@@ -137,6 +137,9 @@ fn version_and_leading_admin_flags_do_not_require_llm_endpoint() {
         &["-V"][..],
         &["--lang", "ko", "-V"][..],
         &["--json", "version"][..],
+        &["--version", "--json"][..],
+        &["version", "--json"][..],
+        &["-V", "--lang=zh", "--json"][..],
     ] {
         let out = bounded_run(
             {
@@ -157,8 +160,56 @@ fn version_and_leading_admin_flags_do_not_require_llm_endpoint() {
             stdout.contains("Nola") || stdout.contains("\"version\""),
             "{args:?} stdout={stdout}"
         );
+        if args.contains(&"--json") {
+            assert!(serde_json::from_slice::<serde_json::Value>(&out.stdout).unwrap()["version"].is_string());
+        }
         assert!(!db.exists(), "{args:?} must not create DB");
     }
+}
+
+#[test]
+fn management_help_and_errors_stay_scoped_to_the_requested_command() {
+    let dir = tempfile::tempdir().unwrap();
+    let db = dir.path().join("unused.sqlite");
+    for (args, code, expected) in [
+        (&["--model", "session", "model", "--help"][..], 0, "nola model apply-config"),
+        (&["--json", "plugin", "desktop-pages", "--help"], 0, "nola plugin desktop-pages"),
+        (&["session", "--help"], 0, "nola session sources"),
+        (&["model", "connections", "extra"], 2, "nola model --help"),
+    ] {
+        let mut command = nola_cmd(dir.path(), &db, dir.path());
+        command.args(args);
+        let out = bounded_run(command, None);
+        assert_eq!(out.status.code(), Some(code), "{args:?}");
+        let text = String::from_utf8_lossy(if code == 0 { &out.stdout } else { &out.stderr });
+        assert!(text.contains(expected), "{text}");
+        assert!(!text.contains("nola room"), "{text}");
+        assert!(!db.exists());
+    }
+}
+
+#[test]
+fn missing_management_operands_never_mutate_state_and_delete_reports_absence() {
+    let dir = tempfile::tempdir().unwrap();
+    let db = dir.path().join("commands.sqlite");
+    let invoke = |args: &[&str]| {
+        let mut command = nola_cmd(dir.path(), &db, dir.path());
+        command.args(args);
+        bounded_run(command, None)
+    };
+    for args in [&["room", "create", "--json"][..], &["session", "delete", "--json"],
+        &["plugin", "remove", "--json"], &["room", "send", "room", "--json"],
+        &["room", "send", "room", "text", "--to", "--json"], &["model", "discover", "--json"],
+        &["model", "chatgpt", "sign-in", "--json"], &["--project", "--json", "sessions"]] {
+        assert_eq!(invoke(args).status.code(), Some(2), "{args:?}");
+        assert!(!db.exists());
+    }
+    let absent = invoke(&["session", "delete", "missing", "--json"]);
+    assert!(absent.status.success());
+    assert_eq!(serde_json::from_slice::<serde_json::Value>(&absent.stdout).unwrap()["deleted"], false);
+    let room = invoke(&["--json", "room", "create", "--", "--json"]);
+    assert!(room.status.success());
+    assert_eq!(serde_json::from_slice::<serde_json::Value>(&room.stdout).unwrap()["room"]["title"], "--json");
 }
 
 #[test]

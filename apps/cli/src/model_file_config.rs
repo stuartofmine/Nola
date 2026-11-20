@@ -75,9 +75,13 @@ impl FileModels {
             let examples = config.connections.iter().flat_map(|connection| connection.models.iter()
                 .map(move |model| json!({"connection": connection.id, "model": model.id}).to_string()))
                 .take(8).collect::<Vec<_>>().join("\n  ");
+            use crate::i18n::{interaction_text, ui_text, UiText};
+            let invalid = json!({"connection": config.default_model.connection, "model": config.default_model.model});
             return Err(format!(
-                "default_model must refer to a declared connection and model.\nCurrent: {}\nSet llm.default_model using connection/model IDs from llm.connections, for example:\n  {examples}\nSave the configuration, then run `nola model apply-config` again.",
-                json!({"connection": config.default_model.connection, "model": config.default_model.model})));
+                "{}\n{} {invalid}\n{}\n  {examples}\n{} `nola model apply-config`",
+                ui_text(UiText::MissingDefaultModel), interaction_text().current_label,
+                ui_text(UiText::DefaultModelChoices), ui_text(UiText::ApplyConfigAgain)
+            ));
         }
         Ok(config)
     }
@@ -129,7 +133,7 @@ fn selected_path_from(explicit: Option<&str>, home: Option<&std::path::Path>) ->
         }
         return Ok(path.to_owned());
     }
-    let home = home.ok_or("cannot locate Nola home; use model apply-config <absolute-config-path>")?;
+    let home = home.ok_or("cannot locate Nola home; use nola model apply-config <config-path>")?;
     // RuntimeConfig loads JSON after JSONC, giving JSON the same precedence.
     for name in ["config.json", "config.jsonc"] {
         let path = home.join(".nola").join(name);
@@ -137,11 +141,20 @@ fn selected_path_from(explicit: Option<&str>, home: Option<&std::path::Path>) ->
             return path.into_os_string().into_string().map_err(|_| "config path is not UTF-8".into());
         }
     }
-    Err("no ~/.nola/config.json or config.jsonc; use model apply-config <absolute-config-path>".into())
+    Err("no ~/.nola/config.json or config.jsonc; use nola model apply-config <config-path>".into())
 }
 
 pub(crate) fn apply(store: &NolaStore, path: &str, gateways: &[String]) -> Result<Value, String> {
-    let document = parse_jsonc(&read_selected(path)?)?;
+    let bytes = read_selected(path).map_err(|reason| {
+        let guidance = match reason.as_str() {
+            "source_unavailable" | "source_access_denied" => "check the file path and read permission",
+            "source_not_a_bounded_regular_file" | "source_too_large" => "select a regular file up to 2 MiB",
+            _ => "check that the configuration file is readable",
+        };
+        format!("cannot read model configuration {path:?} ({reason}). {guidance}")
+    })?;
+    let document = parse_jsonc(&bytes)
+        .map_err(|reason| format!("cannot parse model configuration {path:?} ({reason})"))?;
     let config = FileModels::parse(document.get("llm").cloned().ok_or("missing llm object")?)?;
     apply_with_sink(store, config, gateways, &mut VaultImportCredentialSink)
 }

@@ -96,6 +96,8 @@ internal fun webHostConnectionMessage(context: Context, error: Throwable): Strin
             normalized.contains("failed to connect") ||
             normalized.contains("connection refused") ->
             context.getString(R.string.models_error_host_unreachable)
+        error is com.nola.data.remote.api.WebHostStatusException && (error.statusCode == 401 || error.statusCode == 403) ->
+            context.getString(R.string.models_error_host_unauthorized)
         normalized.contains("401") || normalized.contains("403") || normalized.contains("unauthorized") ->
             context.getString(R.string.models_error_host_unauthorized)
         else -> context.getString(R.string.models_error_host_generic)

@@ -2424,7 +2424,7 @@ struct ChatView: View {
             attachmentImportTasks[operation.id] = Task { @MainActor in
                 defer { attachmentImportTasks[operation.id] = nil }
                 do {
-                    let importResult = try await ChatAttachmentDraft.importFiles(from: result, parserHost: parserHost)
+                    let importResult = try await ChatAttachmentDraft.importFiles(from: result, parserHost: parserHost, runtime: container.applicationRuntime)
                     guard !Task.isCancelled, composerDrafts.accepts(operation),
                           attachmentOwnerStillExists(operation.owner) else { return }
                     let imported = importResult.attachments

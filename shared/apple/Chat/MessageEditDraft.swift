@@ -62,7 +62,7 @@ nonisolated struct AppleMessageEditDraft: Sendable {
     /// A UI hint only. Core must revalidate both captured revisions at prepare.
     var hasSourceWitness: Bool {
         sourceConversationID != nil && expectedSourceRevision.map { $0 > 0 } == true
-            && expectedMessageRevision.map { $0 > 0 } == true && !sourceMessageID.isEmpty
+            && expectedMessageRevision != nil && !sourceMessageID.isEmpty
     }
     func inPlacePreparation() -> ApplePrepareInPlaceResend? {
         guard let sourceConversationID, let expectedSourceRevision, let expectedMessageRevision,

@@ -64,7 +64,7 @@ const entries: Record<string, Translations> = {
     'shell.nav.data': ['数据中心', 'Data Center', 'Datenzentrale', 'Centro de datos', 'Centre de données', 'データセンター', 'Центр данных'],
     'shell.nav.automation': ['自动化', 'Automations', 'Automatisierungen', 'Automatizaciones', 'Automatisations', '自動化', 'Автоматизация'],
     'shell.nav.models': ['模型', 'Models', 'Modelle', 'Modelos', 'Modèles', 'モデル', 'Модели'],
-    'shell.nav.capabilities': ['技能与 MCP', 'Skills & MCP', 'Skills & MCP', 'Habilidades y MCP', 'Compétences et MCP', 'スキルと MCP', 'Навыки и MCP'],
+    'shell.nav.capabilities': ['能力库', 'Capability library', 'Funktionsbibliothek', 'Biblioteca de capacidades', 'Bibliothèque de fonctionnalités', '機能ライブラリ', 'Библиотека возможностей'],
     'shell.informationOverviewHint': ['把值得留下的信息，整理在一起。', 'Keep useful information together.', 'Nützliche Informationen an einem Ort.', 'Reúne la información que vale la pena guardar.', 'Rassemblez les informations utiles.', '残しておきたい情報をまとめます。', 'Соберите полезную информацию вместе.'],
     'shell.informationActivity': ['活动', 'Activity', 'Aktivität', 'Actividad', 'Activité', '活動', 'Активность'],
     'shell.informationKnowledgeHint': ['查看会话中保存的知识点；打开原会话即可编辑。', 'Read saved conversation knowledge. Open the original conversation to edit it.', 'Gespeichertes Gesprächswissen lesen. Zum Bearbeiten das ursprüngliche Gespräch öffnen.', 'Consulta el conocimiento guardado. Abre la conversación original para editarlo.', 'Consultez les connaissances enregistrées. Ouvrez la conversation d’origine pour les modifier.', '会話に保存した知識を確認できます。編集するには元の会話を開いてください。', 'Просматривайте сохранённые знания. Для редактирования откройте исходный диалог.'],

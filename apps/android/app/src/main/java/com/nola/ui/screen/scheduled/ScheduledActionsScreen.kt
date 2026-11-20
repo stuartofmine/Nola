@@ -1,5 +1,6 @@
 package com.nola.ui.screen.scheduled
 
+import com.nola.ui.components.dismissImeOnBlankTap
 import android.Manifest
 import android.content.pm.PackageManager
 import android.os.Build
@@ -8,6 +9,8 @@ import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.horizontalScroll
+import androidx.compose.foundation.text.KeyboardActions
+import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -65,12 +68,16 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalFocusManager
+import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.res.stringResource
 import androidx.core.content.ContextCompat
 import androidx.compose.ui.platform.LocalUriHandler
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -86,6 +93,7 @@ import com.nola.ui.components.NolaColors
 import com.nola.ui.components.NolaDivider
 import com.nola.ui.components.NolaEmptyState
 import com.nola.ui.components.NolaHeroCard
+import com.nola.ui.components.NolaIconButton
 import com.nola.ui.components.NolaSectionTitle
 import com.nola.ui.components.NolaSpacing
 import com.nola.ui.components.NolaSwitch
@@ -234,10 +242,17 @@ fun ScheduledActionsScreen(
                     Icon(Icons.Filled.Add, contentDescription = stringResource(R.string.scheduled_action_editor_new))
                 }
                 if (state.actions.isNotEmpty()) {
-                    TextButton(onClick = onCreateInChat) {
-                        Icon(Icons.Filled.AutoAwesome, contentDescription = null)
-                        Spacer(Modifier.width(6.dp))
-                        Text(stringResource(R.string.scheduled_create_in_chat))
+                    val label = stringResource(R.string.scheduled_create_in_chat)
+                    if (LocalConfiguration.current.screenWidthDp < 600) {
+                        NolaIconButton(label = label, onClick = onCreateInChat) {
+                            Icon(painterResource(R.drawable.nola_chat), contentDescription = label)
+                        }
+                    } else {
+                        TextButton(onClick = onCreateInChat) {
+                            Icon(Icons.Filled.AutoAwesome, contentDescription = null)
+                            Spacer(Modifier.width(6.dp))
+                            Text(label)
+                        }
                     }
                 }
             }
@@ -905,6 +920,7 @@ internal fun ExecutionResultDetailSheet(
         || result.eventsJson.trim() !in setOf("", "[]", "{}")
 
     ModalBottomSheet(
+        modifier = Modifier.dismissImeOnBlankTap(),
         onDismissRequest = onDismiss,
         sheetState = androidx.compose.material3.rememberModalBottomSheetState(skipPartiallyExpanded = true),
     ) {
@@ -1212,6 +1228,7 @@ fun ScheduledActionEditorSheet(
     val initialTime = existing?.scheduledTimeIso ?: ""
     val initialTimezone = existing?.timezone?.takeIf { it.isNotBlank() } ?: TimeZone.getDefault().id
     val draftId = remember(existing?.id) { existing?.id ?: java.util.UUID.randomUUID().toString() }
+    val focusManager = LocalFocusManager.current
     var name by remember(existing?.id) { mutableStateOf(initialName) }
     var url by remember(existing?.id) { mutableStateOf(initialUrl) }
     var scheduleFrequency by remember(existing?.id) {
@@ -1268,6 +1285,7 @@ fun ScheduledActionEditorSheet(
     }
 
     androidx.compose.material3.ModalBottomSheet(
+        modifier = Modifier.dismissImeOnBlankTap(),
         onDismissRequest = requestDismiss,
         sheetState = com.nola.ui.components.rememberGuardedEditorSheetState(isSaving, isDirty) { showDiscardConfirmation = true },
     ) {
@@ -1288,7 +1306,9 @@ fun ScheduledActionEditorSheet(
                     label = { Text(stringResource(R.string.scheduled_name)) },
                     placeholder = { Text(stringResource(R.string.scheduled_name_placeholder)) },
                     modifier = Modifier.fillMaxWidth(),
-                    singleLine = true
+                    singleLine = true,
+                    keyboardOptions = KeyboardOptions(imeAction = ImeAction.Done),
+                    keyboardActions = KeyboardActions(onDone = { focusManager.clearFocus() })
                 )
                 Spacer(Modifier.height(8.dp))
             }

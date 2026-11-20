@@ -137,33 +137,52 @@ final class MacManagedNolaServer {
     private var process: Process?
     private var stdoutTask: Task<Void, Never>?
     private var stderrTask: Task<Void, Never>?
-    private var requestedStop = false
+    private var launchRevision = 0
+    private var pendingStop: Task<Void, Never>?
+    private let environment: MacAppEnvironment
+    private let executableOverride: URL?
+    private let bindAddress: String
+    private let port: Int
+    private let startupTimeout: Duration
+
+    init(environment: MacAppEnvironment = .shared, executable: URL? = nil,
+         bindAddress: String = "0.0.0.0", port: Int = 5001, startupTimeout: Duration = .seconds(12)) {
+        self.environment = environment
+        self.executableOverride = executable
+        self.bindAddress = bindAddress
+        self.port = port
+        self.startupTimeout = startupTimeout
+    }
 
     func start() async {
-        guard process?.isRunning != true else { return }
+        guard state != .starting, process?.isRunning != true else { return }
+        launchRevision &+= 1
+        let revision = launchRevision
         state = .starting
-        requestedStop = false
+        await pendingStop?.value
+        guard revision == launchRevision else { return }
+        pendingStop = nil
 
         do {
-            guard let executableURL = MacAgentHostExecutableLocator.resolve() else {
+            guard let executableURL = executableOverride ?? MacAgentHostExecutableLocator.resolve() else {
                 throw MacManagedNolaServerError.executableUnavailable
             }
             let process = Process()
             let output = Pipe()
             let errors = Pipe()
             process.executableURL = executableURL
-            process.currentDirectoryURL = MacAppEnvironment.shared.scratchWorkspaceURL
+            process.currentDirectoryURL = environment.scratchWorkspaceURL
             process.arguments = [
                 "server",
-                "--host", "0.0.0.0",
-                "--port", "5001",
+                "--host", bindAddress,
+                "--port", String(port),
                 "--json",
             ]
             process.standardOutput = output
             process.standardError = errors
             process.standardInput = FileHandle.nullDevice
-            var environment = MacAppEnvironment.shared.launchAgentEnvironment(
-                projectURL: MacAppEnvironment.shared.scratchWorkspaceURL
+            var environment = self.environment.launchAgentEnvironment(
+                projectURL: self.environment.scratchWorkspaceURL
             )
             environment["NOLA_CLIENT_SURFACE"] = "mac_server"
             let storedProfile = UserDefaults.standard.object(forKey: Self.permissionProfileKey)
@@ -203,10 +222,16 @@ final class MacManagedNolaServer {
                 }
             }
 
-            let line = try await Self.readStartupLine(
-                from: output.fileHandleForReading,
-                timeout: .seconds(12)
-            )
+            let deadline = Task {
+                try await Task.sleep(for: startupTimeout)
+                guard revision == launchRevision, state == .starting else { return }
+                launchRevision &+= 1
+                stopProcess()
+                state = .failed(MacManagedNolaServerError.startupTimedOut.localizedDescription)
+            }
+            defer { deadline.cancel() }
+            let line = try await Self.readStartupLine(from: output.fileHandleForReading)
+            guard revision == launchRevision, self.process === process, process.isRunning else { return }
             let handshake = try JSONDecoder().decode(
                 MacManagedNolaServerHandshake.self,
                 from: Data(line.utf8)
@@ -257,13 +282,14 @@ final class MacManagedNolaServer {
                 )
             )
         } catch {
+            guard revision == launchRevision else { return }
             stopProcess()
             state = .failed(error.localizedDescription)
         }
     }
 
     func stop() {
-        requestedStop = true
+        launchRevision &+= 1
         stopProcess()
         state = .stopped
     }
@@ -273,10 +299,15 @@ final class MacManagedNolaServer {
         stdoutTask = nil
         stderrTask?.cancel()
         stderrTask = nil
-        if let process {
-            MacOwnedChildProcessRegistry.shared.stop(process)
+        if let stopping = process {
+            process = nil
+            // The registry retains ownership while termination is in flight.
+            // A subsequent launch waits for this task to release the listen port.
+            pendingStop = Task.detached(priority: .userInitiated) {
+                MacOwnedChildProcessRegistry.shared.stop(stopping)
+                stopping.waitUntilExit()
+            }
         }
-        process = nil
     }
 
     private func processDidTerminate(processIdentifier: Int32, status: Int32) {
@@ -289,40 +320,16 @@ final class MacManagedNolaServer {
         stdoutTask = nil
         stderrTask?.cancel()
         stderrTask = nil
-        if requestedStop {
-            state = .stopped
-        } else {
-            state = .failed(
-                String(
-                    format: String(localized: "Nola Server stopped unexpectedly with status %d."),
-                    status
-                )
-            )
-        }
+        launchRevision &+= 1
+        state = .failed(
+            String(format: String(localized: "Nola Server stopped unexpectedly with status %d."), status)
+        )
     }
 
-    nonisolated private static func readStartupLine(
-        from handle: FileHandle,
-        timeout: Duration
-    ) async throws -> String {
-        try await withThrowingTaskGroup(of: String.self) { group in
-            group.addTask {
-                for try await line in handle.bytes.lines {
-                    if !line.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-                        return line
-                    }
-                }
-                throw MacManagedNolaServerError.invalidHandshake
-            }
-            group.addTask {
-                try await Task.sleep(for: timeout)
-                throw MacManagedNolaServerError.startupTimedOut
-            }
-            guard let result = try await group.next() else {
-                throw MacManagedNolaServerError.invalidHandshake
-            }
-            group.cancelAll()
-            return result
+    nonisolated private static func readStartupLine(from handle: FileHandle) async throws -> String {
+        for try await line in handle.bytes.lines where !line.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            return line
         }
+        throw MacManagedNolaServerError.invalidHandshake
     }
 }

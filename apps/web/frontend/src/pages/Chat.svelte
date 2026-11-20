@@ -68,6 +68,21 @@
     import ConversationPdfTab from '../components/ConversationPdfTab.svelte';
     import WorkspacePageTab from '../components/WorkspacePageTab.svelte';
     import WorkspaceListNavigation from '../components/WorkspaceListNavigation.svelte';
+    import DesktopPluginNavigation from '../components/DesktopPluginNavigation.svelte';
+    import { desktopPluginPath, type DesktopPluginPage } from '../lib/desktopPluginPages';
+    let pluginTitles = $state<Record<string,string>>({});
+    function reconcilePluginPages(pages: DesktopPluginPage[], removed: Set<string>) {
+        pluginTitles = Object.fromEntries(pages.map(page => [desktopPluginPath(page.id), page.title]));
+        if (!removed.size) return;
+        function keepInstalled(tabs: ConversationContentTabs) {
+            return tabs.items.reduce((state, item) => item.kind === 'page' && removed.has(item.path) ? closeContentTab(state, item.key) : state, tabs);
+        }
+        for (const [owner, tabs] of workspaceHost?.contentTabs ?? []) {
+            workspaceHost?.contentTabs.set(owner, keepInstalled(tabs));
+        }
+        const current = keepInstalled(contentTabs);
+        if (current !== contentTabs) updateContentTabs(current);
+    }
     import WorkspaceResourceNavigation from '../components/WorkspaceResourceNavigation.svelte';
     let navigationExpanded = $state(true);
     let listCategory = $state<'conversations' | 'resources'>('conversations');
@@ -121,7 +136,10 @@
         const page = next.items.find(item => item.key === next.selected);
         if (page?.kind === 'page') { inspectorTab = null; location.searchParams.set('content', page.path); }
         else location.searchParams.delete('content');
-        window.history.replaceState(window.history.state, '', location);
+        const entry = {...window.history.state};
+        if (page?.kind === 'page' && page.path.startsWith('/plugin-page?')) entry.nolaPluginDestination = true;
+        else delete entry.nolaPluginDestination;
+        window.history.replaceState(entry, '', location);
         if (returning) {
             const position = active && workspaceHost?.readingPositions.get(active.conversationId);
             if (position) { const token = scroll.restoreIntent(scroll.token, position); if (token) void restoreConversationReading(position, token); }
@@ -139,6 +157,9 @@
         const target = managementContentPath(href, window.location.origin);
         if (!target) return false;
         if (viewportWidth <= 700) { navigationPanel?.closePanel(); navigateWorkspace(target.path); return true; }
+        if (requested.pathname === '/plugin-page' && new URL(window.location.href).searchParams.get('content') !== target.path) {
+            history.pushState(history.state, '', window.location.href);
+        }
         updateContentTabs(openPageContentTab(contentTabs, target.path, target.titleKey));
         if (viewportWidth <= 700) navigationPanel?.closePanel();
         return true;
@@ -1077,6 +1098,16 @@
         const contentNavigation = (event: Event) => {
             if (event instanceof CustomEvent && typeof event.detail === 'string' && openManagementTab(event.detail)) event.preventDefault();
         };
+        function restorePluginNavigation(event: PopStateEvent) {
+            const address = new URL(window.location.href);
+            const leavingPlugin = selectedContentTab?.kind === 'page' && selectedContentTab.path.startsWith('/plugin-page?');
+            if (address.pathname !== '/chat' || (!event.state?.nolaPluginDestination && !leavingPlugin)) return;
+            if (address.searchParams.get('conversation') !== (active?.conversationId ?? null)) return;
+            const next = address.searchParams.get('content');
+            if (next) openManagementTab(next);
+            else updateContentTabs(selectContentTab(contentTabs, conversationTabKey));
+        }
+        window.addEventListener('popstate', restorePluginNavigation);
         window.addEventListener(workspaceContentNavigationEvent, contentNavigation);
         const visibility = () => {
             submissionController?.setForeground(document.visibilityState !== 'hidden');
@@ -1090,6 +1121,7 @@
             disposed = true; draftSelection++; submissionController?.detach(); conversationCacheReader.dispose();
             document.removeEventListener('visibilitychange', visibility);
             window.removeEventListener(workspaceContentNavigationEvent, contentNavigation);
+            window.removeEventListener('popstate', restorePluginNavigation);
             motionPreference.removeEventListener('change', updateMotionPreference);
             if (userScrollTimer) clearTimeout(userScrollTimer);
             if (followFrame !== null) cancelAnimationFrame(followFrame);
@@ -1192,8 +1224,9 @@
         }
         if(current()){
             await conversationManager?.refresh();
-            // The Host can defer the canonical rewind until the replacement is admitted.
-            if (current()) await submissionController?.loadHistory('replace');
+            // A local resend already rewinds the visible timeline at admission.
+            // Replacing its history while its stream is active discards live journal cursors.
+            if (current() && p.experts.length) await submissionController?.loadHistory('replace');
         }
         return completion;
     }
@@ -1256,8 +1289,8 @@
     <header class="chat-header">
         <div class="global-navigation" class:collapsed={viewportWidth > 700 && !navigationExpanded}><a class="desktop-mark" href="/today" aria-label="Nola">n</a><WorkspaceListNavigation category={listCategory} visible={navigationExpanded} onchange={setListCategory} /><button class="sidebar-toggle panel-toggle" title={t($locale, 'shell.toggleSidebar')} aria-label={t($locale, 'shell.toggleSidebar')} aria-expanded={navigationExpanded} onclick={() => navigationExpanded = !navigationExpanded}><PrototypeIcon name="sidebar" size={18} /></button></div>
         <button class="navigation-toggle" aria-label={t($locale, contentTabs.selected === conversationTabKey ? 'shell.workspace' : 'chatPage.title')} onclick={() => contentTabs.selected === conversationTabKey ? navigateWorkspace('/conversations') : updateContentTabs(selectContentTab(contentTabs, conversationTabKey))}><svg aria-hidden="true" viewBox="0 0 24 24"><path d="m15 5-7 7 7 7" /></svg></button>
-        <h1 class="sr-only">{selectedContentTab ? selectedContentTab.kind === 'pdf' ? selectedContentTab.resource.displayName : t($locale, selectedContentTab.titleKey) : active?.title || t($locale, 'chatPage.title')}</h1>
-        {#if viewportWidth <= 700}<div class="mobile-chat-heading"><strong>{selectedContentTab ? selectedContentTab.kind === 'pdf' ? selectedContentTab.resource.displayName : t($locale, selectedContentTab.titleKey) : active?.title || t($locale, 'chatPage.title')}</strong><small>Nola</small></div>{#if selectedContentTab}<button class="panel-toggle mobile-content-close" aria-label={t($locale, 'chatInspector.closeTab')} onclick={() => closeWorkspaceContentTab(contentTabs.selected)}>×</button>{:else}<button class="panel-toggle" aria-label={t($locale, 'chatInspector.context')} disabled={!active} onclick={() => toggleInspector('resources')}><svg aria-hidden="true" viewBox="0 0 24 24"><path d="M6 3h8l4 4v14H6zM14 3v5h4M9 12h6m-6 4h6"/></svg></button><button class="panel-toggle" aria-label={t($locale, 'rooms.experts')} onclick={() => void openExperts()}><svg aria-hidden="true" viewBox="0 0 24 24"><circle cx="12" cy="7" r="4"/><path d="M5 22v-4a7 7 0 0 1 14 0v4"/></svg></button>{/if}{:else}<ContentTabStrip ownerKey={contentWorkspaceKey} state={contentTabs} title={active?.title || t($locale, 'chatPage.title')}
+        <h1 class="sr-only">{selectedContentTab ? selectedContentTab.kind === 'pdf' ? selectedContentTab.resource.displayName : pluginTitles[selectedContentTab.path] ?? t($locale, selectedContentTab.titleKey) : active?.title || t($locale, 'chatPage.title')}</h1>
+        {#if viewportWidth <= 700}<div class="mobile-chat-heading"><strong>{selectedContentTab ? selectedContentTab.kind === 'pdf' ? selectedContentTab.resource.displayName : pluginTitles[selectedContentTab.path] ?? t($locale, selectedContentTab.titleKey) : active?.title || t($locale, 'chatPage.title')}</strong><small>Nola</small></div>{#if selectedContentTab}<button class="panel-toggle mobile-content-close" aria-label={t($locale, 'chatInspector.closeTab')} onclick={() => closeWorkspaceContentTab(contentTabs.selected)}>×</button>{:else}<button class="panel-toggle" aria-label={t($locale, 'chatInspector.context')} disabled={!active} onclick={() => toggleInspector('resources')}><svg aria-hidden="true" viewBox="0 0 24 24"><path d="M6 3h8l4 4v14H6zM14 3v5h4M9 12h6m-6 4h6"/></svg></button><button class="panel-toggle" aria-label={t($locale, 'rooms.experts')} onclick={() => void openExperts()}><svg aria-hidden="true" viewBox="0 0 24 24"><circle cx="12" cy="7" r="4"/><path d="M5 22v-4a7 7 0 0 1 14 0v4"/></svg></button>{/if}{:else}<ContentTabStrip pageTitles={pluginTitles} ownerKey={contentWorkspaceKey} state={contentTabs} title={active?.title || t($locale, 'chatPage.title')}
             conversationId={active?.conversationId ?? null}
             canRename={!!active?.conversationId && canInteract && !conversationWriting && !busy && contentTabs.selected === conversationTabKey}
             onselect={key => updateContentTabs(selectContentTab(contentTabs, key))}
@@ -1291,6 +1324,9 @@
             </div>
             <div class="sidebar-section" hidden={listCategory !== 'resources'}><WorkspaceResourceNavigation onopen={openManagementTab}
                 selectedPath={selectedContentTab?.kind === 'page' ? selectedContentTab.path : ''} /></div>
+            {#if viewportWidth > 700 || 'NolaDesktop' in window}
+                <DesktopPluginNavigation selectedPath={selectedContentTab?.kind === 'page' ? selectedContentTab.path : undefined} onpages={reconcilePluginPages} />
+            {/if}
             <footer class="workspace-footer">
                 <button class="workspace-identity" onclick={() => openManagementTab('/settings?section=general')}><span aria-hidden="true">n</span><span>{t($locale, 'shell.workspace')}<small>Nola</small></span></button>
                 <button aria-label={t($locale, 'shell.toggleAppearance')} title={t($locale, 'shell.toggleAppearance')} onclick={toggleAppearance}><svg aria-hidden="true" viewBox="0 0 24 24">{#if $darkAppearance}<circle cx="12" cy="12" r="4"/><path d="M12 2v2m0 16v2M4.93 4.93l1.41 1.41m11.32 11.32 1.41 1.41M2 12h2m16 0h2M4.93 19.07l1.41-1.41m11.32-11.32 1.41-1.41"/>{:else}<path d="M20 14A8 8 0 0 1 10 4a8 8 0 1 0 10 10Z"/>{/if}</svg></button>
@@ -1300,7 +1336,7 @@
         {#if viewportWidth > 700}<PanelResizeHandle controls="chat-workspace-navigation" label={t($locale, 'shell.resizeSidebar')} value={widths.sidebar} min={220} max={widths.sidebarMax} defaultValue={layoutDefaults.sidebar} onchange={value => setWorkspaceWidth('sidebar', value)} />{/if}
         </div>
         </ChatResponsivePanel>
-        <section id="page-main" tabindex="-1" role="main" class="chat-main" aria-label={selectedContentTab ? selectedContentTab.kind === 'pdf' ? selectedContentTab.resource.displayName : t($locale, selectedContentTab.titleKey) : active?.title || t($locale, 'chatPage.title')}>
+        <section id="page-main" tabindex="-1" role="main" class="chat-main" aria-label={selectedContentTab ? selectedContentTab.kind === 'pdf' ? selectedContentTab.resource.displayName : pluginTitles[selectedContentTab.path] ?? t($locale, selectedContentTab.titleKey) : active?.title || t($locale, 'chatPage.title')}>
             <div class="conversation-panel" role="tabpanel" id={contentTabDomId('panel', contentWorkspaceKey, conversationTabKey)} aria-labelledby={contentTabDomId('tab', contentWorkspaceKey, conversationTabKey)} hidden={contentTabs.selected !== conversationTabKey}>
             {#if returnToActivity}<a class="activity-source-return" href={returnToActivity}><PrototypeIcon name="back" size={16} />{t($locale, 'activity.backToActivity')}</a>{/if}
             {#if searchVisible}<div class="chat-search"><label for="chat-search-input">{t($locale, 'chatPage.find')}</label><input id="chat-search-input" bind:this={searchInput} type="search" bind:value={searchQuery} autocomplete="off" /><span role="status">{searchQuery.trim() ? t($locale, 'chatPage.found', { count: matchingMessageIds.size }) : ''}</span><button type="button" onclick={closeSearch} aria-label={t($locale, 'chatPage.closeSearch')}>×</button></div>{/if}
@@ -1315,8 +1351,12 @@
                 </section>
             {/if}
             {#if notice}<p class="notice" role="status">{t($locale, notice)}</p>{/if}
-            {#if error}<p class="notice error" class:initialization-error={initializationFailed} role="alert">{t($locale, error)}</p>{/if}
-            {#if error === 'chatPage.controlUnconfirmed'}<button type="button" onclick={rereadSelected}>{t($locale, 'chatPage.retryInitialization')}</button>{/if}
+            {#if error === 'chatPage.controlUnconfirmed'}
+                <p class="notice" role="status">{t($locale, error)}</p>
+                <button type="button" onclick={rereadSelected}>{t($locale, 'chatPage.retryInitialization')}</button>
+            {:else if error}
+                <p class="notice error" class:initialization-error={initializationFailed} role="alert">{t($locale, error)}</p>
+            {/if}
             {#if initializationFailed}<button class="initialization-retry" type="button" onclick={() => void initialize()} disabled={initializing}>{t($locale, 'chatPage.retryInitialization')}</button>{/if}
             {#if active && workspaceHost?.persistenceErrors.has(active.conversationId)}<p class="notice error" role="alert">{t($locale, 'chatPage.draftStorageFailed')}</p>{/if}
             {#if uiSurfaceFailure}<p class="notice error" role="alert">{uiSurfaceFailure}</p>{/if}
@@ -1476,7 +1516,7 @@
                 {@const isCurrent = entry.conversationId === (active?.conversationId ?? null) && contentTabs.selected === tab.key}
                 <div class="content-document-panel" role="tabpanel" id={contentTabDomId('panel', entry.workspaceKey, tab.key)}
                     aria-labelledby={isCurrent ? contentTabDomId('tab', entry.workspaceKey, tab.key) : undefined}
-                    aria-label={!isCurrent ? tab.kind === 'pdf' ? tab.resource.displayName : t($locale, tab.titleKey) : undefined}
+                    aria-label={!isCurrent ? tab.kind === 'pdf' ? tab.resource.displayName : (pluginTitles[tab.path] ?? t($locale, tab.titleKey)) : undefined}
                     hidden={!isCurrent} inert={!isCurrent}>
                     {#if tab.kind === 'pdf'}<ConversationPdfTab resource={tab.resource} />
                     {:else}<WorkspacePageTab viewport={tab.viewport} ownerKey={entry.ownerKey} path={tab.path} active={isCurrent}

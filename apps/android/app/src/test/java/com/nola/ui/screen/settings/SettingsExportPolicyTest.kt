@@ -1,34 +1,26 @@
 package com.nola.ui.screen.settings
 
+import com.nola.domain.model.ChatMemoryProfile
+import com.nola.domain.model.McpServerConfig
+import com.nola.domain.model.UploadedContent
+import kotlinx.serialization.encodeToString
+import kotlinx.serialization.json.Json
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
-import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class SettingsExportPolicyTest {
     @Test
-    fun mcpUrlExportRemovesStructuredCredentials() {
-        val result = sanitizeMcpUrlForExport(
-            "https://user:password@mcp.example/v1?transport=sse&api_key=secret&token=second#private"
+    fun userTextSurvivesWithoutConnectionCredentialsOrAccountDetails() {
+        val privateMarker = "test-credential-never-export"
+        val profile = ChatMemoryProfile(
+            longTermMemory = listOf("Choose lightweight models"),
+            mcpServers = listOf(McpServerConfig(name = "private", url = "https://example.org/$privateMarker")),
+            uploadedDocuments = listOf(UploadedContent(name = "Plan", content = "Reviewed", accessOwnerId = privateMarker)),
         )
-
-        assertEquals(4, result.redactionCount)
-        assertFalse(result.url.contains("user"))
-        assertFalse(result.url.contains("password"))
-        assertFalse(result.url.contains("secret"))
-        assertFalse(result.url.contains("second"))
-        assertFalse(result.url.contains("private"))
-        assertTrue(result.url.contains("transport=sse"))
-        assertTrue(result.url.contains("api_key=REDACTED"))
-        assertTrue(result.url.contains("token=REDACTED"))
-    }
-
-    @Test
-    fun mcpUrlExportPreservesOrdinaryEndpoint() {
-        val raw = "https://mcp.example/v1?transport=sse"
-        val result = sanitizeMcpUrlForExport(raw)
-
-        assertEquals(0, result.redactionCount)
-        assertEquals(raw, result.url)
+        val exported = exportableProfile(profile)
+        assertEquals(profile.longTermMemory, exported.longTermMemory)
+        assertEquals("Reviewed", exported.uploadedDocuments.single().content)
+        assertFalse(Json.encodeToString(exported).contains(privateMarker))
     }
 }

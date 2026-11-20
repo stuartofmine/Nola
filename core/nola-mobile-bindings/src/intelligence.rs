@@ -386,11 +386,6 @@ fn merge_unique(target: &mut Vec<String>, additions: impl IntoIterator<Item = St
     }
 }
 
-fn default_legacy_state_path() -> Result<PathBuf, String> {
-    let base = get_config_base().ok_or_else(|| "no base dir".to_string())?;
-    Ok(base.join("nola").join(STATE_FILE))
-}
-
 fn parse_state_json(raw: &str) -> Result<IntelligenceState, String> {
     let state: IntelligenceState = serde_json::from_str(raw)
         .map_err(|error| format!("invalid personal intelligence state: {error}"))?;
@@ -401,14 +396,6 @@ fn parse_state_json(raw: &str) -> Result<IntelligenceState, String> {
         ));
     }
     Ok(state)
-}
-
-fn load_state_from_file(path: &std::path::Path) -> Result<Option<IntelligenceState>, String> {
-    if !path.is_file() {
-        return Ok(None);
-    }
-    let raw = std::fs::read_to_string(path).map_err(|error| error.to_string())?;
-    parse_state_json(&raw).map(Some)
 }
 
 fn load_state() -> Result<IntelligenceState, String> {
@@ -571,9 +558,8 @@ fn sync_state_memories_to_store(
     Ok(())
 }
 
-fn load_or_import_store_state(
+fn load_store_state(
     app: &crate::EmbeddedApplication,
-    legacy_path: Option<&std::path::Path>,
 ) -> Result<IntelligenceState, String> {
     let setting_value =
         app.execute_command(nola_application::ApplicationCommand::GetProductSetting {
@@ -583,15 +569,6 @@ fn load_or_import_store_state(
         let setting: nola_application::ProductSetting =
             serde_json::from_value(setting_value).map_err(|error| error.to_string())?;
         return parse_state_json(&setting.value_json);
-    }
-    if let Some(path) = legacy_path {
-        if let Some(legacy_state) = load_state_from_file(path)? {
-            // One-time non-destructive migration: import into NolaStore while
-            // preserving personal_intelligence.json untouched on disk.
-            save_store_state(app, &legacy_state)?;
-            sync_state_memories_to_store(app, &legacy_state)?;
-            return Ok(legacy_state);
-        }
     }
     Ok(IntelligenceState::default())
 }
@@ -715,10 +692,9 @@ fn load_canonical_extra_memories(
 
 pub(crate) fn ingest_with_application(
     app: &crate::EmbeddedApplication,
-    legacy_path: Option<&std::path::Path>,
     input: IntelligenceIngestInput,
 ) -> Result<IntelligenceIngestResponse, String> {
-    let mut state = load_or_import_store_state(app, legacy_path)?;
+    let mut state = load_store_state(app)?;
     let response = ingest_into_state(&mut state, input);
     save_store_state(app, &state)?;
     sync_state_memories_to_store(app, &state)?;
@@ -727,10 +703,9 @@ pub(crate) fn ingest_with_application(
 
 pub(crate) fn recall_with_application(
     app: &crate::EmbeddedApplication,
-    legacy_path: Option<&std::path::Path>,
     input: RecallInput,
 ) -> Result<RecallResponse, String> {
-    let mut state = load_or_import_store_state(app, legacy_path)?;
+    let mut state = load_store_state(app)?;
     let canonical_extras = load_canonical_extra_memories(app, &state, &input)?;
     let (response, mutated) =
         recall_from_state_with_canonical(&mut state, &canonical_extras, input);
@@ -740,17 +715,8 @@ pub(crate) fn recall_with_application(
     Ok(response)
 }
 
-pub(crate) fn snapshot_with_application(
-    app: &crate::EmbeddedApplication,
-    legacy_path: Option<&std::path::Path>,
-) -> Result<IntelligenceState, String> {
-    load_or_import_store_state(app, legacy_path)
-}
-
-pub(crate) fn clear_with_application(
-    app: &crate::EmbeddedApplication,
-    legacy_path: Option<&std::path::Path>,
-) -> Result<(), String> {
+pub(crate) fn clear_with_application(app: &crate::EmbeddedApplication) -> Result<(), String> {
+    load_store_state(app)?;
     app.execute_command(nola_application::ApplicationCommand::DeleteProductSetting {
         key: PRODUCT_SETTING_KEY.to_string(),
     })?;
@@ -768,11 +734,6 @@ pub(crate) fn clear_with_application(
                     deleted_at_ms,
                 },
             })?;
-        }
-    }
-    if let Some(path) = legacy_path {
-        if path.exists() {
-            std::fs::remove_file(path).map_err(|error| error.to_string())?;
         }
     }
     Ok(())
@@ -1407,99 +1368,97 @@ fn parse_input<T: for<'de> Deserialize<'de>>(
     serde_json::from_slice(bytes).map_err(|error| error.to_string())
 }
 
-#[no_mangle]
-pub extern "C" fn nola_core_intelligence_ingest(
-    data_ptr: *const u8,
-    data_len: usize,
-) -> *mut c_char {
-    let input: IntelligenceIngestInput = match parse_input(data_ptr, data_len) {
-        Ok(input) => input,
-        Err(error) => return error_pointer(error),
+type ApplicationHandle = *mut crate::NolaCoreApplication;
+
+fn with_intelligence_store<T>(
+    handle: Option<ApplicationHandle>,
+    operation: impl FnOnce(Option<&crate::EmbeddedApplication>) -> Result<T, String>,
+) -> Result<T, String> {
+    let _guard = INTELLIGENCE_LOCK.lock().map_err(|_| "intelligence state lock is poisoned")?;
+    let owner = if let Some(handle) = handle {
+        // The Host retains this handle until the synchronous call returns,
+        // the same ownership contract as nola_core_application_execute.
+        Some(unsafe { handle.as_ref() }.ok_or("missing application handle")?.application.clone())
+    } else {
+        crate::sole_embedded_application()?
     };
-    let _guard = match INTELLIGENCE_LOCK.lock() {
-        Ok(guard) => guard,
-        Err(_) => return error_pointer("intelligence state lock is poisoned"),
-    };
-    if let Some(app) = crate::active_embedded_application() {
-        let legacy_path = default_legacy_state_path().ok();
-        return match ingest_with_application(&app, legacy_path.as_deref(), input) {
-            Ok(response) => json_pointer(&response),
-            Err(error) => error_pointer(error),
-        };
-    }
-    let mut state = match load_state() {
-        Ok(state) => state,
-        Err(error) => return error_pointer(error),
-    };
-    let response = ingest_into_state(&mut state, input);
-    if let Err(error) = save_state(&state) {
-        return error_pointer(error);
-    }
-    json_pointer(&response)
+    operation(owner.as_deref())
 }
 
-#[no_mangle]
-pub extern "C" fn nola_core_intelligence_recall(
-    data_ptr: *const u8,
-    data_len: usize,
-) -> *mut c_char {
-    let input: RecallInput = match parse_input(data_ptr, data_len) {
-        Ok(input) => input,
-        Err(error) => return error_pointer(error),
-    };
-    let _guard = match INTELLIGENCE_LOCK.lock() {
-        Ok(guard) => guard,
-        Err(_) => return error_pointer("intelligence state lock is poisoned"),
-    };
-    if let Some(app) = crate::active_embedded_application() {
-        let legacy_path = default_legacy_state_path().ok();
-        return match recall_with_application(&app, legacy_path.as_deref(), input) {
-            Ok(response) => json_pointer(&response),
-            Err(error) => error_pointer(error),
-        };
-    }
-    let mut state = match load_state() {
-        Ok(state) => state,
-        Err(error) => return error_pointer(error),
-    };
-    let response = recall_from_state(&mut state, input);
-    if let Err(error) = save_state(&state) {
-        return error_pointer(error);
-    }
-    json_pointer(&response)
-}
-
-#[no_mangle]
-pub extern "C" fn nola_core_intelligence_snapshot() -> *mut c_char {
-    let _guard = match INTELLIGENCE_LOCK.lock() {
-        Ok(guard) => guard,
-        Err(_) => return error_pointer("intelligence state lock is poisoned"),
-    };
-    if let Some(app) = crate::active_embedded_application() {
-        let legacy_path = default_legacy_state_path().ok();
-        return match snapshot_with_application(&app, legacy_path.as_deref()) {
-            Ok(state) => json_pointer(&state),
-            Err(error) => error_pointer(error),
-        };
-    }
-    match load_state() {
-        Ok(state) => json_pointer(&state),
+fn json_result<T: Serialize>(result: Result<T, String>) -> *mut c_char {
+    match result {
+        Ok(value) => json_pointer(&value),
         Err(error) => error_pointer(error),
     }
 }
 
-#[no_mangle]
-pub extern "C" fn nola_core_intelligence_clear() -> bool {
-    let _guard = match INTELLIGENCE_LOCK.lock() {
-        Ok(guard) => guard,
-        Err(_) => return false,
-    };
-    if let Some(app) = crate::active_embedded_application() {
-        let legacy_path = default_legacy_state_path().ok();
-        return clear_with_application(&app, legacy_path.as_deref()).is_ok();
-    }
-    remove_config_file(STATE_FILE).is_ok()
+fn ingest(handle: Option<ApplicationHandle>, bytes: *const u8, len: usize) -> *mut c_char {
+    json_result(with_intelligence_store(handle, |app| {
+        let input = parse_input(bytes, len)?;
+        if let Some(app) = app {
+            return ingest_with_application(app, input);
+        }
+        let mut state = load_state()?;
+        let response = ingest_into_state(&mut state, input);
+        save_state(&state)?;
+        Ok(response)
+    }))
 }
+
+fn recall(handle: Option<ApplicationHandle>, bytes: *const u8, len: usize) -> *mut c_char {
+    json_result(with_intelligence_store(handle, |app| {
+        let input = parse_input(bytes, len)?;
+        if let Some(app) = app {
+            return recall_with_application(app, input);
+        }
+        let mut state = load_state()?;
+        let response = recall_from_state(&mut state, input);
+        save_state(&state)?;
+        Ok(response)
+    }))
+}
+
+fn snapshot(handle: Option<ApplicationHandle>) -> *mut c_char {
+    json_result(with_intelligence_store(handle, |app| match app {
+        Some(app) => load_store_state(app),
+        None => load_state(),
+    }))
+}
+
+fn clear(handle: Option<ApplicationHandle>) -> bool {
+    with_intelligence_store(handle, |app| match app {
+        Some(app) => clear_with_application(app),
+        None => {
+            load_state()?;
+            remove_config_file(STATE_FILE)
+        }
+    }).is_ok()
+}
+
+#[no_mangle]
+pub extern "C" fn nola_core_intelligence_ingest(bytes: *const u8, len: usize) -> *mut c_char {
+    ingest(None, bytes, len)
+}
+#[no_mangle]
+pub extern "C" fn nola_core_application_intelligence_ingest(app: ApplicationHandle, bytes: *const u8, len: usize) -> *mut c_char {
+    ingest(Some(app), bytes, len)
+}
+#[no_mangle]
+pub extern "C" fn nola_core_intelligence_recall(bytes: *const u8, len: usize) -> *mut c_char {
+    recall(None, bytes, len)
+}
+#[no_mangle]
+pub extern "C" fn nola_core_application_intelligence_recall(app: ApplicationHandle, bytes: *const u8, len: usize) -> *mut c_char {
+    recall(Some(app), bytes, len)
+}
+#[no_mangle]
+pub extern "C" fn nola_core_intelligence_snapshot() -> *mut c_char { snapshot(None) }
+#[no_mangle]
+pub extern "C" fn nola_core_application_intelligence_snapshot(app: ApplicationHandle) -> *mut c_char { snapshot(Some(app)) }
+#[no_mangle]
+pub extern "C" fn nola_core_intelligence_clear() -> bool { clear(None) }
+#[no_mangle]
+pub extern "C" fn nola_core_application_intelligence_clear(app: ApplicationHandle) -> bool { clear(Some(app)) }
 
 #[cfg(test)]
 mod tests {
@@ -1770,7 +1729,6 @@ mod tests {
 
         let ingest_res = ingest_with_application(
             app,
-            None,
             IntelligenceIngestInput {
                 memory_candidates: vec![candidate(
                     "preference.editor",
@@ -1820,7 +1778,6 @@ mod tests {
         // Superseding soft-deletes the old pi_<id> row and commits the new one.
         ingest_with_application(
             app,
-            None,
             IntelligenceIngestInput {
                 memory_candidates: vec![candidate(
                     "preference.editor",
@@ -1886,7 +1843,6 @@ mod tests {
         // 2. Also ingest a PersonalIntelligence memory so both sources exist simultaneously.
         ingest_with_application(
             app,
-            None,
             IntelligenceIngestInput {
                 memory_candidates: vec![candidate(
                     "morning.routine",
@@ -1900,7 +1856,6 @@ mod tests {
 
         let response = recall_with_application(
             app,
-            None,
             RecallInput {
                 query: "Ethiopian coffee".into(),
                 limit: Some(10),
@@ -1924,70 +1879,14 @@ mod tests {
     }
 
     #[test]
-    fn legacy_personal_intelligence_json_is_non_destructively_migrated_on_first_access() {
-        let directory = tempfile::tempdir().unwrap();
-        let db_path = directory.path().join("pi-migration.sqlite");
-        let legacy_path = directory.path().join("personal_intelligence.json");
-
-        let mut legacy_state = IntelligenceState::default();
-        ingest_into_state(
-            &mut legacy_state,
-            IntelligenceIngestInput {
-                memory_candidates: vec![candidate(
-                    "travel.seat",
-                    "Prefers aisle seats on flights over three hours",
-                    0.9,
-                )],
-                ..Default::default()
-            },
-        );
-        let original_bytes = serde_json::to_vec_pretty(&legacy_state).unwrap();
-        std::fs::write(&legacy_path, &original_bytes).unwrap();
-
-        let handle = open_test_app(&db_path);
-        let app = unsafe { &*handle.0 }.application.as_ref();
-
-        // First access imports into NolaStore while preserving personal_intelligence.json untouched.
-        let snapshot = snapshot_with_application(app, Some(&legacy_path)).unwrap();
-        assert_eq!(snapshot.memories.len(), 1);
-        assert_eq!(
-            std::fs::read(&legacy_path).unwrap(),
-            original_bytes,
-            "legacy personal_intelligence.json must remain untouched on disk after non-destructive import"
-        );
-
-        let recalled = recall_with_application(
-            app,
-            Some(&legacy_path),
-            RecallInput {
-                query: "aisle seats flights".into(),
-                limit: Some(5),
-                ..Default::default()
-            },
-        )
-        .unwrap();
-        assert_eq!(recalled.memories.len(), 1);
-        assert_eq!(recalled.memories[0].memory.semantic_key, "travelseat");
-        assert_eq!(std::fs::read(&legacy_path).unwrap(), original_bytes);
-    }
-
-    #[test]
-    fn clear_resets_store_state_soft_deletes_pi_memories_and_removes_legacy_file() {
+    fn clear_resets_store_state_and_soft_deletes_its_pi_memories() {
         let directory = tempfile::tempdir().unwrap();
         let db_path = directory.path().join("pi-clear.sqlite");
-        let legacy_path = directory.path().join("personal_intelligence.json");
-        std::fs::write(
-            &legacy_path,
-            serde_json::to_vec(&IntelligenceState::default()).unwrap(),
-        )
-        .unwrap();
-
         let handle = open_test_app(&db_path);
         let app = unsafe { &*handle.0 }.application.as_ref();
 
         ingest_with_application(
             app,
-            Some(&legacy_path),
             IntelligenceIngestInput {
                 memory_candidates: vec![candidate(
                     "temp.fact",
@@ -1999,9 +1898,8 @@ mod tests {
         )
         .unwrap();
 
-        clear_with_application(app, Some(&legacy_path)).unwrap();
+        clear_with_application(app).unwrap();
 
-        assert!(!legacy_path.exists());
         let setting_val = app
             .execute_command(nola_application::ApplicationCommand::GetProductSetting {
                 key: PRODUCT_SETTING_KEY.to_string(),
@@ -2020,25 +1918,74 @@ mod tests {
     }
 
     #[test]
-    fn c_abi_routes_through_active_embedded_application_store() {
+    fn standalone_and_embedded_databases_have_separate_intelligence_state() {
+        // The compatibility ABI locates the standalone state through system
+        // config directories. Give it a private home and runtime registry.
+        const HOME_FIXTURE: &str = "NOLA_TEST_INTELLIGENCE_HOME";
+        let Some(root) = std::env::var_os(HOME_FIXTURE) else {
+            let dir = tempfile::tempdir().unwrap();
+            let output = std::process::Command::new(std::env::current_exe().unwrap())
+                .args(["--exact", "intelligence::tests::standalone_and_embedded_databases_have_separate_intelligence_state"])
+                .env(HOME_FIXTURE, dir.path()).env("HOME", dir.path())
+                .env("XDG_CONFIG_HOME", dir.path()).output().unwrap();
+            assert!(output.status.success(), "{}", String::from_utf8_lossy(&output.stdout));
+            assert!(String::from_utf8_lossy(&output.stdout).contains("1 passed"));
+            return;
+        };
+        let root = PathBuf::from(root);
+        let file = get_config_base().unwrap().join("nola").join(STATE_FILE);
+        assert!(file.starts_with(&root));
+        let mut standalone = IntelligenceState::default();
+        ingest_into_state(&mut standalone, IntelligenceIngestInput {
+            memory_candidates: vec![candidate("private.test", "Standalone test memory", 0.9)],
+            ..Default::default()
+        });
+        save_state(&standalone).unwrap();
+        let original = std::fs::read(&file).unwrap();
+
+        fn read(pointer: *mut c_char) -> Value {
+            assert!(!pointer.is_null());
+            let bytes = unsafe { std::ffi::CStr::from_ptr(pointer) }.to_bytes();
+            let result = serde_json::from_slice(bytes).unwrap();
+            nola_core::nola_core_free_c_string(pointer);
+            result
+        }
+
+        assert_eq!(read(nola_core_intelligence_snapshot())["memories"].as_array().unwrap().len(), 1);
+        let a = open_test_app(&root.join("a.sqlite"));
+        let same = open_test_app(&root.join("a.sqlite"));
+        assert_eq!(read(nola_core_intelligence_snapshot())["memories"], json!([]));
+        let b = open_test_app(&root.join("b.sqlite"));
+        assert_eq!(read(nola_core_intelligence_snapshot())["ok"], false);
+        assert!(!nola_core_intelligence_clear());
+        assert_eq!(read(nola_core_application_intelligence_snapshot(b.0))["memories"], json!([]));
+        assert!(nola_core_application_intelligence_clear(a.0));
+        let app = &unsafe { &*b.0 }.application;
+        let future = IntelligenceState { schema_version: SCHEMA_VERSION + 1, ..Default::default() };
+        save_store_state(app, &future).unwrap();
+        assert!(!nola_core_application_intelligence_clear(b.0));
+        assert!(load_store_state(app).unwrap_err().contains("unsupported"));
+        drop((same, a, b));
+        let ephemeral = open_test_app(std::path::Path::new(":memory:"));
+        assert_eq!(read(nola_core_intelligence_snapshot())["memories"], json!([]));
+        assert!(nola_core_application_intelligence_clear(ephemeral.0));
+        drop(ephemeral);
+        assert_eq!(std::fs::read(&file).unwrap(), original);
+        assert_eq!(read(nola_core_intelligence_snapshot())["memories"].as_array().unwrap().len(), 1);
+        let future_json = serde_json::to_vec(&future).unwrap();
+        std::fs::write(&file, &future_json).unwrap();
+        assert!(!nola_core_intelligence_clear());
+        assert_eq!(std::fs::read(&file).unwrap(), future_json);
+    }
+
+    #[test]
+    fn c_abi_routes_through_explicit_embedded_application_store() {
         assert_eq!(nola_core_intelligence_abi_version(), 1);
 
         let directory = tempfile::tempdir().unwrap();
         let db_path = directory.path().join("pi-c-abi.sqlite");
         let handle = open_test_app(&db_path);
-        let app_arc = &(unsafe { &*handle.0 }).application;
-        assert!(crate::active_embedded_application().is_some());
-        crate::set_test_pinned_application(Some(app_arc));
-        struct PinReset;
-        impl Drop for PinReset {
-            fn drop(&mut self) {
-                crate::set_test_pinned_application(None);
-            }
-        }
-        let _pin_reset = PinReset;
-        let app = app_arc.as_ref();
-        // Pre-seed empty canonical state so the isolated test DB never inspects host config files.
-        save_store_state(app, &IntelligenceState::default()).unwrap();
+        let other = open_test_app(&directory.path().join("other.sqlite"));
 
         let ingest_payload = serde_json::to_vec(&IntelligenceIngestInput {
             memory_candidates: vec![candidate(
@@ -2050,7 +1997,7 @@ mod tests {
         })
         .unwrap();
         let ingest_ptr =
-            nola_core_intelligence_ingest(ingest_payload.as_ptr(), ingest_payload.len());
+            nola_core_application_intelligence_ingest(handle.0, ingest_payload.as_ptr(), ingest_payload.len());
         assert!(!ingest_ptr.is_null());
         let ingest_json: Value = serde_json::from_str(
             unsafe { std::ffi::CStr::from_ptr(ingest_ptr) }
@@ -2068,7 +2015,7 @@ mod tests {
         })
         .unwrap();
         let recall_ptr =
-            nola_core_intelligence_recall(recall_payload.as_ptr(), recall_payload.len());
+            nola_core_application_intelligence_recall(handle.0, recall_payload.as_ptr(), recall_payload.len());
         assert!(!recall_ptr.is_null());
         let recall_res: RecallResponse = serde_json::from_str(
             unsafe { std::ffi::CStr::from_ptr(recall_ptr) }
@@ -2081,7 +2028,7 @@ mod tests {
         assert_eq!(recall_res.memories.len(), 1);
         assert_eq!(recall_res.memories[0].memory.semantic_key, "cabipreference");
 
-        let snap_ptr = nola_core_intelligence_snapshot();
+        let snap_ptr = nola_core_application_intelligence_snapshot(handle.0);
         assert!(!snap_ptr.is_null());
         let snap: IntelligenceState = serde_json::from_str(
             unsafe { std::ffi::CStr::from_ptr(snap_ptr) }
@@ -2092,5 +2039,10 @@ mod tests {
         nola_core::nola_core_free_c_string(snap_ptr);
         assert_eq!(snap.schema_version, 1);
         assert_eq!(snap.memories.len(), 1);
+        assert!(nola_core_application_intelligence_clear(other.0));
+        assert_eq!(load_store_state(unsafe { &*handle.0 }.application.as_ref()).unwrap().memories.len(), 1);
+        assert!(load_store_state(unsafe { &*other.0 }.application.as_ref()).unwrap().memories.is_empty());
+        assert!(!nola_core_intelligence_clear(), "ambiguous v1 clear must never choose a database");
+        assert!(!nola_core_application_intelligence_clear(std::ptr::null_mut()));
     }
 }

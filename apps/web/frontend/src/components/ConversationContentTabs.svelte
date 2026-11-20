@@ -2,8 +2,8 @@
     import { tick, untrack } from 'svelte';
     import { locale, t } from '../lib/i18n';
     import { conversationTabKey, contentTabDomId, type ConversationContentTabs } from '../lib/conversationContentTabs';
-    let { state: tabsState, title, ownerKey, conversationId = null, canRename = false, onselect, onclose, onrename }: {
-        state: ConversationContentTabs; title: string; ownerKey: string;
+    let { state: tabsState, title, pageTitles = {}, ownerKey, conversationId = null, canRename = false, onselect, onclose, onrename }: {
+        state: ConversationContentTabs; title: string; pageTitles?: Record<string,string>; ownerKey: string;
         conversationId?: string | null; canRename?: boolean;
         onselect: (key: string) => void; onclose: (key: string) => void | Promise<void>;
         onrename?: (conversationId: string, nextTitle: string) => Promise<string | undefined | void> | void;
@@ -13,7 +13,7 @@
     let draftTitle = $state('');
     let renaming = $state(false);
     let renameInput = $state<HTMLInputElement>();
-    const entries = $derived([{key: conversationTabKey, title}, ...tabsState.items.map(item => ({key: item.key, title: item.kind === 'pdf' ? item.resource.displayName : t($locale, item.titleKey)}))]);
+    const entries = $derived([{key: conversationTabKey, title}, ...tabsState.items.map(item => ({key: item.key, title: item.kind === 'pdf' ? item.resource.displayName : pageTitles[item.path] ?? t($locale, item.titleKey)}))]);
     $effect(() => {
         if (renameTarget && (!canRename || conversationId !== renameTarget.id)) {
             untrack(() => { renameTarget = null; });

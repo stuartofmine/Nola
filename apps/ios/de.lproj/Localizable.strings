@@ -1971,6 +1971,12 @@
 "chat.permission.action.create_calendar" = "Termin erstellen";
 "chat.hybrid.clipboard" = "Zwischenablage";
 "model.web_host.connect" = "Verbinden";
+"model.web_host.setup_payload" = "Verbindungsdaten";
+"model.web_host.paste_setup" = "Verbindungsdaten einfügen";
+"model.web_host.invalid_setup" = "Kopieren Sie die Verbindungsdaten in Nola auf dem Host und fügen Sie sie hier ein.";
+"model.web_host.cancel_verification" = "Prüfung abbrechen";
+"model.web_host.error.rollback" = "Das Token konnte nicht gespeichert und die neue Host-Identität nicht entfernt werden. Entfernen Sie die Kopplung und versuchen Sie es erneut.";
+"model.web_host.recheck" = "Erneut prüfen";
 "chat.model.not_configured" = "Nicht konfiguriert";
 "chat.permission.action.write_clipboard" = "Zwischenablage aktualisieren";
 "chat.model.group.cloud" = "Cloud";
@@ -2269,7 +2275,7 @@
 /* macOS Settings workspace */
 
 /* Personal intelligence capabilities */
-"personal.capabilities.title" = "Skills und MCP";
+"personal.capabilities.title" = "Fähigkeiten";
 "personal.capabilities.gateway.detail" = "Verwalte wiederverwendbare Abläufe und externe Tool-Verbindungen.";
 "personal.capabilities.gateway.count" = "aktiv";
 "personal.capabilities.subtitle" = "Wiederverwendbare Abläufe und verbundene Tools für alle Unterhaltungen.";
@@ -2448,7 +2454,7 @@
 
 "chat.task.guidance.send" = "Hinweis senden";
 "model.web_host.setup" = "Vor dem Verbinden";
-"model.web_host.setup.start" = "Öffnen Sie auf dem Mac in Nola „Einstellungen > Host-Verbindung“ und erlauben Sie Geräteverbindungen.";
+"model.web_host.setup.start" = "Öffnen Sie auf dem Mac in Nola „Einstellungen > Verbindungen“ und aktivieren Sie „Diesen Mac als Nola Server freigeben“.";
 "model.web_host.setup.copy" = "Kopieren Sie die in Nola auf dem Mac angezeigte Adresse und das Kopplungstoken. Verwenden Sie ein vertrauenswürdiges privates Netzwerk oder HTTPS.";
 "model.web_host.checking" = "Host wird geprüft";
 "model.web_host.checking.detail" = "Token, Berechtigungsprotokoll und Host-Identität werden vor dem Speichern geprüft.";
@@ -3268,3 +3274,9 @@
 "chat.history.otherClientReadOnly" = "Schreibgeschützt. Setze die Unterhaltung in dem Client fort, in dem du sie begonnen hast.";
 "chat.history.ambiguousIDs" = "Zwei Unterhaltungs-IDs unterscheiden sich nur in der Großschreibung. Öffne sie im ursprünglichen Client.";
 "experts.executor.requiresHost" = "Verbinde dich mit dem Host, auf dem dieser Coding-Agent läuft, und wähle den Experten in einer Host-Unterhaltung.";
+
+"harness.plugins" = "Plugins";
+"harness.host" = "Desktop-Host auswählen";
+"harness.device_note" = "Verbinde den Computer, auf dem deine Plugins laufen, um sie hier zu nutzen.";
+"harness.connect" = "Desktop-Host verbinden";
+"harness.pair" = "Anderen Host verbinden";

@@ -1,6 +1,7 @@
 import type { Locale } from '../i18n';
 const languages: Locale[] = ['zh-Hans', 'en', 'de', 'es', 'fr', 'ja', 'ru'];
 const entries: Record<string, string[]> = {
+    manageOnHost: ['请在运行 Nola 的电脑上打开本地工作区，管理模型来源账户。', 'Open the local workspace on the computer running Nola to manage model source accounts.', 'Öffne den lokalen Arbeitsbereich auf dem Computer mit Nola, um Modellquellkonten zu verwalten.', 'Abre el espacio de trabajo local en el equipo que ejecuta Nola para gestionar las cuentas de origen de los modelos.', 'Ouvrez l’espace de travail local sur l’ordinateur qui exécute Nola pour gérer les comptes des fournisseurs de modèles.', 'モデル提供元のアカウントは、Nola を実行しているコンピュータのローカルワークスペースで管理できます。', 'Чтобы управлять учётными записями источников моделей, откройте локальное рабочее пространство на компьютере с Nola.'],
     'state.stopped_locally': ['已停止本机管理', 'Local management stopped', 'Lokale Verwaltung beendet', 'Gestión local detenida', 'Gestion locale arrêtée', 'ローカル管理を停止', 'Локальное управление остановлено'],
     'state.source_callback_completed': ['来源回调已完成', 'Source callback completed', 'Quell-Callback abgeschlossen', 'Devolución del origen completada', 'Retour source terminé', 'ソースのコールバック完了', 'Callback источника завершён'],
 "openCodeTitle": ["OpenCode 提供方 OAuth","OpenCode provider OAuth","OpenCode-Provider-OAuth","OAuth de proveedores OpenCode","OAuth fournisseur OpenCode","OpenCode プロバイダー OAuth","OAuth провайдера OpenCode"],

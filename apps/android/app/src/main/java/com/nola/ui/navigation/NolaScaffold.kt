@@ -1,5 +1,6 @@
 package com.nola.ui.navigation
 
+import com.nola.ui.components.dismissImeOnBlankTap
 import androidx.activity.compose.BackHandler
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.animateColorAsState
@@ -146,7 +147,7 @@ fun NolaScaffold(
         if (reselected) navController.popBackStack(tab.route, inclusive = false)
     }
 
-    BoxWithConstraints(modifier = modifier.fillMaxSize()) {
+    BoxWithConstraints(modifier = modifier.fillMaxSize().dismissImeOnBlankTap()) {
         val navigationLayout = nolaNavigationLayout(maxWidth.value)
         val usesSideNavigation = navigationLayout != NolaNavigationLayout.Bottom
         val usesExpandedSideNavigation = navigationLayout == NolaNavigationLayout.ExpandedSide

@@ -14,6 +14,9 @@ import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.semantics.SemanticsProperties
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.hasContentDescription
+import androidx.compose.ui.test.hasAnyAncestor
+import androidx.compose.ui.test.hasText
+import androidx.compose.ui.test.isDialog
 import androidx.compose.ui.test.hasScrollAction
 import androidx.compose.ui.test.junit4.createAndroidComposeRule
 import androidx.compose.ui.test.onNodeWithText
@@ -35,6 +38,34 @@ import org.junit.runner.RunWith
 class SettingsScreenUiTest {
     @get:Rule
     val compose = createAndroidComposeRule<ComponentActivity>()
+
+    @Test
+    fun rejectedClearStaysInTheConfirmationAndCanBeCancelled() {
+        var attempts = 0
+        compose.setContent {
+            NolaTheme {
+                SettingsContent(
+                    state = SettingsUiState(isLoading = false),
+                    appearance = AppearancePreference.System,
+                    onAppearanceChange = {},
+                    onRefresh = {},
+                    onClearAllData = { attempts++; false },
+                )
+            }
+        }
+        fun label(id: Int) = compose.activity.getString(id)
+        compose.onNodeWithText(label(R.string.settings_privacy)).performScrollTo().performClick()
+        val clear = compose.onNodeWithText(label(R.string.settings_clear_all_data))
+        clear.performScrollTo().performClick()
+        assertEquals(0, attempts)
+        compose.onNodeWithText(label(R.string.settings_delete_all)).performClick()
+        assertEquals(1, attempts)
+        compose.onNode(hasText(label(R.string.settings_clear_failed)) and hasAnyAncestor(isDialog())).assertIsDisplayed()
+        compose.onNodeWithText(label(R.string.common_cancel)).performClick()
+        compose.onNodeWithText(label(R.string.settings_delete_all)).assertDoesNotExist()
+        clear.performClick()
+        compose.onNodeWithText(label(R.string.settings_clear_failed)).assertDoesNotExist()
+    }
 
     @Test
     fun scrollingRootResetsSubpageScrollAndBackRestoresRootScrollPosition() {

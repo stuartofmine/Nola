@@ -12,19 +12,29 @@ const assert=require('node:assert/strict');
   await page.goto(state.url+'/login');
   await page.getByLabel('Host 访问令牌',{exact:true}).fill(fs.readFileSync(state.root+'/home/.nola/web/mobile-access-token','utf8').trim());
   await page.getByRole('button',{name:'连接',exact:true}).click();
-  const create=page.getByRole('button',{name:'新建会话',exact:true});await create.waitFor();
+  const create=page.getByRole('button',{name:'新对话',exact:true});await create.waitFor();
   async function newConversation(){const res=page.waitForResponse(r=>new URL(r.url()).pathname==='/api/chat/conversations'&&r.request().method()==='POST');await create.click();const body=await(await res).json();report.created.push(body.conversationId);await page.waitForURL(u=>u.searchParams.get('conversation')===body.conversationId);return body.conversationId;}
   const first=await newConversation();const editor=page.locator('#chat-composer');
   await editor.fill('DRAFT_FIRST_PRESERVED');
   const box=await editor.boundingBox();
   await page.evaluate(()=>{window.draftSwitchSamples=[];const e=document.querySelector('#chat-composer');new MutationObserver(()=>window.draftSwitchSamples.push({disabled:e.disabled,busy:e.getAttribute('aria-busy'),url:location.href})).observe(e,{attributes:true,attributeFilter:['disabled','aria-busy']});});
+  // Keep the second real creation pending while exercising the old editor.
+  // A local Host can otherwise finish before Playwright reads its disabled state.
+  let releaseCreate;
+  const heldCreate = new Promise(resolve => { releaseCreate = resolve; });
+  await page.route('**/api/chat/conversations', async route => {
+   if (route.request().method() === 'POST') await heldCreate;
+   await route.continue();
+  });
   const response=page.waitForResponse(r=>new URL(r.url()).pathname==='/api/chat/conversations'&&r.request().method()==='POST');
   await create.click();
-  report.immediatelyDisabled=await editor.isDisabled();assert.equal(report.immediatelyDisabled,true,'old composer must lock immediately after Create');
-  await page.mouse.click(box.x+20,box.y+20);await page.keyboard.type('RACE_TEXT');
+  try {
+   report.immediatelyDisabled=await editor.isDisabled();assert.equal(report.immediatelyDisabled,true,'old composer must lock immediately after Create');
+   await page.mouse.click(box.x+20,box.y+20);await page.keyboard.type('RACE_TEXT');
+  } finally { releaseCreate(); }
   const second=(await(await response).json()).conversationId;report.created.push(second);
   await page.waitForURL(u=>u.searchParams.get('conversation')===second);
-  await page.waitForFunction(()=>!document.querySelector('#chat-composer').disabled);
+  await page.waitForFunction(()=>document.querySelector('#chat-composer:enabled'));
   assert.equal(await editor.inputValue(),'','transition keystrokes must not enter either conversation');
   await editor.fill('DRAFT_SECOND_PRESERVED');
   await page.reload();await page.waitForFunction(()=>document.querySelector('#chat-composer')&&!document.querySelector('#chat-composer').disabled);

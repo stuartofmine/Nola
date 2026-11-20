@@ -29,6 +29,7 @@ struct SettingsView: View {
     @State private var notificationAuthorizationStatus: UNAuthorizationStatus = .notDetermined
     @State private var isUpdatingNotificationAuthorization = false
     @State private var shouldEnableNotificationsAfterSettings = false
+    @State private var notificationError: String?
 
     @AppStorage("enableNotifications") private var enableNotifications: Bool = true
     @AppStorage("enableStepReminders") private var enableStepReminders: Bool = true
@@ -49,7 +50,7 @@ struct SettingsView: View {
         }
         .onChange(of: scenePhase) { _, phase in
             guard phase == .active else { return }
-            Task { await refreshNotificationAuthorization() }
+            Task { await refreshNotificationAuthorization(returningToApp: true) }
         }
     }
 
@@ -134,6 +135,11 @@ struct SettingsView: View {
                 NolaSettingsCard { appearanceControls }
                 Text("settings.navigation.notifications").font(.headline)
                 notificationControls
+                if let notificationError {
+                    NolaSettingsStatusBanner(message: notificationError, isError: true) {
+                        self.notificationError = nil
+                    }
+                }
                 AppleSoftwareUpdateSection()
             }.navigationTitle(LocalizedStringKey(category.titleKey)).navigationBarTitleDisplayMode(.inline)
         case .providers:
@@ -393,19 +399,15 @@ struct SettingsView: View {
     }
 
     @MainActor
-    private func refreshNotificationAuthorization() async {
-        let settings = await UNUserNotificationCenter.current().notificationSettings()
-        notificationAuthorizationStatus = settings.authorizationStatus
-        let isAuthorized = settings.authorizationStatus == .authorized
-            || settings.authorizationStatus == .provisional
-            || settings.authorizationStatus == .ephemeral
-        if shouldEnableNotificationsAfterSettings, isAuthorized {
-            shouldEnableNotificationsAfterSettings = false
-            enableNotifications = true
-        } else if settings.authorizationStatus == .denied
-                    || settings.authorizationStatus == .notDetermined {
-            enableNotifications = false
-        }
+    private func refreshNotificationAuthorization(returningToApp: Bool = false) async {
+        let status = await UNUserNotificationCenter.current().notificationSettings().authorizationStatus
+        notificationAuthorizationStatus = status
+        let requested = shouldEnableNotificationsAfterSettings && returningToApp
+        if returningToApp { shouldEnableNotificationsAfterSettings = false }
+        enableNotifications = SettingsNotificationPresentation.refreshedPreference(
+            current: enableNotifications, requestedFromSettings: requested, authorizationStatus: status
+        )
+        if notificationsAreUsable { notificationError = nil }
     }
 
     @MainActor
@@ -413,14 +415,12 @@ struct SettingsView: View {
         guard enabled else { return }
         guard !isUpdatingNotificationAuthorization else { return }
         guard !notificationsAreUsable else { return }
-        operationMessage = nil
-        operationIsError = false
+        notificationError = nil
 
         if SettingsNotificationPresentation.requiresSystemSettings(
             requestedEnabled: enabled,
             authorizationStatus: notificationAuthorizationStatus
         ) {
-            shouldEnableNotificationsAfterSettings = true
             enableNotifications = false
             openApplicationSettings()
             return
@@ -434,8 +434,7 @@ struct SettingsView: View {
             await refreshNotificationAuthorization()
             if !granted {
                 enableNotifications = false
-                operationIsError = true
-                operationMessage = NSLocalizedString(
+                notificationError = NSLocalizedString(
                     "settings.notifications.permission_denied",
                     value: "Notifications are blocked by iOS. You can allow them later in Settings.",
                     comment: "Notification permission denied guidance"
@@ -443,8 +442,7 @@ struct SettingsView: View {
             }
         } catch {
             enableNotifications = false
-            operationIsError = true
-            operationMessage = String(
+            notificationError = String(
                 format: NSLocalizedString("settings.notifications.permission_failed", value: "Could not update notification permission: %@", comment: "Notification permission update failed"),
                 error.localizedDescription
             )
@@ -506,7 +504,7 @@ struct SettingsView: View {
             }
         }
         let clearedAtMs = Int64(Date().timeIntervalSince1970 * 1_000)
-        if !PersonalIntelligenceCore.clear() {
+        if !container.applicationRuntime.clearIntelligence() {
             completelyCleared = false
             container.logger.log(.warn, "SettingsView", "Failed to clear PersonalIntelligenceCore store")
         }
@@ -555,7 +553,10 @@ struct SettingsView: View {
 
     private func openApplicationSettings() {
         guard let url = URL(string: UIApplication.openSettingsURLString) else { return }
-        UIApplication.shared.open(url)
+        shouldEnableNotificationsAfterSettings = true
+        UIApplication.shared.open(url) { opened in
+            if !opened { shouldEnableNotificationsAfterSettings = false }
+        }
     }
 
     private func finishExportPresentation() {
@@ -573,6 +574,14 @@ struct SettingsView: View {
 }
 
 enum SettingsNotificationPresentation {
+    static func refreshedPreference(current: Bool, requestedFromSettings: Bool, authorizationStatus: UNAuthorizationStatus) -> Bool {
+        switch authorizationStatus {
+        case .denied, .notDetermined: false
+        case .authorized, .provisional, .ephemeral: current || requestedFromSettings
+        @unknown default: current
+        }
+    }
+
     static func requiresSystemSettings(
         requestedEnabled: Bool,
         authorizationStatus: UNAuthorizationStatus

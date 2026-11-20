@@ -20,7 +20,9 @@
     let path = $state(initialLocation.pathname);
     let routeVersion = $state(0);
     import { darkAppearance, toggleAppearance, initializeAppearance } from './lib/appearance';
+    import { dismissKeyboardOnBackgroundTap } from './lib/touchKeyboard';
     onMount(initializeAppearance);
+    onMount(dismissKeyboardOnBackgroundTap);
     const primaryRoot = $derived(['/today', '/conversations', '/activity', '/settings', '/data-sources'].includes(path));
     let page = $state(loadPage(initialLocation.pathname));
     let content: HTMLDivElement;

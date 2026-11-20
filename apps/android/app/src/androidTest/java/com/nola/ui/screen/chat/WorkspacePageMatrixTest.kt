@@ -45,15 +45,21 @@ class WorkspacePageMatrixTest {
         compose.onNode(destination).performClick()
         compose.onNode(destination and isSelected()).assertIsDisplayed()
     }
-    private fun captureSystemWindow(name: String) {
+    private fun captureSystemWindow(name: String, packageName: String) {
         val automation = InstrumentationRegistry.getInstrumentation().uiAutomation
-        // Accessibility can publish the new window before its opening animation is drawn.
-        automation.waitForIdle(350, 5_000)
+        compose.waitUntil(10_000) { automation.rootInActiveWindow?.packageName == packageName }
+        // The accessibility window precedes the first compositor frames on a cold launch.
+        automation.waitForIdle(500, 5_000)
+        android.os.SystemClock.sleep(350)
         val file = File(context.filesDir, "page-matrix/$name.png")
         file.parentFile?.mkdirs()
-        val screen = automation.takeScreenshot()
+        val screenshot = automation.executeShellCommand("screencap -p")
+        val screen = android.os.ParcelFileDescriptor.AutoCloseInputStream(screenshot).use {
+            checkNotNull(android.graphics.BitmapFactory.decodeStream(it)) { "Missing screenshot for $name" }
+        }
         try {
-            file.outputStream().use { screen.compress(Bitmap.CompressFormat.PNG, 100, it) }
+            check(automation.rootInActiveWindow?.packageName == packageName) { "Window changed during $name" }
+            file.outputStream().use { check(screen.compress(Bitmap.CompressFormat.PNG, 100, it)) }
         } finally {
             screen.recycle()
         }
@@ -174,6 +180,13 @@ class WorkspacePageMatrixTest {
                     R.string.chat_experts, R.string.settings_capabilities)) {
                     tab(R.string.tab_settings)
                     compose.onNodeWithText(context.getString(section)).performScrollTo().performClick()
+                    when (section) {
+                        R.string.settings_general -> compose.onNodeWithText(context.getString(R.string.appearance_system)).assertIsDisplayed()
+                        R.string.settings_privacy -> compose.onNodeWithText(context.getString(R.string.settings_local_data_size)).assertIsDisplayed()
+                        R.string.models_title -> compose.onNodeWithTag("models.refresh").assertIsDisplayed()
+                        R.string.chat_experts -> compose.onNodeWithTag("expert.create").assertIsDisplayed()
+                        R.string.settings_capabilities -> compose.onNodeWithTag("intelligence.capabilities.skills").assertIsSelected()
+                    }
                     capture("settings-${context.resources.getResourceEntryName(section)}-$theme", darkTheme = isDark)
                     if (section == R.string.settings_general) {
                         compose.onNodeWithTag("settings_notification_center").performScrollTo().performClick()
@@ -235,10 +248,22 @@ class WorkspacePageMatrixTest {
             click(R.string.chat_create_template_skill)
             capture("skills-new-template")
             compose.onNodeWithText(context.getString(R.string.common_cancel)).performClick()
-            click(R.string.chat_mcp_endpoints)
+            compose.onNodeWithTag("skill.editor.name").assertDoesNotExist()
+            val mcpTab = compose.onNodeWithTag("intelligence.capabilities.mcp")
+            mcpTab.performClick().assertIsSelected()
             click(R.string.chat_add_mcp_endpoint)
+            compose.onNodeWithTag("mcp.editor.endpoint").assertIsDisplayed()
             capture("mcp-new-endpoint")
             compose.onNodeWithText(context.getString(R.string.common_cancel)).performClick()
+            compose.onNodeWithTag("mcp.editor.endpoint").assertDoesNotExist()
+            val pluginsTab = compose.onNodeWithTag("intelligence.capabilities.plugins")
+            pluginsTab.performClick().assertIsSelected()
+            compose.onNodeWithTag("intelligence.harness.plugins").performClick()
+            compose.onNodeWithText(context.getString(R.string.models_web_host_paste_setup)).assertIsDisplayed()
+            capture("plugins-pair-host")
+            compose.onNodeWithText(context.getString(R.string.common_cancel)).performClick()
+            compose.onNodeWithText(context.getString(R.string.models_web_host_paste_setup)).assertDoesNotExist()
+            pluginsTab.assertIsSelected()
             back(activity)
             click(R.string.scheduled_title)
             capture("scheduled-actions")
@@ -426,7 +451,7 @@ class WorkspacePageMatrixTest {
             fun click(label: Int) = compose.onNode(hasText(context.getString(label)) and hasClickAction()).performClick()
             val suffix = java.util.UUID.randomUUID().toString().take(8)
             for (skill in listOf(true, false)) {
-                if (!skill) click(R.string.chat_mcp_endpoints)
+                if (!skill) compose.onNodeWithTag("intelligence.capabilities.mcp").performClick().assertIsSelected()
                 val name = if (skill) "audit-skill-$suffix" else "Audit MCP $suffix"
                 val nameTag = if (skill) "skill.editor.name" else "mcp.editor.name"
                 click(if (skill) R.string.chat_create_template_skill else R.string.chat_add_mcp_endpoint)
@@ -511,7 +536,7 @@ class WorkspacePageMatrixTest {
                                 }
                             } else null
                             button?.let {
-                                captureSystemWindow("schedule-notification-permission")
+                                captureSystemWindow("schedule-notification-permission", it.packageName.toString())
                                 button.performAction(android.view.accessibility.AccessibilityNodeInfo.ACTION_CLICK)
                             } == true
                         }
@@ -532,7 +557,7 @@ class WorkspacePageMatrixTest {
                                 window.findAccessibilityNodeInfosByText(context.applicationInfo.loadLabel(context.packageManager).toString())
                                     .any { it.isVisibleToUser }
                         }
-                        captureSystemWindow("schedule-notification-settings")
+                        captureSystemWindow("schedule-notification-settings", "com.android.settings")
                         InstrumentationRegistry.getInstrumentation().sendKeyDownUpSync(android.view.KeyEvent.KEYCODE_BACK)
                         compose.waitUntil(10_000) {
                             runCatching { settings.fetchSemanticsNode() }.isSuccess
@@ -540,6 +565,13 @@ class WorkspacePageMatrixTest {
                     }
                 }
                 save(enableNotifications = true)
+                val title = compose.onNode(hasText(context.getString(R.string.scheduled_title)) and
+                    SemanticsMatcher.keyIsDefined(SemanticsActions.GetTextLayoutResult), useUnmergedTree = true)
+                compose.waitUntil(10_000) {
+                    val layout = mutableListOf<TextLayoutResult>()
+                    title.performSemanticsAction(SemanticsActions.GetTextLayoutResult) { it(layout) }
+                    layout.singleOrNull()?.let { it.lineCount == 1 && !it.isLineEllipsized(0) } == true
+                }
                 val list = compose.onNode(hasScrollToIndexAction())
                 list.performScrollToNode(hasText(name))
                 val card = SemanticsMatcher("saved schedule") { node ->
@@ -548,10 +580,15 @@ class WorkspacePageMatrixTest {
                 val id = compose.onNode(card).fetchSemanticsNode().config[androidx.compose.ui.semantics.SemanticsProperties.TestTag].removePrefix("scheduled.card.")
                 list.performScrollToNode(hasTestTag("scheduled.toggle.$id"))
                 compose.onNodeWithTag("scheduled.toggle.$id").assertIsOn().performClick()
-                compose.waitUntil(15_000) { compose.onAllNodes(hasTestTag("scheduled.toggle.$id") and isOff()).fetchSemanticsNodes().isNotEmpty() }
+                // Pausing can move the card below the current LazyColumn viewport.
+                compose.waitUntil(15_000) {
+                    list.performScrollToNode(hasTestTag("scheduled.toggle.$id"))
+                    compose.onAllNodes(hasTestTag("scheduled.toggle.$id") and isOff()).fetchSemanticsNodes().isNotEmpty()
+                }
                 list.performScrollToNode(hasTestTag("scheduled.edit.$id"))
                 compose.onNodeWithTag("scheduled.edit.$id").performClick()
                 field(nameField).performTextReplacement("$name revised")
+                field(nameField).performImeAction()
                 save(enableNotifications = false)
                 list.performScrollToNode(hasText("$name revised"))
                 capture("scheduled-paused-renamed")

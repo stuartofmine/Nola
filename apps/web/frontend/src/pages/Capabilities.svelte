@@ -15,14 +15,16 @@
     import { builtin, capabilitySnapshot, capabilityName, capabilityDraft, capabilityMutation, updatedCapability, capabilityCatalog, capabilitySections, restoredSkill, stdioMcp, CapabilityValidationError } from '../lib/capabilities';
     import { locale, t } from '../lib/i18n';
     import type { Capability, CapabilityMode, CapabilitySettings } from '../lib/capabilities';
+    import HarnessPlugins from '../components/HarnessPlugins.svelte';
+    const plugins = $derived(pageLocation.read().searchParams.get('tab') === 'plugins');
     import ConfirmationDialog from '../components/ConfirmationDialog.svelte';
     import type { ConfirmationHandle } from '../lib/confirmation';
-    let confirmation: ConfirmationHandle;
+    let confirmation = $state<ConfirmationHandle>(null!);
     let mode = $state<CapabilityMode>(pageLocation.read().searchParams.get('tab') === 'mcp' ? 'mcp' : 'skills');
     let settings = $state<CapabilitySettings>();
     let executionBackends = $state<Array<{id:string; display_name:string; capabilities:{supports_permission_bridge:boolean}}>>([]);
     let skillReview = $state<{ expected_revision: number; pending: boolean; previous: unknown; current: Capability[] }>();
-    let reviewDialog: HTMLDialogElement;
+    let reviewDialog = $state<HTMLDialogElement>(null!);
     let query = $state('');
     let source = $state('all');
     let busy = $state(false);
@@ -32,7 +34,7 @@
     let original = $state<Capability>();
     let selected = $state<number | null>(null);
     let draft = $state(capabilityDraft({ name: '' }));
-    let dialog: HTMLDialogElement;
+    let dialog = $state<HTMLDialogElement>(null!);
     let retryButton = $state<HTMLButtonElement>();
     let read: AbortController | undefined;
     let reviewRead: AbortController | undefined;
@@ -76,7 +78,7 @@
         }
         finally { busy = false; }
     }
-    onMount(() => { void load(); return () => { disposed = true; read?.abort(); reviewRead?.abort(); }; });
+    onMount(() => { if (!plugins) void load(); return () => { disposed = true; read?.abort(); reviewRead?.abort(); }; });
     function edit(item?: Capability, index: number | null = null) {
         if (busy) return;
         try {
@@ -167,10 +169,19 @@
 </script>
 
 <svelte:window onbeforeunload={beforeUnload} />
-<svelte:head>{#if pageLocation.active()}<title>{t($locale, 'capability.title')} — Nola</title>{/if}</svelte:head>
+<svelte:head>{#if pageLocation.active()}<title>{t($locale, plugins ? 'plugin.title' : 'capability.title')} — Nola</title>{/if}</svelte:head>
+{#if plugins}
+<HarnessPlugins />
+{:else}
 <ConfirmationDialog bind:this={confirmation} />
 <header class="page-header"><div><h1>{t($locale, 'capability.title')}</h1><p class="muted">{t($locale, 'capability.subtitle')}</p></div><div class="actions">{#if mode === 'mcp'}<button disabled={busy || !settings} onclick={addLocalMcp}>{t($locale, 'capability.addLocalMcp')}</button>{/if}<button class="primary" disabled={busy || !settings} onclick={() => edit()}>{t($locale, mode === 'skills' ? 'capability.addSkill' : 'capability.addMcp')}</button></div></header>
 <div class="content management-content">
+    <nav class="library-sections" aria-label={t($locale,'capability.title')}>
+    <div class="tabs" role="tablist" aria-label={t($locale, 'capability.type')}>
+        {#each ['skills', 'mcp'] as value}<button id="capability-{value}" role="tab" aria-selected={mode === value} aria-controls="capability-panel" tabindex={mode === value ? 0 : -1} onkeydown={tabKey} disabled={busy} onclick={() => switchMode(value as CapabilityMode)}>{t($locale, value === 'skills' ? 'capability.skills' : 'capability.mcp')}</button>{/each}
+    </div>
+        <a class="plugin-entry" href="/capabilities?tab=plugins">{t($locale,'plugin.title')}</a>
+    </nav>
     <aside aria-label={t($locale, 'execution.scope.host')}>
         <p class="muted">{t($locale, 'execution.scope.host')}</p><p class="muted">{t($locale, 'execution.scope.child')}</p>
         {#each executionBackends.filter(backend=>!backend.capabilities.supports_permission_bridge) as backend}
@@ -179,9 +190,7 @@
     </aside>
     <div class="retained-settings">{#if skillReview?.pending || settings?.skill_settings_backup_key}<button disabled={busy || reviewLoading} aria-busy={reviewLoading} onclick={openSkillReview}>{t($locale, 'capability.reviewTitle')}</button>{/if}</div>
     {#if skillReview?.pending}<p class="notice" role="status">{t($locale, 'capability.reviewHint')}</p>{/if}
-    <div class="tabs" role="tablist" aria-label={t($locale, 'capability.type')}>
-        {#each ['skills', 'mcp'] as value}<button id="capability-{value}" role="tab" aria-selected={mode === value} aria-controls="capability-panel" tabindex={mode === value ? 0 : -1} onkeydown={tabKey} disabled={busy} onclick={() => switchMode(value as CapabilityMode)}>{t($locale, value === 'skills' ? 'capability.skills' : 'capability.mcp')}</button>{/each}
-    </div>
+
     <div class="fields"><label>{t($locale, 'capability.search')}<input type="search" bind:value={query} placeholder={t($locale, 'capability.searchHint')} /></label><label>{t($locale, 'capability.source')}<select bind:value={source}><option value="all">{t($locale, 'capability.all')}</option><option value="builtin">{t($locale, 'capability.builtin')}</option><option value="custom">{t($locale, 'capability.custom')}</option></select></label></div>
     {#if error && !original}<div class="notice error" role="alert">{t($locale, error, { detail: errorDetail })} <button bind:this={retryButton} onclick={load} aria-disabled={busy}>{t($locale, 'capability.reload')}</button></div>{/if}
     {#if notice}<p role="status">{t($locale, notice)}</p>{/if}
@@ -246,7 +255,11 @@
         <div class="actions"><button disabled={busy} onclick={() => reviewDialog.close()}>{t($locale, 'capability.cancel')}</button>{#if skillReview.pending}<button class="primary" disabled={busy} onclick={confirmSkillReview}>{t($locale, 'capability.useCore')}</button>{/if}</div>
     {/if}
 </dialog>
+{/if}
 <style>
+    .library-sections { display:flex;align-items:center;gap:.25em;flex-wrap:wrap; }
+    .plugin-entry { display:inline-flex;align-items:center;min-height:44px;padding-inline:.85rem;border-radius:.6rem;color:var(--content);text-decoration:none; }
+    .plugin-entry:hover,.plugin-entry:focus-visible { background:var(--accent-subtle); }
     .retained-settings:has(button) { margin-bottom: 16px; }
     .notice button[aria-disabled="true"] { color: var(--muted); background: var(--panel); border-color: var(--border); cursor: progress; }
     .category { display: grid; gap: 12px; margin-bottom: 24px; }

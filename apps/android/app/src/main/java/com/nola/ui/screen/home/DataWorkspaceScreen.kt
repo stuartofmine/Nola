@@ -1,5 +1,6 @@
 package com.nola.ui.screen.home
 
+import com.nola.ui.components.dismissImeOnBlankTap
 import com.nola.ui.components.NolaRootPageTitle
 import android.text.format.DateUtils
 import androidx.activity.compose.rememberLauncherForActivityResult
@@ -1006,7 +1007,7 @@ private fun DataSourceEditorDialog(
     }
 
     AlertDialog(
-        modifier = Modifier.imePadding().testTag("data.sources.editor"),
+        modifier = Modifier.dismissImeOnBlankTap().imePadding().testTag("data.sources.editor"),
         onDismissRequest = requestDismiss,
         title = {
             Column(verticalArrangement = Arrangement.spacedBy(3.dp)) {

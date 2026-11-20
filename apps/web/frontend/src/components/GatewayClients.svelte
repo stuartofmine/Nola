@@ -8,17 +8,19 @@
     import type { RemoteProfile } from '../lib/modelProfiles';
     type Plan = {plan_id: string; source: string; path: string; owned_fields: string[]; expires_at_ms: number};
     type Receipt = {receipt_id: string; source: string; path: string; owned_fields: string[]};
+    let { gateway, openAccess }: { gateway: { enabled: boolean; revision: number }; openAccess: () => void } = $props();
     let source = $state('open_code'), path = $state(''), model = $state('');
     let profiles = $state<RemoteProfile[]>([]), receipts = $state<Receipt[]>([]);
     let plan = $state<Plan | null>(null), planIdentity = $state('');
     let busy = $state(false), failed = $state(false), alive = true;
-    const identity = $derived(JSON.stringify([source, path, model]));
+    const identity = $derived(JSON.stringify([source, path, model, gateway.enabled, gateway.revision]));
     $effect(() => { if (plan && planIdentity !== identity) plan = null; });
     async function perform(action: () => Promise<void>) {
         if (busy) return; busy = true; failed = false;
         try { await action(); } catch { if (alive) failed = true; } finally { if (alive) busy = false; }
     }
     function preview() {
+        if (!gateway.enabled) return;
         const current = identity;
         void perform(async () => {
             const value = await api<Plan>('/api/model-gateway/clients/plan', {method: 'POST', body: JSON.stringify({source, path: path.trim(), model_id: model})});
@@ -51,7 +53,8 @@
         <label>{t($locale, 'connections.source')}<select bind:value={source} disabled={busy}><option value="open_code">OpenCode</option><option value="codex">Codex</option><option value="kimi_code">Kimi Code CLI</option></select></label>
         <label>{t($locale, 'connections.path')}<input bind:value={path} disabled={busy} required /></label>
         <label>{t($locale, 'rooms.model')}<select bind:value={model} disabled={busy} required><option value="">{t($locale, 'rooms.model')}</option>{#each profiles as profile}<option value={`nola/${profile.id}/${profile.revision}`}>{profile.displayName}</option>{/each}</select></label>
-        <button disabled={busy || !path.trim() || !model}>{t($locale, 'connections.preview')}</button>
+        {#if !gateway.enabled}<button type="button" onclick={openAccess}>{t($locale, 'connections.setupGatewayAccess')}</button>{/if}
+        <button disabled={busy || !gateway.enabled || !path.trim() || !model}>{t($locale, 'connections.preview')}</button>
     </form>
     {#if busy}<p role="status">{t($locale, 'rooms.saving')}</p>{/if}
     {#if failed}<p role="alert">{t($locale, 'connections.failed')}</p>{/if}

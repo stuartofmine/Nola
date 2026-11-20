@@ -107,6 +107,22 @@ test('repeated exact admissions keep the hydrated user Parts and snapshot refere
     assert.strictEqual(admitted.canonicalSnapshot,original.canonicalSnapshot);
 });
 
+test('terminal hydration accepts the initial user message revision without allowing revision regression', async () => {
+    const {state, evidence, payload, userId} = await terminalWitnessFixture();
+    const first = payload.conversationProjection.messages[0];
+    first.revision = 0;
+    first.parts[0].revision = 0;
+    const action = {type: 'terminal_witness' as const, request: timelineRequest(state), sourceHostId: 'host', evidence, payload};
+    const hydrated = reduceChatTimeline(state, action);
+    assert.equal(hydrated.ignored, undefined);
+    const witness = hydrated.state.messages.find(message => message.id === userId)?.canonical;
+    assert.equal(witness?.revision, 0);
+    assert.equal(witness?.parts[0].revision, 0);
+    const newer = {...first, revision: 1};
+    const partial = {...state, messages: state.messages.map(message => message.id === userId ? {...message, canonical: newer, canonicalSnapshot: null} : message)};
+    assert.equal(reduceChatTimeline(partial, {...action, request: timelineRequest(partial)}).ignored, 'invalid');
+});
+
 test('missing-snapshot hydration cannot lower a known revision of the same canonical Part',async()=>{
     const {state,evidence,payload,userId}=await terminalWitnessFixture();
     const previous=structuredClone(payload.conversationProjection.messages[0]);
@@ -140,7 +156,8 @@ test('terminal witness rejects stale owner/request/Run and foreign or regressing
         (value:typeof payload)=>{value.conversationProjection.messages[0].parts[0].part_id='different-part';},
         (value:typeof payload)=>{value.conversationProjection.messages[0].parts[0].review='pending';},
         (value:typeof payload)=>{value.conversationProjection.messages[0].role='assistant';},
-        (value:typeof payload)=>{value.conversationProjection.messages[0].revision=0;},
+        (value:typeof payload)=>{value.conversationProjection.messages[0].revision=-1;},
+        (value:typeof payload)=>{Reflect.deleteProperty(value.conversationProjection.messages[0], 'revision');},
     ]){
         const changed=structuredClone(payload);mutate(changed);
         const result=reduceChatTimeline(state,{...action,payload:changed});

@@ -1094,12 +1094,18 @@ public struct WebAgentProvider: LLMClient, LLMRemoteAuxiliaryInvocationProviding
         }
     }
 
-    public static func fetchHostAgentSettings(baseURL: URL, token: String, pinnedCertificateSHA256: String? = nil) async throws -> HostAgentSettings {
+    private static func hostSettingsURL(baseURL: URL, modelsOnly: Bool) -> URL {
+        let url = mobileURL(baseURL: baseURL, path: "agent/settings")
+        return modelsOnly ? url.appending(queryItems: [.init(name: "view", value: "models")]) : url
+    }
+
+    public static func fetchHostAgentSettings(baseURL: URL, token: String, pinnedCertificateSHA256: String? = nil,
+                                              modelsOnly: Bool = false) async throws -> HostAgentSettings {
         NolaTailcatTransport.register(baseURL: baseURL, token: token, hostID: ModelSelectionManager.pairedWebHostIdentity(for: baseURL), certificatePin: pinnedCertificateSHA256)
         guard MobileHostTransportPolicy.allows(baseURL) else {
             throw NolaError.llm(.invalidResponse(reason: "Public Web Host addresses require HTTPS. HTTP is limited to this device or a private local network."))
         }
-        let url = mobileURL(baseURL: baseURL, path: "agent/settings")
+        let url = hostSettingsURL(baseURL: baseURL, modelsOnly: modelsOnly)
         var request = URLRequest(url: url)
         request.httpMethod = "GET"
         request.timeoutInterval = 15
@@ -1140,6 +1146,7 @@ public struct WebAgentProvider: LLMClient, LLMRemoteAuxiliaryInvocationProviding
         guard MobileHostTransportPolicy.allows(baseURL) else {
             throw NolaError.llm(.invalidResponse(reason: "Public Web Host addresses require HTTPS. HTTP is limited to this device or a private local network."))
         }
+        NolaTailcatTransport.register(baseURL: baseURL, token: token, hostID: ModelSelectionManager.pairedWebHostIdentity(for: baseURL), certificatePin: pinnedCertificateSHA256)
         let url = mobileURL(baseURL: baseURL, path: "web-handoff")
         var request = URLRequest(url: url)
         request.httpMethod = "POST"
@@ -2673,8 +2680,7 @@ public struct WebAgentProvider: LLMClient, LLMRemoteAuxiliaryInvocationProviding
         guard MobileHostTransportPolicy.allows(config.baseURL) else {
             throw IOSApplicationRuntimeError.rejected("Host transport is not permitted")
         }
-        let settingsURL = Self.mobileURL(baseURL: config.baseURL, path: "agent/settings")
-        let url = modelsOnly ? settingsURL.appending(queryItems: [.init(name: "view", value: "models")]) : settingsURL
+        let url = Self.hostSettingsURL(baseURL: config.baseURL, modelsOnly: modelsOnly)
         var request = URLRequest(url: url)
         request.httpMethod = "GET"
         request.timeoutInterval = 15

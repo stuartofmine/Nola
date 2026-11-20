@@ -127,7 +127,12 @@ final class MacRealProductUIEndToEndTests: XCTestCase {
         try await Task.sleep(for: .seconds(AppleStreamingRevealTiming.duration + 0.2))
         await settle(hosting)
         try capturePNG(hosting, to: artifactURL(env, "NOLA_MAC_REAL_UI_SCREENSHOT").deletingLastPathComponent().appendingPathComponent("edited-resend-final.png"))
-        try persistCanonicalTranscript(original + continued + secondReply.messages, to: artifactURL(env, "NOLA_MAC_REAL_UI_TRANSCRIPT"))
+        let retainedPrefix = original.prefix { $0.id != user.id }.map(\.id)
+        XCTAssertEqual(continued.prefix(retainedPrefix.count).map(\.id), retainedPrefix)
+        XCTAssertEqual(secondReply.messages.prefix(retainedPrefix.count).map(\.id), retainedPrefix)
+        let witnessedMessages = original + continued.dropFirst(retainedPrefix.count)
+            + secondReply.messages.dropFirst(retainedPrefix.count)
+        try persistCanonicalTranscript(witnessedMessages, to: artifactURL(env, "NOLA_MAC_REAL_UI_TRANSCRIPT"))
         try JSONSerialization.data(withJSONObject: [["stage":"edit-followup-reedit-cold", "running":false,
             "assistantCharacters":secondReply.messages.last?.text.count ?? 0]])
             .write(to: artifactURL(env, "NOLA_MAC_REAL_UI_TIMELINE"))

@@ -41,6 +41,7 @@ enum class IntelligenceEntryKind {
 data class IntelligenceUiState(
     val profile: ChatMemoryProfile = ChatMemoryProfile(),
     val isSaving: Boolean = false,
+    val openingPlugins: Boolean = false,
     val isLoadingProfile: Boolean = true,
     val profileLoadError: String? = null,
     val errorMessage: String? = null,
@@ -53,6 +54,8 @@ data class IntelligenceUiState(
 class IntelligenceViewModel @Inject constructor(
     private val memoryProfileDataStore: MemoryProfileDataStore,
     @ApplicationContext private val context: Context,
+    private val prefs: com.nola.data.local.datastore.PreferenceDataStore,
+    private val webHostApi: com.nola.data.remote.api.WebHostApiService,
 ) : ViewModel() {
     private val _uiState = MutableStateFlow(IntelligenceUiState())
     val uiState = _uiState.asStateFlow()
@@ -61,6 +64,33 @@ class IntelligenceViewModel @Inject constructor(
 
     init {
         reloadProfile()
+    }
+
+    val pluginHostAddress = prefs.webHostBaseUrl
+
+    fun openPlugins(address: String, connect: () -> Unit, open: (String) -> Unit) {
+        if (_uiState.value.openingPlugins) return
+        _uiState.update { it.copy(openingPlugins = true) }
+        viewModelScope.launch {
+            try {
+                val host = prefs.pairedWebHost()
+                if (host == null) { connect(); return@launch }
+                check(address == host.address) { context.getString(R.string.harness_changed) }
+                val settings = webHostApi.getAgentSettings(host.address, host.token, host.pin)
+                check(settings.hostIdentity?.id == host.identity) { context.getString(R.string.harness_changed) }
+                val url = webHostApi.requestWebManagementUrl(host.address, host.token, "/capabilities?tab=plugins", host.pin)
+                val current = prefs.pairedWebHost()
+                check(current != null && current.address == host.address && current.identity == host.identity &&
+                    current.token == host.token && current.pin == host.pin) { context.getString(R.string.harness_changed) }
+                open(url)
+            } catch (cancel: kotlinx.coroutines.CancellationException) {
+                throw cancel
+            } catch (failure: Exception) {
+                _uiState.update { it.copy(errorMessage = failure.localizedMessage) }
+            } finally {
+                _uiState.update { it.copy(openingPlugins = false) }
+            }
+        }
     }
 
     fun reloadProfile() {

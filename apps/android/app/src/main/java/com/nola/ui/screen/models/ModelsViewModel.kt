@@ -168,8 +168,11 @@ class ModelsViewModel @Inject constructor(
         }
     }
 
+    private var modelInventoryJob: Job? = null
+
     fun loadModels() {
-        viewModelScope.launch {
+        modelInventoryJob?.cancel()
+        modelInventoryJob = viewModelScope.launch {
             _uiState.update { it.copy(isLoading = true) }
 
             try {
@@ -182,10 +185,11 @@ class ModelsViewModel @Inject constructor(
                     publishStatus(error.message ?: context.getString(R.string.models_endpoint_save_failed), false)
                     null
                 }
-                val webHostUrl = prefs.webHostBaseUrl.first()
-                val webHostToken = prefs.webHostToken.first()
-                val webHostCertificateSha256 = prefs.webHostCertificateSha256.first()
-                val hasWebHostConfig = webHostUrl.isNotBlank() && webHostToken.isNotBlank()
+                val host = prefs.webHostConfiguration()
+                val webHostUrl = host?.address.orEmpty()
+                val webHostToken = host?.token.orEmpty()
+                val webHostCertificateSha256 = host?.pin.orEmpty()
+                val hasWebHostConfig = host != null
                 val hostSettings = if (hasWebHostConfig) try {
                     withTimeoutOrNull(3_000) {
                         webHostApi.getAgentSettings(
@@ -625,12 +629,17 @@ class ModelsViewModel @Inject constructor(
     fun disconnectWebHost() {
         cancelWebHostConnection()
         viewModelScope.launch {
-            prefs.clearWebHostConfig()
-            val wasSelected = _uiState.value.selectedModelSource == ModelInfo.ModelSource.WebHost
-            if (wasSelected) {
-                modelService.usePlaceholder()
-                prefs.clearDefaultModelSelection()
+            try {
+                prefs.clearWebHostConfig()
+            } catch (cancelled: CancellationException) {
+                throw cancelled
+            } catch (error: Exception) {
+                publishStatus(webHostConnectionMessage(context, error), false)
+                return@launch
             }
+            modelInventoryJob?.cancel()
+            val wasSelected = _uiState.value.selectedModelSource == ModelInfo.ModelSource.WebHost
+            if (modelService.currentModelSource == "web-host") modelService.usePlaceholder()
             webAgentProvider.config = null
             _uiState.update {
                 it.copy(
@@ -639,10 +648,13 @@ class ModelsViewModel @Inject constructor(
                     webHostCertificateSha256 = "",
                     webHostModel = null,
                     hostMessaging = null,
+                    connectionTestResult = null,
+                    connectionTestSucceeded = null,
                     selectedModelId = if (wasSelected) null else it.selectedModelId,
                     selectedModelSource = if (wasSelected) null else it.selectedModelSource,
                 )
             }
+            loadModels()
         }
     }
 
@@ -692,21 +704,33 @@ class ModelsViewModel @Inject constructor(
                     ) }
                 val identity = verifyWebHostConnection(previousIdentity, importedHostIdentity) { settings }
                 prefs.saveWebHostConfig(url, token, normalizedPin, verifiedHostId = identity)
-                val savedUrl = prefs.webHostBaseUrl.first()
-                val savedToken = prefs.webHostToken.first()
-                val savedPin = prefs.webHostCertificateSha256.first()
-                val successMessage = context.getString(R.string.models_web_host_verified)
+                val saved = checkNotNull(prefs.pairedWebHost())
+                modelInventoryJob?.cancel()
+                val previous = webAgentProvider.config
+                if (previous != null && previous.expectedHostId == saved.identity &&
+                    previous.hostBaseUrl == saved.address && previous.pinnedCertificateSha256 == saved.pin) {
+                    webAgentProvider.config = previous.copy(token = saved.token)
+                } else {
+                    webAgentProvider.config = null
+                    if (modelService.currentModelSource == "web-host") modelService.usePlaceholder()
+                }
+                val hostModel = ModelInfo(id = "web-host", name = "Nola Web Host", source = ModelInfo.ModelSource.WebHost)
+                val hostIsDefault = prefs.defaultModelSelection(listOf(hostModel)) != null
+                val successMessage = context.getString(if (hostIsDefault) R.string.models_web_host_default_verified else R.string.models_web_host_verified)
                 _uiState.update {
                     it.copy(
-                        webHostUrl = savedUrl,
-                        webHostToken = savedToken,
-                        webHostCertificateSha256 = savedPin,
-                        webHostModel = ModelInfo(id = "web-host", name = "Nola Web Host", source = ModelInfo.ModelSource.WebHost),
+                        webHostUrl = saved.address,
+                        webHostToken = saved.token,
+                        webHostCertificateSha256 = saved.pin,
+                        selectedModelId = if (!hostIsDefault && it.selectedModelSource == ModelInfo.ModelSource.WebHost) null else it.selectedModelId,
+                        selectedModelSource = if (!hostIsDefault && it.selectedModelSource == ModelInfo.ModelSource.WebHost) null else it.selectedModelSource,
+                        webHostModel = hostModel,
                         hostMessaging = settings.messaging,
                         connectionTestResult = successMessage,
                         connectionTestSucceeded = true
                     )
                 }
+                loadModels()
                 onComplete(true, successMessage)
             } catch (e: kotlinx.coroutines.TimeoutCancellationException) {
                 val message = context.getString(R.string.models_error_host_timeout)
@@ -755,15 +779,21 @@ class ModelsViewModel @Inject constructor(
     ) {
         val state = _uiState.value
         if (state.openingHostManagement || state.webHostUrl.isBlank() || state.webHostToken.isBlank()) return
+        _uiState.update { it.copy(openingHostManagement = true) }
         viewModelScope.launch {
-            _uiState.update { it.copy(openingHostManagement = true) }
             try {
-                onReady(webHostApi.requestWebManagementUrl(
-                    hostBaseUrl = state.webHostUrl,
-                    token = state.webHostToken,
+                val paired = prefs.pairedWebHost() ?: return@launch
+                val url = webHostApi.requestWebManagementUrl(
+                    hostBaseUrl = paired.address,
+                    token = paired.token,
                     target = target,
-                    pinnedCertificateSha256 = state.webHostCertificateSha256
-                ))
+                    pinnedCertificateSha256 = paired.pin
+                )
+                val current = prefs.pairedWebHost()
+                if (current != null && paired.identity == current.identity && paired.address == current.address &&
+                    paired.pin == current.pin && paired.token == current.token) onReady(url)
+            } catch (cancelled: CancellationException) {
+                throw cancelled
             } catch (error: Exception) {
                 publishStatus(webHostConnectionMessage(context, error), false)
             } finally {
@@ -865,18 +895,14 @@ class ModelsViewModel @Inject constructor(
     }
 
     private suspend fun configureWebHostProvider(): Boolean {
-        val url = prefs.webHostBaseUrl.first()
-        val token = prefs.webHostToken.first()
-        val certificateSha256 = prefs.webHostCertificateSha256.first()
-        if (url.isBlank() || token.isBlank()) return false
-
+        val host = prefs.pairedWebHost() ?: return false
         webAgentProvider.config = WebAgentProvider.Config(
-            hostBaseUrl = url,
-            token = token,
+            hostBaseUrl = host.address,
+            token = host.token,
             maxIterations = 0,
-            expectedHostId = prefs.webHostIdentity.first(),
+            expectedHostId = host.identity,
             clientId = prefs.getOrCreateClientUuid(),
-            pinnedCertificateSha256 = certificateSha256
+            pinnedCertificateSha256 = host.pin
         )
         modelService.reconfigure(webAgentProvider, "web-host", "web-host")
         return true

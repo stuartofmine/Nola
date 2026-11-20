@@ -1971,6 +1971,12 @@
 "chat.permission.action.create_calendar" = "予定を作成";
 "chat.hybrid.clipboard" = "クリップボード";
 "model.web_host.connect" = "接続";
+"model.web_host.setup_payload" = "接続情報";
+"model.web_host.paste_setup" = "接続情報をペースト";
+"model.web_host.invalid_setup" = "ホストの Nola で接続情報をコピーして、ここにペーストしてください。";
+"model.web_host.cancel_verification" = "確認をキャンセル";
+"model.web_host.error.rollback" = "トークンを保存できず、新しいホストの識別情報も削除できませんでした。ペアリングを解除してから再試行してください。";
+"model.web_host.recheck" = "再確認";
 "chat.model.not_configured" = "未設定";
 "chat.permission.action.write_clipboard" = "クリップボードを更新";
 "chat.model.group.cloud" = "クラウド";
@@ -2269,7 +2275,7 @@
 /* macOS Settings workspace */
 
 /* Personal intelligence capabilities */
-"personal.capabilities.title" = "スキルと MCP";
+"personal.capabilities.title" = "機能ライブラリ";
 "personal.capabilities.gateway.detail" = "再利用可能なワークフローと外部ツール接続を管理します。";
 "personal.capabilities.gateway.count" = "有効";
 "personal.capabilities.subtitle" = "会話をまたいで利用できるワークフローと接続ツールです。";
@@ -2448,7 +2454,7 @@
 
 "chat.task.guidance.send" = "指示を送信";
 "model.web_host.setup" = "接続する前に";
-"model.web_host.setup.start" = "Mac の Nola で「設定 > ホスト接続」を開き、デバイス接続を有効にします。";
+"model.web_host.setup.start" = "Mac の Nola で「設定 > 接続」を開き、「この Mac を Nola Server として共有」をオンにします。";
 "model.web_host.setup.copy" = "Mac の Nola に表示されるアドレスとペアリングトークンをコピーします。信頼できるプライベートネットワークまたは HTTPS を使用してください。";
 "model.web_host.checking" = "ホストを確認中";
 "model.web_host.checking.detail" = "保存前にトークン、権限プロトコル、ホスト識別情報を検証しています。";
@@ -3253,3 +3259,9 @@
 "chat.history.otherClientReadOnly" = "読み取り専用です。会話を続けるには、作成したクライアントで開いてください。";
 "chat.history.ambiguousIDs" = "大文字と小文字だけが異なる会話 ID が存在します。作成したクライアントで開いてください。";
 "experts.executor.requiresHost" = "このコーディングエージェントを実行するホストに接続し、ホストの会話でエキスパートを選択してください。";
+
+"harness.plugins" = "プラグイン";
+"harness.host" = "デスクトップ Host を選択";
+"harness.device_note" = "プラグインを実行しているコンピュータに接続すると、ここで利用できます。";
+"harness.connect" = "デスクトップホストに接続";
+"harness.pair" = "別の Host に接続";

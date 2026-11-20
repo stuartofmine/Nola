@@ -4040,7 +4040,7 @@ public final class ChatManager: ObservableObject {
                         }
                     }
                     if container.healthDataSource != nil,
-                       let health = try? await HealthDashboardRepository().fetchSnapshot() {
+                       let health = try? await HealthDashboardRepository(runtime: container.applicationRuntime).fetchSnapshot() {
                         let formatter = ISO8601DateFormatter()
                         formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
                         var healthLines = [
@@ -5818,7 +5818,7 @@ public final class ChatManager: ObservableObject {
             tags: ["conversation", route],
             dedupeKey: "conversation:\(conversationId.uuidString):\(eventID)"
         )
-        _ = PersonalIntelligenceCore.ingest(
+        _ = container.applicationRuntime.ingestIntelligence(
             IntelligenceIngestRequest(
                 events: [event],
                 outcomes: [

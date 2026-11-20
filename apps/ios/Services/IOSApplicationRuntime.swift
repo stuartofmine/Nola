@@ -790,6 +790,17 @@ nonisolated final class IOSApplicationRuntime: @unchecked Sendable {
     private var handle: OpaquePointer?
     #endif
 
+    func withIntelligenceHandle<Result>(_ operation: (OpaquePointer) -> Result?) -> Result? {
+        #if canImport(NolaCore)
+        lock.lock()
+        defer { lock.unlock() }
+        guard let handle else { return nil }
+        return operation(handle)
+        #else
+        return nil
+        #endif
+    }
+
     private let expertHostAcknowledgementObserver: (@Sendable (Data, Data) throws -> Void)?
     private let childPumpObserver: (@Sendable (AppleChildPump) -> Void)?
 

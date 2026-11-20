@@ -250,6 +250,20 @@ internal fun ChatUiState.beginAssistantTurn(
     checkingExpertHostAdmission = false,
 )
 
+/** Goal rounds can be admitted by Core before the visible chat has an assistant placeholder. */
+internal fun ChatUiState.bindRecoveredAssistant(descriptor: com.nola.core.AndroidCanonicalTurnDescriptor): ChatUiState {
+    require(conversationId == descriptor.conversationId)
+    val response = descriptor.assistantMessageId
+    val restored = if (activeResponseId == response) this else {
+        val committed = messages.singleOrNull {
+            it.id == response && it.conversationId == conversationId && it.role == ChatRole.assistant
+        }
+        beginAssistantTurn(response, committed?.createdAt ?: descriptor.createdAtMs)
+            .copy(journalResponse = committed, currentResponse = committed?.text.orEmpty())
+    }
+    return restored.copy(activeTurnId = descriptor.submissionId, processingState = ProcessingState.Streaming)
+}
+
 internal fun ChatUiState.activeAssistantMessage(): ConversationMessage? {
     val responseId = activeResponseId ?: return null
     journalResponse?.takeIf { it.id == responseId && it.conversationId == conversationId }?.let { return it }

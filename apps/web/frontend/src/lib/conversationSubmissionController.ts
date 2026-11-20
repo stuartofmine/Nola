@@ -9,7 +9,7 @@ import { get } from 'svelte/store';
 import { api as requestAPI, ApiError } from './api.ts';
 import { locale, t } from './i18n.ts';
 import { browserNotifications } from './browserNotifications.ts';
-import { createChatTimeline, reduceChatTimeline, timelineRequest } from './chatTimeline.ts';
+import { createChatTimeline, parseCanonicalProjection, reduceChatTimeline, timelineRequest } from './chatTimeline.ts';
 import type { ChatTimeline, TimelineOwner } from './chatTimeline.ts';
 import { AssistantJournalReader, parseJournalCursor } from './assistantJournal.ts';
 import type { JournalUpdate } from './assistantJournal.ts';
@@ -327,6 +327,37 @@ export function createConversationSubmissionController(options: {
             journalReader?.dispose(); journalReader = null;
         }
     }
+    // Another browser can read this conversation while only its originating
+    // client can approve tools or stop the Run. Follow the canonical transcript
+    // until its last response settles, then hydrate through the normal reader.
+    async function followReadOnlyHistory(observer: RunObserver, current: () => boolean) {
+        const signal = observer.signal;
+        let failures = 0;
+        while (current() && !signal.aborted && failures < 3) {
+            await new Promise<void>(resolve => {
+                const finish = () => { clearTimeout(timer); signal.removeEventListener('abort', finish); resolve(); };
+                const timer = setTimeout(finish, 3000 * (failures + 1));
+                signal.addEventListener('abort', finish, {once: true});
+            });
+            if (!current() || signal.aborted) return;
+            if (state.historyLoading) continue;
+            try {
+                const page = await api<{sourceHostId: string; conversationProjection: unknown}>(
+                    messageWindowUrl(identity.conversationId, null, 1), {signal});
+                if (!current() || signal.aborted || page.sourceHostId !== identity.hostId) return;
+                const source = parseCanonicalProjection(page.conversationProjection);
+                if (source.conversation_id !== identity.conversationId) return;
+                const last = source.messages.at(-1);
+                if (last?.role === 'assistant' && ['completed', 'cancelled', 'failed'].includes(last.state)) {
+                    const visible = state.timeline?.projection?.messages.at(-1);
+                    if (visible?.message_id !== last.message_id || visible.revision !== last.revision
+                        || visible.state !== last.state) await loadHistory('replace');
+                    return;
+                }
+                failures = 0;
+            } catch { failures++; }
+        }
+    }
     function observeSelected() {
         stopObservation();
         if (disposed || !presentation || !foreground || streamController) return;
@@ -401,7 +432,18 @@ export function createConversationSubmissionController(options: {
                     return true;
                 }
                 return current();
-            }, cause => { if (current()) { state.observedCanSubmit = false; if (cause instanceof ApiError && cause.code === 'run_control_unconfirmed') { state.challenge = null; state.reviewText = ''; state.observedRecovery = 'control_unconfirmed'; state.error = 'chatPage.controlUnconfirmed'; return; } if (state.turn && !canReleaseChatTurn(state.turn)) replyNotice(state.turn, 'uncertain'); else state.error = 'chatPage.uncertain'; } },
+            }, cause => {
+                if (!current()) return;
+                state.observedCanSubmit = false;
+                if (cause instanceof ApiError && cause.code === 'run_control_unconfirmed') {
+                    state.challenge = null; state.reviewText = '';
+                    state.observedRecovery = 'control_unconfirmed'; state.error = 'chatPage.controlUnconfirmed';
+                    void followReadOnlyHistory(runObserver, current);
+                    return;
+                }
+                if (state.turn && !canReleaseChatTurn(state.turn)) replyNotice(state.turn, 'uncertain');
+                else state.error = 'chatPage.uncertain';
+            },
             state.turn?.runId && !canReleaseChatTurn(state.turn) ? { run_id: state.turn.runId, assistant_message_id: state.turn.identity.assistantMessageId } : undefined,
             () => reconcileSubmission(runObserver.signal), () => state.turn?.runId && !canReleaseChatTurn(state.turn) ? { run_id: state.turn.runId, assistant_message_id: state.turn.identity.assistantMessageId } : undefined);
     }

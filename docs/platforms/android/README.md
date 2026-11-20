@@ -17,3 +17,15 @@
 输入时在光标处选择专家，已发消息在原句保留名字。下一条草稿可重新点名；当前会话中已加入的专家和子会话继续保留。交互与恢复规则见[消息内的专家提及](../../design/shared/EXPERT_MENTIONS.md)。
 
 专家叶子不提供 `request_user_input`，缺失信息由主 Agent 统一向用户确认。旧冻结专家配置若含主控控制则明确拒绝恢复执行，保留历史和可用取消操作，不改写旧捕获。
+
+### 本机会话中的 Goal
+
+从会话菜单打开「进度」，输入目标和可选约束。启动时，Android 会读取当前模型、工具目录和权限，交给 Core 保存为该目标的执行配置。暂停后可以恢复原目标。取消目标后，设备会确认原运行已经停止。随后可以在同一会话内开始下一个目标，已完成的回复会保留。
+
+### Privacy export on Android
+
+Settings → Privacy → Export readable archive creates a ZIP with a `manifest.json` identifying `nola.android.personal-export` version 2. Each conversation has a Markdown document containing the user and assistant text, including committed messages still in the SQLite write-ahead log. The ZIP also contains `profile/memory.json`, `settings/model_parameters.json`, and `settings/preferences.json`. Markdown files can be opened independently or added to the document library.
+
+Version 1 included raw SQLite files. Version 2 exports user-readable data through Core, and omits connection configuration, account credentials, tool arguments and tool outputs. The user's own text and custom prompts are preserved verbatim and can contain private information. Android has no whole-device ZIP restore interface. Previously saved ZIP files keep their original contents.
+
+**Clear All Data** asks Android to erase Nola's app storage on this device and close the app. The next launch starts at onboarding.

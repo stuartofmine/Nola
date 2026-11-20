@@ -2001,6 +2001,12 @@
 "chat.permission.action.create_calendar" = "Créer un événement";
 "chat.hybrid.clipboard" = "Presse-papiers";
 "model.web_host.connect" = "Connecter";
+"model.web_host.setup_payload" = "Configuration de connexion";
+"model.web_host.paste_setup" = "Coller la configuration de connexion";
+"model.web_host.invalid_setup" = "Copiez la configuration de connexion dans Nola sur l’hôte, puis collez-la ici.";
+"model.web_host.cancel_verification" = "Annuler la vérification";
+"model.web_host.error.rollback" = "Le jeton n’a pas pu être enregistré et la nouvelle identité de l’hôte n’a pas pu être supprimée. Oubliez ce jumelage et réessayez.";
+"model.web_host.recheck" = "Vérifier à nouveau";
 "chat.model.not_configured" = "Non configuré";
 "chat.permission.action.write_clipboard" = "Mettre à jour le presse-papiers";
 "chat.model.group.cloud" = "Cloud";
@@ -2299,7 +2305,7 @@
 /* macOS Settings workspace */
 
 /* Personal intelligence capabilities */
-"personal.capabilities.title" = "Compétences et MCP";
+"personal.capabilities.title" = "Bibliothèque de capacités";
 "personal.capabilities.gateway.detail" = "Gérez les flux réutilisables et les connexions aux outils externes.";
 "personal.capabilities.gateway.count" = "activés";
 "personal.capabilities.subtitle" = "Flux réutilisables et outils connectés disponibles entre les conversations.";
@@ -2478,7 +2484,7 @@
 
 "chat.task.guidance.send" = "Envoyer les instructions";
 "model.web_host.setup" = "Avant la connexion";
-"model.web_host.setup.start" = "Sur le Mac, ouvrez « Réglages > Connexion à l’hôte » dans Nola et autorisez les connexions d’appareils.";
+"model.web_host.setup.start" = "Sur le Mac, ouvrez « Réglages > Connexions » dans Nola et activez « Partager ce Mac comme Nola Server ».";
 "model.web_host.setup.copy" = "Copiez l’adresse et le jeton de jumelage affichés par Nola sur le Mac. Utilisez un réseau privé de confiance ou HTTPS.";
 "model.web_host.checking" = "Vérification de l’hôte";
 "model.web_host.checking.detail" = "Vérification du jeton, du protocole d’autorisation et de l’identité de l’hôte avant l’enregistrement.";
@@ -3298,3 +3304,9 @@
 "chat.history.otherClientReadOnly" = "Lecture seule. Pour poursuivre cette conversation, ouvre-la dans le client où elle a été créée.";
 "chat.history.ambiguousIDs" = "Deux identifiants de conversation diffèrent uniquement par la casse. Ouvre ces conversations dans leur client d’origine.";
 "experts.executor.requiresHost" = "Connectez-vous à l’hôte qui exécute cet agent de programmation, puis sélectionnez l’expert dans une conversation de cet hôte.";
+
+"harness.plugins" = "Extensions";
+"harness.host" = "Choisir un hôte";
+"harness.device_note" = "Connectez l’ordinateur qui exécute vos extensions pour les utiliser ici.";
+"harness.connect" = "Connecter un hôte de bureau";
+"harness.pair" = "Connecter un autre hôte";

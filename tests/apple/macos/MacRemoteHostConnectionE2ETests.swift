@@ -7,6 +7,70 @@ import XCTest
 @testable import Nola
 
 final class MacRemoteHostConnectionE2ETests: XCTestCase {
+    @MainActor
+    func testStoppingDuringHandshakeDoesNotBlockUIOrStopReplacementHost() async throws {
+        let files = FileManager.default
+        let root = files.temporaryDirectory.appendingPathComponent("nola-share-restart-" + UUID().uuidString)
+        let app = MacAppEnvironment(applicationSupportRoot: root, cachesRoot: root.appendingPathComponent("cache"))
+        try app.prepare()
+        defer { try? files.removeItem(at: root) }
+        let executable = root.appendingPathComponent("host")
+        let realHost = try XCTUnwrap(MacAgentHostExecutableLocator.resolve())
+        try realHost.path.appending("\n").write(to: app.scratchWorkspaceURL.appendingPathComponent("real-host-path"),
+                                               atomically: true, encoding: .utf8)
+        let launch = #"""
+        #!/bin/sh
+        if [ -f first-started ]; then
+            IFS= read -r executable < real-host-path
+            exec "$executable" "$@"
+        fi
+        trap '' TERM
+        touch first-started
+        exec /bin/sleep 20
+        """#
+        try launch.write(to: executable, atomically: true, encoding: .utf8)
+        try files.setAttributes([.posixPermissions: 0o700], ofItemAtPath: executable.path)
+        let server = MacManagedNolaServer(environment: app, executable: executable, bindAddress: "127.0.0.1", port: 0)
+        defer { server.stop() }
+        let first = Task { await server.start() }
+        let deadline = ContinuousClock.now + .seconds(5)
+        let marker = app.scratchWorkspaceURL.appendingPathComponent("first-started")
+        while !files.fileExists(atPath: marker.path), ContinuousClock.now < deadline {
+            try await Task.sleep(for: .milliseconds(20))
+        }
+        XCTAssertTrue(files.fileExists(atPath: marker.path))
+        let started = ContinuousClock.now
+        server.stop()
+        XCTAssertEqual(server.state, .stopped)
+        XCTAssertLessThan(started.duration(to: .now), .milliseconds(450), "Stop must return before the child termination grace period")
+        await server.start()
+        await first.value
+        if case .failed(let message) = server.state { return XCTFail("Replacement host: " + message) }
+        guard case let .ready(info) = server.state else { return XCTFail("Replacement Host failed to become ready") }
+        let setup = try XCTUnwrap(info.connectionSetupText.flatMap(AppleHostConnectionSetup.decode))
+        let verified = try await MacRemoteHostService.shared.testConnection(configuration:
+            .init(baseURL: setup.origin, token: setup.accessToken, expectedHostID: setup.hostID))
+        XCTAssertEqual(verified.hostID, info.hostID)
+    }
+
+    @MainActor
+    func testSilentHostTimesOutWithoutWaitingForOutput() async throws {
+        let files = FileManager.default
+        let root = files.temporaryDirectory.appendingPathComponent("nola-share-timeout-" + UUID().uuidString)
+        let app = MacAppEnvironment(applicationSupportRoot: root, cachesRoot: root.appendingPathComponent("cache"))
+        try app.prepare()
+        defer { try? files.removeItem(at: root) }
+        let executable = root.appendingPathComponent("silent")
+        try "#!/bin/sh\nexec /bin/sleep 15\n".write(to: executable, atomically: true, encoding: .utf8)
+        try files.setAttributes([.posixPermissions: 0o700], ofItemAtPath: executable.path)
+        let server = MacManagedNolaServer(environment: app, executable: executable, startupTimeout: .milliseconds(250))
+        let start = ContinuousClock.now
+        await server.start()
+        guard case .failed(let detail) = server.state else { return XCTFail("Missing timeout feedback") }
+        XCTAssertEqual(detail, MacManagedNolaServerError.startupTimedOut.localizedDescription)
+        XCTAssertLessThan(start.duration(to: .now), .seconds(5))
+    }
+
     func testActualNolaServerPairsAndRejectsWrongTokenAndIdentity() async throws {
         let root = FileManager.default.temporaryDirectory.appendingPathComponent("nola-real-host-pairing-\(UUID().uuidString)")
         try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)

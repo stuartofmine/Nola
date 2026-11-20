@@ -357,6 +357,7 @@ struct NolaApp: App {
                 .background(DesignTokens.backgroundColor)
             }
             }
+            .background { IOSKeyboardDismissal().frame(width: 0, height: 0).accessibilityHidden(true) }
             .preferredColorScheme((AppleAppearancePreference(rawValue: appearance) ?? .system).colorScheme)
         }
     }

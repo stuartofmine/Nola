@@ -280,7 +280,8 @@ struct AppleExpertResendEditor: View {
             }
             #if os(macOS)
             MacComposerTextEditor(text: textBinding, conversationID: draft.sourceMessageID, focused: $focus,
-                onPasteAttachments: { false }, onDropAttachments: { _ in false }, onSubmit: {}, submitsReturn: false, mentionCommand: handle, mentionEditor: hooks)
+                onPasteAttachments: { false }, onDropAttachments: { _ in false }, onSubmit: {}, submitsReturn: false,
+                mentionCommand: handle, mentionEditor: hooks, editorAccessibilityIdentifier: "mac-message-edit-text")
             #elseif os(iOS)
             ChatPasteAwareEditor(text: textBinding, isEditable: true, focus: $focus,
                 onPasteFiles: { _ in }, onPasteFailure: { _ in }, mentionsVisible: query != nil,

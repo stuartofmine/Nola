@@ -29,6 +29,7 @@ export interface EditedResendCompletion { envelope: EditedResendEnvelope; receip
 const object = (value: unknown): value is Record<string, unknown> => !!value && typeof value === 'object' && !Array.isArray(value);
 const id = (value: unknown): value is string => typeof value === 'string' && !!value.trim() && value.trim() === value && !/[\u0000-\u001f\u007f-\u009f]/.test(value) && value.length <= 512;
 const positive = (value: unknown): value is number => Number.isSafeInteger(value) && Number(value) > 0;
+const durableRevision = (value: unknown): value is number => typeof value === 'number' && Number.isSafeInteger(value) && value >= 0;
 const digest = (value: unknown): value is string => typeof value === 'string' && /^[a-f0-9]{64}$/.test(value);
 const uuid = (value: unknown): value is string => typeof value === 'string' && /^[a-f0-9]{8}-(?:[a-f0-9]{4}-){3}[a-f0-9]{12}$/i.test(value);
 /** Offer editing only for a disclosed canonical plain user boundary. Core still proves send provenance. */
@@ -38,7 +39,7 @@ export function editedResendSourceForMessage(message: TimelineMessage, owner: {
     const canonical=message.canonical,snapshot=message.canonicalSnapshot;
     if(!snapshot||snapshot.sourceHostId!==owner.hostId||snapshot.conversationId!==owner.conversationId||!positive(snapshot.revision))return null;
     if(message.role!=='user'||message.state!=='completed'||!canonical||canonical.role!=='user'||canonical.state!=='completed'||canonical.message_id!==message.id
-        ||!positive(canonical.revision)||canonical.parts.length!==1)return null;
+        ||!durableRevision(canonical.revision)||canonical.parts.length!==1)return null;
     const part=canonical.parts[0];
     let text:string;
     if(part.kind==='text'&&part.is_final===true&&typeof part.markdown==='string'&&(part.review==null||part.review==='approved'))text=part.markdown;
@@ -49,7 +50,7 @@ export function editedResendSourceForMessage(message: TimelineMessage, owner: {
             ||preview.total_utf8_bytes!==new TextEncoder().encode(preview.text).length)return null;
         text=preview.text;
     }else return null;
-    if(!positive(part.revision)||displayTextAttachmentMessage(text)!==null||message.parts.length!==1
+    if(!durableRevision(part.revision)||displayTextAttachmentMessage(text)!==null||message.parts.length!==1
         ||message.parts[0].id!==part.part_id||timelineMessageText(message)!==text)return null;
     const mentions=partMentions(part,text);
     return Object.freeze({...owner,...(mentions.length?{originalMentions:mentions}:{}),conversationRevision:snapshot.revision,messageId:canonical.message_id,messageRevision:canonical.revision,originalText:text});
@@ -57,7 +58,7 @@ export function editedResendSourceForMessage(message: TimelineMessage, owner: {
 export function createEditedResendDraft(source: EditedResendSourceSnapshot, text = source.originalText,
     identity = {operationId: crypto.randomUUID(), targetId: crypto.randomUUID(), createdAtMs: Date.now()}): EditedResendDraft {
     if (![source.hostId, source.clientId, source.conversationId, source.messageId].every(id)
-        || !positive(source.conversationRevision) || !positive(source.messageRevision)
+        || !positive(source.conversationRevision) || !durableRevision(source.messageRevision)
         || !uuid(identity.operationId) || !uuid(identity.targetId) || !Number.isSafeInteger(identity.createdAtMs) || identity.createdAtMs < 0
         || identity.targetId === source.conversationId || typeof text !== 'string') throw new Error('Invalid edit source witness');
     const title = Array.from(text.replace(/[\u0000-\u001f\u007f-\u009f]/g, '').trim()).slice(0,80).join('') || 'Edited message';
@@ -87,7 +88,7 @@ export function parseEditedResendEnvelope(value: unknown, source: Pick<EditedRes
     const input = p.input as unknown as EditedResendInput, sent = p.source;
     if (Object.keys(input).length !== 9 || !uuid(input.operation_id) || !uuid(input.target_conversation_id)
         || !id(input.source_conversation_id) || !id(input.source_message_id)
-        || !positive(input.expected_source_revision) || !positive(input.expected_source_message_revision)
+        || !positive(input.expected_source_revision) || !durableRevision(input.expected_source_message_revision)
         || typeof input.edited_text !== 'string' || !input.edited_text.trim() || typeof input.title !== 'string' || !input.title.trim()
         || !Number.isSafeInteger(input.created_at_ms) || input.created_at_ms<0 || input.target_conversation_id===input.source_conversation_id
         || expected && !sameEditedResendInput(input, expected)

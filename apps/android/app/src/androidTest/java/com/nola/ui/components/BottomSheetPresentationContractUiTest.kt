@@ -23,6 +23,7 @@ import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.semantics.SemanticsActions
 import androidx.compose.ui.semantics.getOrNull
 import androidx.compose.ui.test.performClick
+import androidx.compose.ui.test.performTextReplacement
 import androidx.compose.ui.test.hasScrollToNodeAction
 import androidx.compose.ui.test.hasText
 import androidx.compose.ui.test.isDialog
@@ -44,6 +45,7 @@ import com.nola.data.local.db.entity.ExecutionResultEntity
 import com.nola.data.local.db.entity.ScheduledActionEntity
 import com.nola.data.repository.AgentDirectory
 import com.nola.data.repository.ConversationProgress
+import com.nola.data.repository.GoalControlObservation
 import com.nola.data.repository.ExpertRoleTemplate
 import com.nola.data.repository.PersistentAgent
 import com.nola.domain.model.ContextBreakdown
@@ -64,7 +66,9 @@ import com.nola.ui.screen.models.ModelInferenceTestSheet
 import com.nola.ui.screen.scheduled.ExecutionResultDetailSheet
 import com.nola.ui.screen.scheduled.ScheduledActionEditorSheet
 import com.nola.ui.theme.NolaTheme
+import kotlinx.serialization.json.JsonNull
 import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.buildJsonObject
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
@@ -78,6 +82,35 @@ import org.junit.runner.RunWith
 class BottomSheetPresentationContractUiTest {
     @get:Rule
     val compose = createAndroidComposeRule<ComponentActivity>()
+
+    @Test
+    fun startingAnotherGoalDoesNotTargetTheCancelledGoal() {
+        val prior = ConversationProgress(
+            conversationId = "conversation", objective = "Previous goal", status = "cancelled",
+            requirements = emptyList(), todos = emptyList(),
+            goalControl = GoalControlObservation("old-goal", "old-token", 5uL, emptyMap(),
+                canPause = false, canResume = false, canCancel = false)
+        )
+        var submitted: JsonObject? = null
+        compose.setContent {
+            NolaTheme {
+                ConversationProgressPanel(
+                    state = ChatUiState(conversationId = prior.conversationId),
+                    load = { prior }, pendingControl = { false },
+                    submitControl = { _, input -> submitted = input; prior }, onClose = {}
+                )
+            }
+        }
+        compose.onNodeWithText(compose.activity.getString(R.string.goal_objective))
+            .performScrollTo().performTextReplacement("New objective")
+        compose.onNodeWithText(compose.activity.getString(R.string.goal_start)).performScrollTo().performClick()
+        compose.runOnIdle {
+            assertEquals(JsonPrimitive("start"), submitted?.get("action"))
+            assertEquals(JsonPrimitive("New objective"), submitted?.get("objective"))
+            assertEquals(JsonNull, submitted?.get("expectedGoalId"))
+            assertEquals(JsonNull, submitted?.get("expectedControlToken"))
+        }
+    }
 
     private enum class SheetCase {
         ExpertManagement,

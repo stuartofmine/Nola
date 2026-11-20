@@ -884,7 +884,7 @@ final class MacSecondaryPageVisualEndToEndTests: XCTestCase {
 @MainActor
 final class MacSecondaryPageNavigationTests: XCTestCase {
     func testSecondaryPageInitialLaunchAndNavigationStateMachines() {
-        for section in MacWorkspaceSection.allCases {
+        for section in MacWorkspaceSection.sidebarSections {
             XCTAssertEqual(
                 MacWorkspaceSection.initialSection(environment: ["NOLA_MAC_INITIAL_SECTION": section.rawValue]),
                 section
@@ -1030,6 +1030,128 @@ final class MacSecondaryPageNavigationTests: XCTestCase {
         window.orderFrontRegardless()
         defer { window.close() }
         try await pressIdentifier("page.navigation.back", in: host)
+    }
+
+    func testCancellingHostVerificationAndLeavingSettingsProtectsTheSavedConnection() async throws {
+        let session = try MacHostedAccessibilitySession()
+        defer { session.restore() }
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent("host-cancellation-" + UUID().uuidString)
+        let environment = MacAppEnvironment(applicationSupportRoot: root, cachesRoot: root.appendingPathComponent("cache"))
+        try environment.prepare()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let store = MacRemoteHostConfigurationStore(applicationPort: try MacApplicationPort(databaseURL: root.appendingPathComponent("store.db")))
+        let server = MacManagedNolaServer(environment: environment, bindAddress: "127.0.0.1", port: 0)
+        let board = NSPasteboard.withUniqueName()
+        defer { board.releaseGlobally() }
+        let suite = "host-cancel-" + UUID().uuidString
+        let preferences = try XCTUnwrap(UserDefaults(suiteName: suite))
+        defer { preferences.removePersistentDomain(forName: suite) }
+
+        let fd = socket(AF_INET, SOCK_STREAM, 0)
+        XCTAssertGreaterThanOrEqual(fd, 0)
+        defer { Darwin.close(fd) }
+        var local = sockaddr_in()
+        local.sin_len = UInt8(MemoryLayout<sockaddr_in>.size)
+        local.sin_family = sa_family_t(AF_INET)
+        local.sin_addr.s_addr = inet_addr("127.0.0.1")
+        var length = socklen_t(MemoryLayout<sockaddr_in>.size)
+        try withUnsafeMutablePointer(to: &local) { pointer in
+            try pointer.withMemoryRebound(to: sockaddr.self, capacity: 1) { addr in
+                guard Darwin.bind(fd, addr, length) == 0, listen(fd, SOMAXCONN) == 0, getsockname(fd, addr, &length) == 0
+                else { throw POSIXError(.EADDRNOTAVAIL) }
+            }
+        }
+        let origin = "http://127.0.0.1:" + String(UInt16(bigEndian: local.sin_port))
+        let json = try JSONSerialization.data(withJSONObject: ["type": "nola.server.connection", "protocol_version": 1,
+            "origin": origin, "host_id": "fixture-host-identity", "access_token": "fixture"] as [String: Any])
+        board.setString(String(decoding: json, as: UTF8.self), forType: .string)
+        let host = NSHostingView(rootView: MacSettingsView(snapshotHostState: .notConfigured, initialCategory: "connections",
+            managedServer: server, connectionPasteboard: board, hostConfigurationStore: store).defaultAppStorage(preferences))
+        let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 1000, height: 850),
+                              styleMask: [.titled, .closable], backing: .buffered, defer: false)
+        window.isReleasedWhenClosed = false; window.contentView = host; window.orderFrontRegardless()
+        defer { window.close() }
+        try await pressIdentifier("mac.host.pasteSetup", in: host)
+        try await pressIdentifier("mac.host.verify", in: host)
+        try await pressIdentifier("mac.host.cancelVerification", in: host)
+        XCTAssertEqual(store.displayValues().url, "")
+        XCTAssertTrue(accessibilityObjects(host).contains { $0.accessibilityIdentifier?() == "mac.host.status.unsaved" })
+        let bitmap = try XCTUnwrap(host.bitmapImageRepForCachingDisplay(in: host.bounds))
+        host.cacheDisplay(in: host.bounds, to: bitmap)
+        let image = try XCTUnwrap(bitmap.representation(using: .png, properties: [:]))
+        let evidence = XCTAttachment(data: image, uniformTypeIdentifier: "public.png")
+        evidence.name = "mac-host-verification-cancelled"
+        evidence.lifetime = .keepAlways
+        add(evidence)
+        try await pressIdentifier("mac.host.verify", in: host)
+        try await pressIdentifier("settings.category.general", in: host)
+        try await pressIdentifier("settings.category.connections", in: host)
+        XCTAssertEqual(store.displayValues().url, "")
+        let fields = accessibilityObjects(host)
+        XCTAssertFalse(fields.contains { $0.accessibilityIdentifier?() == "mac.host.cancelVerification" })
+        let displayedAddresses = fields.compactMap { element -> String? in
+            if let field = element as? NSTextField, !(field is NSSecureTextField) { return field.stringValue }
+            guard element.accessibilityIdentifier?() == "mac.host.url", let object = element as? NSObject,
+                  object.responds(to: NSSelectorFromString("accessibilityValue")) else { return nil }
+            return object.perform(NSSelectorFromString("accessibilityValue"))?.takeUnretainedValue() as? String
+        }
+        XCTAssertTrue(displayedAddresses.contains(origin), "The original draft address remains visible after navigating back")
+        try await pressIdentifier("mac.host.verify", in: host)
+        XCTAssertTrue(accessibilityObjects(host).contains { $0.accessibilityIdentifier?() == "mac.host.cancelVerification" })
+        window.close()
+        window.orderFrontRegardless()
+        let deadline = Date().addingTimeInterval(4)
+        while !accessibilityObjects(host).contains(where: { $0.accessibilityIdentifier?() == "mac.host.status.unsaved" }), Date() < deadline {
+            try await Task.sleep(for: .milliseconds(20))
+            host.layoutSubtreeIfNeeded()
+        }
+        XCTAssertTrue(accessibilityObjects(host).contains { $0.accessibilityIdentifier?() == "mac.host.status.unsaved" })
+        XCTAssertFalse(accessibilityObjects(host).contains { $0.accessibilityIdentifier?() == "mac.host.cancelVerification" })
+        XCTAssertEqual(store.displayValues().url, "")
+    }
+
+    func testShareSettingsCopiesUsablePhoneSetupFromRunningServer() async throws {
+        let session = try MacHostedAccessibilitySession()
+        defer { session.restore() }
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent("share-phone-" + UUID().uuidString)
+        let app = MacAppEnvironment(applicationSupportRoot: root, cachesRoot: root.appendingPathComponent("cache"))
+        try app.prepare()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let server = MacManagedNolaServer(environment: app, bindAddress: "127.0.0.1", port: 0)
+        defer { server.stop() }
+        await server.start()
+        guard case .ready(let info) = server.state else { return XCTFail("Isolated server is unavailable") }
+        let board = NSPasteboard.withUniqueName()
+        defer { board.releaseGlobally() }
+        let suite = "sharing-settings-" + UUID().uuidString
+        let preferences = try XCTUnwrap(UserDefaults(suiteName: suite))
+        defer { preferences.removePersistentDomain(forName: suite) }
+        preferences.set(true, forKey: MacManagedNolaServer.enabledKey)
+        let host = NSHostingView(rootView: MacSettingsView(snapshotHostState: .notConfigured, initialCategory: "connections",
+            managedServer: server, connectionPasteboard: board).defaultAppStorage(preferences))
+        let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 1000, height: 760),
+                              styleMask: [.titled, .closable], backing: .buffered, defer: false)
+        window.isReleasedWhenClosed = false
+        window.contentView = host
+        window.orderFrontRegardless()
+        defer { window.close() }
+        try await pressIdentifier("mac.server.copySetup", in: host)
+        let setup = try XCTUnwrap(board.string(forType: .string).flatMap(AppleHostConnectionSetup.decode))
+        XCTAssertEqual(setup.hostID, info.hostID)
+        let bitmap = try XCTUnwrap(host.bitmapImageRepForCachingDisplay(in: host.bounds))
+        host.cacheDisplay(in: host.bounds, to: bitmap)
+        let attachment = XCTAttachment(data: try XCTUnwrap(bitmap.representation(using: .png, properties: [:])),
+                                      uniformTypeIdentifier: "public.png")
+        attachment.name = "mac-share-connection-setup-copied"
+        attachment.lifetime = .keepAlways
+        add(attachment)
+        try await pressIdentifier("mac.host.pasteSetup", in: host)
+        let ids = accessibilityObjects(host).compactMap { $0.accessibilityIdentifier?() }
+        XCTAssertTrue(ids.contains("mac.host.status.unsaved"), "Pasting only edits the draft")
+        XCTAssertFalse(ids.contains("mac.host.remove"), "An unsaved draft has no stored connection to delete")
+        let connected = try await MacRemoteHostService.shared.testConnection(configuration:
+            .init(baseURL: setup.origin, token: setup.accessToken, expectedHostID: setup.hostID))
+        XCTAssertEqual(connected.hostID, info.hostID)
     }
 
     func testEverySettingsCategoryCanOpenAndReturnInBothThemes() async throws {

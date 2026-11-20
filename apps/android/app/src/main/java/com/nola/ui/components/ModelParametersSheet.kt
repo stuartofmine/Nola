@@ -111,6 +111,7 @@ fun ModelParametersSheet(
     )
 
     ModalBottomSheet(
+        modifier = Modifier.dismissImeOnBlankTap(),
         onDismissRequest = requestDismiss,
         sheetState = sheetState
     ) {

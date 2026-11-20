@@ -179,6 +179,10 @@ Git 工作区准备在 agent 进程沙箱外，不能信任仓库转换程序。
 
 Start 可以携带由已有 Host admission 装配器提供的冻结配置；没有新配置时仅能复用已建立的会话配置。绑定与读取权限由 Core 检查，凭据仍归既有 Host 安全恢复路径。sealed Run 永不重开；执行报告已提交但验收未提交仍读取 immutable seal/journal。Pause/Cancel 先持久提交精确 Interrupt，返回 interrupted_run_id 供 Host 接续物理取消，未收到 ACK 不假称停止。
 
+若用户在暂停后立即取消，同一 Goal 可在原 Run 等待停机确认时提交为已取消。此时 `execute_run` 仍指向原 Run，`interrupted_run_id` 为空。宿主沿用暂停时产生的取消请求和确认凭据。收到原请求所指 effect 的停机确认后，Run 封存，Goal 返回取消终态。
+
+移动端恢复已有 Goal 时，重新观察设备当前的能力目录。若该 Run 曾从已结束会话的精简配置准入，冻结目录中只有非工具路由，工具列表为空；Core 按相同范围核对这次观察到的描述符。宿主身份、目录版本、可用性代次、租约、权限与模型仍须与 Run 的冻结配置一致。新增的设备工具不会进入该 Run。
+
 实现已替换旧 embedded/synchronous 分叉：删除 CLI HostGoalPort 与 execute-round 准入；旧 Host 同步函数只是 step/精确 Run 执行循环。既有控制 FIFO 仅运输 Goal envelope，消费时同样进入 step；Core 在这一处决定 Interrupt，队列不另做控制决策。封存读取也收为 step 内部，不再开放独立 load_sealed_goal_round 调度接口。App 不可执行时只报告不可执行，不承诺永久后台。
 
 

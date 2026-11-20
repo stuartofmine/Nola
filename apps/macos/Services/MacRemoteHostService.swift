@@ -878,24 +878,38 @@ nonisolated final class MacRemoteHostConfigurationStore: @unchecked Sendable {
 
     /// A blank edit field may reuse a credential only for its saved destination.
     /// Never resolve the previous Host's token after an address edit.
-    func tokenForDraft(url: URL, enteredToken: String) -> String? {
+    func configurationForDraft(url: URL, enteredToken: String, importedIdentity: String? = nil) throws -> MacRemoteHostConfiguration? {
         let entered = enteredToken.trimmingCharacters(in: .whitespacesAndNewlines)
-        if !entered.isEmpty { return entered }
         configurationLock.lock()
         defer { configurationLock.unlock() }
-        guard let stored = storedConfiguration(), URL(string: stored.url) == url,
-              let token = loadToken(), !token.isEmpty else { return nil }
-        return token
+        let stored = storedConfiguration()
+        guard AppleHostConnectionSetup.endpoint(url.absoluteString) != nil else { return nil }
+        let matchesSaved = stored.flatMap { AppleHostConnectionSetup.endpoint($0.url) }.map {
+            AppleHostConnectionSetup.sameEndpoint(url, $0)
+        } ?? false
+        let savedIdentity = matchesSaved ? stored?.hostID : nil
+        if let savedIdentity, !savedIdentity.isEmpty, let importedIdentity, savedIdentity != importedIdentity {
+            throw MacCoreToolPolicyError.invalidManifest(String(
+                localized: "The Nola Server identity changed. Remove it and pair again before continuing.",
+                table: "ServerCenter"
+            ))
+        }
+        let token: String
+        if entered.isEmpty {
+            guard matchesSaved, let saved = loadToken(), !saved.isEmpty else { return nil }
+            token = saved
+        } else {
+            token = entered
+        }
+        return MacRemoteHostConfiguration(baseURL: url, token: token,
+            expectedHostID: importedIdentity ?? savedIdentity)
     }
 
     func displayValues() -> (url: String, token: String, hostID: String) {
         configurationLock.lock()
         defer { configurationLock.unlock() }
-        return (
-            storedConfiguration()?.url ?? "",
-            loadToken() ?? "",
-            storedConfiguration()?.hostID ?? ""
-        )
+        guard let stored = storedConfiguration() else { return ("", "", "") }
+        return (stored.url, loadToken() ?? "", stored.hostID ?? "")
     }
 
     func save(url: String, token: String, hostID: String? = nil) throws {
@@ -1240,16 +1254,23 @@ actor MacRemoteHostService: MacRemoteAgentRunning {
         guard let configuration = configurationStore.load() else {
             throw MacRemoteHostError.notConfigured
         }
+        if target == "/capabilities?tab=plugins" {
+            return try await requestVerifiedManagementURL(target: target, configuration: configuration)
+        }
         return try await requestWebManagementURL(target: target, configuration: configuration)
     }
 
     /// Model management is a separate Host owner, never the native Mac account store.
     /// Capture pairing once so a settings change during identity verification cannot retarget it.
     func requestModelManagementURL(configuration: MacRemoteHostConfiguration) async throws -> URL {
+        try await requestVerifiedManagementURL(target: "/models?tab=api", configuration: configuration)
+    }
+
+    private func requestVerifiedManagementURL(target: String, configuration: MacRemoteHostConfiguration) async throws -> URL {
         guard configuration.expectedHostID != nil else { throw MacRemoteHostError.notConfigured }
         _ = try await testConnection(configuration: configuration)
         try Task.checkCancellation()
-        let url = try await requestWebManagementURL(target: "/models?tab=api", configuration: configuration)
+        let url = try await requestWebManagementURL(target: target, configuration: configuration)
         try Task.checkCancellation()
         guard let current = configurationStore.load(),
               current.expectedHostID == configuration.expectedHostID,

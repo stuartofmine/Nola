@@ -78,7 +78,8 @@ pub fn classify_external_context_bundle(
             .map(|value| value.with_timezone(&Utc));
         context.freshness = match (updated_at, personal_max_age) {
             (Some(updated_at), Some(max_age))
-                if now.signed_duration_since(updated_at).num_seconds() <= max_age.max(0) * 60 =>
+                if updated_at <= now
+                    && now.signed_duration_since(updated_at).num_seconds() <= max_age.max(0).saturating_mul(60) =>
             {
                 ExternalContextFreshness::Fresh
             }
@@ -120,6 +121,20 @@ mod tests {
         let bytes = vec![b'x'; MAX_EXTERNAL_CONTEXT_BYTES + 1];
         let error = prepare_external_context(PathBuf::from("large.md"), &bytes).unwrap_err();
         assert!(error.contains("byte limit"));
+    }
+
+    #[test]
+    fn freshness_handles_large_windows_and_future_timestamps() {
+        let now = DateTime::parse_from_rfc3339("2026-07-16T12:00:00Z").unwrap().with_timezone(&Utc);
+        let context = |text: &str| prepare_external_context(PathBuf::new(), text.as_bytes()).unwrap().unwrap();
+        let loaded = classify_external_context_bundle(vec![
+            context("source_policy: personal_data\nmaximum_age_minutes: 9223372036854775807"),
+            context("source: personal_data\nupdated_at: 2026-07-16T11:59:00Z"),
+            context("source: personal_data\nupdated_at: 2026-07-17T12:00:00Z\nfuture payload"),
+        ], now);
+        assert_eq!(loaded[1].freshness, ExternalContextFreshness::Fresh);
+        assert_eq!(loaded[2].freshness, ExternalContextFreshness::Stale);
+        assert!(!loaded[2].content.contains("future payload"));
     }
 
     #[test]

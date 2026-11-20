@@ -24,6 +24,7 @@
 #   DERIVED_DATA     - DerivedData path (default: ./build)
 #   DESTINATION      - xcodebuild destination string (auto-detected if unset)
 #   RESULT_BUNDLE    - path for .xcresult (default: ./build/TestResults.xcresult)
+#   IOS_PARALLEL_TESTING_ENABLED - YES (default) uses XCTest workers, NO uses the selected simulator
 #   INCLUDE_UI_TESTS - set 1 to also run NolaUITests (default: 0)
 #   SKIP_BUILD       - set 1 to run tests without building (default: 0)
 #   PARALLEL_TEST_WORKERS - maximum parallel XCTest workers (default: 4)
@@ -42,6 +43,11 @@ RESULT_BUNDLE="${RESULT_BUNDLE:-$DERIVED_DATA/TestResults.xcresult}"
 XCODE_OPTS="${XCODE_OPTS:-}"
 INCLUDE_UI_TESTS="${INCLUDE_UI_TESTS:-0}"
 PARALLEL_TEST_WORKERS="${PARALLEL_TEST_WORKERS:-4}"
+case "${IOS_PARALLEL_TESTING_ENABLED:-YES}" in
+    YES) IOS_PARALLEL_FLAGS=(-parallel-testing-enabled YES -maximum-parallel-testing-workers "$PARALLEL_TEST_WORKERS") ;;
+    NO)  IOS_PARALLEL_FLAGS=(-parallel-testing-enabled NO) ;;
+    *) echo "IOS_PARALLEL_TESTING_ENABLED must be YES or NO." >&2; exit 64 ;;
+esac
 XCODE_DESTINATION_TIMEOUT="${XCODE_DESTINATION_TIMEOUT:-10}"
 case "${SIMULATOR_SIGNING:-unsigned}" in
     unsigned) IOS_TEST_SIGNING_FLAGS=(CODE_SIGNING_ALLOWED=NO) ;;
@@ -151,8 +157,7 @@ _run_xcodebuild() {
         -destination-timeout "$XCODE_DESTINATION_TIMEOUT" \
         -derivedDataPath "$DERIVED_DATA" \
         -resultBundlePath "$RESULT_BUNDLE" \
-        -parallel-testing-enabled YES \
-        -maximum-parallel-testing-workers "$PARALLEL_TEST_WORKERS" \
+        "${IOS_PARALLEL_FLAGS[@]}" \
         "${IOS_TEST_SIGNING_FLAGS[@]}" \
         $XCODE_OPTS \
         "$@"

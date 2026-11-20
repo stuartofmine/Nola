@@ -41,7 +41,7 @@ struct MacMessageEditSheet: View {
                 .frame(minHeight: 220)
                 .background(MacDesignColor.canvas, in: RoundedRectangle(cornerRadius: 10))
                 .overlay { RoundedRectangle(cornerRadius: 10).strokeBorder(MacDesignColor.controlOutline, lineWidth: 1) }
-                .disabled(submitting).accessibilityIdentifier("mac-message-edit-text")
+                .disabled(submitting)
             if let error { Text(error).font(.callout).foregroundStyle(.red).textSelection(.enabled)
                 .accessibilityIdentifier("mac-message-edit-error") }
             HStack {

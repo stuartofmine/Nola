@@ -2693,6 +2693,14 @@ fn required_tool_argument_error(spec: &ToolSpec, request: &ToolRequest) -> Optio
             missing.join(", ")
         ));
     }
+    if request.name == "write_file" {
+        if let Err(failure) = expected_sha256(&request.args) {
+            return Some(format!(
+                "{}. For replacement, copy expected_sha256 from a complete read_file result.",
+                failure.display
+            ));
+        }
+    }
     let alternatives = spec.parameters.get("oneOf").and_then(Value::as_array);
     if let Some(alternatives) = alternatives {
         let required_alternatives = alternatives

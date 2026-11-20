@@ -42,10 +42,15 @@ const catalogFailures: Record<Locale, string> = {
     de: 'Modellkatalog nicht verfügbar. Sitzungsrechte bleiben verfügbar. Erneut laden.', es: 'Catálogo no disponible; los permisos siguen disponibles. Vuelve a cargar.',
     fr: 'Catalogue indisponible ; les autorisations restent disponibles. Actualisez.', ja: 'モデル一覧を読み込めません。会話の権限は設定できます。再読み込みしてください。', ru: 'Каталог недоступен; права диалога доступны. Обновите страницу.',
 };
+const configureModel: Record<Locale, string> = {
+    'zh-Hans': '添加聊天模型', en: 'Add a chat model', de: 'Chatmodell hinzufügen',
+    es: 'Añadir un modelo de chat', fr: 'Ajouter un modèle de chat',
+    ja: 'チャットモデルを追加', ru: 'Добавить модель для чата',
+};
 export const chatSessionMessages: Record<Locale, Record<string, string>> = Object.fromEntries(
-    Object.entries(translations).map(([language, values]) => {
+    Object.entries(translations).map(([language, values]): [string, Record<string, string>] => {
         if (values.length !== keys.length) throw new Error(`Incomplete chat session catalog: ${language}`);
-        return [language, { ...Object.fromEntries([['chatSession.catalogFailed', catalogFailures[language as Locale]]]), ...Object.fromEntries(keys.map((key, index) => [`chatSession.${key}`, values[index]])),
+        return [language, { 'chatSession.configureModel': configureModel[language as Locale], 'chatSession.catalogFailed': catalogFailures[language as Locale], ...Object.fromEntries(keys.map((key, index) => [`chatSession.${key}`, values[index]])),
             ...Object.fromEntries(['retrieval', 'retrievalScope'].map((key, index) => [`chatSession.${key}`, retrievalMessages[language as Locale][index]])),
             ...Object.fromEntries(['memory', 'memoryOn', 'memoryOff', 'memoryScope'].map((key, index) => [`chatSession.${key}`, memoryMessages[language as Locale][index]])),
             ...Object.fromEntries(['seedClear', 'seedValue', 'invalidSeed'].map((key, index) => [`chatSession.${key}`, seedMessages[language as Locale][index]])) }];

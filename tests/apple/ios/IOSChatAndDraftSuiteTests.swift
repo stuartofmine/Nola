@@ -338,6 +338,32 @@ final class ChatErrorPresentationTests: XCTestCase {
 }
 
 final class ChatMemoryProfileTests: XCTestCase {
+    func testIntelligenceReadsAndWritesStayInTheOwningRuntime() throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let first = try IOSApplicationRuntime(databaseURL: root.appendingPathComponent("first.db"))
+        let second = try IOSApplicationRuntime(databaseURL: root.appendingPathComponent("second.db"))
+        let event = IntelligenceEvent(source: "audit", kind: "test.note", summary: "Scoped event")
+        let request = IntelligenceIngestRequest(events: [event])
+        XCTAssertEqual(first.ingestIntelligence(request)?["ok"], .bool(true))
+        XCTAssertEqual(second.intelligenceSnapshot()?["events"], .array([]))
+        XCTAssertTrue(second.clearIntelligence())
+        guard case .array(let events)? = first.intelligenceSnapshot()?["events"],
+              case .object(let record)? = events.first else { return XCTFail("The first runtime lost its event") }
+        XCTAssertEqual(events.count, 1)
+        XCTAssertEqual(record["summary"], .string("Scoped event"))
+        XCTAssertTrue(first.clearIntelligence())
+        XCTAssertEqual(first.intelligenceSnapshot()?["events"], .array([]))
+    }
+
+    func testSnapshotDistinguishesLibraryReadFailureFromEmptyMemory() {
+        let failure = #"{"ok":false,"error":"unable to read memory"}"#
+        let valid = #"{"schema_version":1,"events":[],"memories":[],"strategies":[],"outcomes":[]}"#
+        XCTAssertNil(failure.withCString { PersonalIntelligenceCore.decodeSnapshot($0) })
+        XCTAssertEqual(valid.withCString { PersonalIntelligenceCore.decodeSnapshot($0) }?["memories"], .array([]))
+        XCTAssertNil(valid.replacingOccurrences(of: "1", with: "2").withCString { PersonalIntelligenceCore.decodeSnapshot($0) })
+    }
+
     func testCanonicalSensitivitySurvivesProfileRoundTripAndDefaultPolicyRejectsIt() throws {
         let canonical = IOSCanonicalMemoryRecord(
             record: IOSCanonicalSemanticMemoryRecord(
@@ -993,6 +1019,27 @@ final class IOSDraftAggregateTests: XCTestCase {
 }
 
 final class IOSChatPresentationCommandsAndDraftContractsTests: XCTestCase {
+    func testFirstUserMessageRetainsItsZeroRevisionForEditedResend() throws {
+        let messageJSON = """
+        {"message_id":"first-user","role":"user","state":"completed","revision":0,"created_at_ms":1,
+         "parts":[{"kind":"text","part_id":"p","revision":0,"markdown":"first","is_final":true}]}
+        """
+        let original = try JSONDecoder().decode(IOSConversationProjectionV1.Message.self, from: Data(messageJSON.utf8))
+        guard case .text(let body)? = original.parts.first else { return XCTFail("Missing original user text") }
+        XCTAssertTrue(body.isFinal)
+        XCTAssertEqual(body.revision, 0)
+
+        let initial = AppleMessageEditDraft(sourceConversationID: "conversation", sourceMessageID: "user",
+            expectedSourceRevision: 1, expectedMessageRevision: original.revision, text: "edited")
+        XCTAssertTrue(initial.hasSourceWitness)
+        XCTAssertEqual(try XCTUnwrap(initial.inPlacePreparation()).expected_message_revision, 0)
+        XCTAssertEqual(try XCTUnwrap(initial.preparation(title: "edit")).expected_source_message_revision, 0)
+        let unknown = AppleMessageEditDraft(sourceConversationID: "conversation", sourceMessageID: "user",
+            expectedSourceRevision: 1, expectedMessageRevision: nil, text: "edited")
+        XCTAssertFalse(unknown.hasSourceWitness)
+        XCTAssertNil(unknown.inPlacePreparation())
+    }
+
     func testCurrentToolPresentationTraceMetaCommandsTitlePolicyKnowledgeAndEditDrafts() throws {
         // Current tool presentation & historical reasoning
         let failed = HostAgentToolEvent(id: "failed", name: "bash", status: .failed, text: "Missing dependency")

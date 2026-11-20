@@ -194,13 +194,12 @@ struct ChatConversationsList: View {
             }
             if directorySnapshot == nil && loadError == nil {
                 ProgressView().frame(maxWidth: .infinity).listRowSeparator(.hidden)
-            } else if conversations.isEmpty && loadError == nil {
+            } else if conversations.isEmpty && query.isEmpty && !needsResponseOnly && loadError == nil {
                 VStack(alignment: .leading, spacing: 8) {
                     Text(String(localized: "chat.history.empty.title")).font(.headline)
                     Text(String(localized: "chat.history.empty.message")).foregroundStyle(.secondary)
                 }.padding(.vertical, 20).listRowSeparator(.hidden).listRowBackground(DesignTokens.backgroundColor)
-            }
-            if !conversations.isEmpty && visibleConversations.isEmpty {
+            } else if loadError == nil && visibleConversations.isEmpty {
                 if !query.isEmpty && !IOSConversationListPreview.missing(in: conversations, cache: previews, visit: previewRefreshRevision).isEmpty {
                     ProgressView().frame(maxWidth: .infinity).listRowSeparator(.hidden)
                 } else {

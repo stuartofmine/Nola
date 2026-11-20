@@ -58,6 +58,7 @@ internal data class ChatContextPreparationResult(
 
 class ChatContextPreparer @Inject constructor(
     @ApplicationContext private val context: Context,
+    private val intelligence: PersonalIntelligenceCore,
     private val contextRepository: ContextRepository,
     private val healthDataSource: AndroidHealthDataSource,
     private val archiveWriter: ConversationArchiveWriter,
@@ -76,7 +77,7 @@ class ChatContextPreparer @Inject constructor(
             selectedDataSourceIds = conversation.dataSourceIds,
             disclosesToCloud = disclosesContextToCloud(request.route),
         )
-        val personalContext = PersonalIntelligenceCore.recallContext(request.currentUserText)
+        val personalContext = intelligence.recallContext(request.currentUserText)
         val healthSummary = if (isHealthDataSourceSelected(conversation.dataSourceIds)) {
             runCatching { healthDataSource.readSummary(days = 7) }.getOrNull()
         } else {

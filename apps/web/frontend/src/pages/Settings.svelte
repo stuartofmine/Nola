@@ -44,12 +44,26 @@
         revealTab(category);
     }
     function showOverview() {
+        if (narrow && !pageLocation.key && history.state?.nolaSettingsSection) {
+            history.back();
+            return;
+        }
         overview = true;
         const url = pageLocation.read(); url.searchParams.delete('section'); pageLocation.replace(url);
     }
     function openCategory(event: MouseEvent, category: Category) {
         if (event.button !== 0 || event.ctrlKey || event.metaKey || event.shiftKey || event.altKey) return;
-        event.preventDefault(); select(category);
+        event.preventDefault();
+        if (narrow && overview && !pageLocation.key) {
+            history.pushState({...history.state, nolaSettingsSection: true}, '', (event.currentTarget as HTMLAnchorElement).href);
+        }
+        select(category);
+    }
+    function restoreSection() {
+        if (pageLocation.key || location.pathname !== '/settings') return;
+        const category = resolveSettingsCategory(pageLocation.read().searchParams.get('section'));
+        if (category) select(category);
+        else overview = true;
     }
     function revealTab(category: Category) {
         if (!pageLocation.active() || !narrow) return;
@@ -110,14 +124,14 @@
             if (disposed) return;
             if (!logoutConfirmed(result)) throw new Error('Unconfirmed logout');
             session = { ...session, sessionAuthenticated: false, authenticated: session.localTrust };
-            window.location.assign('/login?logged_out=1');
+            window.location.assign('/login?logged_out=1&next=%2Fsettings%3Fsection%3Dconnections');
         } catch { if (!disposed) error = 'settings.logoutError'; }
         finally { if (!disposed) busy = false; }
     }
 </script>
 
 <svelte:head>{#if pageLocation.active()}<title>{t($locale, 'shell.settings')} — Nola</title>{/if}</svelte:head>
-<svelte:window onresize={resize} />
+<svelte:window onresize={resize} onpopstate={restoreSection} />
 <ConfirmationDialog bind:this={confirmation} />
 {#if !overview}<div class="settings-back"><button type="button" onclick={showOverview}><span aria-hidden="true">‹</span>{t($locale, 'shell.settings')}</button></div>{/if}
 <header class="page-header" class:mobile-overview={narrow && overview}><div><h1 id="settings-mobile-title">{t($locale, !overview ? `settings.category.${selected}` : 'shell.settings')}</h1></div></header>
@@ -163,18 +177,20 @@
         </section>
     </div>
     <div role={narrow ? "region" : "tabpanel"} id="settings-panel-connections" aria-labelledby={narrow ? "settings-mobile-title" : "settings-tab-connections"} hidden={selected !== 'connections'}>
-    <section class="card" id="host-session" aria-busy={loading || busy}>
+    <section class="card host-session" id="host-session" aria-busy={loading || busy}>
         <div class="row between"><h2>{t($locale, 'settings.session')}</h2><button disabled={loading || busy} onclick={load}>{t($locale, 'models.reload')}</button></div>
         {#if loading}<p role="status">{t($locale, 'settings.loading')}</p>{/if}
         {#if error}<p role="alert" class="error">{t($locale, error)}</p>{/if}
         {#if session}
-            <dl><dt>{t($locale, 'settings.host')}</dt><dd title={session.hostId}>{session.localTrust ? t($locale, 'chatOverview.localHost') : session.hostId.slice(0, 8)}</dd><dt>{t($locale, 'settings.connection')}</dt><dd>{t($locale, session.sessionAuthenticated ? 'settings.signedIn' : session.localTrust ? 'settings.local' : 'settings.signedOut')}</dd></dl>
+            <dl><dt>{t($locale, 'settings.host')}</dt><dd title={session.hostId}>{session.localTrust ? t($locale, 'chatOverview.localHost') : session.hostId}</dd><dt>{t($locale, 'settings.connection')}</dt><dd>{t($locale, session.sessionAuthenticated ? 'settings.signedIn' : session.localTrust ? 'settings.local' : 'settings.signedOut')}</dd></dl>
             {#if session.transportIngress === "tailcat"}<p class="muted">{t($locale, 'settings.tailcatIngress')}</p>{/if}
             {#if session.localTrust}<p class="muted">{t($locale, 'settings.localHint')}</p>{/if}
             {#if session.sessionAuthenticated}<div class="actions"><button disabled={busy || loading} onclick={logout}>{t($locale, 'settings.logout')}</button></div>
-            {:else}<a class="button" href="/login?next=%2Fsettings">{t($locale, 'settings.signIn')}</a>{/if}
+            {:else}
+                <p class="muted">{t($locale, 'settings.tokenAuth')}</p>
+                <a class="button" href="/login?next=%2Fsettings%3Fsection%3Dconnections">{t($locale, 'settings.signIn')}</a>
+            {/if}
         {/if}
-        <p class="muted">{t($locale, 'settings.tokenAuth')}</p>
     </section>
         {#if visited.has('connections')}<div id="messaging-settings"><MessagingSettings /></div>{/if}
     </div>
@@ -213,6 +229,7 @@
     }
     dl { display: grid; grid-template-columns: auto minmax(0, 1fr); gap: 8px 16px; }
     dt { color: var(--muted); } dd { margin: 0; overflow-wrap: anywhere; }
+    .host-session > dl, .host-session > p { margin-block: 0; }
     #agent-access, #messaging-settings, #host-session { scroll-margin-top: 20px; }
     .settings-panels :global([data-workspace-id="agent-access"]), .settings-panels :global([data-workspace-id="messaging-settings"]), .settings-panels :global([data-workspace-id="host-session"]) { scroll-margin-top: 20px; }
 </style>

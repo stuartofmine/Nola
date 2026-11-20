@@ -1,5 +1,7 @@
 package com.nola.ui.screen.chat
 
+import com.nola.ui.components.dismissImeOnBlankTap
+import com.nola.ui.components.ForgetHostPairingDialog
 import androidx.compose.foundation.selection.toggleable
 import androidx.compose.ui.semantics.Role
 
@@ -314,6 +316,7 @@ fun ChatMoreSettingsScreen(
         val contextValid = contextLimitText.isBlank() || parsedContext in ModelParameterLimits.remoteContextTokens
         val outputValid = outputLimitText.isBlank() || parsedOutput in ModelParameterLimits.outputTokens
         AlertDialog(
+            modifier = Modifier.dismissImeOnBlankTap(),
             onDismissRequest = { if (!conversationLimitsSaving) showConversationLimits = false },
             title = { Text(stringResource(R.string.chat_conversation_limits_title)) },
             text = {
@@ -482,26 +485,9 @@ fun ChatMoreSettingsScreen(
                             )
                         }
                         if (showForgetPairingConfirmation) {
-                            AlertDialog(
-                                onDismissRequest = { showForgetPairingConfirmation = false },
-                                title = { Text(stringResource(R.string.chat_host_pairing_forget_confirm_title)) },
-                                text = { Text(stringResource(R.string.chat_host_pairing_forget_confirm_message)) },
-                                dismissButton = {
-                                    TextButton(onClick = { showForgetPairingConfirmation = false }) {
-                                        Text(stringResource(R.string.common_cancel))
-                                    }
-                                },
-                                confirmButton = {
-                                    TextButton(onClick = {
-                                        showForgetPairingConfirmation = false
-                                        onForgetHostPairing()
-                                    }) {
-                                        Text(
-                                            stringResource(R.string.chat_host_pairing_forget_confirm_action),
-                                            color = MaterialTheme.colorScheme.error
-                                        )
-                                    }
-                                }
+                            ForgetHostPairingDialog(
+                                onConfirm = { showForgetPairingConfirmation = false; onForgetHostPairing() },
+                                onDismiss = { showForgetPairingConfirmation = false }
                             )
                         }
                     }

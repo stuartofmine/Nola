@@ -138,6 +138,7 @@ fn remote_profile_projection(profile: &nola_application::ModelProfile) -> Result
     // Explicit projection: do not publish arbitrary source metadata or credentials.
     Ok(json!({
         "id": profile.id, "provider": profile.provider, "displayName": profile.display_name, "modelName": profile.model_name,
+        "connectionId": source["connectionID"].as_str(),
         "revision": profile.revision, "selected": profile.selected,
         "enabled": source.get("modelEnabled").and_then(Value::as_bool).unwrap_or(profile.enabled),
         "endpoint": {
@@ -402,11 +403,14 @@ fn replace_remote_model_catalog(store: &NolaStore, body: &Value) -> Result<Value
     let draft: CatalogDraft = serde_json::from_value(body.clone()).map_err(|_| "invalid catalog draft")?;
     if draft.endpoints.len() > 200 { return Err("too many API endpoints".into()); }
     let all_existing = store.model_profiles()?;
+    let connection_managed = |profile: &nola_application::ModelProfile| {
+        serde_json::from_str::<Value>(&profile.source_json).ok().is_some_and(|source| !source["connectionID"].is_null())
+    };
     let foreign_ids = all_existing.iter().filter(|profile| profile.provider != "openai-compatible"
-        || profile.runtime != "remote" || profile.deleted_at_ms.is_some())
+        || profile.runtime != "remote" || profile.deleted_at_ms.is_some() || connection_managed(profile))
         .map(|profile| profile.id.clone()).collect::<std::collections::HashSet<_>>();
     let existing = all_existing.into_iter().filter(|profile| profile.provider == "openai-compatible"
-        && profile.runtime == "remote" && profile.deleted_at_ms.is_none()).collect::<Vec<_>>();
+        && profile.runtime == "remote" && profile.deleted_at_ms.is_none() && !connection_managed(profile)).collect::<Vec<_>>();
     let actual = existing.iter().map(|profile| (profile.id.clone(), profile.revision))
         .collect::<std::collections::BTreeMap<_, _>>();
     if actual != draft.expected_revisions { return Err("revision_conflict: model catalog membership or profile revision changed".into()); }
@@ -1040,6 +1044,33 @@ mod model_profile_web_tests {
         let before = store.model_profiles().unwrap();
         assert!(create_remote_model_profile(&store, &request).unwrap_err().starts_with("revision_conflict:"));
         assert_eq!(store.model_profiles().unwrap(), before);
+    }
+
+    #[test]
+    fn replacing_manual_catalog_preserves_managed_profile_identity_revision_selection_and_credentials() {
+        let (root, store) = endpoint_fixture();
+        let connection = rusqlite::Connection::open(root.path().join("test.sqlite")).unwrap();
+        connection.execute("UPDATE model_profiles SET source_json=json_set(source_json,'$.connectionID','managed-owner') WHERE id='first'", []).unwrap();
+        let managed = store.model_profile("first").unwrap().unwrap();
+        assert_eq!(remote_profile_projection(&managed).unwrap()["connectionId"], "managed-owner");
+        let mut revisions = catalog_revisions(&store);
+        revisions.remove("first");
+        let mut fresh = route_profile();
+        fresh.id = "added-manually".into();
+        fresh.selected = true;
+        let mut source: Value = serde_json::from_str(&fresh.source_json).unwrap();
+        source["endpointID"] = json!("independent");
+        fresh.source_json = source.to_string();
+        store.replace_remote_model_profiles(vec![fresh.clone()], revisions).unwrap();
+        assert_eq!(store.model_profile("first").unwrap().unwrap(), managed);
+        assert!(!store.model_profile(&fresh.id).unwrap().unwrap().selected);
+        let mut revisions = catalog_revisions(&store);
+        revisions.remove("first");
+        source["endpointID"] = json!("endpoint");
+        fresh.source_json = source.to_string();
+        assert!(store.replace_remote_model_profiles(vec![fresh], revisions.clone()).is_err());
+        assert!(store.replace_remote_model_profiles(vec![managed.clone()], revisions).is_err());
+        assert_eq!(store.model_profile("first").unwrap().unwrap(), managed);
     }
 
     #[test]

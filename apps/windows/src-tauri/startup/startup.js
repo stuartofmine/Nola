@@ -26,6 +26,7 @@ async function update() {
             const feedback = document.getElementById("nola-action-status");
             button.addEventListener("click", async () => {
                 if (button.disabled) return;
+                const hadFocus = document.activeElement === button;
                 button.disabled = true;
                 button.setAttribute("aria-busy", "true");
                 feedback.textContent = "";
@@ -36,6 +37,9 @@ async function update() {
                 } finally {
                     button.disabled = false;
                     button.removeAttribute("aria-busy");
+                    if (hadFocus && button.isConnected && document.activeElement === document.body) {
+                        button.focus({preventScroll: true});
+                    }
                 }
             });
         }

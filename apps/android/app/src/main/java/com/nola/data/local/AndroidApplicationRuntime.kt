@@ -55,6 +55,22 @@ class AndroidApplicationRuntime(
     private val lock = Any()
     private var handle: Long
     /** Core owns the worker and all leases; native only services its mailbox. */
+    internal fun intelligenceIngest(input: ByteArray) = synchronized(lock) {
+        AgentCoreNative.nativeApplicationIntelligenceIngest(handle, input)
+    }
+
+    internal fun intelligenceRecall(input: ByteArray) = synchronized(lock) {
+        AgentCoreNative.nativeApplicationIntelligenceRecall(handle, input)
+    }
+
+    internal fun intelligenceSnapshot() = synchronized(lock) {
+        AgentCoreNative.nativeApplicationIntelligenceSnapshot(handle)
+    }
+
+    internal fun intelligenceClear() = synchronized(lock) {
+        AgentCoreNative.nativeApplicationIntelligenceClear(handle)
+    }
+
     fun startChildPump(input: JsonObject): Long = synchronized(lock) {
         check(handle != 0L) { "Application is closed" }
         AgentCoreNative.nativeChildPumpStart(handle,input.toString().encodeToByteArray()).also {

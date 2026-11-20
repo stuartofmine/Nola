@@ -1137,6 +1137,7 @@ const ALL_PERMISSION_LEVELS: [PermissionLevel; 2] = PermissionLevel::ALL;
 
 #[derive(Debug, PartialEq, Eq)]
 enum PermissionPickerAction {
+    Scroll(bool),
     Select(usize),
     SelectAndConfirm(usize),
     Confirm,
@@ -1146,6 +1147,9 @@ enum PermissionPickerAction {
 
 fn permission_picker_action(key: KeyEvent, selected: usize) -> PermissionPickerAction {
     use PermissionPickerAction::*;
+    if let Some(down) = crate::interaction::modal_scroll_direction(&key) {
+        return Scroll(down);
+    }
     match crate::terminal_input::modal_key(&key) {
         crate::terminal_input::ModalKey::Cancel => return Cancel,
         crate::terminal_input::ModalKey::Ignore => return Ignore,
@@ -1181,34 +1185,28 @@ fn interactive_permission_panel(config: &mut Config) -> io::Result<()> {
     let _modal = crate::interaction::acquire_terminal_modal();
     let _raw_mode = InteractiveRawModeGuard::new()?;
 
-    let mut rendered_lines = 0usize;
-    draw_permission_picker_frame(&levels, selected_idx, current, rendered_lines)?;
-    rendered_lines = render_permission_picker(&levels, selected_idx, current)
-        .lines()
-        .count();
+    draw_permission_picker_frame(&levels, selected_idx, current)?;
 
     loop {
         match read()? {
             Event::Key(key) => match permission_picker_action(key, selected_idx) {
+                PermissionPickerAction::Scroll(down) => crate::terminal_ui::scroll_permission_frame(down),
                 PermissionPickerAction::Select(index) => {
                     selected_idx = index;
-                    draw_permission_picker_frame(&levels, selected_idx, current, rendered_lines)?;
-                    rendered_lines = render_permission_picker(&levels, selected_idx, current)
-                        .lines()
-                        .count();
+                    draw_permission_picker_frame(&levels, selected_idx, current)?;
                 }
                 PermissionPickerAction::Confirm => {
-                    clear_permission_picker_frame(rendered_lines)?;
+                    crate::terminal_ui::clear_permission_frame();
                     apply_interactive_permission_level(config, levels[selected_idx]);
                     return Ok(());
                 }
                 PermissionPickerAction::SelectAndConfirm(index) => {
-                    clear_permission_picker_frame(rendered_lines)?;
+                    crate::terminal_ui::clear_permission_frame();
                     apply_interactive_permission_level(config, levels[index]);
                     return Ok(());
                 }
                 PermissionPickerAction::Cancel => {
-                    clear_permission_picker_frame(rendered_lines)?;
+                    crate::terminal_ui::clear_permission_frame();
                     llm::log_local_debug_payload(
                         "permission_mode_panel",
                         &json!({
@@ -1223,7 +1221,7 @@ fn interactive_permission_panel(config: &mut Config) -> io::Result<()> {
                 _ => {}
             },
             Event::Resize(_, _) => {
-                draw_permission_picker_frame(&levels, selected_idx, current, rendered_lines)?;
+                draw_permission_picker_frame(&levels, selected_idx, current)?;
             }
             _ => {}
         }
@@ -1251,77 +1249,38 @@ fn draw_permission_picker_frame(
     levels: &[PermissionLevel],
     selected_idx: usize,
     current: PermissionLevel,
-    previous_lines: usize,
 ) -> io::Result<()> {
-    crate::terminal_ui::present_permission_frame(
-        &render_permission_picker(levels, selected_idx, current), previous_lines > 0,
-    )
-}
-
-fn clear_permission_picker_frame(_rendered_lines: usize) -> io::Result<()> {
-    crate::terminal_ui::clear_permission_frame();
-    Ok(())
+    let text = render_permission_picker(levels, selected_idx, current, terminal_columns());
+    crate::terminal_ui::present_permission_frame(&text, true)
 }
 
 fn render_permission_picker(
     levels: &[PermissionLevel],
     selected_idx: usize,
     current: PermissionLevel,
+    columns: usize,
 ) -> String {
     let color = interactive_color_enabled();
-    let accent = INTERACTIVE_ACCENT;
-    let header = tr(Message::InteractiveAllowPanelTitle);
     let localized = crate::i18n::interaction_text();
-    let hint = localized.selection_hint;
-
-    let mut plain_rows: Vec<String> = Vec::new();
-    plain_rows.push(format!("⚙  {header}"));
-    plain_rows.push(hint.to_string());
-    plain_rows.push(format!(
-        "  {} {} ({})",
-        localized.current_label,
-        current.display(),
-        current.description()
-    ));
-    plain_rows.push(String::new());
-    let option_start = plain_rows.len();
-    for (i, level) in levels.iter().enumerate() {
-        let marker = if i == selected_idx { "›" } else { " " };
-        plain_rows.push(format!("{marker} {}  {}", i + 1, level.display()));
-        plain_rows.push(format!("     {}", level.description()));
-    }
-
-    let terminal_width = terminal_columns().max(12);
-    let max_content = terminal_width.saturating_sub(6).max(8);
-    let preferred_min = 32.min(max_content);
-    let inner = plain_rows
-        .iter()
-        .map(|row| display_width(row))
-        .max()
-        .unwrap_or(preferred_min)
-        .min(max_content)
-        .max(preferred_min);
+    let inner = columns.saturating_sub(6).clamp(1, 76);
     let mut out = String::new();
-    out.push('\n');
-    push_picker_border(&mut out, "╭", "╮", inner, accent, color);
-    for (index, row) in plain_rows.iter().enumerate() {
-        let rendered = truncate_display_width(row, inner);
-        let padded = pad_to_display_width(&rendered, inner);
-        let selected = index >= option_start && (index - option_start) / 2 == selected_idx;
-        let row_color = if index == 0 {
-            accent
-        } else if index >= option_start {
-            if (index - option_start) % 2 == 0 {
-                INTERACTIVE_ACCENT
-            } else {
-                INTERACTIVE_DIM
-            }
-        } else {
-            INTERACTIVE_DIM
-        };
-        push_picker_line(&mut out, &padded, row_color, color, selected);
+    push_picker_border(&mut out, "╭", "╮", inner, INTERACTIVE_ACCENT, color);
+    let mut row = |text: &str, tone: &str, selected: bool| {
+        for line in crate::terminal_ui::wrap_styled_line(text, inner) {
+            push_picker_line(&mut out, &pad_to_display_width(&line, inner), tone, color, selected);
+        }
+    };
+    row(tr(Message::InteractiveAllowPanelTitle), INTERACTIVE_ACCENT, false);
+    row(&format!("{} {}", localized.current_label, current.display()), INTERACTIVE_DIM, false);
+    for (i, level) in levels.iter().enumerate() {
+        let selected = i == selected_idx;
+        let marker = if selected { "›" } else { " " };
+        row(&format!("{marker} {}  {}", i + 1, level.display()), INTERACTIVE_ACCENT, selected);
     }
-    push_picker_border(&mut out, "╰", "╯", inner, accent, color);
+    row(levels[selected_idx].description(), INTERACTIVE_DIM, false);
+    row(localized.selection_hint, INTERACTIVE_DIM, false);
+    row(crate::i18n::ui_text(crate::i18n::UiText::PermissionDigitHint), INTERACTIVE_DIM, false);
+    push_picker_border(&mut out, "╰", "╯", inner, INTERACTIVE_ACCENT, color);
     out
 }
 
@@ -1960,6 +1919,50 @@ fn prepare_cli_prompt<'a>(config: &Config, prompt: &'a str) -> Result<(Config, s
     Ok((selected_config, std::borrow::Cow::Borrowed(prompt)))
 }
 
+/// The terminal listener has joined before this handoff. Every Enter it
+/// accepted is now either in the predecessor's Core checkpoint or in the
+/// original Application FIFO. Only the latter still needs a foreground run.
+fn finish_cli_foreground(
+    config: &Config,
+    mut cancellation: interaction::ExecutionCancellation,
+    emitter: &mut Emitter,
+    mut outcome: core_agent_runtime::CoreRunOutcome,
+) -> Result<core_agent_runtime::CoreRunOutcome, String> {
+    let Some(session) = config.session_id.as_deref().filter(|_| config.save_session) else {
+        return Ok(outcome);
+    };
+    let mut admitted = std::collections::BTreeSet::new();
+    while outcome.turn_status == nola_core::agent::AgentTurnStatus::Completed && !cancellation.is_requested() {
+        admitted.extend(cancellation.runtime_control().take_admitted_followups(session));
+        if admitted.is_empty() { break; }
+        core_agent_runtime::drain_parent_agent_task_inbox(session)?;
+        let Some(lease) = crate::agent_command_port::claim_authored_followup(session, &admitted)? else { break; };
+        let command_id = lease.command_id.clone();
+        let lease_owner = lease.lease_owner.clone();
+        let request_id = format!("queued-admission:{}:{}", command_id, lease.delivery_attempt);
+        // Each new turn observes its own configuration and transcript parent.
+        // A mention on the preceding message belongs only to that message.
+        let mut next = config.clone();
+        next.main_expert_selection = None;
+        cancellation = interaction::ExecutionCancellation::interactive();
+        let result = (|| {
+            let next = crate::conversation_invocation::prepare_submission(&next)?;
+            let request = next.host_invocation_request()?;
+            with_cli_execution_control(&next, cancellation.clone(), emitter, |control, emitter|
+                core_agent_runtime::run_queued_user_input(&request, lease, request_id, emitter, control,
+                    nola_core::context_engine::ContextPlatform::Cli, Vec::new()))
+        })();
+        if let Err(error) = &result {
+            if nola_service_client::ApplicationServiceCommandError::unresolved_from_boundary_message(error).is_none() {
+                crate::agent_command_port::release_agent_command_lease(session, &command_id, &lease_owner)?;
+            }
+        }
+        outcome = result?;
+        admitted.remove(&command_id);
+    }
+    Ok(outcome)
+}
+
 fn run_single_prompt(config: &Config, prompt: &str) -> Result<PromptRunResult, String> {
     let (selected_config, text) = prepare_cli_prompt(config, prompt)?;
     let prompt = text.as_ref();
@@ -1979,8 +1982,9 @@ fn run_single_prompt(config: &Config, prompt: &str) -> Result<PromptRunResult, S
         interaction::ExecutionCancellation::interactive()
     };
     let request = turn_config.host_invocation_request()?;
-    let run_outcome = with_cli_execution_control(config, cancellation, &mut emitter, |control, emitter|
+    let run_outcome = with_cli_execution_control(config, cancellation.clone(), &mut emitter, |control, emitter|
         core_agent_runtime::run_agent_core_with_cancellation(&request, prompt, emitter, control))?;
+    let run_outcome = finish_cli_foreground(config, cancellation, &mut emitter, run_outcome)?;
     record_cli_data_source_usage(config, &used_data_sources);
     emitter.wait_for_execution_input_release();
     let session_id = emitter.session_id().map(str::to_string);

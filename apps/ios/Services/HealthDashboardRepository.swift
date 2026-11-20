@@ -57,6 +57,9 @@ struct HealthDashboardSnapshot: Sendable {
 }
 
 final class HealthDashboardRepository: @unchecked Sendable {
+    private let runtime: IOSApplicationRuntime?
+    init(runtime: IOSApplicationRuntime? = .shared) { self.runtime = runtime }
+
     private let store = HKHealthStore()
     private let calendar = Calendar.autoupdatingCurrent
     private let logger = Logger.shared
@@ -262,7 +265,7 @@ final class HealthDashboardRepository: @unchecked Sendable {
                 )
             )
         }
-        _ = PersonalIntelligenceCore.ingest(
+        _ = runtime?.ingestIntelligence(
             IntelligenceIngestRequest(events: [event], memoryCandidates: candidates)
         )
     }

@@ -92,6 +92,7 @@ mod llm;
 mod room_routing;
 mod local_models;
 mod mcp_catalog_port;
+pub mod harness_plugin;
 mod plugin_manager;
 pub mod plugin_runtime;
 mod mcp_host;

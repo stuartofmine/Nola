@@ -1901,6 +1901,27 @@ final class MacEditedResendTests: XCTestCase {
         XCTAssertTrue(overlay.isEmpty)
     }
 
+    func testInitialUserRevisionEnablesInPlaceEditWithoutInventingAVersion() throws {
+        let messageJSON = """
+        {"message_id":"first-user","role":"user","state":"completed","revision":0,"created_at_ms":1,
+         "parts":[{"kind":"text","part_id":"p","revision":0,"markdown":"first","is_final":true}]}
+        """
+        let original = try JSONDecoder().decode(MacCanonicalConversationProjectionV1.Message.self, from: Data(messageJSON.utf8))
+        guard case .text(let body)? = original.parts.first else { return XCTFail("Missing original user text") }
+        XCTAssertTrue(body.isFinal)
+        XCTAssertEqual(body.revision, 0)
+
+        let draft = AppleMessageEditDraft(sourceConversationID: "thread", sourceMessageID: "first-user",
+            expectedSourceRevision: 2, expectedMessageRevision: original.revision, text: "replacement")
+        XCTAssertTrue(draft.hasSourceWitness)
+        let request = try XCTUnwrap(draft.inPlacePreparation())
+        XCTAssertEqual(request.expected_message_revision, 0)
+        XCTAssertEqual(request.expected_revision, 2)
+        let missing = AppleMessageEditDraft(sourceConversationID: "thread", sourceMessageID: "first-user",
+            expectedSourceRevision: 2, expectedMessageRevision: nil, text: "replacement")
+        XCTAssertNil(missing.inPlacePreparation())
+    }
+
     func testInPlaceEditKeepsOwnerAndStableRetryIdentity() throws {
         var draft = AppleMessageEditDraft(sourceConversationID: "existing-conversation", sourceMessageID: "user-message",
             expectedSourceRevision: 7, expectedMessageRevision: 3, text: "original")

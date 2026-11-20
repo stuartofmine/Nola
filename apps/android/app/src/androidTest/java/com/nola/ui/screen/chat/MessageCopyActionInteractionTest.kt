@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: Apache-2.0
 package com.nola.ui.screen.chat
 
+import android.content.ClipData
+import android.content.ClipboardManager
 import androidx.activity.ComponentActivity
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.width
@@ -20,6 +22,7 @@ import androidx.compose.ui.test.performClick
 import androidx.compose.ui.unit.dp
 import com.nola.R
 import com.nola.ui.theme.NolaTheme
+import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Rule
 import org.junit.Test
@@ -39,7 +42,9 @@ class MessageCopyActionInteractionTest {
                 }
             }
         }
+        val clipboard = compose.activity.getSystemService(ClipboardManager::class.java)
         for (appearance in listOf(false, true)) {
+            compose.runOnIdle { clipboard.setPrimaryClip(ClipData.newPlainText("fixture", "previous message")) }
             compose.runOnIdle { dark = appearance }
             val copy = compose.onNodeWithTag("copy")
             copy.assertHasClickAction()
@@ -54,6 +59,9 @@ class MessageCopyActionInteractionTest {
             try {
                 copy.performClick()
                 compose.mainClock.advanceTimeByFrame()
+                compose.runOnIdle {
+                    assertEquals("Owned clipboard acceptance", clipboard.primaryClip?.getItemAt(0)?.text?.toString())
+                }
                 copy.assertContentDescriptionEquals(compose.activity.getString(R.string.chat_message_copied))
             } finally {
                 compose.mainClock.autoAdvance = true

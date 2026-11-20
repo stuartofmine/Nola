@@ -42,3 +42,14 @@ test('activity source focus keeps exact child ownership and a bounded return des
     assert.equal(activityFocusOwner(completed), null);
     assert.equal(activitySourcePath({...detail,source_conversation_id:null}), null);
 });
+
+test('installed plugin destinations keep opaque identity on desktop reload and compact routing', () => {
+    const id = 'pi/npm:@example/board#weekly';
+    const path = '/plugin-page?' + new URLSearchParams({id});
+    const desktop = initialWorkspaceLocation('https://nola.test' + path, 1160);
+    assert.equal(desktop.pathname, '/chat');
+    assert.equal(desktop.searchParams.get('content'), path);
+    const restored = initialWorkspaceLocation(desktop.href, 690);
+    assert.equal(restored.pathname, '/plugin-page');
+    assert.equal(restored.searchParams.get('id'), id);
+});

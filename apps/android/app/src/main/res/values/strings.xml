@@ -1,5 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
+    <string name="conversation_more_options">More options for %1$s</string>
     <string name="expert_use_conversation_model">Use conversation model</string>
     <string name="expert_manage">Manage experts</string>
     <string name="inspector_progress">Progress</string>
@@ -424,7 +425,7 @@
     <string name="models_access_token">Access Token</string>
     <string name="models_certificate_sha256_optional">Certificate SHA-256 (optional)</string>
     <string name="models_certificate_sha256_help">For HTTPS hosts. Paste the leaf certificate fingerprint with or without colons.</string>
-    <string name="models_web_host_trust_explanation">The access token is encrypted in Android Keystore. Host identity is paired on first verified connection. An optional certificate pin adds HTTPS transport identity binding.</string>
+    <string name="models_web_host_trust_explanation">The access token is encrypted in Android Keystore. Host identity is paired on first verified connection.</string>
     <string name="models_error_invalid_certificate_pin">Certificate fingerprint must contain exactly 64 hexadecimal characters.</string>
     <string name="models_error_certificate_pin_requires_https">Certificate pinning requires an HTTPS Host URL.</string>
     <string name="models_error_public_http_forbidden">Public Web Host addresses require HTTPS. HTTP is limited to this device or a private local network.</string>
@@ -477,16 +478,15 @@
     <string name="settings_not_connected">Not connected</string>
     <string name="settings_data_management">Data Management</string>
     <string name="settings_local_data_size">Local Data Size</string>
-    <string name="settings_export_data">Export Data</string>
+    <string name="settings_export_data">Export readable archive</string>
     <string name="settings_export_desc">Review and export a private archive</string>
     <string name="settings_export_failed">Export failed: %1$s</string>
     <string name="settings_export_confirm_title">Export private archive?</string>
-    <string name="settings_export_confirm_message">The archive includes conversations, memories, uploaded content, custom prompts, and tool history. Nola removes stored credentials and structured MCP URL secrets, but does not scan or alter free text. Continue only if you can store the archive securely.</string>
+    <string name="settings_export_confirm_message">Includes conversation text, memories, documents, skills and generation settings. Connections and tool details stay on this device. Your text may contain private information.</string>
     <string name="settings_export_confirm_action">Continue</string>
     <string name="settings_clear_all_data">Clear All Data</string>
-    <string name="settings_clear_all_data_message">This will permanently delete all conversations, messages, scheduled actions, and notifications. This action cannot be undone.</string>
+    <string name="settings_clear_all_data_message">Android will erase Nola’s data on this device, including conversations, files, accounts, and settings. Nola will close. This cannot be undone.</string>
     <string name="settings_delete_all">Delete All</string>
-    <string name="settings_all_data_cleared">All data cleared</string>
     <string name="settings_about">About</string>
     <string name="settings_privacy">Privacy</string>
     <string name="settings_privacy_desc">Data stays on this device unless you use a connected service.</string>
@@ -586,7 +586,7 @@
     <string name="chat_host_pairing_identity">Paired host</string>
     <string name="chat_host_pairing_forget">Forget host pairing</string>
     <string name="chat_host_pairing_forget_confirm_title">Forget this host pairing?</string>
-    <string name="chat_host_pairing_forget_confirm_message">Nola will clear the trusted host identity. Conversations remain on this device.</string>
+    <string name="chat_host_pairing_forget_confirm_message">The saved host address, token and device grants will be removed. Your conversations stay on this device.</string>
     <string name="chat_host_pairing_forget_confirm_action">Forget pairing</string>
     <string name="chat_permission_hybrid_request_reason">The paired host is requesting a device capability. The result will return only to this host session.</string>
     <string name="chat_permission_hybrid_run_format">Run %1$s on this device</string>
@@ -738,7 +738,7 @@
     <string name="settings_data_sources">Data sources</string>
     <string name="settings_data_sources_desc">Health, files, calendar, and other local data</string>
     <string name="settings_models_desc">Local, cloud, and host model connections</string>
-    <string name="settings_capabilities">Skills and MCP</string>
+    <string name="settings_capabilities">Capability library</string>
     <string name="settings_capabilities_desc">Manage reusable workflows and tool connections</string>
     <string name="settings_automation">Automation</string>
     <string name="scheduled_delete_confirm_title">Delete automation?</string>
@@ -860,7 +860,7 @@
     <string name="settings_load_failed_detail">Local settings are temporarily unavailable.</string>
     <string name="settings_exporting_data">Preparing secure export…</string>
     <string name="settings_clearing_data">Clearing…</string>
-    <string name="settings_clear_failed">Could not clear data: %1$s</string>
+    <string name="settings_clear_failed">Android could not clear the data. Try again or open App info → Storage → Clear storage.</string>
     <string name="notifications_search_hint">Search notifications</string>
     <string name="notifications_clear_search">Clear search</string>
     <string name="notifications_filter_all_v2">All</string>
@@ -901,6 +901,7 @@
     <string name="personal_intelligence_strategies_title">Learning how to work better</string>
     <string name="personal_intelligence_strategies_detail">Adapting model and route choices from real outcomes</string>
     <string name="personal_intelligence_clear_action">Clear personal intelligence</string>
+    <string name="personal_intelligence_clear_failed">Could not clear learned data. Try again.</string>
     <string name="personal_intelligence_clear_title">Clear all learned data?</string>
     <string name="personal_intelligence_clear_detail">Chats stay intact, but observations, memories, and route learning cannot be restored.</string>
     <string name="personal_intelligence_clear_confirm">Clear</string>
@@ -1059,7 +1060,7 @@
     <string name="chat_skill_run_result">Result: %1$s</string>
     <string name="chat_skill_run_error">Error: %1$s</string>
     <string name="models_web_host_setup_title">Before connecting</string>
-    <string name="models_web_host_setup_start">On the Mac, open Nola Settings > Host connection and enable Share This Mac.</string>
+    <string name="models_web_host_setup_start">On the Mac, open Nola Settings > Connections and enable Share This Mac.</string>
     <string name="models_web_host_setup_copy">Choose Copy Connection Setup on the Mac, then paste it here. You can also enter the address and token manually.</string>
     <string name="models_web_host_checking">Checking host</string>
     <string name="models_web_host_checking_detail">Verifying the token, permission protocol, and host identity before saving.</string>
@@ -1072,6 +1073,7 @@
     <string name="models_error_host_unreachable">The host could not be reached. Check its address, network, and running status.</string>
     <string name="models_error_host_unauthorized">The access token was rejected. Copy the current token from the host and try again.</string>
     <string name="models_error_host_generic">The host could not be verified. Check the connection details and try again.</string>
+    <string name="models_web_host_default_verified">Host verified. It remains your default for new conversations.</string>
     <string name="models_web_host_verified">Web Host verified and saved. Activate it separately when you want to use it.</string>
     <string name="models_host_messaging_title">Messaging channels</string>
     <string name="models_host_messaging_summary">%1$d connected of %2$d · background worker %3$s</string>
@@ -1406,4 +1408,8 @@
     <string name="chat_tool_install_skill_host">Install Skill on the host</string>
     <string name="chat_tool_read_skill_file">Read a Skill file</string>
     <string name="chat_permission_install_github_skill">Download and enable a Skill from %1$s for future chats on this phone.</string>
+    <string name="harness_plugins">Plugins</string>
+    <string name="harness_device_note">Connect the computer that runs your plugins to use them here.</string>
+    <string name="harness_connect">Connect desktop Host</string>
+    <string name="harness_changed">Host pairing changed. Open plugin management again.</string>
 </resources>

@@ -5,6 +5,29 @@
 import AppKit
 import SwiftUI
 
+/// A Settings scene may retain its hosting view after its native window closes.
+struct MacWindowCloseObserver: NSViewRepresentable {
+    let onClose: () -> Void
+
+    func makeNSView(context: Context) -> ObserverView { ObserverView() }
+    func updateNSView(_ view: ObserverView, context: Context) { view.onClose = onClose }
+
+    final class ObserverView: NSView {
+        var onClose: (() -> Void)?
+
+        override func viewDidMoveToWindow() {
+            super.viewDidMoveToWindow()
+            let center = NotificationCenter.default
+            center.removeObserver(self, name: NSWindow.willCloseNotification, object: nil)
+            if let window {
+                center.addObserver(self, selector: #selector(windowClosing(_:)), name: NSWindow.willCloseNotification, object: window)
+            }
+        }
+
+        @objc private func windowClosing(_ notification: Notification) { onClose?() }
+    }
+}
+
 /// Protects a standalone editor's native close button and Command-W as well as
 /// its in-content Cancel action. Forward every unrelated delegate method to
 /// SwiftUI's delegate rather than taking over window lifecycle ownership.

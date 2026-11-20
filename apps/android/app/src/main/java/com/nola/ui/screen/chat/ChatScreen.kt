@@ -2,6 +2,7 @@
 
 package com.nola.ui.screen.chat
 
+import com.nola.ui.components.dismissImeOnBlankTap
 import kotlinx.serialization.json.jsonArray
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
@@ -342,6 +343,7 @@ internal fun ChatScreen(
     }
     renameTarget?.let { (targetId, _) ->
         androidx.compose.material3.AlertDialog(
+            modifier = Modifier.dismissImeOnBlankTap(),
             onDismissRequest = { renameTarget = null },
             title = { Text(stringResource(R.string.chat_rename_conversation)) },
             text = {
@@ -689,7 +691,9 @@ internal fun ChatScreen(
     }
 
     if (showExpertPicker) {
-        ModalBottomSheet(onDismissRequest = { showExpertPicker = false; showExpertManagement = false },
+        ModalBottomSheet(
+            modifier = Modifier.dismissImeOnBlankTap(),
+            onDismissRequest = { showExpertPicker = false; showExpertManagement = false },
             sheetState = androidx.compose.material3.rememberModalBottomSheetState(skipPartiallyExpanded = true)) {
             if (showExpertManagement) {
                 ExpertManagementPanel(viewModel, onBack = {
@@ -739,7 +743,9 @@ internal fun ChatScreen(
     }
 
     if (inspector != null || showContextSheetOpen) {
-        ModalBottomSheet(onDismissRequest = { inspector = null; showContextSheetOpen = false }, sheetState = androidx.compose.material3.rememberModalBottomSheetState(skipPartiallyExpanded = true)) {
+        ModalBottomSheet(
+            modifier = Modifier.dismissImeOnBlankTap(),
+            onDismissRequest = { inspector = null; showContextSheetOpen = false }, sheetState = androidx.compose.material3.rememberModalBottomSheetState(skipPartiallyExpanded = true)) {
         Box(Modifier.fillMaxWidth().fillMaxHeight(0.92f).navigationBarsPadding()) {
         if (inspector == ConversationInspector.Progress) {
             ConversationProgressPanel(
@@ -874,7 +880,9 @@ internal fun ChatScreen(
 
 
     if (showIMSearch) {
-        ModalBottomSheet(onDismissRequest = { showIMSearch = false },
+        ModalBottomSheet(
+            modifier = Modifier.dismissImeOnBlankTap(),
+            onDismissRequest = { showIMSearch = false },
             sheetState = androidx.compose.material3.rememberModalBottomSheetState(skipPartiallyExpanded = true)) {
             Column(Modifier.fillMaxWidth().fillMaxHeight(.92f).imePadding().navigationBarsPadding().padding(16.dp)) {
                 androidx.compose.material3.OutlinedTextField(value = imSearch, onValueChange = { imSearch = it },
@@ -1029,6 +1037,7 @@ internal fun ChatScreen(
                         Icon(painterResource(R.drawable.nola_more), contentDescription = stringResource(R.string.common_more))
                     }
                     if (showActions) ModalBottomSheet(
+                        modifier = Modifier.dismissImeOnBlankTap(),
                         onDismissRequest = { showActions = false },
                         sheetState = androidx.compose.material3.rememberModalBottomSheetState(skipPartiallyExpanded = true)
                     ) {
@@ -1500,7 +1509,7 @@ internal fun ChatScreen(
             message = message,
             onDismiss = { learningMessage = null },
             onSave = { statement, appliesToFuture ->
-                recordLearningFeedback(message, statement, appliesToFuture)
+                recordLearningFeedback(PersonalIntelligenceCore.from(context), message, statement, appliesToFuture)
                 if (appliesToFuture) {
                     intelligenceViewModel.saveEntry(
                         kind = IntelligenceEntryKind.Preference,
@@ -3022,8 +3031,6 @@ fun MessageBubble(
                     val blocks = canonicalMessageBlocks(message.canonicalParts.filterNot { it is ConversationProjectionV1.Part.Source || it is ConversationProjectionV1.Part.Citation })
                     val latestActivityKey = blocks.lastOrNull { it is CanonicalMessageBlock.Activity }?.key
                     blocks.forEach { block ->
-                        if (block is CanonicalMessageBlock.Part && block.part is ConversationProjectionV1.Part.Text &&
-                            block.part.disclosedMarkdown.isEmpty()) return@forEach
                         if (block is CanonicalMessageBlock.Activity && block.parts.none { part ->
                             part is ConversationProjectionV1.Part.Tool || (thinkingEnabled && part is ConversationProjectionV1.Part.Reasoning &&
                                 (!part.summary.isNullOrBlank() || part.partId == visibleReasoningPlaceholderId(block.parts, isStreaming)))
@@ -3294,12 +3301,16 @@ internal fun AgentCoreTaskCard(
         modifier = Modifier
             .fillMaxWidth()
             .clip(RoundedCornerShape(NolaRadius.md))
-            .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.34f))
-            .testTag("chat.task.card.${task.id}")
-            .combinedClickable(onClick = { expanded = !expanded }, onLongClick = {}),
+            .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.34f)),
     ) {
+        val toggleLabel = stringResource(if (expanded) R.string.common_collapse else R.string.common_expand)
         Row(
-            modifier = Modifier.padding(horizontal = 11.dp, vertical = 10.dp),
+            modifier = Modifier
+                .fillMaxWidth()
+                .heightIn(min = 48.dp)
+                .testTag("chat.task.card.${task.id}")
+                .clickable(role = Role.Button, onClickLabel = toggleLabel) { expanded = !expanded }
+                .padding(horizontal = 11.dp, vertical = 10.dp),
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.spacedBy(10.dp),
         ) {
@@ -3431,7 +3442,9 @@ private fun ChatMessageActionSheet(
     onCopy: () -> Unit,
     onTeach: (() -> Unit)?
 ) {
-    ModalBottomSheet(onDismissRequest = onDismiss,
+    ModalBottomSheet(
+        modifier = Modifier.dismissImeOnBlankTap(),
+        onDismissRequest = onDismiss,
         sheetState = androidx.compose.material3.rememberModalBottomSheetState(skipPartiallyExpanded = true)) {
         Column(
             modifier = Modifier
@@ -3543,7 +3556,9 @@ private fun ChatLearningFeedbackSheet(
     if (discard) com.nola.ui.components.DiscardChangesDialog(onDiscard = onDismiss, onKeepEditing = { discard = false })
     val defaultStatement = stringResource(focus.statementRes)
 
-    ModalBottomSheet(onDismissRequest = requestDismiss, sheetState = com.nola.ui.components.rememberGuardedEditorSheetState(false, dirty) { discard = true }) {
+    ModalBottomSheet(
+        modifier = Modifier.dismissImeOnBlankTap(),
+        onDismissRequest = requestDismiss, sheetState = com.nola.ui.components.rememberGuardedEditorSheetState(false, dirty) { discard = true }) {
         Column(
             modifier = Modifier
                 .fillMaxWidth()
@@ -3674,13 +3689,14 @@ private fun ChatLearningFeedbackSheet(
 }
 
 private fun recordLearningFeedback(
+    intelligence: PersonalIntelligenceCore,
     message: ConversationMessage,
     statement: String,
     appliesToFuture: Boolean
 ) {
     val eventID = UUID.randomUUID().toString()
     val semanticKey = "user-preference-${statement.lowercase().hashCode()}"
-    PersonalIntelligenceCore.ingest(
+    intelligence.ingest(
         IntelligenceIngestRequest(
             events = listOf(
                 IntelligenceEvent(

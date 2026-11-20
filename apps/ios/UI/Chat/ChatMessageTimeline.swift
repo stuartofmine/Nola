@@ -663,7 +663,7 @@ struct ChatMessageTimeline: View {
             success: true,
             userCorrected: true
         )
-        let response = PersonalIntelligenceCore.ingest(
+        let response = container.applicationRuntime.ingestIntelligence(
             IntelligenceIngestRequest(
                 events: [event],
                 memoryCandidates: candidates,

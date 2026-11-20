@@ -16,11 +16,13 @@ struct ModelsView: View {
     @EnvironmentObject var container: ServiceContainer
     @Environment(\.openURL) private var openURL
     @Environment(\.horizontalSizeClass) private var horizontalSizeClass
+    @Environment(\.layoutDirection) private var layoutDirection
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     @State private var apiDraft = IOSModelSetupDraft()
     @State private var hostHasDraft = false
-    @State private var hostIsConnecting = false
+    @State private var hostVerificationTask: Task<Void, Never>?
+    private var hostIsConnecting: Bool { hostVerificationTask != nil }
     @State private var confirmsDiscard = false
     private var hasDraft: Bool { apiDraft.hasChanges || hostHasDraft }
     @State private var models: [ModelInfo] = []
@@ -80,8 +82,8 @@ struct ModelsView: View {
                 WebHostConfigurationView(
                     existingModel: hostModels.first, embedded: true,
                     onDraftChanged: { hostHasDraft = $0 },
-                    onConnectingChanged: { hostIsConnecting = $0 }
-                ) { configured in
+                    onVerificationChanged: { hostVerificationTask = $0 }
+                ) { configured, _ in
                     if onConfigured != nil {
                         select(configured)
                     } else {
@@ -99,16 +101,37 @@ struct ModelsView: View {
         .toolbarBackground(DesignTokens.backgroundColor, for: .navigationBar)
         .toolbarBackground(.visible, for: .navigationBar)
         .toolbar {
-            if ownsNavigationStack || hasDraft || hostIsConnecting {
-                ToolbarItem(placement: .cancellationAction) {
-                    Button(L10n.close) {
-                        if hasDraft { confirmsDiscard = true } else { dismiss() }
+            ToolbarItem(placement: .cancellationAction) {
+                Button {
+                    if let hostVerificationTask { hostVerificationTask.cancel() }
+                    else if hasDraft { confirmsDiscard = true }
+                    else { dismiss() }
+                } label: {
+                    if hostIsConnecting {
+                        Text(NSLocalizedString("model.web_host.cancel_verification", comment: ""))
+                    } else if ownsNavigationStack {
+                        Text(L10n.close)
+                    } else {
+                        Image(systemName: "chevron.backward").accessibilityLabel(L10n.back)
                     }
-                    .accessibilityIdentifier("model.setup.close")
                 }
+                .accessibilityIdentifier(hostIsConnecting ? "model.web_host.cancel_verification" : "model.setup.close")
             }
         }
-        .navigationBarBackButtonHidden(!ownsNavigationStack && (hasDraft || hostIsConnecting))
+        .navigationBarBackButtonHidden(!ownsNavigationStack)
+        .overlay(alignment: .leading) {
+            if !ownsNavigationStack && !hasDraft && !hostIsConnecting {
+                // Reserve the leading edge for Back. The paged model sources
+                // otherwise consume the same horizontal pan as a tab swipe.
+                Color.clear.frame(width: 16)
+                    .contentShape(Rectangle())
+                    .gesture(DragGesture(minimumDistance: 12).onEnded { drag in
+                        let forward = layoutDirection == .rightToLeft ? -drag.translation.width : drag.translation.width
+                        if forward > 60 && forward > abs(drag.translation.height) { dismiss() }
+                    })
+                    .accessibilityHidden(true)
+            }
+        }
         .interactiveDismissDisabled(hasDraft || hostIsConnecting)
         .alert(
             NSLocalizedString("model.setup.discard_title", value: "Discard unsaved changes?", comment: "Discard model setup title"),
@@ -737,28 +760,11 @@ private struct IOSModelExecutionCapabilitiesView: View {
 
 /// Saved pairing credentials belong to the approved endpoint, never an edited destination.
 enum IOSHostConnectionDraftPolicy {
-    static func endpoint(_ raw: String) -> URL? {
-        guard let url = URL(string: raw.trimmingCharacters(in: .whitespacesAndNewlines)),
-              let components = URLComponents(url: url, resolvingAgainstBaseURL: false),
-              ["http", "https"].contains(components.scheme?.lowercased() ?? ""),
-              components.host?.isEmpty == false,
-              components.user == nil, components.password == nil,
-              components.query == nil, components.fragment == nil,
-              components.port.map({ (1...65535).contains($0) }) ?? true else { return nil }
-        return url
-    }
+    static func endpoint(_ raw: String) -> URL? { AppleHostConnectionSetup.endpoint(raw) }
 
     static func canReuseSavedToken(for url: URL, original: String?) -> Bool {
-        guard let original, let approved = endpoint(original),
-              AppleHostConnectionSetup.sameOrigin(url, approved) else { return false }
-        // Hosts currently use root origins. Preserve path identity for any
-        // previously configured routed endpoint instead of broadening trust.
-        func path(_ value: URL) -> String {
-            var result = URLComponents(url: value, resolvingAgainstBaseURL: false)?.percentEncodedPath ?? value.path
-            while result.last == "/" { result.removeLast() }
-            return result
-        }
-        return path(url) == path(approved)
+        guard let original, let approved = endpoint(original) else { return false }
+        return AppleHostConnectionSetup.sameEndpoint(url, approved)
     }
 
     static func token(entered: String, for url: URL, original: String?, loadSaved: () -> String?) -> String {
@@ -771,117 +777,124 @@ enum IOSHostConnectionDraftPolicy {
 
 struct WebHostConfigurationView: View {
     @Environment(\.dismiss) private var dismiss
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     let existingModel: ModelInfo?
     let embedded: Bool
     let onDraftChanged: (Bool) -> Void
-    let onConnectingChanged: (Bool) -> Void
-    let onConnected: (ModelInfo) -> Void
+    let onVerificationChanged: (Task<Void, Never>?) -> Void
+    let onConnected: (ModelInfo, String) -> Void
 
     @State private var hostURL: String
     @State private var accessToken: String
     @State private var isConnecting = false
+    @State private var verifiedAddress: String?
+    @State private var pairingToForget: URL?
     @State private var importedSetup: AppleHostConnectionSetup?
     private enum ConnectionField: Hashable {
         case url
         case token
     }
     @FocusState private var connectionField: ConnectionField?
+    private var hasDraft: Bool { hostURL != (existingModel?.baseURL ?? "") || !accessToken.isEmpty }
+    @State private var confirmsDiscard = false
     @State private var connectionTask: Task<Void, Never>?
     @State private var errorMessage: String?
 
     init(
         existingModel: ModelInfo?, embedded: Bool = false,
         onDraftChanged: @escaping (Bool) -> Void = { _ in },
-        onConnectingChanged: @escaping (Bool) -> Void = { _ in },
-        onConnected: @escaping (ModelInfo) -> Void
+        onVerificationChanged: @escaping (Task<Void, Never>?) -> Void = { _ in },
+        onConnected: @escaping (ModelInfo, String) -> Void
     ) {
         self.existingModel = existingModel
         self.embedded = embedded
         self.onConnected = onConnected
         self.onDraftChanged = onDraftChanged
-        self.onConnectingChanged = onConnectingChanged
+        self.onVerificationChanged = onVerificationChanged
         _hostURL = State(initialValue: existingModel?.baseURL ?? "")
         _accessToken = State(initialValue: "")
     }
 
+    private var pairedHost: URL? {
+        guard let url = IOSHostConnectionDraftPolicy.endpoint(hostURL),
+              ModelSelectionManager.pairedWebHostIdentity(for: url) != nil else { return nil }
+        return url
+    }
+
     var body: some View {
-        Form {
+        let pairedURL = pairedHost
+        return Form {
             Group {
-            Section {
-                VStack(alignment: .leading, spacing: 12) {
-                    Label {
-                        Text(NSLocalizedString(
-                            "model.web_host.setup.start",
-                            value: "On the Mac, open Nola Settings > Host connection and enable device connections.",
-                            comment: "Web Host setup first step"
-                        ))
-                    } icon: {
-                        Image(systemName: "1.circle.fill")
-                            .foregroundStyle(DesignTokens.primaryColor)
-                    }
-
-                    Label {
-                        Text(NSLocalizedString(
-                            "model.web_host.setup.copy",
-                            value: "Copy the address and pairing token shown by Nola on the Mac. Keep both devices on a trusted private network, or use HTTPS.",
-                            comment: "Web Host setup second step"
-                        ))
-                    } icon: {
-                        Image(systemName: "2.circle.fill")
-                            .foregroundStyle(DesignTokens.primaryColor)
-                    }
-                }
-                .font(.subheadline)
-            } header: {
-                Text(NSLocalizedString("model.web_host.setup", value: "Before connecting", comment: "Web Host setup section"))
-            }
-
-            if isConnecting {
+            if pairedURL == nil {
                 Section {
-                    HStack(spacing: 12) {
-                        ProgressView()
-                        VStack(alignment: .leading, spacing: 3) {
-                            Text(NSLocalizedString("model.web_host.checking", value: "Checking host", comment: "Web Host checking title"))
-                                .font(.subheadline.weight(.semibold))
+                    VStack(alignment: .leading, spacing: 12) {
+                        Label {
                             Text(NSLocalizedString(
-                                "model.web_host.checking.detail",
-                                value: "Verifying the token, permission protocol, and host identity before saving.",
-                                comment: "Web Host checking detail"
+                                "model.web_host.setup.start",
+                                value: "On the Mac, open Nola Settings > Connections and enable “Share this Mac as a Nola Server”.",
+                                comment: "Web Host setup first step"
                             ))
-                            .font(.footnote)
-                            .foregroundStyle(.secondary)
+                        } icon: {
+                            Image(systemName: "1.circle.fill")
+                                .foregroundStyle(DesignTokens.primaryColor)
+                        }
+
+                        Label {
+                            Text(NSLocalizedString(
+                                "model.web_host.setup.copy",
+                                value: "Copy the address and pairing token shown by Nola on the Mac. Keep both devices on a trusted private network, or use HTTPS.",
+                                comment: "Web Host setup second step"
+                            ))
+                        } icon: {
+                            Image(systemName: "2.circle.fill")
+                                .foregroundStyle(DesignTokens.primaryColor)
                         }
                     }
-                    .accessibilityElement(children: .combine)
+                    .font(.subheadline)
+                } header: {
+                    Text(NSLocalizedString("model.web_host.setup", value: "Before connecting", comment: "Web Host setup section"))
+                        .accessibilityIdentifier("model.web_host.first_steps")
                 }
             }
 
             Section {
-                Button {
-                    guard let text = UIPasteboard.general.string, let setup = AppleHostConnectionSetup.decode(text) else {
-                        errorMessage = NSLocalizedString("model.web_host.invalid_setup", value: "Copy Connection Setup from Nola on the host, then paste it here.", comment: "Invalid host setup")
-                        return
+                LabeledContent {
+                    PasteButton(payloadType: String.self) { values in
+                        guard let text = values.first, let setup = AppleHostConnectionSetup.decode(text) else {
+                            errorMessage = NSLocalizedString("model.web_host.invalid_setup", value: "Copy Connection Setup from Nola on the host, then paste it here.", comment: "Invalid host setup")
+                            return
+                        }
+                        importedSetup = setup
+                        hostURL = setup.origin.absoluteString
+                        accessToken = setup.accessToken
+                        errorMessage = nil
                     }
-                    importedSetup = setup
-                    hostURL = setup.origin.absoluteString
-                    accessToken = setup.accessToken
-                    errorMessage = nil
+                    .labelStyle(.titleAndIcon)
+                    .frame(minHeight: 44)
+                    .disabled(isConnecting)
+                    .accessibilityLabel(Text("model.web_host.paste_setup"))
+                    .accessibilityIdentifier("model.web_host.paste_setup")
                 } label: {
-                    Label(NSLocalizedString("model.web_host.paste_setup", value: "Paste Connection Setup", comment: "Paste host setup action"), systemImage: "doc.on.clipboard")
+                    Text("model.web_host.setup_payload")
                 }
-                .disabled(isConnecting)
-                .accessibilityIdentifier("model.web_host.paste_setup")
 
                 TextField(
                     NSLocalizedString("model.web_host.url", value: "Host URL", comment: "Web Host URL field"),
-                    text: $hostURL
+                    text: Binding(get: { hostURL }, set: { value in
+                        guard hostURL != value else { return }
+                        accessToken = ""
+                        importedSetup = nil
+                        hostURL = value
+                    })
                 )
                 .textContentType(.URL)
                 .textInputAutocapitalization(.never)
                 .autocorrectionDisabled()
                 .keyboardType(.URL)
                 .focused($connectionField, equals: .url)
+                .submitLabel(.next)
+                .onSubmit { connectionField = .token }
                 .accessibilityIdentifier("model.web_host.url_field")
                 .disabled(isConnecting)
 
@@ -895,13 +908,14 @@ struct WebHostConfigurationView: View {
                 // pairing; mark the pairing code explicitly instead.
                 .textContentType(.oneTimeCode)
                 .focused($connectionField, equals: .token)
+                .submitLabel(.go)
+                .onSubmit { connect() }
                 .keyboardType(.asciiCapable)
                 .textInputAutocapitalization(.never)
                 .autocorrectionDisabled()
                 .accessibilityIdentifier("model.web_host.token_field")
                 .disabled(isConnecting)
-                if let url = IOSHostConnectionDraftPolicy.endpoint(hostURL),
-                   IOSHostConnectionDraftPolicy.canReuseSavedToken(for: url, original: existingModel?.baseURL) {
+                if pairedURL != nil {
                     Text(NSLocalizedString("model.web_host.saved_token_hint", value: "Leave blank to use this host’s saved token.", comment: "Saved host token hint"))
                         .font(.footnote).foregroundStyle(.secondary)
                 }
@@ -909,10 +923,18 @@ struct WebHostConfigurationView: View {
             } header: {
                 Text(NSLocalizedString("model.web_host.connection", value: "Connection", comment: "Web Host connection section"))
             } footer: {
-                if let errorMessage, !errorMessage.isEmpty {
+                if isConnecting {
+                    Text("model.web_host.checking.detail")
+                        .accessibilityIdentifier("model.web_host.checking")
+                } else if let errorMessage, !errorMessage.isEmpty {
                     Label(errorMessage, systemImage: "exclamationmark.triangle.fill")
                         .foregroundStyle(.red)
                         .accessibilityIdentifier("model.web_host.validation_error")
+                } else if verifiedAddress == hostURL && accessToken.isEmpty {
+                    Label("chat.host_pairing.verified", systemImage: "checkmark.circle")
+                        .accessibilityIdentifier("model.web_host.verified")
+                } else if pairedURL != nil && accessToken.isEmpty {
+                    Label("chat.host_pairing.identity", systemImage: "checkmark.shield")
                 } else {
                     Text(NSLocalizedString(
                         "model.web_host.connection.footer",
@@ -922,30 +944,12 @@ struct WebHostConfigurationView: View {
                 }
             }
 
-            Section {
-                Label {
-                    Text(NSLocalizedString(
-                        "model.web_host.security_summary",
-                        value: "Nola verifies the token, permission protocol, and host identity before pairing. Every host or device tool still follows its own approval policy.",
-                        comment: "Web Host security summary"
-                    ))
-                    .font(.footnote)
-                    .foregroundStyle(.secondary)
-                } icon: {
-                    Image(systemName: "checkmark.shield")
-                        .foregroundStyle(DesignTokens.primaryColor)
-                }
-                .accessibilityElement(children: .combine)
-            }
+            if embedded { Section { connectButton(paired: pairedURL != nil) } }
 
-            if embedded { Section { connectButton } }
-
-            if let url = IOSHostConnectionDraftPolicy.endpoint(hostURL.trimmingCharacters(in: .whitespacesAndNewlines)),
-               ModelSelectionManager.pairedWebHostIdentity(for: url) != nil {
+            if let url = pairedURL {
                 Section {
                     Button(role: .destructive) {
-                        ModelSelectionManager.forgetWebHostIdentity(for: url)
-                        errorMessage = nil
+                        pairingToForget = url
                     } label: {
                         Label(
                             NSLocalizedString(
@@ -956,6 +960,7 @@ struct WebHostConfigurationView: View {
                             systemImage: "trash"
                         )
                     }
+                    .disabled(isConnecting)
                     .accessibilityIdentifier("model.web_host.forget_pairing")
                 } footer: {
                     Text(NSLocalizedString(
@@ -976,43 +981,71 @@ struct WebHostConfigurationView: View {
         .toolbar {
             if !embedded {
                 ToolbarItem(placement: .cancellationAction) {
-                    Button(NSLocalizedString("common.cancel", value: "Cancel", comment: "Cancel action")) {
-                        connectionTask?.cancel()
-                        dismiss()
+                    Button(isConnecting ? NSLocalizedString("model.web_host.cancel_verification", comment: "") : L10n.cancel) {
+                        if isConnecting { connectionTask?.cancel() }
+                        else if hasDraft { connectionField = nil; confirmsDiscard = true }
+                        else { dismiss() }
                     }
+                    .accessibilityIdentifier(isConnecting ? "model.web_host.cancel_verification" : "model.web_host.close")
                 }
-                ToolbarItem(placement: .confirmationAction) { connectButton }
+                ToolbarItem(placement: .confirmationAction) { connectButton(paired: pairedURL != nil) }
             }
         }
-        .onChange(of: hostURL != (existingModel?.baseURL ?? "") || !accessToken.isEmpty, initial: true) { _, value in
+        .interactiveDismissDisabled(!embedded && (hasDraft || isConnecting))
+        .alert(LocalizedStringKey("model.setup.discard_title"), isPresented: $confirmsDiscard) {
+            Button("model.setup.discard", role: .destructive) { dismiss() }
+            Button("model.setup.keep_editing", role: .cancel) {}
+        }
+        .alert(Text("chat.host_pairing.forget.confirm.title"), isPresented: Binding(
+            get: { pairingToForget != nil }, set: { if !$0 { pairingToForget = nil } }
+        ), presenting: pairingToForget) { url in
+            Button("chat.host_pairing.forget.confirm.action", role: .destructive) {
+                ModelSelectionManager.forgetWebHostIdentity(for: url)
+                verifiedAddress = nil
+                errorMessage = nil
+            }
+            Button("common.cancel", role: .cancel) {}
+        } message: { _ in
+            Text("model.web_host.forget_pairing.footer")
+        }
+        .onChange(of: hostURL) { _, _ in
+            verifiedAddress = nil
+            errorMessage = nil
+        }
+        .onChange(of: accessToken) { _, value in
+            if !value.isEmpty {
+                verifiedAddress = nil
+                errorMessage = nil
+            }
+        }
+        .onChange(of: hasDraft, initial: true) { _, value in
             onDraftChanged(value)
         }
-        .onChange(of: isConnecting, initial: true) { _, value in onConnectingChanged(value) }
         .onDisappear { connectionTask?.cancel() }
     }
 
-    private var connectButton: some View {
+    private func connectButton(paired: Bool) -> some View {
         Button {
             connect()
         } label: {
-            if isConnecting {
-                ProgressView()
+            if isConnecting && !reduceMotion {
+                ProgressView().accessibilityLabel(Text("model.web_host.checking"))
+            } else if isConnecting {
+                Text("model.web_host.checking")
             } else {
-                Text(NSLocalizedString("model.web_host.connect", value: "Connect", comment: "Connect Web Host action"))
+                Text(paired ? LocalizedStringKey("model.web_host.recheck") : LocalizedStringKey("model.web_host.connect"))
             }
         }
         .disabled(isConnecting)
         .accessibilityIdentifier("model.web_host.connect")
-        .accessibilityHint(NSLocalizedString(
-            "model.web_host.connect.accessibility_hint",
-            value: "Validates this host and pairs its identity before saving.",
-            comment: "Connect Web Host accessibility hint"
-        ))
+        .accessibilityHint(paired ? Text("model.web_host.saved_token_hint") : Text("model.web_host.connect.accessibility_hint"))
     }
 
     private func connect() {
         guard !isConnecting else { return }
+        connectionField = nil
         errorMessage = nil
+        verifiedAddress = nil
         let rawURL = hostURL.trimmingCharacters(in: .whitespacesAndNewlines)
         guard let url = IOSHostConnectionDraftPolicy.endpoint(rawURL) else {
             errorMessage = NSLocalizedString("model.web_host.invalid_url", value: "Enter a valid HTTP or HTTPS Host URL.", comment: "Invalid Web Host URL error")
@@ -1023,17 +1056,20 @@ struct WebHostConfigurationView: View {
             return
         }
         let token = IOSHostConnectionDraftPolicy.token(
-            entered: accessToken, for: url, original: existingModel?.baseURL,
-            loadSaved: { existingModel?.resolvedAPIKey }
+            entered: accessToken, for: url, original: pairedHost?.absoluteString,
+            loadSaved: { ModelSelectionManager.webHostToken(for: rawURL) }
         )
         guard !token.isEmpty else {
             errorMessage = NSLocalizedString("model.web_host.missing_token", value: "Enter the access token for this host.", comment: "Missing Web Host token error")
             return
         }
-        connectionField = nil
         isConnecting = true
         connectionTask = Task { @MainActor in
-            defer { isConnecting = false }
+            defer {
+                isConnecting = false
+                connectionTask = nil
+                onVerificationChanged(nil)
+            }
             do {
                 try await WebAgentProvider.validateToken(
                     baseURL: url,
@@ -1043,7 +1079,8 @@ struct WebHostConfigurationView: View {
                 let settings = try await WebAgentProvider.fetchHostAgentSettings(
                     baseURL: url,
                     token: token,
-                    pinnedCertificateSHA256: nil
+                    pinnedCertificateSHA256: nil,
+                    modelsOnly: true
                 )
                 try Task.checkCancellation()
                 guard settings.host_identity?.permission_protocol_version == WebAgentProvider.hostPermissionProtocolVersion,
@@ -1054,16 +1091,7 @@ struct WebHostConfigurationView: View {
                 if let setup = importedSetup, AppleHostConnectionSetup.sameOrigin(setup.origin, url), setup.hostID != identity {
                     throw WebHostPairingFailure.identityChanged
                 }
-                if let existingIdentity = ModelSelectionManager.pairedWebHostIdentity(for: url),
-                   existingIdentity != identity {
-                    throw WebHostPairingFailure.identityChanged
-                }
-                guard ModelSelectionManager.saveWebHostToken(token, for: rawURL) else {
-                    throw WebHostPairingFailure.secureStorageFailed
-                }
-                guard ModelSelectionManager.trustWebHostIdentity(identity, for: url) else {
-                    throw WebHostPairingFailure.identityStorageFailed
-                }
+                try ModelSelectionManager.saveVerifiedHostPairing(identity, token: token, for: url)
                 let model = ModelSelectionManager.webBackendModel(
                     baseURL: rawURL,
                     pinnedCertificateSHA256: nil
@@ -1073,15 +1101,15 @@ struct WebHostConfigurationView: View {
                 // does not offer to save this pairing secret as a login.
                 accessToken = ""
                 connectionField = nil
-                await Task.yield()
-                try Task.checkCancellation()
-                onConnected(model)
-                dismiss()
+                verifiedAddress = hostURL
+                onConnected(model, identity)
+                if !embedded { dismiss() }
             } catch {
                 guard !Task.isCancelled else { return }
                 errorMessage = webHostPairingErrorMessage(error)
             }
         }
+        onVerificationChanged(connectionTask)
     }
 
 }
@@ -1291,12 +1319,6 @@ enum IOSModelInferenceTestRoute {
     }
 }
 
-enum WebHostPairingFailure: Error {
-    case unsupportedPermissionProtocol
-    case identityChanged
-    case secureStorageFailed
-    case identityStorageFailed
-}
 
 func webHostPairingErrorMessage(_ error: Error) -> String {
     switch error {
@@ -1308,6 +1330,8 @@ func webHostPairingErrorMessage(_ error: Error) -> String {
         return NSLocalizedString("model.web_host.error.secure_storage", value: "The access token could not be stored securely on this device.", comment: "Web Host secure storage failure")
     case WebHostPairingFailure.identityStorageFailed:
         return NSLocalizedString("model.web_host.error.pairing", value: "The verified host identity could not be saved. Try again.", comment: "Web Host pairing storage failure")
+    case WebHostPairingFailure.rollbackFailed:
+        return NSLocalizedString("model.web_host.error.rollback", comment: "Pairing rollback failed")
     default:
         break
     }

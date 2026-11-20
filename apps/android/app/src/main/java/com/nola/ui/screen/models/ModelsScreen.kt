@@ -1,9 +1,13 @@
 package com.nola.ui.screen.models
 
+import com.nola.ui.components.dismissImeOnBlankTap
+import com.nola.ui.components.ForgetHostPairingDialog
 import androidx.compose.foundation.selection.selectable
 import androidx.compose.foundation.selection.selectableGroup
 import androidx.compose.foundation.selection.toggleable
 import androidx.compose.ui.semantics.Role
+import androidx.compose.foundation.layout.width
+import androidx.compose.ui.semantics.liveRegion
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.stateDescription
@@ -149,10 +153,16 @@ fun ModelsScreen(
     onBack: (() -> Unit)? = null,
 ) {
     val context = LocalContext.current
+    val manageHostModels = {
+        viewModel.openHostMessagingManagement("/models?tab=api") { target ->
+            context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(target)))
+        }
+    }
     val reduceMotion = rememberReduceMotionEnabled()
     val state by viewModel.uiState.collectAsStateWithLifecycle()
     var sourceTab by rememberSaveable { mutableStateOf(0) }
-    var showWebHostSheet by remember { mutableStateOf(false) }
+    var confirmDisconnectAddress by rememberSaveable { mutableStateOf<String?>(null) }
+    var showWebHostSheet by rememberSaveable { mutableStateOf(false) }
     var capabilityTarget by remember { mutableStateOf<ModelInfo?>(null) }
     var capabilityError by remember { mutableStateOf<String?>(null) }
     var savingCapabilities by remember { mutableStateOf(false) }
@@ -172,17 +182,15 @@ fun ModelsScreen(
         )
     }
 
-    if (showWebHostSheet) {
-        WebHostConfigSheet(
-            currentUrl = state.webHostUrl,
-            currentToken = state.webHostToken,
-            currentCertificateSha256 = state.webHostCertificateSha256,
-            onSave = { url, token, certificateSha256, importedIdentity, completion ->
-                viewModel.saveWebHostConfig(url, token, certificateSha256, importedIdentity, completion)
-            },
-            onCancelConnection = viewModel::cancelWebHostConnection,
-            onDismiss = { showWebHostSheet = false }
+    if (confirmDisconnectAddress != null && confirmDisconnectAddress == state.webHostUrl) {
+        ForgetHostPairingDialog(
+            onConfirm = { confirmDisconnectAddress = null; viewModel.disconnectWebHost() },
+            onDismiss = { confirmDisconnectAddress = null }
         )
+    }
+
+    if (showWebHostSheet) {
+        HostPairingSheet(onDismiss = { showWebHostSheet = false }, viewModel = viewModel)
     }
 
     capabilityTarget?.let { target ->
@@ -284,7 +292,10 @@ fun ModelsScreen(
                 Box(
                     modifier = Modifier.weight(1f).heightIn(min = 48.dp).clip(RoundedCornerShape(8.dp))
                         .background(if (selected) MaterialTheme.colorScheme.surface else Color.Transparent)
-                        .selectable(selected = selected, role = Role.Tab, onClick = { sourceTab = index })
+                        .selectable(selected = selected, role = Role.Tab, onClick = {
+                            if (!selected) viewModel.clearConnectionStatus()
+                            sourceTab = index
+                        })
                         .padding(horizontal = 6.dp),
                     contentAlignment = Alignment.Center,
                 ) {
@@ -294,6 +305,52 @@ fun ModelsScreen(
                 }
             }
         }
+        AnimatedVisibility(
+            visible = state.connectionTestResult?.isNotEmpty() == true,
+            enter = nolaDisclosureEnter(reduceMotion),
+            exit = nolaDisclosureExit(reduceMotion),
+        ) {
+            state.connectionTestResult?.takeIf { it.isNotEmpty() }?.let { result ->
+                val success = state.connectionTestSucceeded != false
+                val statusTint = if (success) NolaColors.success else MaterialTheme.colorScheme.error
+                Row(
+                modifier = Modifier
+                    .fillMaxWidth().semantics { liveRegion = androidx.compose.ui.semantics.LiveRegionMode.Polite }
+                    .clip(RoundedCornerShape(NolaRadius.lg))
+                    .background(
+                        statusTint.copy(alpha = 0.08f)
+                    )
+                    .padding(horizontal = NolaSpacing.md, vertical = NolaSpacing.sm),
+                horizontalArrangement = Arrangement.spacedBy(NolaSpacing.sm),
+                verticalAlignment = Alignment.CenterVertically
+                ) {
+                Icon(
+                    imageVector = if (success) Icons.Filled.Check else Icons.Filled.ErrorOutline,
+                    contentDescription = null,
+                    tint = statusTint,
+                    modifier = Modifier.size(18.dp)
+                )
+                Text(
+                    result,
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurface,
+                    modifier = Modifier.weight(1f)
+                )
+                IconButton(
+                    onClick = viewModel::clearConnectionStatus,
+                    modifier = Modifier.size(48.dp)
+                ) {
+                    Icon(
+                        Icons.Filled.Close,
+                        contentDescription = stringResource(R.string.common_close),
+                        tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.size(17.dp)
+                    )
+                }
+                }
+            }
+        }
+
         if (sourceTab == 0) {
         EndpointConfigFields(
             initialEndpoint = "", initialApiKey = "", initialModel = "",
@@ -302,60 +359,10 @@ fun ModelsScreen(
             onSave = { endpoint, key, model, protocol -> viewModel.saveApiEndpoint(endpoint, key, model, protocol) }
         )
 
-            AnimatedVisibility(
-                visible = state.connectionTestResult?.isNotEmpty() == true,
-                enter = nolaDisclosureEnter(reduceMotion),
-                exit = nolaDisclosureExit(reduceMotion),
-            ) {
-                state.connectionTestResult?.takeIf { it.isNotEmpty() }?.let { result ->
-                    val success = state.connectionTestSucceeded != false
-                    val statusTint = if (success) NolaColors.success else MaterialTheme.colorScheme.error
-                    Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .clip(RoundedCornerShape(NolaRadius.lg))
-                        .background(
-                            statusTint.copy(alpha = 0.08f)
-                        )
-                        .padding(horizontal = NolaSpacing.md, vertical = NolaSpacing.sm),
-                    horizontalArrangement = Arrangement.spacedBy(NolaSpacing.sm),
-                    verticalAlignment = Alignment.CenterVertically
-                    ) {
-                    Icon(
-                        imageVector = if (success) Icons.Filled.Check else Icons.Filled.ErrorOutline,
-                        contentDescription = null,
-                        tint = statusTint,
-                        modifier = Modifier.size(18.dp)
-                    )
-                    Text(
-                        result,
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurface,
-                        modifier = Modifier.weight(1f)
-                    )
-                    IconButton(
-                        onClick = viewModel::clearConnectionStatus,
-                        modifier = Modifier.size(48.dp)
-                    ) {
-                        Icon(
-                            Icons.Filled.Close,
-                            contentDescription = stringResource(R.string.common_close),
-                            tint = MaterialTheme.colorScheme.onSurfaceVariant,
-                            modifier = Modifier.size(17.dp)
-                        )
-                    }
-                    }
-                }
-            }
-
             ModelConnectionsSection(state, viewModel::loadConnectionInventory, connectHost = {
                 sourceTab = 2
                 showWebHostSheet = true
-            }) {
-                viewModel.openHostMessagingManagement("/models?tab=api") { target ->
-                    context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(target)))
-                }
-            }
+            }, manageHost = manageHostModels)
 
             if (state.officialModels.isNotEmpty()) {
                 ModelListCard(
@@ -426,9 +433,9 @@ fun ModelsScreen(
         }
         if (sourceTab == 2) {
             ModelActionTile(title = stringResource(R.string.models_web_host),
+                modifier = Modifier.testTag(MODEL_HOST_CONNECTION_TEST_TAG),
                 subtitle = state.webHostUrl.ifBlank { stringResource(R.string.models_desktop_bridge) },
                 icon = Icons.Filled.Security, tint = MaterialTheme.colorScheme.primary,
-                isActive = state.selectedModelSource == ModelInfo.ModelSource.WebHost,
                 onClick = { showWebHostSheet = true })
             state.webHostModel?.let { webHostModel ->
                 ModelListCard(
@@ -441,8 +448,12 @@ fun ModelsScreen(
                     onSelect = { viewModel.selectModel(it) },
                     onParams = { viewModel.openParameters(it) }
                 )
+                TextButton(enabled = !state.openingHostManagement, onClick = manageHostModels,
+                    modifier = Modifier.fillMaxWidth().testTag("models.web_host.manage")) {
+                    Text(stringResource(R.string.model_connections_host_manage))
+                }
                 TextButton(
-                    onClick = viewModel::disconnectWebHost,
+                    onClick = { confirmDisconnectAddress = state.webHostUrl },
                     modifier = Modifier.fillMaxWidth().testTag("models.web_host.disconnect")
                 ) {
                     Text(
@@ -513,7 +524,9 @@ private fun ModelExecutionCapabilitiesSheet(
     val dirty = toolCalls != initial.toolCalls || imageInput != initial.imageInput ||
         samplingParameters != initial.samplingParameters || outputField != initial.chatOutputTokenField
     val requestDismiss = { if (!saving) { if (dirty) showDiscardDialog = true else onDismiss() } }
-    ModalBottomSheet(onDismissRequest = requestDismiss, sheetState = com.nola.ui.components.rememberGuardedEditorSheetState(saving, dirty) { showDiscardDialog = true }) {
+    ModalBottomSheet(
+        modifier = Modifier.dismissImeOnBlankTap(),
+        onDismissRequest = requestDismiss, sheetState = com.nola.ui.components.rememberGuardedEditorSheetState(saving, dirty) { showDiscardDialog = true }) {
         Column(
             modifier = Modifier.fillMaxWidth().verticalScroll(rememberScrollState()).navigationBarsPadding().padding(horizontal = 24.dp, vertical = 20.dp),
             verticalArrangement = Arrangement.spacedBy(12.dp),
@@ -915,6 +928,7 @@ internal fun ModelInferenceTestSheet(
     onDismiss: () -> Unit,
 ) {
     ModalBottomSheet(
+        modifier = Modifier.dismissImeOnBlankTap(),
         onDismissRequest = onDismiss,
         sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true),
     ) {
@@ -1040,7 +1054,6 @@ fun ModelActionTile(
     tint: Color,
     modifier: Modifier = Modifier,
     enabled: Boolean = true,
-    isActive: Boolean = false,
     onClick: () -> Unit
 ) {
     val shape = RoundedCornerShape(NolaRadius.lg)
@@ -1048,7 +1061,6 @@ fun ModelActionTile(
         modifier = modifier
             .fillMaxWidth()
             .clip(shape)
-            .background(if (isActive) MaterialTheme.colorScheme.primaryContainer else Color.Transparent, shape)
             .clickable(enabled = enabled, onClick = onClick)
             .heightIn(min = 58.dp)
             .padding(horizontal = NolaSpacing.md, vertical = NolaSpacing.sm),
@@ -1079,13 +1091,6 @@ fun ModelActionTile(
                 softWrap = true
               )
           }
-          if (isActive) {
-              NolaBadge(
-                  stringResource(R.string.models_selected),
-                  icon = Icons.Filled.Check,
-                  tint = tint
-              )
-          }
       }
   }
 
@@ -1107,7 +1112,9 @@ fun EndpointConfigSheet(
     val requestDismiss = { if (!saving) { if (dirty) showDiscardDialog = true else onDismiss() } }
     val sheetState = com.nola.ui.components.rememberGuardedEditorSheetState(saving, dirty) { showDiscardDialog = true }
 
-    ModalBottomSheet(onDismissRequest = requestDismiss, sheetState = sheetState) {
+    ModalBottomSheet(
+        modifier = Modifier.dismissImeOnBlankTap(),
+        onDismissRequest = requestDismiss, sheetState = sheetState) {
         Column(Modifier.fillMaxWidth().imePadding().navigationBarsPadding().padding(24.dp)
             .verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(16.dp)) {
             Text(stringResource(R.string.models_endpoint_sheet_title), style = MaterialTheme.typography.titleLarge)
@@ -1191,6 +1198,24 @@ private fun EndpointConfigFields(
     }
 }
 
+@Composable
+internal fun HostPairingSheet(
+    onDismiss: () -> Unit,
+    onVerified: (String) -> Unit = { onDismiss() },
+    viewModel: ModelsViewModel = hiltViewModel()
+) {
+    val state by viewModel.uiState.collectAsStateWithLifecycle()
+    WebHostConfigSheet(
+        currentUrl = state.webHostUrl,
+        currentToken = state.webHostToken,
+        currentCertificateSha256 = state.webHostCertificateSha256,
+        onSave = viewModel::saveWebHostConfig,
+        onCancelConnection = viewModel::cancelWebHostConnection,
+        onVerified = onVerified,
+        onDismiss = onDismiss
+    )
+}
+
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun WebHostConfigSheet(
@@ -1199,7 +1224,8 @@ fun WebHostConfigSheet(
     currentCertificateSha256: String,
     onSave: (String, String, String, String?, (Boolean, String) -> Unit) -> Unit,
     onDismiss: () -> Unit,
-    onCancelConnection: () -> Unit = {}
+    onCancelConnection: () -> Unit = {},
+    onVerified: (String) -> Unit = { onDismiss() }
 ) {
     var url by remember { mutableStateOf(currentUrl) }
     var token by remember { mutableStateOf("") }
@@ -1211,6 +1237,7 @@ fun WebHostConfigSheet(
     var importedSetup by remember { mutableStateOf<WebHostConnectionSetup?>(null) }
     val clipboard = androidx.compose.ui.platform.LocalClipboardManager.current
     val context = androidx.compose.ui.platform.LocalContext.current
+    val showCertificate = certificateSha256.isNotBlank() || Uri.parse(url.trim()).scheme.equals("https", ignoreCase = true)
     val dirty = url != currentUrl || token.isNotBlank() || certificateSha256 != currentCertificateSha256
     val canUseSavedToken = currentToken.isNotBlank() && sameWebHostDestination(currentUrl, url)
     val sheetState = com.nola.ui.components.rememberGuardedEditorSheetState(isConnecting, dirty) { showDiscardDialog = true }
@@ -1218,9 +1245,28 @@ fun WebHostConfigSheet(
     val requestDismiss = { if (dirty) showDiscardDialog = true else onDismiss() }
 
     ModalBottomSheet(
+        modifier = Modifier.dismissImeOnBlankTap(),
         onDismissRequest = { if (!isConnecting) requestDismiss() },
         sheetState = sheetState
     ) {
+        val focus = LocalFocusManager.current
+        val keyboard = LocalSoftwareKeyboardController.current
+        val canSubmit = !isConnecting && url.isNotBlank() && (token.isNotBlank() || canUseSavedToken)
+        fun submit() {
+            if (isConnecting || !canSubmit) return
+            focus.clearFocus()
+            keyboard?.hide()
+            inlineError = null
+            isConnecting = true
+            val generation = ++connectionGeneration
+            val expectedIdentity = importedSetup?.takeIf { sameWebHostOrigin(it.origin, url) }?.hostId
+            onSave(url.trim(), webHostConnectionToken(currentUrl, currentToken, url, token), certificateSha256.trim(), expectedIdentity) { succeeded, message ->
+                if (generation == connectionGeneration) {
+                    isConnecting = false
+                    if (succeeded) onVerified(url.trim()) else inlineError = message
+                }
+            }
+        }
         Column(
             modifier = Modifier
                 .fillMaxWidth()
@@ -1230,35 +1276,33 @@ fun WebHostConfigSheet(
                 .padding(horizontal = 24.dp)
         ) {
             Spacer(Modifier.height(20.dp))
-            Text(stringResource(R.string.models_web_host), style = MaterialTheme.typography.titleLarge)
+            Text(stringResource(R.string.models_web_host), Modifier.testTag("models.host.heading"), style = MaterialTheme.typography.titleLarge)
             Spacer(Modifier.height(16.dp))
 
             Column(
                 modifier = Modifier
                     .weight(1f)
-                    .verticalScroll(rememberScrollState()),
+                    .verticalScroll(rememberScrollState()).testTag("models.host.fields"),
                 verticalArrangement = Arrangement.spacedBy(10.dp)
             ) {
-                Column(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .clip(RoundedCornerShape(NolaRadius.lg))
-                        .background(MaterialTheme.colorScheme.primary.copy(alpha = 0.07f))
-                        .padding(NolaSpacing.md),
-                    verticalArrangement = Arrangement.spacedBy(NolaSpacing.sm)
-                ) {
-                    Text(
-                        stringResource(R.string.models_web_host_setup_title),
-                        style = MaterialTheme.typography.titleSmall
-                    )
-                    if (!hasExistingConnection) {
+                if (!hasExistingConnection) {
+                    Column(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clip(RoundedCornerShape(NolaRadius.lg))
+                            .background(MaterialTheme.colorScheme.primary.copy(alpha = 0.07f))
+                            .padding(NolaSpacing.md),
+                        verticalArrangement = Arrangement.spacedBy(NolaSpacing.sm)
+                    ) {
+                        Text(
+                            stringResource(R.string.models_web_host_setup_title),
+                            style = MaterialTheme.typography.titleSmall
+                        )
                         Text(
                             stringResource(R.string.models_web_host_setup_start),
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
-                    }
-                    if (!hasExistingConnection) {
                         Text(
                             stringResource(R.string.models_web_host_setup_copy),
                             style = MaterialTheme.typography.bodySmall,
@@ -1279,28 +1323,6 @@ fun WebHostConfigSheet(
                     }
                 }) { Text(stringResource(R.string.models_web_host_paste_setup)) }
 
-                if (isConnecting) {
-                    Row(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .clip(RoundedCornerShape(NolaRadius.lg))
-                            .background(MaterialTheme.colorScheme.secondaryContainer.copy(alpha = 0.55f))
-                            .padding(NolaSpacing.md),
-                        horizontalArrangement = Arrangement.spacedBy(NolaSpacing.md),
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        CircularProgressIndicator(modifier = Modifier.size(22.dp), strokeWidth = 2.dp)
-                        Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
-                            Text(stringResource(R.string.models_web_host_checking), style = MaterialTheme.typography.titleSmall)
-                            Text(
-                                stringResource(R.string.models_web_host_checking_detail),
-                                style = MaterialTheme.typography.bodySmall,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant
-                            )
-                        }
-                    }
-                }
-
                 OutlinedTextField(
                     value = url,
                     enabled = !isConnecting,
@@ -1311,32 +1333,43 @@ fun WebHostConfigSheet(
                             importedSetup = null
                         }
                         url = it
+                        inlineError = null
                     },
                     label = { Text(stringResource(R.string.models_host_url)) },
                     placeholder = { Text(stringResource(R.string.models_web_host_url_placeholder)) },
-                    modifier = Modifier.fillMaxWidth(),
+                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Uri, autoCorrect = false, imeAction = ImeAction.Next),
+                    keyboardActions = KeyboardActions(onNext = { focus.moveFocus(FocusDirection.Next) }),
+                    modifier = Modifier.fillMaxWidth().testTag("models.host.url"),
                     singleLine = true
                 )
                 OutlinedTextField(
                     value = token,
                     enabled = !isConnecting,
-                    onValueChange = { token = it },
+                    onValueChange = { token = it; inlineError = null },
                     label = { Text(stringResource(R.string.models_access_token)) },
-                    supportingText = { Text(stringResource(if (canUseSavedToken)
-                        R.string.models_host_token_keep else R.string.models_host_token_new)) },
-                    modifier = Modifier.fillMaxWidth(),
+                    supportingText = if (token.isBlank()) {
+                        { Text(stringResource(if (canUseSavedToken) R.string.models_host_token_keep else R.string.models_host_token_new)) }
+                    } else null,
+                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password, autoCorrect = false,
+                        imeAction = if (showCertificate) ImeAction.Next else ImeAction.Done),
+                    keyboardActions = KeyboardActions(onNext = { focus.moveFocus(FocusDirection.Next) }, onDone = { submit() }),
+                    modifier = Modifier.fillMaxWidth().testTag("models.host.token"),
                     singleLine = true,
                     visualTransformation = PasswordVisualTransformation()
                 )
-                OutlinedTextField(
-                    value = certificateSha256,
-                    enabled = !isConnecting,
-                    onValueChange = { certificateSha256 = it },
-                    label = { Text(stringResource(R.string.models_certificate_sha256_optional)) },
-                    supportingText = { Text(stringResource(R.string.models_certificate_sha256_help)) },
-                    modifier = Modifier.fillMaxWidth(),
-                    singleLine = true
-                )
+                if (showCertificate) {
+                    OutlinedTextField(
+                        value = certificateSha256,
+                        enabled = !isConnecting,
+                        onValueChange = { certificateSha256 = it; inlineError = null },
+                        label = { Text(stringResource(R.string.models_certificate_sha256_optional)) },
+                        supportingText = { Text(stringResource(R.string.models_certificate_sha256_help)) },
+                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Ascii, autoCorrect = false, imeAction = ImeAction.Done),
+                        keyboardActions = KeyboardActions(onDone = { submit() }),
+                        modifier = Modifier.fillMaxWidth().testTag("models.host.certificateSha256"),
+                        singleLine = true
+                    )
+                }
                 Row(
                     modifier = Modifier
                         .fillMaxWidth()
@@ -1359,31 +1392,21 @@ fun WebHostConfigSheet(
                         modifier = Modifier.weight(1f)
                     )
                 }
-                inlineError?.let { message ->
-                    Row(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .clip(RoundedCornerShape(NolaRadius.lg))
-                            .background(MaterialTheme.colorScheme.errorContainer.copy(alpha = 0.62f))
-                            .padding(NolaSpacing.md),
-                        horizontalArrangement = Arrangement.spacedBy(NolaSpacing.sm),
-                        verticalAlignment = Alignment.Top
-                    ) {
-                        Icon(
-                            Icons.Filled.Security,
-                            contentDescription = null,
-                            tint = MaterialTheme.colorScheme.error,
-                            modifier = Modifier.size(20.dp)
-                        )
-                        Text(
-                            message,
-                            style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.onErrorContainer,
-                            modifier = Modifier.weight(1f)
-                        )
-                    }
-                }
                 Spacer(Modifier.height(6.dp))
+            }
+
+            val reduceMotion = rememberReduceMotionEnabled()
+            AnimatedVisibility(visible = inlineError != null, enter = nolaDisclosureEnter(reduceMotion), exit = nolaDisclosureExit(reduceMotion)) {
+                inlineError?.let { message ->
+                    Text(
+                        message,
+                        modifier = Modifier.fillMaxWidth().heightIn(max = 96.dp).verticalScroll(rememberScrollState())
+                            .semantics { liveRegion = androidx.compose.ui.semantics.LiveRegionMode.Polite }
+                            .padding(vertical = NolaSpacing.sm).testTag("models.host.feedback"),
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.error,
+                    )
+                }
             }
 
             Row(
@@ -1402,22 +1425,20 @@ fun WebHostConfigSheet(
                     modifier = Modifier.weight(1f)
                 ) { Text(stringResource(R.string.common_cancel)) }
                 Button(
-                    onClick = {
-                        inlineError = null
-                        isConnecting = true
-                        val generation = ++connectionGeneration
-                        val expectedIdentity = importedSetup?.takeIf { sameWebHostOrigin(it.origin, url) }?.hostId
-                        onSave(url.trim(), webHostConnectionToken(currentUrl, currentToken, url, token), certificateSha256.trim(), expectedIdentity) { succeeded, message ->
-                            if (generation == connectionGeneration) {
-                                isConnecting = false
-                                if (succeeded) onDismiss() else inlineError = message
-                            }
-                        }
-                    },
-                    enabled = !isConnecting && url.isNotBlank() && (token.isNotBlank() || canUseSavedToken),
+                    onClick = ::submit,
+                    enabled = canSubmit,
                     modifier = Modifier.weight(1f)
                 ) {
-                    Text(stringResource(if (dirty) R.string.models_save_and_verify else R.string.models_verify_again))
+                    if (isConnecting) {
+                        CircularProgressIndicator(modifier = Modifier.size(16.dp), strokeWidth = 2.dp)
+                        Spacer(Modifier.width(6.dp))
+                    }
+                    val action = when {
+                        isConnecting -> R.string.models_web_host_checking
+                        !dirty && canUseSavedToken -> R.string.models_verify_again
+                        else -> R.string.models_save_and_verify
+                    }
+                    Text(stringResource(action))
                 }
             }
             Spacer(Modifier.height(12.dp))

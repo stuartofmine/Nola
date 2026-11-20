@@ -204,7 +204,7 @@
         <button type="button" class="primary" disabled={busy || !!catalogError} onclick={saveCatalog}>{t($locale, busy ? 'models.saving' : 'models.save')}</button>
     {/if}
 </div>
-{#if !draftCatalog.length}<p class="empty-catalog">{t($locale, 'remote.empty_catalog')}</p>{/if}
+{#if !draftCatalog.length && !profiles.some(profile => profile.connectionId)}<p class="empty-catalog">{t($locale, 'remote.empty_catalog')}</p>{/if}
 {#if draftCatalog.length}<p class="routing-policy">{t($locale, 'remote.routing_policy')}</p>{/if}
 {#if catalogDirty}<p class="muted" role="status">{t($locale, 'remote.unsaved_changes')}</p>{/if}
 <div class="groups">

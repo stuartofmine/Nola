@@ -37,14 +37,25 @@ final class IOSWorkspaceNavigationSmokeTests: XCTestCase {
             }
         }
         let endpoint = app.textFields["model.setup.endpoint"]
+        func swipeBackFromEdge() {
+            let start = app.coordinate(withNormalizedOffset: CGVector(dx: 0.005, dy: 0.45))
+            let end = app.coordinate(withNormalizedOffset: CGVector(dx: 0.85, dy: 0.45))
+            start.press(forDuration: 0.1, thenDragTo: end)
+        }
         step("01-open-model-settings") {
             app.waitForRootTab("settings")
+            app.openModelCenterFromSettings()
+            XCTAssertTrue(endpoint.waitForExistence(timeout: 5))
+            swipeBackFromEdge()
+            XCTAssertTrue(app.buttons["settings.models"].waitForExistence(timeout: 5))
             app.openModelCenterFromSettings()
             XCTAssertTrue(endpoint.waitForExistence(timeout: 5))
         }
         step("02-enter-endpoint") {
             endpoint.tap()
             endpoint.typeText("https://draft.example.invalid/v1\n")
+            XCTAssertEqual(endpoint.value as? String, "https://draft.example.invalid/v1")
+            swipeBackFromEdge()
             XCTAssertEqual(endpoint.value as? String, "https://draft.example.invalid/v1")
         }
         step("03-switch-source") {
@@ -168,6 +179,46 @@ final class IOSWorkspaceNavigationSmokeTests: XCTestCase {
         let source = app.descendants(matching: .any).matching(NSPredicate(format: "label CONTAINS %@", "Yuan1z0825/nature-skills")).firstMatch
         XCTAssertTrue(source.isHittable)
         captureAudit("installed-github-skill-source", in: app)
+    }
+
+    func testRuntimePluginsOpenHostPairingFromCapabilityLibrary() throws {
+        continueAfterFailure = false
+        let app = XCUIApplication()
+        app.launchArguments = ["-ui-testing", "-AppleLanguages", "(en)", "-AppleLocale", "en_US"]
+        app.launchEnvironment["NOLA_UI_TEST_RUN_ID"] = "runtime-plugins-\(UUID().uuidString)"
+        app.launch()
+        defer { app.terminate() }
+        app.tapRootTab("settings")
+        app.buttons["settings.category.agent"].tap()
+        let plugins = app.buttons["Plugins"]
+        XCTAssertTrue(plugins.waitForExistence(timeout: 5))
+        plugins.tap()
+        let entry = app.buttons["intelligence.harness.plugins"]
+        XCTAssertTrue(entry.waitForExistence(timeout: 5))
+        XCTAssertGreaterThanOrEqual(entry.frame.height, 44)
+        let capture = XCTAttachment(screenshot: app.screenshot())
+        capture.name = "Runtime plugins in capability library"
+        capture.lifetime = .keepAlways
+        add(capture)
+        entry.tap()
+        let url = app.textFields["model.web_host.url_field"]
+        XCTAssertTrue(url.waitForExistence(timeout: 5))
+        url.tap()
+        url.typeText("draft.invalid")
+        app.buttons["Cancel"].tap()
+        let discard = app.alerts["Discard unsaved changes?"]
+        XCTAssertTrue(discard.waitForExistence(timeout: 5))
+        discard.buttons["Keep editing"].firstMatch.tap()
+        XCTAssertEqual(url.value as? String, "draft.invalid")
+        app.buttons["Cancel"].tap()
+        discard.buttons["Discard changes"].firstMatch.tap()
+        XCTAssertTrue(entry.waitForExistence(timeout: 5))
+        entry.tap()
+        XCTAssertTrue(url.waitForExistence(timeout: 5))
+        XCTAssertNotEqual(url.value as? String, "draft.invalid")
+        app.buttons["Cancel"].tap()
+        XCTAssertTrue(entry.waitForExistence(timeout: 5))
+        XCTAssertTrue(plugins.isSelected)
     }
 
     func testSkillAndMCPEditorsSaveAndDiscardThroughActualControls() throws {
@@ -996,8 +1047,15 @@ final class IOSWorkspaceNavigationSmokeTests: XCTestCase {
             try capture("experts-\(theme)", isDark: isDark)
             tap("experts.management.done")
 
-            for identifier in ["settings.models", "settings.category.general", "settings.category.agent", "settings.category.privacy"] {
+            let categories = [
+                ("settings.models", app.buttons["model.setup.source.0"]),
+                ("settings.category.general", app.buttons["settings.appearance"]),
+                ("settings.category.agent", app.buttons["Plugins"]),
+                ("settings.category.privacy", app.buttons["settings.privacy.clear"])
+            ]
+            for (identifier, control) in categories {
                 tap(identifier)
+                XCTAssertTrue(control.waitForExistence(timeout: 5), "Missing destination control for " + identifier)
                 try capture("\(identifier)-\(theme)", isDark: isDark)
                 if identifier == "settings.category.general" {
                     let update = app.buttons["Check for updates"]
@@ -1007,17 +1065,29 @@ final class IOSWorkspaceNavigationSmokeTests: XCTestCase {
                 }
                 backToSettings()
             }
-            for destination in ["knowledge", "memory", "sources"] {
+            for (destination, title) in [("knowledge", "Knowledge points"), ("memory", "Long-term memory"), ("sources", "Data Sources")] {
                 waitAndTapRootTab("information", in: app)
                 tap("information.\(destination)")
+                XCTAssertTrue(app.navigationBars[title].waitForExistence(timeout: 5), destination)
+                if destination == "memory" {
+                    XCTAssertTrue(app.staticTexts["No durable memories yet"].waitForExistence(timeout: 5))
+                    XCTAssertFalse(app.staticTexts["Learning how to work better"].exists,
+                                   "A fresh database must not inherit outcomes from another library")
+                }
                 try capture("library-\(destination)-\(theme)", isDark: isDark)
                 let back = app.navigationBars.buttons.element(boundBy: 0)
                 XCTAssertTrue(back.waitForExistence(timeout: 3))
                 back.tap()
                 XCTAssertTrue(app.buttons["information.knowledge"].waitForExistence(timeout: 3))
             }
-            for tab in ["chat", "activity", "information", "settings"] {
+            let tabs = [
+                ("chat", app.buttons["chat.conversations.new"]), ("activity", app.buttons["activity.plans"]),
+                ("information", app.buttons["information.knowledge"]), ("settings", app.buttons["settings.models"])
+            ]
+            for (tab, control) in tabs {
                 waitAndTapRootTab(tab, in: app)
+                XCTAssertTrue(control.waitForExistence(timeout: 5), "Missing visible content for " + tab)
+                XCTAssertTrue(app.rootTabButton(tab).isSelected)
                 try capture("primary-\(tab)-\(theme)", isDark: isDark)
             }
         }
@@ -1158,6 +1228,49 @@ extension IOSWorkspaceNavigationSmokeTests {
         app.buttons[owner].tap()
         XCTAssertTrue(app.textViews["chat.composer.input"].waitForExistence(timeout: 5))
         captureAudit("ipad-workspace-restored-conversation", in: app)
+    }
+
+    func testIPadSystemSidebarOpensLibraryAndRestoresChat() throws {
+        let app = launchSettingsAudit("ipad-sidebar")
+        defer { app.terminate() }
+        try XCTSkipUnless(app.frame.width >= 700, "Requires a regular-width iPad window")
+        let toggle = app.buttons["ToggleSideBar"]
+        XCTAssertTrue(toggle.waitForExistence(timeout: 5))
+
+        // The tab bar and sidebar reuse identifiers. Only sidebar rows
+        // start in the leading margin below the system toolbar.
+        func sidebarRow(_ tab: String) -> XCUIElement? {
+            app.descendants(matching: .any).matching(identifier: "tab." + tab).allElementsBoundByIndex.first {
+                let frame = $0.frame
+                return !frame.isEmpty && frame.minX < app.frame.width * 0.1 && frame.minY > 70
+            }
+        }
+        func waitForSidebar(_ visible: Bool) {
+            let state = NSPredicate { _, _ in (sidebarRow("activity") != nil) == visible }
+            XCTAssertEqual(XCTWaiter.wait(for: [XCTNSPredicateExpectation(predicate: state, object: nil)], timeout: 8), .completed)
+        }
+        toggle.tap()
+        waitForSidebar(true)
+        let chat = try XCTUnwrap(sidebarRow("chat"))
+        let activity = try XCTUnwrap(sidebarRow("activity"))
+        let library = try XCTUnwrap(sidebarRow("information"))
+        XCTAssertLessThan(chat.frame.midY, activity.frame.midY)
+        XCTAssertLessThan(activity.frame.midY, library.frame.midY)
+        captureAudit("ipad-system-sidebar-expanded", in: app)
+        library.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5)).tap()
+        let knowledge = app.buttons["information.knowledge"]
+        XCTAssertTrue(knowledge.waitForExistence(timeout: 5))
+        if app.frame.height > app.frame.width {
+            waitForSidebar(false)
+        }
+        captureAudit("ipad-system-sidebar-library", in: app)
+        if sidebarRow("chat") == nil {
+            toggle.tap()
+            waitForSidebar(true)
+        }
+        try XCTUnwrap(sidebarRow("chat")).coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5)).tap()
+        XCTAssertTrue(app.buttons["chat.conversations.new"].waitForExistence(timeout: 5))
+        captureAudit("ipad-system-sidebar-chat", in: app)
     }
 
     func testDataOverviewNotificationTargetAndDarkEmptyState() throws {

@@ -18,7 +18,7 @@ use std::time::{Duration, Instant};
 use unicode_width::UnicodeWidthStr;
 
 use agent::{render_markdown_text, Emitter};
-use config::{print_help, CommandMode, Config};
+use config::{help_topic, print_help, CommandMode, Config};
 use crate::native_host_request::validate_desktop_resume_identity;
 use crate::session_projection_output::session_show_json_value;
 use core_agent_runtime::{
@@ -226,12 +226,13 @@ impl CliApplication {
             entry::EntryIdentity::Cli => &terminal_setup,
             entry::EntryIdentity::AgentHost => &no_setup,
         };
-        let mut config = match Config::from_args_with_setup(std::env::args().skip(1), setup) {
+        let arguments: Vec<String> = std::env::args().skip(1).collect();
+        let mut config = match Config::from_args_with_setup(arguments.iter().cloned(), setup) {
             Ok(config) => config,
             Err(message) => {
                 eprintln!("{message}");
-                eprintln!();
-                eprintln!("{}", crate::i18n::help_text());
+                let topic = help_topic(&arguments).map(|name| format!(" {name}")).unwrap_or_default();
+                eprintln!("nola{topic} --help");
                 process::exit(2);
             }
         };
@@ -303,7 +304,7 @@ impl CliApplication {
         }
 
         if config.show_help {
-            print_help();
+            print_help(help_topic(&arguments));
             return;
         }
 
@@ -533,6 +534,7 @@ fn run_command(config: &Config) -> Result<(), String> {
             | CommandMode::ModelProbe { .. }
             | CommandMode::ModelOverride { .. }
             | CommandMode::ModelImport { .. }
+            | CommandMode::HarnessPlugin(_)
             | CommandMode::Plugin(_)
             | CommandMode::SessionShow(_)
             | CommandMode::SessionPart { .. }
@@ -557,6 +559,7 @@ fn run_command(config: &Config) -> Result<(), String> {
         );
     }
     match &config.command {
+        CommandMode::HarnessPlugin(command) => command.run(&config.project_root),
         CommandMode::Plugin(command) => {
             let result = crate::plugin_manager::run(command)?;
             println!("{}", serde_json::to_string_pretty(&result).map_err(|error| error.to_string())?);
@@ -855,11 +858,12 @@ fn run_command(config: &Config) -> Result<(), String> {
         }
         CommandMode::SessionDelete(id) => {
             core_agent_runtime::end_agent_core_session(id)?;
-            session::delete_session(id)?;
+            let deleted = session::delete_session(id)?;
             if config.json_output {
-                println!("{}", json!({"type": "session_deleted", "id": id}));
+                println!("{}", json!({"type": "session_deleted", "id": id, "deleted": deleted}));
             } else {
-                println!("{} {id}", tr(Message::DeletedSessionPrefix));
+                let message = if deleted { Message::DeletedSessionPrefix } else { Message::AbsentSessionPrefix };
+                println!("{} {id}", tr(message));
             }
             Ok(())
         }
@@ -1824,6 +1828,14 @@ fn print_interactive_session_history(config: &Config) -> Result<(), String> {
     print_interactive_session_replay(&saved);
     if !config.json_output { crate::terminal_ui::set_restoring_view(false); }
     Ok(())
+}
+
+fn replace_interactive_session_replay(saved: &session::SavedSession, config: &Config) {
+    crate::terminal_ui::set_restoring_view(true);
+    crate::terminal_ui::clear_replayed_history();
+    print_interactive_session_entry(saved, config);
+    print_interactive_session_replay(saved);
+    crate::terminal_ui::set_restoring_view(false);
 }
 
 fn print_interactive_session_replay(saved: &session::SavedSession) {

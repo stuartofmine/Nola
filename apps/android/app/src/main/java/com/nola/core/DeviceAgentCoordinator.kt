@@ -247,13 +247,7 @@ class DeviceAgentCoordinator internal constructor(
                 toolPlan = toolPlan,
                 config = config,
             )
-            val admittedConfig = if (captureDelegation && childToolPlan != null && prepareChildExecutor != null && config.preparedHostInvocation != null) {
-                canonicalApplication.mobileCommand(buildJsonObject {
-                    put("type", "capture_mobile_delegation_configuration"); put("config",runtimeConfig)
-                    put("settings",buildJsonObject { put("project_root", "android-device"); put("selected_profile",JsonNull); put("agents",buildJsonObject {}) })
-                }).jsonObject
-            } else runtimeConfig
-            canonicalApplication.configure(admittedConfig)
+            canonicalApplication.configure(admissionConfiguration(runtimeConfig))
             val runtime: AgentCoreTransitionRuntime = canonicalApplication
             val state = RunState(
                 sessionId = stableSessionId,
@@ -1304,6 +1298,20 @@ class DeviceAgentCoordinator internal constructor(
             put("policy",plan.originalIntent?.let { Json.parseToJsonElement(Json.encodeToString(it)) } ?: JsonNull)
             put("allowed_server_ids",JsonArray(ids.map(::JsonPrimitive)))
         })}
+    }
+
+    internal fun admissionConfiguration(config: JsonObject): JsonObject {
+        if (!captureDelegation || childToolPlan == null || prepareChildExecutor == null ||
+            config["turn_identity"]?.jsonObject?.get("host_invocation") == null) return config
+        return canonicalApplication.mobileCommand(buildJsonObject {
+            put("type", "capture_mobile_delegation_configuration")
+            put("config", config)
+            put("settings", buildJsonObject {
+                put("project_root", "android-device")
+                put("selected_profile", JsonNull)
+                put("agents", buildJsonObject {})
+            })
+        }).jsonObject
     }
 
     internal suspend fun buildRuntimeConfig(

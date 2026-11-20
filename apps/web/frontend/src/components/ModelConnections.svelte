@@ -8,6 +8,7 @@
     import { api as unscopedApi } from '../lib/api';
     import { locale, t } from '../lib/i18n';
     import { loadConnections, modelSelectionCommand, type ConnectionInventory, type ConnectionSnapshot, type ImportPlan, type ImportResult } from '../lib/modelConnections';
+    let { openConnectionId = '' }: { openConnectionId?: string } = $props();
     function importCredentialLabel(status: string) {
         switch (status) {
             case 'available': return t($locale, 'connections.importKeyAvailable');
@@ -46,6 +47,11 @@
     let enableModels = $state(false);
     let results = $state<ImportResult[]>([]);
     let gateway = $state({revision: 0, enabled: false});
+    let accessPanel: HTMLDetailsElement;
+    function openGatewayAccess() {
+        accessPanel.open = true;
+        accessPanel.querySelector('button')?.focus();
+    }
     let gatewayToken = $state('');
     let tokenCopied = $state(false);
     function attemptLabel(profileId: string) {
@@ -155,7 +161,7 @@
     {#if !loading && !failed && inventory.connections.length && !visibleConnections.length}<p class="muted" role="status">{t($locale, 'connections.noMatches')}</p>{/if}
     {#each visibleConnections as snapshot (snapshot.document.connection.id)}
         {@const connection = snapshot.document.connection}
-        <details class="connection-detail"><summary class="connection-summary"><svg class="connection-chevron" aria-hidden="true" viewBox="0 0 16 16"><path d="m6 3 5 5-5 5" /></svg><span class="connection-identity"><strong>{connection.display_name}</strong><small title={connection.base_url}>{connection.base_url}</small></span><span class="connection-count">{snapshot.document.catalog?.models.length ?? 0} · {t($locale, connection.enabled ? 'connections.enabled' : 'connections.disabled')}</span></summary>
+        <details class="connection-detail" open={openConnectionId === connection.id}><summary class="connection-summary"><svg class="connection-chevron" aria-hidden="true" viewBox="0 0 16 16"><path d="m6 3 5 5-5 5" /></svg><span class="connection-identity"><strong>{connection.display_name}</strong><small title={connection.base_url}>{connection.base_url}</small></span><span class="connection-count">{snapshot.document.catalog?.models.length ?? 0} · {t($locale, connection.enabled ? 'connections.enabled' : 'connections.disabled')}</span></summary>
         <div class="connection-body">
             <button disabled={busy} onclick={() => discover(snapshot)}>{t($locale, 'connections.discover')}</button>
             {#each inventory.accounts.filter(item => item.account.id === connection.account_id) as item}<p class="muted">{item.account.display_name}</p>{/each}
@@ -191,13 +197,13 @@
         </div>{/if}
         {#each results as result}<p role="status" class:error={result.status !== 'imported'}>{t($locale, result.status === 'imported' ? 'connections.imported' : 'connections.importFailed')} {result.error ?? ''}</p>{/each}
     </details>
-    <details><summary>{t($locale, 'connections.gateway')}</summary>
+    <details bind:this={accessPanel}><summary>{t($locale, 'connections.gateway')}</summary>
         <p>{t($locale, 'connections.gatewayHint')}</p><code>{typeof location === 'undefined' ? '' : location.origin}/gateway/v1</code>
         <p><button disabled={busy} onclick={() => configureGateway(false)}>{t($locale, 'connections.issueToken')}</button>
         {#if gateway.enabled}<button disabled={busy} onclick={() => configureGateway(true)}>{t($locale, 'connections.revokeToken')}</button>{/if}</p>
         {#if gatewayToken}<div class="gateway-token"><label>{t($locale, 'connections.tokenOnce')}<input readonly type="text" class="token-value" value={gatewayToken} onclick={event => event.currentTarget.select()} /></label><button type="button" onclick={copyGatewayToken}>{t($locale, tokenCopied ? 'shell.login.copied' : 'shell.markdown.copy')}</button></div>{/if}
     </details>
-    <GatewayClients />
+    <GatewayClients {gateway} openAccess={openGatewayAccess} />
     <SourceAccounts />
     <details><summary>{t($locale, 'connections.gatewayUsage')}</summary>
         <button disabled={busy} onclick={readAttempts}>{t($locale, 'rooms.refresh')}</button>

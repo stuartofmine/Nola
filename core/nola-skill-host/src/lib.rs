@@ -683,18 +683,18 @@ pub fn prepare_with(
 }
 
 pub fn markdown_frontmatter_body(text: &str) -> Option<(&str, &str)> {
-    let rest = text
-        .strip_prefix("---\n")
-        .or_else(|| text.strip_prefix("---\r\n"))?;
-    let marker = rest.find("\n---\n").or_else(|| rest.find("\r\n---\r\n"))?;
-    let body = &rest[..marker];
-    let content_start = marker
-        + if rest[marker..].starts_with("\r\n---\r\n") {
-            7
-        } else {
-            5
-        };
-    Some((body, &rest[content_start..]))
+    let text = text.strip_prefix('\u{feff}').unwrap_or(text);
+    let (opening, rest) = text.split_once('\n')?;
+    if opening.trim_end() != "---" { return None; }
+    let mut offset = 0;
+    for line in rest.split_inclusive('\n') {
+        if line.trim_end() == "---" {
+            let header = rest[..offset].strip_suffix('\n').unwrap_or(&rest[..offset]);
+            return Some((header.strip_suffix('\r').unwrap_or(header), &rest[offset + line.len()..]));
+        }
+        offset += line.len();
+    }
+    None
 }
 
 fn read_metadata(path: &Path) -> Result<(String, String, String), String> {
@@ -851,6 +851,13 @@ mod tests {
             let yaml = format!("always_load: ['{file}']");
             assert!(shared_resources(yaml.as_bytes(), "skills/card").is_err());
         }
+    }
+
+    #[test]
+    fn first_frontmatter_boundary_wins_across_line_endings() {
+        let mixed = "\u{feff}---\r\nname: formatter\r\ndescription: Edit\r\n---\r\nKeep this body.\n---\nMore.";
+        assert_eq!(markdown_frontmatter_body(mixed), Some(("name: formatter\r\ndescription: Edit", "Keep this body.\n---\nMore.")));
+        assert_eq!(markdown_frontmatter_body("---\nname: formatter\n---"), Some(("name: formatter", "")));
     }
 
     #[test]

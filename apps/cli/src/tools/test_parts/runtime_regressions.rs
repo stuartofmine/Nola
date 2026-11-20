@@ -81,6 +81,23 @@ fn large_tool_preview_exposes_exact_utf8_continuation_offset() {
 }
 
 #[test]
+fn invalid_write_precondition_is_rejected_by_permission_preflight() {
+    let mut request = ToolRequest {
+        id: "overwrite-preflight".into(),
+        name: "write_file".into(),
+        args: serde_json::json!({"path":"note.txt","content":"replacement","expected_sha256":"unknown"})
+            .as_object().unwrap().clone(),
+    };
+    let failure = preflight_tool_request(&request).expect("reject before prompting");
+    assert!(failure.text.contains("tool_execution_skipped: true"));
+    assert!(failure.text.contains("complete read_file result"));
+    request.args.insert("expected_sha256".into(), serde_json::json!("a".repeat(64)));
+    assert!(preflight_tool_request(&request).is_none());
+    request.args.remove("expected_sha256");
+    assert!(preflight_tool_request(&request).is_none());
+}
+
+#[test]
 fn invalid_validation_pipeline_is_rejected_by_permission_preflight() {
     let request = ToolRequest {
         id: "validation-preflight".to_string(),

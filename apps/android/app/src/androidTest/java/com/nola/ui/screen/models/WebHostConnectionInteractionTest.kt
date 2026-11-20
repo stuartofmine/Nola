@@ -35,6 +35,8 @@ class WebHostConnectionInteractionTest {
                 finish = completion
             }, onDismiss = { dismissed = true }) }
         }
+        compose.onNodeWithText(context.getString(R.string.models_save_and_verify)).assertIsNotEnabled()
+        compose.onNodeWithText(context.getString(R.string.models_verify_again)).assertDoesNotExist()
         val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
         compose.runOnIdle { clipboard.setPrimaryClip(ClipData.newPlainText("fixture", "{}")) }
         val paste = context.getString(R.string.models_web_host_paste_setup)
@@ -56,6 +58,51 @@ class WebHostConnectionInteractionTest {
         }
     }
 
+    @Test fun httpsKeyboardMovesToOptionalPinAndDoneUsesSaveCallbackOnce() {
+        val context = compose.activity
+        var calls = 0
+        compose.setContent {
+            NolaTheme {
+                WebHostConfigSheet("", "", "", onSave = { origin, token, pin, _, _ ->
+                    calls++
+                    assertEquals("https://studio.local", origin)
+                    assertEquals("test-token", token)
+                    assertEquals("abc", pin)
+                }, onDismiss = {})
+            }
+        }
+        val address = compose.onNodeWithTag("models.host.url")
+        val token = compose.onNodeWithTag("models.host.token")
+        val pin = compose.onNodeWithTag("models.host.certificateSha256")
+        pin.assertDoesNotExist()
+        address.performScrollTo().performClick().performTextReplacement("https://studio.local")
+        address.performImeAction()
+        token.assertIsFocused().performTextInput("test-token")
+        compose.onNodeWithText(context.getString(R.string.models_host_token_new)).assertDoesNotExist()
+        token.performImeAction()
+        pin.assertIsFocused().performTextInput("abc")
+        pin.performImeAction()
+        compose.onNodeWithText(context.getString(R.string.models_web_host_checking)).assertIsNotEnabled()
+        pin.assertIsNotEnabled()
+        compose.runOnIdle { assertEquals(1, calls) }
+    }
+
+    @Test fun existingCertificateOnPlainHttpCanBeClearedBeforeVerification() {
+        var sentPin: String? = null
+        compose.setContent {
+            NolaTheme {
+                WebHostConfigSheet("http://studio.local", "saved", "old-pin", onSave = { _, _, pin, _, _ ->
+                    sentPin = pin
+                }, onDismiss = {})
+            }
+        }
+        val pin = compose.onNodeWithTag("models.host.certificateSha256")
+        pin.performScrollTo().performClick().performTextClearance()
+        pin.assertDoesNotExist()
+        compose.onNodeWithText(compose.activity.getString(R.string.models_save_and_verify)).performClick()
+        compose.runOnIdle { assertEquals("", sentPin) }
+    }
+
     @Test fun cancelledCheckIgnoresLateSuccessAndKeepsDraft() {
         val context = compose.activity
         var dismissed = false
@@ -66,6 +113,7 @@ class WebHostConnectionInteractionTest {
                 onSave = { _, _, _, _, completion -> finish = completion },
                 onDismiss = { dismissed = true }, onCancelConnection = { cancelled++ }) }
         }
+        compose.onNodeWithText(context.getString(R.string.models_web_host_setup_title)).assertDoesNotExist()
         val verify = context.getString(R.string.models_verify_again)
         compose.onNodeWithText(verify).performClick()
         compose.onNodeWithText(context.getString(R.string.common_cancel)).performClick()

@@ -1972,6 +1972,9 @@
 "model.web_host.security_summary" = "配对前，Nola 会验证令牌、权限协议和宿主机身份；每个宿主机或设备工具仍遵循各自的授权策略。";
 "model.web_host.error_format" = "连接错误：%@";
 "model.web_host.connect" = "连接";
+"model.web_host.cancel_verification" = "取消验证";
+"model.web_host.error.rollback" = "令牌保存失败，刚保存的宿主身份也未能移除。请忘记此配对后重试。";
+"model.web_host.recheck" = "重新验证";
 "model.web_host.connect.accessibility_hint" = "验证宿主机并绑定其身份后再保存。";
 "model.web_host.invalid_url" = "请输入有效的 HTTP 或 HTTPS 宿主机 URL。";
 "model.web_host.missing_token" = "请输入此宿主机的访问令牌。";
@@ -2412,7 +2415,7 @@
 /* macOS 设置工作区 */
 
 /* 个人智能能力 */
-"personal.capabilities.title" = "技能与 MCP";
+"personal.capabilities.title" = "能力库";
 "personal.capabilities.gateway.detail" = "管理可复用工作流和外部工具连接。";
 "personal.capabilities.gateway.count" = "已启用";
 "personal.capabilities.subtitle" = "跨会话可用的复用工作流与连接工具。";
@@ -2589,7 +2592,7 @@
 
 "chat.task.guidance.send" = "发送引导";
 "model.web_host.setup" = "连接前";
-"model.web_host.setup.start" = "在 Mac 的 Nola 中打开“设置 > 宿主机连接”，开启“共享此 Mac”。";
+"model.web_host.setup.start" = "在 Mac 的 Nola 中打开“设置 > 连接”，开启“将这台 Mac 共享为 Nola 服务器”。";
 "model.web_host.setup.copy" = "在 Mac 端点击“复制连接信息”，然后在下方粘贴。两台设备需位于可信私有网络，或使用 HTTPS。";
 "model.web_host.checking" = "正在检查宿主机";
 "model.web_host.checking.detail" = "保存前正在验证令牌、权限协议和宿主机身份。";
@@ -3290,6 +3293,7 @@
 "model.web_host.invalid_setup" = "请在宿主机的 Nola 中复制连接信息，再粘贴到这里。";
 
 "model.web_host.paste_setup" = "粘贴连接信息";
+"model.web_host.setup_payload" = "连接信息";
 
 // Generated UI recovery and presentation
 "a2ui.revalidate" = "重新校验";
@@ -3425,3 +3429,9 @@
 "Keep names as plain text" = "将名字保留为普通文字";
 "View expert history" = "查看专家会话";
 "experts.executor.requiresHost" = "请连接已安装此编程助手的宿主机，然后在宿主机会话中选择这位专家。";
+
+"harness.plugins" = "插件";
+"harness.host" = "选择桌面 Host";
+"harness.device_note" = "连接运行插件的电脑，就能在这里使用它的插件。";
+"harness.connect" = "连接桌面 Host";
+"harness.pair" = "连接其他 Host";

@@ -7,7 +7,7 @@ use sha2::{Digest, Sha256};
 use std::path::Path;
 
 #[cfg(windows)]
-pub mod windows_permissions;
+pub use nola_windows_permissions as windows_permissions;
 
 pub struct HostCredentialVault {
     connection: Connection,
@@ -34,6 +34,24 @@ pub fn identity(base_url: &str, protocol: &str) -> Result<String, String> {
     let path = url.path().trim_end_matches('/').to_owned();
     url.set_path(&path);
     Ok(format!("{protocol}\n{url}"))
+}
+
+// Released vaults have no SQLite user_version and always contain endpoint_credentials.
+// Check before switching journaling modes or seeding a table in an unrelated file.
+#[cfg(any(unix, windows))]
+fn recognize_vault(connection: &Connection) -> Result<(), String> {
+    let (version, application, empty, endpoints): (i64, i64, bool, bool) = connection.query_row(
+        "SELECT (SELECT user_version FROM pragma_user_version),
+                (SELECT application_id FROM pragma_application_id),
+                NOT EXISTS(SELECT 1 FROM sqlite_schema WHERE name NOT GLOB 'sqlite_*'),
+                EXISTS(SELECT 1 FROM sqlite_schema WHERE name='endpoint_credentials' AND type='table')",
+        [], |row| Ok((row.get(0)?,row.get(1)?,row.get(2)?,row.get(3)?)),
+    ).map_err(|_| "Cannot inspect credential vault")?;
+    if version == 0 && application == 0 && (empty || (endpoints && connection
+        .prepare("SELECT endpoint_id, identity, revision, secret FROM endpoint_credentials LIMIT 0").is_ok())) {
+        return Ok(());
+    }
+    Err("Unsupported credential vault format".into())
 }
 
 impl HostCredentialVault {
@@ -165,6 +183,7 @@ impl HostCredentialVault {
         connection
             .busy_timeout(std::time::Duration::from_secs(5))
             .map_err(|_| "Cannot configure credential vault")?;
+        recognize_vault(&connection)?;
         connection.execute_batch("PRAGMA journal_mode=DELETE; PRAGMA secure_delete=ON; CREATE TABLE IF NOT EXISTS endpoint_credentials(endpoint_id TEXT PRIMARY KEY, identity TEXT NOT NULL, revision INTEGER NOT NULL, secret TEXT);")
             .map_err(|_| "Cannot initialize credential vault")?;
         Ok(Self { connection })
@@ -449,6 +468,24 @@ mod tests {
                 0o600
             );
         }
+        }
+    }
+
+    #[cfg(any(unix, windows))]
+    #[test]
+    fn foreign_or_future_vault_is_rejected_without_seeding_tables() {
+        for sql in ["CREATE TABLE notes(body TEXT)", "PRAGMA user_version=42"] {
+            let dir = tempfile::tempdir().unwrap();
+            let database = dir.path().join("fixture.sqlite");
+            std::fs::File::create(&database).unwrap();
+            drop(HostCredentialVault::open(&database).unwrap());
+            let file = std::fs::read_dir(dir.path().join(".nola-host-secrets"))
+                .unwrap().next().unwrap().unwrap().path();
+            std::fs::remove_file(&file).unwrap();
+            Connection::open(&file).unwrap().execute_batch(sql).unwrap();
+            let original = std::fs::read(&file).unwrap();
+            assert!(matches!(HostCredentialVault::open(&database), Err(error) if error == "Unsupported credential vault format"));
+            assert_eq!(std::fs::read(&file).unwrap(), original);
         }
     }
 

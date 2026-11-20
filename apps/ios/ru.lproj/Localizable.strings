@@ -1971,6 +1971,12 @@
 "chat.permission.action.create_calendar" = "Создать событие";
 "chat.hybrid.clipboard" = "Буфер обмена";
 "model.web_host.connect" = "Подключить";
+"model.web_host.setup_payload" = "Данные подключения";
+"model.web_host.paste_setup" = "Вставить данные подключения";
+"model.web_host.invalid_setup" = "Скопируйте данные подключения в Nola на хосте и вставьте их здесь.";
+"model.web_host.cancel_verification" = "Отменить проверку";
+"model.web_host.error.rollback" = "Не удалось сохранить токен и удалить новый идентификатор хоста. Удалите сопряжение и повторите попытку.";
+"model.web_host.recheck" = "Проверить снова";
 "chat.model.not_configured" = "Не настроено";
 "chat.permission.action.write_clipboard" = "Обновить буфер обмена";
 "chat.model.group.cloud" = "Облако";
@@ -2269,7 +2275,7 @@
 /* macOS Settings workspace */
 
 /* Personal intelligence capabilities */
-"personal.capabilities.title" = "Навыки и MCP";
+"personal.capabilities.title" = "Библиотека возможностей";
 "personal.capabilities.gateway.detail" = "Управляйте повторно используемыми сценариями и внешними инструментами.";
 "personal.capabilities.gateway.count" = "включено";
 "personal.capabilities.subtitle" = "Сценарии и подключённые инструменты, доступные во всех диалогах.";
@@ -2448,7 +2454,7 @@
 
 "chat.task.guidance.send" = "Отправить указание";
 "model.web_host.setup" = "Перед подключением";
-"model.web_host.setup.start" = "На Mac откройте в Nola «Настройки > Подключение к хосту» и разрешите подключения устройств.";
+"model.web_host.setup.start" = "На Mac откройте в Nola «Настройки > Подключения» и включите «Использовать этот Mac как Nola Server».";
 "model.web_host.setup.copy" = "Скопируйте адрес и токен сопряжения, показанные Nola на Mac. Используйте доверенную частную сеть или HTTPS.";
 "model.web_host.checking" = "Проверка хоста";
 "model.web_host.checking.detail" = "Перед сохранением проверяются токен, протокол разрешений и идентификатор хоста.";
@@ -3268,3 +3274,9 @@
 "chat.history.otherClientReadOnly" = "Только для чтения. Чтобы продолжить беседу, откройте её в клиенте, в котором она была создана.";
 "chat.history.ambiguousIDs" = "Идентификаторы двух бесед различаются только регистром. Откройте их в исходном клиенте.";
 "experts.executor.requiresHost" = "Подключитесь к хосту, на котором работает этот агент программирования, и выберите эксперта в чате этого хоста.";
+
+"harness.plugins" = "Плагины";
+"harness.host" = "Выберите Host";
+"harness.device_note" = "Подключите компьютер, на котором работают плагины, чтобы пользоваться ими здесь.";
+"harness.connect" = "Подключить настольный хост";
+"harness.pair" = "Подключить другой Host";

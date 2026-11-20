@@ -1,5 +1,7 @@
 package com.nola.ui.screen.intelligence
 
+import com.nola.ui.components.dismissImeOnBlankTap
+import com.nola.ui.screen.models.HostPairingSheet
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import com.nola.ui.components.GithubSkillSourceLink
@@ -108,7 +110,8 @@ enum class IntelligenceSection {
 
 private enum class CapabilitySection {
     SKILLS,
-    MCP
+    MCP,
+    PLUGINS
 }
 
 internal const val INTELLIGENCE_CAPABILITY_SKILLS_TAB_TAG = "intelligence.capabilities.skills"
@@ -120,6 +123,8 @@ fun IntelligenceScreen(
     section: IntelligenceSection? = null,
     onBack: (() -> Unit)? = null,
 ) {
+    val uriHandler = androidx.compose.ui.platform.LocalUriHandler.current
+    val pluginHost by viewModel.pluginHostAddress.collectAsStateWithLifecycle(initialValue = "")
     val state by viewModel.uiState.collectAsStateWithLifecycle()
     val profile = state.profile
     val visibleSkillIndices = profile.uploadedSkills.indices.filter {
@@ -134,6 +139,16 @@ fun IntelligenceScreen(
     val readableEnabledMcpCount = visibleMcpIndices.count { index ->
         profile.mcpServers[index].enabled && state.mcpAccess.getOrNull(index)?.canReadContent == true
     }
+    var pairingHost by androidx.compose.runtime.saveable.rememberSaveable { mutableStateOf(false) }
+    if (pairingHost) {
+        HostPairingSheet(
+            onDismiss = { pairingHost = false },
+            onVerified = { address ->
+                pairingHost = false
+                viewModel.openPlugins(address, { pairingHost = true }, uriHandler::openUri)
+            }
+        )
+    }
     val newSkillTemplate = stringResource(R.string.chat_new_skill_template)
     var editor by remember { mutableStateOf<IntelligenceEditor?>(null) }
     var skillEditor by remember { mutableStateOf<SkillEditor?>(null) }
@@ -141,7 +156,7 @@ fun IntelligenceScreen(
     var pendingDeletion by remember { mutableStateOf<CapabilityDeletion?>(null) }
     var pendingEntryDeletion by remember { mutableStateOf<IntelligenceEditor?>(null) }
     var activeSection by remember(section) { mutableStateOf(section ?: IntelligenceSection.MEMORY) }
-    var activeCapabilitySection by remember { mutableStateOf(CapabilitySection.SKILLS) }
+    var activeCapabilitySection by androidx.compose.runtime.saveable.rememberSaveable { mutableStateOf(CapabilitySection.SKILLS) }
     var dismissedSaveRevision by remember { mutableStateOf(0L) }
 
     Box(
@@ -178,8 +193,8 @@ fun IntelligenceScreen(
                         style = MaterialTheme.typography.headlineSmall,
                         fontWeight = FontWeight.Bold
                     )
-                    Text(
-                        text = stringResource(if (section == IntelligenceSection.EXTENSIONS) R.string.settings_capabilities_desc else R.string.intelligence_subtitle),
+                    if (section != IntelligenceSection.EXTENSIONS) Text(
+                        text = stringResource(R.string.intelligence_subtitle),
                         style = MaterialTheme.typography.bodyMedium,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
@@ -202,7 +217,7 @@ fun IntelligenceScreen(
             )
         }
 
-        if (state.profileLoadError != null) {
+        if (state.profileLoadError != null && (activeSection != IntelligenceSection.EXTENSIONS || activeCapabilitySection != CapabilitySection.PLUGINS)) {
             item {
                 Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                     Text(stringResource(R.string.intelligence_profile_load_failed), color = MaterialTheme.colorScheme.error)
@@ -299,18 +314,24 @@ fun IntelligenceScreen(
             }
         } else {
             item {
-                CapabilityTypeSwitcher(
-                    showingSkills = activeCapabilitySection == CapabilitySection.SKILLS,
-                    enabledSkills = readableEnabledSkillCount,
-                    totalSkills = visibleSkillIndices.size,
-                    enabledMcp = readableEnabledMcpCount,
-                    totalMcp = visibleMcpIndices.size,
-                    onShowSkills = { activeCapabilitySection = CapabilitySection.SKILLS },
-                    onShowMcp = { activeCapabilitySection = CapabilitySection.MCP }
-                )
+                CapabilityTypeSwitcher(activeCapabilitySection) { activeCapabilitySection = it }
             }
-
             when (activeCapabilitySection) {
+                CapabilitySection.PLUGINS -> item {
+                    if (pluginHost.isBlank()) Text(stringResource(R.string.harness_device_note),
+                        style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    TextButton(
+                        enabled = !state.openingPlugins,
+                        onClick = { viewModel.openPlugins(pluginHost, { pairingHost = true }, uriHandler::openUri) },
+                        modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp).testTag("intelligence.harness.plugins")
+                    ) {
+                        Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                            Text(pluginHost.ifBlank { stringResource(R.string.harness_connect) },
+                                modifier = Modifier.weight(1f), style = MaterialTheme.typography.bodyLarge)
+                            if (state.openingPlugins) CircularProgressIndicator(modifier = Modifier.size(20.dp))
+                        }
+                    }
+                }
                 CapabilitySection.SKILLS -> item {
                     SkillLibraryCard(
                         skills = profile.uploadedSkills,
@@ -456,73 +477,32 @@ fun IntelligenceScreen(
 }
 
 @Composable
-internal fun CapabilityTypeSwitcher(
-    showingSkills: Boolean,
-    enabledSkills: Int,
-    totalSkills: Int,
-    enabledMcp: Int,
-    totalMcp: Int,
-    onShowSkills: () -> Unit,
-    onShowMcp: () -> Unit
-) {
-    Surface(
-        shape = RoundedCornerShape(16.dp),
-        color = Color.Transparent
+private fun CapabilityTypeSwitcher(selected: CapabilitySection, onSelect: (CapabilitySection) -> Unit) {
+    Row(
+        modifier = Modifier.fillMaxWidth(),
+        horizontalArrangement = Arrangement.spacedBy(4.dp)
     ) {
-        Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(4.dp),
-            horizontalArrangement = Arrangement.spacedBy(4.dp)
-        ) {
-            CapabilityTypeSegment(
-                label = stringResource(R.string.chat_skill_library),
-                count = "$enabledSkills/$totalSkills",
-                selected = showingSkills,
-                modifier = Modifier
-                    .weight(1f)
-                    .testTag(INTELLIGENCE_CAPABILITY_SKILLS_TAB_TAG),
-                onClick = onShowSkills
-            )
-            CapabilityTypeSegment(
-                label = stringResource(R.string.chat_mcp_endpoints),
-                count = "$enabledMcp/$totalMcp",
-                selected = !showingSkills,
-                modifier = Modifier
-                    .weight(1f)
-                    .testTag(INTELLIGENCE_CAPABILITY_MCP_TAB_TAG),
-                onClick = onShowMcp
-            )
-        }
-    }
-}
-
-@Composable
-private fun CapabilityTypeSegment(
-    label: String,
-    count: String,
-    selected: Boolean,
-    modifier: Modifier,
-    onClick: () -> Unit
-) {
-    Surface(
-        modifier = modifier
-            .heightIn(min = 48.dp)
-            .clip(RoundedCornerShape(12.dp))
-            .selectable(selected = selected, role = Role.Tab, onClick = onClick),
-        shape = RoundedCornerShape(12.dp),
-        color = selectionBackground(selected),
-        contentColor = if (selected) MaterialTheme.colorScheme.onSurface else MaterialTheme.colorScheme.onSurfaceVariant,
-        tonalElevation = 0.dp
-    ) {
-        Row(
-            modifier = Modifier.padding(horizontal = 12.dp, vertical = 9.dp),
-            horizontalArrangement = Arrangement.Center,
-            verticalAlignment = Alignment.CenterVertically
-        ) {
-            Text(label, style = MaterialTheme.typography.labelLarge, fontWeight = FontWeight.SemiBold)
-            Spacer(Modifier.width(7.dp))
-            Text(count, style = MaterialTheme.typography.labelSmall)
+        CapabilitySection.entries.forEach { section ->
+            val label = when (section) {
+                CapabilitySection.SKILLS -> stringResource(R.string.chat_control_skills)
+                CapabilitySection.MCP -> "MCP"
+                CapabilitySection.PLUGINS -> stringResource(R.string.harness_plugins)
+            }
+            val tag = when (section) {
+                CapabilitySection.SKILLS -> INTELLIGENCE_CAPABILITY_SKILLS_TAB_TAG
+                CapabilitySection.MCP -> INTELLIGENCE_CAPABILITY_MCP_TAB_TAG
+                CapabilitySection.PLUGINS -> "intelligence.capabilities.plugins"
+            }
+            Surface(
+                modifier = Modifier.weight(1f).heightIn(min = 48.dp).clip(RoundedCornerShape(12.dp))
+                    .testTag(tag).selectable(selected = section == selected, role = Role.Tab, onClick = { onSelect(section) }),
+                color = selectionBackground(section == selected),
+                contentColor = if (section == selected) MaterialTheme.colorScheme.onSurface else MaterialTheme.colorScheme.onSurfaceVariant
+            ) {
+                Box(Modifier.padding(horizontal = 6.dp, vertical = 9.dp), contentAlignment = Alignment.Center) {
+                    Text(label, style = MaterialTheme.typography.labelLarge, fontWeight = FontWeight.SemiBold)
+                }
+            }
         }
     }
 }
@@ -1036,7 +1016,7 @@ internal fun SkillEditorDialog(editor: SkillEditor, isSaving: Boolean, errorMess
     }
     if (discard) DiscardChangesDialog(onDiscard = onDismiss, onKeepEditing = { discard = false })
     AlertDialog(
-        modifier = Modifier
+        modifier = Modifier.dismissImeOnBlankTap()
             .fillMaxWidth()
             .widthIn(max = 720.dp)
             .padding(horizontal = 16.dp),
@@ -1111,7 +1091,7 @@ internal fun McpEditorDialog(
         parsed != null && parsed.scheme?.lowercase() in setOf("http", "https") && !parsed.host.isNullOrBlank()
     }
     AlertDialog(
-        modifier = Modifier
+        modifier = Modifier.dismissImeOnBlankTap()
             .fillMaxWidth()
             .widthIn(max = 620.dp)
             .padding(horizontal = 16.dp),
@@ -1200,6 +1180,7 @@ private fun IntelligenceEditorDialog(
         IntelligenceEntryKind.Memory -> if (editor.index == null) stringResource(R.string.intelligence_add_memory) else stringResource(R.string.intelligence_edit_memory)
     }
     AlertDialog(
+        modifier = Modifier.dismissImeOnBlankTap(),
         onDismissRequest = requestDismiss,
         title = { Text(title) },
         text = {

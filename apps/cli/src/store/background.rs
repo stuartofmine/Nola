@@ -18,6 +18,8 @@ const SHELL_PROCESS_KIND: &str = "shell_process";
 #[derive(Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct ShellProcessMetadata {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    local_execution: Option<nola_domain::execution_evidence::LocalExecutionIdentity>,
     #[serde(default,skip_serializing_if="Option::is_none")]
     process_sandbox: Option<crate::process_sandbox::FrozenProcessSandbox>,
     terminal: Option<nola_domain::terminal_input::TerminalSessionConfiguration>,
@@ -96,6 +98,7 @@ fn create_runtime_task_from_background(
         }
     }
     let metadata = ShellProcessMetadata {
+        local_execution: task.local_execution.clone(),
         process_sandbox: task.process_sandbox.clone(),
         terminal: task.terminal.clone(),
         command: task.command.clone(),
@@ -159,6 +162,7 @@ pub(crate) fn background_task_from_runtime(
         })?;
     if let Some(size) = &metadata.terminal { size.validate()?; }
     Ok(DbBackgroundTask {
+        local_execution: metadata.local_execution,
         process_sandbox: metadata.process_sandbox,
         terminal: metadata.terminal,
         id: task.id,
@@ -191,7 +195,8 @@ mod tests {
         let database = root.join("nola.db");
         let store = NolaStore::open(&database)?;
         let task = DbBackgroundTask {
-        process_sandbox: None,
+            local_execution: None,
+            process_sandbox: None,
             terminal: None,
             id: "bash-test-1".to_string(),
             project_root: "/workspace".to_string(),

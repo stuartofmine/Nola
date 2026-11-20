@@ -1229,7 +1229,7 @@ final class IOSUIInteractionPolicyTests: XCTestCase {
 
             try await IOSVisualPixelAssertions.assertPresentedSheet(
                 NavigationStack {
-                    WebHostConfigurationView(existingModel: nil) { _ in }
+                    WebHostConfigurationView(existingModel: nil) { _, _ in }
                 },
                 label: "sheet-web-host-config-\(themeName)",
                 userInterfaceStyle: style
@@ -1241,8 +1241,16 @@ final class IOSUIInteractionPolicyTests: XCTestCase {
 @MainActor
 final class WebHostConnectionUIVisualTests: XCTestCase {
     func testConnectionSheetRendersSetupAndInputsAtPhoneSize() async throws {
+        #if targetEnvironment(simulator)
+        // A disabled system Paste control is deliberately dim. Verify its
+        // visible, actionable state with a local plaintext test item.
+        UIPasteboard.general.setItems([["public.utf8-plain-text": "Nola UI fixture"]],
+                                      options: [.localOnly: true, .expirationDate: Date().addingTimeInterval(120)])
+        let change = UIPasteboard.general.changeCount
+        defer { if UIPasteboard.general.changeCount == change { UIPasteboard.general.setItems([], options: [.localOnly: true]) } }
+        #endif
         let view = NavigationStack {
-            WebHostConfigurationView(existingModel: nil) { _ in }
+            WebHostConfigurationView(existingModel: nil) { _, _ in }
         }
         let image = try await IOSVisualPixelAssertions.assertHostedView(
             view,
@@ -1256,11 +1264,18 @@ final class WebHostConnectionUIVisualTests: XCTestCase {
         recognition.recognitionLanguages = ["zh-Hans", "en-US"]
         recognition.recognitionLevel = .accurate
         try VNImageRequestHandler(cgImage: XCTUnwrap(image.cgImage)).perform([recognition])
-        let visibleText = recognition.results?.compactMap { $0.topCandidates(1).first?.string }
-            .joined().filter { !$0.isWhitespace } ?? ""
-        let pasteLabel = NSLocalizedString("model.web_host.paste_setup", value: "Paste Connection Setup", comment: "")
-            .filter { !$0.isWhitespace }
-        XCTAssertTrue(visibleText.contains(pasteLabel), "The pairing action must be visible, not an empty control row")
+        let observations = recognition.results ?? []
+        func text(_ line: VNRecognizedTextObservation) -> String {
+            line.topCandidates(1).first?.string.lowercased().filter { !$0.isWhitespace } ?? ""
+        }
+        let row = try XCTUnwrap(observations.first { line in
+            text(line).hasPrefix("connectionsetup") || text(line).hasPrefix("连接信息")
+        }, "The setup row must have a readable title")
+        let paste = observations.contains { line in
+            guard abs(line.boundingBox.midY - row.boundingBox.midY) < 0.025 else { return false }
+            return text(line).hasSuffix("paste") || text(line).hasSuffix("粘贴")
+        }
+        XCTAssertTrue(paste, "Expected Paste beside the setup title; recognized \(observations.map(text))")
     }
 
     func testConnectionFailuresUseStableLocalizedMessages() {
@@ -1277,6 +1292,42 @@ final class WebHostConnectionUIVisualTests: XCTestCase {
             NSLocalizedString("model.web_host.error.unreachable", comment: "")
         )
     }
+    func testPairingFailureRestoresPreviousKeychainState() throws {
+        let url = try XCTUnwrap(URL(string: "http://127.0.0.1:1/" + UUID().uuidString))
+        defer { ModelSelectionManager.forgetWebHostIdentity(for: url) }
+        let id = UUID().uuidString
+        XCTAssertTrue(ModelSelectionManager.saveWebHostToken("previous", for: url.absoluteString))
+        XCTAssertThrowsError(try ModelSelectionManager.saveVerifiedHostPairing("invalid pin", token: "new", for: url))
+        XCTAssertNil(ModelSelectionManager.pairedWebHostIdentity(for: url))
+        XCTAssertEqual(ModelSelectionManager.webHostToken(for: url.absoluteString), "previous")
+        XCTAssertThrowsError(try ModelSelectionManager.saveVerifiedHostPairing(id, token: "new", for: url) { _, _ in false })
+        XCTAssertNil(ModelSelectionManager.pairedWebHostIdentity(for: url))
+        XCTAssertEqual(ModelSelectionManager.webHostToken(for: url.absoluteString), "previous")
+        try ModelSelectionManager.saveVerifiedHostPairing(id, token: "verified", for: url)
+        XCTAssertThrowsError(try ModelSelectionManager.saveVerifiedHostPairing(id, token: "new", for: url) { _, _ in false })
+        XCTAssertThrowsError(try ModelSelectionManager.saveVerifiedHostPairing(UUID().uuidString, token: "new", for: url))
+        XCTAssertEqual(ModelSelectionManager.pairedWebHostIdentity(for: url), id)
+        XCTAssertEqual(ModelSelectionManager.webHostToken(for: url.absoluteString), "verified")
+    }
+
+    func testForgettingPairingRemovesOnlyItsIdentityAndToken() throws {
+        let local = "http://127.0.0.1:1/" + UUID().uuidString
+        let first = try XCTUnwrap(URL(string: local + "/first"))
+        let second = try XCTUnwrap(URL(string: local + "/second"))
+        defer { ModelSelectionManager.forgetWebHostIdentity(for: second) }
+        for host in [first, second] {
+            XCTAssertTrue(ModelSelectionManager.installEphemeralWebHostCredential(
+                token: "fixture", identity: UUID().uuidString, for: host
+            ))
+            XCTAssertEqual(ModelSelectionManager.webHostToken(for: host.absoluteString), "fixture")
+        }
+        ModelSelectionManager.forgetWebHostIdentity(for: first)
+        XCTAssertNil(ModelSelectionManager.pairedWebHostIdentity(for: first))
+        XCTAssertNil(ModelSelectionManager.webHostToken(for: first.absoluteString))
+        XCTAssertNotNil(ModelSelectionManager.pairedWebHostIdentity(for: second))
+        XCTAssertEqual(ModelSelectionManager.webHostToken(for: second.absoluteString), "fixture")
+    }
+
     func testSavedPairingTokenNeverLoadsForAnEditedDestination() throws {
         let original = "https://host.example/routed"
         var reads = 0

@@ -229,17 +229,32 @@ test("startup recovers from a missed status read and shows native action errors"
                 unavailable = false;
                 return Promise.reject(new Error("Bridge connecting"));
             }
-            if (command === "open_diagnostics") return Promise.reject(new Error("Folder unavailable"));
+            if (command === "open_diagnostics") return new Promise((_, reject) => {
+                window.__rejectDiagnostics = () => reject(new Error("Folder unavailable"));
+            });
             return original(command, args);
         };
     }`});
     await page.addScriptTag({content: startup});
     const logs = page.getByRole("button", {name: stringsFor("en").openLogs});
-    await logs.click();
+    await logs.focus();
+    await logs.press("Enter");
+    await expect(logs).toBeDisabled();
+    const rejectDiagnostics = () => page.evaluate(() =>
+        (window as Window & { __rejectDiagnostics(): void }).__rejectDiagnostics());
+    await rejectDiagnostics();
     await expect(page.getByRole("status")).toHaveText("Folder unavailable");
     await expect(logs).toBeEnabled();
+    await expect(logs).toBeFocused();
     await expect(page.locator(".detail")).toHaveText("Exit code 1");
     await expect(page).toHaveTitle(stringsFor("en").failedTitle);
+    await logs.press("Enter");
+    await expect(logs).toBeDisabled();
+    const retry = page.locator("#nola-retry-host");
+    await retry.focus();
+    await rejectDiagnostics();
+    await expect(logs).toBeEnabled();
+    await expect(retry).toBeFocused();
 });
 
 test("Windows desktop shell integration against isolated real nola web renders Svelte 5 chat, Settings login card, and /models runtime badge", async ({ browser }) => {
@@ -262,7 +277,7 @@ test("Windows desktop shell integration against isolated real nola web renders S
 
     const logs: string[] = [];
     const host = spawn(cliPath, ["web", "--host", "127.0.0.1", "--port", String(port), "--web-root", webRoot], {
-        cwd: repoRoot,
+        cwd: tmpRoot,
         env: childEnv,
         stdio: ["ignore", "pipe", "pipe"],
     });
@@ -316,6 +331,16 @@ test("Windows desktop shell integration against isolated real nola web renders S
             });
         await action('02-enter-draft', () => composer.fill('Windows desktop shell roundtrip'),
             () => expect(composer).toHaveValue('Windows desktop shell roundtrip'));
+        const owner = new URL(page.url()).searchParams.get('conversation');
+        expect(owner).toBeTruthy();
+        const conversations = await page.request.get(origin + '/api/chat/conversations');
+        expect(conversations.ok()).toBe(true);
+        expect((await conversations.json()).conversations.map((value: {conversationId: string}) => value.conversationId)).toEqual([owner]);
+        await action('send-without-configured-model', () => page.getByRole('button', {name:'Send', exact:true}).click(),
+            async () => {
+                await expect(page.getByRole('link', {name:'Add a chat model'})).toBeVisible();
+                await expect(composer).toHaveValue('Windows desktop shell roundtrip');
+            });
         await action('03-open-settings', () => page.getByRole('button', {name:'Settings', exact:true}).click(),
             () => expect(settings).toBeVisible());
         const categories = [

@@ -2669,13 +2669,12 @@ mod skill_projection_contract_tests {
     }
 }
 
-pub fn delete_session(id: &str) -> Result<(), String> {
+pub fn delete_session(id: &str) -> Result<bool, String> {
     validate_session_id(id)?;
     let mut canonical = application_port_default()?;
     canonical
         .delete_conversation(id)
-        .map_err(|error| format!("delete canonical conversation failed: {error}"))?;
-    Ok(())
+        .map_err(|error| format!("delete canonical conversation failed: {error}"))
 }
 
 fn validate_session_id(id: &str) -> Result<(), String> {

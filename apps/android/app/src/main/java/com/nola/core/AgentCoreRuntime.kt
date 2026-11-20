@@ -64,6 +64,10 @@ internal object AgentCoreNative {
     external fun nativeComposeAgentPrompt(input: ByteArray): ByteArray?
     external fun nativeParseAgentModelOutput(input: ByteArray): ByteArray?
     external fun nativeStitchAgentModelContinuation(input: ByteArray): ByteArray?
+    external fun nativeApplicationIntelligenceIngest(handle: Long, input: ByteArray): ByteArray?
+    external fun nativeApplicationIntelligenceRecall(handle: Long, input: ByteArray): ByteArray?
+    external fun nativeApplicationIntelligenceSnapshot(handle: Long): ByteArray?
+    external fun nativeApplicationIntelligenceClear(handle: Long): Boolean
     external fun nativeIntelligenceIngest(input: ByteArray): ByteArray?
     external fun nativeIntelligenceRecall(input: ByteArray): ByteArray?
     external fun nativeIntelligenceSnapshot(): ByteArray?

@@ -370,6 +370,40 @@ Java_com_nola_core_AgentCoreNative_nativeIntelligenceClear(JNIEnv*, jobject) {
     return nola_core_intelligence_clear() ? JNI_TRUE : JNI_FALSE;
 }
 
+extern "C" JNIEXPORT jbyteArray JNICALL
+Java_com_nola_core_AgentCoreNative_nativeApplicationIntelligenceIngest(JNIEnv* env, jobject, jlong handle, jbyteArray input) {
+    jbyte* pinned = nullptr;
+    jsize length = 0;
+    const unsigned char* bytes = pin_bytes(env, input, &pinned, &length);
+    auto* application = reinterpret_cast<NolaCoreApplication*>(static_cast<std::intptr_t>(handle));
+    char* result = nola_core_application_intelligence_ingest(application, bytes, static_cast<size_t>(length));
+    release_bytes(env, input, pinned);
+    return consume_json(env, result);
+}
+
+extern "C" JNIEXPORT jbyteArray JNICALL
+Java_com_nola_core_AgentCoreNative_nativeApplicationIntelligenceRecall(JNIEnv* env, jobject, jlong handle, jbyteArray input) {
+    jbyte* pinned = nullptr;
+    jsize length = 0;
+    const unsigned char* bytes = pin_bytes(env, input, &pinned, &length);
+    auto* application = reinterpret_cast<NolaCoreApplication*>(static_cast<std::intptr_t>(handle));
+    char* result = nola_core_application_intelligence_recall(application, bytes, static_cast<size_t>(length));
+    release_bytes(env, input, pinned);
+    return consume_json(env, result);
+}
+
+extern "C" JNIEXPORT jbyteArray JNICALL
+Java_com_nola_core_AgentCoreNative_nativeApplicationIntelligenceSnapshot(JNIEnv* env, jobject, jlong handle) {
+    auto* application = reinterpret_cast<NolaCoreApplication*>(static_cast<std::intptr_t>(handle));
+    return consume_json(env, nola_core_application_intelligence_snapshot(application));
+}
+
+extern "C" JNIEXPORT jboolean JNICALL
+Java_com_nola_core_AgentCoreNative_nativeApplicationIntelligenceClear(JNIEnv*, jobject, jlong handle) {
+    auto* application = reinterpret_cast<NolaCoreApplication*>(static_cast<std::intptr_t>(handle));
+    return nola_core_application_intelligence_clear(application) ? JNI_TRUE : JNI_FALSE;
+}
+
 extern "C" JNIEXPORT jlong JNICALL
 Java_com_nola_core_AgentCoreNative_nativeChildPumpStart(JNIEnv* env, jobject, jlong handle, jbyteArray input) {
     jbyte* pinned=nullptr; jsize length=0;

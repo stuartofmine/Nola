@@ -196,6 +196,14 @@ pub fn start_model_attempt(
     ])
 }
 
+/// An empty report adds no facts to this physical request. Keep any earlier
+/// accounting; still validate malformed non-object payloads through the normal record validator.
+fn update_reported_usage(record: &mut ModelAttemptRecord, usage: serde_json::Value) {
+    if usage.as_object().is_none_or(|fields| !fields.is_empty()) {
+        record.usage = usage;
+    }
+}
+
 pub fn record_model_attempt_usage(
     current: &ModelAttemptRecord,
     usage: serde_json::Value,
@@ -205,7 +213,7 @@ pub fn record_model_attempt_usage(
         return Err("only a running model attempt can report usage".into());
     }
     let mut record = next(current, now)?;
-    record.usage = usage;
+    update_reported_usage(&mut record, usage);
     validate_model_attempt(&record)?;
     Ok(ModelAttemptMutation { expected_revision: Some(current.revision), record })
 }
@@ -225,11 +233,7 @@ pub fn finish_model_attempt(
     }
     record.state = state;
     record.failure = failure;
-    // Failure/cancellation often has no additional accounting. It must not
-    // erase a physical request's already-committed provider usage.
-    if usage.as_object().is_none_or(|fields| !fields.is_empty()) {
-        record.usage = usage;
-    }
+    update_reported_usage(&mut record, usage);
     record.completed_at_ms = state.is_terminal().then_some(now);
     validate_model_attempt(&record)?;
     Ok(ModelAttemptMutation {
@@ -338,6 +342,18 @@ mod tests {
             assert_eq!(next.revision, 1);
             assert_eq!(next.started_at_ms, Some(130));
         }
+    }
+
+    #[test]
+    fn empty_followup_usage_retains_last_physical_report_through_completion() {
+        let usage = serde_json::json!({"cache_usage":{
+            "input_tokens":100,"read_tokens":75,"write_tokens":null,"is_compaction":false
+        }});
+        let measured = record_model_attempt_usage(&running(), usage.clone(), 115).unwrap().record;
+        let later = record_model_attempt_usage(&measured, serde_json::json!({}), 116).unwrap().record;
+        assert_eq!(later.usage, usage);
+        let finished = finish_model_attempt(&later, Succeeded, None, serde_json::json!({}), 120).unwrap().record;
+        assert_eq!(nola_domain::PromptCacheUsage::from_model_attempt_usage(&finished.usage).hit_rate_bps, Some(7500));
     }
 
     #[test]

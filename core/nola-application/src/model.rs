@@ -276,10 +276,41 @@ impl From<ModelRuntime> for StoredModelRuntime {
 
 pub(crate) fn execute_model_command(
     store: &mut impl ModelRepository,
-    command: ModelCommand,
+    mut command: ModelCommand,
 ) -> Result<Value, String> {
     // Managed connections own their source metadata and enabled selections.
     // Parameter edits remain on the existing profile command path.
+    if let ModelCommand::ReplaceProfiles { provider, runtime, profiles, expected_revisions, .. } = &mut command {
+        let mut draft_endpoints = std::collections::HashSet::new();
+        let mut draft_ids = std::collections::HashSet::new();
+        for draft in profiles.iter() {
+            let source: Value = serde_json::from_str(&draft.source_json).map_err(|_| "invalid model source")?;
+            if !source["connectionID"].is_null() {
+                return Err("managed connection profiles require a connection command".into());
+            }
+            if let Some(endpoint) = source["endpointID"].as_str() { draft_endpoints.insert(endpoint.to_owned()); }
+            draft_ids.insert(draft.id.clone());
+        }
+        let mut protected = Vec::new();
+        for existing in store.list_model_profiles().map_err(|error| error.to_string())? {
+            if existing.provider != *provider || existing.runtime != *runtime { continue; }
+            let source: Value = serde_json::from_str(&existing.source_json).map_err(|_| "invalid stored model source")?;
+            if source["connectionID"].is_null() { continue; }
+            if expected_revisions.contains_key(&existing.id) || draft_ids.contains(&existing.id)
+                || existing.deleted_at_ms.is_none() && source["endpointID"].as_str().is_some_and(|id| draft_endpoints.contains(id)) {
+                return Err("managed connection profiles require a connection command".into());
+            }
+            if existing.deleted_at_ms.is_none() { protected.push(existing); }
+        }
+        if protected.iter().any(|profile| profile.selected) {
+            for profile in profiles.iter_mut() { profile.selected = false; }
+        }
+        // The repository atomically checks the combined membership and revisions.
+        for profile in protected {
+            expected_revisions.insert(profile.id.clone(), profile.revision);
+            profiles.push(profile.into());
+        }
+    }
     let mutation_ids: Vec<&str> = match &command {
         ModelCommand::UpsertProfile { input } => vec![input.id.as_str()],
         ModelCommand::DeleteProfile { id, .. } => vec![id.as_str()],
@@ -293,7 +324,7 @@ pub(crate) fn execute_model_command(
     if !mutation_ids.is_empty()
         || matches!(
             &command,
-            ModelCommand::ConfigureEndpoint { .. } | ModelCommand::ReplaceProfiles { .. }
+            ModelCommand::ConfigureEndpoint { .. }
         )
     {
         for profile in store
@@ -309,9 +340,6 @@ pub(crate) fn execute_model_command(
                     ModelCommand::ConfigureEndpoint { endpoint_id, .. } => {
                         source["endpointID"].as_str() == Some(endpoint_id.as_str())
                     }
-                    ModelCommand::ReplaceProfiles {
-                        provider, runtime, ..
-                    } => profile.provider == *provider && profile.runtime == *runtime,
                     _ => false,
                 };
             if overlaps {

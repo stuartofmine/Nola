@@ -2263,6 +2263,12 @@ mod background_lifecycle_tests {
         );
         args.insert("_nola_approved_once".to_string(), Value::Bool(true));
 
+        let identity = nola_domain::execution_evidence::LocalExecutionIdentity {
+            execution_id: "supervised-foreground".into(), host_id: "host".into(),
+            session_id: "session".into(), turn_id: "turn".into(), effect_id: "effect".into(),
+            request_id: "request".into(), call_id: "call".into(), delivery_attempt_id: Some("delivery".into()),
+        };
+        let _execution = enter_local_execution_identity(identity.clone());
         let outcome = run_bash_with_permission(&args, &ctx, true);
 
         assert!(!outcome.error, "{}", outcome.text);
@@ -2270,6 +2276,10 @@ mod background_lifecycle_tests {
         assert!(!outcome.text.contains("background_mode:"), "{}", outcome.text);
         let tasks = NolaStore::open(&db_path).unwrap().list_all_runtime_tasks().unwrap();
         assert_eq!(tasks.len(), 1, "short auto command bypassed or duplicated supervision");
+        let stop = outcome.execution.as_ref().and_then(|receipt| receipt.local_stop.as_ref())
+            .expect("the supervisor must return the observed process scope to its foreground invocation");
+        assert_eq!(stop.identity, identity);
+        stop.validate().unwrap();
         assert_eq!(tasks[0].kind, "shell_process");
         assert_eq!(tasks[0].status, "completed");
         let metadata: Value = serde_json::from_str(&tasks[0].metadata_json).unwrap();
@@ -2978,6 +2988,7 @@ fn run_bash_execution(
                 )))
         );
         let record = DbBackgroundTask {
+            local_execution: None,
             process_sandbox: ctx.policy.process_sandbox().cloned(),
             terminal,
             id: task_id.clone(),
@@ -3112,6 +3123,7 @@ fn run_bash_execution(
                 )))
         );
         let record = DbBackgroundTask {
+            local_execution: current_local_execution_identity(),
             process_sandbox: ctx.policy.process_sandbox().cloned(),
             terminal: None,
             id: task_id.clone(),
@@ -3309,6 +3321,9 @@ fn run_bash_execution(
             .unwrap_or_else(|| terminal_task.last_activity.clone().unwrap_or_else(|| terminal_task.status.clone()));
         let execution_metadata = serde_json::from_str::<Value>(&terminal_task.metadata_json)
             .ok().and_then(|value| value.get("shell_execution").cloned()).unwrap_or(Value::Null);
+        let local_stop = execution_metadata.get("local_stop").and_then(|value|
+            serde_json::from_value::<nola_domain::execution_evidence::LocalExecutionStop>(value.clone()).ok()
+        ).filter(|stop| Some(&stop.identity) == record.local_execution.as_ref() && stop.validate().is_ok());
         let (status_exit_code, status_signal) = shell_terminal_status_fields(&status);
         let exit_code = execution_metadata.get("exit_code").and_then(Value::as_i64)
             .and_then(|code| i32::try_from(code).ok()).or(status_exit_code);
@@ -3322,23 +3337,30 @@ fn run_bash_execution(
             text.push_str("\n\n[output compacted: showing bounded head/tail]");
         }
         let mut outcome = ToolOutcome {
-        full_output_ref: None,
-        data: Some(json!({
-            "type": "shell_execution",
-            "command": command,
-            "cwd": cwd,
-            "state": terminal_task.status,
-            "exit_code": exit_code,
-            "signal": signal,
-            "exit_evidence": execution_metadata.get("exit_evidence"),
-            "semantic_note": execution_metadata.get("semantic_note"),
-            // Preserve the original evidence before the common result writer
-            // creates a bounded model preview and a navigable full-output ref.
-            "stdout": stdout_full,
-            "stderr": stderr_full,
-            "output_compacted": false,
-        })),
-        execution: None,
+            full_output_ref: None,
+            data: Some(json!({
+                "type": "shell_execution",
+                "command": command,
+                "cwd": cwd,
+                "state": terminal_task.status,
+                "exit_code": exit_code,
+                "signal": signal,
+                "exit_evidence": execution_metadata.get("exit_evidence"),
+                "semantic_note": execution_metadata.get("semantic_note"),
+                // Preserve complete output before building a bounded model preview.
+                "stdout": stdout_full,
+                "stderr": stderr_full,
+                "output_compacted": false,
+            })),
+            execution: local_stop.map(|stop| nola_host_protocol::tool_result::ExecutionReceipt {
+                state: if terminal_task.status == "completed" {
+                    nola_host_protocol::tool_result::ExecutionState::Completed
+                } else {
+                    nola_host_protocol::tool_result::ExecutionState::Unknown
+                },
+                local_stop: Some(stop),
+                ..Default::default()
+            }),
             text,
             display: if terminal_task.status == "completed" {
                 format!("$ {} (completed)", truncate(&command, 60))
@@ -3726,6 +3748,7 @@ fn shell_observation_ignores_terminal_files_and_rejects_missing_or_foreign_recor
     let root = tempfile::tempdir().unwrap();
     let store = NolaStore::open(&root.path().join("nola.db")).unwrap();
     let record = DbBackgroundTask {
+        local_execution: None,
         process_sandbox: None,
         terminal: None,
         id: "queued-observation".into(), project_root: root.path().to_string_lossy().into_owned(),

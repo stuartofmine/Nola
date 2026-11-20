@@ -78,6 +78,20 @@ class ChatStreamingStateTest {
         assertEquals(ProcessingState.Idle, completed.processingState)
     }
 
+    @Test fun recoveredGoalBindsTheExactRunAndKeepsExistingJournalUntilTerminal() {
+        val assistant = ConversationMessage("distinct-assistant", "owner", ChatRole.assistant, "already visible", 12L)
+        val descriptor = com.nola.core.AndroidCanonicalTurnDescriptor("owner", "", "separate-run", "", "", null, assistant.id)
+        val restored = ChatUiState(conversationId = "owner", messages = listOf(assistant), currentResponse = "old answer")
+            .bindRecoveredAssistant(descriptor)
+        assertEquals("separate-run", restored.activeTurnId)
+        assertEquals(assistant.id, restored.activeResponseId)
+        assertSame(assistant, restored.journalResponse)
+        assertEquals("already visible", restored.currentResponse)
+        val live = restored.copy(currentResponse = "another delta")
+        assertEquals("another delta", live.bindRecoveredAssistant(descriptor).currentResponse)
+        assertEquals(ProcessingState.Idle, live.completeAssistantTurn(assistant).processingState)
+    }
+
     @Test
     fun errorsDoNotPermanentlyBlockTheComposer() {
         assertFalse(ProcessingState.Error.blocksInput)

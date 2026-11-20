@@ -73,11 +73,14 @@ import kotlinx.serialization.json.jsonPrimitive
 
 @Composable
 fun PersonalIntelligenceDialog(onDismiss: () -> Unit) {
-    var snapshot by remember { mutableStateOf(PersonalIntelligenceCore.snapshot()) }
+    val context = androidx.compose.ui.platform.LocalContext.current
+    val intelligence = remember(context) { PersonalIntelligenceCore.from(context) }
+    var snapshot by remember(intelligence) { mutableStateOf(intelligence.snapshot()) }
     var selectedFilter by remember { mutableStateOf(IntelligenceFilter.All) }
     var memoryLimit by remember(selectedFilter) { mutableStateOf(24) }
     var strategyLimit by remember { mutableStateOf(10) }
     var showClearConfirmation by remember { mutableStateOf(false) }
+    var clearFailed by remember { mutableStateOf(false) }
     var entered by remember { mutableStateOf(false) }
     val events = snapshot.array("events")
     val eventObjects = events.mapNotNull { runCatching { it.jsonObject }.getOrNull() }
@@ -119,7 +122,7 @@ fun PersonalIntelligenceDialog(onDismiss: () -> Unit) {
                     title = stringResource(R.string.personal_intelligence_title),
                     refreshLabel = stringResource(R.string.personal_intelligence_refresh),
                     closeLabel = stringResource(R.string.personal_intelligence_close),
-                    onRefresh = { snapshot = PersonalIntelligenceCore.snapshot() },
+                    onRefresh = { snapshot = intelligence.snapshot() },
                     onDismiss = onDismiss
                 )
 
@@ -211,7 +214,7 @@ fun PersonalIntelligenceDialog(onDismiss: () -> Unit) {
 
                     TextButton(
                         enabled = snapshot != null,
-                        onClick = { showClearConfirmation = true },
+                        onClick = { clearFailed = false; showClearConfirmation = true },
                         modifier = Modifier.fillMaxWidth(),
                         colors = ButtonDefaults.textButtonColors(contentColor = MaterialTheme.colorScheme.error)
                     ) {
@@ -229,13 +232,19 @@ fun PersonalIntelligenceDialog(onDismiss: () -> Unit) {
             onDismissRequest = { showClearConfirmation = false },
             title = { Text(stringResource(R.string.personal_intelligence_clear_title)) },
             text = {
-                Text(stringResource(R.string.personal_intelligence_clear_detail))
+                Column {
+                    Text(stringResource(R.string.personal_intelligence_clear_detail))
+                    if (clearFailed) Text(stringResource(R.string.personal_intelligence_clear_failed), color = MaterialTheme.colorScheme.error)
+                }
             },
             confirmButton = {
                 TextButton(onClick = {
-                    PersonalIntelligenceCore.clear()
-                    snapshot = PersonalIntelligenceCore.snapshot()
-                    showClearConfirmation = false
+                    if (intelligence.clear()) {
+                        snapshot = intelligence.snapshot()
+                        showClearConfirmation = false
+                    } else {
+                        clearFailed = true
+                    }
                 }) { Text(stringResource(R.string.personal_intelligence_clear_confirm), color = MaterialTheme.colorScheme.error) }
             },
             dismissButton = {

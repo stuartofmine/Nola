@@ -39,6 +39,7 @@ pub enum Message {
     UpdatedLabel,
     MessagesLabel,
     DeletedSessionPrefix,
+    AbsentSessionPrefix,
     FailedReadPromptPrefix,
     PromptRequired,
     SessionRequiresAction,
@@ -47,7 +48,7 @@ pub enum Message {
     UnknownCommandPrefix,
     MaxIterationsPositive,
     UnknownOptionPrefix,
-    UnexpectedSessionArgs,
+    UnexpectedCommandArgs,
     MissingEndpoint,
     ContinueOrSession,
     CurrentDirFailedPrefix,
@@ -510,6 +511,11 @@ pub fn interaction_text() -> InteractionText {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum UiText {
+    MissingDefaultModel,
+    DefaultModelChoices,
+    ApplyConfigAgain,
+    PermissionDigitHint,
+    PermissionScrollHint,
     HelpSources,
     DataSourcesTitle,
     DataSourcesUsage,
@@ -572,6 +578,7 @@ pub enum UiText {
     WorkResolveHint,
     HelpRoom,
     NoRooms,
+    NoPendingQuestions,
     PermissionInstructionOption,
     PermissionInstructionCommand,
     NoConfiguredMcp,
@@ -675,6 +682,27 @@ pub fn ui_text(key: UiText) -> &'static str {
 
 fn ui_text_for(language: Language, key: UiText) -> &'static str {
     let values = match key {
+        UiText::MissingDefaultModel => [
+            "llm.default_model 指定的连接和模型组合不存在。", "llm.default_model 指定的連線與模型組合不存在。",
+            "default_model must refer to a declared connection and model.", "Die Verbindung und das Modell in llm.default_model sind nicht zusammen konfiguriert.",
+            "La combinación de conexión y modelo en llm.default_model no está configurada.", "La connexion et le modèle de llm.default_model ne sont pas configurés ensemble.",
+            "llm.default_model で指定した接続とモデルの組み合わせがありません。", "llm.default_model에 지정한 연결과 모델 조합이 없습니다.",
+            "В llm.default_model указана неизвестная пара подключения и модели.",
+        ],
+        UiText::DefaultModelChoices => [
+            "请从 llm.connections 选择一组 ID 填入 llm.default_model，例如", "請從 llm.connections 選一組 ID 填入 llm.default_model，例如",
+            "Set llm.default_model using connection/model IDs from llm.connections, for example:", "Setze llm.default_model auf ein ID-Paar aus llm.connections, zum Beispiel:",
+            "Asigna a llm.default_model un par de identificadores de llm.connections, por ejemplo:", "Renseignez llm.default_model avec deux identifiants de llm.connections, par exemple :",
+            "llm.connections の ID の組を llm.default_model に設定してください。例", "llm.connections의 ID 조합을 llm.default_model에 입력하세요. 예시",
+            "Для llm.default_model выберите пару идентификаторов из llm.connections, например:",
+        ],
+        UiText::ApplyConfigAgain => [
+            "保存配置后重新运行", "儲存設定後重新執行", "Save the configuration, then rerun", "Konfiguration speichern und erneut ausführen",
+            "Guarda la configuración y vuelve a ejecutar", "Enregistrez la configuration et relancez", "設定を保存し、次のコマンドを再実行してください。",
+            "설정을 저장한 후 다시 실행하세요.", "Сохраните конфигурацию и повторите команду",
+        ],
+        UiText::PermissionDigitHint => ["1/2 直接应用", "1/2 直接套用", "1/2 apply immediately", "1/2 sofort anwenden", "1/2 aplicar de inmediato", "1/2 appliquer directement", "1/2 ですぐに適用", "1/2 즉시 적용", "1/2 применить сразу"],
+        UiText::PermissionScrollHint => ["PgUp/PgDn 翻页 · ↑/↓ 选择", "PgUp/PgDn 翻頁 · ↑/↓ 選擇", "PgUp/PgDn: details · ↑/↓: select", "PgUp/PgDn blättern · ↑/↓ wählen", "PgUp/PgDn detalles · ↑/↓ elegir", "PgUp/PgDn détails · ↑/↓ choisir", "PgUp/PgDn 詳細 · ↑/↓ 選択", "PgUp/PgDn 상세 · ↑/↓ 선택", "PgUp/PgDn детали · ↑/↓ выбор"],
         UiText::HelpSources => [
             "管理数据源：/sources [list|add|test|remove|enable|disable|inherit]",
             "管理資料來源：/sources [list|add|test|remove|enable|disable|inherit]",
@@ -754,6 +782,11 @@ fn ui_text_for(language: Language, key: UiText) -> &'static str {
             "ルームに送信します。@ と Tab でメンバーを選び、省略すると自動で割り当てます。",
             "방에 메시지를 보냅니다. @ 입력 후 Tab으로 멤버를 선택하거나 @를 생략해 자동으로 배정합니다.",
             "Отправить сообщение в комнату. Введите @ и нажмите Tab для выбора участника или опустите @ для автоназначения.",
+        ],
+        UiText::NoPendingQuestions => [
+            "当前没有待回答的问题。", "目前沒有待回答的問題。", "No pending questions.",
+            "Keine offenen Fragen.", "No hay preguntas pendientes.", "Aucune question en attente.",
+            "回答待ちの質問はありません。", "답변을 기다리는 질문이 없습니다.", "Нет вопросов, ожидающих ответа.",
         ],
         UiText::NoRooms => [
             "还没有房间。请在终端创建一个房间", "還沒有房間。請在終端機建立房間",
@@ -1403,21 +1436,28 @@ pub fn help_text_for(language: Language) -> &'static str {
   nola init [选项]
   nola wiki [选项]
   nola web [选项]
+  nola web --connect-host <origin> --expected-host-id <id> --tailcat-helper <path> --tailcat-helper-sha256 <sha256> --token-stdin [--control-stdin] [--json]
   nola server [选项]
+  nola server --host 127.0.0.1 --port <port> --tailcat-ingress [--tailcat-helper <path> --tailcat-helper-sha256 <sha256>]
   nola sessions
-  nola room list|inspect|create|send ...
-  nola skills [list|enable <id>|disable <id>]
+  nola room list | directory | create <title> | show <id> | join <room> <agent> | send <room> <text> [--to <participant>] | recover <room>
+  nola skills [list|find <name-or-github-url>|install <github-url>|enable <id>|disable <id>]
   nola mcp [list|add <name> <target> [args...]|remove <id>|enable <id>|disable <id>]
   nola memory [list|add <text>|search <query>|create|revise|delete]
-  nola model [list|discover|configure|apply-config|import|probe|override|chatgpt]
+  nola model --help
+  nola run --profile <id> [--profile-revision <revision>] [message]
   nola update [check|download <dir>]
-  nola version
+  nola version [--json]
+  nola plugin desktop-library
+  nola plugin desktop-pages [id]
+  nola plugin pi install <source> | list | pages | open | remove <source>
+  nola plugin dsh [--profile tui|web] install <source> | list | pages | open | remove <name>
   nola plugin inspect|install <directory>
   nola plugin list [--after <id>]
   nola plugin enable|disable|remove <id>
   nola plugin credential-set|credential-clear <id> <reference>
   nola session show <id>
-  nola session part <conversation> <message> <part> <revision>
+  nola session part <conversation> <message> <part> <conversation-revision>
   nola session sources <conversation> [compaction-part]
   nola session delete <id>
 
@@ -1479,21 +1519,28 @@ pub fn help_text_for(language: Language) -> &'static str {
   nola init [選項]
   nola wiki [選項]
   nola web [選項]
+  nola web --connect-host <origin> --expected-host-id <id> --tailcat-helper <path> --tailcat-helper-sha256 <sha256> --token-stdin [--control-stdin] [--json]
   nola server [選項]
+  nola server --host 127.0.0.1 --port <port> --tailcat-ingress [--tailcat-helper <path> --tailcat-helper-sha256 <sha256>]
   nola sessions
-  nola room list|inspect|create|send ...
-  nola skills [list|enable <id>|disable <id>]
+  nola room list | directory | create <title> | show <id> | join <room> <agent> | send <room> <text> [--to <participant>] | recover <room>
+  nola skills [list|find <name-or-github-url>|install <github-url>|enable <id>|disable <id>]
   nola mcp [list|add <name> <target> [args...]|remove <id>|enable <id>|disable <id>]
   nola memory [list|add <text>|search <query>|create|revise|delete]
-  nola model [list|discover|configure|apply-config|import|probe|override|chatgpt]
+  nola model --help
+  nola run --profile <id> [--profile-revision <revision>] [message]
   nola update [check|download <dir>]
-  nola version
+  nola version [--json]
+  nola plugin desktop-library
+  nola plugin desktop-pages [id]
+  nola plugin pi install <source> | list | pages | open | remove <source>
+  nola plugin dsh [--profile tui|web] install <source> | list | pages | open | remove <name>
   nola plugin inspect|install <directory>
   nola plugin list [--after <id>]
   nola plugin enable|disable|remove <id>
   nola plugin credential-set|credential-clear <id> <reference>
   nola session show <id>
-  nola session part <conversation> <message> <part> <revision>
+  nola session part <conversation> <message> <part> <conversation-revision>
   nola session sources <conversation> [compaction-part]
   nola session delete <id>
 
@@ -1555,21 +1602,28 @@ Usage:
   nola init [options]
   nola wiki [options]
   nola web [options]
+  nola web --connect-host <origin> --expected-host-id <id> --tailcat-helper <path> --tailcat-helper-sha256 <sha256> --token-stdin [--control-stdin] [--json]
   nola server [options]
+  nola server --host 127.0.0.1 --port <port> --tailcat-ingress [--tailcat-helper <path> --tailcat-helper-sha256 <sha256>]
   nola sessions
-  nola room list|inspect|create|send ...
-  nola skills [list|enable <id>|disable <id>]
+  nola room list | directory | create <title> | show <id> | join <room> <agent> | send <room> <text> [--to <participant>] | recover <room>
+  nola skills [list|find <name-or-github-url>|install <github-url>|enable <id>|disable <id>]
   nola mcp [list|add <name> <target> [args...]|remove <id>|enable <id>|disable <id>]
   nola memory [list|add <text>|search <query>|create|revise|delete]
-  nola model [list|discover|configure|apply-config|import|probe|override|chatgpt]
+  nola model --help
+  nola run --profile <id> [--profile-revision <revision>] [message]
   nola update [check|download <dir>]
-  nola version
+  nola version [--json]
+  nola plugin desktop-library
+  nola plugin desktop-pages [id]
+  nola plugin pi install <source> | list | pages | open | remove <source>
+  nola plugin dsh [--profile tui|web] install <source> | list | pages | open | remove <name>
   nola plugin inspect|install <directory>
   nola plugin list [--after <id>]
   nola plugin enable|disable|remove <id>
   nola plugin credential-set|credential-clear <id> <reference>
   nola session show <id>
-  nola session part <conversation> <message> <part> <revision>
+  nola session part <conversation> <message> <part> <conversation-revision>
   nola session sources <conversation> [compaction-part]
   nola session delete <id>
 
@@ -1631,21 +1685,28 @@ Verwendung:
   nola init [Optionen]
   nola wiki [Optionen]
   nola web [Optionen]
+  nola web --connect-host <origin> --expected-host-id <id> --tailcat-helper <path> --tailcat-helper-sha256 <sha256> --token-stdin [--control-stdin] [--json]
   nola server [Optionen]
+  nola server --host 127.0.0.1 --port <port> --tailcat-ingress [--tailcat-helper <path> --tailcat-helper-sha256 <sha256>]
   nola sessions
-  nola room list|inspect|create|send ...
-  nola skills [list|enable <id>|disable <id>]
+  nola room list | directory | create <title> | show <id> | join <room> <agent> | send <room> <text> [--to <participant>] | recover <room>
+  nola skills [list|find <name-or-github-url>|install <github-url>|enable <id>|disable <id>]
   nola mcp [list|add <name> <target> [args...]|remove <id>|enable <id>|disable <id>]
   nola memory [list|add <text>|search <query>|create|revise|delete]
-  nola model [list|discover|configure|apply-config|import|probe|override|chatgpt]
+  nola model --help
+  nola run --profile <id> [--profile-revision <revision>] [message]
   nola update [check|download <dir>]
-  nola version
+  nola version [--json]
+  nola plugin desktop-library
+  nola plugin desktop-pages [id]
+  nola plugin pi install <source> | list | pages | open | remove <source>
+  nola plugin dsh [--profile tui|web] install <source> | list | pages | open | remove <name>
   nola plugin inspect|install <directory>
   nola plugin list [--after <id>]
   nola plugin enable|disable|remove <id>
   nola plugin credential-set|credential-clear <id> <reference>
   nola session show <id>
-  nola session part <conversation> <message> <part> <revision>
+  nola session part <conversation> <message> <part> <conversation-revision>
   nola session sources <conversation> [compaction-part]
   nola session delete <id>
 
@@ -1706,21 +1767,28 @@ Uso:
   nola init [opciones]
   nola wiki [opciones]
   nola web [opciones]
+  nola web --connect-host <origin> --expected-host-id <id> --tailcat-helper <path> --tailcat-helper-sha256 <sha256> --token-stdin [--control-stdin] [--json]
   nola server [opciones]
+  nola server --host 127.0.0.1 --port <port> --tailcat-ingress [--tailcat-helper <path> --tailcat-helper-sha256 <sha256>]
   nola sessions
-  nola room list|inspect|create|send ...
-  nola skills [list|enable <id>|disable <id>]
+  nola room list | directory | create <title> | show <id> | join <room> <agent> | send <room> <text> [--to <participant>] | recover <room>
+  nola skills [list|find <name-or-github-url>|install <github-url>|enable <id>|disable <id>]
   nola mcp [list|add <name> <target> [args...]|remove <id>|enable <id>|disable <id>]
   nola memory [list|add <text>|search <query>|create|revise|delete]
-  nola model [list|discover|configure|apply-config|import|probe|override|chatgpt]
+  nola model --help
+  nola run --profile <id> [--profile-revision <revision>] [message]
   nola update [check|download <dir>]
-  nola version
+  nola version [--json]
+  nola plugin desktop-library
+  nola plugin desktop-pages [id]
+  nola plugin pi install <source> | list | pages | open | remove <source>
+  nola plugin dsh [--profile tui|web] install <source> | list | pages | open | remove <name>
   nola plugin inspect|install <directory>
   nola plugin list [--after <id>]
   nola plugin enable|disable|remove <id>
   nola plugin credential-set|credential-clear <id> <reference>
   nola session show <id>
-  nola session part <conversation> <message> <part> <revision>
+  nola session part <conversation> <message> <part> <conversation-revision>
   nola session sources <conversation> [compaction-part]
   nola session delete <id>
 
@@ -1781,21 +1849,28 @@ Utilisation :
   nola init [options]
   nola wiki [options]
   nola web [options]
+  nola web --connect-host <origin> --expected-host-id <id> --tailcat-helper <path> --tailcat-helper-sha256 <sha256> --token-stdin [--control-stdin] [--json]
   nola server [options]
+  nola server --host 127.0.0.1 --port <port> --tailcat-ingress [--tailcat-helper <path> --tailcat-helper-sha256 <sha256>]
   nola sessions
-  nola room list|inspect|create|send ...
-  nola skills [list|enable <id>|disable <id>]
+  nola room list | directory | create <title> | show <id> | join <room> <agent> | send <room> <text> [--to <participant>] | recover <room>
+  nola skills [list|find <name-or-github-url>|install <github-url>|enable <id>|disable <id>]
   nola mcp [list|add <name> <target> [args...]|remove <id>|enable <id>|disable <id>]
   nola memory [list|add <text>|search <query>|create|revise|delete]
-  nola model [list|discover|configure|apply-config|import|probe|override|chatgpt]
+  nola model --help
+  nola run --profile <id> [--profile-revision <revision>] [message]
   nola update [check|download <dir>]
-  nola version
+  nola version [--json]
+  nola plugin desktop-library
+  nola plugin desktop-pages [id]
+  nola plugin pi install <source> | list | pages | open | remove <source>
+  nola plugin dsh [--profile tui|web] install <source> | list | pages | open | remove <name>
   nola plugin inspect|install <directory>
   nola plugin list [--after <id>]
   nola plugin enable|disable|remove <id>
   nola plugin credential-set|credential-clear <id> <reference>
   nola session show <id>
-  nola session part <conversation> <message> <part> <revision>
+  nola session part <conversation> <message> <part> <conversation-revision>
   nola session sources <conversation> [compaction-part]
   nola session delete <id>
 
@@ -1856,21 +1931,28 @@ Fichiers de configuration :
   nola init [オプション]
   nola wiki [オプション]
   nola web [オプション]
+  nola web --connect-host <origin> --expected-host-id <id> --tailcat-helper <path> --tailcat-helper-sha256 <sha256> --token-stdin [--control-stdin] [--json]
   nola server [オプション]
+  nola server --host 127.0.0.1 --port <port> --tailcat-ingress [--tailcat-helper <path> --tailcat-helper-sha256 <sha256>]
   nola sessions
-  nola room list|inspect|create|send ...
-  nola skills [list|enable <id>|disable <id>]
+  nola room list | directory | create <title> | show <id> | join <room> <agent> | send <room> <text> [--to <participant>] | recover <room>
+  nola skills [list|find <name-or-github-url>|install <github-url>|enable <id>|disable <id>]
   nola mcp [list|add <name> <target> [args...]|remove <id>|enable <id>|disable <id>]
   nola memory [list|add <text>|search <query>|create|revise|delete]
-  nola model [list|discover|configure|apply-config|import|probe|override|chatgpt]
+  nola model --help
+  nola run --profile <id> [--profile-revision <revision>] [message]
   nola update [check|download <dir>]
-  nola version
+  nola version [--json]
+  nola plugin desktop-library
+  nola plugin desktop-pages [id]
+  nola plugin pi install <source> | list | pages | open | remove <source>
+  nola plugin dsh [--profile tui|web] install <source> | list | pages | open | remove <name>
   nola plugin inspect|install <directory>
   nola plugin list [--after <id>]
   nola plugin enable|disable|remove <id>
   nola plugin credential-set|credential-clear <id> <reference>
   nola session show <id>
-  nola session part <conversation> <message> <part> <revision>
+  nola session part <conversation> <message> <part> <conversation-revision>
   nola session sources <conversation> [compaction-part]
   nola session delete <id>
 
@@ -1931,21 +2013,28 @@ Fichiers de configuration :
   nola init [옵션]
   nola wiki [옵션]
   nola web [옵션]
+  nola web --connect-host <origin> --expected-host-id <id> --tailcat-helper <path> --tailcat-helper-sha256 <sha256> --token-stdin [--control-stdin] [--json]
   nola server [옵션]
+  nola server --host 127.0.0.1 --port <port> --tailcat-ingress [--tailcat-helper <path> --tailcat-helper-sha256 <sha256>]
   nola sessions
-  nola room list|inspect|create|send ...
-  nola skills [list|enable <id>|disable <id>]
+  nola room list | directory | create <title> | show <id> | join <room> <agent> | send <room> <text> [--to <participant>] | recover <room>
+  nola skills [list|find <name-or-github-url>|install <github-url>|enable <id>|disable <id>]
   nola mcp [list|add <name> <target> [args...]|remove <id>|enable <id>|disable <id>]
   nola memory [list|add <text>|search <query>|create|revise|delete]
-  nola model [list|discover|configure|apply-config|import|probe|override|chatgpt]
+  nola model --help
+  nola run --profile <id> [--profile-revision <revision>] [message]
   nola update [check|download <dir>]
-  nola version
+  nola version [--json]
+  nola plugin desktop-library
+  nola plugin desktop-pages [id]
+  nola plugin pi install <source> | list | pages | open | remove <source>
+  nola plugin dsh [--profile tui|web] install <source> | list | pages | open | remove <name>
   nola plugin inspect|install <directory>
   nola plugin list [--after <id>]
   nola plugin enable|disable|remove <id>
   nola plugin credential-set|credential-clear <id> <reference>
   nola session show <id>
-  nola session part <conversation> <message> <part> <revision>
+  nola session part <conversation> <message> <part> <conversation-revision>
   nola session sources <conversation> [compaction-part]
   nola session delete <id>
 
@@ -2006,21 +2095,28 @@ Fichiers de configuration :
   nola init [параметры]
   nola wiki [параметры]
   nola web [параметры]
+  nola web --connect-host <origin> --expected-host-id <id> --tailcat-helper <path> --tailcat-helper-sha256 <sha256> --token-stdin [--control-stdin] [--json]
   nola server [параметры]
+  nola server --host 127.0.0.1 --port <port> --tailcat-ingress [--tailcat-helper <path> --tailcat-helper-sha256 <sha256>]
   nola sessions
-  nola room list|inspect|create|send ...
-  nola skills [list|enable <id>|disable <id>]
+  nola room list | directory | create <title> | show <id> | join <room> <agent> | send <room> <text> [--to <participant>] | recover <room>
+  nola skills [list|find <name-or-github-url>|install <github-url>|enable <id>|disable <id>]
   nola mcp [list|add <name> <target> [args...]|remove <id>|enable <id>|disable <id>]
   nola memory [list|add <text>|search <query>|create|revise|delete]
-  nola model [list|discover|configure|apply-config|import|probe|override|chatgpt]
+  nola model --help
+  nola run --profile <id> [--profile-revision <revision>] [message]
   nola update [check|download <dir>]
-  nola version
+  nola version [--json]
+  nola plugin desktop-library
+  nola plugin desktop-pages [id]
+  nola plugin pi install <source> | list | pages | open | remove <source>
+  nola plugin dsh [--profile tui|web] install <source> | list | pages | open | remove <name>
   nola plugin inspect|install <directory>
   nola plugin list [--after <id>]
   nola plugin enable|disable|remove <id>
   nola plugin credential-set|credential-clear <id> <reference>
   nola session show <id>
-  nola session part <conversation> <message> <part> <revision>
+  nola session part <conversation> <message> <part> <conversation-revision>
   nola session sources <conversation> [compaction-part]
   nola session delete <id>
 
@@ -2731,6 +2827,7 @@ fn en(message: Message) -> &'static str {
         Message::UpdatedLabel => "updated:",
         Message::MessagesLabel => "messages:",
         Message::DeletedSessionPrefix => "Deleted session",
+        Message::AbsentSessionPrefix => "Session already absent",
         Message::FailedReadPromptPrefix => "failed to read prompt:",
         Message::PromptRequired => "message is required",
         Message::SessionRequiresAction => "session requires an action: show or delete",
@@ -2739,7 +2836,7 @@ fn en(message: Message) -> &'static str {
         Message::UnknownCommandPrefix => "unknown command:",
         Message::MaxIterationsPositive => "--max-iterations must be a non-negative integer",
         Message::UnknownOptionPrefix => "unknown option:",
-        Message::UnexpectedSessionArgs => "unexpected extra arguments for session command",
+        Message::UnexpectedCommandArgs => "unexpected extra arguments for this command",
         Message::MissingEndpoint => "missing --endpoint or llm.endpoint in a Nola config file",
         Message::ContinueOrSession => "use either --continue or --session, not both",
         Message::CurrentDirFailedPrefix => "current_dir failed:",
@@ -2959,6 +3056,7 @@ fn zh_hans(message: Message) -> &'static str {
         Message::UpdatedLabel => "更新时间：",
         Message::MessagesLabel => "消息数：",
         Message::DeletedSessionPrefix => "已删除会话",
+        Message::AbsentSessionPrefix => "会话已不存在",
         Message::FailedReadPromptPrefix => "读取提示词失败：",
         Message::PromptRequired => "请输入消息内容",
         Message::SessionRequiresAction => "session 需要指定操作：show 或 delete",
@@ -2967,7 +3065,7 @@ fn zh_hans(message: Message) -> &'static str {
         Message::UnknownCommandPrefix => "未知命令：",
         Message::MaxIterationsPositive => "--max-iterations 必须是非负整数",
         Message::UnknownOptionPrefix => "未知选项：",
-        Message::UnexpectedSessionArgs => "session 命令不接受额外参数",
+        Message::UnexpectedCommandArgs => "该命令不接受额外参数",
         Message::MissingEndpoint => "缺少 --endpoint 或 Nola 配置文件中的 llm.endpoint",
         Message::ContinueOrSession => "--continue 和 --session 只能二选一",
         Message::CurrentDirFailedPrefix => "读取当前目录失败：",
@@ -3185,6 +3283,7 @@ fn de(message: Message) -> &'static str {
         Message::UpdatedLabel => "aktualisiert:",
         Message::MessagesLabel => "Nachrichten:",
         Message::DeletedSessionPrefix => "Gelöschte Sitzung",
+        Message::AbsentSessionPrefix => "Sitzung bereits entfernt",
         Message::FailedReadPromptPrefix => "Prompt konnte nicht gelesen werden:",
         Message::PromptRequired => "Nachricht erforderlich",
         Message::SessionRequiresAction => "session benötigt eine Aktion: show oder delete",
@@ -3193,7 +3292,7 @@ fn de(message: Message) -> &'static str {
         Message::UnknownCommandPrefix => "unbekannter Befehl:",
         Message::MaxIterationsPositive => "--max-iterations muss eine nichtnegative Ganzzahl sein",
         Message::UnknownOptionPrefix => "unbekannte Option:",
-        Message::UnexpectedSessionArgs => "unerwartete Zusatzargumente für session-Befehl",
+        Message::UnexpectedCommandArgs => "unerwartete Zusatzargumente für diesen Befehl",
         Message::MissingEndpoint => "--endpoint oder llm.endpoint in einer Nola-Konfigurationsdatei fehlt",
         Message::ContinueOrSession => "verwende entweder --continue oder --session, nicht beides",
         Message::CurrentDirFailedPrefix => "current_dir fehlgeschlagen:",
@@ -3415,6 +3514,7 @@ fn es(message: Message) -> &'static str {
         Message::UpdatedLabel => "actualizada:",
         Message::MessagesLabel => "mensajes:",
         Message::DeletedSessionPrefix => "Sesión eliminada",
+        Message::AbsentSessionPrefix => "La sesión ya no existe",
         Message::FailedReadPromptPrefix => "no se pudo leer el prompt:",
         Message::PromptRequired => "se requiere un mensaje",
         Message::SessionRequiresAction => "session requiere una acción: show o delete",
@@ -3423,7 +3523,7 @@ fn es(message: Message) -> &'static str {
         Message::UnknownCommandPrefix => "comando desconocido:",
         Message::MaxIterationsPositive => "--max-iterations debe ser un entero no negativo",
         Message::UnknownOptionPrefix => "opción desconocida:",
-        Message::UnexpectedSessionArgs => "argumentos extra inesperados para el comando session",
+        Message::UnexpectedCommandArgs => "argumentos extra inesperados para este comando",
         Message::MissingEndpoint => "falta --endpoint o llm.endpoint en un archivo de configuración de Nola",
         Message::ContinueOrSession => "usa --continue o --session, no ambos",
         Message::CurrentDirFailedPrefix => "current_dir falló:",
@@ -3643,6 +3743,7 @@ fn fr(message: Message) -> &'static str {
         Message::UpdatedLabel => "mise à jour :",
         Message::MessagesLabel => "messages :",
         Message::DeletedSessionPrefix => "Session supprimée",
+        Message::AbsentSessionPrefix => "La session est déjà absente",
         Message::FailedReadPromptPrefix => "échec de lecture du prompt :",
         Message::PromptRequired => "un message est requis",
         Message::SessionRequiresAction => "session nécessite une action : show ou delete",
@@ -3651,8 +3752,8 @@ fn fr(message: Message) -> &'static str {
         Message::UnknownCommandPrefix => "commande inconnue :",
         Message::MaxIterationsPositive => "--max-iterations doit être un entier non négatif",
         Message::UnknownOptionPrefix => "option inconnue :",
-        Message::UnexpectedSessionArgs => {
-            "arguments supplémentaires inattendus pour la commande session"
+        Message::UnexpectedCommandArgs => {
+            "arguments supplémentaires inattendus pour cette commande"
         }
         Message::MissingEndpoint => "--endpoint ou llm.endpoint manque dans un fichier de configuration Nola",
         Message::ContinueOrSession => "utilisez --continue ou --session, pas les deux",
@@ -3873,6 +3974,7 @@ fn ja(message: Message) -> &'static str {
         Message::UpdatedLabel => "更新:",
         Message::MessagesLabel => "メッセージ数:",
         Message::DeletedSessionPrefix => "削除したセッション",
+        Message::AbsentSessionPrefix => "セッションは既に存在しません",
         Message::FailedReadPromptPrefix => "プロンプトの読み取りに失敗しました:",
         Message::PromptRequired => "メッセージを入力してください",
         Message::SessionRequiresAction => "session には操作 show または delete が必要です",
@@ -3881,7 +3983,7 @@ fn ja(message: Message) -> &'static str {
         Message::UnknownCommandPrefix => "不明なコマンド:",
         Message::MaxIterationsPositive => "--max-iterations は 0 以上の整数である必要があります",
         Message::UnknownOptionPrefix => "不明なオプション:",
-        Message::UnexpectedSessionArgs => "session コマンドに予期しない追加引数があります",
+        Message::UnexpectedCommandArgs => "このコマンドに予期しない追加引数があります",
         Message::MissingEndpoint => "--endpoint または Nola 設定ファイルの llm.endpoint がありません",
         Message::ContinueOrSession => "--continue と --session は同時に指定できません",
         Message::CurrentDirFailedPrefix => "current_dir に失敗しました:",
@@ -4099,6 +4201,7 @@ fn ru(message: Message) -> &'static str {
         Message::UpdatedLabel => "обновлено:",
         Message::MessagesLabel => "сообщений:",
         Message::DeletedSessionPrefix => "Удален сеанс",
+        Message::AbsentSessionPrefix => "Сессия уже отсутствует",
         Message::FailedReadPromptPrefix => "не удалось прочитать запрос:",
         Message::PromptRequired => "требуется сообщение",
         Message::SessionRequiresAction => "session требует действие: show или delete",
@@ -4107,7 +4210,7 @@ fn ru(message: Message) -> &'static str {
         Message::UnknownCommandPrefix => "неизвестная команда:",
         Message::MaxIterationsPositive => "--max-iterations должен быть неотрицательным целым числом",
         Message::UnknownOptionPrefix => "неизвестный параметр:",
-        Message::UnexpectedSessionArgs => "лишние аргументы для команды session",
+        Message::UnexpectedCommandArgs => "лишние аргументы для этой команды",
         Message::MissingEndpoint => "не указан --endpoint или llm.endpoint в файле конфигурации Nola",
         Message::ContinueOrSession => "используйте либо --continue, либо --session, но не оба",
         Message::CurrentDirFailedPrefix => "current_dir завершился ошибкой:",
@@ -4325,6 +4428,7 @@ fn zh_hant(message: Message) -> &'static str {
         Message::UpdatedLabel => "更新時間：",
         Message::MessagesLabel => "訊息數：",
         Message::DeletedSessionPrefix => "已刪除工作階段",
+        Message::AbsentSessionPrefix => "會話已不存在",
         Message::FailedReadPromptPrefix => "讀取提示詞失敗：",
         Message::PromptRequired => "必須輸入訊息內容",
         Message::SessionRequiresAction => "session 需要指定操作：show 或 delete",
@@ -4333,7 +4437,7 @@ fn zh_hant(message: Message) -> &'static str {
         Message::UnknownCommandPrefix => "未知命令：",
         Message::MaxIterationsPositive => "--max-iterations 必須為非負整數",
         Message::UnknownOptionPrefix => "未知選項：",
-        Message::UnexpectedSessionArgs => "session 命令不接受額外引數",
+        Message::UnexpectedCommandArgs => "此命令不接受額外引數",
         Message::MissingEndpoint => "缺少 --endpoint 或 Nola 設定檔中的 llm.endpoint",
         Message::ContinueOrSession => "--continue 與 --session 僅能擇一使用",
         Message::CurrentDirFailedPrefix => "讀取目前目錄失敗：",
@@ -4549,6 +4653,7 @@ fn ko(message: Message) -> &'static str {
         Message::UpdatedLabel => "업데이트 시각:",
         Message::MessagesLabel => "메시지 수:",
         Message::DeletedSessionPrefix => "세션 삭제됨",
+        Message::AbsentSessionPrefix => "세션이 이미 없습니다",
         Message::FailedReadPromptPrefix => "프롬프트 읽기 실패:",
         Message::PromptRequired => "메시지 내용이 필요합니다",
         Message::SessionRequiresAction => "session 은 작업을 지정해야 합니다: show 또는 delete",
@@ -4557,7 +4662,7 @@ fn ko(message: Message) -> &'static str {
         Message::UnknownCommandPrefix => "알 수 없는 명령:",
         Message::MaxIterationsPositive => "--max-iterations 는 0 이상의 정수여야 합니다",
         Message::UnknownOptionPrefix => "알 수 없는 옵션:",
-        Message::UnexpectedSessionArgs => "session 명령은 추가 인수를 받지 않습니다",
+        Message::UnexpectedCommandArgs => "이 명령은 추가 인수를 받지 않습니다",
         Message::MissingEndpoint => "--endpoint 또는 Nola 설정 파일의 llm.endpoint 가 누락되었습니다",
         Message::ContinueOrSession => "--continue 와 --session 은 동시에 사용할 수 없습니다",
         Message::CurrentDirFailedPrefix => "현재 디렉터리 확인 실패:",

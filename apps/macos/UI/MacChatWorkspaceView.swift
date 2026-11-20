@@ -294,10 +294,19 @@ struct MacChatWorkspaceView: View {
         model.setDraft(insertion.text, conversationID: owner, mentions: insertion.mentions)
     }
     private var model: MacWorkspaceModel { modelOwner.model }
+    @Environment(\.desktopPluginClient) private var pluginClient
+    @State private var pluginLibrary: MacDesktopPluginLibrary?
+    @State private var pluginLibraryError: String?
+    private var pluginPages: [MacDesktopPluginPage] { pluginLibrary?.workspacePages ?? [] }
+    @State private var selectedPlugin: MacDesktopPluginPage?
+    @State private var pluginRefresh = 0
     @State private var selectedSection: MacWorkspaceSection
     private var navigationActions: MacWorkspaceNavigationActions {
         MacWorkspaceNavigationActions(model: model, extensions: extensionsNavigation,
-            currentSection: { selectedSection }, setSection: { selectedSection = $0 },
+            currentSection: { selectedSection }, setSection: {
+                if $0 != .pluginPage { selectedPlugin = nil }
+                selectedSection = $0
+            },
             focusNewConversation: { focusComposer(in: $0) })
     }
 
@@ -654,6 +663,20 @@ struct MacChatWorkspaceView: View {
             Task {
                 await refreshRemoteHostConnection()
             }
+        }
+        .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in pluginRefresh += 1 }
+        .onReceive(NotificationCenter.default.publisher(for: .macDesktopPluginsChanged)) { _ in pluginRefresh += 1 }
+        .task(id: pluginRefresh) {
+            do {
+                let library = try await pluginClient.library()
+                guard !Task.isCancelled else { return }
+                pluginLibrary = library
+                pluginLibraryError = nil
+                if let selected = selectedPlugin {
+                    if let current = library.workspacePages.first(where: { $0.id == selected.id }) { selectedPlugin = current }
+                    else { navigationActions.navigate(to: .chat) }
+                }
+            } catch { if !Task.isCancelled { pluginLibraryError = error.localizedDescription } }
         }
         .onReceive(NotificationCenter.default.publisher(for: .macDefaultChatModelDidChange)) { _ in
             model.refreshModelConfiguration()
@@ -1025,6 +1048,10 @@ struct MacChatWorkspaceView: View {
     @ViewBuilder
     private var workspaceContent: some View {
         switch selectedSection {
+        case .pluginPage:
+            if let selectedPlugin {
+                MacDesktopPluginPageView(page: selectedPlugin).id(selectedPlugin.id)
+            }
         case .chat:
             conversationContent
         case .extensions:
@@ -1032,7 +1059,9 @@ struct MacChatWorkspaceView: View {
                 roomWorkspace: roomWorkspace,
                 remoteHost: remoteHost,
                 skillsNavigation: extensionsNavigation,
-                activeWorkspaceURL: model.workspaceURL
+                activeWorkspaceURL: model.workspaceURL,
+                pluginLibrary: pluginLibrary, pluginLibraryError: pluginLibraryError,
+                onOpenPluginPage: openPluginPage
             )
             .transition(.opacity)
         case .automations:
@@ -1153,7 +1182,7 @@ struct MacChatWorkspaceView: View {
                         Image(systemName: selectedSection.symbol)
                             .font(.system(size: 13, weight: .semibold))
                             .foregroundStyle(.secondary)
-                        Text(selectedSection.title)
+                        (selectedPlugin.map { Text(verbatim: $0.title) } ?? Text(selectedSection.title))
                             .font(.system(size: 16, weight: .semibold))
                             .lineLimit(1)
                     }
@@ -1225,6 +1254,13 @@ struct MacChatWorkspaceView: View {
         .accessibilityIdentifier("workspace.newConversation")
     }
 
+    private func openPluginPage(_ page: MacDesktopPluginPage) {
+        navigationActions.navigate(to: .pluginPage, ifStillValid: { pluginPages.contains(where: { $0.id == page.id }) }) {
+            selectedPlugin = page
+            activeOverlay = nil
+        }
+    }
+
     private var workspaceSidebar: some View {
         MacConversationSidebar(model: model, selectedSection: sectionSelection,
             selectConversation: { id in
@@ -1236,7 +1272,7 @@ struct MacChatWorkspaceView: View {
                     try service.forConversation(id)?.room.room.participants
                         .filter(\.active).map(\.displayName) ?? []
                 }.value
-            }, onOpenSettings: {
+            }, pluginPages: pluginPages, selectedPluginID: selectedPlugin?.id, openPluginPage: openPluginPage, onOpenSettings: {
                 openSettings()
             })
     }
@@ -1716,7 +1752,7 @@ struct MacChatWorkspaceView: View {
                         }())
                     }
                     Button {
-                        openHostSettings()
+                        openSettings.openHostConnections()
                     } label: {
                         Label(
                             remoteHostConnectionState.isConfigured
@@ -1865,11 +1901,6 @@ struct MacChatWorkspaceView: View {
             )
             localExecutionBackendDiscoveryError = error.localizedDescription
         }
-    }
-
-    private func openHostSettings() {
-        UserDefaults.standard.set("connections", forKey: "nola.mac.settings.category")
-        openSettings()
     }
 
     private func modelOptionButton(_ option: MacChatModelOption) -> some View {

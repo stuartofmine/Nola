@@ -167,7 +167,10 @@ impl<P: HostExecutionProtocol> HostMailbox<P> {
     /// Host response nor acknowledges execution/stop; the committed driver's
     /// exact cancellation drain still owns any subsequent Cancel request.
     pub fn abort_delivery(&self, effect_id: &str) -> Result<bool, String> {
-        let state = self.shared.state.lock().map_err(|_| "Host mailbox lock poisoned")?;
+        let mut state = self.shared.state.lock().map_err(|_| "Host mailbox lock poisoned")?;
+        // A poll after cancellation must never take a delivery the platform hasn't claimed.
+        // Already claimed tickets still use the dispatcher's commit acknowledgement path.
+        state.pending.retain(|(_, request)| request.effect_id.0 != effect_id);
         let mut found = false;
         for port in state.replies.values().filter(|port| port.effect_id == effect_id) {
             port.aborted.store(true, Ordering::Release);

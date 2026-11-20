@@ -7,6 +7,72 @@ mod tests {
     use std::time::Duration;
 
     #[test]
+    fn sealed_cli_turn_executes_late_fifo_receipts_once_without_keyboard_input() {
+        crate::agent_command_port::with_terminal_fixture(|root, _| {
+            let server = tiny_http::Server::http("127.0.0.1:0").unwrap();
+            let endpoint = format!("http://{}/v1", server.server_addr());
+            let (stop, stopped) = std::sync::mpsc::channel::<()>();
+            let provider = std::thread::spawn(move || {
+                let mut samples = 0;
+                while stopped.try_recv() == Err(std::sync::mpsc::TryRecvError::Empty) {
+                    let Some(request) = server.recv_timeout(Duration::from_millis(20)).unwrap() else { continue; };
+                    let (mime, text) = match request.url() {
+                        "/v1/models" => ("application/json", json!({"data":[{"id":"fixture-model","context_length":32768}]}).to_string()),
+                        "/v1/chat/completions" => {
+                            samples += 1;
+                            let delta = json!({"choices":[{"index":0,"delta":{"content":format!("reply {samples}")},"finish_reason":null}]});
+                            let end = json!({"choices":[{"index":0,"delta":{},"finish_reason":"stop"}]});
+                            ("text/event-stream", format!("data: {delta}\n\ndata: {end}\n\ndata: [DONE]\n\n"))
+                        }
+                        other => panic!("unexpected provider path: {other}"),
+                    };
+                    request.respond(tiny_http::Response::from_string(text)
+                        .with_header(tiny_http::Header::from_bytes("Content-Type", mime).unwrap())).unwrap();
+                }
+                samples
+            });
+            let session = "cli-finish-followups";
+            let config = Config::from_args(vec!["nola".into(), "--session".into(), session.into(),
+                "--project".into(), root.to_string_lossy().into(), "--endpoint".into(), endpoint,
+                "--model".into(), "fixture-model".into(), "--api-key".into(), "fixture".into(),
+                "--no-tools".into()]).unwrap();
+            let initial = run_single_prompt(&config, "first").unwrap();
+            let complete = nola_core::agent::AgentTurnStatus::Completed;
+            assert_eq!(initial.run_outcome.turn_status, complete);
+            let owner = interaction::ExecutionCancellation::default();
+            owner.bind_session_input(session, crate::runtime_control::InputRetention::Persistent).unwrap();
+            let admit = |text: &str| {
+                let receipt = owner.queue_runtime_input(crate::runtime_input::RuntimeInput::UserFollowUp(text.into())).unwrap();
+                let crate::runtime_input::InputReceipt::Durable(id) = receipt else { panic!("missing receipt") };
+                id
+            };
+            let earlier = admit("already consumed");
+            let existing = crate::agent_command_port::claim_next_agent_command(session, "prior-consumer", 1, i64::MAX).unwrap().unwrap();
+            assert_eq!(existing.command_id, earlier);
+            // The finishing listener may still hold IDs whose Application FIFO
+            // entry was already ACKed by the predecessor's boundary consumer.
+            assert!(crate::agent_command_port::acknowledge_agent_command(session, &earlier, "prior-consumer").unwrap());
+            let first = admit("late one");
+            let second = admit("late two");
+            assert!(owner.runtime_control().take_admitted_followups("another-session").is_empty());
+            let mut waiting = initial.run_outcome.clone();
+            waiting.turn_status = nola_core::agent::AgentTurnStatus::AwaitingPermission;
+            let mut emitter = Emitter::with_event_sink(|_| {});
+            assert_eq!(finish_cli_foreground(&config, owner.clone(), &mut emitter, waiting.clone()).unwrap(), waiting);
+            let done = finish_cli_foreground(&config, owner, &mut emitter, initial.run_outcome).unwrap();
+            assert_eq!(done.turn_status, complete);
+            let mut app = crate::application_port::CliApplicationPort::persistent_default().unwrap();
+            let messages = app.load_conversation(session).unwrap().unwrap().messages;
+            let ids: Vec<_> = messages.iter().map(|message| message.id.as_str()).collect();
+            assert_eq!(&ids[2..], [first.as_str(), &format!("{first}:assistant"), second.as_str(), &format!("{second}:assistant")]);
+            assert!(app.active_run(session).unwrap().is_none());
+            assert!(crate::agent_command_port::claim_next_agent_command(session, "verify", 1, i64::MAX).unwrap().is_none());
+            drop(stop);
+            assert_eq!(provider.join().unwrap(), 3);
+        });
+    }
+
+    #[test]
     fn replay_includes_surface_summary_beside_text_without_reading_form_values() {
         let message = json!({
             "content":"Here is the form.",
@@ -206,6 +272,9 @@ mod tests {
                 assert!(next < ALL_PERMISSION_LEVELS.len());
             }
         }
+        assert_eq!(permission_picker_action(key(KeyCode::PageDown), 0), Scroll(true));
+        assert_eq!(permission_picker_action(key(KeyCode::PageUp), 1), Scroll(false));
+        assert_eq!(permission_picker_action(KeyEvent::new_with_kind(KeyCode::PageDown, KeyModifiers::NONE, KeyEventKind::Release), 0), Ignore);
         assert_eq!(permission_picker_action(key(KeyCode::Enter), 2), Confirm);
         assert_eq!(permission_picker_action(key(KeyCode::Esc), 2), Cancel);
         assert_eq!(permission_picker_action(KeyEvent::new(KeyCode::Char('c'), KeyModifiers::CONTROL), 2), Cancel);
@@ -1631,7 +1700,8 @@ mod tests {
             // Use the real shell producer so the Work projection receives its
             // complete metadata contract, not an Agent-shaped shell record.
             let task = crate::store::DbBackgroundTask {
-        process_sandbox: None,
+                local_execution: None,
+                process_sandbox: None,
                 terminal: None,
                 id: format!("work-{marker}"),
                 project_root: project_root.to_string_lossy().to_string(),

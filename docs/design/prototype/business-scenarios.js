@@ -26,6 +26,7 @@
         history[replace ? 'replaceState' : 'pushState']({}, '', urlFor(scene.id, stateId));
     }
     function readLocation() {
+        window.hostConnectionPreview.cancel();
         const params = new URLSearchParams(location.search);
         platform = Object.hasOwn(names, params.get('platform')) ? params.get('platform') : 'mac';
         scene = catalog.scenarios.find(item => item.id === params.get('scene')) || catalog.scenarios[0];
@@ -62,7 +63,7 @@
     const isMultiLine = field => field.multiline === true || (field.multiline !== false && (String(field.value || '').includes('\n') || multiLineLabels.has(field.label)));
     function formMarkup(state) {
         if (!['form','choice','review'].includes(state.kind) || !scene.fields.length) return '';
-        return `<form class="sample-form" id="sample-form" novalidate>${scene.fields.map((field, index) => `<label>${escape(field.label)}${field.required ? '<small>必填 · 仅样例</small>' : ''}${isMultiLine(field) ? `<textarea aria-label="${escape(field.label)}" data-field="${index}" ${field.required ? 'required' : ''} rows="${field.value.length > 35 ? 3 : 2}">${escape(memory().draft[index])}</textarea>` : `<input type="text" aria-label="${escape(field.label)}" data-field="${index}" ${field.required ? 'required' : ''} value="${escape(memory().draft[index])}" autocomplete="off">`}</label>`).join('')}<small>修改只保留在此平台、此场景的本页草稿中。</small></form>`;
+        return `<form class="sample-form" id="sample-form" novalidate>${scene.fields.map((field, index) => `<label>${escape(field.label)}${field.required ? '<small>必填 · 仅样例</small>' : ''}${isMultiLine(field) ? `<textarea aria-label="${escape(field.label)}" data-field="${index}" ${field.required ? 'required' : ''} rows="${field.value.length > 35 ? 3 : 2}">${escape(memory().draft[index])}</textarea>` : `<input type="${field.secret ? 'password' : 'text'}" aria-label="${escape(field.label)}" data-field="${index}" ${field.required ? 'required' : ''} value="${escape(memory().draft[index])}" autocomplete="off">`}</label>`).join('')}<small>修改只保留在此平台、此场景的本页草稿中。</small></form>`;
     }
     function domainMarkup(state) {
         if (scene.id === 'experts' && state.id === '0') return '<a href="index.html?demo=expert-mention">在对话中试用 @专家</a>';
@@ -99,7 +100,27 @@
             return;
         }
         visited.add(`${platform}:${scene.id}:${state.id}`);
-        const actions = state.actions.map((action,index)=>`<button data-transition="${index}" class="${action.style === 'primary' ? 'primary' : action.style === 'danger' ? 'danger' : ''}">${escape(action.label)}</button>`).join('');
+        const actions = state.actions.map((action,index)=>action.preview_only ? '' : `<button data-transition="${index}" class="${action.style === 'primary' ? 'primary' : action.style === 'danger' ? 'danger' : ''}">${escape(action.label)}</button>`).join('');
+        if (scene.id === 'web-login') {
+            const login = state.kind === 'form';
+            const path = login || state.id === '1' ? 'Nola · 登录' : '设置 / 连接';
+            $('#device').innerHTML = `<div class="device-system"><span>${escape(names[platform])}</span><span>交互原型</span></div>
+                <section class="hp-panel"><header><p class="hp-path">${path}</p><h3>${escape(state.title)}</h3></header>
+                <p class="${state.kind === 'error' ? 'inline-error' : 'hp-note'}">${escape(state.body[0])}</p>
+                ${login ? formMarkup(state) : ''}<p id="field-error" class="inline-error" role="alert"></p><div class="actions">${actions}</div></section>`;
+            $('#visit-count').textContent = `本页已检查 ${visited.size} 个平台状态`;
+            return;
+        }
+        if (window.hostConnectionPreview.supports(scene.id)) {
+            $('#device').innerHTML = window.hostConnectionPreview.render(scene, state, platform, memory(), escape);
+            $('#visit-count').textContent = `本页已检查 ${visited.size} 个平台状态`;
+            return;
+        }
+        if (scene.id === 'harness-plugins') {
+            $('#device').innerHTML = window.pluginLibraryPreview(state, platform, escape, memory());
+            $('#visit-count').textContent = `本页已检查 ${visited.size} 个平台状态`;
+            return;
+        }
         if (scene.id === 'github-skill' || scene.id === 'github-skill-host') {
             $('#device').innerHTML = window.githubSkillPreview.render(scene, state, platform, memory(), actions, escape);
             $('#visit-count').textContent = `本页已检查 ${visited.size} 个平台状态`;
@@ -112,6 +133,12 @@
         $('#device').innerHTML = shell(content);
         $('#visit-count').textContent = `本页已检查 ${visited.size} 个平台状态`;
     }
+    document.addEventListener('change', event => {
+        const index = event.target.dataset?.pluginLocation;
+        if (index !== undefined && scene.id === 'harness-plugins') {
+            transition(scene.states.find(item => item.id === stateId).actions[Number(index)]);
+        }
+    });
     function render() {
         $('#group-name').textContent = catalog.groups.find(group=>group.id===scene.group).title;
         $('#preview-title').textContent = scene.title;
@@ -121,6 +148,15 @@
         $('#boundary').textContent = scene.boundary;
         $('#sources').innerHTML = scene.sources.map(source=>`<li>${escape(source)}</li>`).join('');
         const available = scene.platforms.includes(platform);
+        const host = window.hostConnectionPreview.supports(scene.id) && available;
+        $('#host-outcome').hidden = !host;
+        if (host) {
+            const outcomes = scene.id === 'share-host'
+                ? [['ok','启动成功'],['failed','启动失败']]
+                : [['ok','正常核验'],['rejected','令牌被拒绝'],['1','身份不符'],['offline','无法连接'],['storage','保存失败']];
+            $('#host-result').innerHTML = outcomes.map(([id,label]) => `<option value="${id}">${label}</option>`).join('');
+            $('#host-result').value = memory().outcome || 'ok';
+        }
         $('#state-list').innerHTML = scene.states.map((state,index)=>`<button data-state="${state.id}" ${state.id===stateId?'aria-current="step"':''} ${available?'':'disabled'}><span class="step-no">${String(index+1).padStart(2,'0')}</span>${escape(state.title)}</button>`).join('');
         renderList(); renderDevice();
         document.title = `${scene.title} · ${names[platform]} · Nola 业务场景`;
@@ -135,16 +171,63 @@
                 $(`[data-field="${invalid}"]`).focus(); return;
             }
         }
+        if (!direct && scene.id === 'web-login') {
+            if (action.to === '2' && memory().draft[0] !== scene.fields[0].value) {
+                memory().loginRetryState = stateId;
+                action = {...action, to:'1'};
+            } else if (stateId === '1' && action.to === '0') {
+                action = {...action, to:memory().loginRetryState || '0'};
+                delete memory().loginRetryState;
+            }
+        }
         if (action.confirm && !direct) {
+            const remove = {mac:'移除连接', ios:'忘记配对', android:'断开宿主机'};
+            const label = scene.id === 'host-pair' ? remove[platform] : action.label;
+            const specific = ['host-pair','web-login'].includes(scene.id);
+            $('#confirm-title').textContent = specific ? label + '？' : '确认演示操作';
+            $('#confirm p').textContent = scene.id === 'host-pair'
+                ? `从此设备清除 ${memory().host.savedAddress} 的绑定与访问令牌。${platform === 'android' ? '同时清除这台宿主机的默认选择和设备授权。' : ''}宿主机继续运行。`
+                : scene.id === 'web-login' ? '退出这个浏览器的会话，其他设备仍然保持登录。'
+                : '只改变当前场景样例，不修改真实数据。取消后保留当前草稿与位置。';
+            $('#confirm-apply').textContent = specific ? label : '确认并继续演示';
             pending = action; priorFocus = document.activeElement; $('#confirm').showModal(); $('#confirm-cancel').focus(); return;
         }
         if (!direct && scene.id.startsWith('github-skill') && action.to === 'review' && ['0','choose'].includes(stateId)) {
             memory().pinnedSelection = stateId === 'choose';
         }
+        if (direct && scene.id === 'harness-plugins') {
+            const local = memory();
+            local.hasBoard = false;
+            local.hasTool = false;
+        }
+        if (!direct && scene.id === 'harness-plugins') {
+            const local = memory();
+            if (stateId === 'both-installed') { local.hasBoard = true; local.hasTool = true; }
+            if (stateId === 'pi-installed') local.hasTool = true;
+            if (stateId === 'dsh-installed') local.hasBoard = true;
+            if (stateId === 'pi-review' && action.to === 'pi-installed') local.hasTool = true;
+            if (stateId === 'dsh-review' && action.to === 'dsh-installed') local.hasBoard = true;
+            if (stateId === 'pi-remove' && action.to === '0') local.hasTool = false;
+            if (stateId === 'dsh-remove' && action.to === '0') local.hasBoard = false;
+            if (['pi-installed','dsh-installed'].includes(action.to) && local.hasBoard && local.hasTool) action = {...action, to:'both-installed'};
+            if (action.to === '0') action = {...action, to:local.hasBoard && local.hasTool ? 'both-installed' : local.hasBoard ? 'dsh-installed' : local.hasTool ? 'pi-installed' : '0'};
+        }
+        window.hostConnectionPreview.cancel();
+        const host = window.hostConnectionPreview.supports(scene.id);
+        if (host && !direct && !window.hostConnectionPreview.prepare(scene, stateId, action, memory())) return;
         if (action.cancel) memory().draft = {...memory().saved};
-        stateId = action.to; memory().state = stateId;
+        const returnToSaved = scene.id === 'host-pair' && stateId === 'checking' && action.to === '0' && memory().host.savedAddress;
+        stateId = returnToSaved ? '2' : action.to; memory().state = stateId;
         if (!direct && scene.states.find(item=>item.id===stateId).kind === 'success') memory().saved = {...memory().draft};
         syncLocation(); render();
+        if (host && !direct) {
+            const outcome = memory().outcome || 'ok';
+            if (stateId === 'starting' || stateId === 'checking') {
+                memory().outcome = 'ok';
+                $('#host-result').value = 'ok';
+                window.hostConnectionPreview.schedule(scene, stateId, memory(), outcome, to => transition({to}));
+            }
+        }
         const focusTarget = $('#device h3'); focusTarget?.setAttribute('tabindex','-1'); focusTarget?.focus({preventScroll:true});
         $('#live').textContent = `演示状态：${scene.states.find(item=>item.id===stateId).title}。未执行真实操作。`;
     }
@@ -155,6 +238,7 @@
         const target = event.target.closest('button,a');
         if (!target || !catalog) return;
         if (target.dataset.scene) {
+            window.hostConnectionPreview.cancel();
             event.preventDefault(); scene = catalog.scenarios.find(item=>item.id===target.dataset.scene);
             stateId = memory().state; syncLocation(); render();
             if (innerWidth<=700) { $('#catalog').hidden = true; $('#catalog-toggle').setAttribute('aria-expanded','false'); $('#preview-title').focus({preventScroll:true}); }
@@ -179,17 +263,39 @@
     });
     document.addEventListener('input', event => {
         if (!catalog) return;
+        if (event.target.dataset.hostField) {
+            const field = event.target.dataset.hostField;
+            window.hostConnectionPreview.edit(field, event.target.value, memory());
+            if (scene.id === 'host-pair' && platform === 'mac' && stateId === 'checking') {
+                transition({to:'draft'}, true);
+                document.querySelector(`[data-host-field="${field}"]`)?.focus();
+            }
+        }
         if (event.target.dataset.field !== undefined) memory().draft[event.target.dataset.field] = event.target.value;
         if (event.target.hasAttribute('data-wiki')) memory().wiki = event.target.value;
     });
+    $('#host-result').addEventListener('change', event => { memory().outcome = event.target.value; });
+    $('#device').addEventListener('change', event => {
+        if (event.target.hasAttribute('data-host-mode')) memory().host.permission = event.target.value;
+    });
+    $('#device').addEventListener('click', event => {
+        const separateCopy = event.target.closest('[data-host-copy]');
+        if (separateCopy) {
+            const menu = separateCopy.closest('details');
+            menu.open = false;
+            menu.querySelector('summary').focus();
+            $('#device .hp-copy-status').textContent = '已复制' + separateCopy.dataset.hostCopy;
+        }
+        if (event.target.closest('[data-host-use]')) { memory().host.used = true; renderDevice(); }
+    });
     $('#search').addEventListener('input', () => catalog && renderList());
     $('#applicable').addEventListener('change', () => catalog && renderList());
-    $('#platform').addEventListener('change', () => { platform=$('#platform').value; stateId=memory().state; syncLocation(); render(); });
+    $('#platform').addEventListener('change', () => { window.hostConnectionPreview.cancel(); platform=$('#platform').value; stateId=memory().state; syncLocation(); render(); });
     $('#theme').addEventListener('change', () => { applyTheme(); if (catalog) syncLocation(true); });
     $('#large-text').addEventListener('change', () => catalog && renderDevice());
     $('#reduce-motion').addEventListener('change', () => document.documentElement.dataset.reduce = String($('#reduce-motion').checked));
     $('#catalog-toggle').addEventListener('click', () => { $('#catalog').hidden=!$('#catalog').hidden; $('#catalog-toggle').setAttribute('aria-expanded',String(!$('#catalog').hidden)); });
-    $('#reset-scene').addEventListener('click', () => { memories.delete(`${platform}:${scene.id}`); stateId='0'; memory(); syncLocation(); render(); $('#live').textContent='已重置此场景样例。其他场景未改变。'; });
+    $('#reset-scene').addEventListener('click', () => { window.hostConnectionPreview.cancel(); memories.delete(`${platform}:${scene.id}`); stateId='0'; memory(); syncLocation(); render(); $('#live').textContent='已重置此场景样例。其他场景未改变。'; });
     $('#confirm-cancel').addEventListener('click', closeConfirm);
     $('#confirm').addEventListener('cancel', event => { event.preventDefault(); closeConfirm(); });
     $('#confirm-apply').addEventListener('click', () => { const action=pending; $('#confirm').close(); pending=null; transition({...action,confirm:false}); });

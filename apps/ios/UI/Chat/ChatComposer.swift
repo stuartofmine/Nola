@@ -379,9 +379,10 @@ nonisolated struct ChatAttachmentDraft: Identifiable, Codable, Equatable, Sendab
 
     static func importFiles(
         from result: Result<[URL], Error>,
-        parserHost: ChatAttachmentParserHost? = nil
+        parserHost: ChatAttachmentParserHost? = nil,
+        runtime: IOSApplicationRuntime? = nil
     ) async throws -> ChatAttachmentImportResult {
-        try await ChatAttachmentPipeline.importFiles(from: result, parserHost: parserHost)
+        try await ChatAttachmentPipeline.importFiles(from: result, parserHost: parserHost, runtime: runtime)
     }
 
     static func promptBlock(for attachments: [ChatAttachmentDraft]) -> String {

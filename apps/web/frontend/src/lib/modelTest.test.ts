@@ -17,7 +17,9 @@ test('model test only uses a selected eligible model', () => {
 test('model test creates an explicitly bound safe chat-only run', () => {
     const create = modelTestConversationRequest('cloud', 'profile', 'Model Test');
     assert.deepEqual(create, { title: 'Model Test', selectedModelSource: 'cloud', selectedModelId: 'profile', executionBackend: 'nola' });
-    const request = modelTestRunRequest({ conversationId: 'test-1' } as never, 'client', 'submission', 'Hello', 'en', 'UTC');
+    const request = modelTestRunRequest({ conversationId: 'test-1', configurationRevision: 3 } as never, 'client', 'submission', 'Hello', 'en', 'UTC');
+    assert.equal(request.expected_configuration_revision, 3);
+    assert.equal(request.expected_parent_message_id, null);
     assert.equal(request.permission_profile, 'cautious');
     assert.equal(request.agentMode, false);
     assert.equal(request.model_test_mode, true);

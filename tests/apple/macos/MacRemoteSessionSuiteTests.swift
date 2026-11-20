@@ -56,13 +56,26 @@ final class MacRemoteHostConfigurationAndIntentSuiteTests: XCTestCase {
             XCTAssertEqual(configuration.displayValues().url, "")
             try configuration.save(url: "https://old.example:5001/v1", token: "old-token", hostID: "old-host")
             let original = try XCTUnwrap(URL(string: "https://old.example:5001/v1"))
-            XCTAssertEqual(configuration.tokenForDraft(url: original, enteredToken: ""), "old-token")
+            let savedDraft = try XCTUnwrap(configuration.configurationForDraft(url: original, enteredToken: ""))
+            XCTAssertEqual(savedDraft.token, "old-token")
+            XCTAssertEqual(savedDraft.expectedHostID, "old-host")
+            XCTAssertEqual(try configuration.configurationForDraft(url: original, enteredToken: "new-token")?.expectedHostID, "old-host")
             for address in ["https://new.example:5001/v1", "http://old.example:5001/v1",
                             "https://old.example:5002/v1", "https://old.example:5001/other"] {
                 let destination = try XCTUnwrap(URL(string: address))
-                XCTAssertNil(configuration.tokenForDraft(url: destination, enteredToken: ""), address)
-                XCTAssertEqual(configuration.tokenForDraft(url: destination, enteredToken: " new-token "), "new-token")
+                XCTAssertNil(try configuration.configurationForDraft(url: destination, enteredToken: ""), address)
+                let replacement = try XCTUnwrap(configuration.configurationForDraft(url: destination, enteredToken: " new-token "))
+                XCTAssertEqual(replacement.token, "new-token")
+                XCTAssertNil(replacement.expectedHostID)
+                XCTAssertEqual(try configuration.configurationForDraft(url: destination, enteredToken: "new-token",
+                    importedIdentity: "pasted-host")?.expectedHostID, "pasted-host")
             }
+            let alias = try XCTUnwrap(URL(string: original.absoluteString + "/"))
+            XCTAssertThrowsError(try configuration.configurationForDraft(url: alias, enteredToken: "new-token",
+                                                                         importedIdentity: "different-host")) { error in
+                XCTAssertEqual(error.localizedDescription, String(localized: "The Nola Server identity changed. Remove it and pair again before continuing.", table: "ServerCenter"))
+            }
+            XCTAssertEqual(try configuration.configurationForDraft(url: alias, enteredToken: "")?.expectedHostID, "old-host")
             XCTAssertEqual(configuration.load()?.baseURL, original)
             XCTAssertEqual(configuration.load()?.token, "old-token")
 

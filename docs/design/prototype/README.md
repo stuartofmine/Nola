@@ -1,8 +1,14 @@
 # Nola · 业务原型与交互设计
 
-更新：2026-11-20。桌面左侧统一为「对话 / 专家与技能 / 自动化中心 / 记忆与数据源」四项主导航 + 常驻对话搜索与列表 + 底部单一设置窗口入口；移除顶栏双侧栏图标与浏览器式内容标签。右侧「任务 / 产物 / 上下文」采用无外层手风琴的三个独立扁平滚动区，其中「上下文」提供原始消息与摘要计数、可各自展开的知识点/会话 Wiki/会话回忆，托管浏览器仅在未连接或异常时提示。桌面输入栏精简为「模型/外部代理/远端主机」「选择文件夹（临时工作区）」「@ 专家」三项控制。当前处理中显示单色流光，尊重减少动态效果。
+更新：2026-11-20。桌面左侧统一为「对话 / 专家与技能 / 自动化中心 / 记忆与数据源」四项固定导航，已安装插件提供的工作页在同一侧栏按名称出现；常驻对话搜索与列表 + 底部单一设置窗口入口；移除顶栏双侧栏图标与浏览器式内容标签。右侧「任务 / 产物 / 上下文」采用无外层手风琴的三个独立扁平滚动区，其中「上下文」提供原始消息与摘要计数、可各自展开的知识点/会话 Wiki/会话回忆，托管浏览器仅在未连接或异常时提示。桌面输入栏精简为「模型/外部代理/远端主机」「选择文件夹（临时工作区）」「@ 专家」三项控制。当前处理中显示单色流光，尊重减少动态效果。
 
-新增覆盖当前业务清单的可操作场景原型：**70 个场景、236 个状态、六个平台视角**。既有完整交互原型保留；新入口补齐首次引导、账户授权、模型配置、宿主机、权限、Goal、长任务恢复、MCP/Skill、资料记忆、协作、计划通知及维护流程的正常、异常和恢复状态。
+新增覆盖当前业务清单的可操作场景原型：**71 个场景、六个平台视角**，各场景的状态数见[生成清单](docs/BUSINESS-SCENARIOS.md)。既有完整交互原型保留；新入口补齐首次引导、账户授权、模型配置、宿主机、权限、Goal、长任务恢复、MCP/Skill、资料记忆、协作、计划通知及维护流程的正常、异常和恢复状态。
+
+## 连接宿主机
+
+[共享这台 Mac](scenarios.html?scene=share-host&platform=mac) → [手机配对](scenarios.html?scene=host-pair&platform=ios) → [Android 模型与管理入口](scenarios.html?scene=host-pair&state=2&platform=android)。Mac 连接另一台服务器使用[远端连接表单](scenarios.html?scene=host-pair&platform=mac)。从桌面原型的设置 → 连接，或手机原型的模型页，也能进入对应流程。
+
+「下次演示回执」可控制下一次验证结果。试着在验证中取消、在错误表单中改令牌，以及先配对再修改地址，核对原连接是否保留。完整的平台入口、状态与原型图见[连接宿主机](../shared/HOST_CONNECTION_WORKFLOW.md)。本地浏览器回放使用 `PROTOTYPE_URL=http://127.0.0.1:8071 node docs/design/prototype/verify_host_connection.cjs`。
 
 ## 打开原型
 
@@ -10,14 +16,16 @@
 python3 -m http.server 8071 --bind 127.0.0.1 --directory docs/design/prototype
 ```
 
+- [桌面侧栏中的任务看板](scenarios.html?scene=harness-plugins&platform=mac&state=page)演示直接在主窗口切换对话、插件管理和包内页面。
+- [运行时插件](scenarios.html?scene=harness-plugins&platform=ios)进入后显示已安装插件；添加时选择运行时，安装后从同一行直接打开随包页面。
 - GitHub Skill 安装支持按名称查找、直接使用目录链接、审阅安装位置、拒绝或单次允许、在新会话读取随包文件，以及在设置中查看固定来源和停用。手机可分别预览[本机安装](scenarios.html?scene=github-skill&platform=ios)和[配对 Host 安装](scenarios.html?scene=github-skill-host&platform=android)。桌面与终端可在同一场景切换平台。[桌面审阅](scenarios.html?scene=github-skill&platform=mac&state=review)
 - [过程与来源预览](reply-preview.html)：切换桌面/手机及明暗，检查正文/表格中的灰色小号内联引用、步骤间等待、展开中的运行标题、未完成状态语义与 31 条引用的展开收起；完整原型的“本地模型，怎么选更合适”会话也使用同一组件。
 - [移动端预览](mobile.html)：直接在 Mac 浏览器审阅手机界面，可切换 iOS/Android、明暗和 320/390/430px；外观切换保留草稿。
 - [持续流光预览](index.html?stream=hold)：发送一条演示消息后保持处理中，便于审阅流光和减少动态效果；点击停止结束演示，不调用模型。
 - [全业务场景原型](scenarios.html)：本地服务地址 `http://127.0.0.1:8071/scenarios.html`。按业务、平台、主题和状态审阅，可直接操作表单、分支、确认与取消；场景可通过 URL 分享到具体状态。
 - [完整交互原型](index.html)：本地服务首页。保留实际会话列表、全屏聊天、模型档位、编辑重发、独立检查器、资料和通用设置；设置中的“原型预览”可进入全业务场景。
-- [业务覆盖与维护规则](docs/BUSINESS-SCENARIOS.md)：逐项入口、状态数、适用平台和当前 Web 14 路由映射。
-- [覆盖 CSV](FEATURE-COVERAGE.csv) / [结构化场景清单](BUSINESS-SCENARIOS.json)：70 项完整清单；旧覆盖表不再把过时的 Today 导航或历史测试当现行结论。
+- [业务覆盖与维护规则](docs/BUSINESS-SCENARIOS.md)：逐项入口、状态数、适用平台和当前 Web 15 路由映射。
+- [覆盖 CSV](FEATURE-COVERAGE.csv) / [结构化场景清单](BUSINESS-SCENARIOS.json)：71 项完整清单；旧覆盖表不再把过时的 Today 导航或历史测试当现行结论。
 - [验证与边界](docs/VALIDATION.md)：区分本轮合成原型回放、历史记录、原生客户端和真实模型证据。
 
 启动上述本地服务后，运行 `node docs/design/prototype/verify_github_skill.cjs` 可回放安装流程并导出截图。脚本使用项目配套的 Browser Use 运行时，也可通过 `NOLA_BROWSER_USE_PYTHON` 指向已安装 `apps/web/browser_use_runtime/requirements.lock` 的 Python 环境。

@@ -305,7 +305,7 @@ export function reduceChatTimeline(state: ChatTimeline, action: TimelineAction):
                 const declaration=declared.get(message.id),canonical=incoming.get(message.id);
                 if(!declaration||!canonical||message.canonical&&message.canonicalSnapshot)return message;
                 if(message.role!=='user'||message.state!=='completed'||canonical.role!=='user'||canonical.state!=='completed'
-                    ||canonical.revision<1||projection.revision<1||message.canonical&&canonical.revision<message.canonical.revision)
+                    ||projection.revision<1||message.canonical&&canonical.revision<message.canonical.revision)
                     throw new Error('Terminal user witness identity/revision mismatch');
                 const part=canonical.parts.length===1?canonical.parts[0]:null;
                 const previousPart=part&&message.canonical?.parts.find(value=>value.part_id===part.part_id);
@@ -319,7 +319,7 @@ export function reduceChatTimeline(state: ChatTimeline, action: TimelineAction):
                         &&historical.owner.part_id===part?.part_id&&historical.owner.conversation_id===owner.conversationId
                         &&object(historical.canonical_text)&&typeof visible==='string'&&historical.canonical_text.text===visible
                         &&historical.canonical_text.total_utf8_bytes===new TextEncoder().encode(visible).length;
-                if(!part||!canonicalPart||!complete||typeof visible!=='string'||part.revision<1||displayTextAttachmentMessage(visible)!==null
+                if(!part||!canonicalPart||!complete||typeof visible!=='string'||displayTextAttachmentMessage(visible)!==null
                     ||!admitted||admitted.kind!=='text'||admitted.id!==part.part_id||admitted.content_text!==visible
                     ||message.parts.length!==1||message.parts[0].id!==part.part_id
                     ||timelineMessageText(message)!==visible)throw new Error('Terminal user witness body mismatch');

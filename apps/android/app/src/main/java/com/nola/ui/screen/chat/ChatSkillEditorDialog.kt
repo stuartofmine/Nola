@@ -1,5 +1,6 @@
 package com.nola.ui.screen.chat
 
+import com.nola.ui.components.dismissImeOnBlankTap
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
@@ -39,6 +40,7 @@ internal fun ChatSkillEditorDialog(
     if (discard) DiscardChangesDialog(onDiscard = onDismiss, onKeepEditing = { discard = false })
     val scope = rememberCoroutineScope()
     AlertDialog(
+        modifier = Modifier.dismissImeOnBlankTap(),
         onDismissRequest = requestDismiss,
         title = { Text(stringResource(R.string.chat_skill_content)) },
         text = {

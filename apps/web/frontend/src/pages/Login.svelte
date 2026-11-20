@@ -1,7 +1,8 @@
 <script lang="ts">
-    import { onDestroy, tick } from 'svelte';
+    import { onDestroy, onMount, tick } from 'svelte';
     import { api, ApiError } from '../lib/api';
     import { safeLoginNext, validHostToken, loginErrorKind } from '../lib/login';
+    import { settingsSession } from '../lib/settingsSession';
     import { locale, localePreference, supportedLocales, t, setLocale } from '../lib/i18n';
     import type { Locale } from '../lib/i18n';
     import { languageNames } from '../lib/locales/shell';
@@ -10,6 +11,7 @@
     let token = $state('');
     let revealed = $state(false);
     let busy = $state(false);
+    let canReturn = $state(false);
     let error = $state(params.has('error') ? loginErrorKind(params.get('error') ?? '') : '');
     let attempted = $state(false);
     const invalidToken = $derived(attempted && !validHostToken(token));
@@ -18,6 +20,11 @@
     let disposed = false;
     const controller = new AbortController();
     onDestroy(() => { disposed = true; controller.abort(); token = ''; });
+    onMount(() => {
+        void api('/api/web/session', {signal: controller.signal}).then(value => {
+            if (!disposed) canReturn = settingsSession(value).authenticated;
+        }).catch(() => { /* Keep sign-in available when an existing session cannot be confirmed. */ });
+    });
     const errorText = $derived(error ? t($locale, `shell.login.error.${error}`) : '');
 
     async function connect(event: SubmitEvent) {
@@ -67,6 +74,7 @@
             </div>
             {#if invalidToken}<p id="token-validation" class="error" role="alert">{t($locale, 'shell.login.token_validation')}</p>{/if}
             <button class="primary connect" disabled={busy || !token.trim()}>{t($locale, busy ? 'shell.login.connecting' : 'shell.login.connect')}</button>
+            {#if canReturn}<button type="button" disabled={busy} onclick={() => window.location.replace(next)}>{t($locale, 'shell.cancel')}</button>{/if}
         </form>
         <details>
             <summary>{t($locale, 'shell.login.need_token')}</summary>

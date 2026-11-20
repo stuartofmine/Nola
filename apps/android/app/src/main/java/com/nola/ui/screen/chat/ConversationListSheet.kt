@@ -1,5 +1,6 @@
 package com.nola.ui.screen.chat
 
+import com.nola.ui.components.dismissImeOnBlankTap
 import com.nola.ui.components.NolaRootPageTitle
 import androidx.compose.animation.Crossfade
 import androidx.compose.animation.animateColorAsState
@@ -122,6 +123,7 @@ fun ConversationListScreen(
 
     renameTarget?.let { (targetId, _) ->
         AlertDialog(
+            modifier = Modifier.dismissImeOnBlankTap(),
             onDismissRequest = { renameTarget = null },
             title = { Text(stringResource(R.string.chat_rename_conversation)) },
             text = {
@@ -223,7 +225,8 @@ fun ConversationListScreen(
             }
             LazyColumn(state = listState, modifier = Modifier.widthIn(max = 720.dp).fillMaxSize().testTag("chat.conversations.list")) {
                 if (visible.isEmpty()) item {
-                    Text(stringResource(if (conversations.isEmpty()) R.string.conversations_empty_message else R.string.conversations_no_results),
+                    val unfiltered = search.isBlank() && !needsResponseOnly
+                    Text(stringResource(if (unfiltered) R.string.conversations_empty_message else R.string.conversations_no_results),
                         modifier = Modifier.padding(24.dp), color = MaterialTheme.colorScheme.onSurfaceVariant)
                 }
                 items(visible, key = { it.id }) { conv ->
@@ -269,7 +272,7 @@ fun ConversationListScreen(
                             IconButton(onClick = { menuTargetId = conv.id }) {
                                 Icon(
                                     Icons.Filled.MoreVert,
-                                    contentDescription = displayedTitle,
+                                    contentDescription = stringResource(R.string.conversation_more_options, displayedTitle),
                                     tint = MaterialTheme.colorScheme.onSurfaceVariant
                                 )
                             }

@@ -1,5 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
+    <string name="conversation_more_options">Más opciones para %1$s</string>
     <string name="canonical_pending">Pendiente</string>
     <string name="canonical_running">En curso</string>
     <string name="canonical_waiting_permission">Requiere confirmación</string>
@@ -391,13 +392,12 @@
     <string name="settings_not_connected">No conectado</string>
     <string name="settings_data_management">Gestión de datos</string>
     <string name="settings_local_data_size">Tamaño de datos locales</string>
-    <string name="settings_export_data">Exportar datos</string>
+    <string name="settings_export_data">Exportar archivo de lectura</string>
     <string name="settings_export_desc">Guardar una copia local completa</string>
     <string name="settings_export_failed">Error al exportar: %1$s</string>
     <string name="settings_clear_all_data">Borrar todos los datos</string>
-    <string name="settings_clear_all_data_message">Esto eliminará permanentemente todas las conversaciones, mensajes, acciones programadas y notificaciones. Esta acción no se puede deshacer.</string>
+    <string name="settings_clear_all_data_message">Android borrará los datos de Nola en este dispositivo, incluidas las conversaciones, los archivos, las cuentas y los ajustes. Nola se cerrará. Esta acción es irreversible.</string>
     <string name="settings_delete_all">Eliminar todo</string>
-    <string name="settings_all_data_cleared">Todos los datos borrados</string>
     <string name="settings_about">Acerca de</string>
     <string name="settings_privacy">Privacidad</string>
     <string name="settings_privacy_desc">Los datos permanecen en este dispositivo salvo que uses un servicio conectado.</string>
@@ -602,7 +602,7 @@
     <string name="settings_data_sources">Fuentes de datos</string>
     <string name="settings_data_sources_desc">Salud, archivos, calendario y otros datos locales</string>
     <string name="settings_models_desc">Conexiones de modelos locales, en la nube y del host</string>
-    <string name="settings_capabilities">Skills y MCP</string>
+    <string name="settings_capabilities">Biblioteca de capacidades</string>
     <string name="settings_capabilities_desc">Gestiona flujos reutilizables y conexiones de herramientas</string>
     <string name="settings_automation">Automatización</string>
     <string name="scheduled_delete_confirm_title">¿Eliminar automatización?</string>
@@ -633,7 +633,7 @@
     <string name="chat_error_switch_model">Cambiar modelo</string>
     <string name="models_certificate_sha256_optional">SHA-256 del certificado (opcional)</string>
     <string name="models_certificate_sha256_help">Para hosts HTTPS, pega la huella del certificado final con o sin dos puntos. La validación del certificado del sistema y del nombre del host sigue activa.</string>
-    <string name="models_web_host_trust_explanation">El token de acceso se cifra en Android Keystore. La identidad del host se vincula en la primera conexión verificada. Una fijación de certificado opcional añade la identidad de transporte HTTPS.</string>
+    <string name="models_web_host_trust_explanation">El token de acceso se cifra en Android Keystore. La identidad del host se vincula en la primera conexión verificada.</string>
     <string name="models_error_invalid_certificate_pin">La huella del certificado debe contener exactamente 64 caracteres hexadecimales.</string>
     <string name="models_error_certificate_pin_requires_https">La fijación del certificado requiere una URL de host HTTPS.</string>
     <string name="models_error_public_http_forbidden">Las direcciones públicas de Web Host requieren HTTPS. HTTP se limita a este dispositivo o a una red local privada.</string>
@@ -645,7 +645,7 @@
     <string name="settings_transport_system_https">HTTPS del sistema</string>
     <string name="settings_transport_encrypted_lan">Puente LAN cifrado</string>
     <string name="settings_export_confirm_title">¿Exportar archivo privado?</string>
-    <string name="settings_export_confirm_message">El archivo incluye conversaciones, recuerdos, contenido subido, prompts personalizados e historial de herramientas. Nola elimina las credenciales guardadas y los secretos estructurados de URL de MCP, pero no examina ni modifica el texto libre. Continúa solo si puedes guardar el archivo de forma segura.</string>
+    <string name="settings_export_confirm_message">Incluye el texto de conversaciones, recuerdos, documentos, habilidades y ajustes de generación. Las conexiones y los detalles de herramientas permanecen en el dispositivo. Tus textos pueden contener información privada.</string>
     <string name="settings_export_confirm_action">Continuar</string>
     <string name="permission_detail_location">Se ejecuta en</string>
     <string name="permission_detail_data">Límite de datos</string>
@@ -682,7 +682,7 @@
     <string name="chat_host_pairing_identity">Host vinculado</string>
     <string name="chat_host_pairing_forget">Desvincular host</string>
     <string name="chat_host_pairing_forget_confirm_title">¿Desvincular este host?</string>
-    <string name="chat_host_pairing_forget_confirm_message">Nola borrará la identidad de host de confianza. Las conversaciones permanecerán en este dispositivo.</string>
+    <string name="chat_host_pairing_forget_confirm_message">Se eliminarán la dirección del anfitrión, el token y los permisos del dispositivo. Tus conversaciones se conservarán en este dispositivo.</string>
     <string name="chat_host_pairing_forget_confirm_action">Desvincular</string>
     <string name="chat_permission_hybrid_request_reason">El host vinculado solicita una función del dispositivo. El resultado solo se devolverá a esta sesión del host.</string>
     <string name="chat_permission_hybrid_run_format">Ejecutar %1$s en este dispositivo</string>
@@ -795,7 +795,7 @@
     <string name="settings_load_failed_detail">Los ajustes locales no están disponibles temporalmente.</string>
     <string name="settings_exporting_data">Preparando exportación segura…</string>
     <string name="settings_clearing_data">Borrando…</string>
-    <string name="settings_clear_failed">No se pudieron borrar los datos: %1$s</string>
+    <string name="settings_clear_failed">Android no pudo borrar los datos. Inténtalo de nuevo o abre Información de la aplicación → Almacenamiento → Borrar almacenamiento.</string>
     <string name="notifications_search_hint">Buscar notificaciones</string>
     <string name="notifications_clear_search">Borrar búsqueda</string>
     <string name="notifications_filter_all_v2">Todas</string>
@@ -836,6 +836,7 @@
     <string name="personal_intelligence_strategies_title">Aprendiendo a trabajar mejor</string>
     <string name="personal_intelligence_strategies_detail">Adaptando modelos y rutas según resultados reales</string>
     <string name="personal_intelligence_clear_action">Borrar inteligencia personal</string>
+    <string name="personal_intelligence_clear_failed">No se pudieron borrar los datos aprendidos. Inténtalo de nuevo.</string>
     <string name="personal_intelligence_clear_title">¿Borrar todos los datos aprendidos?</string>
     <string name="personal_intelligence_clear_detail">Los chats se conservan, pero las observaciones, recuerdos y aprendizaje de rutas no se pueden restaurar.</string>
     <string name="personal_intelligence_clear_confirm">Borrar</string>
@@ -993,8 +994,8 @@
     <string name="chat_skill_run_result">Resultado: %1$s</string>
     <string name="chat_skill_run_error">Error: %1$s</string>
     <string name="models_web_host_setup_title">Antes de conectar</string>
-    <string name="models_web_host_setup_start">En el equipo anfitrión, inicia Nola Web Host y déjalo en ejecución.</string>
-    <string name="models_web_host_setup_copy">Copia la dirección LAN y el token de acceso de inicio que muestra el host. Usa una red privada de confianza o HTTPS.</string>
+    <string name="models_web_host_setup_start">En el Mac, abre Ajustes > Conexiones en Nola y activa la opción de compartir este Mac.</string>
+    <string name="models_web_host_setup_copy">Copia los datos de conexión en el Mac y pégalos aquí. También puedes introducir la dirección y el token manualmente.</string>
     <string name="models_web_host_checking">Comprobando el host</string>
     <string name="models_web_host_checking_detail">Verificando el token, el protocolo de permisos y la identidad del host antes de guardar.</string>
     <string name="models_save_and_verify">Guardar y verificar</string>
@@ -1006,6 +1007,7 @@
     <string name="models_error_host_unreachable">No se pudo acceder al host. Comprueba la dirección, la red y su estado.</string>
     <string name="models_error_host_unauthorized">El token de acceso fue rechazado. Copia el token actual del host e inténtalo de nuevo.</string>
     <string name="models_error_host_generic">No se pudo verificar el host. Comprueba los datos de conexión e inténtalo de nuevo.</string>
+    <string name="models_web_host_default_verified">Anfitrión verificado. Sigue siendo la opción predeterminada para las conversaciones nuevas.</string>
     <string name="models_web_host_verified">Web Host se verificó y guardó. Actívalo por separado cuando quieras usarlo.</string>
     <string name="models_host_messaging_title">Canales de mensajería</string>
     <string name="models_host_messaging_summary">%1$d de %2$d conectados · proceso en segundo plano %3$s</string>
@@ -1396,4 +1398,8 @@
     <string name="chat_tool_install_skill_host">Instalar Skill en el host</string>
     <string name="chat_tool_read_skill_file">Leer un archivo del Skill</string>
     <string name="chat_permission_install_github_skill">Descargar y activar un Skill de %1$s para futuros chats en este teléfono.</string>
+    <string name="harness_plugins">Plugins</string>
+    <string name="harness_device_note">Conecta el equipo donde se ejecutan tus plugins para usarlos aquí.</string>
+    <string name="harness_connect">Conectar Host</string>
+    <string name="harness_changed">El Host ha cambiado. Abre de nuevo el gestor.</string>
 </resources>

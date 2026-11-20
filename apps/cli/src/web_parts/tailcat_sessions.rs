@@ -139,13 +139,7 @@ fn create_tailcat_lease(
         let _ = input.write_all(b"{\"version\":1,\"kind\":\"stop\"}\n");
         let _ = input.flush();
         drop(input);
-        let stopped = child.wait().is_ok();
-        let (state, wake) = &*finished;
-        *state.lock().unwrap() = Some(stopped);
-        wake.notify_all();
-        if stopped {
-            tailcat_leases().lock().unwrap().remove(&grant_id);
-        }
+        finish_tailcat_lease(&grant_id, &finished, child.wait());
     });
     // Verified helper has its own30s startup deadline. A dropped HTTP receiver
     // also drops the ready receiver; the owner then closes the helper.
@@ -156,6 +150,20 @@ fn create_tailcat_lease(
     Ok(
         json!({"version":1,"leaseId":id,"address":address,"hostId":host_identity(),"expiresIn":TAILCAT_GRANT_SECONDS}),
     )
+}
+
+fn finish_tailcat_lease(
+    id: &str,
+    finished: &(Mutex<Option<bool>>, std::sync::Condvar),
+    exit: std::io::Result<std::process::ExitStatus>,
+) {
+    let (state, wake) = finished;
+    *state.lock().unwrap() = Some(exit.as_ref().is_ok_and(|status| status.success()));
+    wake.notify_all();
+    // A reaped child no longer consumes a grant slot, including on an error exit.
+    if exit.is_ok() {
+        tailcat_leases().lock().unwrap().remove(id);
+    }
 }
 
 fn close_tailcat_lease(owner: &str, id: &str) -> Result<Value, (u16, &'static str)> {
@@ -184,6 +192,38 @@ fn close_tailcat_lease(owner: &str, id: &str) -> Result<Value, (u16, &'static st
 #[cfg(test)]
 mod tailcat_lease_tests {
     use super::*;
+    #[cfg(unix)]
+    #[test]
+    fn abnormal_helper_exit_does_not_acknowledge_close_or_leak_a_slot() {
+        let id = uuid::Uuid::new_v4().to_string();
+        let (stop, close_requested) = mpsc::channel();
+        let finished = Arc::new((Mutex::new(None), std::sync::Condvar::new()));
+        tailcat_leases().lock().unwrap().insert(
+            id.clone(),
+            TailcatLease {
+                owner: "owner".into(),
+                stop,
+                finished: finished.clone(),
+            },
+        );
+        let lease_id = id.clone();
+        let closer = thread::spawn(move || close_tailcat_lease("owner", &lease_id).unwrap());
+        close_requested
+            .recv_timeout(StdDuration::from_secs(5))
+            .unwrap();
+        let exit = std::process::Command::new("/bin/sh")
+            .args(["-c", "exit 7"])
+            .status();
+        assert_eq!(exit.as_ref().unwrap().code(), Some(7));
+        finish_tailcat_lease(&id, &finished, exit);
+        let receipt = closer.join().unwrap();
+        assert_eq!(
+            receipt,
+            json!({"closed":false,"closing":false,"stopUnconfirmed":true,"runStateChanged":false})
+        );
+        assert!(!tailcat_leases().lock().unwrap().contains_key(&id));
+    }
+
     #[test]
     fn lease_close_requires_original_owner_and_never_fabricates_a_stop() {
         let id = uuid::Uuid::new_v4().to_string();

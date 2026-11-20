@@ -20,7 +20,6 @@ pub fn prepare<S: crate::repositories::ApplicationCommandRepositories>(
     if input.conversation_id.trim().is_empty()
         || input.message_id.trim().is_empty()
         || input.expected_revision < 1
-        || input.expected_message_revision < 1
         || input.created_at_ms < 0
         || input.edited_text.trim().is_empty()
         || input.edited_text.len() > 1_000_000
@@ -54,6 +53,7 @@ pub fn prepare<S: crate::repositories::ApplicationCommandRepositories>(
             .iter()
             .find(|m| m.message_id.0 == input.message_id)
             .ok_or("resend_message_not_visible")?;
+        // A first-turn provider failure can seal an untouched reducer at revision zero.
         if message.revision != input.expected_message_revision {
             return Err(format!("resend_message_revision_changed: expected {}, current {}",input.expected_message_revision,message.revision));
         }

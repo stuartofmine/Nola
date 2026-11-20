@@ -4113,6 +4113,34 @@ fn host_permission_safe_review_text(request: &ToolRequest) -> Option<String> {
                 slug, request.args.get("dry_run").and_then(Value::as_bool).unwrap_or(true),
                 content.len(), Sha256::digest(content.as_bytes())))
         }
+        "edit_file" => {
+            if !request.args.keys().all(|key| matches!(key.as_str(),
+                "path" | "old_text" | "new_text" | "replace_all" | "expected_replacements" | "expected_sha256" | "dry_run"))
+                || ["replace_all", "dry_run"].iter().any(|key|
+                    request.args.get(*key).is_some_and(|value| !value.is_boolean()))
+                || crate::tools::validate_tool_request(request).is_some() { return None; }
+            let path = safe_target(request.args.get("path")?)?;
+            if request.args.get("path")?.as_str()? != path { return None; }
+            let before = request.args.get("old_text")?.as_str()?;
+            let after = request.args.get("new_text")?.as_str()?;
+            if before.is_empty() { return None; }
+            let matches = match (request.args.get("replace_all").and_then(Value::as_bool).unwrap_or(false), request.args.get("expected_replacements")) {
+                (false, None) => 1,
+                (true, Some(value)) => value.as_u64().filter(|n| *n > 0)?,
+                _ => return None,
+            };
+            let version = match request.args.get("expected_sha256") {
+                None => String::new(),
+                Some(value) => {
+                    let digest = value.as_str()?;
+                    if digest.len() != 64 || !digest.bytes().all(|byte| byte.is_ascii_hexdigit()) { return None; }
+                    format!("\nRequired file SHA-256: {digest}")
+                }
+            };
+            let mode = if request.args.get("dry_run") == Some(&Value::Bool(true)) { "preview only" } else { "replace exact text" };
+            Some(format!("edit_file: {}\nMode: {mode}; required matches: {matches}\nPer match: {} UTF-8 bytes removed, {} inserted{version}",
+                serde_json::to_string(&path).ok()?, before.len(), after.len()))
+        }
         "write_file" => {
             // Present only the already-bound operation, never its possibly
             // secret-bearing body. Unknown fields cannot silently add effects.

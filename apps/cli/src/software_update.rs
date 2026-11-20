@@ -45,7 +45,10 @@ fn run(args: &[String]) -> Result<(), Box<dyn std::error::Error>> {
             positional.extend(rest[index + 1..].iter().cloned());
             break;
         }
-        if arg == "--source" {
+        if arg == "--json" {
+            // Both update operations already emit JSON.
+            index += 1;
+        } else if arg == "--source" {
             let value = rest
                 .get(index + 1)
                 .ok_or("--source requires an absolute public source JSON path")?;

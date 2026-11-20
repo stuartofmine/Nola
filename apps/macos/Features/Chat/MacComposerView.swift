@@ -147,6 +147,7 @@ struct MacComposerTextEditor: NSViewRepresentable {
     var submitsReturn = true
     var mentionCommand: (String) -> Bool = { _ in false }
     var mentionEditor = AppleMentionEditor()
+    var editorAccessibilityIdentifier: String?
 
     func makeCoordinator() -> Coordinator {
         Coordinator(parent: self)
@@ -161,6 +162,9 @@ struct MacComposerTextEditor: NSViewRepresentable {
         scrollView.autohidesScrollers = true
 
         let textView = MacAttachmentPasteTextView()
+        if let editorAccessibilityIdentifier {
+            textView.setAccessibilityIdentifier(editorAccessibilityIdentifier)
+        }
         textView.registerForDraggedTypes([.fileURL, .png, .tiff])
         textView.delegate = context.coordinator
         textView.isRichText = false

@@ -1,5 +1,6 @@
 package com.nola.ui.screen.scheduled
 
+import com.nola.ui.components.dismissImeOnBlankTap
 import android.text.format.DateFormat
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
@@ -157,7 +158,9 @@ private fun ScheduleZoneDialog(zone: String, onDismiss: () -> Unit, onConfirm: (
     var query by rememberSaveable { mutableStateOf("") }
     val zones = remember { (ZoneId.getAvailableZoneIds() + "UTC").sorted() }
     val visible = remember(query) { zones.filter { it.contains(query.trim(), ignoreCase = true) } }
-    AlertDialog(onDismissRequest = onDismiss, title = { Text(stringResource(R.string.scheduled_timezone)) }, text = {
+    AlertDialog(
+        modifier = Modifier.dismissImeOnBlankTap(),
+        onDismissRequest = onDismiss, title = { Text(stringResource(R.string.scheduled_timezone)) }, text = {
         Column {
             OutlinedTextField(query, onValueChange = { query = it }, singleLine = true,
                 label = { Text(stringResource(R.string.scheduled_zone_search)) }, modifier = Modifier.testTag("schedule-zone-search"))

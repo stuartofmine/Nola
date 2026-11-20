@@ -2643,11 +2643,11 @@ name = "nola_credential_host"
 version = "0.1.0"
 dependencies = [
  "libc",
+ "nola_windows_permissions",
  "rusqlite",
  "sha2",
  "tempfile",
  "url",
- "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -2802,13 +2802,13 @@ dependencies = [
  "nola_application",
  "nola_application_bootstrap",
  "nola_core",
- "nola_credential_host",
  "nola_domain",
  "nola_host_protocol",
  "nola_protocol",
  "nola_service_client",
  "nola_store",
  "nola_store_port",
+ "nola_windows_permissions",
  "rusqlite",
  "serde_json",
  "tempfile",
@@ -2821,8 +2821,8 @@ name = "nola_service_client"
 version = "0.1.0"
 dependencies = [
  "libc",
- "nola_credential_host",
  "nola_protocol",
+ "nola_windows_permissions",
  "serde",
  "serde_json",
  "socket2 0.5.10",
@@ -2884,6 +2884,14 @@ dependencies = [
  "sha2",
  "tempfile",
  "url",
+]
+
+[[package]]
+name = "nola_windows_permissions"
+version = "0.1.0"
+dependencies = [
+ "tempfile",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]

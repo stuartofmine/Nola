@@ -171,7 +171,7 @@ internal fun SettingsContent(
     appearance: AppearancePreference,
     onAppearanceChange: (AppearancePreference) -> Unit,
     onRefresh: () -> Unit,
-    onClearAllData: suspend () -> Unit = {},
+    onClearAllData: () -> Boolean = { false },
     onCreateExportArchive: suspend () -> java.io.File = { error("Export unavailable") },
     onNotifications: () -> Unit = {},
     onScheduledActions: () -> Unit = {},
@@ -188,6 +188,7 @@ internal fun SettingsContent(
     var detailSection by detailState
     BackHandler(enabled = detailSection != null) { detailSection = null }
     var isClearingData by remember { mutableStateOf(false) }
+    var clearError by remember { mutableStateOf(false) }
     var isExportingData by remember { mutableStateOf(false) }
     var operationMessage by rememberSaveable { mutableStateOf<String?>(null) }
     var operationFailed by rememberSaveable { mutableStateOf(false) }
@@ -214,23 +215,26 @@ internal fun SettingsContent(
         AlertDialog(
             onDismissRequest = { if (!isClearingData) showDeleteDialog = false },
             title = { Text(stringResource(R.string.settings_clear_all_data)) },
-            text = { Text(stringResource(R.string.settings_clear_all_data_message)) },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(NolaSpacing.sm)) {
+                    Text(stringResource(R.string.settings_clear_all_data_message))
+                    if (clearError) Text(stringResource(R.string.settings_clear_failed),
+                        color = MaterialTheme.colorScheme.error)
+                }
+            },
             confirmButton = {
                 Button(
                     onClick = {
                         isClearingData = true
-                        scope.launch {
-                            try {
-                                onClearAllData()
-                                showDeleteDialog = false
-                                operationFailed = false
-                                operationMessage = context.getString(R.string.settings_all_data_cleared)
-                            } catch (error: Exception) {
-                                operationFailed = true
-                                operationMessage = context.getString(R.string.settings_clear_failed, error.message ?: "")
-                            } finally {
-                                isClearingData = false
-                            }
+                        clearError = false
+                        val accepted = try {
+                            onClearAllData()
+                        } catch (_: SecurityException) {
+                            false
+                        }
+                        if (!accepted) {
+                            clearError = true
+                            isClearingData = false
                         }
                     },
                     enabled = !isClearingData,
@@ -457,7 +461,7 @@ internal fun SettingsContent(
                 tint = NolaColors.danger,
                 isBusy = isClearingData,
                 enabled = !isExportingData && !isClearingData
-            ) { showDeleteDialog = true }
+            ) { clearError = false; showDeleteDialog = true }
         }
         }
     }

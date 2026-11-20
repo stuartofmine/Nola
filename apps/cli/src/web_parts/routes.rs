@@ -651,6 +651,50 @@ fn route_request(
     config: &Config,
     _language: crate::i18n::Language,
 ) -> Response<Box<dyn Read + Send>> {
+    if matches!(path, "/api/harness-plugins" | "/api/desktop-plugin-pages") {
+        if method != &Method::Post { return method_not_allowed(); }
+        if !(source_management_request_allowed(request, config.tailcat_ingress)
+            || (web_session_is_authenticated(request) && web_csrf_is_valid(request))) {
+            return json_response(StatusCode(403), json!({"error":"Open plugin management from the selected Host."}));
+        }
+        #[derive(Deserialize)]
+        #[serde(deny_unknown_fields)]
+        struct PluginAction { #[serde(default)] runtime: String, #[serde(default)] profile: String, action: String, #[serde(default)] source: String }
+        let mut body = Vec::new();
+        if request.as_reader().take(4097).read_to_end(&mut body).is_err() || body.len() > 4096 {
+            return json_response(StatusCode(400), json!({"error":"Invalid plugin request"}));
+        }
+        if path == "/api/desktop-plugin-pages" {
+            #[derive(Deserialize)]
+            #[serde(deny_unknown_fields)]
+            struct PageRequest { id: Option<String> }
+            let Ok(input) = serde_json::from_slice::<PageRequest>(&body) else {
+                return json_response(StatusCode(400), json!({"error":"Invalid desktop page request"}));
+            };
+            return match crate::harness_plugin::desktop::catalog(input.id.as_deref()) {
+                Ok(value) => json_response(StatusCode(200), value),
+                Err(error) => json_response(StatusCode(if error == "Desktop plugin page is unavailable" {404} else {500}), json!({"error":error})),
+            }.with_header(Header::from_bytes("Cache-Control", "no-store").unwrap());
+        }
+        let Ok(input) = serde_json::from_slice::<PluginAction>(&body) else {
+            return json_response(StatusCode(400), json!({"error":"Invalid plugin request"}));
+        };
+        let host = request_header(request, "Host").and_then(|value| reqwest::Url::parse(&format!("http://{value}")).ok())
+            .and_then(|url| url.host_str().map(str::to_owned));
+        let Some(host) = host else {return json_response(StatusCode(400), json!({"error":"Missing Host"}));};
+        let local = source_management_request_allowed(request, config.tailcat_ingress);
+        if input.action == "library" {
+            if !input.runtime.is_empty() || !input.profile.is_empty() || !input.source.is_empty() {
+                return json_response(StatusCode(400), json!({"error":"Library lists all runtime profiles"}));
+            }
+            return json_response(StatusCode(200), crate::harness_plugin::desktop::library(&host, local))
+                .with_header(Header::from_bytes("Cache-Control", "no-store").unwrap());
+        }
+        return match crate::harness_plugin::manage(&input.runtime, &input.profile, &input.action, &input.source, &host, local) {
+            Ok(snapshot) => json_response(StatusCode(200), snapshot),
+            Err(error) => json_response(StatusCode(409), json!({"error":error})),
+        };
+    }
     if matches!(path, "/api/software-update" | "/api/software-update/check" | "/api/software-update/package") {
         return software_update_response(request, method, path)
             .with_header(Header::from_bytes("Cache-Control", "no-store").unwrap());
@@ -1375,6 +1419,8 @@ fn route_request(
         | (&Method::Head, "/models")
         | (&Method::Get, "/model-test")
         | (&Method::Head, "/model-test")
+        | (&Method::Get, "/plugin-page")
+        | (&Method::Head, "/plugin-page")
         | (&Method::Get, "/capabilities")
         | (&Method::Head, "/capabilities")
         | (&Method::Get, "/activity")

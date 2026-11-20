@@ -351,6 +351,20 @@ mod host_permission_broker_tests {
             host_permission_safe_review_text(&request("delete_file", json!({"path":"notes.txt"}))),
             Some("delete_file: \"notes.txt\"".into())
         );
+        let edit = |extra: Value| {
+            let mut args = json!({"path":"report.json","old_text":"fixture-secret","new_text":"新"});
+            args.as_object_mut().unwrap().extend(extra.as_object().unwrap().clone());
+            host_permission_safe_review_text(&request("edit_file", args))
+        };
+        let preview = edit(json!({})).unwrap();
+        assert!(preview.contains("edit_file: \"report.json\"") && preview.contains("required matches: 1"));
+        assert!(preview.contains("14 UTF-8 bytes removed, 3 inserted") && !preview.contains("fixture-secret"));
+        let bulk = edit(json!({"replace_all":true,"expected_replacements":3,"dry_run":true})).unwrap();
+        assert!(bulk.contains("preview only; required matches: 3"));
+        for invalid in [json!({"replace_all":true}),json!({"expected_replacements":2}),json!({"dry_run":"yes"}),
+            json!({"expected_sha256":"invalid"}),json!({"path":"secret-key.txt"}),json!({"unknown_effect":true})] {
+            assert!(edit(invalid.clone()).is_none(), "unsafe edit preview for {invalid}");
+        }
         let configured = crate::mcp_connection_authority::bind_configurations(
             &[json!({"server_id":"preview","enabled":true,"endpoint":"http://127.0.0.1:1/mcp"})],
             "preview-host", &uuid::Uuid::new_v4().to_string()).unwrap();

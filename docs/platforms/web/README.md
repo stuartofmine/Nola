@@ -2,6 +2,8 @@
 
 实现位于 [web/frontend](../../../apps/web/frontend)，Svelte 界面由用户拥有的 Rust Host 提供；浏览器不拥有第二套业务 Runtime，也不在浏览器本地执行桌面工具。
 
+设置 → 连接显示当前 Host 与浏览器会话。受保护页面登录后返回原站内地址，退出只撤销当前浏览器会话。 [连接宿主机的操作与边界](../../design/shared/HOST_CONNECTION_WORKFLOW.md)。
+
 - [Web 构建目录](../../../apps/web/README.md)、[Host 传输](../../architecture/模块/14-远程Host与同步/README.md)。
 - [会话交互](../../design/shared/CONVERSATION_UI_DESIGN.md)、[检查器](../../design/shared/CONVERSATION_INSPECTOR.md)。
 - `npm --prefix apps/web/frontend ci`，然后运行 `run check`、`test`、`run build`。启动方式见[仓库 README](../../../README.md)。

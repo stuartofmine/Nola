@@ -79,10 +79,24 @@ for line in sys.stdin:
         assert!(driver.catalog.resolve_available(&id).is_none(),"configuration alone cannot expose an executable remote tool");
         assert!(driver.catalog.resolve_available(crate::mcp_connection_authority::CONNECT_CAPABILITY).is_some());
         let reference = driver.mcp_server_registry[0]["connection_ref"].as_str().unwrap();
+        let skill_result = || ToolOutcome {
+            text: String::new(), display: String::new(), error: false, artifacts: Vec::new(),
+            activation: None, execution: None, full_output_ref: None,
+            data: Some(json!({"required_tools": [{"provider":"mcp",
+                "server_id":"plugin:driver-fixture:mcp:echo","tool_name":"echo"}]})),
+        };
+        let mut offline = skill_result();
+        driver.check_skill_dependencies("Skill", &mut offline);
+        assert!(offline.error);
+        assert!(offline.activation.is_none());
+        assert_eq!(offline.data.unwrap()["connection_refs"], json!([reference]));
         let expected = crate::mcp_connection_authority::permission_resource(reference).unwrap();
         crate::mcp_host::connect_approved(reference,&expected).unwrap();
         driver.refresh_mcp_capability_catalog().unwrap();
         assert!(driver.catalog.resolve_available(&id).is_some());
+        let mut online = skill_result();
+        driver.check_skill_dependencies("Skill", &mut online);
+        assert!(!online.error);
         for descriptor in &code_descriptors {
             assert_eq!(driver.catalog.capabilities.get(&descriptor.id), Some(descriptor),
                 "MCP refresh must preserve frozen Code Mode schemas and budgets");
@@ -271,6 +285,51 @@ impl CliAgentHostDriver {
                     ))
             })
             .collect();
+    }
+
+    fn check_skill_dependencies(&self, capability_id: &str, outcome: &mut ToolOutcome) {
+        use nola_core::agent::capability::CapabilityToolReference;
+        if outcome.error || !matches!(capability_id, "Skill" | "skill_invoke") {
+            return;
+        }
+        let Some(required) = outcome.data.as_ref().and_then(|data| data.get("required_tools")) else {
+            return;
+        };
+        let Ok(required) = serde_json::from_value::<Vec<CapabilityToolReference>>(required.clone()) else {
+            return;
+        };
+        let mut missing = Vec::new();
+        let mut connections = std::collections::BTreeSet::new();
+        for tool in required {
+            if self.catalog.resolve_available(&tool.model_capability_id()).is_some() {
+                continue;
+            }
+            missing.push(tool.display_id());
+            if let CapabilityToolReference::Mcp { server_id, .. } = tool {
+                if let Some(server) = self.capability_catalog.mcp.servers.get(&server_id) {
+                    if crate::mcp_connection_authority::permission_resource(&server.connection_ref)
+                        .is_ok_and(|resource| resource.generation.is_none()) {
+                        connections.insert(&server.connection_ref);
+                    }
+                }
+            }
+        }
+        if missing.is_empty() {
+            return;
+        }
+        let next_action = if connections.is_empty() {
+            "Report the unavailable requirements. Retry the Skill when its required tools are available."
+        } else {
+            "Request mcp_connect for each listed connection_ref, then retry the Skill after discovery. If denied, report the unmet requirement."
+        };
+        let summary = format!("Skill requires unavailable tools: {}", missing.join(", "));
+        let data = json!({"error":"skill_requirements_unavailable","message":summary,
+            "missing_tools":missing,"connection_refs":connections,"next_action":next_action});
+        outcome.text = data.to_string();
+        outcome.display = summary;
+        outcome.data = Some(data);
+        outcome.error = true;
+        outcome.activation = None;
     }
 
     fn materialize_capability_activation(
@@ -3404,11 +3463,12 @@ impl CliAgentHostDriver {
             runtime_result.outcome =
                 finish_tool_work_step_transaction(runtime_transaction, runtime_result.outcome);
             let RuntimeToolResult {
-                outcome,
+                mut outcome,
                 task_promotion,
                 task_update,
                 pending_error: _,
             } = runtime_result;
+            self.check_skill_dependencies(capability_id, &mut outcome);
             if let Some(update) = task_update {
                 Self::emit(
                     request,
@@ -3532,6 +3592,7 @@ impl CliAgentHostDriver {
             crate::tools::ExecutionAuthority::CoreApproved(permission_profile),
             discovery_catalog.as_ref(),
         );
+        self.check_skill_dependencies(capability_id, &mut outcome);
         crate::llm::log_local_debug_payload(
             "host_tool_dispatch",
             &json!({
@@ -3721,10 +3782,11 @@ impl CliAgentHostDriver {
         capability_id: &str,
         call_id: &str,
         args: &serde_json::Map<String, Value>,
-        outcome: ToolOutcome,
+        mut outcome: ToolOutcome,
         external_full_output_ref: Option<String>,
         emit: &mut dyn FnMut(HostResponseEnvelope) -> Result<(), String>,
     ) -> Result<(), String> {
+        self.check_skill_dependencies(capability_id, &mut outcome);
         self.record_tool_outcome(
             &deterministic_tool_failure_key(capability_id, args),
             &outcome,

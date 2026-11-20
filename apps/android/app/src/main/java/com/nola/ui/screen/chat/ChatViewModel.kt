@@ -956,21 +956,22 @@ class ChatViewModel @Inject constructor(
         userPrompt: String = "",
     ): JsonObject = withContext(Dispatchers.IO) {
         check(resolveConversationProgressHost(owner) == null) { "Goal belongs to a paired Host" }
-        val nativeHost = withContext(Dispatchers.Main) { localToolPlan(owner,
-            runRegistry.find(composerDrafts.ownerKey(owner))?.state?.value ?: _uiState.value).identity.hostId }
+        val plan = withContext(Dispatchers.Main) { localToolPlan(owner,
+            runRegistry.find(composerDrafts.ownerKey(owner))?.state?.value ?: _uiState.value) }
         val action = control?.get("action")?.jsonPrimitive?.content
         val state = withContext(Dispatchers.Main) { runRegistry.find(composerDrafts.ownerKey(owner))?.state?.value ?: _uiState.value }
         val needsModel = action in setOf("start", "resume") || userPrompt.isNotBlank()
-        val selectedModel = if (needsModel) {
+        val admission = if (needsModel) {
             val resolvedModel = state.currentModel
             if (resolvedModel != null) {
-                agentTurnService.goalModelAdmission(resolvedModel, state.effectiveGenerationParameters,
-                    state.currentParameters.enableThinking)
+                agentTurnService.goalModelAdmission(owner, resolvedModel, state.effectiveGenerationParameters,
+                    state.currentParameters.enableThinking, state.responseStyle, action == "start",
+                    state.agentMode, plan.permissionMode)
             } else {
                 check(action != "start") { context.getString(R.string.chat_no_model_selected) }
-                JsonNull
+                null
             }
-        } else JsonNull
+        } else null
         val operation = control?.getValue("operationId")?.jsonPrimitive?.content
         val intent = control?.let { value -> buildJsonObject {
                 put("conversation_id", owner); put("operation_id", value.getValue("operationId")); put("action", value.getValue("action"))
@@ -983,8 +984,9 @@ class ChatViewModel @Inject constructor(
             put("type", "prepare_goal_control_intent"); put("input", it)
         }, operation?.let { "goal-intent:$owner:$it" }) }
         val command = buildJsonObject {
-            put("type", "step_goal"); put("conversation_id", owner); put("source_host_id",nativeHost); put("host_available",hostAvailable)
-            put("control", envelope ?: JsonNull); put("selected_model",selectedModel); put("user_prompt", userPrompt)
+            put("type", "step_goal"); put("conversation_id", owner); put("source_host_id", plan.identity.hostId); put("host_available",hostAvailable)
+            put("control", envelope ?: JsonNull); put("selected_model", admission?.selection ?: JsonNull); put("user_prompt", userPrompt)
+            admission?.startConfiguration?.let { put("start_configuration", it) }
         }
         val result = applicationRuntime.submitMutation(command, operation?.let { "embedded-goal:$owner:$it" }).jsonObject
         result["error"]?.takeUnless { it is JsonNull }?.jsonPrimitive?.content?.let { error(it) }
@@ -1695,12 +1697,15 @@ class ChatViewModel @Inject constructor(
 
     private fun loadPreferences() {
         viewModelScope.launch {
+            prefs.hostDeviceGrants.collect { grants ->
+                _uiState.update { it.copy(pairedHostIdentity = grants.identity,
+                    hybridDeviceToolsEnabled = grants.enabled, hybridDeviceCapabilities = grants.capabilities) }
+            }
+        }
+        viewModelScope.launch {
             val agentMode = prefs.isAgentModeEnabled.first()
             val permissionMode = prefs.agentPermissionMode.first()
             defaultPermissionMode = permissionMode
-            val hybridDeviceTools = prefs.hybridDeviceToolsEnabled.first()
-            val hybridCapabilities = prefs.hybridDeviceCapabilities.first()
-            val pairedHostIdentity = prefs.webHostIdentity.first()
             val autoCompact = memoryProfileDataStore.autoCompactTriggerPercent.first()
             val documents = memoryProfileDataStore.documentEditor()
             val profile = chatRepo.getMemoryProfile().copy(uploadedDocuments = documents.documents)
@@ -1715,9 +1720,6 @@ class ChatViewModel @Inject constructor(
             _uiState.update { it.copy(
                 agentMode = agentMode,
                 permissionMode = if (it.conversationId == null) permissionMode else it.permissionMode,
-                hybridDeviceToolsEnabled = hybridDeviceTools,
-                hybridDeviceCapabilities = hybridCapabilities,
-                pairedHostIdentity = pairedHostIdentity,
                 autoCompactTriggerPercent = autoCompact,
                 longTermMemory = profile.longTermMemory.joinToString("\n"),
                 userPreferences = profile.userPreferences.joinToString("\n"),
@@ -1743,7 +1745,8 @@ class ChatViewModel @Inject constructor(
             models.addAll(deviceModelStore.installedModels().map { record ->
                 ModelInfo(id = record.id, name = record.displayName, source = ModelInfo.ModelSource.Local)
             })
-            if (prefs.webHostBaseUrl.first().isNotBlank() && prefs.webHostToken.first().isNotBlank()) {
+            val host = prefs.webHostConfiguration()
+            if (host != null) {
                 models.add(ModelInfo("web-host", "Nola Web Host", ModelInfo.ModelSource.WebHost))
             }
 
@@ -1756,9 +1759,8 @@ class ChatViewModel @Inject constructor(
                     it.profileId == null && it.id == modelService.currentModelId
             } ?: prefs.defaultModelSelection(models)
             val activeParameters = activeModel?.let { modelParamsStore.loadParameters(it.parameterProfileId) }
-            val defaultHostBinding = if (activeModel?.source == ModelInfo.ModelSource.WebHost)
-                com.nola.domain.model.ExecutionHostBinding(prefs.webHostBaseUrl.first(),
-                    prefs.webHostCertificateSha256.first().takeIf { it.isNotBlank() }) else null
+            val defaultHostBinding = if (activeModel?.source == ModelInfo.ModelSource.WebHost && host != null)
+                com.nola.domain.model.ExecutionHostBinding(host.address, host.pin.takeIf { it.isNotBlank() }) else null
             if (request != modelCatalogGeneration) return@launch
             // The directory is application-scoped; only selection/defaults belong
             // to the captured conversation or pending draft.
@@ -2455,7 +2457,10 @@ class ChatViewModel @Inject constructor(
             try {
                 val state = _uiState.value
                 val toolPlan = localToolPlan(conversation.id, state)
-                _uiState.update { it.copy(processingState = ProcessingState.Streaming) }
+                val descriptor = withContext(Dispatchers.IO) {
+                    agentTurnService.recoveryDescriptor(conversation.id, conversation.title.orEmpty(), runId)
+                }
+                _uiState.update { it.bindRecoveredAssistant(descriptor) }
                 runDeviceAgentResponse(
                     input = "",
                     convId = conversation.id,
@@ -2463,8 +2468,7 @@ class ChatViewModel @Inject constructor(
                     state = state,
                     toolPlan = toolPlan,
                     attachments = emptyList(),
-                    canonicalTurn = agentTurnService.recoveryDescriptor(
-                        conversation.id, conversation.title.orEmpty(), runId),
+                    canonicalTurn = descriptor,
                     recoverExistingRun = true,
                 )
             } catch (error: Exception) {
@@ -2862,9 +2866,10 @@ class ChatViewModel @Inject constructor(
         val conversationId = _uiState.value.conversationId
         val generation = ++modelSelectionGeneration
         viewModelScope.launch {
-            prefs.forgetWebHostIdentity()
+            prefs.clearWebHostConfig()
+            webAgentProvider.config = null
+            if (modelService.currentModelSource == "web-host") modelService.usePlaceholder()
             if (generation != modelSelectionGeneration || _uiState.value.conversationId != conversationId) return@launch
-            webAgentProvider.config = webAgentProvider.config?.copy(expectedHostId = "")
             _uiState.update {
                 it.copy(
                     pairedHostIdentity = "",
@@ -2872,7 +2877,7 @@ class ChatViewModel @Inject constructor(
                     hybridDeviceCapabilities = emptySet()
                 )
             }
-            refreshHostAgentSettings(conversationId, generation)
+            loadAvailableModels()
         }
     }
 
@@ -2881,16 +2886,13 @@ class ChatViewModel @Inject constructor(
 
     private suspend fun resolveBoundHost(binding: com.nola.domain.model.ExecutionHostBinding): WebAgentProvider.Config {
         com.nola.data.repository.validateExecutionHostBinding(binding)
-        val url = prefs.webHostBaseUrl.first()
-        val pin = prefs.webHostCertificateSha256.first()
-        require(binding.baseURL == url && binding.tlsCertificateSHA256.orEmpty() == pin) {
+        val host = prefs.webHostConfiguration()
+        require(host != null && binding.baseURL == host.address && binding.tlsCertificateSHA256.orEmpty() == host.pin) {
             "This conversation's Host is not the currently paired connection; reconnect its Host to continue"
         }
-        val token = prefs.webHostToken.first()
-        require(token.isNotBlank()) { "Host credentials are unavailable" }
-        return WebAgentProvider.Config(hostBaseUrl = binding.baseURL, token = token,
-            expectedHostId = prefs.webHostIdentity.first(), clientId = prefs.getOrCreateClientUuid(),
-            pinnedCertificateSha256 = binding.tlsCertificateSHA256.orEmpty())
+        return WebAgentProvider.Config(hostBaseUrl = host.address, token = host.token,
+            expectedHostId = host.identity, clientId = prefs.getOrCreateClientUuid(),
+            pinnedCertificateSha256 = host.pin)
     }
 
     fun setModel(model: ModelInfo) {
@@ -2926,13 +2928,11 @@ class ChatViewModel @Inject constructor(
                     }
                 }
                 ModelInfo.ModelSource.WebHost -> {
-                    val url = prefs.webHostBaseUrl.first()
-                    val token = prefs.webHostToken.first()
-                    require(url.isNotBlank() && token.isNotBlank()) { "Host connection is not configured" }
-                    hostConfiguration = WebAgentProvider.Config(hostBaseUrl = url, token = token,
+                    val host = requireNotNull(prefs.webHostConfiguration()) { "Host connection is not configured" }
+                    hostConfiguration = WebAgentProvider.Config(hostBaseUrl = host.address, token = host.token,
                         timezone = TimeZone.getDefault().id, maxIterations = 0,
-                        expectedHostId = prefs.webHostIdentity.first(), clientId = prefs.getOrCreateClientUuid(),
-                        pinnedCertificateSha256 = prefs.webHostCertificateSha256.first())
+                        expectedHostId = host.identity, clientId = prefs.getOrCreateClientUuid(),
+                        pinnedCertificateSha256 = host.pin)
                 }
             }
 
@@ -4371,9 +4371,7 @@ class ChatViewModel @Inject constructor(
             // Cancellation after admission preserves the independent Run for
             // exact recovery; never dispatch it with the predecessor's stop.
             if (executionSession.successorCancellationRequested || executionSession.retired) return
-            _uiState.update { it.copy(activeResponseId = next.assistantMessageId,
-                processingState = ProcessingState.Streaming, agentPermissionRequest = null,
-                agentPermissionAction = null) }
+            _uiState.update { it.bindRecoveredAssistant(next).copy(agentPermissionRequest = null, agentPermissionAction = null) }
             mayContinue = runSingleDeviceAgentResponse("", convId, null, _uiState.value,
                 localToolPlan(convId, _uiState.value), emptyList(), next, true, null)
         }
@@ -5517,7 +5515,7 @@ class ChatViewModel @Inject constructor(
         val route = model?.source?.name?.lowercase() ?: "unknown"
         executionScope.launch(Dispatchers.IO) {
             runCatching {
-                PersonalIntelligenceCore.ingest(
+                PersonalIntelligenceCore(applicationRuntime).ingest(
                     IntelligenceIngestRequest(
                         events = listOf(
                             IntelligenceEvent(

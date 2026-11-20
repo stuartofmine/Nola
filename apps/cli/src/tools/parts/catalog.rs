@@ -185,7 +185,7 @@ fn specs_with_skills(skills: &SkillRuntimeContext) -> Vec<ToolSpec<'static>> {
         },
         ToolSpec {
             name: "read_file",
-            description: "Read allowed files with bounded previews. Text content is raw UTF-8; parse content, not numbered display. A complete UTF-8 read returns expected_sha256 for a subsequent replacement. For partial reads continue with start_line/line_count. PDF/Excel extraction is not raw source. PNG/JPEG/GIF/WebP; PDF visual=true (30 MiB, capable model/provider required). Audio decode: MP3, WAV/PCM, FLAC, Ogg/Vorbis, AAC/M4A (64 MiB, at most 15 minutes); mono waveform frequencies/metadata and RMS/FFT peaks, not transcription or pitch tracking.",
+            description: "Read allowed files with bounded previews. Parse raw UTF-8 content, not numbered display. Full text reads return expected_sha256 for replacement. Page with start_line/line_count. PDF/Excel text is extracted. PNG/JPEG/GIF/WebP; PDF visual=true (30 MiB, capable model/provider required). Decode audio: MP3, WAV/PCM, FLAC, Ogg/Vorbis, AAC/M4A (64 MiB, at most 15 minutes): mono waveform frequencies/metadata and RMS/FFT peaks, not transcription or pitch tracking.",
             read_only: true,
             parameters: json!({
                 "type": "object",
@@ -595,7 +595,7 @@ fn specs_with_skills(skills: &SkillRuntimeContext) -> Vec<ToolSpec<'static>> {
         },
         ToolSpec {
             name: "Skill",
-            description: "Load an exact advertised Skill ID once before acting. Loading neither executes nor delegates: perform the workflow with exposed tools, not repeated loads. To add external Skills discover github_skill_find and github_skill_install.",
+            description: "Load an exact advertised Skill ID once before acting. Loading neither executes nor delegates: perform the workflow with exposed tools, not repeated loads. Find/install via github_skill_find and github_skill_install.",
             read_only: true,
             parameters: json!({
                 "type": "object",

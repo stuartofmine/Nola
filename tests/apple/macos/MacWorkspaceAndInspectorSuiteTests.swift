@@ -24,7 +24,7 @@ final class MacWorkspaceTabsLayoutAndComposerContractTests: XCTestCase {
         XCTAssertNil(ComposerCommand.parse("/stop extra")?.command)
         XCTAssertEqual(ComposerCommand.parse("/stop ")?.command, .stop)
 
-        XCTAssertEqual(MacWorkspaceSection.allCases, [.chat, .extensions, .automations, .memory])
+        XCTAssertEqual(MacWorkspaceSection.sidebarSections, [.chat, .extensions, .automations, .memory])
         XCTAssertTrue(MacDataCenterSection.allCases.contains(.memory))
         XCTAssertFalse(MacDataCenterSection.allCases.contains { $0.rawValue == "plans" })
         XCTAssertEqual(MacChatInspector.InspectorTab.allCases, [.task, .artifacts, .context])
@@ -1335,7 +1335,7 @@ final class MacInspectorInteractionTests: XCTestCase {
                 )
 
                 if expectsSidebar && layoutLabel == "threeColumn" {
-                    for section in MacWorkspaceSection.allCases {
+                    for section in MacWorkspaceSection.sidebarSections {
                         let sectionView = MacChatWorkspaceView(
                             canonicalRepository: repo,
                             localAgentRuntime: PersistenceTestLocalRuntime(),

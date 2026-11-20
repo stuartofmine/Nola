@@ -81,7 +81,7 @@ internal fun ConversationProgressPanel(
     fun submit(action: String?, prepared: JsonObject? = null) {
         if (submitting || (action == "start" && objective.isBlank())) return
         val capturedOwner = owner ?: return
-        val observed = value?.goalControl
+        val observed = value?.goalControl?.takeUnless { action == "start" }
         val parsedConstraints = if (action == "start") {
             constraintsText.split('\n', ',').map { it.trim() }.filter { it.isNotEmpty() }
         } else {

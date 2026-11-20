@@ -1,3 +1,6 @@
+import java.net.URLClassLoader
+import java.util.zip.ZipFile
+import java.lang.reflect.Modifier
 import org.gradle.api.tasks.testing.Test
 import org.gradle.testing.jacoco.plugins.JacocoTaskExtension
 import org.gradle.testing.jacoco.tasks.JacocoReport
@@ -161,10 +164,57 @@ android {
     }
 }
 
+// The transport uses reflection so builds without an embedded SDK remain supported.
+val tailcatArchives = fileTree(rootProject.projectDir.parentFile.parentFile.resolve("transport/tailcat/build/android")) {
+    include("*.aar")
+}
+val verifyTailcatBindings by tasks.registering {
+    onlyIf("An optional Tailcat AAR is present") { !tailcatArchives.isEmpty }
+    inputs.files(tailcatArchives)
+    val bindingsDirectory = layout.buildDirectory.dir("intermediates/tailcat-bindings")
+    outputs.dir(bindingsDirectory)
+    doLast {
+        val archives = tailcatArchives.files
+        try {
+            var hasNativeLibrary = false
+            val jars = archives.mapNotNull { archive ->
+                ZipFile(archive).use { aar ->
+                    hasNativeLibrary = hasNativeLibrary || aar.entries().asSequence()
+                        .any { it.name.startsWith("jni/") && it.name.endsWith("/libgojni.so") }
+                    val classes = aar.getEntry("classes.jar") ?: return@use null
+                    val jar = bindingsDirectory.get().file(archive.nameWithoutExtension + ".jar").asFile
+                    jar.parentFile.mkdirs()
+                    aar.getInputStream(classes).use { source -> jar.outputStream().use { source.copyTo(it) } }
+                    jar.toURI().toURL()
+                }
+            }
+            check(hasNativeLibrary) { "Missing libgojni.so" }
+            // Inspect signatures without executing static initializers or loading native code on the build host.
+            URLClassLoader(jars.toTypedArray(), ClassLoader.getPlatformClassLoader()).use { loader ->
+                val sdk = Class.forName("nolatailcat.Nolatailcat", false, loader)
+                val session = Class.forName("nolatailcat.Session", false, loader)
+                val string = String::class.java
+                fun checkMethod(owner: Class<*>, name: String, result: Class<*>, isStatic: Boolean, vararg args: Class<*>) {
+                    val method = owner.getMethod(name, *args)
+                    check(method.returnType == result && Modifier.isStatic(method.modifiers) == isStatic) { name }
+                }
+                checkMethod(sdk, "newSession", session, true)
+                checkMethod(sdk, "setAndroidNetworkInterfaces", Void.TYPE, true, string)
+                checkMethod(session, "publicKey", string, false)
+                checkMethod(session, "connect", string, false, string, string, string, Long::class.javaPrimitiveType!!)
+                checkMethod(session, "close", Void.TYPE, false)
+            }
+        } catch (error: Exception) {
+            throw GradleException("Incompatible Android Tailcat AAR. Rebuild the Android binding from transport/tailcat using its pinned gomobile toolchain.", error)
+        }
+    }
+}
+tasks.named("preBuild") { dependsOn(verifyTailcatBindings) }
+
 dependencies {
     implementation(libs.lifecycle.process)
     // Generated from the pinned optional Tailcat module; never downloaded by Gradle.
-    implementation(fileTree(rootProject.projectDir.parentFile.parentFile.resolve("transport/tailcat/build/android")) { include("*.aar") })
+    implementation(tailcatArchives)
     // Compose BOM
     val composeBom = platform(libs.compose.bom)
     implementation(composeBom)

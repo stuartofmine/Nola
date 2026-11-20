@@ -71,31 +71,50 @@ pub(crate) fn run_if_requested(args: &[String]) -> Option<Result<(), String>> {
         Ok(context) => context,
         Err(error) => return Some(Err(error)),
     };
-    if !is_admin_dispatch_target(&context.remaining) {
+    let remaining = &context.remaining;
+    let desktop_usage = match remaining.as_slice() {
+        [plugin, action, ..] if plugin == "plugin" => match action.as_str() {
+            "desktop-library" => Some("nola plugin desktop-library [--json]"),
+            "desktop-pages" => Some("nola plugin desktop-pages [id] [--json]"),
+            _ => None,
+        },
+        _ => None,
+    };
+    if !is_admin_dispatch_target(remaining) && desktop_usage.is_none() {
         return None;
     }
     if let Some(language) = context.language {
         set_language(language);
     }
-
-    match context.remaining.first().map(String::as_str) {
-        Some("version" | "--version" | "-V") => {
-            if context.remaining.len() == 1
-                || (context.remaining.len() == 2
-                    && matches!(context.remaining[1].as_str(), "--help" | "-h"))
-            {
-                if context.remaining.get(1).is_some() {
-                    println!("Usage:\n  nola version\n  nola --version | -V");
-                    return Some(Ok(()));
+    if let Some(usage) = desktop_usage {
+        return Some(strip_admin_flags(&remaining[2..], context.json_output).and_then(
+            |(args, _, help)| {
+                if help {
+                    println!("{usage}");
+                    return Ok(());
                 }
-                return Some(run_version(context.json_output));
-            }
-            if context.remaining.first().map(String::as_str) == Some("version") {
-                return Some(Err("Usage: nola version [--json]".to_string()));
-            }
-            None
-        }
-        Some("update") => crate::software_update::run_if_requested(&context.remaining),
+                let mut command = remaining[..2].to_vec();
+                command.extend(args);
+                crate::harness_plugin::desktop_command(&command)
+                    .unwrap_or_else(|| Err(usage.to_owned()))
+            },
+        ));
+    }
+    match remaining.first().map(String::as_str) {
+        Some("version" | "--version" | "-V") => Some(
+            strip_admin_flags(&remaining[1..], context.json_output).and_then(|(args, json, help)| {
+                const USAGE: &str = "nola version | --version | -V [--json]";
+                if help {
+                    println!("{USAGE}");
+                    Ok(())
+                } else if args.is_empty() {
+                    run_version(json)
+                } else {
+                    Err(USAGE.into())
+                }
+            }),
+        ),
+        Some("update") => crate::software_update::run_if_requested(remaining),
         Some("memory") => Some(crate::memory_admin::run_cli_args(
             &context.remaining[1..],
             context.json_output,

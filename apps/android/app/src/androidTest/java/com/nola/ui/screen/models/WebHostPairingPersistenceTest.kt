@@ -35,6 +35,34 @@ class WebHostPairingPersistenceTest {
         } finally { client.close() }
     }
 
+    @Test fun forgettingHostPreservesUnrelatedDefaultAndRePairingCannotReviveForgottenGrants() = runBlocking {
+        val context = ApplicationProvider.getApplicationContext<Context>()
+        requireIsolatedProductTestUser(context)
+        val prefs = PreferenceDataStore(context, SecureTokenStore(context))
+        check(prefs.webHostBaseUrl.first().isBlank())
+        val cloud = com.nola.domain.model.ModelInfo("fixture-cloud", "Cloud", com.nola.domain.model.ModelInfo.ModelSource.Cloud)
+        val host = com.nola.domain.model.ModelInfo("web-host", "Host", com.nola.domain.model.ModelInfo.ModelSource.WebHost)
+        suspend fun pair() = prefs.saveWebHostConfig("https://first.local", "test-token", verifiedHostId = "test-identity-first")
+        try {
+            prefs.saveDefaultModelSelection(cloud)
+            pair()
+            prefs.clearWebHostConfig()
+            assertEquals(cloud, prefs.defaultModelSelection(listOf(cloud, host)))
+            pair()
+            prefs.saveDefaultModelSelection(host)
+            prefs.setHybridDeviceToolsEnabled(true)
+            prefs.setHybridDeviceCapability("fixture-camera", true)
+            prefs.clearWebHostConfig()
+            pair()
+            assertNull(prefs.defaultModelSelection(listOf(host)))
+            assertFalse(prefs.hybridDeviceToolsEnabled.first())
+            assertTrue(prefs.hybridDeviceCapabilities.first().isEmpty())
+        } finally {
+            prefs.clearDefaultModelSelection()
+            prefs.clearWebHostConfig()
+        }
+    }
+
     @Test fun verifiedPairingPersistsTogetherAndMismatchPreservesCredential() = runBlocking {
         val context = ApplicationProvider.getApplicationContext<Context>()
         requireIsolatedProductTestUser(context)

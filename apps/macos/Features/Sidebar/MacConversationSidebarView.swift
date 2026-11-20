@@ -10,6 +10,9 @@ struct MacConversationSidebar: View {
     @Binding var selectedSection: MacWorkspaceSection
     let selectConversation: (String) -> Void
     let loadParticipantNames: (String) async throws -> [String]
+    var pluginPages: [MacDesktopPluginPage] = []
+    var selectedPluginID: String?
+    var openPluginPage: (MacDesktopPluginPage) -> Void = { _ in }
     var onOpenSettings: (() -> Void)? = nil
     @Environment(\.openWindow) private var openWindow
     @Environment(\.openSettings) private var openSettings
@@ -30,7 +33,7 @@ struct MacConversationSidebar: View {
     var body: some View {
         VStack(spacing: 0) {
             VStack(spacing: 2) {
-                ForEach(MacWorkspaceSection.allCases) { section in
+                ForEach(MacWorkspaceSection.sidebarSections) { section in
                     let isSelected = selectedSection == section
                     Button {
                         selectedSection = section
@@ -48,7 +51,35 @@ struct MacConversationSidebar: View {
                 }
             }
             .padding(.horizontal, 10)
-            .padding(.vertical, 12)
+            .padding(.top, 12)
+            if !pluginPages.isEmpty {
+                ScrollView {
+                    LazyVStack(spacing: 2) {
+                        ForEach(pluginPages) { page in
+                            let selected = selectedSection == .pluginPage && selectedPluginID == page.id
+                            Button { openPluginPage(page) } label: {
+                                Label {
+                                    Text(verbatim: page.title).lineLimit(1)
+                                } icon: {
+                                    Image(systemName: MacWorkspaceSection.pluginPage.symbol)
+                                }
+                                .font(.system(size: 13.5, weight: selected ? .semibold : .regular))
+                                .foregroundStyle(selected ? MacDesignColor.brand : Color("NolaTextPrimary"))
+                                .frame(maxWidth: .infinity, minHeight: 34, alignment: .leading)
+                                .padding(.horizontal, 11)
+                                .contentShape(Rectangle())
+                            }
+                            .buttonStyle(MacSidebarNavigationButtonStyle(isSelected: selected))
+                            .help(page.package)
+                            .accessibilityAddTraits(selected ? .isSelected : [])
+                            .accessibilityIdentifier("workspace.nav.plugin." + page.id)
+                        }
+                    }
+                }
+                .frame(height: CGFloat(min(4, pluginPages.count)) * 36)
+                .padding(.horizontal, 10)
+            }
+            Spacer().frame(height: 12)
 
             Divider()
                 .opacity(0.55)

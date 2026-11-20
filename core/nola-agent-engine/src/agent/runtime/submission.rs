@@ -2779,10 +2779,13 @@ impl AgentRuntime {
                     events.push(RuntimeEvent::GoalUpdated { goal_projection_revision: self.session.goal_projection.revision, goal: self.session.goal_projection.clone() });
                 }
                 let live_turn = self.session.execution.active_turn.as_ref().filter(|turn| !turn.status.is_terminal());
-                let owns_live_goal = live_turn.is_some_and(|turn| self.session.goal_projection.execution_owner(turn.turn_id.as_str()).is_some());
-                // A Goal may be queued behind another ordinary Run. Its pause
-                // commits, but cannot interrupt that unrelated execution.
-                if accepted && (!guarded_goal || owns_live_goal) {
+                // Pause and cancel can both commit while the same Run awaits its
+                // physical stop. Keep the original cancellation identity and its
+                // pending Host acknowledgements. A queued Goal cannot stop an unrelated Run.
+                let needs_goal_interrupt = live_turn.is_some_and(|turn|
+                    turn.status != AgentTurnStatus::Cancelling
+                        && self.session.goal_projection.execution_owner(turn.turn_id.as_str()).is_some());
+                if accepted && (!guarded_goal || needs_goal_interrupt) {
                     self.cancel_with_identity(cancellation_id, reason, &mut events, &mut effects)?;
                 }
             }

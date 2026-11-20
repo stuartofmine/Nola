@@ -1,6 +1,7 @@
 package com.nola.ui.screen.chat
 
 import androidx.compose.ui.graphics.asAndroidBitmap
+import androidx.compose.ui.test.assertTextContains
 import androidx.compose.ui.test.hasTestTag
 import androidx.compose.ui.test.isEnabled
 import androidx.compose.ui.test.captureToImage
@@ -611,8 +612,9 @@ class RealAndroidChatProductUiEndToEndTest {
             try { composeRule.onNodeWithTag("chat.experts.list").performScrollToNode(androidx.compose.ui.test.hasText(expertName)) }
             finally { composeRule.mainClock.autoAdvance = false }
             composeRule.onNodeWithText(expertName).performProductClick()
-            composeRule.onNodeWithText(context.getString(R.string.common_done)).performProductClick()
-            composeRule.onNodeWithTag("chat.composer.input").performProductInput(prompt)
+            composeRule.onNodeWithTag("chat.experts.list").assertDoesNotExist()
+            composeRule.onNodeWithTag("chat.composer.input").assertTextContains("@$expertName", substring = true)
+                .performProductInput(prompt)
             composeRule.onNodeWithContentDescription(context.getString(R.string.chat_send)).assertIsEnabled().performProductClick()
             composeRule.mainClock.autoAdvance = false
             composeRule.waitUntil(15_000) {

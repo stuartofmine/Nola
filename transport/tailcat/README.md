@@ -108,7 +108,7 @@ leaseId, address, hostId and expiresIn; it never prints the address. The bridge 
 owned by private pipes, closes on owner exit and has a20-minute in-memory lease.
 A bounded32 transient bridges protects Host resources; it is not a model budget.
 `close` requires the same credential owner and exact leaseId. The response says
-closed only after process exit; unknown stop evidence remains stopUnconfirmed.
+`closed: true` after the helper exits successfully. If the helper is still stopping after the wait, the receipt says `closing: true`. An abnormal exit or wait error returns `stopUnconfirmed: true`. All three leave `runStateChanged` false.
 No lease or private key is stored in Core tables or client preferences.
 
 Native requests first inspect the existing Host, automatically exchange a grant,
@@ -131,17 +131,18 @@ close releases the local engine and best-effort Host lease. Lease expiry or app
 termination requires a fresh authenticated bootstrap, so cold cross-network
 reconnect is not promised without separately approved durable device identity.
 
-### Actual platform checks
+### Platform checks (2026-11-20)
 
-* Real production Rust Host + shared Apple native SDK adapter: automatic grant,
-  authenticated requests, logical URL retained, explicit park/resume, full close
-  and reconnect passed with temporary test identities. This is a native network
-  adapter test, not an actual Mac/iOS window or OS suspension test.
-* Final Mac Test app, iOS arm64 simulator Test app and Android arm64 debug APK
-  builds passed. The APK contains the optional JNI SDK. No actual native window,
-  Android device, iOS OS-suspension, Intel/Windows/Linux runtime claim.
-* Android actual device testing stopped when normal adb service startup returned
-  smartsocket5037 EPERM. No alternate port, permission change or retry.
+| Runtime | Operation observed through Tailcat | Scope |
+| --- | --- | --- |
+| macOS arm64 and iOS arm64 Simulator | Each native client obtained one grant, created a room, parked and resumed the transport, read the same room, and received a confirmed close. The bootstrap gateway counted zero room requests. | Shared production Swift transport linked with the SDK built from source. The installed default test builds were inspected separately and lacked the native session binding. |
+| Android arm64, API 35 emulator | The APK with the rebuilt AAR used the production transport to read the expected Host and the prepared conversation’s task projection. The bootstrap gateway counted zero business requests. After disconnect, the Host remained online and its lease helper exited. | Instrumented Android client. The default APK lacked the optional JNI library. |
+| macOS CLI and browser | Two fresh browser sessions logged in through the temporary origin. Desktop renamed a conversation and a mobile touch viewport opened the same ID with the new title. Stopping the CLI closed the origin, and the Host retained the title. | Chromium desktop and mobile viewport on one Mac. |
+| Linux arm64 VM → macOS Rust Host | The Linux helper verified the Host, received 401 before login, then created and read a conversation. After the listener closed, an independent request on macOS read back the same ID. | Alpine guest with its own kernel and network stack on the same physical Mac. Private operator IPC supplied the grant. |
+
+The opt-in stream check also ran on Darwin and Linux. Each received the first event before the fixture producer was released, then verified every remaining byte and listener shutdown. This measures incremental delivery with a controlled HTTP origin. Physical phones, independent physical networks, and the Windows WebView2 runtime remain separate coverage.
+
+### Platform behavior
 * Mac's existing authenticated Web-management handoff now opens the App-owned
   loopback origin. Real Web login and a Core-backed conversation query passed
   through that origin. Mobile external browsers are not mapped to an App-owned
@@ -169,7 +170,10 @@ For the checked-in App consumers, run `build-sdk.sh /absolute/go
 /absolute/pinned/gomobile /absolute/pinned/gobind` with the approved pinned tools
 and existing SDK/NDK. It generates ignored `build/apple` and `build/android`
 outputs. Xcode optionally includes `Tailcat.xcconfig`; Gradle optionally consumes
-the local AAR. Neither App build installs software or downloads a transport binary.
+the local AAR. When an AAR is supplied, Android checks the JNI library and the
+method signatures used by the app before packaging. An incompatible binding
+produces a build error with instructions to rebuild the SDK. With no AAR, the
+regular Android build completes with its existing direct Host transport.
 Currently generated slices are arm64 macOS/iOS/simulator and arm64-v8a Android;
 use an arm64 simulator destination rather than a universal Intel simulator build.
 

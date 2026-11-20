@@ -711,7 +711,7 @@ fn submit_execution_draft(cancellation: &ExecutionCancellation) {
         } else if cancellation.listen_to_terminal {
             crate::terminal_ui::commit_history(&format!("\n⚠ {}\n", ui_text(UiText::InputAdmissionFailed)));
         }
-        if cancellation.listen_to_terminal && receipt == Ok(InputReceipt::Durable) {
+        if cancellation.listen_to_terminal && matches!(receipt, Ok(InputReceipt::Durable(_))) {
             crate::agent::print_queued_follow_up(&committed);
         }
     }
@@ -810,7 +810,10 @@ fn should_suppress_popup_shortcut(elapsed: Duration, key: &crossterm::event::Key
     elapsed < MODAL_POPUP_SHORTCUT_GUARD && is_modal_quick_confirm_key(key)
 }
 
-fn modal_scroll_direction(key: &crossterm::event::KeyEvent) -> Option<bool> {
+pub(crate) fn modal_scroll_direction(key: &crossterm::event::KeyEvent) -> Option<bool> {
+    if key.kind == crossterm::event::KeyEventKind::Release {
+        return None;
+    }
     match key.code {
         KeyCode::PageUp => Some(false),
         KeyCode::PageDown => Some(true),

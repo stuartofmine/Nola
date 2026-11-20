@@ -748,6 +748,7 @@ mod tests {
             UiText::HelpAgent,
             UiText::HelpRoom,
             UiText::NoRooms,
+            UiText::NoPendingQuestions,
             UiText::PermissionInstructionOption,
             UiText::PermissionInstructionCommand,
             UiText::NoConfiguredMcp,
@@ -800,7 +801,13 @@ mod tests {
             (Language::Ru, "Использование:"),
         ];
         for (language, marker) in cases {
-            assert!(help_text_for(language).contains(marker));
+            let help = help_text_for(language);
+            assert!(help.contains(marker));
+            let client = help.lines().find(|line| line.contains("web --connect-host")).unwrap();
+            for flag in ["--expected-host-id", "--tailcat-helper", "--tailcat-helper-sha256", "--token-stdin"] {
+                assert!(client.contains(flag));
+            }
+            assert!(help.lines().any(|line| line.contains("server --host 127.0.0.1") && line.contains("--tailcat-ingress")));
         }
     }
 

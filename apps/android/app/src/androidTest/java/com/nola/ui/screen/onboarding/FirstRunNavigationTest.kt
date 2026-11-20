@@ -56,12 +56,21 @@ class FirstRunNavigationTest {
             val automation = InstrumentationRegistry.getInstrumentation().uiAutomation
             // Compose can be idle while WindowManager is still showing the old activity.
             automation.waitForIdle(400, 5_000)
-            var image = checkNotNull(automation.takeScreenshot())
-            val deadline = SystemClock.elapsedRealtime() + 5_000
+            val deadline = SystemClock.elapsedRealtime() + 8_000
+            fun captureVisibleApp(): Bitmap {
+                do {
+                    if (automation.rootInActiveWindow?.packageName == context.packageName) {
+                        automation.takeScreenshot()?.let { return it }
+                    }
+                    SystemClock.sleep(100)
+                } while (SystemClock.elapsedRealtime() < deadline)
+                error("No screenshot of the Nola window at $name")
+            }
+            var image = captureVisibleApp()
             try {
                 while (true) {
                     SystemClock.sleep(300)
-                    val next = checkNotNull(automation.takeScreenshot())
+                    val next = captureVisibleApp()
                     val settled = next.sameAs(image)
                     image.recycle()
                     image = next

@@ -334,10 +334,12 @@ class WebHostApiServiceImpl @Inject constructor(
         path: String
     ): EncryptedEnvelope {
         val url = webHostMobileUrl(hostBaseUrl, path)
-        return client.get(url) {
+        val response = client.get(url) {
             mobileAuthHeaders(token, "GET", url).forEach { (name, value) -> header(name, value) }
             header("Accept", "application/json")
-        }.body()
+        }
+        if (response.status.value !in 200..299) throw WebHostStatusException(response.status.value)
+        return response.body()
     }
 }
 
