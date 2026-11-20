@@ -171,6 +171,17 @@ class RustBuildCacheTests(unittest.TestCase):
             self.assert_backend(result, 'mbx')
             self.assertEqual([r['kind'] for r in records], ['mbx', 'cargo'])
 
+    def test_sccache_server_uses_parent_of_disposable_xctest_directory(self):
+        self.write_executable(self.bin_directory / 'sccache', 'sccache')
+        for shell in SHELLS:
+            for execute in (False, True):
+                result, records, _ = self.run_launcher(
+                    shell, purpose='staticlib', execute=execute,
+                    environment={'TMPDIR': '/tmp/user/nola-xctest-run.example/'},
+                )
+                self.assertEqual(result.returncode, 0, result.stderr)
+                self.assertEqual(records[0]['env']['TMPDIR'], '/tmp/user')
+
     def test_sccache_explicit_mode_and_user_cache_size_are_preserved(self):
         cache = self.bin_directory / 'sccache'
         self.write_executable(cache, 'sccache')

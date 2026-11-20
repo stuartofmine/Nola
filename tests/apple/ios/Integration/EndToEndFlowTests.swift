@@ -542,6 +542,23 @@ final class EndToEndFlowTests: XCTestCase {
         )
     }
 
+    private func resolveFixtureWorktreePermission(_ request: HostAgentPermissionRequest, provider: WebAgentProvider,
+                                                 host: String, client: String, conversation: String, run: String) async throws {
+        let fixture = try XCTUnwrap(ProcessInfo.processInfo.environment["NOLA_REAL_WEB_AGENT_HOST_DESTRUCTIVE_FILE"])
+        let project = URL(fileURLWithPath: fixture).deletingLastPathComponent()
+            .appendingPathComponent("project").standardizedFileURL.path
+        let roots = [project, project.hasPrefix("/private/") ? String(project.dropFirst(8)) : "/private" + project]
+        let lines = request.argsPreview.components(separatedBy: "\n")
+        let allowed = request.hostId == host && request.clientId == client
+            && request.sessionId == conversation && request.canonicalRunID == run
+            && request.toolName == "git_worktree_create" && roots.contains { root in
+                lines.contains("Repository: \(root)") && lines.contains("Common directory: \(root)/.git")
+            }
+        try await provider.submitHostPermissionDecision(
+            ChatManager.hostPermissionDecisionPayload(for: request, decision: allowed ? .allowOnce : .deny))
+        XCTAssertTrue(allowed, "Unexpected permission in fixture: \(request.toolName)")
+    }
+
     func testRealWebAgentHostRunsInstalledExternalExecutorsAndResumesTheirNativeSessions() async throws {
         let environment = ProcessInfo.processInfo.environment
         guard environment["NOLA_REAL_WEB_AGENT_HOST_E2E"] == "1" else {
@@ -553,7 +570,9 @@ final class EndToEndFlowTests: XCTestCase {
         let token = try XCTUnwrap(environment["NOLA_REAL_WEB_AGENT_HOST_TOKEN"])
         let settings = try await WebAgentProvider.fetchHostAgentSettings(baseURL: baseURL, token: token)
         let hostIdentity = try XCTUnwrap(settings.host_identity)
-        let requiredBackends = ["codex", "claude_code", "opencode"]
+        let requiredBackends = environment["NOLA_EXTERNAL_EXECUTOR_BACKENDS"]?.split(separator: ",").map(String.init)
+            ?? ["codex", "claude_code", "opencode", "antigravity"]
+        XCTAssertFalse(requiredBackends.isEmpty)
         for backendID in requiredBackends {
             let descriptor = try XCTUnwrap(
                 settings.execution_backends.first(where: { $0.id == backendID }),
@@ -570,20 +589,27 @@ final class EndToEndFlowTests: XCTestCase {
             backendID: String,
             conversationID: String,
             marker: String,
-            externalSessionID: String? = nil
-        ) async throws -> (String, String) {
+            externalSessionID: String? = nil,
+            previous: IOSRemoteSubmissionIdentity? = nil
+        ) async throws -> (text: String, sessionID: String, owner: IOSRemoteSubmissionIdentity) {
             let provider = WebAgentProvider(config: .init(
                 baseURL: baseURL,
                 token: token,
                 expectedHostId: hostIdentity.id,
                 clientId: "ios-real-\(backendID)-executor"
             ))
+            let submissionID = UUID().uuidString
+            let assistantID = "\(submissionID):assistant"
             var prefs = [
+                "submission_id": submissionID,
+                "user_message_id": "\(submissionID):user",
+                "assistant_message_id": assistantID,
                 "message": "Reply with only this exact token: \(marker)",
                 "enable_thinking": "false",
                 "host_conversation_id": conversationID,
                 "execution_backend": backendID,
             ]
+            if let previous { prefs["expected_parent_message_id"] = previous.assistant_message_id }
             if let externalSessionID { prefs["external_session_id"] = externalSessionID }
             let input = ModelInput(
                 dateRange: .init(start: "2026-08-13T00:00:00Z", end: "2026-08-13T00:01:00Z"),
@@ -592,10 +618,18 @@ final class EndToEndFlowTests: XCTestCase {
             )
             let journal = IOSCommittedJournalTestReader()
             var sessions: [String] = []
+            var answeredPermissions = Set<String>()
             var traceSequences: [UInt64] = []
-            for try await event in provider.generateAgentEventStream(input: input) {
+            let prepared = try await provider.prepareStandaloneSubmission(provider.makeHostAgentPayload(input: input), previous: previous)
+            for try await event in provider.generateAgentEventStream(input: input,
+                    boundRequestDigest: prepared.digest, frozenPayload: prepared.request) {
                 try journal.observe(event)
                 switch event {
+                case .permissionRequest(let request, _), .delegatedPermissionRequest(let request):
+                    if answeredPermissions.insert(request.id).inserted {
+                        try await resolveFixtureWorktreePermission(request, provider: provider, host: hostIdentity.id,
+                            client: "ios-real-\(backendID)-executor", conversation: conversationID, run: submissionID)
+                    }
                 case .externalSessionStarted(let backendID, let sessionID):
                     XCTAssertEqual(backendID, prefs["execution_backend"])
                     sessions.append(sessionID)
@@ -616,7 +650,8 @@ final class EndToEndFlowTests: XCTestCase {
                 response.trimmingCharacters(in: CharacterSet.whitespacesAndNewlines.union(
                     CharacterSet(charactersIn: "`")
                 )),
-                try XCTUnwrap(sessions.last)
+                try XCTUnwrap(sessions.last),
+                try XCTUnwrap(journal.admittedOwner)
             )
         }
 
@@ -629,17 +664,70 @@ final class EndToEndFlowTests: XCTestCase {
                 conversationID: conversationID,
                 marker: firstMarker
             )
-            XCTAssertEqual(first.0, firstMarker)
+            XCTAssertEqual(first.text, firstMarker)
             let secondMarker = "IOS-\(label)-RESUME-\(UUID().uuidString.uppercased())"
             let second = try await run(
                 backendID: backendID,
                 conversationID: conversationID,
                 marker: secondMarker,
-                externalSessionID: first.1
+                externalSessionID: first.sessionID,
+                previous: first.owner
             )
-            XCTAssertEqual(second.0, secondMarker)
-            XCTAssertEqual(second.1, first.1)
+            XCTAssertEqual(second.text, secondMarker)
+            XCTAssertEqual(second.sessionID, first.sessionID)
         }
+    }
+
+    func testRealWebAgentHostMainDelegatesToMentionedAntigravityExpert() async throws {
+        let env = ProcessInfo.processInfo.environment
+        guard env["NOLA_REAL_IOS_MAIN_EXPERT"] == "1" else { throw XCTSkip("Requires the paired Host and its Antigravity account") }
+        let baseURL = try XCTUnwrap(env["NOLA_REAL_WEB_AGENT_HOST_URL"].flatMap(URL.init(string:)))
+        let token = try XCTUnwrap(env["NOLA_REAL_WEB_AGENT_HOST_TOKEN"])
+        let settings = try await WebAgentProvider.fetchHostAgentSettings(baseURL: baseURL, token: token)
+        let host = try XCTUnwrap(settings.host_identity)
+        let provider = WebAgentProvider(config: .init(baseURL: baseURL, token: token,
+            expectedHostId: host.id, clientId: "ios-real-main-expert"))
+        let directory = try await provider.expertRooms(command: .object(["type": .string("directory")]), expectedEpoch: nil)
+        let initial = try JSONDecoder().decode(IOSAgentDirectory.self, from: JSONEncoder().encode(directory.result))
+        let id = UUID().uuidString.lowercased()
+        let name = "Mobile reviewer"
+        let updated = try await provider.expertRooms(command: .object([
+            "type": .string("configure_agent"), "input": .object([
+                "id": .string(id), "expected_directory_revision": initial.revision.map { .signedInteger($0) } ?? .null,
+                "expected_agent_revision": .null, "name": .string(name), "description": .string("Checks arithmetic"),
+                "availability": .string("active"), "updated_at_ms": .signedInteger(Int64(Date().timeIntervalSince1970 * 1000)),
+                "defaults": .object(["expertExecutor": .object(["backend": .string("antigravity")])]),
+            ]),
+        ]), expectedEpoch: directory.sourceStoreEpoch)
+        let agents = try JSONDecoder().decode(IOSAgentDirectory.self, from: JSONEncoder().encode(updated.result))
+        let selected = try XCTUnwrap(agents.agents.first { $0.id == id })
+        let mention = "@\(name)"
+        let brief = " Use delegate_expert to ask this reviewer to compute 37 × 23. Wait for their result, then reply with only IOS_EXPERT=<their answer>."
+        let sid = UUID().uuidString
+        let conversation = "ios-main-expert-\(UUID().uuidString)"
+        let input = ModelInput(dateRange: .init(start: "2026-08-13T00:00:00Z", end: "2026-08-13T00:01:00Z"),
+            candidates: [], userPrefs: ["message": mention + brief, "execution_backend": "nola",
+                "host_conversation_id": conversation, "submission_id": sid,
+                "user_message_id": "\(sid):user", "assistant_message_id": "\(sid):assistant"],
+            selectedExperts: [.init(agentID: id, agentRevision: selected.revision)],
+            expertMentions: .init(version: 1, segments: [.init(text: mention, agentID: id), .init(text: brief, agentID: nil)]),
+            expertSelectionSourceEpoch: updated.sourceStoreEpoch)
+        let journal = IOSCommittedJournalTestReader()
+        var approvals = Set<String>()
+        for try await event in provider.generateAgentEventStream(input: input) {
+            try journal.observe(event)
+            switch event {
+            case .permissionRequest(let request, _), .delegatedPermissionRequest(let request):
+                if approvals.insert(request.id).inserted {
+                    try await resolveFixtureWorktreePermission(request, provider: provider, host: host.id,
+                        client: "ios-real-main-expert", conversation: conversation, run: sid)
+                }
+            case .error(let message): XCTFail(message)
+            default: break
+            }
+        }
+        let answer = try await journal.text(provider: provider)
+        XCTAssertEqual(answer.trimmingCharacters(in: .whitespacesAndNewlines), "IOS_EXPERT=851")
     }
 
     func testRealWebAgentHostCancelsRunningToolAndRecoversConversation() async throws {

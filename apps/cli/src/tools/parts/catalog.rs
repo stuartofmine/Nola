@@ -582,8 +582,20 @@ fn specs_with_skills(skills: &SkillRuntimeContext) -> Vec<ToolSpec<'static>> {
             }),
         },
         ToolSpec {
+            name: "github_skill_find",
+            description: "Find public GitHub Skill repositories by name, or list SKILL.md packages at a GitHub URL. Use web_search if repository search alone is inconclusive. Resolve meaningful ambiguity with the user.",
+            read_only: true,
+            parameters: json!({"type":"object","properties":{"query":{"type":"string","description":"Repository search words or a GitHub repository/directory URL"}},"required":["query"],"additionalProperties":false}),
+        },
+        ToolSpec {
+            name: "github_skill_install",
+            description: "Download a public GitHub SKILL.md package, register its files in Nola settings and enable it for future chats. Pass a repository, directory or SKILL.md URL. A collection may return choices.",
+            read_only: false,
+            parameters: json!({"type":"object","properties":{"url":{"type":"string","description":"GitHub repository or exact Skill package URL"}},"required":["url"],"additionalProperties":false}),
+        },
+        ToolSpec {
             name: "Skill",
-            description: "Load an exact advertised Skill ID once before acting. Loading neither executes nor delegates: perform the workflow with exposed tools, not repeated loads.",
+            description: "Load an exact advertised Skill ID once before acting. Loading neither executes nor delegates: perform the workflow with exposed tools, not repeated loads. To add external Skills discover github_skill_find and github_skill_install.",
             read_only: true,
             parameters: json!({
                 "type": "object",
@@ -1644,7 +1656,7 @@ fn specs_with_skills(skills: &SkillRuntimeContext) -> Vec<ToolSpec<'static>> {
                 "properties": {
                     "agent_type": {
                         "type": "string",
-                        "description": "Agent profile name. Nola built-ins: explore, plan, verify, general, workspace (file edits only; no commands or builds). Desktop external harness profiles: codex, claude_code, opencode (installed CLI and its existing login required). A custom profile can freeze executor backend/model in runtime configuration. External profiles use ask, not the Nola read_only catalog. Never silently substitute a different executor."
+                        "description": "Agent profile name. Nola built-ins: explore, plan, verify, general, workspace (file edits only; no commands or builds). Desktop external harness profiles: codex, claude_code, opencode, antigravity (installed CLI and its existing login required). A custom profile can freeze executor backend/model in runtime configuration. External profiles use ask, not the Nola read_only catalog. Never silently substitute a different executor."
                     },
                     "name": {"type": "string", "description": "Optional stable short name for the task."},
                     "task_id": {"type": "string", "description": "Optional terminal Agent task from this conversation/project to derive explicitly requested follow-up work. Creates a NEW task_id linked by resumed_from_task_id and reuses the child session; the original business Task and its sealed Run remain terminal."},

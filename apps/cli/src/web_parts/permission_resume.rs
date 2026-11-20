@@ -149,10 +149,7 @@ fn host_run_resume_response_body(
             }
             if web_event_is_core_projection(&event) {
                 event["source_host_id"] = json!(host_id);
-                if event.get("type").and_then(Value::as_str) == Some("context_usage") {
-                    event["protocol_version"] = json!(1);
-                    event["session_id"] = json!(session);
-                }
+                bind_mobile_context_usage(&mut event, &session, &host_id);
             }
             // The resume helper validates this Run against Application and
             // the locked Host before publishing or dispatching any effect.

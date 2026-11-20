@@ -20,7 +20,7 @@ import kotlinx.serialization.json.*
 
 /** Authenticated local native Host factory. Renderer JSON cannot supply an actor,
  * builtin catalog, definition body, authorization clock or private operation. */
-internal class AndroidExpertHostFactory(context: Context, private val runtime: AndroidApplicationRuntime) {
+internal class AndroidExpertHostFactory(private val context: Context, private val runtime: AndroidApplicationRuntime) {
     private val profiles = MemoryProfileDataStore(context, SecureTokenStore(context), runtime)
 
     private fun authority(): JsonObject = buildJsonObject {
@@ -189,6 +189,9 @@ internal class AndroidExpertHostFactory(context: Context, private val runtime: A
     /** The shared admission preview is the only model-selection authority. The
      * existing native parameter reader remains unchanged in this source batch. */
     private fun userDefinitions(settings: JsonObject, declaration: JsonObject, presentation: JsonElement): List<AndroidExpertPromptDefinition> {
+        require(declaration["runtime"]?.jsonPrimitive?.contentOrNull != "external") {
+            context.getString(com.nola.R.string.expert_executor_requires_host)
+        }
         val id = declaration.getValue("profile_id").jsonPrimitive.content
         val revision = declaration.getValue("profile_revision").jsonPrimitive.long
         val profile = checkNotNull(runtime.modelProfile(id)) { "The exact previewed expert model is unavailable" }

@@ -738,7 +738,7 @@ fn worktree_binding_and_required_sandbox_are_frozen_by_core() {
     assert!(bind(json!({}).as_object().unwrap(), &parent, Some(&binding), original.clone(), false).is_err());
     let frozen = bind(args.as_object().unwrap(), &parent, Some(&binding), original.clone(), false).unwrap();
     assert_eq!(frozen.worktree.as_ref(),Some(&binding));
-    for backend in ["codex","claude_code","opencode"] {
+    for backend in ["codex","claude_code","opencode","antigravity"] {
         let mut external=original.clone(); external.execution_backend=backend.into(); external.profile.tools.clear();
         let external=bind(args.as_object().unwrap(),&parent,Some(&binding),external,false).unwrap();
         assert_eq!(external.worktree.as_ref(),Some(&binding));

@@ -143,7 +143,7 @@ Git 工作区准备在 agent 进程沙箱外，不能信任仓库转换程序。
 | 范围 | 当前与本轮实施 | 未实现边界 |
 | --- | --- | --- |
 | Goal 执行 | 共享 GoalRuntimePort；CLI 与 macOS 原生 Host 实现自动循环与调度；本轮统一 incomplete 控制 | macOS 使用既有 MacBackgroundGoalRunner；iOS/Android 新接共享逐轮准入与验收，仅在本机 App/Host 可执行期间推进，不承诺永久后台执行 |
-| 子代理 | Rust Desktop Host 的 profile 可独立选择 Nola / Codex / Claude Code / OpenCode，冻结执行者与子会话；iOS 已接同连接、同生成策略的独立 HTTP 子模型客户端；Android 继承父模型 | 手机本机不启动桌面 CLI；原生私有模型 channel 子委派、跨凭据/不同生成策略、嵌套委派与完整 CLI 控制工具仍受限，不可静默换执行者/模型 |
+| 子代理 | Rust Desktop Host 的 profile 可独立选择 Nola / Codex / Claude Code / OpenCode / Antigravity，冻结执行者与子会话；iOS 已接同连接、同生成策略的独立 HTTP 子模型客户端；Android 继承父模型 | 手机本机不启动桌面 CLI；原生私有模型 channel 子委派、跨凭据/不同生成策略、嵌套委派与完整 CLI 控制工具仍受限，不可静默换执行者/模型 |
 | 委派重放 | 本轮按 parent Run/effect 精确查询原 Task，保留原配置与参数一致性校验 | 不全扫全部历史任务，不增加缓存或新调度器 |
 | Room context | participant 私有 Conversation 与 ContextOwner 映射已实现 | 公开时间线不能当作私有历史授权；完整跨设备同步不属于本轮 |
 | UI | 业务目标 / 工作项与执行尝试分层；显示来源、记录中可证明的执行 Host（未知不猜本机）、上下文范围与真实可用操作 | 不显示虚构的跨 Host 接管、自动 Goal 创建或通用订阅按钮 |
@@ -208,13 +208,19 @@ read_only 仍可收窄；Code Mode 包装器本身不被当作只读工具，因
 
 ## 子任务执行者：本机 harness（2026-11-04）
 
-Task 的执行者与父会话模型分开。`agent_type=codex/claude_code/opencode` 选择独立本机 harness；`explore/plan/verify/general` 仍使用 Nola。现有 CLI `/agent` 列表和 `spawn_agent` schema 公开这些名称，不要求先把整个父对话切换到外部执行者。自定义 profile 可通过既有 `agents` 配置选择 `executor`：
+Task 的执行者与父会话模型分开。`agent_type=codex/claude_code/opencode/antigravity` 选择独立本机 harness；`explore/plan/verify/general` 仍使用 Nola。现有 CLI `/agent` 列表和 `spawn_agent` schema 公开这些名称，不要求先把整个父对话切换到外部执行者。自定义 profile 可通过既有 `agents` 配置选择 `executor`：
 
 ```json
 {"agents":{"implementation":{"executor":{"backend":"codex","model":null,"model_provider":null},"prompt":"Complete the assigned implementation and return changed paths and evidence."}}}
 ```
 
 `executor.model_provider` 仅 Codex 支持；Claude/OpenCode 的非空值在 Domain 校验拒绝，OpenCode 可使用自己的 qualified model ID，不静默丢弃 provider 选择。OpenCode 的模型通过 ACP `session/set_config_option` 在新建或恢复原会话后设置，收到成功回执才发送 prompt；`opencode acp` 不接收 `--model`，不支持的模型明确失败，不回退到默认服务。`executor.model` 是 harness 自己的模型标识；它与 Nola 的 HTTP `model` profile intent 互斥。Core 在 `capture_delegated_invocation` 冻结执行者和模型。Task metadata 只投影这份 snapshot；恢复不能从当前父会话、全局选择或可变 metadata 重新选执行者。新 child 不继承父 harness session；续作只恢复原 child 已提交的 session，沿原 Task/Run/lease/封存协议，不打开旧 Run。
+
+Antigravity 通过宿主机上的 `agy acp --sandbox` 通信。`agy models` 提供可选变体；指定变体时，Host 在发送任务前通过 `session/set_model` 传递完整 ID，保留用户选择的模型和推理档位。未选择时使用执行器默认值。续接时使用原生会话 ID 和握手中声明的恢复能力。没有登录、模型被拒绝、恢复失败或生成达到限额时，任务保留具体错误。协议与其他编辑器的接入方式见 [Antigravity ACP 文档](https://antigravity.google/docs/cli/acp/)。
+
+主 Agent 负责用户对话、派发任务和汇总。用户可以用 `@专家` 引入已绑定宿主执行器的持久角色，也可以要求主 Agent 临时使用内置执行器 profile。每次委派产生隶属当前主会话的子会话。实现者在分配的 worktree 提交变更，主 Agent 取得提交号和改动文件，再向审查者交付该版本。需要独立测试工作区时，以实现者的 worktree 为来源，用 `git_worktree_list` 检查其 HEAD，用 `git_worktree_create` 创建指向该提交的检出，向后续任务传入返回的 worktree 选择。变更提交后重新验证；主 Agent 汇总实际读过的提交、运行的命令和结果。可对照 [Zed 的多 Agent 工作区](https://zed.dev/docs/ai/parallel-agents)。
+
+真实验收脚本 `scripts/test_real_coding_agent_handoff.py` 在临时仓库内派发实现和审查，检查两个原生执行器的持久回执、提交身份、交付文件及同一测试在修改前后的结果。`--check-existing <证据目录>` 可离线重查。移动端通过连接的桌面 Host 执行任务，外部程序和账号留在该 Host。
 
 外部 harness 使用本机安装程序及其既有登录；Nola 不复制 API key、OAuth token 或绕过登录。外部 child 的 snapshot 清除父 HTTP route/credential/fallback。这不是 OS 环境隔离承诺：外部命令仍继承 Host 正常环境，harness 自身环境凭据可能存在；Nola 不显式注入父 API key，也不全局 env_clear 破坏用户的正常 harness 配置。Host 在 Task 创建前检查安装与执行者可提供的认证状态。Codex/Claude 的登录状态不等于底层模型路由已验证；OpenCode 的供应商认证彼此独立，版本探测通过也不代表选定模型已可用，仍须等待模型选择及请求结果。不可用返回准确错误，不静默换 Nola 或另一服务。执行仍通过 `CliAgentHostDriver → DelegateAgent → external_executor` 的原有 adapter，沿既有进程组、资源预算、权限请求回执和停止 ACK。
 

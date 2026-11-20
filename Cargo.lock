@@ -2578,6 +2578,7 @@ dependencies = [
  "nola_runtime_supervisor",
  "nola_service",
  "nola_service_client",
+ "nola_skill_host",
  "nola_store",
  "nola_store_port",
  "nola_update_host",
@@ -2726,6 +2727,7 @@ dependencies = [
  "nola_mcp_host",
  "nola_protocol",
  "nola_runtime_driver",
+ "nola_skill_host",
  "nola_store",
  "nola_update_host",
  "rusqlite",
@@ -2826,6 +2828,19 @@ dependencies = [
  "socket2 0.5.10",
  "uds_windows",
  "windows-sys 0.61.2",
+]
+
+[[package]]
+name = "nola_skill_host"
+version = "0.1.0"
+dependencies = [
+ "reqwest",
+ "serde",
+ "serde_json",
+ "serde_yaml_ng",
+ "tempfile",
+ "url",
+ "zip",
 ]
 
 [[package]]
@@ -3800,6 +3815,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "serde_yaml_ng"
+version = "0.10.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "7b4db627b98b36d4203a7b458cf3573730f2bb591b28871d916dfa9efabfd41f"
+dependencies = [
+ "indexmap",
+ "itoa",
+ "ryu",
+ "serde",
+ "unsafe-libyaml",
+]
+
+[[package]]
 name = "servo_arc"
 version = "0.3.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -4625,6 +4653,12 @@ dependencies = [
  "crypto-common",
  "subtle",
 ]
+
+[[package]]
+name = "unsafe-libyaml"
+version = "0.2.11"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "673aac59facbab8a9007c7f6108d11f63b603f7cabff99fabf650fea5c32b861"
 
 [[package]]
 name = "untrusted"

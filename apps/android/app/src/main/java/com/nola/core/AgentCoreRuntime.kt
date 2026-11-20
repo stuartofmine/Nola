@@ -40,6 +40,7 @@ internal object AgentCoreNative {
     // Match the single shipped Application command contract, never a raw Core ABI.
     internal fun supportsApplicationContract(abi: Int, protocol: Int): Boolean = abi == 1 && protocol == 1
 
+    external fun nativeGithubSkillPackage(root: ByteArray, request: ByteArray): ByteArray?
     external fun nativeMobileMcpRetain(handle: Long): Long
     external fun nativeMobileMcpHost(handle: Long, input: ByteArray): ByteArray?
     external fun nativeIntelligenceAbiVersion(): Int

@@ -454,9 +454,11 @@ nonisolated enum MacBuiltInSkillRegistry {
     }
 
     static func extensionItems(
-        store: any MacSkillCatalogApplicationClient = MacApplicationPort.shared
+        store: any MacSkillCatalogApplicationClient = MacApplicationPort.shared,
+        skills: [MacCanonicalSkill]? = nil
     ) throws -> [MacExtensionItem] {
-        let records = Dictionary(uniqueKeysWithValues: try store.listSkills()
+        let catalog = try skills ?? store.listSkills()
+        let records = Dictionary(uniqueKeysWithValues: catalog
             .filter { $0.source == .builtIn }.map { ($0.id, $0) })
         let removed = try hiddenSkillIDs(store: store)
         return try MacBuiltInSkillID.allCases.compactMap { id in
@@ -544,9 +546,10 @@ nonisolated enum MacBuiltInSkillRegistry {
     }
 
     static func activeDescriptors(
-        store: any MacSkillCatalogApplicationClient = MacApplicationPort.shared
+        store: any MacSkillCatalogApplicationClient = MacApplicationPort.shared,
+        skills: [MacCanonicalSkill]? = nil
     ) throws -> [MacBuiltInSkillDescriptor] {
-        try extensionItems(store: store).compactMap { item in
+        try extensionItems(store: store, skills: skills).compactMap { item in
             guard item.isEnabled,
                   let id = skillID(forExtensionItemID: item.id),
                   let path = item.path else { return nil }

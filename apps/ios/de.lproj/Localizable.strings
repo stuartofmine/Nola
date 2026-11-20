@@ -678,6 +678,9 @@
 "chat.host_tool.name.time" = "Systemzeit lesen";
 "chat.host_tool.name.browser" = "Browser steuern";
 "chat.host_tool.name.computer" = "Computer bedienen";
+"chat.host_tool.name.find_skill" = "GitHub-Skill suchen";
+"chat.host_tool.name.install_skill" = "Skill installieren und aktivieren";
+"chat.host_tool.name.read_skill_resource" = "Skill-Ressource lesen";
 "chat.host_tool.name.skill" = "Skill verwenden";
 "chat.host_tool.name.mcp" = "MCP aufrufen";
 "chat.host_tool.name.background" = "Hintergrundaufgabe";
@@ -3264,3 +3267,4 @@
 
 "chat.history.otherClientReadOnly" = "Schreibgeschützt. Setze die Unterhaltung in dem Client fort, in dem du sie begonnen hast.";
 "chat.history.ambiguousIDs" = "Zwei Unterhaltungs-IDs unterscheiden sich nur in der Großschreibung. Öffne sie im ursprünglichen Client.";
+"experts.executor.requiresHost" = "Verbinde dich mit dem Host, auf dem dieser Coding-Agent läuft, und wähle den Experten in einer Host-Unterhaltung.";

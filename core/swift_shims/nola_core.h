@@ -143,6 +143,7 @@ char* nola_core_intelligence_snapshot(void);
 bool nola_core_intelligence_clear(void);
 
 // Software updates are Host operations; invoke on an IO worker.
+char *nola_mobile_github_skill_package_json(const char *package_root, const char *request_json);
 char *nola_core_software_update_json(const uint8_t *input, size_t length);
 
 #ifdef __cplusplus

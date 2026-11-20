@@ -21,6 +21,8 @@ final class IOSCommittedJournalTestReader {
         if value.phase == "admitted" { receipt = value }
     }
 
+    var admittedOwner: IOSRemoteSubmissionIdentity? { receipt?.identity }
+
     func text(provider: WebAgentProvider) async throws -> String {
         let receipt = try XCTUnwrap(receipt)
         let admission = try XCTUnwrap(receipt.admission)

@@ -12,6 +12,8 @@ CLI 可以通过带认证的本地 HTTP 服务，为 Web 和远程客户端提�
 
 原生与 Web 专家设置提供代码编写、代码审查、测试、私人秘书、画师、PPT 制作和论文写作七个起始角色，包含提示词、推荐工具包及关联 Skill。专家可独立选择模型声明的推理档位；在图形客户端输入框用 `@` 选择专家。已有会话保留加入时配置，明确确认更新后才切换。主 Agent 统一与用户交互并调度专家；专家复用 subagent 的 Task 执行链路，保留独立模型、工具和持久子会话历史，不递归调用其他专家。详见[专家交互设计](docs/design/shared/MULTI_AGENT_NAVIGATION.md)。
 
+专家可以使用桌面宿主机上安装的 Antigravity、Codex、Claude Code 或 OpenCode。例如，把「代码实现」绑定到 Antigravity，把「代码审查」绑定到 Codex，再在同一条消息中提及两位专家。主 Agent 可以让审查者检查实现者交回的提交，并在该版本运行测试。模型选项来自宿主机，包含 Antigravity 提供的推理档位。[专家配置与提及](docs/design/shared/EXPERT_MENTIONS.md)
+
 ## 下载
 
 从 [1.0.0 发行页](https://github.com/stuartofmine/Nola/releases/tag/v1.0.0-build.2) 选择安装包或压缩包。发行页列出了可下载的平台、签名状态和校验值。

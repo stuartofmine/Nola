@@ -12,7 +12,8 @@ import kotlinx.serialization.Serializable
 @Serializable data class ExpertRoleFeatures(@SerialName("reasoning_effort") val reasoningEffort: Boolean,
     @SerialName("explicit_generation_reasoning") val explicitGenerationReasoning: Boolean, val rejoin: Boolean,
     @SerialName("main_agent_delegation") val mainAgentDelegation: Boolean = false,
-    @SerialName("inline_expert_mentions") val inlineExpertMentions: Boolean = false)
+    @SerialName("inline_expert_mentions") val inlineExpertMentions: Boolean = false,
+    @SerialName("external_expert_executors") val externalExpertExecutors: Boolean = false)
 @Serializable data class ExpertRoleCatalog(val version: Int, val features: ExpertRoleFeatures, val templates: List<ExpertRoleTemplate>) {
     fun validated(): ExpertRoleCatalog {
         require(version == 1 && features.reasoningEffort && features.explicitGenerationReasoning && features.rejoin && templates.map { it.id }.distinct().size == templates.size)

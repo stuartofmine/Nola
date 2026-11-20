@@ -788,6 +788,9 @@
 "chat.host_tool.name.time" = "读取系统时间";
 "chat.host_tool.name.browser" = "控制浏览器";
 "chat.host_tool.name.computer" = "操作电脑";
+"chat.host_tool.name.find_skill" = "查找 GitHub 技能";
+"chat.host_tool.name.install_skill" = "安装并启用技能";
+"chat.host_tool.name.read_skill_resource" = "读取技能资源";
 "chat.host_tool.name.skill" = "使用技能";
 "chat.host_tool.name.mcp" = "调用 MCP";
 "chat.host_tool.name.background" = "后台任务";
@@ -3421,3 +3424,4 @@
 "The expert selection changed. Remove the mention and select the expert again." = "专家来源或配置已变更。请删除这处提及，重新选择专家。";
 "Keep names as plain text" = "将名字保留为普通文字";
 "View expert history" = "查看专家会话";
+"experts.executor.requiresHost" = "请连接已安装此编程助手的宿主机，然后在宿主机会话中选择这位专家。";

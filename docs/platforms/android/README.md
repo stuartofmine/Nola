@@ -2,6 +2,8 @@
 
 实现位于 [android](../../../apps/android)，使用 Kotlin/Compose、JNI 和 Android 能力。设备能力与连接 Host 的执行目录分别管理。
 
+在本机对话里可以说“找到 GitHub 上 Nature Skills 里做论文精读卡的 Skill，装到这部手机”。也可以直接贴仓库或 Skill 目录链接。安装并启用后，在新的本机会话中即可调用。想给电脑使用时，选择已配对的 Host 并在该对话中提出安装请求。两处的 Skill 设置分别保存。[安装位置与资源范围](../../architecture/模块/11-Skill插件与MCP/README.md)
+
 - [客户端配置与远端权限呈现](../../architecture/模块/13-客户端投影/CLIENT_INTERACTION_AND_CONFIGURATION.md)。
 - [宿主机流程](../../design/shared/HOST_CONNECTION_WORKFLOW.md)、[权限合同](../../architecture/模块/07-权限与平台/README.md)。
 - JVM 测试：`cd apps/android && ./gradlew test`；设备测试：`./gradlew connectedDebugAndroidTest`。需要 JDK 21、SDK/NDK、Rust Android targets 与 cargo-ndk；只使用明确选择的测试模拟器/设备及隔离数据。

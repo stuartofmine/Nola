@@ -1390,4 +1390,10 @@
     <string name="expert_mention_needs_text">Beschreibe, was der Experte tun soll.</string>
     <string name="expert_mention_plain">Als normalen Text verwenden</string>
     <string name="expert_mention_upgrade_host">Aktualisiere den verbundenen Host, um Experten zu erwähnen. Du kannst auch normalen Text senden.</string>
+    <string name="expert_executor_requires_host">Verbinde dich mit dem Host, auf dem dieser Coding-Agent läuft, und wähle den Experten in einer Host-Unterhaltung.</string>
+    <string name="chat_tool_find_github_skill">GitHub-Skill suchen</string>
+    <string name="chat_tool_install_skill_device">Skill auf diesem Gerät installieren</string>
+    <string name="chat_tool_install_skill_host">Skill auf dem Host installieren</string>
+    <string name="chat_tool_read_skill_file">Skill-Datei lesen</string>
+    <string name="chat_permission_install_github_skill">Skill von %1$s herunterladen und für künftige Chats auf diesem Gerät aktivieren.</string>
 </resources>

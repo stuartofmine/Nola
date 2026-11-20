@@ -31,6 +31,7 @@ test = false
 bench = false
 
 [dependencies]
+nola_skill_host = { path = "../../core/nola-skill-host" }
 nola_update_host = { path = "../../core/nola-update-host" }
 nola_mcp_host = { path = "../../core/nola-mcp-host" }
 nola_measurement = { path = "../../core/nola-measurement" }

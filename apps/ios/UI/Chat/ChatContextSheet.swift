@@ -1236,6 +1236,7 @@ struct ChatContextSheet: View {
                 }
             }
             Section {
+                GitHubSkillSourceLink(reference: item.wrappedValue.packageReference)
                 TextField(tr("chat.context.skills.name", "Skill 名称", "Skill name"), text: item.name)
                 TextField(tr("chat.context.skills.description", "说明：什么时候使用这个 Skill", "Description: when to use this Skill"), text: item.description, axis: .vertical)
                     .lineLimit(2...5)
@@ -1302,6 +1303,7 @@ struct ChatContextSheet: View {
                             .foregroundStyle(.secondary)
                     }
                 }
+                GitHubSkillSourceLink(reference: item.packageReference)
             }
             if !item.description.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
                 Section(tr("chat.context.skills.purpose", "适用场景", "When to use")) {
@@ -1731,4 +1733,16 @@ struct ChatContextSheet: View {
     }
 
 
+}
+
+struct GitHubSkillSourceLink: View {
+    let reference: String?
+
+    var body: some View {
+        if let source = IOSGitHubSkillPackages.sourceURL(reference: reference) {
+            Link(destination: source) {
+                Label("GitHub · " + source.pathComponents.dropFirst().prefix(2).joined(separator: "/"), systemImage: "link")
+            }
+        }
+    }
 }

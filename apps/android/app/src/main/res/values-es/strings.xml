@@ -1390,4 +1390,10 @@
     <string name="expert_mention_needs_text">Escribe lo que quieres que haga el experto.</string>
     <string name="expert_mention_plain">Usar como texto normal</string>
     <string name="expert_mention_upgrade_host">Actualiza el host conectado para mencionar expertos. También puedes enviar texto normal.</string>
+    <string name="expert_executor_requires_host">Conecta el equipo que ejecuta este agente de programación y selecciona al experto en una conversación de ese equipo.</string>
+    <string name="chat_tool_find_github_skill">Buscar un Skill de GitHub</string>
+    <string name="chat_tool_install_skill_device">Instalar Skill en este teléfono</string>
+    <string name="chat_tool_install_skill_host">Instalar Skill en el host</string>
+    <string name="chat_tool_read_skill_file">Leer un archivo del Skill</string>
+    <string name="chat_permission_install_github_skill">Descargar y activar un Skill de %1$s para futuros chats en este teléfono.</string>
 </resources>

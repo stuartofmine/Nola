@@ -10,7 +10,7 @@ import time
 import uuid
 
 
-def run_collaboration(api, stream, command, profile, roles, database, host_id, client, output, observations):
+def run_collaboration(api, stream, command, profile, roles, database, host_id, client, output, observations, external_executor=None, external_model=None):
     from test_real_expert_roles import answer_text
     from test_real_remote_host_long_tasks import committed_tools
 
@@ -18,11 +18,17 @@ def run_collaboration(api, stream, command, profile, roles, database, host_id, c
     now=lambda:int(time.time()*1000)
     directory=command({'type':'directory'})
     expert_id=str(uuid.uuid4())
+    defaults = {'selectedPromptTemplateID': roles['code-reviewer']['id']}
+    if external_executor:
+        defaults['expertExecutor'] = {'backend': external_executor}
+        if external_model:
+            defaults['expertExecutor']['model'] = external_model
+    else:
+        defaults.update(modelSelectionID='configured:'+profile['id'], expertReasoningEffort='high')
     directory=command({'type':'configure_agent','input':{
         'id':expert_id,'expected_directory_revision':directory['revision'],'expected_agent_revision':None,
         'name':'QA code reviewer','description':'Disposable leaf expert','availability':'active',
-        'defaults':{'modelSelectionID':'configured:'+profile['id'],
-            'selectedPromptTemplateID':roles['code-reviewer']['id'],'expertReasoningEffort':'high'},'updated_at_ms':now()}})
+        'defaults':defaults,'updated_at_ms':now()}})
     expert=next(item for item in directory['agents'] if item['id']==expert_id)
     selected={'agent_id':expert_id,'agent_revision':expert['revision'],'participant_id':None,'context_conversation_id':None}
 
@@ -89,13 +95,43 @@ def run_collaboration(api, stream, command, profile, roles, database, host_id, c
         assert task['child_session_id']==member['context_conversation_id'] and task['parent_task_id'] is None
         assert pin['target']['participant_id']==member['id']
         assert len(read('SELECT task_id FROM runtime_task_run_bindings WHERE task_id=? AND run_id=?',(task['id'],task['id'])))==1
-        assert not read('SELECT id FROM durable_tasks WHERE owner_session_id=?',(member['context_conversation_id'],)), 'Leaf expert must not spawn another Task'
+        leaf_tasks = read("SELECT kind FROM durable_tasks WHERE owner_session_id=?", (member['context_conversation_id'],))
+        assert all(external_executor and row['kind'] == 'external_executor' for row in leaf_tasks), 'Unexpected nested leaf Task'
         assert not any(call['tool'] in {'delegate_expert','expert_exchange','spawn_agent','request_user_input'} for call in committed_tools(database,member['context_conversation_id']))
         child_view=api('/api/chat/conversations/'+member['context_conversation_id'])
         assert child_view['expertContextOwner']['isCurrent'] is True
         assert child_view['expertParentConversationId']==parent
         return "\n".join([*asked, answer_text(database,sid)]),task,answer_text(database,task['id'])
 
+    if external_executor:
+        result, task, answer = send('Use delegate_expert to ask the selected reviewer to multiply 29 by 31. '
+            'Have it answer EXPERT_PRODUCT=<number> without tools. Wait for the result, then reply MAIN_PRODUCT=<number>.')
+        assert 'MAIN_PRODUCT=899' in result and 'EXPERT_PRODUCT=899' in answer, (result, answer)
+        metadata = json.loads(task['metadata_json'])
+        backend = 'opencode' if external_executor == 'open_code' else external_executor
+        role = roles['code-reviewer']
+        assert any(item['component_id'] == 'prompt_template:'+role['id'] and role['prompt'] in item['content']
+                   for item in metadata['expert_target_prompt_definitions'])
+        assert metadata['execution_backend'] == backend
+        assert metadata['delegated_invocation']['execution_backend'] == backend
+        assert metadata['delegated_invocation']['external_execution_model'] == external_model
+        rows = read("SELECT status, metadata_json FROM durable_tasks WHERE owner_session_id=? AND kind='external_executor'",
+                    (task['child_session_id'],))
+        assert any(row['status'] == 'completed'
+                   and json.loads(row['metadata_json']).get('backend_id') == backend
+                   and json.loads(row['metadata_json']).get('model_id') == external_model
+                   for row in rows), 'External expert must have a completed receipt for the selected executor and model'
+        followup, second, remembered = send('Via delegate_expert ask the same reviewer: "What product did you report earlier '
+            'in your own conversation? Return EXPERT_RECALL=<number> and do not call tools." Omit numbers and the previous answer '
+            'from your brief. Wait for the reviewer, then return MAIN_RECALL=<number>.')
+        assert 'EXPERT_RECALL=899' in remembered and 'MAIN_RECALL=899' in followup, (followup, remembered)
+        assert task['id'] != second['id'] and task['child_session_id'] == second['child_session_id']
+        assert '899' not in json.loads(second['metadata_json'])['expert_exchange_context']['text']
+        completed = read("SELECT id, child_session_id FROM durable_tasks WHERE kind='external_executor' AND status='completed' "
+                         "AND owner_session_id=?", (task['child_session_id'],))
+        assert len(completed) == 2
+        return {'persistent_external_expert': {'backend': backend, 'model': external_model, 'parent': parent, 'child': task['child_session_id'],
+                'tasks': [task['id'], second['id']], 'native_executor_completions': len(completed), 'own_history_reused': True}}
     first,one,target_answer=send('Use the selected reviewer via delegate_expert. Ask it to compute 17*19 and return TARGET_OWN_HIGH=323. '
         'This is a short text protocol test; do not create artifacts or call file/shell tools. '
         'Wait/read its actual completed result; do not calculate it yourself. Reply MAIN_RESULT=323 only after it returned the answer.')

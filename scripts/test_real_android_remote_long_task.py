@@ -37,6 +37,7 @@ def main():
     parser.add_argument('--owned-avd-run',type=uuid.UUID,help='Run UUID already staged in the disposable primary-user AVD')
     parser.add_argument('--config',type=Path,default=Path.home()/'.nola/config.json')
     parser.add_argument('--steps',type=int,default=120)
+    parser.add_argument('--github-skill', action='store_true', help='Install a GitHub Skill on the paired Host instead of running the long job')
     parser.add_argument('--skip-build',action='store_true')
     args=parser.parse_args()
     if not args.serial.startswith('emulator-') or args.user < 0 or (args.user == 0 and not args.owned_avd_run):
@@ -45,10 +46,11 @@ def main():
     sdk=Path(os.environ.get('ANDROID_SDK_ROOT',str(Path.home()/'Library/Android/sdk')))
     adb=str(sdk/'platform-tools/adb')
     root=Path(tempfile.mkdtemp(prefix='nola-android-remote-long-'));root.chmod(0o700)
-    print(json.dumps({'stage':'started','evidence':str(root),'steps':args.steps}),flush=True)
+    scenario = {'scenario': 'github_skill'} if args.github_skill else {'steps': args.steps}
+    print(json.dumps({'stage': 'started', 'evidence': str(root), **scenario}), flush=True)
     upstream,model,secret=selected_route(args.config)
     host=None;oracle=None;reverses=[];staged=False
-    receipt={'passed':False,'steps':args.steps,'realModel':True,'realHost':True}
+    receipt={'passed':False,**scenario,'realModel':True,'realHost':True}
 
     def device(*command,data=None,timeout=120):
         result=subprocess.run([adb,'-s',args.serial,*map(str,command)],input=data,stdout=subprocess.PIPE,stderr=subprocess.STDOUT,timeout=timeout)
@@ -94,7 +96,7 @@ def main():
             with socket.socket() as sock:sock.bind(('127.0.0.1',0));port=sock.getsockname()[1]
             log=(root/'host.log').open('w')
             host=subprocess.Popen([str(ROOT/'target/debug/nola'),'web','--host','127.0.0.1','--port',str(port),
-                '--project',str(project),'--allow-dir',str(project),'--web-root',str(ROOT/'apps/web'),'--no-skills'],cwd=project,
+                '--project',str(project),'--allow-dir',str(project),'--web-root',str(ROOT/'apps/web'),*(() if args.github_skill else ('--no-skills',))],cwd=project,
                 env=env,stdout=log,stderr=subprocess.STDOUT,start_new_session=True)
             url=f'http://127.0.0.1:{port}'
             deadline=time.monotonic()+30
@@ -117,6 +119,11 @@ def main():
             expected={'nonce':nonce,'steps':args.steps,'total':args.steps*(args.steps+1)//2}
 
             def actual_state():
+                if args.github_skill:
+                    with sqlite3.connect(database.as_uri()+'?mode=ro',uri=True) as db:
+                        installed = db.execute("select count(*) from skill_definitions where id='nature-paper-card' and source='user' and enabled=1").fetchone()[0]
+                        terminal = db.execute("select status from runs where kind='conversation' order by created_at_ms desc limit 1").fetchone()
+                    return {"skillInstalled": installed == 1, "runFinished": terminal is not None and terminal[0] == 'sealed'}
                 ticks=(project/'progress.txt').read_text().splitlines() if (project/'progress.txt').exists() else []
                 starts=(project/'starts.txt').read_text().splitlines() if (project/'starts.txt').exists() else []
                 with sqlite3.connect(database.as_uri()+'?mode=ro',uri=True) as db:
@@ -138,31 +145,50 @@ def main():
             setup={'url':url,'token':tokenFile.read_text().strip(),'hostId':hostId,'steps':args.steps,'project':str(project.resolve()),
                 'oracle':f'http://127.0.0.1:{oracle.server_port}/state',
                 'prompt':'请实际执行隔离项目中的 python3 remote_job.py，前台执行，timeout_sec=240。等待它真实完成后读取 result.json 并核验实际结果，最终以 ANDROID_REMOTE_LONG_DONE 开头报告。命令只启动一次，不要修改脚本，不要联网、派生助手或改用别的执行方式。'}
+            if args.github_skill:
+                setup['skillUrl'] = 'https://github.com/Yuan1z0825/nature-skills/tree/main/skills/nature-paper-card'
+                setup['prompt'] = '请把这个 Skill 安装到已连接的 Host，启用供以后 Host 对话使用：' + setup['skillUrl']
             device('shell','run-as','com.nola','--user',args.user,'mkdir','-p','files')
             device('shell','run-as','com.nola','--user',args.user,'sh','-c',"'cat > files/remote-long-fixture.json'",data=json.dumps(setup).encode());staged=True
-            print(json.dumps({'stage':'native-submit-and-detach'}),flush=True)
-            instrument('submitRealLongTaskThenDetachClient')
-            before=actual_state();assert before['runStatus']=='running' and before['starts']==1
-            device('shell','am','force-stop','--user',args.user,'com.nola')
-            time.sleep(5);detached=actual_state()
-            assert detached['runId']==before['runId'] and detached['runStatus']=='running' and detached['ticks']>before['ticks']
-            (root/'detached.json').write_text(json.dumps(detached,indent=2))
-            print(json.dumps({'stage':'native-cold-client-restore','ticks':detached['ticks']}),flush=True)
-            instrument('coldClientObservesSameRunAndCompletedResult')
-            final=actual_state();assert final['runId']==before['runId'] and final['runCount']==1 and final['resultValid'] and final['starts']==1
-            assert (project/'progress.txt').read_text().splitlines()==[str(i) for i in range(1,args.steps+1)]
-            assert (project/'remote_job.py').read_text()==program,'Input script was modified'
-            tools=committed_tools(database,final['conversationId'])
-            jobs=[t for t in tools if t['tool']=='bash' and t['arguments'].get('command')=='python3 remote_job.py']
-            assert len(jobs)==1 and jobs[0]['state']=='completed','Physical job must complete exactly once'
-            assert not any(t['tool']=='bash' and t not in jobs and t['arguments'].get('operation_kind')!='inspect'
-                for t in tools),'Unexpected additional mutating command'
-            with sqlite3.connect(database.as_uri()+'?mode=ro',uri=True) as db:receipt['canonical']=audit_runs(db,final['conversationId'])
-            assert receipt['canonical']=={'runCount':1,'outcomes':['answered']}
-            receipt.update(passed=True,final=final,provider=provider_totals(root/'provider.ndjson'))
+            if args.github_skill:
+                instrument('installSkillOnPairedHost')
+                assert actual_state()['skillInstalled']
+                with sqlite3.connect(database.as_uri()+'?mode=ro',uri=True) as db:
+                    conversation = db.execute("select conversation_id from runs where kind='conversation' order by created_at_ms desc limit 1").fetchone()[0]
+                deadline = time.monotonic() + 20
+                while not any(t['tool'] == 'github_skill_install' and t['state'] == 'completed'
+                              for t in committed_tools(database, conversation)):
+                    if time.monotonic() > deadline: raise AssertionError("Missing completed Host installation effect")
+                    time.sleep(.2)
+                with sqlite3.connect(database.as_uri()+'?mode=ro',uri=True) as db:
+                    receipt['canonical'] = audit_runs(db, conversation)
+                assert receipt['canonical'] == {'runCount': 1, 'outcomes': ['answered']}
+                receipt.update(passed=True, skill='nature-paper-card', destination='paired_host',
+                               provider=provider_totals(root/'provider.ndjson'))
+            else:
+                print(json.dumps({'stage':'native-submit-and-detach'}),flush=True)
+                instrument('submitRealLongTaskThenDetachClient')
+                before=actual_state();assert before['runStatus']=='running' and before['starts']==1
+                device('shell','am','force-stop','--user',args.user,'com.nola')
+                time.sleep(5);detached=actual_state()
+                assert detached['runId']==before['runId'] and detached['runStatus']=='running' and detached['ticks']>before['ticks']
+                (root/'detached.json').write_text(json.dumps(detached,indent=2))
+                print(json.dumps({'stage':'native-cold-client-restore','ticks':detached['ticks']}),flush=True)
+                instrument('coldClientObservesSameRunAndCompletedResult')
+                final=actual_state();assert final['runId']==before['runId'] and final['runCount']==1 and final['resultValid'] and final['starts']==1
+                assert (project/'progress.txt').read_text().splitlines()==[str(i) for i in range(1,args.steps+1)]
+                assert (project/'remote_job.py').read_text()==program,'Input script was modified'
+                tools=committed_tools(database,final['conversationId'])
+                jobs=[t for t in tools if t['tool']=='bash' and t['arguments'].get('command')=='python3 remote_job.py']
+                assert len(jobs)==1 and jobs[0]['state']=='completed','Physical job must complete exactly once'
+                assert not any(t['tool']=='bash' and t not in jobs and t['arguments'].get('operation_kind')!='inspect'
+                    for t in tools),'Unexpected additional mutating command'
+                with sqlite3.connect(database.as_uri()+'?mode=ro',uri=True) as db:receipt['canonical']=audit_runs(db,final['conversationId'])
+                assert receipt['canonical']=={'runCount':1,'outcomes':['answered']}
+                receipt.update(passed=True,final=final,provider=provider_totals(root/'provider.ndjson'))
     except Exception as error:receipt['error']=str(error)
     finally:
-        for name in ['remote-long-failed-in-app.png','remote-long-failed-tree.txt','remote-long-new-chat.png','remote-long-running.png','remote-long-permission-review.png','remote-long-restored-result.png','remote-long-restored-tree.txt','remote-long-original.json','remote-long-detached.json','remote-long-result.json']:
+        for name in ['remote-skill-installed.png','remote-long-failed-in-app.png','remote-long-failed-tree.txt','remote-long-new-chat.png','remote-long-running.png','remote-long-permission-review.png','remote-long-restored-result.png','remote-long-restored-tree.txt','remote-long-original.json','remote-long-detached.json','remote-long-result.json']:
             try:
                 device('shell','run-as','com.nola','--user',args.user,'test','-f','files/'+name)
                 artifact=device('exec-out','run-as','com.nola','--user',args.user,'cat','files/'+name)

@@ -100,6 +100,11 @@
         }
         visited.add(`${platform}:${scene.id}:${state.id}`);
         const actions = state.actions.map((action,index)=>`<button data-transition="${index}" class="${action.style === 'primary' ? 'primary' : action.style === 'danger' ? 'danger' : ''}">${escape(action.label)}</button>`).join('');
+        if (scene.id === 'github-skill' || scene.id === 'github-skill-host') {
+            $('#device').innerHTML = window.githubSkillPreview.render(scene, state, platform, memory(), actions, escape);
+            $('#visit-count').textContent = `本页已检查 ${visited.size} 个平台状态`;
+            return;
+        }
         const heading = `<div class="status-heading status-${state.kind}"><span class="status-dot" aria-hidden="true"></span>${escape(kindNames[state.kind])} · 样例状态</div><h3>${escape(state.title)}</h3>`;
         let content = `${heading}${specialMarkup(state)}${domainMarkup(state)}${formMarkup(state)}<p id="field-error" class="inline-error" role="alert"></p><div class="actions">${actions}</div>`;
         if (platform === 'cli') content = `<section class="terminal"><pre class="terminal-command">$ ${escape(scene.command || 'nola')}\n# 文本布局草图；下方按钮为原型审阅控制，不是终端命令。</pre>${content}</section>`;
@@ -132,6 +137,9 @@
         }
         if (action.confirm && !direct) {
             pending = action; priorFocus = document.activeElement; $('#confirm').showModal(); $('#confirm-cancel').focus(); return;
+        }
+        if (!direct && scene.id.startsWith('github-skill') && action.to === 'review' && ['0','choose'].includes(stateId)) {
+            memory().pinnedSelection = stateId === 'choose';
         }
         if (action.cancel) memory().draft = {...memory().saved};
         stateId = action.to; memory().state = stateId;
@@ -185,6 +193,28 @@
     $('#confirm-cancel').addEventListener('click', closeConfirm);
     $('#confirm').addEventListener('cancel', event => { event.preventDefault(); closeConfirm(); });
     $('#confirm-apply').addEventListener('click', () => { const action=pending; $('#confirm').close(); pending=null; transition({...action,confirm:false}); });
+    function closeSkillEditor(form, message) {
+        const details = form.closest('details');
+        details.open = false;
+        details.querySelector('summary').focus();
+        $('#device .gs-feedback').textContent = message;
+    }
+    $('#device').addEventListener('submit', event => {
+        if (!event.target.matches('[data-skill-editor]')) return;
+        event.preventDefault();
+        const field = event.target.elements.instructions;
+        if (!field.value.trim()) { field.focus(); return; }
+        memory().instructions = field.value;
+        field.defaultValue = field.value;
+        closeSkillEditor(event.target, '技能指令已保存');
+    });
+    $('#device').addEventListener('click', event => {
+        const cancel = event.target.closest('[data-skill-cancel]');
+        if (cancel) {
+            cancel.form.reset();
+            closeSkillEditor(cancel.form, '');
+        }
+    });
     $('#device').addEventListener('change', event => {
         if (event.target.id==='effort') memory().effort=event.target.value;
         if (event.target.id==='font-preview') { memory().font=event.target.value; renderDevice(); $('#font-preview').focus(); }

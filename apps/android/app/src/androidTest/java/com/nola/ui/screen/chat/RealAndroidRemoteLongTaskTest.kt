@@ -107,35 +107,86 @@ class RealAndroidRemoteLongTaskTest {
         }
     }
 
-    @Test fun submitRealLongTaskThenDetachClient() {
-        requireIsolatedProductTestUser(context)
-        org.junit.Assume.assumeTrue(InstrumentationRegistry.getArguments().getString("realRemoteLong") == "1")
-        val fixture = config()
+    private fun connectToFixture(fixture: JSONObject) {
         val preferences = PreferenceDataStore(context, SecureTokenStore(context))
         runBlocking {
             preferences.setOnboardingCompleted()
             preferences.saveWebHostConfig(fixture.getString("url"), fixture.getString("token"), verifiedHostId = fixture.getString("hostId"))
         }
+    }
+
+    private fun submitOnSelectedHost(fixture: JSONObject) {
+        compose.onNodeWithContentDescription(context.getString(R.string.tab_settings)).performClick()
+        compose.onNodeWithText(context.getString(R.string.models_title)).performClick()
+        compose.onNode(hasText(context.getString(R.string.models_web_host)) and hasClickAction()).performClick()
+        val hostRow = hasTestTag("models.row.web-host")
+        compose.waitUntil(60_000) { compose.onAllNodes(hostRow).fetchSemanticsNodes().isNotEmpty() }
+        val use = hasText(context.getString(R.string.models_use)) and hasAnyAncestor(hostRow)
+        if (compose.onAllNodes(use).fetchSemanticsNodes().isNotEmpty()) compose.onNode(use).performScrollTo().performClick()
+        compose.waitUntil(30_000) { compose.onAllNodes(hasText(context.getString(R.string.models_selected)) and hasAnyAncestor(hostRow)).fetchSemanticsNodes().isNotEmpty() }
+        compose.onNodeWithContentDescription(context.getString(R.string.tab_chat)).performClick()
+        compose.onNodeWithTag("chat.conversations.new").performClick()
+        val readyComposer = hasTestTag("chat.composer.input") and isEnabled()
+        compose.waitUntil(30_000) { compose.onAllNodes(readyComposer).fetchSemanticsNodes().isNotEmpty() }
+        assertHeaderTextFits(context.getString(R.string.chat_new_chat))
+        screenshot("remote-long-new-chat.png")
+        val composer = compose.onNode(readyComposer)
+        composer.performTouchInput { click() }
+        composer.performTextInput(fixture.getString("prompt"))
+        compose.onNodeWithContentDescription(context.getString(R.string.chat_send)).assertIsEnabled().performClick()
+    }
+
+    @Test fun installSkillOnPairedHost() {
+        requireIsolatedProductTestUser(context)
+        org.junit.Assume.assumeTrue(InstrumentationRegistry.getArguments().getString("realRemoteLong") == "1")
+        val fixture = config()
+        val database = com.nola.data.local.AndroidApplicationRuntime.defaultDatabaseFile(context)
+        val packages = File(database.parentFile, "${database.nameWithoutExtension}.skill-packages")
+        fun localRecords(): List<List<String>> {
+            if (!database.isFile) return emptyList()
+            return android.database.sqlite.SQLiteDatabase.openDatabase(database.path, null, android.database.sqlite.SQLiteDatabase.OPEN_READONLY).use { db ->
+                db.rawQuery("SELECT id, current_version, enabled, revision FROM skill_definitions WHERE source='user' ORDER BY id", null).use { rows ->
+                    buildList { while (rows.moveToNext()) add((0 until rows.columnCount).map { rows.getString(it) }) }
+                }
+            }
+        }
+        val originalRecords = localRecords()
+        val localFiles = packages.walkTopDown().filter { it.isFile }.map { it.relativeTo(packages).path }.toSet()
+        connectToFixture(fixture)
+        ActivityScenario.launch(MainActivity::class.java).use {
+            submitOnSelectedHost(fixture)
+            compose.waitUntil(210_000) {
+                val once = compose.onAllNodesWithText(context.getString(R.string.permission_action_allow_once))
+                if (once.fetchSemanticsNodes().isNotEmpty()) {
+                    val identity = once.onFirst().fetchSemanticsNode().config[SemanticsProperties.TestTag].removePrefix("permission.allow-once.")
+                    compose.onNodeWithTag("permission.details.$identity").performClick()
+                    compose.waitUntil(5000) {
+                        compose.onAllNodes(hasText(fixture.getString("skillUrl"), substring = true) and hasAnyAncestor(isDialog()))
+                            .fetchSemanticsNodes().isNotEmpty()
+                    }
+                    compose.onNode(hasText(context.getString(R.string.common_close)) and hasAnyAncestor(isDialog())).performClick()
+                    once.onFirst().performClick()
+                }
+                val observed = state()
+                if (observed.optBoolean("runFinished")) {
+                    screenshot("remote-skill-installed.png")
+                    assertTrue("Host finished without enabling the requested Skill", observed.getBoolean("skillInstalled"))
+                    true
+                } else false
+            }
+        }
+        assertEquals(originalRecords, localRecords())
+        assertEquals(localFiles, packages.walkTopDown().filter { it.isFile }.map { it.relativeTo(packages).path }.toSet())
+    }
+
+    @Test fun submitRealLongTaskThenDetachClient() {
+        requireIsolatedProductTestUser(context)
+        org.junit.Assume.assumeTrue(InstrumentationRegistry.getArguments().getString("realRemoteLong") == "1")
+        val fixture = config()
+        connectToFixture(fixture)
         ActivityScenario.launch(MainActivity::class.java).use {
             try {
-                compose.onNodeWithContentDescription(context.getString(R.string.tab_settings)).performClick()
-                compose.onNodeWithText(context.getString(R.string.models_title)).performClick()
-                compose.onNode(hasText(context.getString(R.string.models_web_host)) and hasClickAction()).performClick()
-                val hostRow = hasTestTag("models.row.web-host")
-                compose.waitUntil(60_000) { compose.onAllNodes(hostRow).fetchSemanticsNodes().isNotEmpty() }
-                val use = hasText(context.getString(R.string.models_use)) and hasAnyAncestor(hostRow)
-                if (compose.onAllNodes(use).fetchSemanticsNodes().isNotEmpty()) compose.onNode(use).performScrollTo().performClick()
-                compose.waitUntil(30_000) { compose.onAllNodes(hasText(context.getString(R.string.models_selected)) and hasAnyAncestor(hostRow)).fetchSemanticsNodes().isNotEmpty() }
-                compose.onNodeWithContentDescription(context.getString(R.string.tab_chat)).performClick()
-                compose.onNodeWithTag("chat.conversations.new").performClick()
-                val readyComposer = hasTestTag("chat.composer.input") and isEnabled()
-                compose.waitUntil(30_000) { compose.onAllNodes(readyComposer).fetchSemanticsNodes().isNotEmpty() }
-                assertHeaderTextFits(context.getString(R.string.chat_new_chat))
-                screenshot("remote-long-new-chat.png")
-                val composer = compose.onNode(readyComposer)
-                composer.performTouchInput { click() }
-                composer.performTextInput(fixture.getString("prompt"))
-                compose.onNodeWithContentDescription(context.getString(R.string.chat_send)).assertIsEnabled().performClick()
+                submitOnSelectedHost(fixture)
                 compose.waitUntil(180_000) { approveExactJob(); state().optInt("ticks") >= 2 }
                 val running = state()
                 assertEquals("running", running.getString("runStatus"))

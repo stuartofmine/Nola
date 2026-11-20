@@ -678,6 +678,9 @@
 "chat.host_tool.name.time" = "Leer hora del sistema";
 "chat.host_tool.name.browser" = "Controlar navegador";
 "chat.host_tool.name.computer" = "Controlar el ordenador";
+"chat.host_tool.name.find_skill" = "Buscar un skill en GitHub";
+"chat.host_tool.name.install_skill" = "Instalar y activar el skill";
+"chat.host_tool.name.read_skill_resource" = "Leer un recurso del skill";
 "chat.host_tool.name.skill" = "Usar skill";
 "chat.host_tool.name.mcp" = "Invocar MCP";
 "chat.host_tool.name.background" = "Tarea en segundo plano";
@@ -3263,3 +3266,4 @@
 
 "chat.history.otherClientReadOnly" = "Solo lectura. Para continuar esta conversación, ábrela en el cliente donde la creaste.";
 "chat.history.ambiguousIDs" = "Dos conversaciones tienen identificadores que solo se distinguen por las mayúsculas. Ábrelas en el cliente original.";
+"experts.executor.requiresHost" = "Conecta el equipo que ejecuta este agente de programación y selecciona al experto en una conversación de ese equipo.";

@@ -1916,7 +1916,7 @@ struct ChatView: View {
 
     private var expertPickerSheet: some View {
         VStack {
-            IOSChatExpertPicker(agents: expertDirectory, allowsManagement: container.chatManager.getCurrentModel()?.isWebBackend != true, onManagementClosed: {
+            IOSChatExpertPicker(agents: expertDirectory, allowsManagement: container.chatManager.getCurrentModel()?.isWebBackend != true || expertRemoteSource != nil, remoteSource: expertRemoteSource, onManagementClosed: {
                 Task { await reloadExpertDirectory() }
             }, selection: .constant(expertSelection), onMention: { agent in
                 guard requireLocalExpertOwner() else { return }
@@ -3054,7 +3054,8 @@ struct ChatView: View {
                             name: name,
                             content: hostSkill.content,
                             description: "\(tr("chat.host_skill.description_prefix", "From Web host.", comment: "Prefix for host skill description")) \(hostSkill.description ?? "")".trimmingCharacters(in: .whitespacesAndNewlines),
-                            enabled: hostSkill.enabled ?? true
+                            enabled: hostSkill.enabled ?? true,
+                            packageReference: hostSkill.packageReference
                         )
                     }
                 currentHostUploadedDocuments = settings.uploaded_documents

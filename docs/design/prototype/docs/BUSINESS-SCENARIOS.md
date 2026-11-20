@@ -1,10 +1,10 @@
 # 全业务场景与状态目录
 
-更新：2026-11-10。主入口：[可操作场景原型](../scenarios.html)；原有完整交互原型：[index.html](../index.html)。
+更新：2026-11-20。主入口：[可操作场景原型](../scenarios.html)；原有完整交互原型：[index.html](../index.html)。
 
 ## 范围与使用方法
 
-本清单以当前仓库用户可见业务为范围，共 **68 个场景、220 个状态、6 个平台视角**。每项有独立状态图、原型入口、适用平台与生产源码依据；Web 当前 **14 个路由**全部关联。它覆盖可枚举的业务主线、异常和恢复，不声称穷尽任意数据、语言、系统版本和网络组合。
+本清单以当前仓库用户可见业务为范围，共 **70 个场景、236 个状态、6 个平台视角**。每项有独立状态图、原型入口、适用平台与生产源码依据；Web 当前 **14 个路由**全部关联。它覆盖可枚举的业务主线、异常和恢复，不声称穷尽任意数据、语言、系统版本和网络组合。
 
 选择业务与平台，直接操作预览中的按钮；右侧可跳到任意状态。每个状态有独立 URL，浏览器前进／后退可复现。原型目录和状态面板属于评审工具，不是产品导航。字段只保存为当前页面内、当前平台及场景的草稿；取消保留已保存基线，切换场景不覆盖其他草稿，刷新重置。破坏性样例先打开可取消的确认框。没有模型、账户、Host、文件、下载或系统权限请求，不能输入真实凭据。
 
@@ -63,6 +63,8 @@
 | [permission-missing](../scenarios.html?scene=permission-missing&platform=mac) | 宿主机与权限 / 缺失详情、过期申请与错误身份 | 原会话 → 权限申请 | 4 | macOS / iOS / iPadOS / Android / Web / Windows |
 | [system-permission](../scenarios.html?scene=system-permission&platform=mac) | 宿主机与权限 / 系统权限拒绝与设置入口 | 使用受保护资源时 | 3 | macOS / iOS / iPadOS / Android |
 | [execution-scope](../scenarios.html?scene=execution-scope&platform=mac) | 宿主机与权限 / 执行位置、设备桥接与边界 | 会话详情 → 执行 | 3 | macOS / iOS / iPadOS / Android / Web / Windows |
+| [github-skill](../scenarios.html?scene=github-skill&platform=mac) | Skills、MCP 与插件 / 从对话安装 GitHub Skill | 本机或当前 Host 的对话 | 8 | macOS / iOS / iPadOS / Android / Web / Windows / CLI |
+| [github-skill-host](../scenarios.html?scene=github-skill-host&platform=ios) | Skills、MCP 与插件 / 手机对话 · 安装到配对 Host | 已配对 Host 的对话 | 8 | iOS / iPadOS / Android |
 | [skill-editor](../scenarios.html?scene=skill-editor&platform=mac) | Skills、MCP 与插件 / Skill 新增、编辑与内置恢复 | 设置 → Skills | 3 | macOS / iOS / iPadOS / Android / Web / Windows |
 | [skill-review](../scenarios.html?scene=skill-review&platform=mac) | Skills、MCP 与插件 / Skill 设置复核与来源保留 | Skills → 需要复核 | 3 | macOS / iOS / iPadOS / Android / Web / Windows |
 | [mcp-config](../scenarios.html?scene=mcp-config&platform=mac) | Skills、MCP 与插件 / MCP HTTP / stdio 配置与检查 | 设置 → MCP → 添加 | 3 | macOS / iOS / iPadOS / Android / Web / Windows |
@@ -101,7 +103,7 @@
 | `/models` | [model-empty](../scenarios.html?scene=model-empty&platform=web), [api-config](../scenarios.html?scene=api-config&platform=web), [catalog-select](../scenarios.html?scene=catalog-select&platform=web), [host-pair](../scenarios.html?scene=host-pair&platform=web) |
 | `/model-test` | [model-probe](../scenarios.html?scene=model-probe&platform=web) |
 | `/login` | [web-login](../scenarios.html?scene=web-login&platform=web) |
-| `/capabilities` | [skill-editor](../scenarios.html?scene=skill-editor&platform=web), [skill-review](../scenarios.html?scene=skill-review&platform=web), [mcp-config](../scenarios.html?scene=mcp-config&platform=web), [mcp-uncertain](../scenarios.html?scene=mcp-uncertain&platform=web), [mcp-invoke](../scenarios.html?scene=mcp-invoke&platform=web) |
+| `/capabilities` | [skill-editor](../scenarios.html?scene=skill-editor&platform=web), [skill-review](../scenarios.html?scene=skill-review&platform=web), [mcp-config](../scenarios.html?scene=mcp-config&platform=web), [mcp-uncertain](../scenarios.html?scene=mcp-uncertain&platform=web), [mcp-invoke](../scenarios.html?scene=mcp-invoke&platform=web), [github-skill](../scenarios.html?scene=github-skill&platform=web) |
 | `/activity` | [activity-inbox](../scenarios.html?scene=activity-inbox&platform=web), [event-wait](../scenarios.html?scene=event-wait&platform=web) |
 | `/results` | [results-dashboard](../scenarios.html?scene=results-dashboard&platform=web) |
 | `/dashboard` | [results-dashboard](../scenarios.html?scene=results-dashboard&platform=web) |
@@ -111,7 +113,7 @@
 | `/workspace-review` | [git-review](../scenarios.html?scene=git-review&platform=web), [artifact-review](../scenarios.html?scene=artifact-review&platform=web) |
 | `/today` | [results-dashboard](../scenarios.html?scene=results-dashboard&platform=web) |
 | `/conversations` | [conversation-list](../scenarios.html?scene=conversation-list&platform=web), [conversation-delete](../scenarios.html?scene=conversation-delete&platform=web) |
-| `/chat` | [compose](../scenarios.html?scene=compose&platform=web), [stream-reader](../scenarios.html?scene=stream-reader&platform=web), [goal-input](../scenarios.html?scene=goal-input&platform=web), [permission](../scenarios.html?scene=permission&platform=web), [remote-reconnect](../scenarios.html?scene=remote-reconnect&platform=web), [compaction](../scenarios.html?scene=compaction&platform=web), [inspector](../scenarios.html?scene=inspector&platform=web) |
+| `/chat` | [compose](../scenarios.html?scene=compose&platform=web), [stream-reader](../scenarios.html?scene=stream-reader&platform=web), [goal-input](../scenarios.html?scene=goal-input&platform=web), [permission](../scenarios.html?scene=permission&platform=web), [remote-reconnect](../scenarios.html?scene=remote-reconnect&platform=web), [compaction](../scenarios.html?scene=compaction&platform=web), [inspector](../scenarios.html?scene=inspector&platform=web), [github-skill](../scenarios.html?scene=github-skill&platform=web) |
 
 ## 维护与验收
 

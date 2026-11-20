@@ -678,6 +678,9 @@
 "chat.host_tool.name.time" = "システム時刻を読む";
 "chat.host_tool.name.browser" = "ブラウザを操作";
 "chat.host_tool.name.computer" = "コンピューターを操作";
+"chat.host_tool.name.find_skill" = "GitHub のスキルを検索";
+"chat.host_tool.name.install_skill" = "スキルをインストールして有効にする";
+"chat.host_tool.name.read_skill_resource" = "スキルのリソースを読む";
 "chat.host_tool.name.skill" = "スキルを使用";
 "chat.host_tool.name.mcp" = "MCP を呼び出す";
 "chat.host_tool.name.background" = "バックグラウンドタスク";
@@ -3249,3 +3252,4 @@
 
 "chat.history.otherClientReadOnly" = "読み取り専用です。会話を続けるには、作成したクライアントで開いてください。";
 "chat.history.ambiguousIDs" = "大文字と小文字だけが異なる会話 ID が存在します。作成したクライアントで開いてください。";
+"experts.executor.requiresHost" = "このコーディングエージェントを実行するホストに接続し、ホストの会話でエキスパートを選択してください。";

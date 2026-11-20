@@ -125,9 +125,10 @@ pub(crate) fn validate_facts(
     if frozen.permission_rules != current.permission_rules {
         return Err("Recovery permission authority changed".into());
     }
-    if serde_json::to_value(&frozen.context_window).map_err(|_| "Invalid frozen context policy")?
-        != serde_json::to_value(&current.context_window)
-            .map_err(|_| "Invalid current context policy")?
+    // The Run captures the effective Core budget. A Host may still present the
+    // original declaration (e.g. a prompt limit above window minus output).
+    if frozen.context_window.clone().normalized().budget_facts()
+        != current.context_window.clone().normalized().budget_facts()
     {
         return Err("Recovery context policy changed".into());
     }
@@ -352,6 +353,19 @@ mod tests {
             "b".repeat(64)
         );
     }
+    #[test]
+    fn accepts_original_budget_after_core_clamps_the_prompt_limit() {
+        let (mut frozen, mut current) = fixture();
+        current.context_window.context_window_tokens = 64_000;
+        current.context_window.reserved_output_tokens = 16_384;
+        current.context_window.prompt_token_limit = Some(48_000);
+        frozen.context_window = current.context_window.clone().normalized();
+        assert_eq!(frozen.context_window.prompt_token_limit, Some(47_616));
+        validate_facts(&frozen, &current, 0).unwrap();
+        current.context_window.prompt_token_limit = Some(47_615);
+        assert!(validate_facts(&frozen, &current, 0).is_err());
+    }
+
     #[test]
     fn rejects_real_permission_schema_host_and_context_changes() {
         let (frozen, current) = fixture();

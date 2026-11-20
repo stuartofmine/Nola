@@ -1567,7 +1567,7 @@ pub fn print_help() {
         }
     }
     println!("\n  nola room list|directory|create <title>|show <id>|join <room> <agent>|send <room> <text> [--to <participant>]|recover <room>");
-    println!("  nola skills [list|enable <id>|disable <id>] [--json]");
+    println!("  nola skills [list|find <name-or-github-url>|install <github-url>|enable <id>|disable <id>] [--json]");
     println!("  nola mcp [list|add <name> <command-or-url> [args...]|remove <id-or-name>|enable <id-or-name>|disable <id-or-name>] [--json]");
     println!("  nola memory [list|add <text> [--scope global|project]|search <query>|create|revise <id>|delete <id>] [--json]");
     println!("  nola update check | download <directory> [--source <absolute-public-source-json>]");

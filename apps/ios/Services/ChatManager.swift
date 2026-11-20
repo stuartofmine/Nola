@@ -381,7 +381,7 @@ public final class ChatManager: ObservableObject {
         container.chatMemoryProfileStore.loadProfile().uploadedSkills.filter(\.enabled).map {
             IOSAgentSkillSnapshot(id: $0.id.uuidString, name: $0.name, summary: $0.description,
                 instructions: $0.content, version: $0.version, requiredTools: $0.requiredTools ?? [],
-                validationSteps: $0.validationSteps ?? [])
+                validationSteps: $0.validationSteps ?? [], packageReference: $0.packageReference)
         }
     }
 
@@ -1409,7 +1409,7 @@ public final class ChatManager: ObservableObject {
     private var agentTraceContext = AgentTraceContext(conversationId: "")
     private var webAgentTaskProjectionReducer = AgentCoreTaskProjectionReducer()
     private var webAgentSkillRuntimeReducer = AgentCoreSkillRuntimeProjectionReducer()
-    private let agentCoreHostExecutor = IOSAgentHostExecutor()
+    private let agentCoreHostExecutor: IOSAgentHostExecutor
     private let agentCorePermissionBroker = IOSAgentPermissionBroker()
 
     /// Each session owns its reducer, transports, permission continuations and
@@ -2349,6 +2349,7 @@ public final class ChatManager: ObservableObject {
 
     private init(container: ServiceContainer, restorePersistedState: Bool, isConversationExecution: Bool) {
         self.container = container
+        self.agentCoreHostExecutor = IOSAgentHostExecutor(applicationRuntime: container.applicationRuntime)
         self.isConversationExecution = isConversationExecution
         if isConversationExecution {
             // Freeze the actual provider, not the app-wide mutable facade.

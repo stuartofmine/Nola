@@ -142,6 +142,34 @@ final class IOSWorkspaceNavigationSmokeTests: XCTestCase {
         captureAudit("system-prompt-whitespace-reopened", in: app)
     }
 
+    func testInstalledGitHubSkillAppearsInSettingsWithPinnedSource() throws {
+        guard let root = ProcessInfo.processInfo.environment["NOLA_GITHUB_SKILL_UI_FIXTURE_ROOT"] else {
+            throw XCTSkip("Requires the isolated on-device GitHub Skill installation")
+        }
+        continueAfterFailure = false
+        let app = XCUIApplication()
+        app.launchArguments = ["-ui-testing", "-AppleLanguages", "(en)", "-AppleLocale", "en_US"]
+        app.launchEnvironment["NOLA_REAL_IOS_UI_DATABASE_PATH"] = URL(fileURLWithPath: root).appendingPathComponent("nola.db").path
+        app.launchEnvironment["NOLA_UI_TEST_RUN_ID"] = "github-skill-\(UUID())"
+        app.launch()
+        defer { app.terminate() }
+        app.tapRootTab("settings")
+        app.buttons["settings.category.agent"].tap()
+        let skill = app.staticTexts["nature-paper-card"].firstMatch
+        XCTAssertTrue(skill.waitForExistence(timeout: 10))
+        captureAudit("installed-github-skill-library", in: app)
+        let edit = app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH %@ AND identifier ENDSWITH %@",
+            "intelligence.capabilities.skill.", ".edit")).firstMatch
+        XCTAssertTrue(edit.exists)
+        edit.tap()
+        let name = app.textFields["intelligence.capabilities.editor.name"]
+        XCTAssertTrue(name.waitForExistence(timeout: 5))
+        XCTAssertEqual(name.value as? String, "nature-paper-card")
+        let source = app.descendants(matching: .any).matching(NSPredicate(format: "label CONTAINS %@", "Yuan1z0825/nature-skills")).firstMatch
+        XCTAssertTrue(source.isHittable)
+        captureAudit("installed-github-skill-source", in: app)
+    }
+
     func testSkillAndMCPEditorsSaveAndDiscardThroughActualControls() throws {
         continueAfterFailure = false
         let app = XCUIApplication()

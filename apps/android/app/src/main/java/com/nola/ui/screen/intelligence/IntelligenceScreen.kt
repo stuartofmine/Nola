@@ -2,6 +2,7 @@ package com.nola.ui.screen.intelligence
 
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
+import com.nola.ui.components.GithubSkillSourceLink
 import com.nola.ui.components.DiscardChangesDialog
 
 import androidx.compose.animation.animateColorAsState
@@ -1058,6 +1059,7 @@ internal fun SkillEditorDialog(editor: SkillEditor, isSaving: Boolean, errorMess
                     color = MaterialTheme.colorScheme.error,
                     style = MaterialTheme.typography.bodySmall,
                 )
+                GithubSkillSourceLink(editor.skill)
                 OutlinedTextField(name, { name = it }, modifier = Modifier.fillMaxWidth().testTag("skill.editor.name"), label = { Text(stringResource(R.string.chat_skill_name)) }, singleLine = true, enabled = editor.isEditable && !isSaving)
                 OutlinedTextField(description, { description = it }, modifier = Modifier.fillMaxWidth(), label = { Text(stringResource(R.string.chat_skill_description)) }, maxLines = 3, enabled = editor.isEditable && !isSaving)
                 OutlinedTextField(

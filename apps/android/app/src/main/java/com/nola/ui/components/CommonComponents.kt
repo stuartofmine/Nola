@@ -159,6 +159,10 @@ internal fun hostToolDisplayNameStringRes(toolName: String): Int? {
         "git_show" -> R.string.chat_host_tool_name_changes
         "web_search" -> R.string.chat_host_tool_name_web_search
         "web_fetch", "fetch_url" -> R.string.chat_host_tool_name_web_read
+        "github_skill_find", "device_github_skill_find" -> R.string.chat_tool_find_github_skill
+        "device_github_skill_install" -> R.string.chat_tool_install_skill_device
+        "github_skill_install" -> R.string.chat_tool_install_skill_host
+        "device_skill_read_resource" -> R.string.chat_tool_read_skill_file
         "tool_search" -> R.string.chat_host_tool_name_search_tools
         "tool_output_list", "tool_output_read", "tool_output_search", "tool_output_find" -> R.string.chat_host_tool_name_read_output
         "memory_save", "memory_search" -> R.string.chat_host_tool_name_memory

@@ -2493,7 +2493,7 @@ done
             "parent-before-opencode-crash",
         );
         crashed.backend_id = "opencode".to_string();
-        let error = crate::external_executor::run_opencode_acp(
+        let error = crate::external_executor::run_acp_executor(
             &config.external_execution_settings(),
             "perform one external write",
             true,
@@ -2521,7 +2521,7 @@ done
             "different-parent-after-opencode-restart",
         );
         recovered.backend_id = "opencode".to_string();
-        crate::external_executor::run_opencode_acp(
+        crate::external_executor::run_acp_executor(
             &config.external_execution_settings(),
             "resume after the ACP crash",
             true,

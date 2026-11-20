@@ -2758,8 +2758,16 @@ private fun HostPermissionCard(request: com.nola.domain.model.HostAgentPermissio
 @Composable
 private fun LocalPermissionCard(request: com.nola.core.AndroidAgentPermissionRequest,
     onDecision: (String, Boolean, Boolean) -> Unit, onInstruction: (String, String) -> Unit) {
+    val packageUrl = remember(request.toolName, request.scope) {
+        if (request.toolName == "device_github_skill_install") {
+            request.scope?.let { scope -> runCatching { JSONObject(scope).optString("url") }.getOrNull() }
+                ?.takeIf { it.startsWith("https://github.com/") }
+        } else null
+    }
+    val message = if (packageUrl != null) stringResource(R.string.chat_permission_install_github_skill, packageUrl)
+        else request.rationale.ifBlank { request.scope.orEmpty() }
     PermissionDialog(toolName = request.toolName,
-        message = listOf(request.rationale.ifBlank { request.scope.orEmpty() }, if (request.permissionInstructions.isEmpty()) "" else
+        message = listOf(message, if (request.permissionInstructions.isEmpty()) "" else
             stringResource(R.string.permission_guidance_recorded) + "\n" + request.permissionInstructions.joinToString("\n") { it.instruction }
         ).filter { it.isNotBlank() }.joinToString("\n\n"),
         executionLocation = stringResource(if(request.originKind=="mcp") R.string.mcp_permission_http_server else R.string.permission_location_device),

@@ -170,7 +170,7 @@ fn strip_admin_flags(
 }
 
 fn skills_usage() -> &'static str {
-    "Usage:\n  nola skills [list] [--json]\n  nola skills enable <id> [--json]\n  nola skills disable <id> [--json]"
+    "Usage:\n  nola skills [list] [--json]\n  nola skills find <name-or-github-url> [--json]\n  nola skills install <github-url> [--json]\n  nola skills enable <id> [--json]\n  nola skills disable <id> [--json]"
 }
 
 fn run_skills_command(args: &[String], leading_json: bool) -> Result<(), String> {
@@ -178,6 +178,32 @@ fn run_skills_command(args: &[String], leading_json: bool) -> Result<(), String>
     if show_help {
         println!("{}", skills_usage());
         return Ok(());
+    }
+    if let [action, value] = positional.as_slice() {
+        let result = match action.as_str() {
+            "find" => Some(crate::github_skills::find(value)?),
+            "install" => Some(crate::github_skills::install(value)?),
+            _ => None,
+        };
+        if let Some(value) = result {
+            if json_output {
+                println!("{value}");
+            } else if let Some(items) = value["repositories"].as_array().or(value["skills"].as_array()) {
+                for item in items {
+                    println!("{}  {}", item["repository"].as_str().or(item["path"].as_str()).unwrap_or_default(),
+                             item["url"].as_str().unwrap_or_default());
+                }
+                if value["status"] == "selection_required" {
+                    println!("Select a Skill URL and run nola skills install <url>.");
+                } else if items.is_empty() {
+                    println!("No matching Skills or repositories found.");
+                }
+            } else {
+                println!("Enabled {} from {}", value["id"].as_str().unwrap_or_default(),
+                         value["source_url"].as_str().unwrap_or_default());
+            }
+            return Ok(());
+        }
     }
     let mut application = CliApplicationPort::persistent_default()?;
     execute_skills_command(&mut application, &positional, json_output)
@@ -257,6 +283,9 @@ fn set_skill_enabled(
             updated_at_ms: Utc::now().timestamp_millis(),
         },
     })?;
+    if updated["record"]["source"] == "user" {
+        crate::builtin_skills::sync_registered_custom(application, Some(&matched_id))?;
+    }
     let new_revision = updated["revision"].as_i64().unwrap_or(revision + 1);
     if json_output {
         println!(

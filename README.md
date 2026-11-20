@@ -12,6 +12,8 @@ The CLI can expose its local Host through an authenticated HTTP service for the 
 
 Native and Web expert settings provide seven starting roles: code writing, code review, testing, personal assistance, visual art, presentations and academic writing. Each includes instructions, a suggested tool pack and associated Skills. Experts have their own model-declared reasoning effort; use `@` in graphical conversation composers to select an expert. Existing conversations retain their joined configuration until an explicit update. A single main agent interacts with the user and delegates to experts through the shared subagent Task runtime. Experts keep their own model, tools and persistent child history and do not recursively delegate. See the [expert interaction design](docs/design/shared/MULTI_AGENT_NAVIGATION.md).
 
+Experts can also run through an installed Antigravity, Codex, Claude Code or OpenCode on the connected desktop Host. Bind the implementation and review roles to their preferred executors, then mention both in a conversation. The main agent can send the implementation commit to a second agent for review and verification. Model choices come from the Host, including the native Antigravity reasoning variants. [Expert configuration and mentions](docs/design/shared/EXPERT_MENTIONS.md)
+
 ## Downloads
 
 Choose an installer or archive from the [1.0.0 release](https://github.com/stuartofmine/Nola/releases/tag/v1.0.0-build.2). The release page lists the available platforms, signing status and checksums.

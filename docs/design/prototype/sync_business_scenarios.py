@@ -55,7 +55,7 @@ def generated():
     writer.writerows(rows)
     document = '''# 全业务场景与状态目录
 
-更新：2026-11-10。主入口：[可操作场景原型](../scenarios.html)；原有完整交互原型：[index.html](../index.html)。
+更新：%s。主入口：[可操作场景原型](../scenarios.html)；原有完整交互原型：[index.html](../index.html)。
 
 ## 范围与使用方法
 
@@ -80,7 +80,7 @@ def generated():
 
 | ID | 业务 / 场景 | 入口 | 状态数 | 适用设计平台 |
 | --- | --- | --- | ---: | --- |
-''' % (len(scenarios), sum(len(scene['states']) for scene in scenarios), len(routes))
+''' % (catalog['updated'], len(scenarios), sum(len(scene['states']) for scene in scenarios), len(routes))
     for row, scene in zip(rows, scenarios):
         document += f'| [{row[0]}](../{row[-1]}) | {row[1]} / {row[2]} | {row[3]} | {len(scene["states"])} | {row[4]} |\n'
     document += '\n## 路由关联\n\n| 生产 Web 路由 | 对应业务场景 |\n| --- | --- |\n'

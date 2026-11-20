@@ -264,6 +264,9 @@
 "chat.host_tool.name.time" = "Lire l’heure système";
 "chat.host_tool.name.browser" = "Contrôler le navigateur";
 "chat.host_tool.name.computer" = "Contrôler l’ordinateur";
+"chat.host_tool.name.find_skill" = "Rechercher un skill sur GitHub";
+"chat.host_tool.name.install_skill" = "Installer et activer le skill";
+"chat.host_tool.name.read_skill_resource" = "Lire une ressource du skill";
 "chat.host_tool.name.skill" = "Utiliser le skill";
 "chat.host_tool.name.mcp" = "Appeler MCP";
 "chat.host_tool.name.background" = "Tâche en arrière-plan";
@@ -3294,3 +3297,4 @@
 
 "chat.history.otherClientReadOnly" = "Lecture seule. Pour poursuivre cette conversation, ouvre-la dans le client où elle a été créée.";
 "chat.history.ambiguousIDs" = "Deux identifiants de conversation diffèrent uniquement par la casse. Ouvre ces conversations dans leur client d’origine.";
+"experts.executor.requiresHost" = "Connectez-vous à l’hôte qui exécute cet agent de programmation, puis sélectionnez l’expert dans une conversation de cet hôte.";

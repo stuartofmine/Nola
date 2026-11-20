@@ -196,6 +196,24 @@ pub struct ExpertContextReservation {
     pub child_submission_id: String,
 }
 
+/// An external execution profile is pinned by the expert identity and revision.
+pub fn expert_executor_declaration(
+    participant: &ExpertParticipantReference,
+    executor: &crate::delegation::ExternalAgentExecutor,
+) -> ExpertModelDeclaration {
+    ExpertModelDeclaration {
+        profile_id: format!("expert-executor:{}", participant.agent_id.as_str()),
+        profile_revision: participant.agent_revision,
+        provider: executor.backend.id().into(),
+        model_name: executor
+            .model
+            .clone()
+            .unwrap_or_else(|| executor.backend.id().into()),
+        runtime: "external".into(),
+        parameters: serde_json::json!({}),
+    }
+}
+
 /// Match distinct selection/profile and transport domains without exposing a
 /// credential handle or copying a prior Host configuration.
 pub fn validate_expert_model_route(
@@ -205,6 +223,20 @@ pub fn validate_expert_model_route(
     route: &serde_json::Value,
 ) -> Result<(), String> {
     use sha2::{Digest, Sha256};
+    if let Some(executor) = defaults.expert_executor() {
+        let backend = executor.backend.id();
+        let expected = serde_json::json!({
+            "kind": "external", "backend": backend, "model": executor.model, "provider": executor.model_provider
+        });
+        if declaration.runtime != "external"
+            || declaration.provider != backend
+            || declaration.model_name != executor.model.as_deref().unwrap_or(backend)
+            || route != &expected
+        {
+            return Err("expert_message_external_executor_changed".into());
+        }
+        return Ok(());
+    }
     match route.get("kind").and_then(|v| v.as_str()) {
         Some("native") => {
             let reference = route.get("profile_ref").filter(|v| !v.is_null());
@@ -267,4 +299,54 @@ pub fn validate_expert_model_route(
         _ => return Err("expert_message_unsupported_declared_transport".into()),
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod executor_tests {
+    use super::*;
+    use serde_json::{json, Value};
+
+    #[test]
+    fn pins_native_variant_and_rejects_transport_substitution() {
+        let defaults = AgentDefaults::try_from(json!({
+            "expertExecutor": {"backend": "antigravity", "model": "test-variant"}
+        }))
+        .unwrap();
+        let participant = ExpertParticipantReference {
+            participant_id: "participant".into(),
+            agent_id: AgentId::try_from("reviewer".to_owned()).unwrap(),
+            agent_revision: 3,
+            context_conversation_id: "child".into(),
+        };
+        let declaration =
+            expert_executor_declaration(&participant, &defaults.expert_executor().unwrap());
+        assert_eq!(declaration.profile_revision, 3);
+        let route = json!({"kind":"external","backend":"antigravity","model":"test-variant","provider":null});
+        validate_expert_model_route(&declaration, &Value::Null, &defaults, &route).unwrap();
+        for (key, value) in [
+            ("kind", "http"),
+            ("backend", "codex"),
+            ("model", "other"),
+            ("provider", "inherited"),
+        ] {
+            let mut changed = route.clone();
+            changed[key] = json!(value);
+            assert!(
+                validate_expert_model_route(&declaration, &Value::Null, &defaults, &changed)
+                    .is_err()
+            );
+        }
+        assert!(AgentDefaults::try_from(json!({
+            "expertExecutor":{"backend":"antigravity"}, "expertReasoningEffort":"high"
+        })).is_err());
+        assert!(AgentDefaults::try_from(json!({"expertExecutor":{"backend":"nola"}})).is_err());
+        assert!(AgentDefaults::try_from(
+            json!({"expertExecutor":{"backend":"antigravity","api_key":"fake"}})
+        )
+        .is_err());
+        assert!(AgentDefaults::try_from(json!({}))
+            .unwrap()
+            .expert_executor()
+            .is_none());
+    }
 }

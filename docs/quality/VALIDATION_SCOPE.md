@@ -223,3 +223,17 @@ Web 生成路线共 236 次请求，234 次成功，两次真实上游传输错�
 ## 尚未覆盖
 
 Mac/iOS 原生同等 200 步远端任务、Windows 系统运行、物理手机后台、双设备 Wi-Fi/Bonjour/防火墙/网络切换，以及全部 provider、语言、字号、CLI 图片粘贴/权限流程，均不因上述结果关闭。[宿主机合同](../design/shared/HOST_CONNECTION_WORKFLOW.md)和[版本策略](../architecture/总体设计/VERSION_COMPATIBILITY.md)继续适用。
+
+## GitHub Skill 安装验收
+
+用隔离数据库和公开的 `Yuan1z0825/nature-skills` 验证。首次安装前检查目标不存在，安装后查设置中的启用状态和固定提交。新会话须调用已安装的 Skill，并读出 `nature-shared/core/terminology-ledger.md` 的内容。
+
+| 入口 | 复跑方式 |
+| --- | --- |
+| CLI | `python3 scripts/test_real_github_skill_install.py --entry name` 或 `--entry url`，覆盖启用、禁用、设置编辑和跨会话读取。 |
+| Web | 同一脚本加 `--entry web`，由 Chromium 在聊天中提交、审阅安装许可，并在第二个会话验证引文。 |
+| macOS | 设置 `NOLA_MAC_REAL_ONLY_TESTING=NolaMacTests/MacAgentCapabilityEndToEndTests/testRealMacChatInstallsGitHubSkillAndUsesEditedPackageInFreshConversation` 后运行 `scripts/run_real_mac_xctests.sh`。新会话还须读出用户加入说明的随机标记。 |
+| iOS | `python3 scripts/test_real_ios_github_skills.py`，需要已构建的 Host、已配置的模型和可用 iPhone 模拟器。脚本记录本机与配对 Host 的 XCTest 结果，并单独运行设置页 XCUITest。 |
+| Android 本机 | `python3 scripts/test_real_android_github_skill.py --serial <模拟器> --user <隔离用户>`，通过原生界面按名称搜索、单次批准安装、在第二个会话读取资源，并打开设置页查看来源。 |
+| Android 配对 Host | `python3 scripts/test_real_android_remote_long_task.py --serial <模拟器> --avd <AVD> --user <隔离用户> --github-skill`。独立核对 Host 写入成功、手机上的 Skill 记录和文件清单保持一致。 |
+| Windows | `npm --prefix apps/windows test` 验证桌面壳与 Web Host 集成。安装包与 WebView2 的系统级操作需要 Windows 测试机。 |

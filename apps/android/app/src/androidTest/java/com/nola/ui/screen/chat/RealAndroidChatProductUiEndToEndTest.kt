@@ -84,15 +84,19 @@ class RealAndroidChatProductUiEndToEndTest {
     }
 
     // Exercise the actual once-only UI approval; never blanket-authorize unrelated tools.
-    private fun approveVisibleRenderUiIfRequested(scenario: ActivityScenario<MainActivity>) {
+    private fun approveVisibleToolOnce(
+        scenario: ActivityScenario<MainActivity>,
+        tool: String,
+        beforeClick: (() -> Unit)? = null,
+    ): Boolean {
         val context = InstrumentationRegistry.getInstrumentation().targetContext
-        val resource = com.nola.ui.components.hostToolDisplayNameStringRes("render_ui")
+        val resource = com.nola.ui.components.hostToolDisplayNameStringRes(tool)
         val displayName = resource?.let(context::getString)
-            ?: context.getString(R.string.chat_host_tool_name_unknown_format, "render_ui")
+            ?: context.getString(R.string.chat_host_tool_name_unknown_format, tool)
         val title = context.getString(R.string.permission_required_title, displayName)
         val permissionTitle = composeRule.onAllNodesWithText(title, useUnmergedTree = true)
             .fetchSemanticsNodes().isNotEmpty()
-        if (!permissionTitle) return
+        if (!permissionTitle) return false
         var imeVisible = false
         scenario.onActivity { activity ->
             imeVisible = androidx.core.view.ViewCompat.getRootWindowInsets(activity.window.decorView)
@@ -106,7 +110,116 @@ class RealAndroidChatProductUiEndToEndTest {
                     ?.startsWith("permission.allow-once.") == true
             }, useUnmergedTree = true,
         )
-        if (allow.fetchSemanticsNodes().size == 1) allow[0].performProductScrollTo().performClick()
+        if (allow.fetchSemanticsNodes().size != 1) return false
+        allow[0].performProductScrollTo()
+        beforeClick?.invoke()
+        allow[0].performClick()
+        return true
+    }
+
+    @Test
+    fun installsGithubSkillOnPhoneAndReadsResourceInNewChat() {
+        val instrumentation = InstrumentationRegistry.getInstrumentation()
+        val context = instrumentation.targetContext
+        requireIsolatedProductTestUser(context)
+        val fixture = JSONObject(File(context.filesDir, "nola-real-llm-e2e.json").readText())
+        val model = fixture.getString("model")
+        val secure = SecureTokenStore(context)
+        val preferences = PreferenceDataStore(context, secure)
+        val skill = "nature-paper-card"
+        AndroidApplicationRuntime(context).use { app ->
+            runBlocking {
+                preferences.setOnboardingCompleted()
+                preferences.setAgentModeEnabled(true)
+                preferences.setAgentPermissionMode(com.nola.core.AndroidAgentPermissionMode.Cautious)
+                applyRealModelFixture(context, app, fixture)
+            }
+            check(app.skillEditor(skill) == null) { "Installation requires a fresh isolated app store" }
+            ActivityScenario.launch(MainActivity::class.java).use { scenario ->
+                awaitIsolatedWindow(scenario)
+                composeRule.onNodeWithContentDescription(context.getString(R.string.tab_settings)).performProductClick()
+                composeRule.onNodeWithText(context.getString(R.string.models_title)).performProductClick()
+                val modelTag = MODEL_ROW_TEST_TAG_PREFIX + model
+                composeRule.waitUntil(20_000) { composeRule.onAllNodesWithTag(modelTag).fetchSemanticsNodes().isNotEmpty() }
+                confirmRealProviderCapabilities(model)
+                val use = composeRule.onAllNodes(androidx.compose.ui.test.hasText(context.getString(R.string.models_use)) and
+                    androidx.compose.ui.test.hasAnyAncestor(hasTestTag(modelTag)), useUnmergedTree = true)
+                if (use.fetchSemanticsNodes().isNotEmpty()) use[0].performProductScrollTo().performProductClick()
+                composeRule.onNodeWithContentDescription(context.getString(R.string.tab_chat)).performProductClick()
+
+                fun sendNewChat(prompt: String) {
+                    composeRule.onNodeWithTag("chat.conversations.new").performProductClick()
+                    composeRule.waitUntil(20_000) { composeRule.onAllNodes(hasTestTag("chat.composer.input") and isEnabled()).fetchSemanticsNodes().isNotEmpty() }
+                    composeRule.onNodeWithTag("chat.composer.input").performProductInput(prompt)
+                    val send = androidx.compose.ui.test.hasContentDescription(context.getString(R.string.chat_send))
+                    composeRule.waitUntil(20_000) {
+                        composeRule.onAllNodes(send and isEnabled()).fetchSemanticsNodes().isNotEmpty()
+                    }
+                    composeRule.onNodeWithTag("chat.composer.input").assertTextEquals(prompt)
+                    composeRule.onNode(send).performProductClick()
+                }
+
+                fun waitForFinishedReply() {
+                    composeRule.waitUntil(90_000) {
+                        composeRule.onAllNodesWithTag("chat.composer", useUnmergedTree = true).fetchSemanticsNodes()
+                            .any { it.config.getOrNull(ChatComposerGenerationActiveKey) == false }
+                    }
+                }
+
+                fun capture(name: String) = File(context.filesDir, "github-skill-$name.png").outputStream().use { output ->
+                    instrumentation.uiAutomation.takeScreenshot().compress(android.graphics.Bitmap.CompressFormat.PNG, 100, output)
+                }
+
+                sendNewChat("请在 GitHub 按名字查找 nature-skills，然后把 Yuan1z0825 那个仓库中的 nature-paper-card 安装并启用在这台手机上，供后续聊天使用。")
+                composeRule.waitUntil(180_000) {
+                    check(app.skillEditor(skill) == null) { "Installed in cautious mode before approval" }
+                    approveVisibleToolOnce(scenario, "device_github_skill_install") { capture("approval") }
+                }
+                composeRule.waitUntil(180_000) {
+                    // A collection URL can yield candidates before the selected directory gets its own approval.
+                    approveVisibleToolOnce(scenario, "device_github_skill_install")
+                    app.skillEditor(skill)?.record?.get("enabled") == JsonPrimitive(true)
+                }
+                waitForFinishedReply()
+                capture("installed")
+                composeRule.onNodeWithTag("chat.conversation.back").performProductClick()
+                sendNewChat("请实际调用已安装的 nature-paper-card，然后读取它的 ../nature-shared/core/terminology-ledger.md 文件，引用文件的英文标题。")
+                composeRule.waitUntil(180_000) {
+                    composeRule.onAllNodesWithTag(CHAT_STREAMING_MARKDOWN_TEST_TAG, useUnmergedTree = true).fetchSemanticsNodes()
+                        .any { it.config.getOrNull(ChatStreamingMarkdownSourceKey)?.contains("Terminology Ledger", ignoreCase=true) == true }
+                }
+                waitForFinishedReply()
+                capture("used")
+                composeRule.onNodeWithTag("chat.conversation.back").performProductClick()
+                composeRule.onNodeWithContentDescription(context.getString(R.string.tab_settings)).performProductClick()
+                val entryLabel = context.getString(R.string.settings_capabilities)
+                try {
+                    // The tab restores the model settings page visited before the chat.
+                    composeRule.waitUntil(15_000) {
+                        composeRule.onAllNodesWithText(entryLabel, useUnmergedTree = true).fetchSemanticsNodes().isNotEmpty() ||
+                            composeRule.onAllNodesWithTag(modelTag, useUnmergedTree = true).fetchSemanticsNodes().isNotEmpty()
+                    }
+                    if (composeRule.onAllNodesWithText(entryLabel, useUnmergedTree = true).fetchSemanticsNodes().isEmpty()) {
+                        composeRule.onNodeWithContentDescription(context.getString(R.string.common_back))
+                            .performProductScrollTo().performProductClick()
+                    }
+                    composeRule.waitUntil(15_000) {
+                        composeRule.onAllNodesWithText(entryLabel, useUnmergedTree = true).fetchSemanticsNodes().isNotEmpty()
+                    }
+                    composeRule.onNodeWithText(entryLabel, useUnmergedTree = true).performProductScrollTo().performProductClick()
+                } catch (failure: Throwable) {
+                    capture("settings-navigation")
+                    File(context.filesDir, "github-skill-settings-navigation.txt")
+                        .writeText(composeRule.onRoot(useUnmergedTree = true).printToString())
+                    throw failure
+                }
+                composeRule.waitUntil(15_000) { composeRule.onAllNodesWithText(skill).fetchSemanticsNodes().isNotEmpty() }
+                composeRule.onNodeWithText(skill).performProductScrollTo().performProductClick()
+                composeRule.onNodeWithTag("skill.editor.github").assertIsDisplayed()
+                capture("settings")
+                check(app.skillEditor(skill)?.record?.get("instructions_ref")?.jsonPrimitive?.content?.startsWith("nola://github-skills/") == true)
+            }
+        }
     }
 
     @Test
@@ -199,7 +312,7 @@ class RealAndroidChatProductUiEndToEndTest {
             val deadline = SystemClock.elapsedRealtime() + 180_000
             var finalSource = ""
             while (SystemClock.elapsedRealtime() < deadline) {
-                approveVisibleRenderUiIfRequested(scenario)
+                approveVisibleToolOnce(scenario, "render_ui")
                 composeRule.mainClock.advanceTimeBy(64)
                 composeRule.waitForIdle()
                 val streamingNodes = composeRule

@@ -126,7 +126,9 @@ class IntelligenceViewModel @Inject constructor(
             val record = snapshot.record
             onLoaded(skill.copy(
                 name = record.getValue("display_name").jsonPrimitive.content,
-                description = record["description"]?.jsonPrimitive?.content ?: skill.description,
+                description = record.getValue("summary").jsonPrimitive.content,
+                canonicalSkillRecord = record,
+                canonicalRevision = snapshot.revision,
                 content = record.getValue("instructions_text").jsonPrimitive.content,
                 enabled = record.getValue("enabled").jsonPrimitive.content.toBooleanStrict(),
             ), snapshot)

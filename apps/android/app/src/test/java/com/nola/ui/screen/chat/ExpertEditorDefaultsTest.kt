@@ -59,4 +59,13 @@ class ExpertEditorDefaultsTest {
             mergeExpertEditorDefaults(original, false, null, false, null, reasoningEffort = "balanced")
         }
     }
+    @Test fun executorVariantsKeepProviderAndPreserveModelDefaults() {
+        val original = buildJsonObject { put("modelSelectionID", "old") }
+        val variant = com.nola.data.remote.dto.ExecutionBackendModelDto("x", "X", "p")
+        val binding = expertExecutorBinding("codex", variant)
+        val updated = mergeExpertEditorDefaults(original, false, null, false, null, changeExecutor = true, executor = binding)
+        assertEquals(JsonPrimitive("p"), (updated["expertExecutor"] as JsonObject)["model_provider"])
+        assertEquals(JsonPrimitive("open_code"), expertExecutorBinding("opencode")["backend"])
+        assertEquals(original, mergeExpertEditorDefaults(updated, false, null, false, null, changeExecutor = true))
+    }
 }

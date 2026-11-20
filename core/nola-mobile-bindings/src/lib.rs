@@ -23,6 +23,8 @@ pub use child_pump::*;
 mod intelligence;
 mod mcp_host;
 pub use mcp_host::{nola_core_mobile_mcp_host,nola_core_mobile_mcp_retain};
+mod github_skill;
+pub use github_skill::nola_mobile_github_skill_package_json;
 mod software_update;
 pub use software_update::nola_core_software_update_json;
 mod projection;

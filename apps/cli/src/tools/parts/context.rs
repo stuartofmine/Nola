@@ -2154,6 +2154,7 @@ fn skill_invoke(args: &Map<String, Value>, ctx: &ToolContext) -> ToolOutcome {
         .ok()
         .and_then(|content| serde_json::from_str::<Value>(&content).ok())
         .unwrap_or(Value::Null);
+    let base_directory = crate::github_skills::resource_base(&base_directory, &manifest);
     let version = manifest
         .get("version")
         .and_then(Value::as_str)

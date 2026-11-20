@@ -1065,7 +1065,7 @@ class DeviceAgentCoordinator internal constructor(
             )
         }
         val call = androidAgentHostCallRequest(payload, allowed.capability)
-        val result = hostExecutor.execute(call, toolPlan)
+        val result = hostExecutor.execute(call, toolPlan, state.activatedPackageRefs)
         if (result.isError) {
             state.cancellationEvidence.outcomeUnknown(request)
         } else {
@@ -1457,7 +1457,8 @@ class DeviceAgentCoordinator internal constructor(
             title = tool.toolId,
             route = "tool",
             exposure = "visible",
-            permissionDomain = tool.capability.takeUnless { tool.permission == "none" },
+            permissionDomain = if (tool.toolId == "device_github_skill_install") tool.toolId
+                else tool.capability.takeUnless { tool.permission == "none" },
             inputSchema = inputSchema,
             streaming = false,
             argumentStreaming = true,
@@ -1748,6 +1749,7 @@ class DeviceAgentCoordinator internal constructor(
         val executionMode: String,
         val hostId: String,
     ) {
+        val activatedPackageRefs = mutableSetOf<String>()
         val hostJournal = DeviceHostExactlyOnceCoordinator(sessionId, hostId)
         val permissionRequests = mutableMapOf<String, AndroidAgentPermissionRequest>()
         val cancellationEvidence = AndroidCancellationEvidence()

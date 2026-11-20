@@ -22,6 +22,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.semantics.SemanticsActions
 import androidx.compose.ui.semantics.getOrNull
+import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.hasScrollToNodeAction
 import androidx.compose.ui.test.hasText
 import androidx.compose.ui.test.isDialog
@@ -413,9 +414,37 @@ class BottomSheetPresentationContractUiTest {
         }.getOrDefault(emptyList())
     }
 
-    private class FakeExpertManagementDataSource : ExpertManagementDataSource {
+    @Test fun hostExpertChoosesExecutorVariantAndReopensSavedDefinition() {
+        val fixture = FakeExpertManagementDataSource(hostExecutor = true)
+        compose.setContent { NolaTheme { ExpertManagementPanel(ChatUiState(), fixture) {} } }
+        compose.waitUntil(10_000) { compose.onAllNodesWithText("Research Specialist").fetchSemanticsNodes().isNotEmpty() }
+        compose.onNodeWithText("Research Specialist").performClick()
+        compose.onNodeWithTag("expert.editor.executor").performScrollTo().performClick()
+        compose.onNodeWithText("Antigravity").performClick()
+        compose.onNodeWithTag("expert.editor.executor.model").performScrollTo().performClick()
+        compose.onNodeWithText("Gemini · Low").performClick()
+        compose.onNodeWithTag("expert.editor.save").performScrollTo().performClick()
+        compose.waitUntil(5_000) { fixture.saved != null }
+        assertEquals("""{"backend":"antigravity","model":"gemini-variant-low"}""", fixture.saved?.defaults?.get("expertExecutor").toString())
+        compose.onNodeWithText("Research Specialist").performClick()
+        compose.onNodeWithTag("expert.editor.executor.model").performScrollTo()
+        compose.onNodeWithText("Gemini · Low", substring = true).assertExists()
+        val instrumentation = androidx.test.platform.app.InstrumentationRegistry.getInstrumentation()
+        instrumentation.uiAutomation.waitForIdle(150, 2500)
+        java.io.File(instrumentation.targetContext.filesDir, "expert-executor-variant.png").outputStream().use {
+            instrumentation.uiAutomation.takeScreenshot().compress(android.graphics.Bitmap.CompressFormat.PNG, 100, it)
+        }
+    }
+
+    private class FakeExpertManagementDataSource(private val hostExecutor: Boolean = false) : ExpertManagementDataSource {
+        @Volatile var saved: PersistentAgent? = null
         override suspend fun expertEditorScope() = ChatViewModel.ExpertEditorScope(
-            remote = false,
+            remote = hostExecutor,
+            executors = if (hostExecutor) listOf(com.nola.data.remote.dto.ExecutionBackendDto(
+                id = "antigravity", displayName = "Antigravity", availability = "available",
+                capabilities = com.nola.data.remote.dto.ExecutionBackendCapabilitiesDto(true, true, true, true, true, true),
+                models = listOf(com.nola.data.remote.dto.ExecutionBackendModelDto("gemini-variant-low", "Gemini · Low")),
+            )) else emptyList(),
             models = emptyList(),
             defaultProfileId = null,
             efforts = emptyMap(),
@@ -435,8 +464,8 @@ class BottomSheetPresentationContractUiTest {
             ),
         )
 
-        override suspend fun roleTemplates(conversationId: String?, storeEpoch: String?): List<ExpertRoleTemplate> =
-            emptyList()
+        override suspend fun roleTemplates(conversationId: String?, storeEpoch: String?) =
+            com.nola.data.repository.ExpertRoleCatalog(1, com.nola.data.repository.ExpertRoleFeatures(true, true, true, externalExpertExecutors = hostExecutor), emptyList())
 
         override suspend fun readableExpertTemplates() = ReadableExpertTemplateCatalog(
             revision = 1L,
@@ -462,7 +491,12 @@ class BottomSheetPresentationContractUiTest {
             name: String,
             description: String,
             snapshot: AgentDirectory,
-        ): AgentDirectory = snapshot
+        ): AgentDirectory {
+            if (!hostExecutor) return snapshot
+            val updated = original.copy(name = name, description = description, revision = original.revision + 1)
+            saved = updated
+            return AgentDirectory((snapshot.revision ?: 0) + 1, snapshot.agents.map { if (it.id == updated.id) updated else it })
+        }
 
         override fun refreshConversationExperts(restoreSelection: Boolean) = Unit
     }

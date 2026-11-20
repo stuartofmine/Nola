@@ -402,6 +402,20 @@ fn mobile_agent_settings_response(request: &Request) -> Response<Box<dyn Read + 
             )
         }
     };
+    // Freezing the default model needs the source identity and model revisions.
+    // Catalog reads around admission must not launch installed coding agents.
+    if query_param(request.url(), "view").as_deref() == Some("models") {
+        if read_epoch().ok().as_ref() != Some(&source_store_epoch) {
+            return mobile_encrypted_json_response(StatusCode(409), json!({"code":"room_source_epoch_changed"}), &token);
+        }
+        return mobile_encrypted_json_response(StatusCode(200), json!({
+            "source_store_epoch": source_store_epoch,
+            "host_identity": {"id": host_identity(), "permission_protocol_version": HOST_PERMISSION_PROTOCOL_VERSION},
+            "model_profiles": model_profiles,
+            "default_chat_model_resolution": default_chat_model_resolution,
+            "default_chat_model_revision": default_chat_model_revision,
+        }), &token);
+    }
     let browser_status = native_status_value(NativeBridgeKind::Browser);
     let browser_tools = native_browser_tool_names_from_status(&browser_status);
     let messaging_worker = crate::messaging_channel_worker::config_projection()
@@ -2696,20 +2710,14 @@ fn chat_agent_stream_response_body_with_room_retry(
             "error":"model_intent is only supported by the Nola execution backend"}),
         );
     }
-    let execution_backend_catalog = crate::external_executor::discover_execution_backends();
-    let execution_backend_available = execution_backend_catalog.iter().any(|backend| {
-        backend.id == execution_backend
-            && backend.availability
-                == nola_domain::execution_backend::ExecutionBackendAvailability::Available
-    });
-    if !execution_backend_available {
+    if !crate::external_executor::execution_backend_available(&execution_backend) {
         return json_response(
             StatusCode(422),
             json!({
                 "error": format!("execution backend is unavailable: {execution_backend}"),
                 "code": "execution_backend_unavailable",
                 "execution_backend": execution_backend,
-                "execution_backends": execution_backend_catalog,
+                "execution_backends": crate::external_executor::discover_execution_backends(),
             }),
         );
     }
@@ -3264,11 +3272,7 @@ fn chat_agent_stream_response_body_with_room_retry(
             // CLI and therefore has no transport identity of its own. Mobile
             // scopes it here before forwarding so native clients never guess
             // which conversation owns the measurement.
-            if event_type.as_deref() == Some("context_usage") {
-                event["protocol_version"] = Value::from(2);
-                event["session_id"] = Value::String(usage_conversation_id.clone());
-                event["source_host_id"] = Value::String(event_source_host_id.clone());
-            }
+            bind_mobile_context_usage(&mut event, &usage_conversation_id, &event_source_host_id);
             // Mobile is a canonical Core transport. Presenter-only events are
             // intentionally not part of this protocol and must never be
             // converted into user-visible failures.
@@ -3524,6 +3528,14 @@ fn chat_agent_stream_response_body_with_room_retry(
     sse_response(rx)
 }
 
+fn bind_mobile_context_usage(event: &mut Value, conversation_id: &str, host_id: &str) {
+    if event["type"] == "context_usage" {
+        event["protocol_version"] = json!(1);
+        event["session_id"] = json!(conversation_id);
+        event["source_host_id"] = json!(host_id);
+    }
+}
+
 fn web_event_is_core_projection(event: &Value) -> bool {
     matches!(
         event.get("type").and_then(Value::as_str),
@@ -3533,6 +3545,7 @@ fn web_event_is_core_projection(event: &Value) -> bool {
                 | "core_capabilities_activated"
                 | "core_permission_projection_updated"
                 | "core_memory_runtime_projection_updated"
+                | "external_session_started"
                 | "assistant_journal_committed_v1"
                 | "assistant_run_terminal_committed_v1"
                 | "context_usage"
@@ -4037,6 +4050,13 @@ fn host_permission_safe_review_text(request: &ToolRequest) -> Option<String> {
         Some(text.to_string())
     }
     match request.name.as_str() {
+        "git_worktree_create" => {
+            let root = safe_target(request.args.get("root")?)?;
+            let destination = safe_target(request.args.get("destination")?)?;
+            let head = safe_target(request.args.get("expected_head")?)?;
+            let common = safe_target(request.args.get("expected_common_directory")?)?;
+            Some(format!("Create Git worktree\nRepository: {root}\nCommon directory: {common}\nCommit: {head}\nDestination: {destination}"))
+        }
         "code_mode_wait" => {
             let input: nola_domain::code_mode::CodeCellWaitRequest =
                 serde_json::from_value(Value::Object(request.args.clone())).ok()?;

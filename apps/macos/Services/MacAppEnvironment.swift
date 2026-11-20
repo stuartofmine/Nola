@@ -223,6 +223,7 @@ nonisolated struct MacAppEnvironment: Sendable {
     private func isolatedVariables(projectURL: URL) -> [String: String] {
         [
             "HOME": runtimeHome.path,
+            "NOLA_HOME": runtimeHome.path,
             "XDG_CONFIG_HOME": supportRoot.appendingPathComponent("Configuration", isDirectory: true).path,
             "XDG_DATA_HOME": supportRoot.appendingPathComponent("Data", isDirectory: true).path,
             "XDG_CACHE_HOME": cacheRoot.path,

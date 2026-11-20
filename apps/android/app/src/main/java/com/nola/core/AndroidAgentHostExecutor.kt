@@ -93,6 +93,7 @@ class AndroidAgentHostExecutor(
     suspend fun execute(
         request: AndroidAgentHostCallRequest,
         toolPlan: AgentCoreAndroidToolPlan,
+        activatedPackageRefs: MutableSet<String> = mutableSetOf(),
     ): AndroidAgentHostCallResult =
         runCatching {
             requireAllowedByPlan(request, toolPlan)
@@ -100,7 +101,9 @@ class AndroidAgentHostExecutor(
                 "Host tools cannot execute in the Android device executor"
             }
             when {
-                request.toolName == "skill_invoke" -> invokeSkill(request)
+                request.toolName in setOf("device_github_skill_find", "device_github_skill_install", "device_skill_read_resource") ->
+                    githubSkill(request, activatedPackageRefs)
+                request.toolName == "skill_invoke" -> invokeSkill(request, activatedPackageRefs)
                 request.toolName == "memory_search" -> AndroidAgentHostCallResult(
                     callId = request.callId,
                     output = searchMemory(request),
@@ -238,18 +241,79 @@ class AndroidAgentHostExecutor(
         }
     }
 
+    private suspend fun packageRequest(operation: String, vararg arguments: Pair<String, String>): JsonObject =
+        withContext(Dispatchers.IO) {
+            val body = buildJsonObject {
+                put("operation", operation)
+                arguments.forEach { (key, value) -> put(key, value) }
+            }
+            val result = requireNotNull(AgentCoreNative.nativeGithubSkillPackage(
+                memoryProfileDataStore.githubSkillPackages.absolutePath.encodeToByteArray(),
+                body.toString().encodeToByteArray(),
+            )) { "The GitHub Skill package service is unavailable" }
+            val response = Json.parseToJsonElement(result.decodeToString()).jsonObject
+            check(response["ok"]?.jsonPrimitive?.content == "true") {
+                response["error"]?.jsonPrimitive?.contentOrNull ?: "GitHub Skill package request failed"
+            }
+            response.getValue("value").jsonObject
+        }
+
+    private suspend fun enabledSkill(id: String): com.nola.domain.model.UploadedContent {
+        val principal = memoryProfileDataStore.getOrCreateResourcePrincipalId()
+        val skills = memoryProfileDataStore.skills().filter {
+            it.enabled && it.content.isNotBlank() && AndroidManagedResourceAccess.canReadContent(it, principal)
+        }
+        return skills.singleOrNull { it.resourceId == id } ?: skills.singleOrNull { it.name.trim() == id }
+            ?: error("Unknown, disabled, or ambiguous Skill: $id")
+    }
+
+    private suspend fun githubSkill(
+        request: AndroidAgentHostCallRequest,
+        activatedPackageRefs: Set<String>,
+    ): AndroidAgentHostCallResult {
+        fun arg(key: String): String = requireNotNull(request.arguments.text(key)?.takeIf { it.isNotBlank() }) {
+            "Missing $key"
+        }
+        val result = when (request.toolName) {
+            "device_github_skill_find" -> packageRequest("find", "query" to arg("query"))
+            "device_github_skill_install" -> {
+                val prepared = packageRequest("prepare", "url" to arg("url"))
+                if (prepared["status"]?.jsonPrimitive?.content == "prepared") {
+                    memoryProfileDataStore.registerGithubSkill(prepared)
+                    buildJsonObject {
+                        put("status", "installed")
+                        put("id", prepared.getValue("id"))
+                        put("enabled", true)
+                        put("source_url", prepared.getValue("source_url"))
+                    }
+                } else prepared
+            }
+            else -> {
+                val skill = enabledSkill(arg("skill"))
+                val reference = requireNotNull(skill.canonicalSkillRecord?.get("instructions_ref")?.jsonPrimitive?.content)
+                require(reference.startsWith("nola://github-skills/")) { "This Skill has no installed GitHub package" }
+                require(reference in activatedPackageRefs) { "Invoke this Skill before reading its files" }
+                val result = packageRequest("read", "instructions_ref" to reference, "path" to arg("path"))
+                require(enabledSkill(arg("skill")).canonicalSkillRecord?.get("instructions_ref") == JsonPrimitive(reference)) {
+                    "Skill changed while reading the package"
+                }
+                result
+            }
+        }
+        return AndroidAgentHostCallResult(request.callId, result, false)
+    }
+
     private suspend fun invokeSkill(
         request: AndroidAgentHostCallRequest,
+        activatedPackageRefs: MutableSet<String>,
     ): AndroidAgentHostCallResult {
         val skillId = request.arguments.text("skill")?.trim().orEmpty()
         require(skillId.isNotEmpty()) { "A Skill invocation requires an exact advertised name" }
-        val resourcePrincipalId = memoryProfileDataStore.getOrCreateResourcePrincipalId()
-        val matches = memoryProfileDataStore.getSnapshot().uploadedSkills.filter {
-            it.enabled && it.name.trim() == skillId && it.content.isNotBlank() &&
-                AndroidManagedResourceAccess.canReadContent(it, resourcePrincipalId)
+        val matched = enabledSkill(skillId)
+        val reference = matched.canonicalSkillRecord?.get("instructions_ref")?.jsonPrimitive?.contentOrNull
+        val packageInfo = reference?.takeIf { it.startsWith("nola://github-skills/") }?.let {
+            packageRequest("resolve", "instructions_ref" to it)
         }
-        require(matches.size == 1) { "Unknown, disabled, or ambiguous Skill id: $skillId" }
-        val matched = matches.single()
         val instructions = matched.content
         val bytes = instructions.encodeToByteArray()
         require(bytes.size <= MAX_SKILL_BYTES) { "Skill instructions exceed the Android size limit" }
@@ -268,8 +332,15 @@ class AndroidAgentHostExecutor(
             put("display_name", matched.name)
             put("summary", matched.description)
             put("version", version)
-            put("instructions_ref", "skill://$encodedId/$encodedVersion/SKILL.md")
-            put("base_directory", "android://skills/$encodedId")
+            put("instructions_ref", if (packageInfo == null) "skill://$encodedId/$encodedVersion/SKILL.md" else reference)
+            put("base_directory", packageInfo?.get("base_directory") ?: JsonPrimitive("android://skills/$encodedId"))
+            if (packageInfo != null) {
+                put("_nola_execution_context", buildJsonObject {
+                    put("resource_reader", "device_skill_read_resource")
+                    put("skill", canonicalId)
+                    put("path_base", "Pass paths relative to this Skill directory, including shared files referenced by its manifest.")
+                })
+            }
             put("mode", "inline")
             put("budget", buildJsonObject {
                 put("max_model_turns", 8)
@@ -286,6 +357,12 @@ class AndroidAgentHostExecutor(
             }))
             put("validation_steps", JsonArray(matched.validationSteps.map(::JsonPrimitive)))
             put("activation", activation)
+        }
+        if (packageInfo != null) {
+            check(enabledSkill(skillId).canonicalSkillRecord?.get("instructions_ref") == JsonPrimitive(reference)) {
+                "Skill changed during activation"
+            }
+            activatedPackageRefs.add(requireNotNull(reference))
         }
         return AndroidAgentHostCallResult(
             callId = request.callId,

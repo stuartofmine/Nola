@@ -899,14 +899,7 @@ fn apply_execution_backend(
     backend: &str,
 ) -> Result<(), String> {
     let backend = backend.trim();
-    let available = crate::external_executor::discover_execution_backends()
-        .into_iter()
-        .any(|entry| {
-            entry.id == backend
-                && entry.availability
-                    == nola_domain::execution_backend::ExecutionBackendAvailability::Available
-        });
-    if !available {
+    if !crate::external_executor::execution_backend_available(backend) {
         return Err(format!("execution backend is unavailable: {backend}"));
     }
     conversation.execution_backend = backend.to_string();
@@ -1933,12 +1926,7 @@ fn merge_agent_settings(settings: &mut AgentSettings, value: Value) {
         settings.enable_local_dev_tools = value;
     }
     if let Some(value) = string_field(map, "execution_backend") {
-        let available = crate::external_executor::discover_execution_backends();
-        if available.iter().any(|backend| {
-            backend.id == value
-                && backend.availability
-                    == nola_domain::execution_backend::ExecutionBackendAvailability::Available
-        }) {
+        if crate::external_executor::execution_backend_available(&value) {
             settings.execution_backend = value;
         }
     }
@@ -3867,6 +3855,14 @@ mod tests {
     }
 
     #[test]
+    fn mobile_context_usage_uses_the_published_version_and_conversation_owner() {
+        let mut event = json!({"type": "context_usage", "used_tokens": 5});
+        crate::web::bind_mobile_context_usage(&mut event, "conversation", "host");
+        assert_eq!(event, json!({"protocol_version": 1, "type":"context_usage",
+            "session_id":"conversation", "source_host_id":"host", "used_tokens":5}));
+    }
+
+    #[test]
     fn web_sse_forwards_typed_core_projections_without_trace_wrappers() {
         for event_type in [
             "core_task_updated",
@@ -3876,6 +3872,7 @@ mod tests {
             "core_memory_runtime_projection_updated",
             "assistant_journal_committed_v1",
             "assistant_run_terminal_committed_v1",
+            "external_session_started",
             "context_usage",
         ] {
             assert!(crate::web::web_event_is_core_projection(

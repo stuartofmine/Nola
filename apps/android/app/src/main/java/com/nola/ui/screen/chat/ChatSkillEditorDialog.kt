@@ -10,6 +10,7 @@ import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
 import com.nola.R
+import com.nola.ui.components.GithubSkillSourceLink
 import com.nola.ui.components.DiscardChangesDialog
 import com.nola.domain.model.UploadedContent
 import kotlinx.coroutines.CancellationException
@@ -42,6 +43,7 @@ internal fun ChatSkillEditorDialog(
         title = { Text(stringResource(R.string.chat_skill_content)) },
         text = {
             Column(Modifier.fillMaxWidth().verticalScroll(rememberScrollState())) {
+                GithubSkillSourceLink(original)
                 OutlinedTextField(name, { name = it }, enabled = !saving, singleLine = true,
                     label = { Text(stringResource(R.string.chat_skill_name)) },
                     modifier = Modifier.fillMaxWidth().testTag("chat.skill.editor.name"))

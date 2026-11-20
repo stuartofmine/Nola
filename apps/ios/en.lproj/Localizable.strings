@@ -515,6 +515,9 @@
 "chat.host_tool.name.time" = "Read system time";
 "chat.host_tool.name.browser" = "Control browser";
 "chat.host_tool.name.computer" = "Control computer";
+"chat.host_tool.name.find_skill" = "Find a GitHub skill";
+"chat.host_tool.name.install_skill" = "Install and enable skill";
+"chat.host_tool.name.read_skill_resource" = "Read skill resource";
 "chat.host_tool.name.skill" = "Use skill";
 "chat.host_tool.name.mcp" = "Call MCP";
 "chat.host_tool.name.background" = "Background task";
@@ -3426,3 +3429,4 @@
 
 "chat.history.otherClientReadOnly" = "Read-only. To continue this conversation, open it in the client where it was created.";
 "chat.history.ambiguousIDs" = "Two conversations have identifiers that differ only in letter case. Open them in their original client.";
+"experts.executor.requiresHost" = "Connect to the host that runs this coding agent, then select the expert in a host conversation.";

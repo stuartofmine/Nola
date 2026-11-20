@@ -115,6 +115,7 @@ mod session;
 mod source_journal;
 #[cfg(any(feature = "terminal-ui", test))]
 mod terminal_journal_presentation;
+mod github_skills;
 mod skill_catalog_port;
 mod skill_runtime;
 mod store;

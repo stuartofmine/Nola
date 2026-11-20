@@ -16,3 +16,19 @@
 `web_search.limit` 决定返回和解析的结果数量。无可用正文证据的候选保留在完整诊断报告中，不提升为可引用的模型来源。
 
 `web_fetch` 在每次连接和重定向前校验网址与解析地址，并固定已校验的公网地址。系统 DNS 若仅返回 `198.18.0.0/15` Fake-IP 别名，会通过固定的 Google Public DNS HTTPS 接口查询真实地址，再执行相同的公网校验；不会直接连接 Fake-IP、内网、回环或元数据地址。该恢复查询仅发送域名，不发送网页路径、查询参数或凭据，并关闭 EDNS 客户端子网信息。设置 `NOLA_WEB_FAKE_IP_RECOVERY=0` 可关闭公共解析恢复；失败提示会指引为代理配置真实 IP 解析或改用已连接浏览器。
+
+## 从 GitHub 安装 Skill
+
+在对话中输入“帮我找到 Nature Skills 里做论文精读卡的 Skill，安装并启用”。也可以直接粘贴公开仓库、Skill 子目录或 `SKILL.md` 的 GitHub 链接。遇到含多个 Skill 的合集，可以指定用途或选择其中一个。安装完成后，新会话可以直接调用该 Skill，Web 设置里的 Skill 列表可以查看和切换启用状态。
+
+终端也支持以下操作。
+
+```shell
+nola skills find "nature skills"
+nola skills find https://github.com/Yuan1z0825/nature-skills
+nola skills install https://github.com/Yuan1z0825/nature-skills/tree/main/skills/nature-paper-card
+nola skills disable nature-paper-card
+nola skills enable nature-paper-card
+```
+
+安装器把选定目录和清单 `manifest.yaml` 的 `always_load` 引用文件固定到同一次 Git 提交，保留仓库里的相对位置。禁用后保留包内的脚本、模板和资料，再次启用即可恢复。安装发生在执行工具的 Nola Host 上。涉及额外软件依赖、凭据或 MCP 服务的 Skill，仍需分别配置这些资源。

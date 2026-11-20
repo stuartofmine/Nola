@@ -4819,8 +4819,12 @@ fn handle_interactive_slash_command(
                 }) else {
                     return Err(format!("Skill not found: {target}"));
                 };
+                let id = entry["id"].as_str().ok_or("Missing Skill ID")?.to_owned();
                 entry["enabled"] = json!(desired);
                 crate::skill_catalog_port::save_web_uploaded_skills(&baseline, &updated)?;
+                crate::builtin_skills::sync_registered_custom(
+                    &mut crate::application_port::CliApplicationPort::persistent_default()?, Some(&id),
+                )?;
                 terminal_notice!(
                     "  {} -> {}",
                     target,

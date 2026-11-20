@@ -441,7 +441,8 @@ pub(crate) fn builtin_permission_contract(name: &str, read_only: bool) -> Permis
         // These fixed-schema retrieval adapters do not accept an arbitrary
         // HTTP method, request body, upload or external-message operation.
         // A provider's search POST is still retrieval, not a sending grant.
-        "web_search" | "web_fetch" => PermissionOperationContract {risk:PermissionOperationRisk::OrdinaryRead, ..Default::default()},
+        "github_skill_install" => PermissionOperationContract {risk:PermissionOperationRisk::Overwrite, ..Default::default()},
+        "web_search" | "web_fetch" | "github_skill_find" => PermissionOperationContract {risk:PermissionOperationRisk::OrdinaryRead, ..Default::default()},
         // Controls declare state or ask the owner; neither grants authority to
         // execute a subsequent external operation.
         "request_user_input" | "goal_complete" | "skill_skip" | "sop_run_update" => PermissionOperationContract {risk:PermissionOperationRisk::OrdinaryRead, ..Default::default()},

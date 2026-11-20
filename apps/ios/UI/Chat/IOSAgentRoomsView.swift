@@ -744,6 +744,7 @@ private struct IOSAgentRoomLiveMessage: View {
 struct IOSChatExpertPicker: View {
     let agents: [IOSPersistentAgent]
     var allowsManagement = true
+    var remoteSource: ChatManager.ExpertRoomSource?
     var onManagementClosed: () -> Void = {}
     @Binding var selection: Set<String>
     var onMention: ((IOSPersistentAgent) -> Void)? = nil
@@ -816,7 +817,145 @@ struct IOSChatExpertPicker: View {
             .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
             .background(DesignTokens.backgroundColor.ignoresSafeArea())
             .presentationBackground(DesignTokens.backgroundColor)
-            .sheet(isPresented: $showingManagement, onDismiss: onManagementClosed) { IOSAgentRoomsView() }
+            .sheet(isPresented: $showingManagement, onDismiss: onManagementClosed) {
+                if let remoteSource { IOSHostExpertEditor(source: remoteSource) }
+                else { IOSAgentRoomsView() }
+            }
+    }
+}
+
+private struct IOSHostExpertEditor: View {
+    let source: ChatManager.ExpertRoomSource
+    @EnvironmentObject private var container: ServiceContainer
+    @Environment(\.dismiss) private var dismiss
+    @Environment(\.locale) private var locale
+    @State private var directory: IOSAgentDirectory?
+    @State private var catalog: [AppleExpertExecutorOption] = []
+    @State private var roles: [AppleExpertRoleTemplate] = []
+    @State private var selectedID = ""
+    @State private var createID = UUID().uuidString.lowercased()
+    @State private var name = ""
+    @State private var responsibilities = ""
+    @State private var draft = AppleExpertConfigurationDraft()
+    @State private var original: IOSPersistentAgent?
+    @State private var busy = false
+    @State private var error: String?
+
+    private var dirty: Bool {
+        guard let saved = try? AppleExpertConfigurationDraft(defaults: original?.defaults ?? .object([:])) else { return true }
+        return draft != saved || name != (original?.name ?? "") || responsibilities != (original?.description ?? "")
+    }
+
+    var body: some View {
+        NavigationStack {
+            Form {
+                if let error { Text(error).foregroundStyle(.red).accessibilityAddTraits(.isStaticText) }
+                if let directory {
+                    Picker("chat.experts.title", selection: Binding(get: { selectedID }, set: { id in
+                        do { try select(directory.agents.first { $0.id == id }) } catch { self.error = error.localizedDescription }
+                    })) {
+                        Text("room.create_agent").tag("")
+                        ForEach(directory.agents) { agent in Text(agent.name).tag(agent.id) }
+                    }.disabled(dirty)
+                    TextField("room.agent_name", text: $name)
+                    TextField("room.agent_description", text: $responsibilities, axis: .vertical)
+                    Picker("experts.template", selection: $draft.templateID) {
+                        Text("experts.conversationTemplate").tag("")
+                        ForEach(roles) { role in Text(role.localizedName(locale: locale)).tag(role.id) }
+                        if !draft.templateID.isEmpty, !roles.contains(where: { $0.id == draft.templateID }) {
+                            Text(verbatim: draft.templateID).tag(draft.templateID).disabled(true)
+                        }
+                    }
+                    AppleExpertExecutorControls(selected: $draft.executor, catalog: catalog,
+                        executorLabel: "chat.execution_unit.choose", modelLabel: "room.model", defaultLabel: "model.parameters.reasoning_tier.automatic")
+                    Button("experts.save") { Task { await save(using: directory) } }
+                        .disabled(!dirty || name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                        .accessibilityIdentifier("experts.save")
+                    if dirty { Button(L10n.cancel) { try? select(directory.agents.first { $0.id == selectedID }) } }
+                } else if error != nil {
+                    Button("scheduled_actions.run_detail.section.retry") { Task { await load() } }
+                } else { ProgressView() }
+            }.disabled(busy)
+            .navigationTitle("experts.manage")
+            .interactiveDismissDisabled(busy || dirty)
+            .toolbar { ToolbarItem(placement: .confirmationAction) {
+                Button("room.done") { dismiss() }.disabled(busy || dirty)
+            } }
+        }.task { await load() }
+    }
+
+    private func select(_ agent: IOSPersistentAgent?) throws {
+        let next = try AppleExpertConfigurationDraft(defaults: agent?.defaults ?? .object([:]))
+        if original?.id != agent?.id || agent == nil { createID = UUID().uuidString.lowercased() }
+        original = agent
+        selectedID = agent?.id ?? ""
+        name = agent?.name ?? ""
+        responsibilities = agent?.description ?? ""
+        draft = next
+    }
+
+    private func read<T: Decodable>(_ command: [String: AgentCoreJSONValue]) async throws -> T {
+        try checkSource()
+        let response = try await source.provider.expertRooms(command: .object(command), expectedEpoch: source.epoch)
+        try checkSource()
+        return try JSONDecoder().decode(T.self, from: JSONEncoder().encode(response.result))
+    }
+
+    private func checkSource() throws {
+        guard !Task.isCancelled, source.epoch != nil, source.owner == container.chatManager.currentConversationId,
+              try container.chatManager.matchesExpertRoomSource(source) else { throw IOSApplicationRuntimeError.invalidResponse }
+    }
+
+    private func load() async {
+        guard !busy else { return }
+        busy = true
+        defer { busy = false }
+        do {
+            let definitions: IOSAgentDirectory = try await read(["type": .string("directory")])
+            let templates: AppleExpertRoleTemplateCatalog = try await read(["type": .string("role_templates")])
+            let settings = try await source.provider.hostAgentSettings()
+            try checkSource()
+            catalog = settings.execution_backends.filter { templates.features.externalExpertExecutors && $0.id != "nola" }.map { option in
+                .init(id: option.id, name: option.display_name, available: option.availability == "available",
+                    models: (option.models ?? []).map { .init(id: $0.id, display_name: $0.display_name, provider_id: $0.provider_id) })
+            }
+            roles = templates.templates
+            directory = definitions
+            error = nil
+        } catch { self.error = error.localizedDescription }
+    }
+
+    private func save(using snapshot: IOSAgentDirectory) async {
+        guard !busy else { return }
+        busy = true
+        defer { busy = false }
+        do {
+            let id = original?.id ?? createID
+            let defaults = try draft.applying(to: original?.defaults ?? .object([:]))
+            let input: [String: AgentCoreJSONValue] = [
+                "id": .string(id), "name": .string(name.trimmingCharacters(in: .whitespacesAndNewlines)),
+                "description": .string(responsibilities), "defaults": defaults,
+                "availability": .string(original?.availability ?? "active"),
+                "expected_agent_revision": original.map { .signedInteger($0.revision) } ?? .null,
+                "expected_directory_revision": snapshot.revision.map { .signedInteger($0) } ?? .null,
+                "updated_at_ms": .signedInteger(Int64(Date().timeIntervalSince1970 * 1000))
+            ]
+            let updated: IOSAgentDirectory
+            do { updated = try await read(["type": .string("configure_agent"), "input": .object(input)]) }
+            catch {
+                let failure = error
+                let latest: IOSAgentDirectory = try await read(["type": .string("directory")])
+                directory = latest
+                guard let saved = latest.agents.first(where: { $0.id == id }), saved.revision > (original?.revision ?? 0),
+                      saved.name == name.trimmingCharacters(in: .whitespacesAndNewlines), saved.description == responsibilities,
+                      saved.defaults == defaults, saved.availability == (original?.availability ?? "active") else { throw failure }
+                updated = latest
+            }
+            guard let saved = updated.agents.first(where: { $0.id == id }) else { throw IOSApplicationRuntimeError.invalidResponse }
+            directory = updated
+            try select(saved)
+            error = nil
+        } catch { self.error = error.localizedDescription }
     }
 }
 

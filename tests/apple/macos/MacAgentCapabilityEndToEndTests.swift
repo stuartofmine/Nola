@@ -908,6 +908,53 @@ final class MacAgentCapabilityEndToEndTests: XCTestCase {
         XCTAssertEqual(recoveryTerminal.result.value.kind, .answered)
     }
 
+    func testRealMacChatInstallsGitHubSkillAndUsesEditedPackageInFreshConversation() async throws {
+        let env = ProcessInfo.processInfo.environment
+        guard env["NOLA_REAL_LLM_E2E"] == "1" else { throw XCTSkip("Real provider required") }
+        let endpoint = try XCTUnwrap(env["NOLA_REAL_LLM_ENDPOINT"])
+        let key = try XCTUnwrap(env["NOLA_REAL_LLM_API_KEY"])
+        let model = try XCTUnwrap(env["NOLA_REAL_LLM_MODEL"])
+        let workspace = try makeWorkspace("github-skill")
+        let runtimeRoot = try makeWorkspace("github-skill-app")
+        defer {
+            try? FileManager.default.removeItem(at: workspace)
+            try? FileManager.default.removeItem(at: runtimeRoot)
+        }
+        let app = MacAppEnvironment(applicationSupportRoot: runtimeRoot.appendingPathComponent("support"),
+                                    cachesRoot: runtimeRoot.appendingPathComponent("cache"))
+        let db = env["NOLA_DB_PATH"].map { URL(fileURLWithPath: $0) } ?? app.databaseURL
+        let store = try MacApplicationPort(databaseURL: db)
+        let id = "nature-paper-card"
+        let link = "https://github.com/Yuan1z0825/nature-skills/tree/main/skills/nature-paper-card"
+        let install = try await runAgentHost(prompt: "请把这个 GitHub Skill 安装并启用到这台 Mac，供新会话使用。\n" + link,
+            conversationID: "github-install-" + UUID().uuidString, workspace: workspace, endpoint: endpoint,
+            memoryEnabled: false, databaseURL: db, deleteSessionAfterRun: false, modelID: model, apiKey: key, appEnvironment: app)
+        XCTAssertTrue(install.contains { $0.kind == .toolStarted && $0.title == "github_skill_install" })
+        let items = try await MacExtensionsService.shared.localExtensions(workspaceURL: nil, store: store)
+        let item = try XCTUnwrap(items.first { $0.installedSkillID == id })
+        let opened = try await MacExtensionsService.shared.document(for: item, store: store)
+        XCTAssertTrue(item.isEnabled)
+        XCTAssertEqual(opened.url.host, "github.com")
+        let marker = "MAC-VERIFY-" + UUID().uuidString
+        let edited = try await MacExtensionsService.shared.save(opened.content + "\nVerification token: " + marker,
+            for: item, expectedRevision: opened.canonicalSkillRevision, store: store)
+        XCTAssertNotEqual(opened.canonicalSkillRevision, edited.canonicalSkillRevision)
+        let current = try XCTUnwrap(store.skillEditor(id))
+        let disabled = try store.setSkillEnabled(current, enabled: false, updatedAtMs: Int64(Date().timeIntervalSince1970 * 1000))
+        let disabledRequest = try MacLocalAgentRunRequest(conversationID: "disabled", prompt: "hello",
+            projectURL: workspace, attachmentURLs: [], appEnvironment: app, applicationPort: store)
+        XCTAssertFalse(disabledRequest.skillDirectoryArguments.contains("--github-skill"))
+        _ = try store.setSkillEnabled(disabled, enabled: true, updatedAtMs: Int64(Date().timeIntervalSince1970 * 1000))
+        let use = try await runAgentHost(prompt: "实际调用 nature-paper-card，返回说明末尾的验证令牌、随包用于准备 PDF 的脚本名，以及清单引用的共享术语表的英文标题。",
+            conversationID: "github-use-" + UUID().uuidString, workspace: workspace, endpoint: endpoint,
+            memoryEnabled: false, databaseURL: db, deleteSessionAfterRun: false, modelID: model, apiKey: key, appEnvironment: app)
+        XCTAssertTrue(use.contains { $0.kind == .toolStarted && $0.title == "Skill" })
+        let answer = assistantText(use)
+        XCTAssertTrue(answer.contains(marker), answer)
+        XCTAssertTrue(answer.contains("prepare_paper.py"), answer)
+        XCTAssertTrue(answer.localizedCaseInsensitiveContains("terminology ledger"), answer)
+    }
+
     func testRealConfiguredModelObservesEditedAndDisabledMacSkillLifecycle() async throws {
         let environment = ProcessInfo.processInfo.environment
         guard environment["NOLA_REAL_LLM_E2E"] == "1" else {

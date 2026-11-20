@@ -1389,4 +1389,10 @@
     <string name="expert_mention_needs_text">写下想请专家做的事。</string>
     <string name="expert_mention_plain">转为普通文字</string>
     <string name="expert_mention_upgrade_host">请更新所连接的宿主机以使用专家提及，也可以发送普通文字。</string>
+    <string name="expert_executor_requires_host">请连接已安装此编程助手的宿主机，然后在宿主机会话中选择这位专家。</string>
+    <string name="chat_tool_find_github_skill">查找 GitHub 技能</string>
+    <string name="chat_tool_install_skill_device">在本机安装技能</string>
+    <string name="chat_tool_install_skill_host">在宿主机安装技能</string>
+    <string name="chat_tool_read_skill_file">读取技能文件</string>
+    <string name="chat_permission_install_github_skill">从 %1$s 下载并启用技能，供这台手机以后的聊天使用。</string>
 </resources>

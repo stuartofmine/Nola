@@ -2576,7 +2576,8 @@ nonisolated extension IOSCanonicalSkill {
         }
         return UserUploadedContextItem(
             id: uuid, name: displayName, content: instructionsText, description: summary,
-            enabled: enabled, version: version, requiredTools: tools.isEmpty ? nil : tools
+            enabled: enabled, version: version, requiredTools: tools.isEmpty ? nil : tools,
+            packageReference: IOSGitHubSkillPackages.sourceURL(reference: instructionsRef) == nil ? nil : instructionsRef
         )
     }
 }

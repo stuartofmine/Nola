@@ -473,10 +473,7 @@ pub fn run_web_server(config: &Config) -> Result<(), String> {
                 return Ok(());
             }
             let settings = load_agent_settings_from_store(&store)?;
-            builtin_skills::synchronize(
-                &settings.builtin_skill_overrides,
-                &settings.uploaded_skills,
-            )
+            builtin_skills::synchronize(&settings.builtin_skill_overrides)
             .map(|_| ())
         },
     )?;
@@ -4085,7 +4082,7 @@ fn skill_settings_review_response(expected_revision: Option<i64>) -> Response<Bo
         if let Some(revision) = expected_revision {
             confirm_core_skill_settings(&mut application, revision)?;
             let settings=load_agent_settings_from_store(&NolaStore::open_default()?)?;
-            builtin_skills::synchronize(&settings.builtin_skill_overrides, &settings.uploaded_skills)
+            builtin_skills::synchronize(&settings.builtin_skill_overrides)
                 .map_err(|error|format!("Core settings were selected and the previous settings retained, but Skill materialization failed: {error}"))?;
             return Ok(json!({"confirmed":true}));
         }
@@ -4311,7 +4308,7 @@ fn update_agent_settings_response(request: &mut Request) -> Response<Box<dyn Rea
         return json_response(StatusCode(500), json!({"error": err}));
     }
     if let Err(error) =
-        builtin_skills::synchronize(&settings.builtin_skill_overrides, &settings.uploaded_skills)
+        builtin_skills::synchronize(&settings.builtin_skill_overrides)
     {
         return json_response(
             StatusCode(500),

@@ -9,3 +9,32 @@
 @media(max-width:700px){.review-bar{padding:12px 16px;flex-wrap:wrap;gap:12px}.wordmark{font-size:22px;gap:12px}.review-options{width:100%;gap:8px;justify-content:space-between;align-items:flex-end}.review-options label{min-width:0;flex:1}.review-options button{min-height:44px;font-size:12px}.review-options select{min-height:44px}.review-layout{display:block}#catalog-toggle{display:block}#catalog{border-right:0;border-bottom:1px solid var(--line);max-height:65vh;overflow:auto}#catalog[hidden]{display:none}.catalog-head{padding:20px 16px 12px}.catalog-head h1{font-size:17px}.catalog-head p{margin-bottom:12px}#review-main{padding:24px 12px}.scene-heading h2{font-size:23px}.scene-heading{padding-inline:4px}.prototype-notice{padding-inline:4px;margin:16px 0}.review-workspace{gap:24px}.preview-area,.preview-area:has(.mobile){padding:0;border:0;min-height:0;background:transparent;border-radius:0}#device{box-shadow:none;border-radius:10px}#device.mobile{max-width:100%}.app-top{padding:12px 16px}.app-content{padding:24px 16px}.mobile .actions button{flex-basis:110px}.review-notes{display:block;padding:0 4px}#state-list{display:grid;grid-template-columns:minmax(0,1fr)}.review-notes details{padding:12px 0}.review-footer{padding:0 4px}.terminal{padding:20px 14px;font-size:.8em}.actions button{min-height:44px}.device-system{padding:8px 12px}button{min-height:44px}.scene-link{padding:12px;font-size:14px}.state-callout{padding:14px}.review-tabs{gap:12px;padding:10px 16px}}
 @media(forced-colors:active){button,.state-callout,#device{border:1px solid CanvasText}.status-dot{forced-color-adjust:auto}.primary{outline:1px solid ButtonText}}
 .operation-review{margin:20px 0;padding:12px 0;border-block:1px solid var(--line)}.operation-review summary{font-size:.85em}.operation-review pre,.operation-review p{font-size:.8em}.task-summary{margin:24px 0;border-block:1px solid var(--line);padding:18px 0}.task-summary>div{display:flex;flex-wrap:wrap;justify-content:space-between;gap:8px;font-size:.9em}.task-summary dl,.metric-list{display:grid;gap:10px;margin:18px 0;font-size:.82em}.task-summary dl div,.metric-list div{display:flex;flex-wrap:wrap;justify-content:space-between;gap:8px}.task-summary dt,.metric-list dt{color:var(--muted)}.task-summary dd,.metric-list dd{margin:0}.task-timeline{padding-left:20px;margin:22px 0;font-size:.83em}.task-timeline li{padding:8px 0}.task-timeline span{display:block;color:var(--muted);font-size:.88em}.domain-picker{font-size:.85em;margin:22px 0 12px}.transport-note{font-size:.78em}.checklist{padding-left:20px;font-size:.85em;margin-block:20px}.checklist li{margin-block:10px}.font-specimen{margin:20px 0;padding-block:20px;border-block:1px solid var(--line);font-size:1.05em;line-height:1.9}.font-specimen.serif p{font-family:ui-serif,"Songti SC",serif}.font-specimen code{font-size:.8em}.model-options{margin:24px 0;padding:16px;border:1px solid var(--line);border-radius:8px}.model-options legend{font-size:.8em;color:var(--muted)}.model-options label{display:flex;align-items:center;gap:10px;margin-block:12px;font-size:.83em}.model-options input{width:18px;height:18px;accent-color:var(--accent)}.model-options small{display:block;font-size:.75em}
+
+/* Shared chat, permission and settings surfaces for GitHub Skill installation. */
+.gs-bar {display:flex;align-items:baseline;justify-content:space-between;flex-wrap:wrap;gap:.25em 1em;padding:1em 1.3em;border-bottom:1px solid var(--line)}
+.gs-bar span,.gs-origin,.gs-citation,.gs-package small,.gs-facts dt,.gs-source,.gs-feedback {color:var(--muted)}
+.gs-bar span,.gs-package small,.gs-origin,.gs-citation {font-size:.83em}
+.gs-content {max-width:44rem;margin:auto;padding:clamp(20px,4vw,42px);min-height:19em;overflow-wrap:anywhere}
+.gs-content h3 {font-size:1.38em;letter-spacing:-.025em;line-height:1.4;margin:0 0 .75em}
+.gs-content svg {flex:none;width:1.2em;height:1.2em;fill:none;stroke:currentColor;stroke-width:1.6;stroke-linecap:round;stroke-linejoin:round}
+.gs-content .gs-prompt {max-width:85%;margin:0 0 1.6em auto;padding:.75em 1em;background:var(--hover);border-radius:1em 1em .3em 1em}
+.gs-package {display:flex;align-items:center;gap:.75em;padding:.85em 0}
+.gs-package strong,.gs-package small {display:block}
+.gs-facts {margin:1.25em 0 0;background:var(--raised);border:1px solid var(--line);border-radius:.8em;padding:0 1em}
+.gs-facts div {padding:.8em 0}
+.gs-facts div+div {border-top:1px solid var(--line)}
+.gs-facts dt {font-size:.8em}
+.gs-facts dd {margin:.15em 0 0}
+.gs-directory {display:block;color:var(--muted)}
+.gs-ref summary {display:flex;align-items:center;min-height:44px;color:var(--muted);font-size:.83em;text-decoration:underline;text-underline-offset:.2em}
+.gs-content code {font-size:.91em}
+.gs-content .gs-citation {margin-top:1em}
+.gs-source,.gs-editor {border-top:1px solid var(--line)}
+.gs-source summary,.gs-editor summary {display:flex;align-items:center;gap:.5em;min-height:44px;font-size:.93em;list-style:none}
+.gs-source summary::-webkit-details-marker,.gs-editor summary::-webkit-details-marker {display:none}
+.gs-source code {display:block;margin:0 0 1em}
+.gs-content textarea {min-height:8em;background:var(--surface)}
+.gs-content .actions {margin-top:1.5em}
+.gs-content .gs-feedback:empty {display:none}
+.gs-feedback {margin:.6em 0;font-size:.85em}
+.gs-terminal {font-family:ui-monospace,monospace}

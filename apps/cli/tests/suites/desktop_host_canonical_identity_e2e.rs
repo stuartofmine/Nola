@@ -406,7 +406,8 @@ fn run_desktop_host_result(
     mut payload: serde_json::Value,
 ) -> std::process::Output {
     configure_native_payload(&mut payload, database, "mac-e2e-conversation");
-    let mut command = Command::new(env!("CARGO_BIN_EXE_nola-agent-host"));
+    let mut command = Command::new(std::env::var_os("NOLA_AGENT_HOST_BIN")
+        .unwrap_or_else(|| env!("CARGO_BIN_EXE_nola-agent-host").into()));
     configure_native_tool_receipt(&mut command, root, "mac-e2e-conversation");
     let mut child = command
         .args([
@@ -945,4 +946,42 @@ fn desktop_host_activation_batch_replans_atomically_and_has_a_bounded_failure_pa
         assert_eq!(status, "sealed");
         assert_run_result_kind(&connection, "activation-turn", if expected_status == "completed" { "answered" } else { "failed" });
     }
+}
+
+/// Paid, opt-in acceptance invoked by real_external_executor_e2e.sh.
+#[test]
+#[ignore = "requires an installed and authenticated external coding agent"]
+fn real_external_executor_resumes_committed_session() {
+    let backend = std::env::var("NOLA_TEST_EXTERNAL_BACKEND").expect("select an installed executor");
+    let model = std::env::var("NOLA_TEST_EXTERNAL_MODEL").ok().filter(|s| !s.is_empty());
+    let root = tempfile::tempdir().unwrap();
+    let database = root.path().join("nola.db");
+    let unused_http_route = MockLlm::start();
+    let marker = format!("Fern{}", uuid::Uuid::new_v4().simple());
+    let mut native_session: Option<String> = None;
+    for (turn, prompt, expected) in [
+        (1, format!("In this dialogue the fictional plant is called {marker}. What is the fictional plant called? Include its exact name."), marker.as_str()),
+        (2, "What was the fictional plant name? Return only its exact name.".into(), marker.as_str()),
+    ] {
+        let run = format!("external-turn-{turn}");
+        let message = format!("assistant-{turn}");
+        let response = run_desktop_host_result(root.path(), &database, &unused_http_route,
+            serde_json::json!({
+                "prompt":prompt, "submission_id":run, "user_message_id":format!("user-{turn}"),
+                "assistant_message_id":message, "input_origin":"interactive_user",
+                "execution_backend":backend, "external_session_id":native_session, "execution_model":model
+            }));
+        assert!(response.status.success(), "Host failed: {}", String::from_utf8_lossy(&response.stderr));
+        let db = Connection::open(&database).unwrap();
+        assert_run_result_kind(&db, &run, "answered");
+        let text = assistant_journal::public_text(&database, "mac-e2e-conversation", &run, &message);
+        assert!(text.contains(expected), "Missing the fictional plant name in turn {turn}: {text}");
+        let session: String = db.query_row(
+            "SELECT backend_session_id FROM delegated_invocations WHERE run_id=?1 AND backend_id=?2",
+            [&run, &backend], |row| row.get(0)).unwrap();
+        assert!(!session.is_empty());
+        if let Some(first) = &native_session { assert_eq!(first, &session); }
+        native_session = Some(session);
+    }
+    assert_eq!(unused_http_route.model_requests.load(Ordering::SeqCst), 0);
 }

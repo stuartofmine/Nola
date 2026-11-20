@@ -1390,4 +1390,10 @@
     <string name="expert_mention_needs_text">Напишите, что вы хотите поручить эксперту.</string>
     <string name="expert_mention_plain">Оставить как обычный текст</string>
     <string name="expert_mention_upgrade_host">Обновите подключённый хост, чтобы упоминать экспертов. Также можно отправить обычный текст.</string>
+    <string name="expert_executor_requires_host">Подключитесь к хосту, на котором работает этот агент программирования, и выберите эксперта в чате этого хоста.</string>
+    <string name="chat_tool_find_github_skill">Найти навык на GitHub</string>
+    <string name="chat_tool_install_skill_device">Установить навык на телефоне</string>
+    <string name="chat_tool_install_skill_host">Установить навык на хосте</string>
+    <string name="chat_tool_read_skill_file">Прочитать файл навыка</string>
+    <string name="chat_permission_install_github_skill">Скачать навык из %1$s и включить его для будущих чатов на этом телефоне.</string>
 </resources>

@@ -36,8 +36,18 @@ test('expert effort inherits by removal and never rewrites unrelated model overr
 
 test('revision-conflict refresh retains changed draft controls and newer untouched settings', async () => {
     const {rebaseExpertEditorValues}=await import('./expertDefinition.ts');
-    const baseline=['Original','Responsibility','configured:old','old-role','automatic',true] as const;
-    const latest=['Concurrent name','New responsibility','configured:new','new-role','high',false] as const;
+    const baseline=['Original','Responsibility','configured:old','old-role','automatic',true,''] as const;
+    const latest=['Concurrent name','New responsibility','configured:new','new-role','high',false,''] as const;
     assert.deepEqual(rebaseExpertEditorValues(['My edit',...baseline.slice(1)] as never,[...baseline],[...latest]),
-        ['My edit','New responsibility','configured:new','new-role','high',false]);
+        ['My edit','New responsibility','configured:new','new-role','high',false,'']);
+});
+
+test('executor selection round trips provider-specific variants and clears only the binding', async () => {
+    const {expertExecutorKey, expertExecutorSelection} = await import('./expertDefinition.ts');
+    const previous = {...original, defaults:{...original.defaults, expertExecutor:{backend:'codex', model:'same', model_provider:'first'}}};
+    assert.deepEqual(editedExpertDefaults(previous,'configured:old','template',undefined,expertExecutorSelection(previous)),previous.defaults);
+    const selected = editedExpertDefaults(previous,'configured:old','template',undefined,expertExecutorKey('antigravity',{id:'variant',display_name:'Variant'}));
+    assert.deepEqual(selected.expertExecutor,{backend:'antigravity',model:'variant'});
+    assert.equal(editedExpertDefaults({...previous,defaults:{...previous.defaults,expertReasoningEffort:'high'}},'configured:old','template',undefined,expertExecutorKey('antigravity')).expertReasoningEffort,undefined);
+    assert.deepEqual(editedExpertDefaults({...original,defaults:selected},'configured:old','template',undefined,''),original.defaults);
 });

@@ -1091,6 +1091,16 @@ mod tests {
     }
 
     #[test]
+    fn github_skill_install_requires_separate_admission_and_obeys_network_deny() {
+        assert!(!core_network_policy_rules("allow").iter().any(|rule| rule.capability_pattern == "github_skill_install"));
+        let rules = PermissionRuleSet { rules: core_network_policy_rules("deny") };
+        for name in ["github_skill_find", "github_skill_install"] {
+            assert_eq!(rules.evaluate(&PermissionSubject {capability: name.into(), resource: "*".into()}),
+                PermissionPolicyDecision::Deny);
+        }
+    }
+
+    #[test]
     fn network_allow_is_visible_to_agent_core() {
         assert_eq!(network_decision("allow"), PermissionPolicyDecision::Ask,
             "an opaque call still needs trusted operation classification");

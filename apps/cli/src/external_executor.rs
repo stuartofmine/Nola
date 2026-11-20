@@ -142,7 +142,7 @@ fn compose_external_prompt(config: &ExternalExecutionSettings, prompt: &str) -> 
         "not_attested_by_nola"
     };
     let runtime_contract = format!(
-        "<nola_runtime>\nexecution_backend={backend}\nselected_model={selected_model}\nrequested_native_sandbox={requested_sandbox}\nThe values above are authoritative for this turn. A requested sandbox policy is not proof that the operating system applied it. A working directory or Git worktree is not a filesystem, credential or network security boundary; Git configuration, hooks and objects can be shared. Nola does not attest an OS sandbox for Claude Code or OpenCode. Frozen Nola policy and the execution unit's native permissions remain authoritative; context and workspace location do not grant permissions. If an operation is denied or approval is unavailable, report that limitation accurately. Do not repeat the denied operation without new authorization or claim that its artifact was produced. Identify the user-facing assistant as Nola. If the selected model is executor-managed, do not guess or invent an underlying model name or version.\n</nola_runtime>\n\n",
+        "<nola_runtime>\nexecution_backend={backend}\nselected_model={selected_model}\nrequested_native_sandbox={requested_sandbox}\nThe values above are authoritative for this turn. A requested sandbox policy is not proof that the operating system applied it. A working directory or Git worktree is not a filesystem, credential or network security boundary; Git configuration, hooks and objects can be shared. Nola does not attest an OS sandbox for Antigravity, Claude Code or OpenCode. Frozen Nola policy and the execution unit's native permissions remain authoritative; context and workspace location do not grant permissions. If an operation is denied or approval is unavailable, report that limitation accurately. Do not repeat the denied operation without new authorization or claim that its artifact was produced. Identify the user-facing assistant as Nola. If the selected model is executor-managed, do not guess or invent an underlying model name or version.\n</nola_runtime>\n\n",
         backend = config.execution_backend,
     );
     format!(
@@ -722,16 +722,9 @@ fn run_inner(
     emitter: &mut dyn ExternalExecutionObserver,
     cancellation: Option<RuntimeExecutionControl>,
 ) -> Result<(), String> {
-    let backend_kind = match config.execution_backend.as_str() {
-        "codex" => ExecutionBackendKind::Codex,
-        "claude_code" => ExecutionBackendKind::ClaudeCode,
-        "opencode" => ExecutionBackendKind::OpenCode,
-        other => return Err(format!("unknown execution backend: {other}")),
-    };
-    // Model discovery is a catalog concern. In particular, Codex model/list
-    // requires an App Server handshake and used to add a complete redundant
-    // cold start before every actual turn.
-    let descriptor = discover(backend_kind, false);
+    let descriptor = discover_execution_backend(&config.execution_backend, false)
+        .filter(|backend| backend.kind != ExecutionBackendKind::Nola)
+        .ok_or_else(|| format!("unknown execution backend: {}", config.execution_backend))?;
     if descriptor.kind == ExecutionBackendKind::Codex {
         return run_codex_app_server(
             config,
@@ -742,8 +735,8 @@ fn run_inner(
             &descriptor,
         );
     }
-    if descriptor.kind == ExecutionBackendKind::OpenCode {
-        return run_opencode_acp(
+    if matches!(descriptor.kind, ExecutionBackendKind::OpenCode | ExecutionBackendKind::Antigravity) {
+        return run_acp_executor(
             config,
             prompt,
             prompt_is_prepared,
@@ -998,7 +991,7 @@ pub(crate) fn run_stream_json_process(
     Ok(())
 }
 
-pub(crate) fn run_opencode_acp(
+pub(crate) fn run_acp_executor(
     config: &ExternalExecutionSettings,
     prompt: &str,
     prompt_is_prepared: bool,
@@ -1019,22 +1012,23 @@ pub(crate) fn run_opencode_acp(
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
         .spawn()
-        .map_err(|error| format!("start OpenCode ACP failed: {error}"))?;
+        .map_err(|error| format!("start ACP failed: {error}"))?;
     let mut child = ManagedExternalChild::new(child);
-    let mut stdin = Some(child.stdin.take().ok_or("OpenCode ACP stdin is unavailable")?);
+    let mut stdin = Some(child.stdin.take().ok_or("ACP stdin is unavailable")?);
     let stdout = child
         .stdout
         .take()
-        .ok_or("OpenCode ACP stdout is unavailable")?;
+        .ok_or("ACP stdout is unavailable")?;
     let stderr = child
         .stderr
         .take()
-        .ok_or("OpenCode ACP stderr is unavailable")?;
+        .ok_or("ACP stderr is unavailable")?;
     let budget = ExternalExecutionBudget::from_config(config);
     let output_bytes = Arc::new(AtomicU64::new(0));
     let rx = bounded_external_line_receiver(stdout, budget.max_line_bytes, Arc::clone(&output_bytes));
     let provider_diagnostic = Arc::new(Mutex::new(None));
-    let stderr_handle = bounded_external_stderr(stderr, Arc::clone(&output_bytes), Some(Arc::clone(&provider_diagnostic)));
+    let diagnostics = (descriptor.kind == ExecutionBackendKind::OpenCode).then(|| Arc::clone(&provider_diagnostic));
+    let stderr_handle = bounded_external_stderr(stderr, Arc::clone(&output_bytes), diagnostics);
     let mut budget_monitor = ExternalExecutionBudgetMonitor::new(budget, output_bytes);
 
     let mut cleanup_session: Option<String> = None;
@@ -1050,13 +1044,13 @@ pub(crate) fn run_opencode_acp(
                 "clientInfo":{"name":"Nola","version":env!("CARGO_PKG_VERSION")}
             }
         }), &mut child, cancellation.as_ref(), &mut budget_monitor, emitter, &descriptor.id)?;
-    let initialized = read_acp_response(&rx, 1, &mut child, cancellation.as_ref(), &mut budget_monitor, emitter)?;
+    let initialized = read_acp_response(&rx, 1, &mut child, cancellation.as_ref(), &mut budget_monitor, descriptor.kind)?;
     if initialized
         .pointer("/protocolVersion")
         .and_then(Value::as_u64)
         != Some(1)
     {
-        return Err("OpenCode ACP did not negotiate protocol version 1".to_string());
+        return Err("ACP did not negotiate protocol version 1".to_string());
     }
 
     let requested_session = config
@@ -1067,11 +1061,15 @@ pub(crate) fn run_opencode_acp(
     if let Some(session_id) = requested_session {
         let supports_resume = initialized
             .pointer("/agentCapabilities/sessionCapabilities/resume")
-            .is_some_and(|value| value.as_bool().unwrap_or(true));
+            .is_some_and(|value| value.is_object() || value.as_bool() == Some(true));
+        let supports_load = initialized.pointer("/agentCapabilities/loadSession")
+            .and_then(Value::as_bool) == Some(true);
         let method = if supports_resume {
             "session/resume"
-        } else {
+        } else if supports_load || descriptor.kind == ExecutionBackendKind::OpenCode {
             "session/load"
+        } else {
+            return Err(format!("{} did not advertise ACP session recovery", descriptor.display_name));
         };
         write_external_json(
             &mut stdin,
@@ -1079,7 +1077,7 @@ pub(crate) fn run_opencode_acp(
                 "jsonrpc":"2.0", "id":2, "method":method,
                 "params":{"sessionId":session_id,"cwd":cwd,"mcpServers":[],"additionalDirectories":[]}
             }), &mut child, cancellation.as_ref(), &mut budget_monitor, emitter, &descriptor.id)?;
-        let resumed = read_acp_response(&rx, 2, &mut child, cancellation.as_ref(), &mut budget_monitor, emitter)?;
+        let resumed = read_acp_response(&rx, 2, &mut child, cancellation.as_ref(), &mut budget_monitor, descriptor.kind)?;
         if resumed.get("sessionId").is_some() {
             validate_external_session(Some(session_id), resumed.get("sessionId").and_then(Value::as_str))?;
         }
@@ -1092,28 +1090,31 @@ pub(crate) fn run_opencode_acp(
                 "jsonrpc":"2.0", "id":3, "method":"session/new",
                 "params":{"cwd":cwd,"mcpServers":[],"additionalDirectories":[]}
             }), &mut child, cancellation.as_ref(), &mut budget_monitor, emitter, &descriptor.id)?;
-        let created = read_acp_response(&rx, 3, &mut child, cancellation.as_ref(), &mut budget_monitor, emitter)?;
+        let created = read_acp_response(&rx, 3, &mut child, cancellation.as_ref(), &mut budget_monitor, descriptor.kind)?;
         active_session = created
             .get("sessionId")
             .and_then(Value::as_str)
             .map(str::to_string);
     }
-    let session_id = active_session.ok_or("OpenCode ACP session response did not include an id")?;
+    let session_id = active_session.ok_or("ACP session response did not include an id")?;
     cleanup_session = Some(session_id.clone());
     emitter.external_session_started(&descriptor.id, &session_id)?;
     if cancellation.as_ref().is_some_and(RuntimeExecutionControl::is_requested) {
         return Err("external execution cancelled".into());
     }
 
-    // ACP selects the model on the session; `opencode acp` has no --model flag.
-    // Wait for acceptance before dispatch so a frozen selection cannot silently
-    // run on the executor's default provider/model.
+    // Antigravity's public CLI catalog contains exact model/effort variant IDs.
+    // Its "model" config option uses family IDs. set_model takes the catalog ID.
     if let Some(model) = config.external_execution_model.as_deref() {
+        let (method, params) = if descriptor.kind == ExecutionBackendKind::Antigravity {
+            ("session/set_model", serde_json::json!({"sessionId":session_id,"modelId":model}))
+        } else {
+            ("session/set_config_option", serde_json::json!({"sessionId":session_id,"configId":"model","value":model}))
+        };
         write_external_json(&mut stdin, &serde_json::json!({
-            "jsonrpc":"2.0", "id":5, "method":"session/set_config_option",
-            "params":{"sessionId":session_id,"configId":"model","value":model}
+            "jsonrpc":"2.0","id":5,"method":method,"params":params
         }), &mut child, cancellation.as_ref(), &mut budget_monitor, emitter, &descriptor.id)?;
-        read_acp_response(&rx, 5, &mut child, cancellation.as_ref(), &mut budget_monitor, emitter)?;
+        read_acp_response(&rx, 5, &mut child, cancellation.as_ref(), &mut budget_monitor, descriptor.kind)?;
     }
 
     let prompt_content = external_image_content_blocks(
@@ -1161,16 +1162,16 @@ pub(crate) fn run_opencode_acp(
                     let id = value
                         .get("id")
                         .filter(|id| id.is_string() || id.is_number())
-                        .ok_or("OpenCode permission request is missing its RPC identity")?;
+                        .ok_or("ACP permission request is missing its RPC identity")?;
                     let mut params = value
                         .get("params")
                         .cloned()
-                        .ok_or("OpenCode permission request missing parameters")?;
+                        .ok_or("ACP permission request missing parameters")?;
                     let call_id = params
                         .pointer("/toolCall/toolCallId")
                         .and_then(Value::as_str)
                         .filter(|id| !id.is_empty())
-                        .ok_or("OpenCode permission request missing tool call identity")?
+                        .ok_or("ACP permission request missing tool call identity")?
                         .to_string();
                     if params
                         .pointer("/toolCall/rawInput")
@@ -1179,7 +1180,7 @@ pub(crate) fn run_opencode_acp(
                         let input = tool_inputs
                             .get(&call_id)
                             .cloned()
-                            .ok_or("OpenCode permission request missing raw input")?;
+                            .ok_or("ACP permission request missing raw input")?;
                         params["toolCall"]["rawInput"] = input;
                     }
                     // Preserve the protocol request/call identity and complete resource facts.
@@ -1191,14 +1192,14 @@ pub(crate) fn run_opencode_acp(
                     let decision = emitter.external_permission_requested(
                         &request_id,
                         &call_id,
-                        "opencode.tool",
+                        &format!("{}.tool", descriptor.id),
                         &params,
                         "External tool requests permission",
                     );
                     if cancellation.as_ref().is_some_and(RuntimeExecutionControl::is_requested) {
                         return Err("external execution cancelled".into());
                     }
-                    let outcome = opencode_acp_permission_outcome(&params, decision?)?;
+                    let outcome = acp_permission_outcome(&params, decision?)?;
                     write_external_json(
                         &mut stdin,
                         &serde_json::json!({
@@ -1220,7 +1221,7 @@ pub(crate) fn run_opencode_acp(
                             tool_inputs.insert(call_id, input.clone());
                         }
                     }
-                    for event in parse_opencode_acp_update(update) {
+                    for event in parse_acp_update(update) {
                         match event {
                             ExternalExecutorEvent::TextDelta { text } => {
                                 emitter.external_text(&text)?
@@ -1269,23 +1270,28 @@ pub(crate) fn run_opencode_acp(
                         }
                     }
                 } else if value.get("id").and_then(Value::as_u64) == Some(4) {
-                    if let Some(snapshot)=external_accounting_snapshot("opencode",&value) {
+                    if let Some(snapshot)=external_accounting_snapshot(&descriptor.id,&value) {
                         emitter.external_accounting(snapshot)?;
                     }
                     if let Some(error) = value.get("error") {
                         return Err(format!(
-                            "OpenCode ACP prompt failed: {}",
+                            "ACP prompt failed: {}",
                             bounded_json(error, 2000)
                         ));
                     }
-                    terminal = value.get("result").is_some();
+                    match value.pointer("/result/stopReason").and_then(Value::as_str) {
+                        Some("end_turn") => terminal = true,
+                        Some(reason) => return Err(format!("ACP prompt stopped: {reason}")),
+                        None if descriptor.kind == ExecutionBackendKind::OpenCode && value["result"].is_object() => terminal = true,
+                        None => return Err("ACP prompt response is missing its stop reason".into()),
+                    }
                 }
             }
             Ok(Err(error)) => return Err(error),
             Err(mpsc::RecvTimeoutError::Disconnected) => break,
             Err(mpsc::RecvTimeoutError::Timeout) => {}
         }
-        if let Some(message) = provider_diagnostic.lock().map_err(|_| "OpenCode diagnostic unavailable")?.clone() {
+        if let Some(message) = provider_diagnostic.lock().map_err(|_| "ACP diagnostic unavailable")?.clone() {
             return Err(message);
         }
         if let Err(sampling_error) = budget_monitor.check(&mut child) {
@@ -1303,7 +1309,7 @@ pub(crate) fn run_opencode_acp(
         // abnormal exit is observed when the reader disconnects after drain.
     }
     if cancellation.as_ref().is_some_and(RuntimeExecutionControl::is_requested) { return Ok(true); }
-    if !terminal { return Err("OpenCode ACP ended before prompt completion".into()); }
+    if !terminal { return Err("ACP ended before prompt completion".into()); }
     Ok(false)
     })();
     // A rejected output/permission commit can leave the loop before its next
@@ -1323,25 +1329,25 @@ pub(crate) fn run_opencode_acp(
         match child.try_wait() {
             Ok(Some(status)) => break Ok(status),
             Ok(None) if Instant::now() < deadline => std::thread::sleep(Duration::from_millis(25)),
-            Ok(None) => break Err(format!("OpenCode EOF shutdown unconfirmed for pid {pid}; no signal sent")),
-            Err(error) => break Err(format!("OpenCode exit observation failed: {error}")),
+            Ok(None) => break Err(format!("ACP EOF shutdown unconfirmed for pid {pid}; no signal sent")),
+            Err(error) => break Err(format!("ACP exit observation failed: {error}")),
         }
     };
     // Never retry the previous OS-denied signal path, including from Drop.
     child.disarm();
     let stopped = shutdown.and_then(|status| {
-        observe_owned_group_exit(pid, Duration::from_secs(5)).map_err(|error| format!("OpenCode process group shutdown unconfirmed: {error}"))?;
+        observe_owned_group_exit(pid, Duration::from_secs(5)).map_err(|error| format!("ACP process group shutdown unconfirmed: {error}"))?;
         Ok(status)
     });
     let status = match stopped {
         Ok(status) => status,
         Err(stop) => {
-            eprintln!("Nola OpenCode shutdown observation unconfirmed pid={pid}: {stop}");
+            eprintln!("Nola ACP shutdown observation unconfirmed pid={pid}: {stop}");
             return Err(match protocol_result { Err(cause) => format!("{cause}; {stop}"), _ => stop });
         }
     };
     while !stderr_handle.is_finished() {
-        if Instant::now() >= deadline { return Err("OpenCode stderr shutdown unconfirmed".into()); }
+        if Instant::now() >= deadline { return Err("ACP stderr shutdown unconfirmed".into()); }
         std::thread::sleep(Duration::from_millis(25));
     }
     let stderr = stderr_handle.join().unwrap_or_default();
@@ -1351,18 +1357,19 @@ pub(crate) fn run_opencode_acp(
     }
     protocol_result?;
     if !status.success() {
-        return Err(opencode_provider_diagnostic(&stderr).map(str::to_string).unwrap_or_else(|| format!("OpenCode ACP exited with {status}")));
+        let diagnostic = (descriptor.kind == ExecutionBackendKind::OpenCode).then(|| opencode_provider_diagnostic(&stderr)).flatten();
+        return Err(diagnostic.map(str::to_string).unwrap_or_else(|| format!("{} ACP exited with {status}", descriptor.display_name)));
     }
     emitter.external_execution_completed(&descriptor.id)?;
     Ok(())
 }
 
-fn opencode_acp_permission_outcome(
+fn acp_permission_outcome(
     params: &Value,
     decision: Option<bool>,
 ) -> Result<Value, String> {
     let approved =
-        decision.ok_or("OpenCode permission transport unavailable; no decision received")?;
+        decision.ok_or("ACP permission transport unavailable; no decision received")?;
     let kind = if approved {
         "allow_once"
     } else {
@@ -1377,14 +1384,14 @@ fn opencode_acp_permission_outcome(
                 .find(|option| option.get("kind").and_then(Value::as_str) == Some(kind))
         })
         .and_then(|option| option.get("optionId").and_then(Value::as_str))
-        .ok_or_else(|| format!("OpenCode permission response has no {kind} option"))?;
+        .ok_or_else(|| format!("ACP permission response has no {kind} option"))?;
     Ok(serde_json::json!({"outcome":"selected","optionId":option_id}))
 }
 
 fn read_acp_response(
     rx: &mpsc::Receiver<Result<String, String>>, expected_id: u64,
     child: &mut Child, cancellation: Option<&RuntimeExecutionControl>,
-    monitor: &mut ExternalExecutionBudgetMonitor, _observer: &mut dyn ExternalExecutionObserver,
+    monitor: &mut ExternalExecutionBudgetMonitor, kind: ExecutionBackendKind,
 ) -> Result<Value, String> {
     let deadline = Instant::now() + duration_from_environment("NOLA_EXTERNAL_EXECUTION_SETUP_SECONDS", 30, 1, 300);
     loop {
@@ -1392,22 +1399,30 @@ fn read_acp_response(
             return Err("external execution cancelled".into());
         }
         monitor.check(child)?;
-        if Instant::now() >= deadline { return Err("OpenCode ACP initialize/session handshake timed out".into()); }
+        if Instant::now() >= deadline { return Err("ACP initialize/session handshake timed out".into()); }
         let line = match rx.recv_timeout(Duration::from_millis(50)) {
             Ok(line) => line?,
             Err(mpsc::RecvTimeoutError::Timeout) => continue,
-            Err(mpsc::RecvTimeoutError::Disconnected) => return Err("OpenCode ACP ended during setup".into()),
+            Err(mpsc::RecvTimeoutError::Disconnected) => return Err("ACP ended during setup".into()),
         };
         let Ok(value) = serde_json::from_str::<Value>(&line) else { continue; };
         if value.get("id").and_then(Value::as_u64) != Some(expected_id) { continue; }
         if let Some(error) = value.get("error") {
-            return Err(format!("OpenCode ACP request failed: {}", bounded_json(error, 1600)));
+            if error.get("code").and_then(Value::as_i64) == Some(-32000)
+                && error.get("message").and_then(Value::as_str).is_some_and(|message| message.eq_ignore_ascii_case("Authentication required")) {
+                let instruction = match kind {
+                    ExecutionBackendKind::Antigravity => "Run `agy acp --login` on the execution Host, then retry.",
+                    _ => "Sign in to the selected agent on the execution Host, then retry.",
+                };
+                return Err(format!("ACP authentication required. {instruction}"));
+            }
+            return Err(format!("ACP request failed: {}", bounded_json(error, 1600)));
         }
-        return value.get("result").cloned().ok_or_else(|| "OpenCode ACP response has no result".into());
+        return value.get("result").cloned().ok_or_else(|| "ACP response has no result".into());
     }
 }
 
-fn parse_opencode_acp_update(update: &Value) -> Vec<ExternalExecutorEvent> {
+fn parse_acp_update(update: &Value) -> Vec<ExternalExecutorEvent> {
     let kind = update
         .get("sessionUpdate")
         .and_then(Value::as_str)
@@ -2242,6 +2257,7 @@ pub fn command_for(
         ExecutionBackendKind::OpenCode => {
             vec!["acp".into(), "--cwd".into(), cwd, "--print-logs".into(), "--log-level".into(), "ERROR".into()]
         }
+        ExecutionBackendKind::Antigravity => vec!["acp".into(), "--sandbox".into()],
         ExecutionBackendKind::Nola => return Err("Nola executes in-process".into()),
     };
     let prompt_via_stdin = true;
@@ -2405,6 +2421,7 @@ pub fn parse_event_line(kind: ExecutionBackendKind, line: &str) -> Vec<ExternalE
         ExecutionBackendKind::Codex => parse_codex_event(&value),
         ExecutionBackendKind::ClaudeCode => parse_claude_event(&value),
         ExecutionBackendKind::OpenCode => parse_opencode_event(&value),
+        ExecutionBackendKind::Antigravity => value.pointer("/params/update").map(parse_acp_update).unwrap_or_default(),
         ExecutionBackendKind::Nola => Vec::new(),
     }
 }
@@ -2800,13 +2817,14 @@ fn nonempty(value: String) -> Option<String> {
 }
 
 pub fn discover_execution_backends() -> Vec<ExecutionBackendDescriptor> {
-    let mut result = vec![ExecutionBackendDescriptor::built_in_nola()];
-    result.extend([
-        discover(ExecutionBackendKind::Codex, true),
-        discover(ExecutionBackendKind::ClaudeCode, true),
-        discover(ExecutionBackendKind::OpenCode, true),
-    ]);
-    result
+    // Each optional agent may block on its own native process or account. Probe
+    // independently, retaining the stable catalog order used by clients.
+    std::thread::scope(|scope| {
+        let probes: Vec<_> = ExecutionBackendKind::ALL.into_iter()
+            .map(|kind| scope.spawn(move || discover(kind, true)))
+            .collect();
+        probes.into_iter().map(|probe| probe.join().expect("executor discovery panicked")).collect()
+    })
 }
 
 /// Resolves one structured backend selection without probing unrelated
@@ -2817,13 +2835,14 @@ pub fn discover_execution_backend(
     id: &str,
     include_models: bool,
 ) -> Option<ExecutionBackendDescriptor> {
-    match id {
-        "nola" => Some(ExecutionBackendDescriptor::built_in_nola()),
-        "codex" => Some(discover(ExecutionBackendKind::Codex, include_models)),
-        "claude_code" => Some(discover(ExecutionBackendKind::ClaudeCode, include_models)),
-        "opencode" => Some(discover(ExecutionBackendKind::OpenCode, include_models)),
-        _ => None,
-    }
+    ExecutionBackendKind::ALL.into_iter()
+        .find(|kind| kind.id() == id)
+        .map(|kind| discover(kind, include_models))
+}
+
+pub(crate) fn execution_backend_available(id: &str) -> bool {
+    discover_execution_backend(id, false)
+        .is_some_and(|entry| entry.availability == ExecutionBackendAvailability::Available)
 }
 
 /// Pure display metadata for hot UI paths. Availability and model discovery
@@ -2834,6 +2853,7 @@ pub fn execution_backend_display_name(id: &str) -> &str {
         "codex" => "Codex",
         "claude_code" => "Claude Code",
         "opencode" => "OpenCode",
+        "antigravity" => "Antigravity",
         _ => id,
     }
 }
@@ -2884,6 +2904,9 @@ where
 }
 
 fn discover(kind: ExecutionBackendKind, include_models: bool) -> ExecutionBackendDescriptor {
+    if kind == ExecutionBackendKind::Nola {
+        return ExecutionBackendDescriptor::built_in_nola();
+    }
     let executable_name = kind.executable_name().expect("external backend executable");
     let path = find_executable(executable_name);
     let version = path.as_ref().and_then(|path| read_version(path));
@@ -2914,6 +2937,7 @@ fn discover(kind: ExecutionBackendKind, include_models: bool) -> ExecutionBacken
         ExecutionBackendKind::OpenCode => {
             ("OpenCode", ExecutionBackendTransport::JsonRpcStdio, true)
         }
+        ExecutionBackendKind::Antigravity => ("Antigravity", ExecutionBackendTransport::JsonRpcStdio, true),
         ExecutionBackendKind::Nola => unreachable!(),
     };
     let (models, default_model_id) = if include_models {
@@ -2938,8 +2962,6 @@ fn discover(kind: ExecutionBackendKind, include_models: bool) -> ExecutionBacken
             streams_tools: true,
             supports_resume: true,
             supports_cancel: true,
-            // Codex app-server and OpenCode ACP carry request identities and
-            // checked approval writes. Claude's one-shot stream-json does not.
             supports_permission_bridge,
         },
         diagnostic: authentication.and_then(AuthenticationProbe::diagnostic),
@@ -3023,6 +3045,20 @@ fn discover_models(
                         }) {
                             let provider = model.split('/').next().map(str::to_string);
                             push_model(&mut models, model.to_string(), provider);
+                        }
+                    }
+                }
+            }
+        }
+        ExecutionBackendKind::Antigravity => {
+            if let Some(path) = executable {
+                if let Ok((status, stdout, _)) = command_output_with_timeout(path, &["models"], Duration::from_secs(5)) {
+                    if status.success() {
+                        for (id, name) in stdout.lines().filter_map(|line| line.split_once('\t')) {
+                            if id.is_empty() || id.chars().any(char::is_whitespace) || name.trim().is_empty() { continue; }
+                            models.push(ExecutionBackendModelDescriptor {
+                                id: id.to_owned(), display_name: name.trim().to_owned(), provider_id: None,
+                            });
                         }
                     }
                 }
@@ -3223,7 +3259,7 @@ fn probe_authentication(kind: ExecutionBackendKind, path: &Path) -> Option<Authe
         ExecutionBackendKind::ClaudeCode => &["auth", "status"],
         // OpenCode authentication is provider-specific. A successful version
         // probe is the only portable local readiness signal it exposes.
-        ExecutionBackendKind::OpenCode | ExecutionBackendKind::Nola => return None,
+        ExecutionBackendKind::OpenCode | ExecutionBackendKind::Antigravity | ExecutionBackendKind::Nola => return None,
     };
     let output = command_output_with_timeout(path, arguments, Duration::from_secs(2));
     let result = match output {

@@ -50,7 +50,12 @@ def main():
     parser.add_argument('--output', type=Path)
     parser.add_argument('--max-provider-requests', type=int, default=64)
     parser.add_argument('--collaboration-only', action='store_true', help='Run Main Agent to leaf expert acceptance (also the default)')
+    parser.add_argument('--external-expert', choices=['antigravity', 'codex', 'claude_code', 'open_code'],
+        help='Verify that a selected persistent expert runs on this installed Host executor')
+    parser.add_argument('--external-model', help='Exact native model or variant ID from the selected executor catalog')
     args = parser.parse_args()
+    if args.external_model and not args.external_expert:
+        parser.error('--external-model requires --external-expert')
     assert 1 <= args.max_provider_requests <= 64, 'Use a bounded live request budget'
     upstream, model, secret = selected_route(args.config)
     output = (args.output or Path(tempfile.mkdtemp(prefix='nola-expert-role-real-'))).resolve()
@@ -78,6 +83,8 @@ def main():
     try:
         with observed_provider(upstream, model, secret, output/'provider.ndjson', request_observer=observe) as endpoint:
             project, env, config = fixture(output/'store', model, endpoint, profile='allow_all')
+            if args.external_expert:
+                env['NOLA_EXTERNAL_EXECUTION_HOME'] = str(Path.home())
             binary = args.binary.resolve()
             # The public legacy profile editor intentionally cannot mutate
             # managed-connection profiles. Configure a new anonymous fixture
@@ -129,6 +136,7 @@ def main():
                 def stream(path,body):
                     request=Request(base+path,data=json.dumps(body).encode(),headers={
                         'Content-Type':'application/json','Accept':'text/event-stream','Origin':base})
+                    approved = set()
                     with opener.open(request,timeout=240) as response:
                         for line in response:
                             if not line.startswith(b'data:'):continue
@@ -136,6 +144,21 @@ def main():
                             if data==b'[DONE]':break
                             if not data:continue
                             event=json.loads(data)
+                            if args.external_expert and event.get('type') == 'permission_request':
+                                identity = (event.get('task_id'), event['request_id'])
+                                if identity in approved:
+                                    continue
+                                allowed = event.get('tool_name') == 'git_worktree_create'
+                                decision = {key: event[key] for key in ('nonce', 'protocol_version', 'request_id',
+                                    'host_id', 'client_id', 'session_id', 'tool_name')}
+                                assert decision['host_id'] == body['expected_host_id'] and decision['session_id'] == body['conversationId']
+                                decision['resolution'] = {'type': 'authorization', 'decision': 'allow_once' if allowed else 'deny'}
+                                result = api('/api/agent/host-permission/decision', decision)
+                                assert result['accepted'] and result['nonce'] == decision['nonce']
+                                approved.add(identity)
+                                receipt['permissions'].append({'tool': decision['tool_name'], 'allowed': allowed})
+                                if not allowed:
+                                    raise RuntimeError('Unexpected permission requested by text-only external expert: '+decision['tool_name'])
                             if event.get('type') in {'error','submission_rejected'}:
                                 detail = event.get('reason_code') or event.get('code') or event.get('message') or event.get('error')
                                 raise RuntimeError(f"Main stream {event['type']}: {str(detail or 'unconfirmed')[:500]}")
@@ -156,6 +179,8 @@ def main():
                 command = lambda value: api('/api/agent-rooms', value)
                 catalog = command({'type': 'role_templates'})
                 assert catalog['version'] == 1 and catalog['features']['explicit_generation_reasoning']
+                if args.external_expert:
+                    assert catalog['features']['external_expert_executors']
                 roles = {role['role_id']: role for role in catalog['templates']}
                 profiles = api('/api/model-profiles')['profiles']
                 assert not profiles, 'The live acceptance Store must start without model profiles'
@@ -180,7 +205,7 @@ def main():
 
                 from real_expert_collaboration import run_collaboration
                 receipt['cases'].update(run_collaboration(api, stream, command, profile, roles, database,
-                    host_id, client, output, receipt['provider_observations']))
+                    host_id, client, output, receipt['provider_observations'], args.external_expert, args.external_model))
                 receipt['passed'] = True
     finally:
         if host is not None and host.poll() is None:

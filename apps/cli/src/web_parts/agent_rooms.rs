@@ -527,6 +527,10 @@ fn execute_selected_room(config: &Config, mut selected: nola_application::agent_
                 expected_host_id: host_identity().into(), client_id: client_id.clone(), session_id: context_id.clone(),
             }, config)?;
             let (configuration_revision, settings) = conversation_configuration_state(&context_id)?.ok_or("room context configuration missing")?;
+            if reserved.as_ref().is_some_and(|entry| entry.defaults.expert_executor().is_some())
+                || settings.get("expertExecutor").is_some_and(|value| !value.is_null()) {
+                return Err("External experts are dispatched by the main agent. Mention the expert in the main conversation.".into());
+            }
             let profile_id = if let Some(entry)=&reserved {entry.model_declaration.profile_id.as_str()} else {
                 settings["modelSelectionID"].as_str().and_then(|id|id.strip_prefix("configured:")).ok_or("room model profile missing")?
             };

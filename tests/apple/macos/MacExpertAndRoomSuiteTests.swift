@@ -475,6 +475,19 @@ final class MacMainExpertDispatchContractTests: XCTestCase {
 
 @MainActor
 final class MacExpertRoleConfigurationTests: XCTestCase {
+    func testExecutorVariantRoundTripPreservesInactiveHTTPModel() throws {
+        let original: MacCanonicalJSONValue = .object(["modelSelectionID": .string("configured:original"),
+            "expertExecutor": .object(["backend": .string("codex"), "model": .string("x"), "model_provider": .string("p")])])
+        var draft = try AppleExpertConfigurationDraft(defaults: original)
+        XCTAssertEqual(draft.executor, .init(backend: "codex", model: "x", model_provider: "p"))
+        XCTAssertEqual(try draft.applying(to: original), original)
+        draft.executor = .init(backend: AppleExpertExecutor.backendKey("opencode"), model: "provider/model")
+        let changed = try draft.applying(to: original)
+        XCTAssertEqual(try AppleExpertConfigurationDraft(defaults: changed), draft)
+        draft.executor = nil
+        XCTAssertEqual(try draft.applying(to: changed), .object(["modelSelectionID": .string("configured:original")]))
+    }
+
     func testEffortSelectionPreservesOpaqueDefaultsAndPerModelOverrides() throws {
         let original: MacCanonicalJSONValue = .object([
             "modelSelectionID": .string("configured:model"), "expertReasoningEffort": .string("high"),

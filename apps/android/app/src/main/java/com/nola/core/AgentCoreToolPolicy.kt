@@ -308,6 +308,9 @@ internal object AndroidAgentToolRegistry {
         "device_create_calendar_event" to "android.calendar.create",
         "memory_search" to "android.memory.search",
         "skill_invoke" to "android.skills.invoke",
+        "device_github_skill_find" to "android.skills.find",
+        "device_github_skill_install" to "android.skills.install",
+        "device_skill_read_resource" to "android.skills.read_resource",
         "render_ui" to "android.core.ui.publish"
     )
 
@@ -318,7 +321,8 @@ internal object AndroidAgentToolRegistry {
         "location",
         "calendar",
         "none",
-        "skill_context"
+        "skill_context",
+        "network"
     )
     val handlerIds: Set<String> = handlers.values.toSet()
 
@@ -362,6 +366,25 @@ internal object AndroidAgentToolRegistry {
                 "limit" to integer("Maximum number of memory records to return, from 1 to 20."),
             ),
             listOf("query"),
+        ),
+        candidate(
+            "device_github_skill_find",
+            "Find public GitHub Skill repositories by name or list Skill packages at a repository or directory URL for installation on this Android device.",
+            "ordinary_read",
+            mapOf("query" to string("Repository name or Github URL.")), listOf("query"),
+        ),
+        candidate(
+            "device_github_skill_install",
+            "Install a public GitHub Skill on this Android device, enable it in settings and keep its resource files for future chats. A collection may return choices.",
+            "overwrite",
+            mapOf("url" to string("GitHub repository, Skill directory, or SKILL.md URL.")), listOf("url"),
+        ),
+        candidate(
+            "device_skill_read_resource",
+            "Read a UTF-8 script, template or reference from a GitHub Skill activated with skill_invoke in this chat run. Paths are relative to its original Skill directory.",
+            "ordinary_read",
+            mapOf("skill" to string("Installed Skill ID."), "path" to string("Relative resource path.")),
+            listOf("skill", "path"),
         ),
         candidate(
             "skill_invoke",

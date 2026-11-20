@@ -265,6 +265,17 @@ fn execute_tool_inner(request: &ToolRequest, ctx: &ToolContext, enforce_availabi
         "coding_conventions" => coding_conventions(&request.args, ctx),
         "project_overview" => project_overview(&request.args, ctx),
         "instruction_context" => instruction_context(&request.args, ctx),
+        "github_skill_find" | "github_skill_install" => {
+            let result = if request.name == "github_skill_find" {
+                crate::github_skills::find(&tool_try!(required_string(&request.args, "query")))
+            } else {
+                crate::github_skills::install(&tool_try!(required_string(&request.args, "url")))
+            };
+            match result {
+                Ok(value) => ok(value.to_string(), request.name.clone()),
+                Err(message) => error(message),
+            }
+        }
         "Skill" | "skill_invoke" => skill_invoke(&request.args, ctx),
         "SOP" | "sop_invoke" => sop_invoke(&request.args, ctx),
         "sop_run_update" => sop_run_update(&request.args, ctx),
@@ -2236,7 +2247,7 @@ mod work_step_transaction_execution_tests {
 fn is_network_sensitive_tool(request: &ToolRequest) -> bool {
     matches!(
         request.name.as_str(),
-        "chrome_native_open_page" | "web_fetch" | "web_search"
+        "chrome_native_open_page" | "web_fetch" | "web_search" | "github_skill_install" | "github_skill_find"
     )
 }
 

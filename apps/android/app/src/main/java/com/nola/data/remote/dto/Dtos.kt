@@ -157,13 +157,21 @@ data class MessagingChannelDto(
 )
 
 @Serializable
+data class ExecutionBackendModelDto(
+    val id: String,
+    @SerialName("display_name") val displayName: String,
+    @SerialName("provider_id") val providerId: String? = null,
+)
+
+@Serializable
 data class ExecutionBackendDto(
     val id: String,
     @SerialName("display_name") val displayName: String,
     val availability: String,
     @SerialName("executable_path") val executablePath: String? = null,
     val version: String? = null,
-    val capabilities: ExecutionBackendCapabilitiesDto
+    val capabilities: ExecutionBackendCapabilitiesDto,
+    val models: List<ExecutionBackendModelDto> = emptyList(),
 ) {
     val availabilityState: ExecutionBackendAvailability
         get() = when (availability) {

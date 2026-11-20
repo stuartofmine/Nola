@@ -155,6 +155,15 @@ class MemoryProfileDataStore @Inject constructor(
         return AndroidApplicationRuntime.SkillEditorSnapshot(record, revision)
     }
 
+    internal val githubSkillPackages: java.io.File
+        get() = applicationRuntime.databaseFile.let { java.io.File(it.parentFile, "${it.nameWithoutExtension}.skill-packages") }
+
+    internal suspend fun registerGithubSkill(prepared: kotlinx.serialization.json.JsonObject) = withContext(Dispatchers.IO) {
+        applicationRuntime.registerGithubSkill(prepared)
+        revision.update { it + 1 }
+    }
+
+    val skillCatalog: Flow<List<UploadedContent>> = revision.map { applicationRuntime.listSkills() }.flowOn(Dispatchers.IO)
     suspend fun skills(): List<UploadedContent> = withContext(Dispatchers.IO) { applicationRuntime.listSkills() }
 
     data class DocumentEditorSnapshot(val documents: List<UploadedContent>, val revision: Long?)
@@ -186,7 +195,7 @@ class MemoryProfileDataStore @Inject constructor(
         if (original == null) {
             applicationRuntime.createUserSkill(edited.copy(resourceId = edited.resourceId ?: UUID.randomUUID().toString()))
         } else {
-            applicationRuntime.configureUserSkill(original, edited.name, edited.content)
+            applicationRuntime.configureUserSkill(original, edited.name, edited.content, edited.description)
         }
         revision.update { it + 1 }
     }

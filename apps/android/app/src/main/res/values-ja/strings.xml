@@ -1392,4 +1392,10 @@
     <string name="expert_mention_needs_text">専門家に依頼したいことを入力してください。</string>
     <string name="expert_mention_plain">通常のテキストにする</string>
     <string name="expert_mention_upgrade_host">専門家をメンションするには接続先のホストを更新してください。通常のテキストとして送ることもできます。</string>
+    <string name="expert_executor_requires_host">このコーディングエージェントを実行するホストに接続し、ホストの会話でエキスパートを選択してください。</string>
+    <string name="chat_tool_find_github_skill">GitHub スキルを検索</string>
+    <string name="chat_tool_install_skill_device">この端末にスキルをインストール</string>
+    <string name="chat_tool_install_skill_host">ホストにスキルをインストール</string>
+    <string name="chat_tool_read_skill_file">スキルのファイルを読む</string>
+    <string name="chat_permission_install_github_skill">%1$s からスキルをダウンロードし、この端末の今後のチャットで使えるようにします。</string>
 </resources>

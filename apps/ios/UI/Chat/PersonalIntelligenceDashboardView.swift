@@ -739,6 +739,7 @@ struct PersonalCapabilitiesLibraryView: View {
                     }
                     ForEach(hostSkills) { skill in
                         DisclosureGroup(skill.name) {
+                            GitHubSkillSourceLink(reference: skill.packageReference)
                             Text(skill.description)
                                 .foregroundStyle(.secondary)
                             Text(skill.content)
@@ -1225,6 +1226,9 @@ struct PersonalCapabilityEditorView: View {
                     }
                 }
                 Section {
+                    if case .skill(_, let skill) = item {
+                        GitHubSkillSourceLink(reference: skill.packageReference)
+                    }
                     TextField(piText("personal.capabilities.name", "Name"), text: $name)
                         .focused($focusedField, equals: .name)
                         .accessibilityIdentifier("intelligence.capabilities.editor.name")

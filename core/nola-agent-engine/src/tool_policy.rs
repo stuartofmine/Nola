@@ -314,7 +314,12 @@ pub fn resolve_tool_policy(input: &ToolPolicyInput) -> ToolPolicyOutput {
         {
             authorization = CapabilityAuthorization::Granted;
         }
-        let requires_egress = route
+        // These two local operations return public repository information and an
+        // installation receipt. A paired device still needs a disclosure grant.
+        let public_local_skill_result = matches!(input.platform, ToolPlatform::Ios | ToolPlatform::Android)
+            && input.conversation.mode == "device_local"
+            && matches!(tool_id.as_str(), "device_github_skill_find" | "device_github_skill_install");
+        let requires_egress = !public_local_skill_result && route
             .map(|value| requires_result_egress(value, &capability))
             .unwrap_or(false);
         let reason = manifest_reason.clone().unwrap_or_else(|| {
@@ -980,6 +985,27 @@ mod tests {
             .all(|tool| tool.capability == "none"
                 && tool.permission == ToolPermission::None
                 && !tool.requires_result_egress));
+    }
+
+    #[test]
+    fn public_skill_install_still_checks_network_and_remote_disclosure() {
+        for platform in [ToolPlatform::Ios, ToolPlatform::Android] {
+            let mut input = input(platform);
+            input.conversation.mode = "device_local".into();
+            input.runtime.tools = ["device_github_skill_find", "device_github_skill_install", "device_read_file"]
+                .into_iter().map(|name| tool(name, ToolRoute::Device)).collect();
+            let local = resolve_tool_policy(&input);
+            assert_eq!(local.enabled_tools.len(), 2);
+            assert!(local.enabled_tools.iter().all(|t| t.capability == "network" && t.permission == ToolPermission::PlatformCapability));
+            assert_eq!(local.disabled_tools[0].reason, "result_egress_receipt_missing");
+            input.runtime.authorizations.insert("network".into(), CapabilityAuthorization::Denied);
+            assert!(resolve_tool_policy(&input).enabled_tools.is_empty());
+            input.runtime.authorizations.insert("network".into(), CapabilityAuthorization::Granted);
+            input.conversation.mode = "hybrid".into();
+            let remote = resolve_tool_policy(&input);
+            assert!(remote.enabled_tools.is_empty());
+            assert!(remote.disabled_tools.iter().all(|t| t.reason == "result_egress_receipt_missing"));
+        }
     }
 
     #[test]

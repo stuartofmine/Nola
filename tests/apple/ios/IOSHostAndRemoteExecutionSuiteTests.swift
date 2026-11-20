@@ -591,6 +591,7 @@ final class RemoteHostModelCatalogTests: XCTestCase {
             token: "fixture-token", expectedHostId: "host", clientId: "client")) { request in
             let object: [String: Any]
             if request.httpMethod == "GET", request.url?.path.hasSuffix("/agent/settings") == true {
+                XCTAssertEqual(request.url?.query, "view=models")
                 object = ["host_identity": ["id": "host"],
                     "model_profiles": [["profile_id": "p", "revision": 3, "display_name": "Model", "model_name": "upstream"]],
                     "default_chat_model_resolution": ["kind": "resolved", "profile_id": "p", "origin": "default"],

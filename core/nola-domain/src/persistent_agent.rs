@@ -117,6 +117,7 @@ impl TryFrom<serde_json::Value> for AgentDefaults {
                     | "modelOverrides"
                     | "selectedPromptTemplateID"
                     | "expertReasoningEffort"
+                    | "expertExecutor"
                     | "language"
                     | "promptResponseStyle"
                     | "contextLimitOverride"
@@ -127,6 +128,12 @@ impl TryFrom<serde_json::Value> for AgentDefaults {
             }
         }
         crate::configuration_patch::validate_patch(&value.to_string())?;
+        if fields.get("expertExecutor").is_some_and(|value| !value.is_null())
+            && fields.get("expertReasoningEffort").and_then(|value| value.as_str())
+                .is_some_and(|effort| effort != "automatic")
+        {
+            return Err("Select reasoning with the external executor's native model or variant".into());
+        }
         Ok(Self(fields.clone()))
     }
 }
@@ -138,6 +145,13 @@ impl From<AgentDefaults> for serde_json::Value {
 }
 
 impl AgentDefaults {
+    pub fn expert_executor(&self) -> Option<crate::delegation::ExternalAgentExecutor> {
+        self.0
+            .get("expertExecutor")
+            .filter(|value| !value.is_null())
+            .map(|value| serde_json::from_value(value.clone()).expect("validated expert executor"))
+    }
+
     /// Independent owned value: later profile edits cannot mutate a session.
     pub fn conversation_configuration(&self) -> serde_json::Value {
         serde_json::Value::Object(self.0.clone())

@@ -1400,4 +1400,10 @@
     <string name="expert_mention_needs_text">Write what you would like the expert to do.</string>
     <string name="expert_mention_plain">Use as plain text</string>
     <string name="expert_mention_upgrade_host">Update the connected Host to mention experts, or send ordinary text.</string>
+    <string name="expert_executor_requires_host">Connect to the host that runs this coding agent, then select the expert in a host conversation.</string>
+    <string name="chat_tool_find_github_skill">Find a GitHub Skill</string>
+    <string name="chat_tool_install_skill_device">Install Skill on this phone</string>
+    <string name="chat_tool_install_skill_host">Install Skill on the host</string>
+    <string name="chat_tool_read_skill_file">Read a Skill file</string>
+    <string name="chat_permission_install_github_skill">Download and enable a Skill from %1$s for future chats on this phone.</string>
 </resources>

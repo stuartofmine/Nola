@@ -1301,7 +1301,8 @@ class ChatViewModel @Inject constructor(
     }
 
     /** This editor's directory is the local Store, never a paired Host mirror. */
-    internal data class ExpertEditorScope(val remote: Boolean, val models: List<ModelInfo>, val defaultProfileId: String?, val efforts: Map<String, List<String>>, val sourceIdentity: String = "local", val storeEpoch: String? = null)
+    internal data class ExpertEditorScope(val remote: Boolean, val models: List<ModelInfo>, val defaultProfileId: String?, val efforts: Map<String, List<String>>, val sourceIdentity: String = "local", val storeEpoch: String? = null,
+        val executors: List<com.nola.data.remote.dto.ExecutionBackendDto> = emptyList())
     internal suspend fun expertEditorScope(): ExpertEditorScope = withContext(Dispatchers.IO) {
         val state = displayedState.value
         val binding = state.conversationId?.let { conversationRepo.getConversation(it)?.executionHostBinding } ?: state.executionHostBinding
@@ -1317,7 +1318,7 @@ class ChatViewModel @Inject constructor(
         val efforts = settings.modelProfiles.associate { it.profileId to it.reasoning?.takeIf { it.control == "effort" }?.efforts.orEmpty()
             .filter { value -> value in listOf("none", "minimal", "low", "medium", "high", "xhigh", "max") }.distinct() }
         ExpertEditorScope(true, models, settings.defaultChatModelResolution?.takeIf { it.kind == "resolved" }?.profileId, efforts,
-            JsonArray(listOf(configuration.expectedHostId, configuration.clientId, epoch).map(::JsonPrimitive)).toString(), epoch)
+            JsonArray(listOf(configuration.expectedHostId, configuration.clientId, epoch).map(::JsonPrimitive)).toString(), epoch, settings.executionBackends)
     }
 
     internal suspend fun readableExpertTemplates(localDirectory: Boolean = false): com.nola.data.local.ReadableExpertTemplateCatalog = withContext(Dispatchers.IO) {
@@ -1648,6 +1649,11 @@ class ChatViewModel @Inject constructor(
     private val displayedChildPermissionIds = java.util.concurrent.ConcurrentHashMap.newKeySet<String>()
 
     init {
+        viewModelScope.launch {
+            memoryProfileDataStore.skillCatalog.collect { skills ->
+                _uiState.update { it.copy(uploadedSkills = skills) }
+            }
+        }
         viewModelScope.launch {
             var displayedChildRequest: String? = null
             combine(AndroidChildPermissions.pending, _uiState) { pending, state ->

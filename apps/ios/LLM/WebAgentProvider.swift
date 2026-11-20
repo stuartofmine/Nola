@@ -674,6 +674,7 @@ public struct WebAgentProvider: LLMClient, LLMRemoteAuxiliaryInvocationProviding
         public let content: String
         public let description: String?
         public let enabled: Bool?
+        public let packageReference: String?
 
         private enum CodingKeys: String, CodingKey {
             case name
@@ -681,6 +682,7 @@ public struct WebAgentProvider: LLMClient, LLMRemoteAuxiliaryInvocationProviding
             case text
             case description
             case enabled
+            case instructionsRef = "instructions_ref"
         }
 
         public init(from decoder: Decoder) throws {
@@ -690,6 +692,8 @@ public struct WebAgentProvider: LLMClient, LLMRemoteAuxiliaryInvocationProviding
             self.content = decodeFirstNonBlankString(container, .content, .text) ?? ""
             self.description = decodeString(container, .description)
             self.enabled = decodeBoolish(container, .enabled)
+            let reference = decodeString(container, .instructionsRef)
+            self.packageReference = IOSGitHubSkillPackages.sourceURL(reference: reference) == nil ? nil : reference
         }
     }
 
@@ -922,6 +926,13 @@ public struct WebAgentProvider: LLMClient, LLMRemoteAuxiliaryInvocationProviding
                 public let supports_permission_bridge: Bool
             }
 
+            public struct Model: Decodable, Equatable {
+                public let id: String
+                public let display_name: String
+                public let provider_id: String?
+            }
+
+            public var models: [Model]? = nil
             public let id: String
             public let display_name: String
             public let availability: String
@@ -2455,7 +2466,7 @@ public struct WebAgentProvider: LLMClient, LLMRemoteAuxiliaryInvocationProviding
         return try await collect(bytes, response: response)
     }
 
-    private func prepareStandaloneSubmission(_ original: [String: Any]) async throws
+    func prepareStandaloneSubmission(_ original: [String: Any], previous: IOSRemoteSubmissionIdentity? = nil) async throws
         -> (identity: IOSRemoteSubmissionIdentity, digest: String, request: AgentCoreJSONValue) {
         var payload = original
         // Standalone summary/model-test calls still own a new explicit
@@ -2471,7 +2482,15 @@ public struct WebAgentProvider: LLMClient, LLMRemoteAuxiliaryInvocationProviding
         }
         let identity = IOSRemoteSubmissionIdentity(source_host_id: host, client_id: config.clientId,
             conversation_id: conversation, submission_id: submission, user_message_id: user, assistant_message_id: assistant)
-        payload = try await prepareHostToolPlan(payload)
+        if let previous {
+            guard previous.source_host_id == host, previous.client_id == config.clientId,
+                  previous.conversation_id == conversation,
+                  previous.assistant_message_id == payload["expected_parent_message_id"] as? String else {
+                throw IOSApplicationRuntimeError.rejected("Previous submission belongs to a different source or parent")
+            }
+        }
+        payload = try await prepareHostToolPlan(payload, sourceRunID: previous?.submission_id,
+            sourceAssistantMessageID: previous?.assistant_message_id)
         struct Query: Encodable { let operation = "prepare"; let identity: IOSRemoteSubmissionIdentity; let request: AgentCoreJSONValue }
         nonisolated struct Prepared: Decodable, Sendable { let identity: IOSRemoteSubmissionIdentity; let request_digest: String }
         let prepared: Prepared = try await pairedReadRequest(Query(identity: identity,
@@ -2650,11 +2669,13 @@ public struct WebAgentProvider: LLMClient, LLMRemoteAuxiliaryInvocationProviding
         }
     }
 
-    private func hostModelSettings() async throws -> [String: Any] {
+    private func hostModelSettings(modelsOnly: Bool = false) async throws -> [String: Any] {
         guard MobileHostTransportPolicy.allows(config.baseURL) else {
             throw IOSApplicationRuntimeError.rejected("Host transport is not permitted")
         }
-        var request = URLRequest(url: Self.mobileURL(baseURL: config.baseURL, path: "agent/settings"))
+        let settingsURL = Self.mobileURL(baseURL: config.baseURL, path: "agent/settings")
+        let url = modelsOnly ? settingsURL.appending(queryItems: [.init(name: "view", value: "models")]) : settingsURL
+        var request = URLRequest(url: url)
         request.httpMethod = "GET"
         request.timeoutInterval = 15
         request.setValue("application/json", forHTTPHeaderField: "Accept")
@@ -2734,7 +2755,7 @@ public struct WebAgentProvider: LLMClient, LLMRemoteAuxiliaryInvocationProviding
                 throw IOSApplicationRuntimeError.rejected("Model intent is already frozen")
             }
             frozenModel = try AppleRemoteHostModelCatalog.freezeDefault(
-                settings: await hostModelSettings(), expectedHostID: host)
+                settings: await hostModelSettings(modelsOnly: true), expectedHostID: host)
         } else { frozenModel = nil }
         struct Query: Encodable { let expected_host_id: String; let client_id: String; let session_id: String }
         let plan: IOSRemoteHostToolPlan = try await pairedReadRequest(
@@ -2743,7 +2764,7 @@ public struct WebAgentProvider: LLMClient, LLMRemoteAuxiliaryInvocationProviding
         payload["expected_configuration_revision"] = frontier.configuration_revision.map { $0 as Any } ?? NSNull()
         payload["expected_parent_message_id"] = frontier.parent_message_id.map { $0 as Any } ?? NSNull()
         if let frozenModel {
-            try AppleRemoteHostModelCatalog.validateUnchanged(frozenModel, settings: await hostModelSettings())
+            try AppleRemoteHostModelCatalog.validateUnchanged(frozenModel, settings: await hostModelSettings(modelsOnly: true))
             // Prompt voice is independent of the model's reasoning tier.
             payload["model_intent"] = try frozenModel.payload(tier: "balanced")
         }

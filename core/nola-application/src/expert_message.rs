@@ -70,6 +70,7 @@ fn defaults(settings: &str) -> Result<AgentDefaults, String> {
         "modelOverrides",
         "selectedPromptTemplateID",
         "expertReasoningEffort",
+        "expertExecutor",
         "language",
         "promptResponseStyle",
         "contextLimitOverride",

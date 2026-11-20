@@ -678,6 +678,9 @@
 "chat.host_tool.name.time" = "Прочитать системное время";
 "chat.host_tool.name.browser" = "Управлять браузером";
 "chat.host_tool.name.computer" = "Управлять компьютером";
+"chat.host_tool.name.find_skill" = "Найти навык на GitHub";
+"chat.host_tool.name.install_skill" = "Установить и включить навык";
+"chat.host_tool.name.read_skill_resource" = "Прочитать ресурс навыка";
 "chat.host_tool.name.skill" = "Использовать навык";
 "chat.host_tool.name.mcp" = "Вызвать MCP";
 "chat.host_tool.name.background" = "Фоновая задача";
@@ -3264,3 +3267,4 @@
 
 "chat.history.otherClientReadOnly" = "Только для чтения. Чтобы продолжить беседу, откройте её в клиенте, в котором она была создана.";
 "chat.history.ambiguousIDs" = "Идентификаторы двух бесед различаются только регистром. Откройте их в исходном клиенте.";
+"experts.executor.requiresHost" = "Подключитесь к хосту, на котором работает этот агент программирования, и выберите эксперта в чате этого хоста.";

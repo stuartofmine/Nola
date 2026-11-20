@@ -3809,6 +3809,24 @@ nonisolated final class MacApplicationPort:
         return try execute(MacSkillCommandEnvelope(command: Payload(input: input)))
     }
 
+    func updateInstalledSkillInstructions(_ text: String, expected: MacCanonicalSkillEditor) throws -> MacCanonicalSkillEditor {
+        struct Payload: Encodable {
+            let type = "configure_user"
+            let expectedRevision: Int64
+            let input: MacCanonicalSkillInput
+        }
+        let record = expected.record
+        guard record.gitHubSourceURL != nil else { throw MacExtensionsServiceError.contentUnavailable }
+        let input = MacCanonicalSkillInput(
+            id: record.id, source: record.source, version: "user-" + UUID().uuidString,
+            displayName: record.displayName, summary: record.summary, category: record.category,
+            instructionsRef: record.instructionsRef, instructionsText: text, requiredTools: record.requiredTools,
+            defaultMode: record.defaultMode, enabled: record.enabled, createdAtMs: record.createdAtMs,
+            updatedAtMs: Int64(Date().timeIntervalSince1970 * 1_000)
+        )
+        return try execute(MacSkillCommandEnvelope(command: Payload(expectedRevision: expected.revision, input: input)))
+    }
+
     func setSkillEnabled(_ expected: MacCanonicalSkillEditor, enabled: Bool, updatedAtMs: Int64) throws -> MacCanonicalSkillEditor {
         struct Payload: Encodable {
             let type = "set_enabled_checked"

@@ -94,7 +94,7 @@ cd apps/cli
 管理本地 Skills、MCP 服务、长期记忆与版本信息（无需连接模型）：
 
 ```bash
-nola skills [list | enable <id> | disable <id>] [--json]
+nola skills [list | find <name-or-github-url> | install <github-url> | enable <id> | disable <id>] [--json]
 nola mcp [list | add <name> <command-or-url> [args...] | remove <id-or-name> | enable <id-or-name> | disable <id-or-name>] [--json]
 nola memory [list | add "<text>" [--scope global|project] | search "<query>" | create | revise <id> | delete <id>] [--json]
 nola version [--json]   # 等价于 nola --version / nola -V

@@ -300,6 +300,8 @@ struct MacExpertDirectoryManagementView: View {
     @State private var isEnabled = true
     @State private var isSaving = false
     @State private var configuration = AppleExpertConfigurationDraft()
+    @State private var supportsExecutors = false
+    @State private var executorOptions: [AppleExpertExecutorOption] = []
     @State private var modelOptions: [MacChatModelOption] = []
     @State private var configurationError: String?
     @State private var showsTemplateLibrary = false
@@ -390,19 +392,23 @@ struct MacExpertDirectoryManagementView: View {
                             .accessibilityIdentifier("mac-expert-name")
                         TextField("Responsibilities and strengths", text: $responsibilities, axis: .vertical)
                             .lineLimit(3...7).accessibilityIdentifier("mac-expert-description")
-                        Picker("Model", selection: $configuration.modelID) {
-                            Text("Use application default model").tag("")
-                            ForEach(modelOptions, id: \.id) { option in
-                                Text(option.displayName).tag(option.id)
+                        AppleExpertExecutorControls(selected: $configuration.executor, catalog: executorOptions,
+                            executorLabel: "Execution Unit", modelLabel: "Model", defaultLabel: "Use default model")
+                        if configuration.executor == nil {
+                            Picker("Model", selection: $configuration.modelID) {
+                                Text("Use application default model").tag("")
+                                ForEach(modelOptions, id: \.id) { option in
+                                    Text(option.displayName).tag(option.id)
+                                }
+                                if !configuration.modelID.isEmpty && !modelOptions.contains(where: { $0.id == configuration.modelID }) {
+                                    Text("Unavailable model: \(configuration.modelID)").tag(configuration.modelID)
+                                }
+                            }.accessibilityIdentifier("mac-expert-model")
+                            .onChange(of: configuration.modelID) { _, _ in
+                                refreshReasoningEfforts()
                             }
-                            if !configuration.modelID.isEmpty && !modelOptions.contains(where: { $0.id == configuration.modelID }) {
-                                Text("Unavailable model: \(configuration.modelID)").tag(configuration.modelID)
-                            }
-                        }.accessibilityIdentifier("mac-expert-model")
-                        .onChange(of: configuration.modelID) { _, _ in
-                            refreshReasoningEfforts()
+                            reasoningControls
                         }
-                        reasoningControls
                         roleControls
                         templateControls
                         Text("Unset selections inherit application defaults. Existing conversations keep their captured configuration.")
@@ -516,9 +522,19 @@ struct MacExpertDirectoryManagementView: View {
                     roleTemplates = catalog.templates
                     if !hasChosenEditor && builtinPreview == nil { builtinPreview = catalog.templates.first }
                     if roleTemplates.contains(where: { $0.id == configuration.templateID }) { previewRoleID = configuration.templateID }
+                    supportsExecutors = catalog.features.externalExpertExecutors
                     supportsExpertReasoning = catalog.features.reasoningEffort && catalog.features.explicitGenerationReasoning
                 }
                 catch { configurationError = error.localizedDescription }
+            }
+            .task(id: supportsExecutors) {
+                guard supportsExecutors else { executorOptions = []; return }
+                do {
+                    executorOptions = try await MacLocalExecutionBackendCatalog.fetch().filter { $0.id != "nola" }.map { item in
+                        .init(id: item.id, name: item.displayName, available: item.isAvailable,
+                            models: item.models.map { .init(id: $0.id, display_name: $0.displayName, provider_id: $0.providerID) })
+                    }
+                } catch { configurationError = error.localizedDescription }
             }
             .onReceive(NotificationCenter.default.publisher(for: .nolaMacConfigurationDidChange)) { _ in refreshModelOptions() }
             .onReceive(NotificationCenter.default.publisher(for: .macDefaultChatModelDidChange)) { _ in

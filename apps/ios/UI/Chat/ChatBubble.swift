@@ -3530,6 +3530,8 @@ struct HostPermissionDecisionCard: View {
 
     private func permissionAllowTitle(for request: HostAgentPermissionRequest) -> String {
         switch request.toolName {
+        case "device_github_skill_install", "github_skill_install":
+            return String(localized: "chat.host_tool.name.install_skill")
         case "device_read_file":
             return NSLocalizedString("chat.permission.action.read_file", value: "选择并读取文件", comment: "Read selected file permission action")
         case "device_write_file":
@@ -3601,6 +3603,12 @@ private func localizedHostToolDisplayName(_ rawName: String) -> String {
          "impact_analysis", "validation_plan", "test_context", "format_plan",
          "verification_review", "handoff_context", "workspace_checkpoint":
         (key, fallback) = ("chat.host_tool.name.workspace", "Inspect workspace")
+    case "github_skill_find", "device_github_skill_find":
+        (key, fallback) = ("chat.host_tool.name.find_skill", "Find a GitHub skill")
+    case "github_skill_install", "device_github_skill_install":
+        (key, fallback) = ("chat.host_tool.name.install_skill", "Install and enable skill")
+    case "device_skill_read_resource":
+        (key, fallback) = ("chat.host_tool.name.read_skill_resource", "Read skill resource")
     case "skill", "skill_context":
         (key, fallback) = ("chat.host_tool.name.skill", "Use skill")
     case "git_diff", "change_review", "diff_review", "changed_symbols", "git_history", "git_blame", "git_show":

@@ -1,6 +1,6 @@
 {
     "schema_version": 1,
-    "updated": "2026-11-10",
+    "updated": "2026-11-20",
     "scope": "当前仓库用户可见业务流程清单；场景状态是设计演示，不是生产完成证据。",
     "platforms": {
         "mac": "macOS",
@@ -3712,6 +3712,356 @@
             }
         },
         {
+            "id": "github-skill",
+            "group": "capability",
+            "title": "从对话安装 GitHub Skill",
+            "entry": "本机或当前 Host 的对话",
+            "platforms": [
+                "mac",
+                "ios",
+                "android",
+                "web",
+                "windows",
+                "cli"
+            ],
+            "sources": [
+                "core/nola-skill-host/src/lib.rs",
+                "apps/ios/Services/IOSGitHubSkillPackages.swift",
+                "apps/android/app/src/main/java/com/nola/core/AndroidAgentHostExecutor.kt",
+                "apps/cli/src/github_skills.rs"
+            ],
+            "states": [
+                {
+                    "id": "0",
+                    "title": "安装论文精读技能",
+                    "body": [
+                        "帮我找 Nature Skills 里做论文精读卡的技能，安装并启用。"
+                    ],
+                    "kind": "choice",
+                    "actions": [
+                        {
+                            "label": "按名称查找",
+                            "to": "choose",
+                            "style": "primary"
+                        },
+                        {
+                            "label": "使用目录链接",
+                            "to": "review",
+                            "style": "secondary"
+                        }
+                    ]
+                },
+                {
+                    "id": "choose",
+                    "title": "找到论文精读卡",
+                    "body": [
+                        "公开仓库中与请求匹配的 Skill。"
+                    ],
+                    "kind": "list",
+                    "actions": [
+                        {
+                            "label": "选择 nature-paper-card",
+                            "to": "review",
+                            "style": "primary"
+                        },
+                        {
+                            "label": "返回对话",
+                            "to": "0",
+                            "style": "secondary"
+                        }
+                    ]
+                },
+                {
+                    "id": "review",
+                    "title": "允许安装这个 Skill？",
+                    "body": [
+                        "下载所选技能及其声明的共享文件，并在这里启用，供以后的对话调用。"
+                    ],
+                    "kind": "permission",
+                    "actions": [
+                        {
+                            "label": "仅允许本次",
+                            "to": "installed",
+                            "style": "primary"
+                        },
+                        {
+                            "label": "拒绝",
+                            "to": "denied",
+                            "style": "secondary"
+                        }
+                    ]
+                },
+                {
+                    "id": "installed",
+                    "title": "已安装并启用",
+                    "body": [
+                        "新会话可以调用这份论文精读技能。"
+                    ],
+                    "kind": "success",
+                    "actions": [
+                        {
+                            "label": "在新会话中使用",
+                            "to": "read",
+                            "style": "primary"
+                        },
+                        {
+                            "label": "查看已安装技能",
+                            "to": "settings",
+                            "style": "secondary"
+                        }
+                    ]
+                },
+                {
+                    "id": "read",
+                    "title": "论文精读卡",
+                    "body": [
+                        "已读取随包术语表，英文标题为 Terminology Ledger。"
+                    ],
+                    "kind": "answer",
+                    "actions": [
+                        {
+                            "label": "查看已安装技能",
+                            "to": "settings",
+                            "style": "primary"
+                        }
+                    ]
+                },
+                {
+                    "id": "settings",
+                    "title": "已安装技能",
+                    "body": [
+                        "按论文原文提取研究问题、方法与证据，并整理成精读卡。"
+                    ],
+                    "kind": "list",
+                    "actions": [
+                        {
+                            "label": "停用",
+                            "to": "off",
+                            "style": "secondary"
+                        },
+                        {
+                            "label": "在新会话中使用",
+                            "to": "read",
+                            "style": "primary"
+                        }
+                    ]
+                },
+                {
+                    "id": "off",
+                    "title": "技能已停用",
+                    "body": [
+                        "这份技能保留在安装位置。重新启用后，新会话可以继续使用。"
+                    ],
+                    "kind": "reader",
+                    "actions": [
+                        {
+                            "label": "重新启用",
+                            "to": "settings",
+                            "style": "primary"
+                        }
+                    ]
+                },
+                {
+                    "id": "denied",
+                    "title": "本次安装已拒绝",
+                    "body": [
+                        "此位置的技能列表没有变化。"
+                    ],
+                    "kind": "blocked",
+                    "actions": [
+                        {
+                            "label": "重新审阅",
+                            "to": "review",
+                            "style": "primary"
+                        },
+                        {
+                            "label": "返回对话",
+                            "to": "0",
+                            "style": "secondary"
+                        }
+                    ]
+                }
+            ],
+            "fields": [],
+            "command": "nola",
+            "contract": "安装位置跟随会话。权限卡显示具体目录和目标，确认后才登记启用。来源固定到同一 Git 提交。",
+            "boundary": "浏览器内回放示例。本机与配对 Host 的设置各自保留，Windows 使用本地 Web Host 的设计视角。",
+            "platform_notes": {}
+        },
+        {
+            "id": "github-skill-host",
+            "group": "capability",
+            "title": "手机对话 · 安装到配对 Host",
+            "entry": "已配对 Host 的对话",
+            "platforms": [
+                "ios",
+                "android"
+            ],
+            "sources": [
+                "core/nola-skill-host/src/lib.rs",
+                "apps/ios/Services/IOSGitHubSkillPackages.swift",
+                "apps/android/app/src/main/java/com/nola/core/AndroidAgentHostExecutor.kt",
+                "apps/cli/src/github_skills.rs"
+            ],
+            "states": [
+                {
+                    "id": "0",
+                    "title": "安装论文精读技能",
+                    "body": [
+                        "帮我找 Nature Skills 里做论文精读卡的技能，安装并启用。"
+                    ],
+                    "kind": "choice",
+                    "actions": [
+                        {
+                            "label": "按名称查找",
+                            "to": "choose",
+                            "style": "primary"
+                        },
+                        {
+                            "label": "使用目录链接",
+                            "to": "review",
+                            "style": "secondary"
+                        }
+                    ]
+                },
+                {
+                    "id": "choose",
+                    "title": "找到论文精读卡",
+                    "body": [
+                        "公开仓库中与请求匹配的 Skill。"
+                    ],
+                    "kind": "list",
+                    "actions": [
+                        {
+                            "label": "选择 nature-paper-card",
+                            "to": "review",
+                            "style": "primary"
+                        },
+                        {
+                            "label": "返回对话",
+                            "to": "0",
+                            "style": "secondary"
+                        }
+                    ]
+                },
+                {
+                    "id": "review",
+                    "title": "允许安装这个 Skill？",
+                    "body": [
+                        "下载所选技能及其声明的共享文件，并在这里启用，供以后的对话调用。"
+                    ],
+                    "kind": "permission",
+                    "actions": [
+                        {
+                            "label": "仅允许本次",
+                            "to": "installed",
+                            "style": "primary"
+                        },
+                        {
+                            "label": "拒绝",
+                            "to": "denied",
+                            "style": "secondary"
+                        }
+                    ]
+                },
+                {
+                    "id": "installed",
+                    "title": "已安装并启用",
+                    "body": [
+                        "新会话可以调用这份论文精读技能。"
+                    ],
+                    "kind": "success",
+                    "actions": [
+                        {
+                            "label": "在新会话中使用",
+                            "to": "read",
+                            "style": "primary"
+                        },
+                        {
+                            "label": "查看已安装技能",
+                            "to": "settings",
+                            "style": "secondary"
+                        }
+                    ]
+                },
+                {
+                    "id": "read",
+                    "title": "论文精读卡",
+                    "body": [
+                        "已读取随包术语表，英文标题为 Terminology Ledger。"
+                    ],
+                    "kind": "answer",
+                    "actions": [
+                        {
+                            "label": "查看已安装技能",
+                            "to": "settings",
+                            "style": "primary"
+                        }
+                    ]
+                },
+                {
+                    "id": "settings",
+                    "title": "已安装技能",
+                    "body": [
+                        "按论文原文提取研究问题、方法与证据，并整理成精读卡。"
+                    ],
+                    "kind": "list",
+                    "actions": [
+                        {
+                            "label": "停用",
+                            "to": "off",
+                            "style": "secondary"
+                        },
+                        {
+                            "label": "在新会话中使用",
+                            "to": "read",
+                            "style": "primary"
+                        }
+                    ]
+                },
+                {
+                    "id": "off",
+                    "title": "技能已停用",
+                    "body": [
+                        "这份技能保留在安装位置。重新启用后，新会话可以继续使用。"
+                    ],
+                    "kind": "reader",
+                    "actions": [
+                        {
+                            "label": "重新启用",
+                            "to": "settings",
+                            "style": "primary"
+                        }
+                    ]
+                },
+                {
+                    "id": "denied",
+                    "title": "本次安装已拒绝",
+                    "body": [
+                        "此位置的技能列表没有变化。"
+                    ],
+                    "kind": "blocked",
+                    "actions": [
+                        {
+                            "label": "重新审阅",
+                            "to": "review",
+                            "style": "primary"
+                        },
+                        {
+                            "label": "返回对话",
+                            "to": "0",
+                            "style": "secondary"
+                        }
+                    ]
+                }
+            ],
+            "fields": [],
+            "command": "nola",
+            "contract": "安装位置跟随会话。权限卡显示具体目录和目标，确认后才登记启用。来源固定到同一 Git 提交。",
+            "boundary": "浏览器内回放示例。本机与配对 Host 的设置各自保留，Windows 使用本地 Web Host 的设计视角。",
+            "platform_notes": {}
+        },
+        {
             "id": "skill-editor",
             "group": "capability",
             "title": "Skill 新增、编辑与内置恢复",
@@ -6816,7 +7166,8 @@
             "skill-review",
             "mcp-config",
             "mcp-uncertain",
-            "mcp-invoke"
+            "mcp-invoke",
+            "github-skill"
         ],
         "/activity": [
             "activity-inbox",
@@ -6861,7 +7212,8 @@
             "permission",
             "remote-reconnect",
             "compaction",
-            "inspector"
+            "inspector",
+            "github-skill"
         ]
     }
 }

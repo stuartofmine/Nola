@@ -18,6 +18,7 @@ import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.platform.LocalConfiguration
+import com.nola.data.repository.ExpertRoleCatalog
 import com.nola.data.repository.ExpertRoleTemplate
 import com.nola.data.repository.expertRoleText
 import androidx.compose.ui.res.stringResource
@@ -40,7 +41,7 @@ import kotlinx.serialization.json.*
 internal interface ExpertManagementDataSource {
     suspend fun expertEditorScope(): ChatViewModel.ExpertEditorScope
     suspend fun directory(conversationId: String?, storeEpoch: String?): AgentDirectory
-    suspend fun roleTemplates(conversationId: String?, storeEpoch: String?): List<ExpertRoleTemplate>
+    suspend fun roleTemplates(conversationId: String?, storeEpoch: String?): ExpertRoleCatalog
     suspend fun readableExpertTemplates(): com.nola.data.local.ReadableExpertTemplateCatalog
     suspend fun expertDefaultReasoningEfforts(): List<String>
     suspend fun reasoningEfforts(model: ModelInfo): List<String>
@@ -86,9 +87,9 @@ internal fun ExpertManagementPanel(viewModel: ChatViewModel, localDirectory: Boo
                     repository(conversationId, storeEpoch).directory()
                 }
 
-            override suspend fun roleTemplates(conversationId: String?, storeEpoch: String?): List<ExpertRoleTemplate> =
+            override suspend fun roleTemplates(conversationId: String?, storeEpoch: String?): ExpertRoleCatalog =
                 withContext(Dispatchers.IO) {
-                    repository(conversationId, storeEpoch).roleTemplates().templates
+                    repository(conversationId, storeEpoch).roleTemplates()
                 }
 
             override suspend fun readableExpertTemplates(): com.nola.data.local.ReadableExpertTemplateCatalog =
@@ -154,6 +155,14 @@ internal fun ExpertManagementPanel(
     var newAgentID by rememberSaveable { mutableStateOf<String?>(null) }
     var name by rememberSaveable { mutableStateOf("") }
     var description by rememberSaveable { mutableStateOf("") }
+    var executorJSON by rememberSaveable { mutableStateOf<String?>(null) }
+    val executor = remember(executorJSON) { executorJSON?.let { Json.parseToJsonElement(it).jsonObject } }
+    var supportsExecutors by remember(state.conversationId, state.executionHostBinding) { mutableStateOf(false) }
+    val executors = editorScope?.executors.orEmpty().filter { supportsExecutors && it.id != "nola" }
+    val executorKind = executor?.get("backend")?.jsonPrimitive?.contentOrNull
+    val backend = executors.firstOrNull { expertExecutorBinding(it.id)["backend"]?.jsonPrimitive?.content == executorKind }
+    var executorMenu by remember { mutableStateOf(false) }
+    var executorModelMenu by remember { mutableStateOf(false) }
     var inheritModel by rememberSaveable { mutableStateOf(true) }
     var modelID by rememberSaveable { mutableStateOf<String?>(null) }
     var modelMenu by remember { mutableStateOf(false) }
@@ -196,6 +205,7 @@ internal fun ExpertManagementPanel(
     fun editAgent(agent: PersistentAgent) {
         editorOwnerKey = sourceKey
         resetModelParameters = null
+        executorJSON = (agent.defaults["expertExecutor"] as? JsonObject)?.toString()
         editingID = agent.id; name = agent.name; description = agent.description
         originalModelSelection = agent.defaults["modelSelectionID"]?.takeUnless { it == JsonNull }?.jsonPrimitive?.content
         inheritModel = originalModelSelection == null
@@ -221,9 +231,11 @@ internal fun ExpertManagementPanel(
         val sourceModels = dataSource.expertEditorScope()
         directory = dataSource.directory(state.conversationId, sourceModels.storeEpoch)
         editorScope = sourceModels
-        roles = try { dataSource.roleTemplates(state.conversationId, sourceModels.storeEpoch) }
+        val roleCatalog = try { dataSource.roleTemplates(state.conversationId, sourceModels.storeEpoch) }
         catch (cancelled: CancellationException) { throw cancelled }
         catch (_: Exception) { throw IllegalStateException(catalogUnavailableMessage) }
+        roles = roleCatalog.templates
+        supportsExecutors = roleCatalog.features.externalExpertExecutors
         catalogReady = true
         try { templateCatalog = dataSource.readableExpertTemplates(); templateCatalogFailed = false }
         catch (cancelled: CancellationException) { throw cancelled }
@@ -257,7 +269,39 @@ internal fun ExpertManagementPanel(
             OutlinedTextField(description, { description = it }, enabled = !busy,
                 label = { Text(stringResource(R.string.room_agent_description)) },
                 modifier = Modifier.fillMaxWidth().testTag("expert.editor.description"))
-            Box(Modifier.fillMaxWidth()) {
+            if (executors.isNotEmpty() || executor != null) Box(Modifier.fillMaxWidth()) {
+                NolaDropdownBar(value = backend?.displayName ?: executorKind ?: "Nola", expanded = executorMenu,
+                    label = stringResource(R.string.chat_execution_unit), onClick = { finishTextEntry(); executorMenu = true },
+                    enabled = !busy, modifier = Modifier.testTag("expert.editor.executor"))
+                DropdownMenu(executorMenu, onDismissRequest = { executorMenu = false }) {
+                    DropdownMenuItem(text = { Text("Nola") }, onClick = { executorJSON = null; executorMenu = false })
+                    executors.forEach { option ->
+                        DropdownMenuItem(text = { Text(option.displayName) }, enabled = option.availability == "available",
+                            onClick = { if (backend?.id != option.id) executorJSON = expertExecutorBinding(option.id).toString(); executorMenu = false })
+                    }
+                }
+            }
+            if (executor != null) Box(Modifier.fillMaxWidth()) {
+                val model = executor["model"]?.jsonPrimitive?.contentOrNull
+                val provider = executor["model_provider"]?.jsonPrimitive?.contentOrNull
+                val selection = backend?.models?.firstOrNull { it.id == model && (backend.id != "codex" || it.providerId == provider) }
+                fun label(option: com.nola.data.remote.dto.ExecutionBackendModelDto) =
+                    listOfNotNull(option.displayName, option.providerId?.takeIf { backend?.id == "codex" }).joinToString(" · ")
+                val savedLabel = listOfNotNull(model, provider).joinToString(" · ")
+                NolaDropdownBar(value = stringResource(R.string.room_agent_model, selection?.let(::label)
+                    ?: savedLabel.ifEmpty { stringResource(R.string.chat_use_model_default) }),
+                    expanded = executorModelMenu, onClick = { finishTextEntry(); executorModelMenu = true },
+                    enabled = !busy && backend?.availability == "available", modifier = Modifier.testTag("expert.editor.executor.model"))
+                DropdownMenu(executorModelMenu, onDismissRequest = { executorModelMenu = false }) {
+                    if (backend != null) {
+                        DropdownMenuItem(text = { Text(stringResource(R.string.chat_use_model_default)) },
+                            onClick = { executorJSON = expertExecutorBinding(backend.id).toString(); executorModelMenu = false })
+                        backend.models.forEach { option -> DropdownMenuItem(text = { Text(label(option)) },
+                            onClick = { executorJSON = expertExecutorBinding(backend.id, option).toString(); executorModelMenu = false }) }
+                    }
+                }
+            }
+            if (executor == null) Box(Modifier.fillMaxWidth()) {
                 val modelValue = if (inheritModel) {
                     stringResource(R.string.expert_follow_app_default_model)
                 } else {
@@ -281,7 +325,7 @@ internal fun ExpertManagementPanel(
             }
             val parameterKey = effectiveModel?.let { com.nola.data.repository.conversationModelIdentity(it) }
             val savedOverrides = directory?.agents?.singleOrNull { it.id == editingID }?.defaults?.get("modelOverrides") as? JsonObject
-            if (parameterKey != null && (savedOverrides?.get(parameterKey) as? JsonObject)?.isNotEmpty() == true) {
+            if (executor == null && parameterKey != null && (savedOverrides?.get(parameterKey) as? JsonObject)?.isNotEmpty() == true) {
                 TextButton(
                     onClick = { resetModelParameters = parameterKey },
                     enabled = !busy && resetModelParameters != parameterKey,
@@ -322,7 +366,7 @@ internal fun ExpertManagementPanel(
                         onClick = {}, enabled = false)
                 }
             }
-            Box(Modifier.fillMaxWidth()) {
+            if (executor == null) Box(Modifier.fillMaxWidth()) {
                 NolaDropdownBar(
                     value = reasoningEffortLabel(effort),
                     expanded = effortMenu,
@@ -338,7 +382,7 @@ internal fun ExpertManagementPanel(
                     }
                 }
             }
-            if (effort != "automatic" && effort !in declaredEfforts) Text(stringResource(R.string.expert_effort_unavailable),
+            if (executor == null && effort != "automatic" && effort !in declaredEfforts) Text(stringResource(R.string.expert_effort_unavailable),
                 style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.error)
             roles.firstOrNull { it.id == templateID }?.let { role ->
                 Text(expertRoleText(role.description, language), style = MaterialTheme.typography.bodySmall)
@@ -368,7 +412,7 @@ internal fun ExpertManagementPanel(
                 TextButton(onClick = { editing = false; editingID = null }, enabled = !busy) { Text(stringResource(R.string.common_cancel)) }
                 Button(enabled = !busy && catalogReady && name.isNotBlank() && directory != null &&
                     (editorOwnerKey == null || editorOwnerKey == sourceKey) &&
-                    (effort == "automatic" || effort in declaredEfforts) &&
+                    (executor != null || effort == "automatic" || effort in declaredEfforts) &&
                     (!modelSelectionTouched || inheritModel || selectedModel != null) &&
                     (editingID != null || inheritModel || selectedModel != null),
                     modifier = Modifier.testTag("expert.editor.save"), onClick = { perform {
@@ -382,7 +426,7 @@ internal fun ExpertManagementPanel(
                         val changeModel = if (original == null) !inheritModel else modelSelectionTouched && desiredModel != originalModelSelection
                         val changeTemplate = templateSelectionTouched && templateID != originalTemplateSelection
                         if (changeTemplate && templateID != null) {
-                            val currentRoles = dataSource.roleTemplates(state.conversationId, editorScope?.storeEpoch)
+                            val currentRoles = dataSource.roleTemplates(state.conversationId, editorScope?.storeEpoch).templates
                             if (currentRoles.none { it.id == templateID }) {
                                 val currentCatalog = dataSource.readableExpertTemplates()
                                 check(currentCatalog.templates.any { it.id == templateID }) { "The selected template is no longer readable" }
@@ -392,7 +436,8 @@ internal fun ExpertManagementPanel(
                         }
                         val modelDefaults = desiredModel?.let { buildJsonObject { put("modelSelectionID", it) } }
                         val defaults = mergeExpertEditorDefaults(original?.defaults ?: buildJsonObject {},
-                            changeModel, modelDefaults, changeTemplate, templateID, reasoningEffort = effort,
+                            changeModel, modelDefaults, changeTemplate, templateID, reasoningEffort = effort.takeIf { executor == null },
+                            changeExecutor = executor != (original?.defaults?.get("expertExecutor") as? JsonObject), executor = executor,
                             resetModelParameters = resetModelParameters?.takeIf { it == desiredModel })
                         val agentID = original?.id ?: newAgentID ?: java.util.UUID.randomUUID().toString().also { newAgentID = it }
                         val attempted = PersistentAgent(agentID, name.trim(), original?.revision ?: 0L,
@@ -417,7 +462,7 @@ internal fun ExpertManagementPanel(
                     } }) { Text(stringResource(R.string.common_save)) }
             }
         } else {
-            TextButton(onClick = { editingID = null; newAgentID = java.util.UUID.randomUUID().toString(); name = ""; description = ""; effort = "automatic"; inheritModel = true; modelID = null; originalModelSelection = null; resetModelParameters = null; modelSelectionTouched = false; modelMenu = false; templateID = null; originalTemplateSelection = null; templateSelectionTouched = false; templateMenu = false; editorOwnerKey = sourceKey; editing = true },
+            TextButton(onClick = { editingID = null; executorJSON = null; newAgentID = java.util.UUID.randomUUID().toString(); name = ""; description = ""; effort = "automatic"; inheritModel = true; modelID = null; originalModelSelection = null; resetModelParameters = null; modelSelectionTouched = false; modelMenu = false; templateID = null; originalTemplateSelection = null; templateSelectionTouched = false; templateMenu = false; editorOwnerKey = sourceKey; editing = true },
                 enabled = !busy && catalogReady && directory != null, modifier = Modifier.testTag("expert.create").heightIn(min = 48.dp)) {
                 Text(stringResource(R.string.room_create_agent))
             }

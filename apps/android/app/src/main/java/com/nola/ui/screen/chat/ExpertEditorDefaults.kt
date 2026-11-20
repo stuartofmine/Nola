@@ -5,6 +5,15 @@ import kotlinx.serialization.json.*
 
 /** Complete configure_agent payload, preserving preferences the editor did not change.
  * An explicit default removes the selected ID; it never invents a None value. */
+internal fun expertExecutorBinding(backendID: String, model: com.nola.data.remote.dto.ExecutionBackendModelDto? = null): JsonObject =
+    buildJsonObject {
+        put("backend", if (backendID == "opencode") "open_code" else backendID)
+        model?.let {
+            put("model", it.id)
+            if (backendID == "codex") it.providerId?.let { provider -> put("model_provider", provider) }
+        }
+    }
+
 internal fun mergeExpertEditorDefaults(
     original: JsonObject,
     changeModel: Boolean,
@@ -13,9 +22,14 @@ internal fun mergeExpertEditorDefaults(
     selectedTemplateId: String?,
     reasoningEffort: String? = null,
     resetModelParameters: String? = null,
+    changeExecutor: Boolean = false,
+    executor: JsonObject? = null,
 ): JsonObject {
-    if (!changeModel && !changeTemplate && reasoningEffort == null && resetModelParameters == null) return original
+    if (!changeExecutor && !changeModel && !changeTemplate && reasoningEffort == null && resetModelParameters == null) return original
     val fields = original.toMutableMap()
+    if (changeExecutor) {
+        if (executor == null) fields.remove("expertExecutor") else fields["expertExecutor"] = executor
+    }
     if (changeModel) {
         if (selectedModel == null) fields.remove("modelSelectionID") else {
             require(selectedModel.keys == setOf("modelSelectionID"))
@@ -36,5 +50,6 @@ internal fun mergeExpertEditorDefaults(
         if (reasoningEffort == "automatic") fields.remove("expertReasoningEffort")
         else fields["expertReasoningEffort"] = JsonPrimitive(reasoningEffort)
     }
+    if (fields["expertExecutor"] is JsonObject) fields.remove("expertReasoningEffort")
     return JsonObject(fields)
 }
