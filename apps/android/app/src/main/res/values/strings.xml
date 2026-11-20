@@ -12,7 +12,7 @@
     <string name="inspector_progress_unavailable">Authoritative progress is unavailable for this conversation. Refresh to try again.</string>
     <string name="inspector_completed_count">%1$d of %2$d items completed</string>
     <string name="chat_experts">Experts</string>
-    <string name="chat_experts_hint">Choose experts to reply to your next message. Selection does not grant permissions.</string>
+    <string name="chat_experts_hint">Mention an expert in this message.</string>
     <string name="chat_experts_empty">No active experts are available.</string>
     <string name="room_waiting_confirmation">Waiting for confirmation</string>
     <string name="room_diagnostics">Show diagnostic details</string>
@@ -1397,4 +1397,7 @@
     <string name="models_web_host_disconnect">Disconnect host</string>
     <string name="onboarding_choose_model">Choose a model</string>
     <string name="onboarding_chat_model_hint">To start chatting, connect a model service, download a local model, or pair with a Nola Host.</string>
+    <string name="expert_mention_needs_text">Write what you would like the expert to do.</string>
+    <string name="expert_mention_plain">Use as plain text</string>
+    <string name="expert_mention_upgrade_host">Update the connected Host to mention experts, or send ordinary text.</string>
 </resources>

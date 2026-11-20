@@ -1887,6 +1887,20 @@ final class MacContextSelectionSnapshotTests: XCTestCase {
 
 @MainActor
 final class MacEditedResendTests: XCTestCase {
+    func testAdmissionDropsTransientRowsThatBelongedToEditedSuffix() {
+        let prefix = MacChatMessage(role: .user, text: "prefix", createdAt: .now)
+        let old = MacChatMessage(role: .assistant, text: "original", createdAt: .now)
+        let replacement = MacChatMessage(role: .user, text: "edited", createdAt: .now)
+        let streaming = MacChatMessage(role: .assistant, text: "new", createdAt: .now)
+        var overlay = MacConversationPresentationOverlay()
+        XCTAssertTrue(overlay.mutateMessage(canonical: [prefix, old], messageID: old.id, createAssistantIfMissing: false) { $0.text += " finish" })
+        overlay.beginSubmission(.init(submissionID: "obsolete", userMessage: prefix, assistantMessage: old))
+        let visible = [prefix, replacement, streaming]
+        overlay.reconcileAfterRewind(visible)
+        XCTAssertEqual(overlay.renderedMessages(canonical: visible), visible)
+        XCTAssertTrue(overlay.isEmpty)
+    }
+
     func testInPlaceEditKeepsOwnerAndStableRetryIdentity() throws {
         var draft = AppleMessageEditDraft(sourceConversationID: "existing-conversation", sourceMessageID: "user-message",
             expectedSourceRevision: 7, expectedMessageRevision: 3, text: "original")

@@ -245,11 +245,14 @@ final class IOSWorkspaceNavigationSmokeTests: XCTestCase {
         let input = app.textViews["chat.composer.input"]
         XCTAssertTrue(input.waitForExistence(timeout: 5)); input.tap(); input.typeText("@Code")
         let mention = app.buttons["chat.mention." + expertID]
-        XCTAssertTrue(mention.waitForExistence(timeout: 5)); mention.tap()
-        let completed = NSPredicate(format: "value == %@", "")
+        XCTAssertTrue(mention.waitForExistence(timeout: 5))
+        let pickerShot = XCTAttachment(screenshot: app.screenshot())
+        pickerShot.name = "ios-inline-mention-picker"; pickerShot.lifetime = .keepAlways; add(pickerShot)
+        mention.tap()
+        let completed = NSPredicate(format: "value CONTAINS[c] %@", "@Code writer")
         expectation(for: completed, evaluatedWith: input)
         waitForExpectations(timeout: 5)
-        XCTAssertTrue(app.buttons["chat.expert.selected." + expertID].waitForExistence(timeout: 5))
+        XCTAssertFalse(app.buttons["chat.expert.selected." + expertID].exists)
         let screenshot = XCTAttachment(screenshot: app.screenshot())
         screenshot.name = "builtin-role-selected-by-mention-without-inference"
         screenshot.lifetime = .keepAlways
@@ -265,7 +268,7 @@ final class IOSWorkspaceNavigationSmokeTests: XCTestCase {
               let fixture = try JSONSerialization.jsonObject(with: data) as? [String: String],
               let database = fixture["database"], database.contains("nola-ios-child-history-fixture-"),
               let parent = fixture["parentID"], let old = fixture["oldID"],
-              let current = fixture["currentID"], let agentID = fixture["agentID"] else {
+              let current = fixture["currentID"] else {
             throw XCTSkip("Requires an isolated Core-authored parent/old/current child fixture")
         }
         continueAfterFailure = false
@@ -303,11 +306,10 @@ final class IOSWorkspaceNavigationSmokeTests: XCTestCase {
         XCTAssertTrue(continueButton.waitForExistence(timeout: 5))
         XCTAssertFalse(app.textViews["chat.composer.input"].exists)
         continueButton.tap()
-        let selectedExpert = app.buttons["chat.expert.selected." + agentID]
-        XCTAssertTrue(selectedExpert.waitForExistence(timeout: 10))
-        XCTAssertTrue(selectedExpert.label.contains("History expert"), "The frozen member name must be available without loading the directory")
-        XCTAssertGreaterThanOrEqual(selectedExpert.frame.height, 44)
-        XCTAssertTrue(app.textViews["chat.composer.input"].exists)
+        let editor = app.textViews["chat.composer.input"]
+        XCTAssertTrue(editor.waitForExistence(timeout: 10))
+        expectation(for: NSPredicate(format: "value CONTAINS %@", "@History expert"), evaluatedWith: editor)
+        waitForExpectations(timeout: 5)
         let continuedShot = XCTAttachment(screenshot: app.screenshot())
         continuedShot.name = "expert-current-context-returned-main-selection"
         continuedShot.lifetime = .keepAlways; add(continuedShot)

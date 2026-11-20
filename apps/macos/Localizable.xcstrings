@@ -1,6 +1,46 @@
 {
   "sourceLanguage" : "en",
   "strings" : {
+    "Write what you want the expert to do." : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "写下想请专家做的事。"
+          }
+        }
+      }
+    },
+    "The expert selection changed. Remove the mention and select the expert again." : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "专家来源或配置已变更。请删除这处提及，重新选择专家。"
+          }
+        }
+      }
+    },
+    "Keep names as plain text" : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "将名字保留为普通文字"
+          }
+        }
+      }
+    },
+    "View expert history" : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "查看专家会话"
+          }
+        }
+      }
+    },
     "" : {
 
     },

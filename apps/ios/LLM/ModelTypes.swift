@@ -132,11 +132,12 @@ nonisolated public struct ModelInput: Codable, Hashable {
     /// OpenAI-compatible providers without file APIs can use it.
     public let attachments: [Attachment]
     public let providerContinuationJSON: String?
+    public let expertMentions: AppleExpertMentions?
     public let selectedExperts: [AppleMainExpertSelectionEntry]?
     public let expertSelectionSourceEpoch: String?
 
     private enum CodingKeys: String, CodingKey {
-        case dateRange, candidates, userPrefs, attachments, providerContinuationJSON, selectedExperts, expertSelectionSourceEpoch
+        case dateRange, candidates, userPrefs, attachments, providerContinuationJSON, selectedExperts, expertMentions, expertSelectionSourceEpoch
     }
 
     public init(
@@ -146,6 +147,7 @@ nonisolated public struct ModelInput: Codable, Hashable {
         attachments: [Attachment] = [],
         providerContinuationJSON: String? = nil,
         selectedExperts: [AppleMainExpertSelectionEntry]? = nil,
+        expertMentions: AppleExpertMentions? = nil,
         expertSelectionSourceEpoch: String? = nil
     ) {
         self.dateRange = dateRange
@@ -153,6 +155,7 @@ nonisolated public struct ModelInput: Codable, Hashable {
         self.userPrefs = userPrefs
         self.attachments = attachments
         self.providerContinuationJSON = providerContinuationJSON
+        self.expertMentions = expertMentions
         self.selectedExperts = selectedExperts
         self.expertSelectionSourceEpoch = expertSelectionSourceEpoch
     }
@@ -164,6 +167,7 @@ nonisolated public struct ModelInput: Codable, Hashable {
         self.userPrefs = try container.decode([String: String].self, forKey: .userPrefs)
         self.attachments = try container.decodeIfPresent([Attachment].self, forKey: .attachments) ?? []
         self.providerContinuationJSON = try container.decodeIfPresent(String.self, forKey: .providerContinuationJSON)
+        self.expertMentions = try container.decodeIfPresent(AppleExpertMentions.self, forKey: .expertMentions)
         self.selectedExperts = try container.decodeIfPresent([AppleMainExpertSelectionEntry].self, forKey: .selectedExperts)
         self.expertSelectionSourceEpoch = try container.decodeIfPresent(String.self, forKey: .expertSelectionSourceEpoch)
     }

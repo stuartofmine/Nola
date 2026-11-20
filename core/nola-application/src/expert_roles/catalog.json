@@ -4,7 +4,8 @@
         "reasoning_effort": true,
         "explicit_generation_reasoning": true,
         "rejoin": true,
-        "main_agent_delegation": true
+        "main_agent_delegation": true,
+        "inline_expert_mentions": true
     },
     "templates": [
         {

@@ -31,8 +31,10 @@ def run_collaboration(api, stream, command, profile, roles, database, host_id, c
             db.row_factory=sqlite3.Row
             return [dict(row) for row in db.execute(sql,args)]
 
-    def send(text):
+    def send(text, *, answer_label_question=False):
         nonlocal selected
+        segments = [{'agent_id': expert_id, 'text': '@' + expert['name']}, {'text': ' ' + text}]
+        text = ''.join(segment['text'] for segment in segments)
         view=api('/api/chat/conversations/'+parent)
         last=read('SELECT id FROM messages WHERE conversation_id=? ORDER BY ordinal DESC LIMIT 1',(parent,))
         sid=str(uuid.uuid4())
@@ -42,6 +44,7 @@ def run_collaboration(api, stream, command, profile, roles, database, host_id, c
             'expected_configuration_revision':view['configurationRevision'],
             'expected_parent_message_id':last[0]['id'] if last else None,
             'messages':[{'role':'user','content':text}],'selected_experts':[selected],
+            'expert_mentions':{'version':1,'segments':segments},
             'tool_plan_ref':plan['reference'],'max_iterations':32}
         identity={'source_host_id':host_id,'client_id':client,'conversation_id':parent,'submission_id':sid,
             'user_message_id':body['user_message_id'],'assistant_message_id':body['assistant_message_id']}
@@ -50,15 +53,34 @@ def run_collaboration(api, stream, command, profile, roles, database, host_id, c
         body['request_digest']=prepared['request_digest']
         stream('/api/chat/agent/v2/stream',body)
         deadline=time.monotonic()+240
+        asked = []
         while time.monotonic()<deadline:
             rows=read('SELECT status FROM runs WHERE id=?',(sid,))
             if rows and rows[0]['status']=='sealed':break
+            if answer_label_question and rows and rows[0]['status']=='waiting_input' and not asked:
+                path = '/api/chat/conversations/'+parent+'/user-input-waits'
+                record = next((r for r in api(path)['waits'] if r['run_id'] == sid), None)
+                if record:
+                    wait = record['wait']
+                    answers = []
+                    for question in wait['question_set']['questions']:
+                        assert question['allow_freeform'] and 'label' in question['prompt'].lower()
+                        asked.append(question['prompt'])
+                        answers.append({'question_id':question['id'], 'value':{'type':'text','text':'ORCHID'}})
+                    reply = api(path+'/respond', {'run_id':sid, 'response':{
+                        'command_id':str(uuid.uuid4()), 'wait_id':wait['wait_id'], 'expected_revision':wait['revision'],
+                        'response_schema_digest':wait['response_schema_digest'], 'response':{'type':'answers','answers':answers}}})
+                    assert reply['type'] == 'resolved'
             time.sleep(.2)
         else:raise TimeoutError('Main Run did not canonically seal')
         association=command({'type':'for_conversation','conversation_id':parent})
         member=next(item for item in association['room']['room']['participants'] if item['agent_id']==expert_id and item['active'])
         selected={'agent_id':expert_id,'agent_revision':member['agent_revision'],
             'participant_id':member['id'],'context_conversation_id':member['context_conversation_id']}
+        rows = read("SELECT content_text,content_json FROM message_parts WHERE message_id=? AND kind='text'", (sid+':user',))
+        assert len(rows) == 1 and rows[0]['content_text'] == text
+        frozen = json.loads(rows[0]['content_json'])['expert_mentions']
+        assert frozen['segments'] == segments and frozen['selected_experts'] == [selected]
         tasks=read("SELECT id,status,owner_session_id,child_session_id,parent_task_id,metadata_json FROM durable_tasks WHERE kind='agent' AND owner_session_id=? ORDER BY created_at_ms,id",(parent,))
         current=[row for row in tasks if json.loads(row['metadata_json'])['expert_target']['source_run_id']==sid]
         assert len(current)==1 and current[0]['status']=='sealed','Main must own one actual completed expert Task'
@@ -72,7 +94,7 @@ def run_collaboration(api, stream, command, profile, roles, database, host_id, c
         child_view=api('/api/chat/conversations/'+member['context_conversation_id'])
         assert child_view['expertContextOwner']['isCurrent'] is True
         assert child_view['expertParentConversationId']==parent
-        return answer_text(database,sid),task,answer_text(database,task['id'])
+        return "\n".join([*asked, answer_text(database,sid)]),task,answer_text(database,task['id'])
 
     first,one,target_answer=send('Use the selected reviewer via delegate_expert. Ask it to compute 17*19 and return TARGET_OWN_HIGH=323. '
         'This is a short text protocol test; do not create artifacts or call file/shell tools. '
@@ -86,7 +108,7 @@ def run_collaboration(api, stream, command, profile, roles, database, host_id, c
     assert '323' not in brief and '17*19' not in brief and '17 * 19' not in brief
     question,three,needs_label=send('Via delegate_expert ask the selected reviewer: "We need a missing label. '
         'Return NEEDS_LABEL and the question Which label should I use? to your Main Agent. Do not ask the user directly or call tools." '
-        'Wait for that actual result, then ask me which label to use. Do not invent a label.')
+        'Wait for that actual result, then ask me which label to use. Do not invent a label.', answer_label_question=True)
     assert 'NEEDS_LABEL' in needs_label and 'label' in question.lower()
     fourth,four,clarified=send('The label is ORCHID. Ask the same selected reviewer via delegate_expert to use my provided label, '
         'reply EXPERT_LABEL=ORCHID, and use no tools. Wait/read its real result and finish MAIN_LABEL=ORCHID.')

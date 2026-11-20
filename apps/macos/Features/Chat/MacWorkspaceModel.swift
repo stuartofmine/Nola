@@ -91,9 +91,17 @@ final class MacWorkspaceModel {
 
     @ObservationIgnored private var remoteExpertTargets: [String: MacRemoteSubmissionTarget] = [:]
     @ObservationIgnored private var remoteExpertSourceIDs: [String: UUID] = [:]
-    func mainExpertSourceIdentity(_ owner: String) -> String? { remoteExpertSourceIDs[owner]?.uuidString }
+    func mainExpertSourceIdentity(_ owner: String) -> String? { executionHost == .remote ? remoteExpertSourceIDs[owner]?.uuidString : nil }
 
-    func mainExpertSelectionSourceEpoch(_ owner: String) -> String? { remoteExpertTargets[owner]?.expectedSourceStoreEpoch }
+    @ObservationIgnored private var verifiedInlineTargets: [String: MacRemoteSubmissionTarget] = [:]
+    /// A draft may survive a restart. Persist only the attested Host ID and Store epoch.
+    func mainExpertDraftSource(_ owner: String) -> String? {
+        guard executionHost == .remote, let verified = verifiedInlineTargets[owner], let current = try? remoteHost.captureSubmissionTarget(),
+              Self.sameExpertTarget(verified, current), verified.expectedSourceStoreEpoch == mainExpertSelectionSourceEpoch(owner) else { return nil }
+        return verified.configuration.expectedHostID
+    }
+
+    func mainExpertSelectionSourceEpoch(_ owner: String) -> String? { executionHost == .remote ? remoteExpertTargets[owner]?.expectedSourceStoreEpoch : nil }
 
     func expertRoomCommand(owner requestedOwner: String?, command: MacCanonicalJSONValue) async throws -> MacCanonicalJSONValue {
         guard let owner = requestedOwner ?? selectedConversationID, selectedConversationID == owner,
@@ -121,11 +129,12 @@ final class MacWorkspaceModel {
         let isDirectory = fields["type"] == .string("directory")
         var target = !isDirectory ? (remoteExpertTargets[owner] ?? .init(configuration: current.configuration, clientID: current.clientID, expectedSourceStoreEpoch: epoch))
             : .init(configuration: current.configuration, clientID: current.clientID, expectedSourceStoreEpoch: epoch)
-        guard Self.sameExpertTarget(target, current) else { throw MacRemoteHostError.invalidResponse }
+        guard Self.sameExpertTarget(target, current), epoch == nil || target.expectedSourceStoreEpoch == epoch else { throw MacRemoteHostError.invalidResponse }
         if isDirectory {
+            verifiedInlineTargets[owner] = nil
             let read = try await remoteHost.expertRooms(command: .object(["type": .string("role_templates")]), target: target)
             let catalog = try JSONDecoder().decode(AppleExpertRoleTemplateCatalog.self, from: JSONEncoder().encode(read.result))
-            guard catalog.features.mainAgentDelegation else { throw MacApplicationPortError.rejected(String(localized: "Update the connected Host to use experts from the main conversation.")) }
+            guard catalog.features.mainAgentDelegation, catalog.features.inlineExpertMentions else { throw MacApplicationPortError.rejected(String(localized: "Update the connected Host to use experts from the main conversation.")) }
             target = .init(configuration: target.configuration, clientID: target.clientID, expectedSourceStoreEpoch: read.sourceStoreEpoch)
         }
         let response = try await remoteHost.expertRooms(command: command, target: target)
@@ -134,7 +143,18 @@ final class MacWorkspaceModel {
         if let previous = remoteExpertTargets[owner], Self.sameExpertTarget(previous, target), previous.expectedSourceStoreEpoch == response.sourceStoreEpoch { }
         else { remoteExpertSourceIDs[owner] = UUID() }
         remoteExpertTargets[owner] = .init(configuration: target.configuration, clientID: target.clientID, expectedSourceStoreEpoch: response.sourceStoreEpoch)
+        if isDirectory { verifiedInlineTargets[owner] = remoteExpertTargets[owner] }
         return response.result
+    }
+
+    func expertHistoryMarkdown(parent: String, child: String, identity: String?, cursor: MacAssistantJournalCursor) async throws -> String? {
+        guard selectedConversationID == parent, cursor.identity.conversation_id == child,
+              let identity, mainExpertSourceIdentity(parent) == identity, let target = try uiRemoteTarget(conversationID: parent),
+              Self.sameExpertTarget(target, try remoteHost.captureSubmissionTarget()) else { throw MacRemoteHostError.invalidResponse }
+        let value = try await remoteHost.expertJournalMarkdown(at: cursor, target: target)
+        guard selectedConversationID == parent, mainExpertSourceIdentity(parent) == identity,
+              Self.sameExpertTarget(target, try remoteHost.captureSubmissionTarget()) else { throw CancellationError() }
+        return value
     }
 
     private static func sameExpertTarget(_ a: MacRemoteSubmissionTarget, _ b: MacRemoteSubmissionTarget) -> Bool {
@@ -515,6 +535,8 @@ final class MacWorkspaceModel {
     private(set) var loadingConversationID: String? = nil
     private var presentationOverlays: [String: MacConversationPresentationOverlay] = [:]
     private var journalMessageReferences: [String: [UUID: MacJournalMessageReference]] = [:]
+    private var mentionsByConversation: [String: [AppleDraftMention]] = [:]
+    func draftMentions(_ owner: String) -> [AppleDraftMention] { mentionsByConversation[owner] ?? [] }
     private var draftsByConversation: [String: String] = [:]
     @ObservationIgnored private var draftRepository: MacConversationDraftRepository?
     private var loadedDraftIDs = Set<String>()
@@ -3252,6 +3274,7 @@ final class MacWorkspaceModel {
         presentationOverlays[conversation.id] = nil
         journalMessageReferences[conversation.id] = nil
         permissionProjectionsByConversation[conversation.id] = nil
+        mentionsByConversation[conversation.id] = nil
         draftsByConversation[conversation.id] = nil
         attachmentsByConversation[conversation.id] = nil
         loadedDraftIDs.remove(conversation.id)
@@ -3669,7 +3692,7 @@ final class MacWorkspaceModel {
         default: throw MacEditedResendError.sourceUnavailable
         }
         return AppleMessageEditDraft(sourceConversationID: conversationID, sourceMessageID: original.messageID,
-            expectedSourceRevision: conversation.revision, expectedMessageRevision: original.revision, text: text)
+            expectedSourceRevision: conversation.revision, expectedMessageRevision: original.revision, text: text, mentions: message.expertMentions?.runs(in: text) ?? [])
     }
 
     func performEditedResend(_ draft: AppleMessageEditDraft, expertWorkspace: MacAgentRoomWorkspace? = nil) async throws {
@@ -3680,7 +3703,8 @@ final class MacWorkspaceModel {
         if try port.activeRunIdentity(conversationID: input.conversation_id)?.runID == input.operation_id
             || port.canonicalRunTerminal(conversationID: input.conversation_id, runID: input.operation_id) != nil {
             let prepared = try port.prepareInPlaceResend(input)
-            reloadPersistentData()
+            if prepared.deferred_rewind == true { try await publishAdmittedRewind(prepared, repository: repository) }
+            else { reloadPersistentData() }
             adoptEditedTitle(conversationID: input.conversation_id, messageID: prepared.user_message_id, text: input.edited_text)
             return
         }
@@ -3695,12 +3719,13 @@ final class MacWorkspaceModel {
         if try port.expertMessageSource(conversationID: input.conversation_id, messageID: input.message_id) != nil,
            expertWorkspace == nil { throw MacEditedResendError.sourceUnavailable }
         let prepared = try port.prepareInPlaceResend(input)
-        reloadPersistentData()
+        if prepared.deferred_rewind != true { reloadPersistentData() }
         // Normal admission creates the replacement message using its stable ID.
         // Passing text explicitly preserves the unsent composer and attachments.
         send(preassignedSubmissionID: prepared.run_id,
             canonicalUserMessageID: prepared.user_message_id, preassignedText: input.edited_text, isInPlaceResend: true,
-            selectedExperts: prepared.experts.map { .init(agentID: $0.agent_id, agentRevision: $0.agent_revision, participantID: $0.participant_id, contextConversationID: $0.context_conversation_id) })
+            deferredRewind: prepared.deferred_rewind == true, editedMentions: input.expert_mentions,
+            selectedExperts: input.selected_experts ?? prepared.experts.map { .init(agentID: $0.agent_id, agentRevision: $0.agent_revision, participantID: $0.participant_id, contextConversationID: $0.context_conversation_id) })
         guard let ticket = runCoordinator.submissionTicket,
               ticket.identity.submissionID == prepared.run_id else { throw MacEditedResendError.admissionUnconfirmed }
         let deadline = Date().addingTimeInterval(30)
@@ -3708,7 +3733,33 @@ final class MacWorkspaceModel {
             try await Task.sleep(for: .milliseconds(50))
         }
         guard ticket.phase == .accepted else { throw MacEditedResendError.admissionUnconfirmed }
+        if prepared.deferred_rewind == true {
+            try await publishAdmittedRewind(prepared, repository: repository)
+        }
         adoptEditedTitle(conversationID: input.conversation_id, messageID: prepared.user_message_id, text: input.edited_text)
+    }
+
+    /// The old suffix stays in the transcript until the replacement is present in Core.
+    private func publishAdmittedRewind(_ prepared: ApplePreparedInPlaceResend, repository: MacCanonicalConversationRepository) async throws {
+        let owner = prepared.input.conversation_id
+        let generation = activeGenerationID
+        projectionObservationCoordinator.cancel(conversationID: owner)
+        conversationWindowCache.evict(conversationID: owner)
+        defer {
+            if generation == activeGenerationID { startProjectionObservation(conversationID: owner, selectionRevision: conversationLoadRevision) }
+        }
+        guard let archive = try await repository.loadAsync(conversationID: owner, windowed: true),
+              archive.messages.contains(where: { $0.role == .user && $0.canonicalMessageID == prepared.user_message_id }),
+              !archive.messages.contains(where: { $0.canonicalMessageID == prepared.input.message_id }) else {
+            throw MacEditedResendError.admissionUnconfirmed
+        }
+        guard generation == activeGenerationID else { return }
+        publishCanonicalMessages(archive.messages, conversationID: owner)
+        if var overlay = presentationOverlays[owner] {
+            overlay.reconcileAfterRewind(archive.messages)
+            overlay.acceptCanonical(archive.messages, retainPendingAssistantPresentation: isRunning && activeConversationID == owner)
+            presentationOverlays[owner] = overlay.isEmpty ? nil : overlay
+        }
     }
 
     private func adoptEditedTitle(conversationID: String, messageID: String, text: String) {
@@ -3996,7 +4047,7 @@ final class MacWorkspaceModel {
         }
     }
 
-    private func send(preassignedSubmissionID: String?, queuedUserCommandID: String? = nil, canonicalUserMessageID: String? = nil, preassignedText: String? = nil, isInPlaceResend: Bool = false, selectedExperts: [AppleMainExpertSelectionEntry] = [], expertSelectionSourceEpoch: String? = nil) {
+    private func send(preassignedSubmissionID: String?, queuedUserCommandID: String? = nil, canonicalUserMessageID: String? = nil, preassignedText: String? = nil, isInPlaceResend: Bool = false, deferredRewind: Bool = false, editedMentions: AppleExpertMentions? = nil, selectedExperts: [AppleMainExpertSelectionEntry] = [], expertSelectionSourceEpoch: String? = nil) {
         guard !selectedModelConfigurationPending else { return }
         parkUnselectedLocalRecovery()
         parkUnselectedRemoteRecovery()
@@ -4033,7 +4084,9 @@ final class MacWorkspaceModel {
         let exactResendText = selectedConversationID.flatMap { editedResendModels[$0] }.flatMap {
             $0.prepared.run_id == preassignedSubmissionID ? $0.prepared.input.edited_text : nil
         }
-        let text = exactResendText ?? preassignedText ?? (queuedUserCommandID == nil ? submittedDraft.trimmingCharacters(in: .whitespacesAndNewlines) : "表单操作")
+        let submittedMentions = preassignedText == nil && queuedUserCommandID == nil ? (selectedConversationID.map(draftMentions) ?? []) : []
+        let mentionSegments = editedMentions ?? AppleDraftMention.segments(submittedMentions, in: submittedDraft)
+        let text = exactResendText ?? preassignedText ?? (queuedUserCommandID == nil ? (mentionSegments == nil ? submittedDraft.trimmingCharacters(in: .whitespacesAndNewlines) : submittedDraft) : "表单操作")
         guard !isRunning,
               (!text.isEmpty || !attachments.isEmpty),
               let selectedConversationID else { return }
@@ -4249,16 +4302,19 @@ final class MacWorkspaceModel {
         // and persists only conversation metadata while execution is active.
         // Pre-creating a Run here makes the Host's atomic submission overlap
         // itself when both processes use the same canonical database.
-        var presentationOverlay = presentationOverlays[selectedConversationID]
-            ?? MacConversationPresentationOverlay()
-        presentationOverlay.beginSubmission(MacPendingSubmissionOverlay(
-            submissionID: submissionID,
-            userMessage: message,
-            assistantMessage: pendingAssistantMessage
-        ))
-        presentationOverlays[selectedConversationID] = presentationOverlay
+        if !deferredRewind {
+            var presentationOverlay = presentationOverlays[selectedConversationID]
+                ?? MacConversationPresentationOverlay()
+            presentationOverlay.beginSubmission(MacPendingSubmissionOverlay(
+                submissionID: submissionID,
+                userMessage: message,
+                assistantMessage: pendingAssistantMessage
+            ))
+            presentationOverlays[selectedConversationID] = presentationOverlay
+        }
         if queuedUserCommandID == nil && preassignedText == nil {
             draftsByConversation[selectedConversationID] = ""
+            mentionsByConversation[selectedConversationID] = nil
             attachmentsByConversation[selectedConversationID] = []
             persistDraft(conversationID: selectedConversationID, attachmentsChanged: true)
         }
@@ -4375,7 +4431,7 @@ final class MacWorkspaceModel {
             }
         if !selectedExperts.isEmpty {
             do {
-                let selected = AppleMainExpertSelectionContext(selectedExperts: selectedExperts, expectedSourceStoreEpoch: expertSelectionSourceEpoch)
+                let selected = AppleMainExpertSelectionContext(selectedExperts: selectedExperts, expectedSourceStoreEpoch: expertSelectionSourceEpoch, expertMentions: mentionSegments)
                 try selected.validate()
                 capturedComponents.append(.init(kind: "main_expert_selection", id: "nola.main-expert-selection",
                     content: try JSONDecoder().decode(MacCoreJSONValue.self, from: JSONEncoder().encode(selected)), source: nil))
@@ -4419,7 +4475,7 @@ final class MacWorkspaceModel {
             workspaceSelection: bookmarkStore.captureSubmissionSelection(conversationID: selectedConversationID, selectedURL: workspaceURL),
             externalSessionID: externalSessionID(conversationID: selectedConversationID, backend: runExecutionBackend),
             remoteTarget: runRemoteTarget, expectedParentMessageID: submittedParentMessageID,
-            queuedUserCommandID: queuedUserCommandID, canonicalUserMessageID: canonicalUserMessageID, ownsComposerDraft: preassignedText == nil)
+            queuedUserCommandID: queuedUserCommandID, canonicalUserMessageID: canonicalUserMessageID, ownsComposerDraft: preassignedText == nil, mentions: submittedMentions)
         localRecoverySelection = runRemoteTarget == nil
             ? (submissionID, snapshot.workspaceSelection) : nil
         preparingSubmission = snapshot
@@ -4506,7 +4562,7 @@ final class MacWorkspaceModel {
         runCoordinator.preparationFailed(generationID: generationID)
         // Do not overwrite a new draft composed while preparation was pending.
         if snapshot.queuedUserCommandID == nil && snapshot.ownsComposerDraft {
-            if draftsByConversation[conversationID]?.isEmpty != false { draftsByConversation[conversationID] = snapshot.draft }
+            if draftsByConversation[conversationID]?.isEmpty != false { draftsByConversation[conversationID] = snapshot.draft; mentionsByConversation[conversationID] = snapshot.mentions }
             if attachmentsByConversation[conversationID]?.isEmpty != false { attachmentsByConversation[conversationID] = snapshot.attachments }
             persistDraft(conversationID: conversationID, attachmentsChanged: true)
         }
@@ -4524,8 +4580,9 @@ final class MacWorkspaceModel {
 
     func dismissLocalSubmissionFailure() { localSubmissionFailure = nil }
 
-    func setDraft(_ value: String, conversationID: String) {
+    func setDraft(_ value: String, conversationID: String, mentions: [AppleDraftMention] = []) {
         guard conversations.contains(where: { $0.id == conversationID }) else { return }
+        mentionsByConversation[conversationID] = mentions
         if value.isEmpty {
             draftsByConversation[conversationID] = nil
         } else {
@@ -4555,7 +4612,7 @@ final class MacWorkspaceModel {
                     browser.isConnected = false
                     conversations[index].browserSnapshot = browser
                 }
-                if !editedDraftTextIDs.contains(conversationID) { draftsByConversation[conversationID] = record.text }
+                if !editedDraftTextIDs.contains(conversationID) { draftsByConversation[conversationID] = record.text; mentionsByConversation[conversationID] = record.mentions }
                 if !editedDraftAttachmentIDs.contains(conversationID) { attachmentsByConversation[conversationID] = record.attachments.map {
                     var attachment = MacAttachment(url: $0.url)
                     attachment.extractedText = $0.text
@@ -4599,7 +4656,7 @@ final class MacWorkspaceModel {
         let record = MacConversationDraftRecord(conversationID: conversationID, text: draftsByConversation[conversationID] ?? "",
             attachments: (attachmentsByConversation[conversationID] ?? []).map {
                 .init(url: $0.url, text: $0.extractedText, method: $0.extractionMethod, byteCount: $0.byteCount, ready: $0.status == .ready)
-            }, browserSnapshot: conversation.browserSnapshot)
+            }, browserSnapshot: conversation.browserSnapshot, mentions: mentionsByConversation[conversationID])
         draftRepository.save(record) { [weak self] succeeded in
             Task { @MainActor [weak self] in
                 guard let self, self.conversations.contains(where: { $0.id == conversationID }),

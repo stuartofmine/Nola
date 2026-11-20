@@ -81,6 +81,7 @@ private struct IOSCompactExpertReplyKey: EnvironmentKey {
     static let defaultValue = false
 }
 extension EnvironmentValues {
+    @Entry var iosSourceAllowsMessageEditing = true
     var iosExpertReplyAvailableWidth: CGFloat? {
         get { self[IOSExpertReplyWidthKey.self] }
         set { self[IOSExpertReplyWidthKey.self] = newValue }
@@ -96,6 +97,7 @@ struct ChatBubble: View {
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @Environment(\.iosExpertReplyAvailableWidth) private var expertReplyAvailableWidth
     @Environment(\.iosCompactExpertReply) private var compactExpertReply
+    @Environment(\.iosSourceAllowsMessageEditing) private var sourceAllowsEditing
     let conversationID: UUID?
     let message: ChatMessage
     let isLatestAssistant: Bool
@@ -320,7 +322,7 @@ struct ChatBubble: View {
                         .foregroundColor(DesignTokens.warningColor)
                 }
                 if !message.content.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-                    Text(message.content)
+                    ExpertMentionText(text: message.content, mentions: message.expertMentions)
                         .font(.body)
                         .lineSpacing(IOSChatProseMetrics.lineSpacing)
                         .foregroundColor(DesignTokens.contentColor)
@@ -401,7 +403,7 @@ struct ChatBubble: View {
                 }
                 .font(.caption).buttonStyle(.borderless).controlSize(.regular)
                 .frame(minHeight: 44, alignment: .trailing)
-                if ownerIsRunning {
+                if sourceAllowsEditing && readOnlyHistoryOwner == nil && ownerIsRunning {
                     Text("chat.message.editWait").font(.caption2).foregroundStyle(.secondary)
                 }
             }
@@ -412,7 +414,7 @@ struct ChatBubble: View {
     }
 
     @ViewBuilder private var editMessageButton: some View {
-        if readOnlyHistoryOwner == nil { editableMessageButton }
+        if readOnlyHistoryOwner == nil && sourceAllowsEditing { editableMessageButton }
     }
 
     private var editableMessageButton: some View {

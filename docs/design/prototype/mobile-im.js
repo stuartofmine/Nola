@@ -29,7 +29,7 @@ window.mobileIM = (() => {
     function message(m,i) {
         const user=m.role==='user';
         const rich=m.rich?'<pre class="im-code" tabindex="0" aria-label="可横向滚动的代码"><code>async function resumeTask(taskId, expectedRevision) {\n  return core.resume({ taskId, expectedRevision });\n}</code></pre><div class="im-table-scroll" tabindex="0" aria-label="可横向滚动的表格"><table><thead><tr><th>环节</th><th>所有权</th><th>用户可见状态</th></tr></thead><tbody><tr><td>等待授权</td><td>Core 精确请求</td><td>等你确认</td></tr><tr><td>正在执行</td><td>绑定的 Host</td><td>执行中</td></tr><tr><td>封存结果</td><td>Core 终态证据</td><td>已完成或未完成</td></tr></tbody></table></div>':'';
-        const body = m.error ? '<p>这部分没有完成，已生成的内容仍保留。</p>'+button('查看原因','error','im-inline') : esc(m.text).split('\n\n').map(p=>`<p>${p.replace(/\n/g,'<br>')}</p>`).join('');
+        const body = m.error ? '<p>这部分没有完成，已生成的内容仍保留。</p>'+button('查看原因','error','im-inline') : (m.role==='user'?inlineExpertHTML(m,current().id):esc(m.text)).split('\n\n').map(p=>`<p>${p.replace(/\n/g,'<br>')}</p>`).join('');
         return `<article class="im-message ${user?'im-outgoing':''}">
         ${!user?`<aside class="im-message-person"><span class="im-mini-avatar">n</span><span>Nola</span></aside>`:''}
         <div class="im-message-content"><div class="im-bubble">${body}${rich}<span class="im-message-time">${i===0?'10:24':'10:25'}</span></div>
@@ -153,16 +153,16 @@ window.mobileIM = (() => {
         return true;
     }
     function send() {
-        if(state.source){toast('此原型一次只回放一段会话；不代表产品并发限制。');return;}const input=document.querySelector('#compose');const text=input?.value.trim();if(!text)return;
-        if(window.expertRolesModule?.validateSend?.()===false)return;if(!models.length){go('models');return;}const c=current(),replyText=window.expertRolesModule?.demoMainReply?.(c.id);c.messages.push({role:'user',text,sendContext:{experts:[...c.experts],model:c.model||defaultModel,...window.expertRolesModule?.sendContext?.(c.id),reasoningEffort:state.efforts['conversation:'+c.id]||c.reasoningEffort||null}});c.title=c.messages.length===1?text.slice(0,28):c.title;c.preview=text;drafts[c.id]='';input.value='';state.scrolls[c.id]=Number.MAX_SAFE_INTEGER;state.interrupted=false;render();const sentTranscript=document.querySelector('.im-transcript');if(sentTranscript)sentTranscript.scrollTop=sentTranscript.scrollHeight;if(!motionReduced())document.querySelector('.im-outgoing:last-of-type')?.animate([{opacity:.4,transform:'translateY(9px) scale(.98)'},{opacity:1,transform:'translateY(0) scale(1)'}],{duration:240,easing:ease});replay(replyText);
+        if(state.source){toast('此原型一次只回放一段会话；不代表产品并发限制。');return;}const input=document.querySelector('#compose');const text=input?.value;if(!text?.trim())return;
+        if(window.expertRolesModule?.validateSend?.()===false)return;if(!models.length){go('models');return;}const c=current(),replyText=window.expertRolesModule?.demoMainReply?.(c.id);c.messages.push({role:'user',text,sendContext:{experts:[...selectedExperts],model:c.model||defaultModel,...window.expertRolesModule?.sendContext?.(c.id),reasoningEffort:state.efforts['conversation:'+c.id]||c.reasoningEffort||null}});c.title=c.messages.length===1?text.slice(0,28):c.title;c.preview=text;drafts[c.id]='';window.expertRolesModule?.afterSend?.(c.id);input.value='';state.scrolls[c.id]=Number.MAX_SAFE_INTEGER;state.interrupted=false;render();const sentTranscript=document.querySelector('.im-transcript');if(sentTranscript)sentTranscript.scrollTop=sentTranscript.scrollHeight;if(!motionReduced())document.querySelector('.im-outgoing:last-of-type')?.animate([{opacity:.4,transform:'translateY(9px) scale(.98)'},{opacity:1,transform:'translateY(0) scale(1)'}],{duration:240,easing:ease});replay(replyText,c.messages.at(-1).sendContext);
     }
     function stop() {
         if(!state.source)return;state.source.stopped=true;cancelAnimationFrame(state.raf);const el=document.querySelector('#im-stream-body');const c=conversations.find(c=>c.id===state.source.id);c.messages.push({role:'Nola',text:(el?.textContent||'')+'\n\n回放已停止，已有内容保留。'});state.source=null;render();
     }
-    function replay(replyText) {
+    function replay(replyText,context) {
         if(state.source||page!=='chat')return;
         const c=current(),t=document.querySelector('.im-transcript');state.interrupted=!!t&&t.scrollHeight-t.scrollTop-t.clientHeight>40;
-        const text=replyText||window.expertRolesModule?.demoMainReply?.(c.id)||'我会先理清目标，再把需要核对的部分分成可验证的步骤。已有内容保留在这段对话里。';
+        const text=replyText||'我会先理清目标，再把需要核对的部分分成可验证的步骤。已有内容保留在这段对话里。';
         state.source={id:c.id,text,shown:0,received:0,started:performance.now(),doneAt:null};
         render();const transcript=document.querySelector('.im-transcript');
         const source=state.source;let lastPacket=0;
@@ -191,13 +191,17 @@ window.mobileIM = (() => {
                 source.shown=source.received;
             }
             if(source.received===text.length){
-                const savedMsg={role:'Nola',text,...(c.experts?.length?{expertTasks:c.experts.map(name=>({name,status:'已完成',summary:'已完成子任务核对并将结果交回 Nola。'}))}:{})};
+                const savedMsg={role:'Nola',text,expertTasks:demoExpertTasks(context)};
                 c.messages.push(savedMsg);state.source=null;
                 if(target){
                     // Final fragments settle within 160ms; no long reveal queue after reception ends.
                     for(const animation of target.getAnimations({subtree:true})){
                         const remaining=Number(animation.effect.getTiming().duration)-Number(animation.currentTime||0);
                         if(remaining>160)animation.playbackRate=remaining/160;
+                    }
+                    for(const edit of document.querySelectorAll('.im-transcript [data-action^="im:edit:"]:disabled')){
+                        edit.disabled=false;
+                        edit.removeAttribute('title');
                     }
                     document.querySelector('#im-chat-status').textContent='本地回放结束 · 内容已保留';
                     const send=document.querySelector('.im-send');send.innerHTML=svg('arrow');send.setAttribute('aria-label','发送消息');send.dataset.action='im:send';send.disabled=!document.querySelector('.im-stage #compose').value.trim();send.onclick=()=>handle('im:send');

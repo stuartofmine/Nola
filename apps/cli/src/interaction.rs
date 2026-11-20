@@ -574,7 +574,7 @@ pub fn start_execution_cancel_listener(
                 if let Some(store) = view_store.as_mut() {
                     let snapshot = thread_cancellation.input_snapshot();
                     if let Err(error) = store.save(crate::cli_view_state::ViewState {
-                        draft: snapshot.draft, cursor: snapshot.cursor,
+                        edit: None, expert_mentions: store.mentions_for(&snapshot.draft), draft: snapshot.draft, cursor: snapshot.cursor,
                         viewport: crate::terminal_ui::capture_viewport_bookmark(),
                     }) {
                         crate::terminal_ui::commit_history(&format!("无法保存 CLI 显示状态：{error}"));

@@ -1141,6 +1141,10 @@ nonisolated struct MacCanonicalConversationProjectionV1: Decodable, Equatable, S
         let binding: String?
         let status: Status
         let fields: [String: Field]
+        var expertMentions: AppleExpertMentions? {
+            guard canonicalKind == "text", case .complete(let value)? = fields["expert_mentions"] else { return nil }
+            return try? JSONDecoder().decode(AppleExpertMentions.self, from: JSONEncoder().encode(value))
+        }
         let canonicalText: TextPreview?
         struct TextPreview: Decodable, Equatable, Sendable {
             let text: String

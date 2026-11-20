@@ -81,12 +81,16 @@ data class AndroidPrepareInPlaceResend(
     @SerialName("expected_message_revision") val expectedMessageRevision: Long,
     @SerialName("edited_text") val editedText: String,
     @SerialName("created_at_ms") val createdAtMs: Long,
+    @SerialName("selected_experts") val selectedExperts: JsonArray? = null,
+    @SerialName("expected_source_store_epoch") val expertSourceEpoch: String? = null,
+    @SerialName("expert_mentions") val expertMentions: JsonObject? = null,
 )
 @Serializable
 data class AndroidPreparedInPlaceResend(val input: AndroidPrepareInPlaceResend,
     @SerialName("run_id") val runId: String,
     @SerialName("user_message_id") val userMessageId: String,
-    val experts: List<AndroidExpertParticipantReference>)
+    val experts: List<AndroidExpertParticipantReference>,
+    @SerialName("deferred_rewind") val deferredRewind: Boolean = false)
 internal fun AndroidPrepareEditedResend.inPlace() = AndroidPrepareInPlaceResend(operationId, sourceConversationId,
     sourceMessageId, expectedSourceRevision, expectedSourceMessageRevision, editedText, createdAtMs)
 internal fun AndroidApplicationRuntime.prepareInPlaceResend(input: AndroidPrepareInPlaceResend): AndroidPreparedInPlaceResend =

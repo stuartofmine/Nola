@@ -1953,19 +1953,11 @@ fn with_cli_execution_control<T>(
 }
 
 fn prepare_cli_prompt<'a>(config: &Config, prompt: &'a str) -> Result<(Config, std::borrow::Cow<'a, str>), String> {
-    let mut selected_config = crate::conversation_invocation::prepare_submission(config)?;
-    let (text, selection) = if config.host_request_stdin {
-        (std::borrow::Cow::Borrowed(prompt), None)
-    } else {
-        crate::cli_expert_mentions::submit(prompt, selected_config.session_id.as_deref())?
-    };
-    if let Some(selection) = selection {
-        if !config.save_session || !config.tools_enabled {
-            return Err("Expert mentions require a saved conversation with tools enabled.".into());
-        }
-        selected_config.main_expert_selection = Some(selection);
+    let selected_config = crate::conversation_invocation::prepare_submission(config)?;
+    if selected_config.main_expert_selection.is_some() && (!config.save_session || !config.tools_enabled) {
+        return Err("Expert mentions require a saved conversation with tools enabled.".into());
     }
-    Ok((selected_config, text))
+    Ok((selected_config, std::borrow::Cow::Borrowed(prompt)))
 }
 
 fn run_single_prompt(config: &Config, prompt: &str) -> Result<PromptRunResult, String> {

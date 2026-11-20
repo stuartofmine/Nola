@@ -441,6 +441,7 @@ class WebAgentProvider @Inject constructor(
         expectedParentMessageId: String? = null,
         queuedUserCommandId: String? = null,
         selectedExperts: JsonArray? = null,
+        expertMentions: JsonObject? = null,
         expertSourceEpoch: String? = null,
     ): JsonObject {
         val cfg = checkNotNull(configuration)
@@ -478,6 +479,7 @@ class WebAgentProvider @Inject constructor(
             "expected_parent_message_id" to (expectedParentMessageId?.let(::JsonPrimitive) ?: kotlinx.serialization.json.JsonNull),
         ))
         return JsonObject(request + (currentUserDisplayText?.let { mapOf("current_user_display_text" to JsonPrimitive(it)) } ?: emptyMap()) +
+            (expertMentions?.let { mapOf("expert_mentions" to it) } ?: emptyMap()) +
             (selectedExperts?.takeIf { it.isNotEmpty() }?.let { mapOf("selected_experts" to it, "expected_source_store_epoch" to JsonPrimitive(checkNotNull(expertSourceEpoch))) } ?: emptyMap()))
     }
 

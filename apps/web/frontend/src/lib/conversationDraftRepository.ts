@@ -1,3 +1,4 @@
+import {mentionSegments, type MentionDraft} from './inlineExpertMentions.ts';
 import type { ChatTextAttachment } from './chatTextAttachments.ts';
 import { MAX_TEXT_ATTACHMENTS, MAX_TEXT_ATTACHMENT_CHARACTERS, MAX_TEXT_ATTACHMENT_BYTES } from './chatTextAttachments.ts';
 import type { PendingSourceSubmission } from './sourceSubmission.ts';
@@ -8,7 +9,7 @@ export interface ConversationDraftSubmissionTicket {
 }
 
 export interface ConversationDraftRecord {
-    hostId: string; conversationId: string; text: string; objective: string; attachments: ChatTextAttachment[];
+    hostId: string; conversationId: string; text: string; objective: string; attachments: ChatTextAttachment[]; mentions?: MentionDraft;
 }
 export interface ConversationDraftRepository {
     read(hostId: string, conversationId: string): Promise<ConversationDraftRecord | null>;
@@ -32,6 +33,10 @@ export function validateConversationDraft(value: ConversationDraftRecord): Conve
             || typeof a.text !== 'string' || a.text.length > MAX_TEXT_ATTACHMENT_CHARACTERS * 2
             || a.text.includes('\0') || !Number.isSafeInteger(a.byteCount)
             || a.byteCount < 0 || a.byteCount > MAX_TEXT_ATTACHMENT_BYTES)) throw new Error('Invalid local conversation draft');
+    if (value.mentions) {
+        if (!value.mentions.epoch?.trim() || !Array.isArray(value.mentions.occurrences)) throw Error('Invalid draft mentions');
+        mentionSegments(value.text, value.mentions.occurrences);
+    }
     return structuredClone(value);
 }
 
@@ -153,7 +158,7 @@ export class IndexedDBConversationDraftRepository implements ConversationDraftRe
                 read.onsuccess = () => {
                     const current = read.result;
                     if (retireDraft && current && !current.deleted && current.revision === ticket.draftRevision) {
-                        drafts.put({...current, text: '', attachments: [], revision: current.revision + 1}); retired = true;
+                        drafts.put({...current, text: '', mentions: undefined, attachments: [], revision: current.revision + 1}); retired = true;
                     }
                     submissions.put({...readTicket.result, committed: true});
                 };

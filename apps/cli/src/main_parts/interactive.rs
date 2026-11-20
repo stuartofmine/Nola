@@ -55,10 +55,14 @@ fn open_interactive_view_state(config: &Config) -> (
     }
 }
 
-fn persist_interactive_view_state(store: &mut Option<crate::cli_view_state::ViewStore>, draft: String, cursor: usize) {
+fn persist_interactive_view_state(store: &mut Option<crate::cli_view_state::ViewStore>, draft: String, cursor: usize, expert_mentions: Vec<crate::cli_expert_mentions::Occurrence>, edit: Option<crate::cli_expert_mentions::EditTarget>) {
     let Some(active) = store.as_mut() else { return; };
     let view = crate::cli_view_state::ViewState {
-        draft, cursor, viewport: crate::terminal_ui::capture_viewport_bookmark(),
+        draft,
+        cursor,
+        expert_mentions,
+        edit,
+        viewport: crate::terminal_ui::capture_viewport_bookmark(),
     };
     if let Err(error) = active.save(view) {
         terminal_notice!("无法保存 CLI 显示状态：{error}");
@@ -92,9 +96,11 @@ fn run_interactive_session(config: &Config, resume_pending: bool) -> Result<Inte
     let mut previous_workspace: Option<PathBuf> = None;
     let mut queued_user_inputs: VecDeque<String> = VecDeque::new();
     let mut pending_draft: Option<String> = None;
+    let mut rejected_mentions = Vec::new();
     let mut goal_entry = false;
     let mut view_session = interactive_config.session_id.clone();
     let (mut view_store, saved_view) = open_interactive_view_state(&interactive_config);
+    let mut edit_target = saved_view.as_ref().and_then(|v| v.edit.clone());
     let _active_view = crate::cli_view_state::ActiveView::bind(view_store.clone());
     if let Some(view) = &saved_view {
         if !view.draft.is_empty() { pending_draft = Some(view.draft.clone()); }
@@ -215,10 +221,12 @@ fn run_interactive_session(config: &Config, resume_pending: bool) -> Result<Inte
     let mut include_child_questions = false;
     loop {
         if view_session != interactive_config.session_id {
+            rejected_mentions.clear();
             view_session = interactive_config.session_id.clone();
             interaction::select_interactive_composer(interactive_composer_key(&interactive_config)?);
             pending_draft = None;
             let (store, view) = open_interactive_view_state(&interactive_config);
+            edit_target = view.as_ref().and_then(|v| v.edit.clone());
             view_store = store;
             crate::cli_view_state::ActiveView::replace(view_store.clone());
             if let Some(view) = view {
@@ -284,7 +292,15 @@ fn run_interactive_session(config: &Config, resume_pending: bool) -> Result<Inte
             }
         }
         queued_user_inputs.extend(interaction::take_interactive_queued_inputs());
-        let prompt_footer = if goal_entry {
+        let prompt_footer = if edit_target.is_some() {
+            Some(
+                match current_language() {
+                    Language::ZhHans => "编辑已发送消息 · Esc 取消",
+                    _ => "Editing sent message · Esc to cancel",
+                }
+                .into(),
+            )
+        } else if goal_entry {
             Some(ui_text(UiText::GoalInputHint).to_string())
         } else if !interactive_config.json_output {
             interactive_prompt_footer_line(
@@ -295,7 +311,10 @@ fn run_interactive_session(config: &Config, resume_pending: bool) -> Result<Inte
         } else {
             None
         };
-        let maybe_prompt = if let Some(queued) = (!goal_entry).then(|| queued_user_inputs.pop_front()).flatten() {
+        let maybe_prompt = if let Some(queued) = (!goal_entry && edit_target.is_none())
+            .then(|| queued_user_inputs.pop_front())
+            .flatten()
+        {
             if !interactive_config.json_output {
                 commit_interactive_user_history_line(&queued);
             }
@@ -310,10 +329,12 @@ fn run_interactive_session(config: &Config, resume_pending: bool) -> Result<Inte
                 &interactive_config,
                 pending_draft.take().as_deref(),
                 if goal_entry { &mut goal_view_store } else { &mut view_store },
-                goal_entry,
+                std::mem::take(&mut rejected_mentions), edit_target.as_ref(), goal_entry,
             )
             .map_err(|err| format!("{} {err}", tr(Message::FailedReadPromptPrefix)))?
         };
+        let mut selected_experts = None;
+        let mut submitted_mentions = Vec::new();
         let prompt = match maybe_prompt {
             None => break,
             Some(InteractivePromptInput::CancelGoal) => {
@@ -322,8 +343,44 @@ fn run_interactive_session(config: &Config, resume_pending: bool) -> Result<Inte
                 interaction::clear_interactive_execution_draft();
                 continue;
             }
+            Some(InteractivePromptInput::CancelEdit) => {
+                edit_target = None;
+                interaction::clear_interactive_execution_draft();
+                persist_interactive_view_state(&mut view_store, String::new(), 0, vec![], None);
+                continue;
+            }
             Some(InteractivePromptInput::Submitted(prompt)) => prompt,
+            Some(InteractivePromptInput::Mentioned(prompt, selection, mentions)) => {
+                selected_experts = Some(selection);
+                submitted_mentions = mentions;
+                prompt
+            }
         };
+        if prompt == "/cancel-edit" {
+            edit_target = None;
+            rejected_mentions.clear();
+            persist_interactive_view_state(&mut view_store, String::new(), 0, vec![], None);
+            continue;
+        }
+        if !goal_entry && (prompt == "/edit" || prompt.starts_with("/edit ")) {
+            let Some(conversation) = interactive_config.session_id.as_deref() else {
+                terminal_notice!("No saved conversation to edit.");
+                continue;
+            };
+            let id = prompt.strip_prefix("/edit").unwrap().trim();
+            match crate::cli_expert_mentions::EditTarget::load(
+                conversation,
+                (!id.is_empty()).then_some(id),
+            ) {
+                Ok((target, text, runs)) => {
+                    edit_target = Some(target);
+                    pending_draft = Some(text);
+                    rejected_mentions = runs;
+                }
+                Err(error) => terminal_notice!("{}", error),
+            }
+            continue;
+        }
         if prompt.is_empty() {
             continue;
         }
@@ -471,6 +528,7 @@ fn run_interactive_session(config: &Config, resume_pending: bool) -> Result<Inte
             SlashCommandResult::Draft(draft) => { pending_draft = Some(draft); continue; }
             SlashCommandResult::Handled => continue,
             SlashCommandResult::WorkspaceChanged | SlashCommandResult::SessionReset => {
+                edit_target = None;
                 interaction::select_interactive_composer(interactive_composer_key(&interactive_config)?);
                 pending_draft = None;
                 recovery_blocked = false;
@@ -491,11 +549,38 @@ fn run_interactive_session(config: &Config, resume_pending: bool) -> Result<Inte
         // cycle. Every ordinary composer submission remains one visible user
         // Turn, even while a Goal is paused, running in the background, or
         // awaiting user input.
+        let mut turn_config = interactive_config.clone();
+        turn_config.main_expert_selection = selected_experts;
+        if turn_config.main_expert_selection.is_some() || edit_target.is_some() {
+            let id = uuid::Uuid::new_v4().to_string();
+            if let Some(target) = &edit_target {
+                if let Err(error) =
+                    target.prepare(&id, &prompt, turn_config.main_expert_selection.as_ref())
+                {
+                    terminal_notice!("{}", error);
+                    pending_draft = Some(prompt);
+                    rejected_mentions = submitted_mentions;
+                    continue;
+                }
+            }
+            turn_config.host_user_message_id = Some(format!("{id}:user"));
+            turn_config.host_assistant_message_id = Some(format!("{id}:assistant"));
+            turn_config.host_submission_id = Some(id);
+        }
+        let editing = edit_target.is_some();
+        let mut replay_edited_history = false;
         let run_result = match run_single_prompt_with_cancellation(
-            &interactive_config,
+            &turn_config,
             prompt.as_str(),
         ) {
             Ok(result) => {
+                replay_edited_history = editing;
+                if (!submitted_mentions.is_empty() || edit_target.is_some())
+                    && result.draft_user_input.is_none()
+                {
+                    persist_interactive_view_state(&mut view_store, String::new(), 0, vec![], None);
+                }
+                edit_target = None;
                 offer_user_questions = true;
                 if !result.run_outcome.is_terminal() {
                     eprintln!("Run remains pending ({:?}); no completion or permission decision was recorded.", result.run_outcome.turn_status);
@@ -515,6 +600,57 @@ fn run_interactive_session(config: &Config, resume_pending: bool) -> Result<Inte
         };
         if let Err(err) = run_result {
             terminal_notice!("{}", format_error(&err));
+            if !submitted_mentions.is_empty() || edit_target.is_some() {
+                let admitted = turn_config.session_id.as_ref().map(|conversation| {
+                    crate::application_port::CliApplicationPort::persistent_default().and_then(
+                        |mut app| {
+                            app.execute::<Option<nola_application::ExactRunInvocation>>(
+                                nola_application::ApplicationCommand::LoadExactRunInvocation {
+                                    conversation_id: conversation.clone(),
+                                    expected_run_id: turn_config
+                                        .host_submission_id
+                                        .clone()
+                                        .unwrap(),
+                                    assistant_message_id: turn_config
+                                        .host_assistant_message_id
+                                        .clone()
+                                        .unwrap(),
+                                },
+                            )
+                        },
+                    )
+                });
+                if matches!(admitted, None | Some(Ok(None))) {
+                    pending_draft = Some(prompt.clone());
+                    rejected_mentions = submitted_mentions;
+                    persist_interactive_view_state(
+                        &mut view_store,
+                        prompt.clone(),
+                        prompt.len(),
+                        rejected_mentions.clone(),
+                        edit_target.clone(),
+                    );
+                } else {
+                    replay_edited_history = editing && matches!(admitted, Some(Ok(Some(_))));
+                    edit_target = None;
+                }
+            }
+        }
+        if replay_edited_history && !interactive_config.json_output {
+            if let Some(saved) = restore_interactive_session_messages(
+                &interactive_config,
+                &mut started,
+                &mut turn,
+                &mut input_history,
+            )? {
+                crate::terminal_ui::set_restoring_view(true);
+                crate::terminal_ui::clear_replayed_history();
+                print_interactive_session_entry(&saved, &interactive_config);
+                print_interactive_session_replay(&saved);
+                crate::terminal_ui::set_restoring_view(false);
+                history_cursor = None;
+                continue;
+            }
         }
         if input_history
             .last()
@@ -747,7 +883,32 @@ fn print_interactive_welcome(config: &Config) -> Result<(), String> {
     Ok(())
 }
 
-enum InteractivePromptInput { Submitted(String), CancelGoal }
+enum InteractivePromptInput {
+    Submitted(String),
+    Mentioned(
+        String,
+        nola_domain::expert_task_target::MainExpertSelectionContextV1,
+        Vec<crate::cli_expert_mentions::Occurrence>,
+    ),
+    CancelGoal,
+    CancelEdit,
+}
+thread_local! {
+    static MENTION_MENU: std::cell::RefCell<(String, usize, Option<usize>)> = Default::default();
+}
+fn mention_menu_focus(line: &str, cursor: usize) -> Option<usize> {
+    MENTION_MENU.with(|m| {
+        let m = m.borrow();
+        if m.0 == line && m.1 == cursor {
+            m.2
+        } else {
+            Some(0)
+        }
+    })
+}
+fn set_mention_focus(line: &str, cursor: usize, index: Option<usize>) {
+    MENTION_MENU.with(|m| *m.borrow_mut() = (line.into(), cursor, index));
+}
 thread_local! { static GOAL_COMPOSER_ACTIVE: Cell<bool> = const { Cell::new(false) }; }
 struct GoalComposerScope(bool);
 impl Drop for GoalComposerScope {
@@ -762,6 +923,8 @@ fn read_interactive_prompt_line(
     config: &Config,
     initial_draft: Option<&str>,
     view_store: &mut Option<crate::cli_view_state::ViewStore>,
+    recovered_mentions: Vec<crate::cli_expert_mentions::Occurrence>,
+    edit_target: Option<&crate::cli_expert_mentions::EditTarget>,
     goal_entry: bool,
 ) -> io::Result<Option<InteractivePromptInput>> {
     crate::cli_expert_mentions::begin_composer();
@@ -798,6 +961,22 @@ fn read_interactive_prompt_line(
     let snapshot = interaction::interactive_composer_snapshot();
     let mut line = initial_draft.unwrap_or(&snapshot.draft).to_string();
     let mut cursor = if snapshot.draft == line { snapshot.cursor } else { line.len() };
+    let mut mentions = if recovered_mentions.is_empty() {
+        view_store
+            .as_ref()
+            .map(|s| s.mentions_for(&line))
+            .unwrap_or_default()
+    } else {
+        recovered_mentions
+    };
+    mentions.retain(|r| line.get(r.start..r.end) == Some(r.text.as_str()));
+    let mut undo_mention: Option<(
+        String,
+        usize,
+        Vec<crate::cli_expert_mentions::Occurrence>,
+        String,
+    )> = None;
+    set_mention_focus(&line, cursor, Some(0));
     let mut pasted_contents: Vec<InteractivePastedContent> = Vec::new();
     let mut esc_pending_clear = false;
     let mut completion_cycle: Option<ComposerCompletionCycle> = None;
@@ -814,7 +993,18 @@ fn read_interactive_prompt_line(
         let effective_footer = interactive_effective_footer(prompt_footer, esc_pending_clear);
         let expanded = expand_interactive_pasted_content(&line, &pasted_contents);
         let expanded_cursor = expand_interactive_pasted_content(&line[..cursor], &pasted_contents).len();
-        persist_interactive_view_state(view_store, expanded, expanded_cursor);
+        let mut expanded_mentions = mentions.clone();
+        for r in &mut expanded_mentions {
+            r.start = expand_interactive_pasted_content(&line[..r.start], &pasted_contents).len();
+            r.end = r.start + r.text.len();
+        }
+        persist_interactive_view_state(
+            view_store,
+            expanded.clone(),
+            expanded_cursor,
+            expanded_mentions.clone(),
+            edit_target.cloned(),
+        );
         if show_prompt && background_notification_pending {
             // Snapshot before reconciliation. Events appended concurrently
             // after this read remain above the consumed cursor and cause the
@@ -961,12 +1151,83 @@ fn read_interactive_prompt_line(
             if key.kind != KeyEventKind::Release && key.code != KeyCode::Esc {
                 esc_pending_clear = false;
             }
-            if !matches!(key.code, KeyCode::Tab | KeyCode::BackTab) && key.kind != KeyEventKind::Release {
+            if key.kind == KeyEventKind::Release {
+                continue;
+            }
+            let query = active_at_file_token(&line, cursor).filter(|_| {
+                !goal_entry
+                    && mention_menu_focus(&line, cursor).is_some()
+                    && !line.trim_start().starts_with('/')
+                    && !mentions.iter().any(|r| r.start < cursor && cursor <= r.end)
+            });
+            let query_open = query.is_some();
+            if key.code == KeyCode::Esc && query_open {
+                set_mention_focus(&line, cursor, None);
+                completion_cycle = None;
+                draw_composer_frame(&line, cursor, prompt_footer, None)?;
+                continue;
+            }
+            if key.code == KeyCode::Char('z') && key.modifiers == KeyModifiers::CONTROL {
+                if let Some((previous, at, old_mentions, after)) = undo_mention.take() {
+                    if line == after {
+                        line = previous;
+                        cursor = at;
+                        mentions = old_mentions;
+                        redraw_interactive_prompt_line(&line, cursor, prompt_footer, config)?;
+                        continue;
+                    }
+                }
+            }
+            if let Some((start, end, prefix)) = query.filter(|_| {
+                is_interactive_submit_event(&key) || matches!(key.code, KeyCode::Down | KeyCode::Up)
+            }) {
+                let experts = if config.save_session && config.tools_enabled {
+                    crate::cli_expert_mentions::completions(prefix, config.session_id.as_deref())
+                } else {
+                    vec![]
+                };
+                if !experts.is_empty() {
+                    let index = mention_menu_focus(&line, cursor).unwrap_or(0) % experts.len();
+                    if is_interactive_submit_event(&key) {
+                        let candidate = &experts[index];
+                        if let Some(run) =
+                            crate::cli_expert_mentions::completion(&candidate.token, start)
+                        {
+                            undo_mention =
+                                Some((line.clone(), cursor, mentions.clone(), String::new()));
+                            line.replace_range(start..end, &run.text);
+                            crate::cli_expert_mentions::replace(
+                                &mut mentions,
+                                start,
+                                end,
+                                run.text.len(),
+                            );
+                            cursor = run.end;
+                            let index = mentions.partition_point(|item| item.start < start);
+                            mentions.insert(index, run);
+                            if let Some(undo) = &mut undo_mention {
+                                undo.3.clone_from(&line);
+                            }
+                        }
+                        set_mention_focus(&line, cursor, None);
+                    } else {
+                        let offset = if key.code == KeyCode::Up {
+                            experts.len() - 1
+                        } else {
+                            1
+                        };
+                        set_mention_focus(&line, cursor, Some((index + offset) % experts.len()));
+                    }
+                    redraw_interactive_prompt_line(&line, cursor, prompt_footer, config)?;
+                    continue;
+                }
+            }
+            if !matches!(key.code, KeyCode::Tab | KeyCode::BackTab) {
                 completion_cycle = None;
             }
             if crate::composer_media::paste_key(&key) {
                 match crate::composer_media::paste_image() {
-                    Ok(marker) => { line.insert_str(cursor, &marker); cursor += marker.len(); }
+                    Ok(marker) => { crate::cli_expert_mentions::replace(&mut mentions,cursor,cursor,marker.len()); line.insert_str(cursor, &marker); cursor += marker.len(); }
                     Err(error) => terminal_notice!("{}", crate::composer_media::paste_error(&error)),
                 }
                 redraw_interactive_prompt_line(&line, cursor, prompt_footer, config)?;
@@ -977,11 +1238,28 @@ fn read_interactive_prompt_line(
                 continue;
             }
             if is_interactive_submit_event(&key) {
-                persist_interactive_view_state(view_store, String::new(), 0);
+                let selection =
+                    match crate::cli_expert_mentions::bind(&expanded, &expanded_mentions) {
+                        Ok(value) => value,
+                        Err(error) => {
+                            terminal_notice!("{}", error);
+                            continue;
+                        }
+                    };
+                if selection.is_none() && edit_target.is_none() {
+                    persist_interactive_view_state(view_store, String::new(), 0, vec![], None);
+                }
                 finish_interactive_prompt_line(&line, prompt_footer)?;
                 interaction::clear_interactive_execution_draft();
                 if line.is_empty() {
                     return Ok(Some(InteractivePromptInput::Submitted(String::new())));
+                }
+                if let Some(selection) = selection {
+                    return Ok(Some(InteractivePromptInput::Mentioned(
+                        expanded,
+                        selection,
+                        expanded_mentions,
+                    )));
                 }
                 let prompt = expand_interactive_pasted_content(&line, &pasted_contents)
                     .trim()
@@ -991,17 +1269,61 @@ fn read_interactive_prompt_line(
             if key.kind != KeyEventKind::Press {
                 continue;
             }
+            let old_cursor = cursor;
+            let old_len = line.len();
+            if let Some(r) = mentions
+                .iter()
+                .find(|r| match key.code {
+                    KeyCode::Backspace | KeyCode::Left => r.start < cursor && cursor <= r.end,
+                    KeyCode::Delete | KeyCode::Right => r.start <= cursor && cursor < r.end,
+                    _ => false,
+                })
+                .cloned()
+                .filter(|_| key.modifiers.is_empty())
+            {
+                match key.code {
+                    KeyCode::Left => cursor = r.start,
+                    KeyCode::Right => cursor = r.end,
+                    _ => {
+                        let old = (line.clone(), cursor, mentions.clone());
+                        line.replace_range(r.start..r.end, "");
+                        cursor = r.start;
+                        crate::cli_expert_mentions::replace(&mut mentions, r.start, r.end, 0);
+                        undo_mention = Some((old.0, old.1, old.2, line.clone()));
+                    }
+                }
+                redraw_interactive_prompt_line(&line, cursor, prompt_footer, config)?;
+                continue;
+            }
             if try_delete_pasted_placeholder(&mut line, &mut cursor, &mut pasted_contents, &key) {
+                crate::cli_expert_mentions::replace(
+                    &mut mentions,
+                    cursor,
+                    cursor + old_len - line.len(),
+                    0,
+                );
                 redraw_interactive_prompt_line(&line, cursor, prompt_footer, config)?;
                 continue;
             }
             if crate::composer::edit(&mut line, &mut cursor, &key) {
+                if old_len != line.len() {
+                    let start = cursor.min(old_cursor);
+                    crate::cli_expert_mentions::replace(
+                        &mut mentions,
+                        start,
+                        start + old_len.saturating_sub(line.len()),
+                        line.len().saturating_sub(old_len),
+                    );
+                }
                 retain_present_pasted_contents(&line, &mut pasted_contents);
                 redraw_interactive_prompt_line(&line, cursor, prompt_footer, config)?;
                 continue;
             }
             match key.code {
                 KeyCode::Esc => {
+                    if edit_target.is_some() {
+                        return Ok(Some(InteractivePromptInput::CancelEdit));
+                    }
                     if goal_entry {
                         clear_interactive_composer_frame();
                         return Ok(Some(InteractivePromptInput::CancelGoal));
@@ -1014,6 +1336,7 @@ fn read_interactive_prompt_line(
                             continue;
                         }
                         line.clear();
+                        mentions.clear();
                         cursor = 0;
                         pasted_contents.clear();
                         esc_pending_clear = false;
@@ -1029,8 +1352,10 @@ fn read_interactive_prompt_line(
                             config,
                             &mut completion_cycle,
                             key.code == KeyCode::BackTab,
+                            &mut mentions,
                         )
                     {
+                        set_mention_focus(&line, cursor, None);
                         retain_present_pasted_contents(&line, &mut pasted_contents);
                         redraw_interactive_prompt_line(&line, cursor, prompt_footer, config)?;
                     }
@@ -1040,6 +1365,7 @@ fn read_interactive_prompt_line(
                         interactive_history_prompt("\x1b[A", input_history, history_cursor)
                     {
                         line = history;
+                        mentions.clear();
                         cursor = line.len();
                         pasted_contents.clear();
                         redraw_interactive_prompt_line(&line, cursor, prompt_footer, config)?;
@@ -1050,11 +1376,13 @@ fn read_interactive_prompt_line(
                         interactive_history_prompt("\x1b[B", input_history, history_cursor)
                     {
                         line = history;
+                        mentions.clear();
                         cursor = line.len();
                         pasted_contents.clear();
                         redraw_interactive_prompt_line(&line, cursor, prompt_footer, config)?;
                     } else {
                         line.clear();
+                        mentions.clear();
                         cursor = 0;
                         pasted_contents.clear();
                         redraw_interactive_prompt_line(&line, cursor, prompt_footer, config)?;
@@ -1065,6 +1393,7 @@ fn read_interactive_prompt_line(
                     if goal_entry { return Ok(Some(InteractivePromptInput::CancelGoal)); }
                     if !line.is_empty() {
                         line.clear();
+                        mentions.clear();
                         cursor = 0;
                         pasted_contents.clear();
                         esc_pending_clear = false;
@@ -1087,6 +1416,7 @@ fn read_interactive_prompt_line(
             completion_cycle = None;
             match crate::composer_media::paste_path(&text) {
                 Ok(Some(marker)) => {
+                    crate::cli_expert_mentions::replace(&mut mentions,cursor,cursor,marker.len());
                     line.insert_str(cursor, &marker); cursor += marker.len();
                     redraw_interactive_prompt_line(&line, cursor, prompt_footer, config)?;
                     continue;
@@ -1102,6 +1432,7 @@ fn read_interactive_prompt_line(
             if sanitized.chars().any(|ch| !ch.is_whitespace()) {
                 if should_collapse_pasted_content(&sanitized) {
                     let placeholder = format!("[Pasted Content {} chars]", sanitized.chars().count());
+                    crate::cli_expert_mentions::replace(&mut mentions,cursor,cursor,placeholder.len());
                     line.insert_str(cursor, &placeholder);
                     cursor += placeholder.len();
                     pasted_contents.push(InteractivePastedContent {
@@ -1109,9 +1440,16 @@ fn read_interactive_prompt_line(
                         content: sanitized,
                     });
                 } else {
+                    crate::cli_expert_mentions::replace(
+                        &mut mentions,
+                        cursor,
+                        cursor,
+                        sanitized.len(),
+                    );
                     line.insert_str(cursor, &sanitized);
                     cursor += sanitized.len();
                 }
+                set_mention_focus(&line, cursor, None);
                 redraw_interactive_prompt_line(&line, cursor, prompt_footer, config)?;
             }
         }
@@ -1869,7 +2207,16 @@ fn composer_completion_line(line: &str, cursor: usize, config: &Config) -> Optio
             .map(|item| interactive_room_completion_label(&item.name).unwrap_or(item.name))
             .collect::<Vec<_>>()
     } else if let Some((_, _, prefix)) = active_at_file_token(line, cursor) {
-        interactive_mention_candidates(config, prefix).into_iter().map(|(_, label)| label).collect()
+        let selected = mention_menu_focus(line, cursor)?;
+        let mut items = interactive_mention_candidates(config, prefix)
+            .into_iter()
+            .map(|(_, label)| label)
+            .collect::<Vec<_>>();
+        if selected < items.len() {
+            items[selected].insert_str(0, "› ");
+            items.drain(..selected.saturating_sub(2));
+        }
+        items
     } else {
         return None;
     };
@@ -2543,6 +2890,10 @@ const INTERACTIVE_SLASH_COMMANDS: &[SlashCommand] = &[
     SlashCommand { name: "/permissions" },
     SlashCommand { name: "/sources" },
     SlashCommand { name: "/resources" },
+    SlashCommand { name: "/edit" },
+    SlashCommand {
+        name: "/cancel-edit",
+    },
     SlashCommand { name: "/goal" },
     SlashCommand { name: "/init" },
     SlashCommand { name: "/cd" },
@@ -3069,18 +3420,30 @@ fn active_at_file_token(line: &str, cursor: usize) -> Option<(usize, usize, &str
         return None;
     }
     let before = &line[..idx];
-    let token_start = before
-        .char_indices()
-        .rev()
-        .find(|(_, ch)| ch.is_whitespace())
-        .map(|(i, ch)| i + ch.len_utf8())
-        .unwrap_or(0);
-    let token = &before[token_start..];
-    let rest = token.strip_prefix('@')?;
-    if rest.contains('@') {
+    let start = before.rfind('@')?;
+    let prefix = &before[start + 1..];
+    if prefix.chars().any(char::is_whitespace)
+        || before[..start]
+            .chars()
+            .next_back()
+            .is_some_and(|c| c.is_ascii_alphanumeric() || matches!(c, '_' | '.' | '@'))
+    {
         return None;
     }
-    Some((token_start, idx, rest))
+    Some((start, idx, prefix))
+}
+
+#[test]
+fn inline_mentions_query_uses_the_caret_and_leaves_email_literal() {
+    let line = "🙂请@审查之后继续";
+    let at = "🙂请@审查".len();
+    assert_eq!(
+        active_at_file_token(line, at),
+        Some(("🙂请".len(), at, "审查"))
+    );
+    for literal in ["mail@example.com", "a.b@example", "@@double", "@选完 继续"] {
+        assert!(active_at_file_token(literal, literal.len()).is_none());
+    }
 }
 
 fn interactive_mention_candidates(config: &Config, prefix: &str) -> Vec<(String, String)> {
@@ -3157,7 +3520,20 @@ fn apply_composer_completion_cycle(
     config: &Config,
     cycle: &mut Option<ComposerCompletionCycle>,
     reverse: bool,
+    mentions: &mut Vec<crate::cli_expert_mentions::Occurrence>,
 ) -> bool {
+    let mut insert = |line: &mut String, start: usize, end: usize, token: &str| {
+        let selected = crate::cli_expert_mentions::completion(token, start);
+        let display = selected.as_ref().map(|r| r.text.as_str()).unwrap_or(token);
+        line.replace_range(start..end, display);
+        crate::cli_expert_mentions::replace(mentions, start, end, display.len());
+        let at = start + display.len();
+        if let Some(run) = selected {
+            let index = mentions.partition_point(|r| r.start < start);
+            mentions.insert(index, run);
+        }
+        at
+    };
     if let Some(existing) = cycle.as_mut() {
         if *cursor == existing.last_inserted_end
             && existing.span_start <= existing.last_inserted_end
@@ -3171,8 +3547,7 @@ fn apply_composer_completion_cycle(
                 existing.index = (existing.index + 1) % existing.candidates.len();
             }
             let next = existing.candidates[existing.index].clone();
-            line.replace_range(existing.span_start..existing.last_inserted_end, &next);
-            let new_end = existing.span_start + next.len();
+            let new_end = insert(line, existing.span_start, existing.last_inserted_end, &next);
             existing.last_inserted_end = new_end;
             *cursor = new_end;
             return true;
@@ -3197,8 +3572,7 @@ fn apply_composer_completion_cycle(
     }
     let idx = if reverse { candidates.len() - 1 } else { 0 };
     let replacement = candidates[idx].clone();
-    line.replace_range(span_start..span_end, &replacement);
-    let new_end = span_start + replacement.len();
+    let new_end = insert(line, span_start, span_end, &replacement);
     *cursor = new_end;
     *cycle = Some(ComposerCompletionCycle {
         span_start,
@@ -4618,6 +4992,7 @@ fn print_interactive_shortcuts_guide() {
             terminal_notice!("  换行：Shift+Enter · Alt+Enter · Ctrl+J · 行尾 \\+Enter");
             terminal_notice!("  跳转：Option/Alt+←/→ 或 Alt+B/F 按词跳转 · Ctrl+A/E 行首/行尾 · Ctrl+Home/End 全文首尾");
             terminal_notice!("  滚动：PgUp/PgDn · Alt+↑/↓ · Ctrl+↑/↓ · Ctrl+Home/End");
+            terminal_notice!("  选专家：输入 @，上下键选择，回车插入名字。/edit 编辑已发送消息。");
             terminal_notice!("  补全：Tab / Shift+Tab 循环补全 /命令 与 @工作区文件");
             terminal_notice!("  草稿：连按两次 Esc 清空输入 · /stop 停止当前运行 · /resume <id> 直接切换会话");
             terminal_notice!("  扩展：/model · /experts · /skills · /mcp · /memory · /questions · /plan");
@@ -4626,6 +5001,7 @@ fn print_interactive_shortcuts_guide() {
             terminal_notice!("  Newline: Shift+Enter · Alt+Enter · Ctrl+J · trailing \\+Enter");
             terminal_notice!("  Word nav: Option/Alt+Left/Right or Alt+B/F · Ctrl+A/E line · Ctrl+Home/End buffer");
             terminal_notice!("  Scroll: PgUp/PgDn · Alt+Up/Down · Ctrl+Up/Down · Ctrl+Home/End");
+            terminal_notice!("  Experts: type @, choose with Up/Down, press Enter to insert. /edit reopens a sent message.");
             terminal_notice!("  Complete: Tab / Shift+Tab cycles /commands and @workspace files");
             terminal_notice!("  Control: Esc x2 clears draft · /stop cancels active run · /resume <id> switches session");
             terminal_notice!("  Catalog: /model · /experts · /skills · /mcp · /memory · /questions · /plan");

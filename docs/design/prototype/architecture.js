@@ -3,7 +3,7 @@ window.architectureModule = (() => {
     const media = window.matchMedia?.('(max-width: 700px)');
     let mode = media?.matches ? 'mobile' : 'desktop';
     const states = {
-        mobile: {page: 'conversations', id: 'design', settings: ''},
+        mobile: {page: new URLSearchParams(location.search).get('demo')==='expert-mention'?'chat':'conversations', id: 'design', settings: ''},
         desktop: {page: 'workspace', id: 'design', settings: ''}
     };
     let sidebarVisible = true,

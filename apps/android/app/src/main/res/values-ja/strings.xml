@@ -1146,7 +1146,7 @@
     <string name="room_waiting_confirmation">確認待ち</string>
     <string name="room_waiting_permission">%1$s · 許可待ち</string>
     <string name="chat_experts">エキスパート</string>
-    <string name="chat_experts_hint">次のメッセージに返信するエキスパートを選択します。選択しても権限は付与されません。</string>
+    <string name="chat_experts_hint">このメッセージで専門家をメンションします。</string>
     <string name="chat_experts_empty">利用できるアクティブなエキスパートはいません。</string>
     <string name="chat_no_matching_experts">一致するエキスパートはいません</string>
     <string name="chat_response_failed">応答に失敗しました。上のテキストは不完全な可能性があります。</string>
@@ -1389,4 +1389,7 @@
     <string name="models_web_host_disconnect">切断</string>
     <string name="onboarding_choose_model">モデルを選ぶ</string>
     <string name="onboarding_chat_model_hint">モデルサービスに接続するか、ローカルモデルをダウンロードするか、Nola ホストとペアリングすると、会話を始められます。</string>
+    <string name="expert_mention_needs_text">専門家に依頼したいことを入力してください。</string>
+    <string name="expert_mention_plain">通常のテキストにする</string>
+    <string name="expert_mention_upgrade_host">専門家をメンションするには接続先のホストを更新してください。通常のテキストとして送ることもできます。</string>
 </resources>

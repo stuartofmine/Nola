@@ -41,6 +41,27 @@ import XCTest
         await foreignState.load()
         XCTAssertTrue(foreignState.children.isEmpty); XCTAssertFalse(foreignState.loaded); XCTAssertNotNil(foreignState.error)
     }
+    func testMentionHistoryMatchesFrozenContextAcrossPagesAndRejectsChangedRevision() async throws {
+        let old = child(current: false, revision: nil)
+        let current = child()
+        let entry = AppleMainExpertSelectionEntry(agentID: old.agentID, agentRevision: 3,
+            participantID: old.participantID, contextConversationID: old.id)
+        var offsets: [Int] = []
+        let (matchedRoom, matchedChild) = try await AppleExpertChildConversations.child(for: entry, parentID: parent) { offset in
+            offsets.append(offset)
+            return offset == 0 ? self.page([current], next: 1) : self.page([old])
+        }
+        XCTAssertEqual(offsets, [0, 1])
+        XCTAssertEqual(matchedRoom, room)
+        XCTAssertEqual(matchedChild, old)
+        do {
+            _ = try await AppleExpertChildConversations.child(for: entry, parentID: parent) { offset in
+                offset == 0 ? self.page([current], next: 1) : self.page([old], revision: 2)
+            }
+            XCTFail("Changing the Room snapshot during lookup must invalidate the lookup")
+        } catch { XCTAssertEqual((error as NSError).domain, NSCocoaErrorDomain) }
+    }
+
     func testDuplicateContextAcrossPagesIsRejectedWithoutLosingHistory() async throws {
         let first = child()
         let page0 = page([first], next: 1), page1 = page([first])
@@ -1026,6 +1047,7 @@ final class IOSMainExpertDispatchContractTests: XCTestCase {
     func testOldHostDoesNotAdvertiseMainDelegationAndUnknownCapabilitiesStayUnsupported() throws {
         let legacy = try JSONDecoder().decode(AppleExpertRoleTemplateCatalog.self, from: Data(#"{"version":1,"templates":[],"features":{"reasoning_effort":true}}"#.utf8))
         XCTAssertFalse(legacy.features.mainAgentDelegation)
+        XCTAssertFalse(legacy.features.inlineExpertMentions)
         let current = try JSONDecoder().decode(AppleExpertRoleTemplateCatalog.self, from: Data(#"{"version":1,"templates":[],"features":{"main_agent_delegation":true}}"#.utf8))
         XCTAssertTrue(current.features.mainAgentDelegation)
     }

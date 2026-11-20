@@ -10,7 +10,9 @@
     import { locale, t } from '../lib/i18n';
     import type { TimelineMessage } from '../lib/chatTimeline';
     import { messageCopyContent, messageMutationId } from '../lib/chatMessageActions';
-    let { message, ownerKey, busy = false, selected = false, onselect, onoperation, editSource, oneditresend, ownerCurrent }: {
+    let { mentionDirectory=[], mentionMembers=[], loadMentions, mentionEpoch, message, ownerKey, busy = false, selected = false, onselect, onoperation, editSource, oneditresend, ownerCurrent }: {
+        mentionDirectory?:import('../lib/agentRooms').PersistentAgent[]; mentionMembers?:import('../lib/agentRooms').RoomParticipant[];
+        loadMentions?:()=>Promise<void>; mentionEpoch?:()=>string|null;
         message: TimelineMessage; ownerKey: string; busy?: boolean; selected?: boolean; onselect?: () => void;
         onoperation?: (operation: 'branch' | 'truncate', messageId: string) => void | Promise<string | void>;
         editSource?: EditedResendSourceSnapshot;
@@ -116,7 +118,7 @@
 {/if}
 
 {#if editing}
-    <ChatMessageEditDialog initial={editing.draft} {busy} ownerChanged={editOwnerChanged} onsubmit={submitEditor} onclose={()=>editing=null} />
+    <ChatMessageEditDialog initial={editing.draft} {mentionDirectory} {mentionMembers} {loadMentions} {mentionEpoch} {busy} ownerChanged={editOwnerChanged} onsubmit={submitEditor} onclose={()=>editing=null} />
 {/if}
 
 <style>

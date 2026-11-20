@@ -176,7 +176,7 @@ struct ChatView: View {
     @State private var composerDrafts = ConversationComposerDraftStore(repository: FileConversationDraftRepository.application())
     private var inputText: String {
         get { composerDrafts.current.text }
-        nonmutating set { composerDrafts.current.text = newValue }
+        nonmutating set { var draft = composerDrafts.current; draft.text = newValue; draft.mentions = []; composerDrafts.current = draft }
     }
     @State private var selectedModel: ModelInfo?
     @State private var highlightedCommandID: String?
@@ -187,17 +187,66 @@ struct ChatView: View {
     @State private var expertSourceOwner: AppleConversationSourceOwner = .unavailable
     @State private var showExpertSourceNotice = false
     @State private var showLocalExpertManagement = false
-    @State private var expertSelection: Set<String> = []
-    @State private var expertSelectionRevisions: [String: Int64] = [:]
+    private var expertSelection: Set<String> { Set(composerDrafts.current.mentions.map { $0.expert.agentID }) }
+    @State private var mentionCaret: AppleMentionEditor.Caret?
+    @State private var editorSelection: NSRange?
+    @State private var editorComposing = false
+    private var currentMentionQuery: ExpertMentionQuery? {
+        guard !editorComposing else { return nil }
+        return .atCaret(in: inputText, selection: editorSelection ?? NSRange(location: inputText.utf16.count, length: 0), mentions: composerDrafts.current.mentions)
+    }
     @State private var expertRemoteSource: ChatManager.ExpertRoomSource?
     @State private var expertRemoteRoom: IOSConversationRoomAssociation?
-    @State private var expertSelectionReferences: [String: AppleMainExpertSelectionEntry] = [:]
-    @State private var expertSelectionRemoteSources: [String: ChatManager.ExpertRoomSource] = [:]
     @State private var expertJoinOperations: [String: UUID] = [:]
     private var joiningExpertIDs: Set<String> { Set(expertJoinOperations.keys) }
     @State private var pendingExpertRejoin: IOSExpertMentionRejoinRequest?
     @State private var highlightedExpertID: String?
     @State private var dismissedExpertMention: String?
+    private struct MentionHistory: Identifiable {
+        let parent: String
+        let room: String
+        let child: AppleExpertChildConversation
+        let source: ChatManager.ExpertRoomSource?
+        var id: String { child.id }
+    }
+    @State private var mentionHistory: MentionHistory?
+
+    private var mentionProfile: AppleMentionProfileActions {
+        var actions = AppleMentionProfileActions()
+        actions.description = mentionDescription
+        if expertSourceOwner != .unavailable { actions.history = { expert in openMentionHistory(expert) } }
+        return actions
+    }
+
+    private func mentionDescription(_ expert: AppleMainExpertSelectionEntry) -> String? {
+        let association = expertRemoteSource == nil ? expertSubmission?.conversationAssociation : expertRemoteRoom
+        guard let association, association.conversationID == container.chatManager.currentConversationId?.uuidString else { return nil }
+        return association.room.room.participants.first(where: { member in
+            member.id == expert.participantID && member.contextConversationID == expert.contextConversationID && member.agentRevision == expert.agentRevision
+        })?.description
+    }
+
+    private func openMentionHistory(_ expert: AppleMainExpertSelectionEntry) {
+        guard let owner = container.chatManager.currentConversationId else { return }
+        let parent = owner.uuidString
+        Task { @MainActor in
+            do {
+                let source = try container.chatManager.expertRoomSource(owner: owner)
+                let service = IOSAgentRoomService(runtime: container.applicationRuntime)
+                let (room, child) = try await AppleExpertChildConversations.child(for: expert, parentID: parent) { offset in
+                    if let source {
+                        return try await container.chatManager.scopedExpertHistoryCommand(owner: owner, source: source, command: [
+                            "type": .string("child_conversations"), "conversation_id": .string(parent),
+                            "limit": .signedInteger(32), "offset": .signedInteger(Int64(offset))])
+                    }
+                    guard try container.applicationRuntime.conversationSourceOwner(conversationID: parent) == .local else { throw IOSApplicationRuntimeError.invalidResponse }
+                    return try await Task.detached { try service.childConversations(conversationID: parent, offset: offset) }.value
+                }
+                guard container.chatManager.currentConversationId == owner else { return }
+                mentionHistory = .init(parent: parent, room: room, child: child, source: source)
+            } catch { if container.chatManager.currentConversationId == owner { expertSendError = error.localizedDescription } }
+        }
+    }
     @State private var expertDirectory: [IOSPersistentAgent] = []
     @State private var expertDirectoryError: String?
     @State private var expertSubmission: IOSRoomSubmissionWorkspace?
@@ -526,11 +575,6 @@ struct ChatView: View {
     private var shouldShowStatusBar: Bool {
         activeAssistantMessageID == nil
             && (processingState.showsInlineStatus || container.chatManager.retrievalInProgress)
-    }
-
-    private var conversationParticipantSummary: String {
-        let names = expertDirectory.filter { expertSelection.contains($0.id) }.map(\.name)
-        return names.isEmpty ? "Nola" : names.joined(separator: " · ")
     }
 
     private var conversationSettingsSheet: some View {
@@ -952,7 +996,7 @@ struct ChatView: View {
                             .frame(width: 10, height: 10).foregroundStyle(.secondary)
                             .accessibilityHidden(true)
                     }
-                    Text(verbatim: conversationParticipantSummary).font(.caption2).foregroundStyle(.secondary).lineLimit(1)
+                    Text(verbatim: "Nola").font(.caption2).foregroundStyle(.secondary).lineLimit(1)
                 }
                 .padding(.horizontal, 8)
                 .frame(maxWidth: .infinity, minHeight: 44)
@@ -991,12 +1035,16 @@ struct ChatView: View {
                     chatTopBar(showsHistoryToggle: false)
                 }
             }
+            .task(id: "\(container.chatManager.currentConversationId?.uuidString ?? "")/\(!expertSelection.isEmpty)/\(selectedModel?.id ?? "")") {
+                guard !expertSelection.isEmpty, container.chatManager.getCurrentModel()?.isWebBackend == true,
+                      expertRemoteSource?.owner != container.chatManager.currentConversationId || expertRemoteSource == nil else { return }
+                await reloadExpertDirectory()
+            }
             .task(id: container.chatManager.currentConversationId) {
                 guard let id = container.chatManager.currentConversationId else { return }
                 prepareExpertWorkspace()
                 await expertSubmission?.restoreConversation(id.uuidString)
                 guard !Task.isCancelled else { return }
-                expertSelection = Set(expertSubmission?.pendingExpertIDs ?? [])
                 applyExpertHistoryContinuation()
                 if inputText.isEmpty, let text = expertSubmission?.pendingAdmissionText { inputText = text }
                 if let association = expertSubmission?.conversationAssociation {
@@ -1021,10 +1069,9 @@ struct ChatView: View {
                     && newOwner.flatMap { submittedTurns[$0] } != nil
                 if transfersSubmittedDraft, let owner = newOwner {
                     if let source = expertRemoteSource { expertRemoteSource = .init(owner: owner, provider: source.provider, epoch: source.epoch) }
-                    expertSelectionRemoteSources = expertSelectionRemoteSources.mapValues { .init(owner: owner, provider: $0.provider, epoch: $0.epoch) }
                 } else {
-                    expertSelection = []; expertSelectionRevisions = [:]
-                    expertRemoteSource = nil; expertRemoteRoom = nil; expertSelectionReferences = [:]; expertSelectionRemoteSources = [:]
+                    editorSelection = nil; mentionCaret = nil
+                    expertRemoteSource = nil; expertRemoteRoom = nil
                 }
                 expertJoinOperations = [:]
                 pendingExpertRejoin = nil
@@ -1064,6 +1111,14 @@ struct ChatView: View {
     var body: some View {
         Group {
             chatPrimaryContent
+            .environment(\.expertMentionProfile, mentionProfile)
+            .environment(\.iosSourceAllowsMessageEditing, expertSourceOwner == .local)
+            .sheet(item: $mentionHistory) { selection in
+                IOSExpertChildHistory(parentID: selection.parent, roomID: selection.room, child: selection.child, runtime: container.applicationRuntime, remoteSource: selection.source) { request in
+                    mentionHistory = nil
+                    applyExpertHistoryContinuation(request)
+                }
+            }
             .onChange(of: hybridDeviceToolsEnabled) { _, _ in saveHybridCapabilitySettings() }
             .onChange(of: hybridFilesEnabled) { _, _ in saveHybridCapabilitySettings() }
             .onChange(of: hybridClipboardEnabled) { _, _ in saveHybridCapabilitySettings() }
@@ -1266,7 +1321,16 @@ struct ChatView: View {
         let permissionDecision = execution?.permissionDecisionHandler(
             localRequest: localPermission, hostRequest: hostPermission)
         return VStack(spacing: 0) {
-            if let expertSendError { Text(expertSendError).font(.callout).foregroundStyle(.red).padding(8) }
+            if let expertSendError {
+                VStack(alignment: .leading, spacing: 4) {
+                    Text(expertSendError).font(.callout).foregroundStyle(.red)
+                    if !composerDrafts.current.mentions.isEmpty {
+                        Button(String(localized: "Keep names as plain text")) {
+                            composerDrafts.current.mentions = []; self.expertSendError = nil
+                        }
+                    }
+                }.padding(8)
+            }
             if let submission = expertSubmission,
                submission.conversationAssociation?.conversationID == container.chatManager.currentConversationId?.uuidString {
                 IOSUnifiedExpertConversation(workspace: agentRoomWorkspace, submission: submission,
@@ -1699,25 +1763,6 @@ struct ChatView: View {
                     ProgressView("experts.mention.joining").font(.footnote).frame(maxWidth: .infinity, alignment: .leading)
                 }
             }
-            if !expertSelection.isEmpty {
-                ScrollView(.horizontal) {
-                    HStack {
-                        ForEach(expertSelection.sorted(), id: \.self) { agentID in
-                            Button {
-                                expertSelection.remove(agentID); expertSelectionRevisions.removeValue(forKey: agentID)
-                                expertSelectionReferences.removeValue(forKey: agentID); expertSelectionRemoteSources.removeValue(forKey: agentID)
-                            } label: {
-                                Label(selectedExpertName(agentID), systemImage: "xmark.circle")
-                                    .padding(.horizontal, 8).frame(minHeight: 44)
-                                    .contentShape(Rectangle())
-                            }
-                            .buttonStyle(.plain)
-                            .accessibilityHint(Text("room.remove_mention"))
-                            .accessibilityIdentifier("chat.expert.selected." + agentID)
-                        }
-                    }
-                }
-            }
             ChatComposer(
                 inputText: Binding(get: { inputText }, set: { inputText = $0 }),
                 attachments: pendingAttachments,
@@ -1737,10 +1782,25 @@ struct ChatView: View {
                 onStop: stopGeneration,
                 mentionsVisible: commandsVisible || expertMentionsVisible,
                 mentionCommand: handleComposerKey,
+                mentionEditor: .init(mentions: composerDrafts.current.mentions, caretRequest: mentionCaret,
+                    selectionChanged: { range, marked in editorSelection = range; editorComposing = marked },
+                    applyEdit: { old, range, replacement in
+                        guard old == inputText else { return false }
+                        var draft = composerDrafts.current
+                        draft.mentions = AppleDraftMention.replacing(draft.mentions, range: range, with: replacement)
+                        draft.text = (old as NSString).replacingCharacters(in: range, with: replacement)
+                        composerDrafts.current = draft
+                        return true
+                    }, restore: { value, mentions in
+                        var draft = composerDrafts.current
+                        draft.text = value; draft.mentions = mentions
+                        composerDrafts.current = draft
+                    }, pasted: { dismissedExpertMention = $0 }),
                 showsModelControl: horizontalSizeClass == .compact,
                 modelControl: composerModelControl
             )
-            .onChange(of: inputText) { _, _ in highlightedCommandID = nil; dismissedCommand = nil; commandError = nil; highlightedExpertID = nil; dismissedExpertMention = nil }
+            .id(composerDrafts.selected)
+            .onChange(of: inputText) { _, _ in highlightedCommandID = nil; dismissedCommand = nil; commandError = nil; highlightedExpertID = nil; if dismissedExpertMention != inputText { dismissedExpertMention = nil } }
         }
     }
 
@@ -1840,20 +1900,8 @@ struct ChatView: View {
         return true
     }
 
-    private func selectedExpertName(_ agentID: String) -> String {
-        let room = expertRemoteRoom ?? expertSubmission?.conversationAssociation
-        let reference = expertSelectionReferences[agentID]
-        if let member = room?.room.room.participants.first(where: { member in
-            member.active && member.agentID == agentID &&
-                member.agentRevision == expertSelectionRevisions[agentID] &&
-                (reference?.participantID == nil || reference?.participantID == member.id) &&
-                (reference?.contextConversationID == nil || reference?.contextConversationID == member.contextConversationID)
-        }) { return member.displayName }
-        return expertDirectory.first(where: { $0.id == agentID })?.name ?? String(localized: "expert.history.peerName")
-    }
-
-    private func applyExpertHistoryContinuation() {
-        guard let request = expertHistoryContinuation,
+    private func applyExpertHistoryContinuation(_ continuation: IOSExpertHistoryContinuation? = nil) {
+        guard let request = continuation ?? expertHistoryContinuation,
               container.chatManager.currentConversationId == request.parentID else { return }
         do {
             guard try container.applicationRuntime.conversationSourceOwner(conversationID: request.parentID.uuidString) == .local,
@@ -1861,10 +1909,8 @@ struct ChatView: View {
                 throw IOSApplicationRuntimeError.rejected(String(localized: "expert.history.unavailable"))
             }
             let member = try request.participant(in: association)
-            expertSelection.insert(member.agentID)
-            expertSelectionRevisions[member.agentID] = member.agentRevision
-            expertSelectionReferences[member.agentID] = .init(agentID: member.agentID, agentRevision: member.agentRevision,
-                participantID: member.id, contextConversationID: member.contextConversationID)
+            insertMention(.init(agentID: member.agentID, agentRevision: member.agentRevision, participantID: member.id,
+                contextConversationID: member.contextConversationID), name: member.displayName, at: insertionRange)
         } catch { expertSendError = error.localizedDescription }
     }
 
@@ -1872,20 +1918,11 @@ struct ChatView: View {
         VStack {
             IOSChatExpertPicker(agents: expertDirectory, allowsManagement: container.chatManager.getCurrentModel()?.isWebBackend != true, onManagementClosed: {
                 Task { await reloadExpertDirectory() }
-            }, selection: Binding(get: { expertSelection }, set: { value in
+            }, selection: .constant(expertSelection), onMention: { agent in
                 guard requireLocalExpertOwner() else { return }
-                let previous = expertSelection
-                expertSelection = value
-                expertSelectionRevisions = expertSelectionRevisions.filter { value.contains($0.key) }
-                for agent in expertDirectory where value.contains(agent.id) && !previous.contains(agent.id) {
-                    expertSelectionRevisions[agent.id] = agent.revision
-                    let member = expertRemoteRoom?.room.room.participants.first { $0.agentID == agent.id && $0.active && $0.agentRevision == agent.revision }
-                    if let source = expertRemoteSource { expertSelectionRemoteSources[agent.id] = source }
-                    else { expertSelectionRemoteSources.removeValue(forKey: agent.id) }
-                    expertSelectionReferences[agent.id] = .init(agentID: agent.id, agentRevision: agent.revision,
-                        participantID: member?.id, contextConversationID: member?.contextConversationID)
-                }
-            }))
+                selectCandidate(agent, range: insertionRange, choosingDirectoryVersion: true)
+                showExpertPicker = false
+            })
             if let expertDirectoryError { Text(expertDirectoryError).foregroundStyle(.red).padding() }
         }.task { await reloadExpertDirectory() }
     }
@@ -1901,7 +1938,7 @@ struct ChatView: View {
             if let source {
                 let capability = try await source.provider.expertRooms(command: .object(["type": .string("role_templates")]), expectedEpoch: source.epoch)
                 let catalog = try JSONDecoder().decode(AppleExpertRoleTemplateCatalog.self, from: JSONEncoder().encode(capability.result))
-                guard catalog.features.mainAgentDelegation else { throw IOSApplicationRuntimeError.rejected(String(localized: "experts.mainHostUpgrade")) }
+                guard catalog.features.mainAgentDelegation, catalog.features.inlineExpertMentions else { throw IOSApplicationRuntimeError.rejected(String(localized: "experts.mainHostUpgrade")) }
                 let read = try await source.provider.expertRooms(command: .object(["type": .string("directory")]), expectedEpoch: capability.sourceStoreEpoch)
                 directory = try JSONDecoder().decode(IOSAgentDirectory.self, from: JSONEncoder().encode(read.result))
                 confirmedSource = .init(owner: owner, provider: source.provider, epoch: read.sourceStoreEpoch)
@@ -1923,6 +1960,7 @@ struct ChatView: View {
         catch {
             guard IOSExpertMentionCompletionPolicy.accepts(owner: owner, draftOwner: draftOwner,
                 currentOwner: container.chatManager.currentConversationId, currentDraftOwner: composerDrafts.selected) else { return }
+            expertRemoteSource = nil; expertRemoteRoom = nil; expertDirectory = []
             expertDirectoryError = error.localizedDescription
         }
     }
@@ -1961,84 +1999,63 @@ struct ChatView: View {
     }
 
     private var expertMentionsVisible: Bool {
-        composerFocused && dismissedExpertMention != inputText && ExpertMentionQuery.atEnd(of: inputText) != nil
+        composerFocused && dismissedExpertMention != inputText && currentMentionQuery != nil
     }
     private var expertMentionCandidates: [ExpertMentionCandidate] {
-        guard canBrowseExpertDirectory, let query = ExpertMentionQuery.atEnd(of: inputText)?.query else { return [] }
+        guard canBrowseExpertDirectory, let query = currentMentionQuery?.query else { return [] }
         if container.chatManager.getCurrentModel()?.isWebBackend == true { guard let _ = expertRemoteSource else { return [] } }
-        return expertDirectory.filter { $0.availability == "active" && !expertSelection.contains($0.id) &&
-            (query.isEmpty || $0.name.localizedCaseInsensitiveContains(query)) }
+        let candidates = expertDirectory.filter { $0.availability == "active" &&
+            (query.isEmpty || $0.name.localizedCaseInsensitiveContains(query) || $0.description.localizedCaseInsensitiveContains(query)) }
             .map { ExpertMentionCandidate(id: $0.id, name: $0.name, detail: $0.description) }
+        let association = expertRemoteSource == nil ? expertSubmission?.conversationAssociation : expertRemoteRoom
+        let members = association.flatMap { $0.conversationID == container.chatManager.currentConversationId?.uuidString ? $0.room.room.participants : nil } ?? []
+        return ExpertMentionCandidate.ordered(candidates, members: Set(members.filter(\.active).map(\.agentID)))
     }
     private func selectExpertMention(_ id: String) {
         guard requireLocalExpertOwner(), !joiningExpertIDs.contains(id),
               expertMentionCandidates.contains(where: { $0.id == id }),
               let candidate = expertDirectory.first(where: { $0.id == id }),
-              let query = ExpertMentionQuery.atEnd(of: inputText) else { return }
-        let capturedText = inputText
+              let query = currentMentionQuery else { return }
+        selectCandidate(candidate, range: query.range)
+    }
+
+    private var insertionRange: NSRange {
+        if let selection = editorSelection, NSMaxRange(selection) <= inputText.utf16.count { return selection }
+        return NSRange(location: inputText.utf16.count, length: 0)
+    }
+
+    private func selectCandidate(_ agent: IOSPersistentAgent, range: NSRange, choosingDirectoryVersion: Bool = false) {
         let owner = container.chatManager.currentConversationId
-        let draftOwner = composerDrafts.selected
-        if let source = expertRemoteSource {
-            do {
-                guard try container.chatManager.matchesExpertRoomSource(source), source.owner == owner else { throw CancellationError() }
-                let member = expertRemoteRoom?.room.room.participants.first { $0.agentID == id && $0.active }
-                if let owner, let member, member.agentRevision != candidate.revision {
-                    pendingExpertRejoin = .init(agent: candidate, owner: owner, draftOwner: draftOwner, text: capturedText, query: query)
-                    return
-                }
-                expertSelectionRemoteSources[id] = source
-                expertSelectionReferences[id] = .init(agentID: id, agentRevision: candidate.revision,
-                    participantID: member?.id, contextConversationID: member?.contextConversationID)
-                finishExpertMention(id: id, revision: candidate.revision, owner: owner, draftOwner: draftOwner, text: capturedText, query: query)
-            } catch { expertDirectoryError = error.localizedDescription }
+        let association = expertRemoteSource != nil ? expertRemoteRoom : expertSubmission?.conversationAssociation
+        let member = association.flatMap { $0.conversationID == owner?.uuidString ? $0.room.room.participants.first { $0.active && $0.agentID == agent.id } : nil }
+        if choosingDirectoryVersion, let owner, let member, member.agentRevision != agent.revision {
+            pendingExpertRejoin = .init(agent: agent, owner: owner, draftOwner: composerDrafts.selected, text: inputText, query: .init(range: range, query: ""))
             return
         }
         if container.chatManager.getCurrentModel()?.isWebBackend == true {
-            expertDirectoryError = "Reload the Host expert directory before selecting an expert."
-            return
-        }
-        let service = IOSAgentRoomService(runtime: container.applicationRuntime)
-        let operation = UUID()
-        expertJoinOperations[id] = operation
-        Task { @MainActor in
-            defer { if expertJoinOperations[id] == operation { expertJoinOperations.removeValue(forKey: id) } }
-            do {
-                if let owner {
-                    _ = try await Task.detached {
-                        try service.joinMention(agentID: id, expectedAgentRevision: candidate.revision, conversationID: owner.uuidString)
-                    }.value
-                } else {
-                    _ = try await Task.detached {
-                        try service.validateMention(agentID: id, expectedAgentRevision: candidate.revision)
-                    }.value
-                }
-                finishExpertMention(id: id, revision: candidate.revision, owner: owner, draftOwner: draftOwner, text: capturedText, query: query)
-            } catch {
-                let refreshed = try? await Task.detached { try service.directory().agents }.value
-                guard IOSExpertMentionCompletionPolicy.accepts(owner: owner, draftOwner: draftOwner,
-                    currentOwner: container.chatManager.currentConversationId, currentDraftOwner: composerDrafts.selected) else { return }
-                if let refreshed { expertDirectory = refreshed }
-                expertDirectoryError = error.localizedDescription
-                if let owner, case IOSExpertMentionFailure.requiresRejoin = error {
-                    pendingExpertRejoin = .init(agent: candidate, owner: owner, draftOwner: draftOwner, text: capturedText, query: query)
-                }
+            guard let source = expertRemoteSource, source.epoch != nil,
+                  (try? container.chatManager.matchesExpertRoomSource(source)) == true else {
+                expertDirectoryError = String(localized: "experts.mainHostUpgrade")
+                return
             }
         }
+        insertMention(.init(agentID: agent.id, agentRevision: member?.agentRevision ?? agent.revision,
+            participantID: member?.id, contextConversationID: member?.contextConversationID), name: member?.displayName ?? agent.name, at: range)
     }
 
-    private func finishExpertMention(id: String, revision: Int64, owner: UUID?, draftOwner: ConversationComposerDraftStore.Owner,
-                                     text: String, query: ExpertMentionQuery) {
-        guard IOSExpertMentionCompletionPolicy.accepts(owner: owner, draftOwner: draftOwner,
-            currentOwner: container.chatManager.currentConversationId, currentDraftOwner: composerDrafts.selected) else { return }
-        expertSelection.insert(id)
-        if container.chatManager.getCurrentModel()?.isWebBackend != true { expertSelectionRemoteSources.removeValue(forKey: id) }
-        expertSelectionRevisions[id] = revision
-        if inputText == text { inputText = query.removing(from: text) }
+    private func insertMention(_ expert: AppleMainExpertSelectionEntry, name: String, at range: NSRange) {
+        var draft = composerDrafts.current
+        let insertion = AppleDraftMention.insertion(text: draft.text, range: range, name: name, expert: expert,
+            mentions: draft.mentions, sourceID: expertRemoteSource?.provider.remoteAuxiliarySourceHostID, epoch: expertRemoteSource?.epoch)
+        let previous = AppleMentionEditor.Snapshot(text: draft.text, mentions: draft.mentions, caret: NSMaxRange(range))
+        draft.text = insertion.text; draft.mentions = insertion.mentions
+        composerDrafts.current = draft
+        mentionCaret = .init(location: insertion.caret, before: previous)
+        editorSelection = NSRange(location: insertion.caret, length: 0)
         expertDirectoryError = nil
         highlightedExpertID = nil
         composerFocused = true
     }
-
     private func confirmExpertRejoin(_ request: IOSExpertMentionRejoinRequest) {
         pendingExpertRejoin = nil
         guard requireLocalExpertOwner(), IOSExpertMentionCompletionPolicy.accepts(owner: request.owner, draftOwner: request.draftOwner,
@@ -2065,11 +2082,9 @@ struct ChatView: View {
                             currentOwner: container.chatManager.currentConversationId, currentDraftOwner: composerDrafts.selected),
                           let member = room.room.room.participants.first(where: { $0.agentID == request.agent.id && $0.active && $0.agentRevision == request.agent.revision }) else { throw CancellationError() }
                     expertRemoteRoom = room
-                    expertSelectionRemoteSources[request.agent.id] = source
-                    expertSelectionReferences[request.agent.id] = .init(agentID: member.agentID, agentRevision: member.agentRevision,
-                        participantID: member.id, contextConversationID: member.contextConversationID)
-                    finishExpertMention(id: member.agentID, revision: member.agentRevision, owner: request.owner,
-                        draftOwner: request.draftOwner, text: request.text, query: request.query)
+                    guard request.text == inputText else { return }
+                    insertMention(.init(agentID: member.agentID, agentRevision: member.agentRevision, participantID: member.id,
+                        contextConversationID: member.contextConversationID), name: member.displayName, at: request.query.range)
                 } catch is CancellationError { }
                 catch { expertDirectoryError = error.localizedDescription }
             }
@@ -2081,12 +2096,14 @@ struct ChatView: View {
         Task { @MainActor in
             defer { if expertJoinOperations[request.agent.id] == operation { expertJoinOperations.removeValue(forKey: request.agent.id) } }
             do {
-                _ = try await Task.detached {
-                    try service.rejoinMention(agentID: request.agent.id, expectedAgentRevision: request.agent.revision,
-                        conversationID: request.owner.uuidString)
+                let updated = try await Task.detached {
+                    try service.rejoinMention(agentID: request.agent.id, expectedAgentRevision: request.agent.revision, conversationID: request.owner.uuidString)
                 }.value
-                finishExpertMention(id: request.agent.id, revision: request.agent.revision,
-                    owner: request.owner, draftOwner: request.draftOwner, text: request.text, query: request.query)
+                guard request.text == inputText, request.draftOwner == composerDrafts.selected,
+                      request.owner == container.chatManager.currentConversationId,
+                      let member = updated.room.room.participants.first(where: { $0.active && $0.agentID == request.agent.id }) else { return }
+                insertMention(.init(agentID: member.agentID, agentRevision: member.agentRevision, participantID: member.id,
+                    contextConversationID: member.contextConversationID), name: member.displayName, at: request.query.range)
             } catch {
                 let refreshed = try? await Task.detached { try service.directory().agents }.value
                 guard IOSExpertMentionCompletionPolicy.accepts(owner: request.owner, draftOwner: request.draftOwner,
@@ -2188,35 +2205,12 @@ struct ChatView: View {
     /// Selection is captured as typed guidance for the ordinary main Run.
     /// Core validates revision pins and admits any missing room membership.
     private func capturedMainExperts() throws -> [AppleMainExpertSelectionEntry] {
-        guard !expertSelection.isEmpty else { return [] }
-        if let source = expertRemoteSource {
-            guard source.owner == container.chatManager.currentConversationId,
-                  try container.chatManager.matchesExpertRoomSource(source) else { throw IOSApplicationRuntimeError.rejected("The expert Host changed. Select the experts again.") }
-            let entries = try expertSelection.sorted().map { id in
-                guard let value = expertSelectionReferences[id], let captured = expertSelectionRemoteSources[id],
-                      captured.owner == source.owner, captured.epoch == source.epoch,
-                      captured.provider.sameExpertConnection(as: source.provider) else {
-                    throw IOSApplicationRuntimeError.rejected("The expert Host changed. Select this expert again before sending.")
-                }
-                return value
-            }
-            try AppleMainExpertSelectionContext(selectedExperts: entries).validate()
-            return entries
+        guard !composerDrafts.current.mentions.isEmpty else { return [] }
+        let source = try container.chatManager.expertRoomSource(owner: container.chatManager.currentConversationId)
+        guard (source == nil) == (expertRemoteSource == nil), expertRemoteSource.map({ (try? container.chatManager.matchesExpertRoomSource($0)) == true }) ?? true else {
+            throw IOSApplicationRuntimeError.rejected(String(localized: "The expert selection changed. Remove the mention and select the expert again."))
         }
-        if let _ = try container.chatManager.expertRoomSource(owner: container.chatManager.currentConversationId) {
-            throw IOSApplicationRuntimeError.rejected("Reload this Host's expert directory before sending.")
-        }
-        guard expertSelection.isDisjoint(with: Set(expertSelectionRemoteSources.keys)) else {
-            throw IOSApplicationRuntimeError.rejected("The expert source changed. Select the experts again before sending.")
-        }
-        let service = IOSAgentRoomService(runtime: container.applicationRuntime)
-        let room = try container.chatManager.currentConversationId.flatMap { try service.forConversation($0.uuidString) }
-        let joined = (room?.room.room.participants ?? []).filter(\.active).map {
-            AppleExpertParticipantReference(participant_id: $0.id, agent_id: $0.agentID,
-                agent_revision: $0.agentRevision, context_conversation_id: $0.contextConversationID)
-        }
-        return try AppleMainExpertSelectionContext.capture(agentIDs: expertSelection,
-            observedRevisions: expertSelectionRevisions, joined: joined).selectedExperts
+        return try AppleDraftMention.selected(composerDrafts.current.mentions, sourceID: source?.provider.remoteAuxiliarySourceHostID, epoch: expertRemoteSource?.epoch)
     }
 
     private func sendMessage() {
@@ -2228,11 +2222,18 @@ struct ChatView: View {
             Task { await container.chatManager.discoverUnknownEffectRecovery() }
             return
         }
+        expertSendError = nil
         let selectedExpertSourceEpoch = expertRemoteSource?.epoch
         let selectedExperts: [AppleMainExpertSelectionEntry]
         do { selectedExperts = try capturedMainExperts() }
         catch { expertSendError = error.localizedDescription; return }
-        let typedMessage = inputText.trimmingCharacters(in: .whitespacesAndNewlines)
+        let mentionSegments = AppleDraftMention.segments(composerDrafts.current.mentions, in: inputText)
+        if !selectedExperts.isEmpty, pendingAttachments.isEmpty,
+           mentionSegments?.segments.contains(where: { $0.agentID == nil && !$0.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }) != true {
+            expertSendError = String(localized: "Write what you want the expert to do.")
+            return
+        }
+        let typedMessage = mentionSegments == nil ? inputText.trimmingCharacters(in: .whitespacesAndNewlines) : inputText
         let attachmentsToSend = pendingAttachments
         guard !isImportingAttachments else { return }
         guard !typedMessage.isEmpty || !attachmentsToSend.isEmpty else { return }
@@ -2249,7 +2250,7 @@ struct ChatView: View {
         NolaHaptics.primaryAction()
 
         let attachmentPrompt = ChatAttachmentDraft.promptBlock(for: attachmentsToSend)
-        let userMessage = composedDisplayMessage(text: typedMessage, attachmentCount: attachmentsToSend.count)
+        let userMessage = mentionSegments == nil ? composedDisplayMessage(text: typedMessage, attachmentCount: attachmentsToSend.count) : typedMessage
         let promptMessage = composedPromptMessage(text: typedMessage, attachmentPrompt: attachmentPrompt)
         let userAttachmentMeta = attachmentMeta(for: attachmentsToSend)
 
@@ -2333,7 +2334,7 @@ struct ChatView: View {
             attachments: ChatAttachmentDraft.modelAttachments(for: attachmentsToSend),
             responseStyle: selectedResponseStyle, retrievalEnabled: enableRetrieval,
             preferredHostID: container.chatManager.preferredNativeAppHostId,
-            hybridToolsEnabled: hybridSurfaceActive, hybridCapabilities: capabilities, selectedExperts: selectedExperts, expertSelectionSourceEpoch: selectedExpertSourceEpoch),
+            hybridToolsEnabled: hybridSurfaceActive, hybridCapabilities: capabilities, selectedExperts: selectedExperts, expertMentions: mentionSegments, expertSelectionSourceEpoch: selectedExpertSourceEpoch),
             observers: [responseStateCancellable].compactMap { $0 }) { result in
             // Completion below applies final state synchronously. Cancel any queued
             // intermediate frame first so it cannot overwrite the result/error.

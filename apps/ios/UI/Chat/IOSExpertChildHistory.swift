@@ -149,6 +149,7 @@ struct IOSExpertChildHistory: View {
     let roomID: String
     let child: AppleExpertChildConversation
     let runtime: IOSApplicationRuntime
+    var remoteSource: ChatManager.ExpertRoomSource? = nil
     let onContinue: (IOSExpertHistoryContinuation) -> Void
     @StateObject private var workspace = IOSAgentRoomWorkspace()
     @State private var error: String?
@@ -200,23 +201,9 @@ struct IOSExpertChildHistory: View {
         isLoading = true; error = nil; canContinue = false
         defer { if openRequest == request { isLoading = false; activePeerRead = nil } }
         do {
-            guard runtime === container.applicationRuntime,
-                  let association = try IOSAgentRoomService(runtime: runtime).forConversation(parentID),
-                  association.roomID == roomID else { throw IOSApplicationRuntimeError.invalidResponse }
-            let parentSource = try runtime.conversationSourceOwner(conversationID: parentID)
-            let childSource = try runtime.conversationSourceOwner(conversationID: child.conversationID)
-            guard parentSource != .unavailable, parentSource == childSource else {
-                throw IOSApplicationRuntimeError.rejected(String(localized: "expert.history.unavailable"))
-            }
-            let value = try runtime.executeAgentCommand(.object(["type": .string("load_conversation_metadata"),
-                "conversation_id": .string(child.conversationID)]))
-            guard case .object(let fields) = value else { throw IOSApplicationRuntimeError.invalidResponse }
-            let settings = try IOSConversationSettingsObject.decode(fields["settings_json"]?.stringScalar)
-            guard let storedOwner = settings["agentRoomOwner"] else { throw IOSApplicationRuntimeError.invalidResponse }
-            let owner = try ConversationAgentRoomOwner.read(storedOwner)
-            guard owner.roomID == roomID, owner.participantID == child.participantID, owner.agentID == child.agentID else {
-                throw IOSApplicationRuntimeError.invalidResponse
-            }
+            let parentSource: AppleConversationSourceOwner
+            if remoteSource != nil { parentSource = .local } // The paired Host owns both sides of its scoped history.
+            else { parentSource = try validatedLocalSource() }
             guard UUID(uuidString: child.conversationID)?.uuidString == child.conversationID else {
                 throw IOSApplicationRuntimeError.rejected(String(localized: "expert.history.unsupportedParent"))
             }
@@ -230,21 +217,78 @@ struct IOSExpertChildHistory: View {
             }
             peerAuthors = try IOSExpertPeerInputAuthor.map(response.expertExchanges, ownerID: child.conversationID, parentID: parentID, roomID: roomID)
             let snapshot = IOSAgentRoomSnapshot(revision: response.roomRevision, room: .init(id: roomID, title: child.title, participants: [participant]))
+            let journal = try await journalMessages(response.window)
+            guard !Task.isCancelled, openRequest == request else { return }
             try workspace.installReadOnlyHistory(snapshot, window: response.window)
+            for message in journal { workspace.applyJournalContent(message, owner: child.conversationID) }
             historyBeforeOrdinal = response.window.hasMore ? response.window.beforeOrdinal : nil
             historySourceOwner = response.sourceOwner
-            if parentSource == .local, let id = UUID(uuidString: parentID), id.uuidString == parentID,
+            if remoteSource == nil, parentSource == .local, let id = UUID(uuidString: parentID), id.uuidString == parentID,
                let fresh = try? IOSAgentRoomService(runtime: runtime).forConversation(parentID) {
                 canContinue = (try? IOSExpertHistoryContinuation(parentID: id, roomID: roomID, child: child).participant(in: fresh)) != nil
             }
         } catch { if openRequest == request { self.error = error.localizedDescription; workspace.close() } }
     }
 
+    @MainActor private func validatedLocalSource() throws -> AppleConversationSourceOwner {
+        guard runtime === container.applicationRuntime,
+              let association = try IOSAgentRoomService(runtime: runtime).forConversation(parentID),
+              association.roomID == roomID else { throw IOSApplicationRuntimeError.invalidResponse }
+        let parentSource = try runtime.conversationSourceOwner(conversationID: parentID)
+        let childSource = try runtime.conversationSourceOwner(conversationID: child.conversationID)
+        guard parentSource != .unavailable, parentSource == childSource else {
+            throw IOSApplicationRuntimeError.rejected(String(localized: "expert.history.unavailable"))
+        }
+        let value = try runtime.executeAgentCommand(.object(["type": .string("load_conversation_metadata"),
+            "conversation_id": .string(child.conversationID)]))
+        guard case .object(let fields) = value else { throw IOSApplicationRuntimeError.invalidResponse }
+        let settings = try IOSConversationSettingsObject.decode(fields["settings_json"]?.stringScalar)
+        guard let storedOwner = settings["agentRoomOwner"] else { throw IOSApplicationRuntimeError.invalidResponse }
+        let owner = try ConversationAgentRoomOwner.read(storedOwner)
+        guard owner.roomID == roomID, owner.participantID == child.participantID, owner.agentID == child.agentID else {
+            throw IOSApplicationRuntimeError.invalidResponse
+        }
+        return parentSource
+    }
+
     @MainActor private func readScopedWindow(beforeOrdinal: Int64?) async throws -> AppleExpertChildHistory<IOSConversationProjectionWindowV1> {
+        if let remoteSource {
+            guard let owner = UUID(uuidString: parentID), owner.uuidString == parentID else { throw IOSApplicationRuntimeError.invalidResponse }
+            let page: AppleExpertChildHistory<IOSConversationProjectionWindowV1> = try await container.chatManager.scopedExpertHistoryCommand(
+                owner: owner, source: remoteSource, command: ["type": .string("child_history"), "conversation_id": .string(parentID),
+                    "child_conversation_id": .string(child.conversationID), "before_ordinal": beforeOrdinal.map(AgentCoreJSONValue.signedInteger) ?? .null,
+                    "limit": .signedInteger(80), "content_byte_limit": .signedInteger(160_000)])
+            try page.validate(parentID: parentID, childID: child.conversationID)
+            guard page.sourceOwner == .local, page.window.projection.conversationID == child.conversationID,
+                  !page.window.hasMore || (page.window.beforeOrdinal != nil && !page.window.projection.messages.isEmpty),
+                  beforeOrdinal == nil || !page.window.hasMore || page.window.beforeOrdinal! < beforeOrdinal! else {
+                throw IOSApplicationRuntimeError.invalidResponse
+            }
+            return page
+        }
         let service = IOSAgentRoomService(runtime: runtime), parentID = parentID, childID = child.conversationID
         let read = Task.detached { try service.childHistory(conversationID: parentID, childID: childID, beforeOrdinal: beforeOrdinal) }
         activePeerRead = read
         return try await withTaskCancellationHandler(operation: { try await read.value }, onCancel: { read.cancel() })
+    }
+
+    @MainActor private func journalMessages(_ window: IOSConversationProjectionWindowV1) async throws -> [IOSJournalMessageContent] {
+        let assistants = Set(window.projection.messages.filter { $0.role == .assistant }.map(\.messageID))
+        var seen = Set<String>()
+        var messages: [IOSJournalMessageContent] = []
+        for cursor in window.assistantJournalHeads {
+            try Task.checkCancellation()
+            let identity = cursor.identity
+            guard identity.conversation_id == child.conversationID, assistants.contains(identity.assistant_message_id),
+                  seen.insert(identity.assistant_message_id).inserted else { throw IOSApplicationRuntimeError.invalidResponse }
+            if let remoteSource {
+                guard identity.source_store_epoch == remoteSource.epoch, try container.chatManager.matchesExpertRoomSource(remoteSource),
+                      remoteSource.owner == container.chatManager.currentConversationId else { throw IOSApplicationRuntimeError.invalidResponse }
+                messages.append(try await remoteSource.provider.taskChildJournalContent(at: cursor))
+                guard try container.chatManager.matchesExpertRoomSource(remoteSource), remoteSource.owner == container.chatManager.currentConversationId else { throw CancellationError() }
+            } else { messages.append(try await IOSAssistantJournalReader(store: runtime).read(at: cursor)) }
+        }
+        return messages
     }
 
     @MainActor private func loadOlder() async throws {
@@ -253,11 +297,14 @@ struct IOSExpertChildHistory: View {
         defer { if openRequest == request { activePeerRead = nil } }
         let response = try await readScopedWindow(beforeOrdinal: cursor)
         guard !Task.isCancelled, openRequest == request else { throw CancellationError() }
-        guard response.roomID == roomID, response.sourceOwner == historySourceOwner else { throw IOSApplicationRuntimeError.invalidResponse }
+        guard response.roomID == roomID, response.roomRevision == workspace.room?.revision, response.sourceOwner == historySourceOwner else { throw IOSApplicationRuntimeError.invalidResponse }
         let authors = try IOSExpertPeerInputAuthor.map(response.expertExchanges, ownerID: child.conversationID, parentID: parentID, roomID: roomID)
         for (id, author) in authors where peerAuthors[id] != nil && peerAuthors[id] != author { throw IOSApplicationRuntimeError.invalidResponse }
+        let journal = try await journalMessages(response.window)
+        guard !Task.isCancelled, openRequest == request else { throw CancellationError() }
         peerAuthors.merge(authors) { first, _ in first }
         try workspace.appendReadOnlyHistory(response.window)
+        for message in journal { workspace.applyJournalContent(message, owner: child.conversationID) }
         historyBeforeOrdinal = response.window.hasMore ? response.window.beforeOrdinal : nil
     }
 

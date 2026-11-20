@@ -13,6 +13,7 @@ nonisolated struct ConversationDraftSubmissionTicket: Codable, Equatable, Sendab
     let text: String
     let attachments: [ChatAttachmentDraft]
     let configuration: ConversationComposerDraftStore.ModelConfiguration?
+    var mentions: [AppleDraftMention]? = nil
 }
 
 nonisolated protocol ConversationDraftRepository: Sendable {
@@ -46,6 +47,7 @@ nonisolated final class FileConversationDraftRepository: ConversationDraftReposi
         let text: String
         let attachments: [AttachmentReference]
         let configuration: ConversationComposerDraftStore.ModelConfiguration?
+        var mentions: [AppleDraftMention]? = nil
     }
     private struct SubmissionRecord: Codable { let ticket: ConversationDraftSubmissionTicket; let committed: Bool }
     private var revisions: [ConversationComposerDraftStore.Owner: Int64] = [:]
@@ -148,7 +150,7 @@ nonisolated final class FileConversationDraftRepository: ConversationDraftReposi
             let ticket = ConversationDraftSubmissionTicket(sourceOwner: owner, conversationID: conversationID,
                 userMessageID: userMessageID, configurationRevision: configurationRevision,
                 draftRevision: try manifest(owner)?.revision ?? 0, text: draft.text,
-                attachments: draft.attachments, configuration: draft.configuration)
+                attachments: draft.attachments, configuration: draft.configuration, mentions: draft.mentions)
             let url = submissionURL(userMessageID)
             if FileManager.default.fileExists(atPath: url.path) {
                 guard try decoder.decode(SubmissionRecord.self, from: Data(contentsOf: url)).ticket == ticket else { throw Failure.conflict }
@@ -246,7 +248,8 @@ nonisolated final class FileConversationDraftRepository: ConversationDraftReposi
             return value
             } catch { failed = true; return nil }
         }
-        return .init(text: manifest.text, attachments: attachments,
+        guard manifest.mentions?.isEmpty != false || AppleDraftMention.segments(manifest.mentions ?? [], in: manifest.text) != nil else { throw CocoaError(.fileReadCorruptFile) }
+        return .init(text: manifest.text, mentions: manifest.mentions ?? [], attachments: attachments,
                      notice: failed ? NSLocalizedString("Some attachments could not be restored. Please attach them again.", comment: "Draft recovery") : nil,
                      configuration: manifest.configuration, restored: true)
     }
@@ -283,7 +286,7 @@ nonisolated final class FileConversationDraftRepository: ConversationDraftReposi
         if case .unsent = owner { configuration = draft.configuration } else { configuration = nil }
         try beforeManifestCommit()
         try write(encoder.encode(Manifest(revision: expected + 1, deleted: false, text: draft.text,
-                  attachments: references, configuration: configuration)),
+                  attachments: references, configuration: configuration, mentions: draft.mentions)),
                   to: directory.appendingPathComponent("manifest.json"))
         revisions[owner] = expected + 1
     }

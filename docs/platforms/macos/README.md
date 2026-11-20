@@ -2,6 +2,8 @@
 
 实现位于 [NolaMac](../../../apps/macos)，使用 SwiftUI/AppKit；不是 CLI 包装界面。
 
+在输入框的光标处输入 `@`，可以用键盘或鼠标选人。编辑已发送的文本消息会恢复原句和当时选中的专家，同一主会话接受替换消息后回溯旧回复。远程镜像可读取和复制，编辑重发在保存原会话的 Host 上完成。[消息内的专家提及](../../design/shared/EXPERT_MENTIONS.md)
+
 - [信息架构](UI_INFORMATION_ARCHITECTURE.md)、[应用设计](APP_DESIGN.md)。
 - [Apple 检查器](../apple/CONVERSATION_INSPECTOR.md)、[共享交互](../../design/README.md)。
 - [宿主机配对与执行](../../design/shared/HOST_CONNECTION_WORKFLOW.md)、[客户端边界](../../architecture/模块/13-客户端投影/CLIENT_INTERACTION_AND_CONFIGURATION.md)。

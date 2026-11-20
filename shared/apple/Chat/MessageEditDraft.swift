@@ -11,10 +11,12 @@ nonisolated struct AppleMessageEditSubmission: Codable, Equatable, Sendable {
     let expectedSourceRevision: Int64
     let expectedMessageRevision: UInt64
     let text: String
+    var mentions: [AppleDraftMention]? = nil
     func inPlacePreparation() -> ApplePrepareInPlaceResend {
         ApplePrepareInPlaceResend(operation_id: operationID.uuidString.lowercased(), conversation_id: sourceConversationID,
             message_id: sourceMessageID, expected_revision: expectedSourceRevision,
-            expected_message_revision: expectedMessageRevision, edited_text: text, created_at_ms: createdAtMs)
+            expected_message_revision: expectedMessageRevision, edited_text: text, created_at_ms: createdAtMs,
+            selected_experts: AppleDraftMention.uniqueEntries(mentions ?? []), expert_mentions: AppleDraftMention.segments(mentions ?? [], in: text))
     }
     func preparation(title: String) -> ApplePrepareEditedResend {
         ApplePrepareEditedResend(operation_id: operationID.uuidString.lowercased(),
@@ -32,6 +34,7 @@ nonisolated struct AppleMessageEditDraft: Sendable {
     let sourceMessageID: String
     let expectedSourceRevision: Int64?
     let expectedMessageRevision: UInt64?
+    var mentions: [AppleDraftMention] = []
     let originalText: String
     var text: String {
         didSet {
@@ -43,7 +46,7 @@ nonisolated struct AppleMessageEditDraft: Sendable {
     }
 
     init(sourceConversationID: String?, sourceMessageID: String, expectedSourceRevision: Int64?,
-         expectedMessageRevision: UInt64?, text: String,
+         expectedMessageRevision: UInt64?, text: String, mentions: [AppleDraftMention] = [],
          operationID: UUID = UUID(), targetConversationID: UUID = UUID()) {
         self.createdAtMs = Int64(Date().timeIntervalSince1970 * 1_000)
         self.operationID = operationID
@@ -52,6 +55,7 @@ nonisolated struct AppleMessageEditDraft: Sendable {
         self.sourceMessageID = sourceMessageID
         self.expectedSourceRevision = expectedSourceRevision
         self.expectedMessageRevision = expectedMessageRevision
+        self.mentions = mentions
         originalText = text
         self.text = text
     }
@@ -66,7 +70,8 @@ nonisolated struct AppleMessageEditDraft: Sendable {
         return ApplePrepareInPlaceResend(operation_id: operationID.uuidString.lowercased(),
             conversation_id: sourceConversationID, message_id: sourceMessageID,
             expected_revision: expectedSourceRevision, expected_message_revision: expectedMessageRevision,
-            edited_text: text, created_at_ms: createdAtMs)
+            edited_text: text, created_at_ms: createdAtMs,
+            selected_experts: AppleDraftMention.uniqueEntries(mentions), expert_mentions: AppleDraftMention.segments(mentions, in: text))
     }
     func preparation(title: String) -> ApplePrepareEditedResend? {
         guard let sourceConversationID, let expectedSourceRevision, let expectedMessageRevision,

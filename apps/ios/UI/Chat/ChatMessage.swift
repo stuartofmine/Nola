@@ -151,6 +151,13 @@ struct ChatMessage: Identifiable {
 }
 
 extension ChatMessage {
+    var expertMentions: AppleExpertMentions? {
+        for case .historical(_, _, let part) in canonicalParts where part.canonicalKind == "text" {
+            if let mentions = part.expertMentions, mentions.runs(in: content) != nil { return mentions }
+        }
+        return nil
+    }
+
     var withholdsLatestCanonicalText: Bool {
         for part in canonicalParts.reversed() {
             guard case .text(let text) = part else { continue }

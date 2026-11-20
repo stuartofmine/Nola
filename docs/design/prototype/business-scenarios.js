@@ -65,6 +65,7 @@
         return `<form class="sample-form" id="sample-form" novalidate>${scene.fields.map((field, index) => `<label>${escape(field.label)}${field.required ? '<small>必填 · 仅样例</small>' : ''}${isMultiLine(field) ? `<textarea aria-label="${escape(field.label)}" data-field="${index}" ${field.required ? 'required' : ''} rows="${field.value.length > 35 ? 3 : 2}">${escape(memory().draft[index])}</textarea>` : `<input type="text" aria-label="${escape(field.label)}" data-field="${index}" ${field.required ? 'required' : ''} value="${escape(memory().draft[index])}" autocomplete="off">`}</label>`).join('')}<small>修改只保留在此平台、此场景的本页草稿中。</small></form>`;
     }
     function domainMarkup(state) {
+        if (scene.id === 'experts' && state.id === '0') return '<a href="index.html?demo=expert-mention">在对话中试用 @专家</a>';
         if (scene.id === 'permission' && state.id === '0') return '<details class="operation-review"><summary>完整操作与授权范围</summary><pre>Command: python3 remote_job.py\nWorking directory: Project directory\n执行位置：已配对宿主机\n范围：仅本次操作</pre><p>批准后才开始执行；拒绝不会修改文件。</p></details>';
         if (['long-run','remote-reconnect','host-cold','cancel'].includes(scene.id)) {
             const done=state.kind==='success', disconnected=state.kind==='warning';

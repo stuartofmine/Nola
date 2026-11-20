@@ -633,6 +633,7 @@ mod in_place_resend {
         let mut store = NolaStore::open(&path).unwrap();
         let proj = nola_application::load_conversation_projection_v1(&store, "history").unwrap();
         let mut input = PrepareInPlaceResend {
+            defer_until_admission: false, selected_experts: vec![], expert_mentions: None, expected_source_store_epoch: None,
             operation_id: uuid::Uuid::new_v4().to_string(),
             conversation_id: "history".into(),
             message_id: "m3".into(),
@@ -787,6 +788,7 @@ mod in_place_resend {
         let f_proj =
             nola_application::load_conversation_projection_v1(&store, "frontier-history").unwrap();
         let f_input = PrepareInPlaceResend {
+            defer_until_admission: false, selected_experts: vec![], expert_mentions: None, expected_source_store_epoch: None,
             operation_id: uuid::Uuid::new_v4().to_string(),
             conversation_id: "frontier-history".into(),
             message_id: "u1".into(),
@@ -862,6 +864,7 @@ mod in_place_resend {
             nola_domain::MessagePartView::Historical { .. }
         ));
         let ios_input = PrepareInPlaceResend {
+            defer_until_admission: false, selected_experts: vec![], expert_mentions: None, expected_source_store_epoch: None,
             operation_id: uuid::Uuid::new_v4().to_string(),
             conversation_id: "ios".into(),
             message_id: "user".into(),

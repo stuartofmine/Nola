@@ -2880,13 +2880,13 @@ mod runtime_provider_environment_tests {
         let mut cycle = None;
         let mut line = "read @al".to_string();
         let mut cursor = line.len();
-        assert!(apply_composer_completion_cycle(&mut line, &mut cursor, &config, &mut cycle, false));
+        assert!(apply_composer_completion_cycle(&mut line, &mut cursor, &config, &mut cycle, false, &mut vec![]));
         let first = line.clone();
         assert!(first == "read @alpha.rs" || first == "read @alpha_two.rs", "{first}");
-        assert!(apply_composer_completion_cycle(&mut line, &mut cursor, &config, &mut cycle, false));
+        assert!(apply_composer_completion_cycle(&mut line, &mut cursor, &config, &mut cycle, false, &mut vec![]));
         let second = line.clone();
         assert_ne!(first, second);
-        assert!(apply_composer_completion_cycle(&mut line, &mut cursor, &config, &mut cycle, true));
+        assert!(apply_composer_completion_cycle(&mut line, &mut cursor, &config, &mut cycle, true, &mut vec![]));
         assert_eq!(line, first);
     }
 }

@@ -668,7 +668,7 @@ nonisolated enum MacExpertMentionPreparationError: Error { case reintroductionRe
     /// Explicit ID selection can include experts not yet joined. Blank unsaved
     /// composers validate directory identity only; send admission creates their room.
     func prepareExpertMention(agentID: String, expectedRevision: Int64, conversationID: String,
-                              isPersisted: Bool, allowReintroduction: Bool = false) async throws {
+                              isPersisted: Bool, allowReintroduction: Bool = false, useMemberSnapshot: Bool = false) async throws {
         guard !requiresMainSource || mainSourceReady else { throw MacApplicationPortError.serviceUnavailable }
         if mainCommand != nil {
             let fresh: MacAgentDirectory = try await mainRead(["type": .string("directory")], owner: conversationID)
@@ -677,7 +677,7 @@ nonisolated enum MacExpertMentionPreparationError: Error { case reintroductionRe
             }
             var association: MacConversationRoomAssociation? = isPersisted
                 ? try await mainAssociation(for: conversationID) : nil
-            if let current = association?.room.room.participants.first(where: { $0.agentID == agentID && $0.active }), current.agentRevision != expectedRevision {
+            if !useMemberSnapshot, let current = association?.room.room.participants.first(where: { $0.agentID == agentID && $0.active }), current.agentRevision != expectedRevision {
                 guard allowReintroduction, let room = association?.room else { throw MacExpertMentionPreparationError.reintroductionRequired }
                 let _: MacAgentRoomSnapshot = try await mainRead(["type": .string("rejoin"), "input": .object([
                     "room_id": .string(room.room.id), "expected_room_revision": .signedInteger(room.revision),
@@ -699,27 +699,15 @@ nonisolated enum MacExpertMentionPreparationError: Error { case reintroductionRe
             mentionedExpertRevisions[conversationID, default: [:]][agentID] = expectedRevision
             return
         }
-        var association = try await Task.detached { try service.ensureForConversation(conversationID) }.value
-        if let previous = association.room.room.participants.first(where: { $0.agentID == agentID && $0.active }),
-           previous.agentRevision != agent.revision {
-            let catalog = try await Task.detached { try service.roleTemplates() }.value
-            guard catalog.features.rejoin else {
-                throw MacApplicationPortError.rejected(String(localized: "This Host does not support expert reintroduction."))
-            }
+        var association = try await Task.detached { try service.forConversation(conversationID) }.value
+        if !useMemberSnapshot, let room = association?.room,
+           let previous = room.room.participants.first(where: { $0.active && $0.agentID == agentID }), previous.agentRevision != expectedRevision {
             guard allowReintroduction else { throw MacExpertMentionPreparationError.reintroductionRequired }
-            let room = association.room
             _ = try await Task.detached { try service.rejoin(agent: agent, room: room) }.value
-            association = try await Task.detached { try service.ensureForConversation(conversationID) }.value
-        } else if !association.room.room.participants.contains(where: { $0.agentID == agentID && $0.active }) {
-            let room = association.room
-            _ = try await Task.detached { try service.join(agent: agent, room: room) }.value
-            association = try await Task.detached { try service.ensureForConversation(conversationID) }.value
+            association = try await Task.detached { try service.forConversation(conversationID) }.value
         }
-        guard association.room.room.participants.contains(where: { $0.agentID == agentID && $0.active }) else {
-            throw MacApplicationPortError.invalidResponse
-        }
-        mentionedExpertRevisions[conversationID, default: [:]][agentID] = expectedRevision
-        if admissionOwner == conversationID, !isAdmitting { conversationAssociation = association }
+        recordMainExpertSelection(agent, conversationID: conversationID)
+        if mainConversationID == conversationID { conversationAssociation = association }
     }
 
     func refreshExpertDirectory() async {

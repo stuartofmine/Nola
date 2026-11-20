@@ -1144,7 +1144,7 @@
     <string name="room_waiting_confirmation">Ожидает подтверждения</string>
     <string name="room_waiting_permission">%1$s · Ожидает разрешения</string>
     <string name="chat_experts">Эксперты</string>
-    <string name="chat_experts_hint">Выберите экспертов для ответа на следующее сообщение. Выбор не предоставляет разрешений.</string>
+    <string name="chat_experts_hint">Упомяните эксперта в этом сообщении.</string>
     <string name="chat_experts_empty">Нет доступных активных экспертов.</string>
     <string name="chat_no_matching_experts">Подходящие эксперты не найдены</string>
     <string name="chat_response_failed">Не удалось получить ответ. Текст выше может быть неполным.</string>
@@ -1387,4 +1387,7 @@
     <string name="models_web_host_disconnect">Отключить</string>
     <string name="onboarding_choose_model">Выбрать модель</string>
     <string name="onboarding_chat_model_hint">Чтобы начать чат, подключите сервис моделей, загрузите локальную модель или подключитесь к хосту Nola.</string>
+    <string name="expert_mention_needs_text">Напишите, что вы хотите поручить эксперту.</string>
+    <string name="expert_mention_plain">Оставить как обычный текст</string>
+    <string name="expert_mention_upgrade_host">Обновите подключённый хост, чтобы упоминать экспертов. Также можно отправить обычный текст.</string>
 </resources>

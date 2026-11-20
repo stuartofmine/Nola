@@ -1,3 +1,4 @@
+import type { MentionDraft } from './inlineExpertMentions.ts';
 import type { ChatReadingPosition } from './chatScroll';
 import type { ConversationContentTabs } from './conversationContentTabs';
 import { createConversationDraftStore } from './chatConversations.ts';
@@ -16,8 +17,8 @@ export const workspaceDraftsContext = Symbol('workspace-drafts');
  * to their original authenticated Host, never copied to the replacement. */
 export function createWorkspaceDrafts(repository: ConversationDraftRepository | null = typeof indexedDB === 'undefined' ? null : new IndexedDBConversationDraftRepository()) {
     const create = (ownerHostId: string) => {
-        const expertSelections = new Map<string, readonly string[]>();
-        const expertSelectionEpochs = new Map<string,string>();
+        const mentions = new Map<string, MentionDraft>();
+        function mentionFields(id:string) { return mentions.has(id) ? {mentions:structuredClone(mentions.get(id)!)} : {}; }
         const contentTabs = new SvelteMap<string | null, ConversationContentTabs>();
         const readingPositions = new Map<string, ChatReadingPosition>();
         const completions = createBrowserWorkspaceCompletions();
@@ -37,7 +38,7 @@ export function createWorkspaceDrafts(repository: ConversationDraftRepository | 
         };
         const persist = (id: string) => {
             if (!repository || !ownerHostId || invalidated || deleted.has(id)) return;
-            const snapshot = {hostId: ownerHostId, conversationId: id, text: text.read(id), objective: objectives.read(id), attachments: attachments.read(id)};
+            const snapshot = {hostId: ownerHostId, conversationId: id, ...mentionFields(id), text: text.read(id), objective: objectives.read(id), attachments: attachments.read(id)};
             const revision = editRevisions.get(id);
             enqueue(id, async () => {
                 await repository.write(snapshot);
@@ -73,7 +74,10 @@ export function createWorkspaceDrafts(repository: ConversationDraftRepository | 
                     hydrating = true;
                     try {
                         const fields = touched.get(id);
-                        if (!fields?.has('text')) text.write(id, record.text);
+                        if (!fields?.has('text')) {
+                            text.write(id, record.text);
+                            if(record.mentions) mentions.set(id,record.mentions);
+                        }
                         if (!fields?.has('objective')) objectives.write(id, record.objective);
                         if (!fields?.has('attachments')) attachments.write(id, record.attachments);
                     }
@@ -84,7 +88,11 @@ export function createWorkspaceDrafts(repository: ConversationDraftRepository | 
                 else persistenceErrors.delete(id);
             } catch { persistenceErrors.set(id, true); }
         }
-        return { text, objectives, attachments, persistenceErrors, load, unsavedEdits,
+        return { text, objectives, attachments, persistenceErrors, load, unsavedEdits, mentions,
+        writeComposer(id:string, value:string, metadata?:MentionDraft) {
+            if (metadata?.occurrences.length) mentions.set(id, structuredClone(metadata)); else mentions.delete(id);
+            text.write(id,value);
+        },
         controllers,
         captureExpertAdmission(id: string, submissionId: string, submittedText: string) {
             if (invalidated || deleted.has(id) || !ownerHostId || !submissionId.trim()
@@ -106,10 +114,10 @@ export function createWorkspaceDrafts(repository: ConversationDraftRepository | 
                 // The existing repository's write performs its per-key revision
                 // CAS. Do not retire the intent until this durable write succeeds.
                 if (repository) await repository.write({hostId: ownerHostId, conversationId: id,
-                    text: unchanged ? '' : text.read(id), objective: objectives.read(id), attachments: attachments.read(id)});
+                    ...(!unchanged ? mentionFields(id) : {}), text: unchanged ? '' : text.read(id), objective: objectives.read(id), attachments: attachments.read(id)});
                 if (unchanged && !invalidated && !deleted.has(id) && (editRevisions.get(id) ?? 0) === captured!.editRevision) {
                     hydrating = true;
-                    try { text.write(id, ''); } finally { hydrating = false; }
+                    try { mentions.delete(id); text.write(id, ''); } finally { hydrating = false; }
                     cleared = true;
                 }
             });
@@ -126,7 +134,7 @@ export function createWorkspaceDrafts(repository: ConversationDraftRepository | 
         async stageSubmission(pending: PendingSourceSubmission) {
             const id = pending.identity.conversation_id;
             const editRevision = editRevisions.get(id) ?? 0;
-            const record = {hostId: ownerHostId, conversationId: id, text: text.read(id), objective: objectives.read(id), attachments: attachments.read(id)};
+            const record = {hostId: ownerHostId, conversationId: id, ...mentionFields(id), text: text.read(id), objective: objectives.read(id), attachments: attachments.read(id)};
             const operation = queue.then(async () => {
                 if (invalidated || deleted.has(id) || !loaded.has(id) && repository) throw new Error('Draft owner unavailable');
                 if (repository && !repository.stageSubmission) throw new Error('Draft repository cannot persist submissions');
@@ -164,7 +172,7 @@ export function createWorkspaceDrafts(repository: ConversationDraftRepository | 
                 const retired = repository ? await repository.retireSubmission!(entry.ticket) : true;
                 if (retired && !invalidated && !deleted.has(id) && (editRevisions.get(id) ?? 0) === entry.editRevision) {
                     hydrating = true;
-                    try { text.write(id, ''); attachments.delete(id); } finally { hydrating = false; }
+                    try { mentions.delete(id); text.write(id, ''); attachments.delete(id); } finally { hydrating = false; }
                 }
                 entry.ticket = {...entry.ticket, committed: true};
             });
@@ -175,6 +183,7 @@ export function createWorkspaceDrafts(repository: ConversationDraftRepository | 
             const entry=tickets.get(submissionId),id=entry?.ticket.conversationId;
             if(!entry?.draft||!id||invalidated||deleted.has(id)||(editRevisions.get(id)??0)!==entry.editRevision)return false;
             const draft=entry.draft;entry.draft=undefined;
+            if(draft.mentions) mentions.set(id,draft.mentions); else mentions.delete(id);
             text.write(id,draft.text);attachments.write(id,draft.attachments);
             return true;
         },
@@ -193,7 +202,7 @@ export function createWorkspaceDrafts(repository: ConversationDraftRepository | 
             deleted.add(id); loaded.delete(id); touched.delete(id); unsavedEdits.delete(id);
             for (const [submissionId, ticket] of expertDrafts) if (ticket.conversationId === id) expertDrafts.delete(submissionId);
             readingPositions.delete(id);
-            expertSelections.delete(id); expertSelectionEpochs.delete(id);
+            mentions.delete(id);
             contentTabs.delete(id);
             if (repository && ownerHostId) enqueue(id, () => repository.delete(ownerHostId, id));
         },
@@ -201,7 +210,7 @@ export function createWorkspaceDrafts(repository: ConversationDraftRepository | 
         isDeleted(id: string) { return deleted.has(id); },
         isLoaded(id: string) { return !repository || loaded.has(id); },
         async flush() { await Promise.all(loading.values()); await queue; },
-        contentTabs, expertSelections, expertSelectionEpochs, readingPositions,
+        contentTabs, readingPositions,
         knowledge: new SvelteMap<string, KnowledgeDraft>(),
         rooms: new SvelteMap<string, RoomDraft>(),
         replyNotices: new SvelteMap<string, { submissionId: string; userMessageId: string; assistantMessageId: string; kind: 'notSent' | 'uncertain' }[]>(),
@@ -213,7 +222,7 @@ export function createWorkspaceDrafts(repository: ConversationDraftRepository | 
     };
     let hostId: string | null = null;
     let current = create('');
-    const clear = () => { current.readingPositions.clear(); current.expertSelections.clear(); current.expertSelectionEpochs.clear(); current.contentTabs.clear(); current.rooms.clear(); for (const controller of current.controllers.values()) controller.dispose(); current.controllers.clear(); current.sources.clear(); current.completions.clear(); for (const transport of current.transports) transport.abort(); current.transports.clear(); current.text.clear(); current.objectives.clear(); current.knowledge.clear(); current.replyNotices.clear(); current.attachments.clear(); current.submissions.clear(); current.lastConversationId = null; };
+    const clear = () => { current.readingPositions.clear(); current.mentions.clear(); current.contentTabs.clear(); current.rooms.clear(); for (const controller of current.controllers.values()) controller.dispose(); current.controllers.clear(); current.sources.clear(); current.completions.clear(); for (const transport of current.transports) transport.abort(); current.transports.clear(); current.text.clear(); current.objectives.clear(); current.knowledge.clear(); current.replyNotices.clear(); current.attachments.clear(); current.submissions.clear(); current.lastConversationId = null; };
     return {
         forHost(id: string) {
             if (!id.trim()) throw new Error('Missing authenticated Host');

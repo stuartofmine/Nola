@@ -1563,7 +1563,7 @@ final class MacCanonicalConversationRepository {
     }
 
     nonisolated static func projectMessages(_ window: MacCanonicalConversationWindow, databaseURL: URL? = nil,
-        sourceOwner: AppleConversationSourceOwner? = nil) throws -> [MacChatMessage] {
+        sourceOwner: AppleConversationSourceOwner? = nil, disclosedJournalText: [String: String]? = nil) throws -> [MacChatMessage] {
         let deferredIDs = Set(window.deferredTextParts.map(\.messageID))
         // A journal-owned row intentionally has no inline body. Validate its
         // owner before applying inline visibility rules, not after discarding it.
@@ -1575,11 +1575,19 @@ final class MacCanonicalConversationRepository {
                       $0.messageID == cursor.identity.assistant_message_id && $0.role == .assistant
                   }) else { throw MacApplicationServiceError.invalidResponse }
         }
-        guard journalIDs.isEmpty || databaseURL != nil else {
+        guard disclosedJournalText.map({ Set($0.keys) == journalIDs }) ?? (journalIDs.isEmpty || databaseURL != nil) else {
             throw MacApplicationServiceError.invalidResponse
         }
         var messages = try projectMessages(window.projection, deferredMessageIDs: deferredIDs,
                                            journalMessageIDs: journalIDs)
+        if let disclosedJournalText {
+            for index in messages.indices {
+                if let id = messages[index].canonicalMessageID, let text = disclosedJournalText[id], !text.isEmpty {
+                    messages[index].scopedJournalText = text
+                    messages[index].text = text
+                }
+            }
+        }
         if let databaseURL {
             // Presentation residency only; source/Host access remains checked
             // by the original operation port when a reader/action is used.

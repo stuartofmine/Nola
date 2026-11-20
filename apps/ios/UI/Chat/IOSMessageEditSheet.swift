@@ -18,7 +18,7 @@ struct IOSMessageEditSheet: View {
         self.submit = submit
         _draft = State(initialValue: AppleMessageEditDraft(sourceConversationID: conversationID?.uuidString,
             sourceMessageID: message.metadata["nola.canonicalMessageID"] ?? message.id.uuidString,
-            expectedSourceRevision: sourceRevision, expectedMessageRevision: message.canonicalMessageRevision, text: message.content))
+            expectedSourceRevision: sourceRevision, expectedMessageRevision: message.canonicalMessageRevision, text: message.content, mentions: message.expertMentions?.runs(in: message.content) ?? []))
     }
 
     init(pending: AppleMessageEditSubmission, ownerIsRunning: Bool, submit: @escaping (AppleMessageEditSubmission) async throws -> Void) {
@@ -27,9 +27,10 @@ struct IOSMessageEditSheet: View {
         _pending = State(initialValue: pending)
         _draft = State(initialValue: AppleMessageEditDraft(sourceConversationID: pending.sourceConversationID,
             sourceMessageID: pending.sourceMessageID, expectedSourceRevision: pending.expectedSourceRevision,
-            expectedMessageRevision: pending.expectedMessageRevision, text: pending.text))
+            expectedMessageRevision: pending.expectedMessageRevision, text: pending.text, mentions: pending.mentions ?? []))
     }
 
+    @State private var candidates: [AppleExpertEditCandidate] = []
     private var available: Bool { submit != nil && draft.hasSourceWitness }
     private var canCheck: Bool { pending != nil && !retryAvailable }
 
@@ -37,7 +38,7 @@ struct IOSMessageEditSheet: View {
         NavigationStack {
             Form {
                 Section {
-                    TextEditor(text: $draft.text).frame(minHeight: 180).disabled(submitting || pending != nil)
+                    AppleExpertResendEditor(draft: $draft, candidates: candidates).frame(minHeight: 180).disabled(submitting || pending != nil)
                         .scrollContentBackground(.hidden)
                         .padding(12)
                         .background(DesignTokens.backgroundColor)
@@ -51,6 +52,20 @@ struct IOSMessageEditSheet: View {
             }
             .scrollContentBackground(.hidden)
             .background(DesignTokens.backgroundColor)
+            .task(id: draft.sourceConversationID) {
+                guard let owner = draft.sourceConversationID, let id = UUID(uuidString: owner),
+                      (try? container.applicationRuntime.conversationSourceOwner(conversationID: id.uuidString)) == .local else { return }
+                let service = IOSAgentRoomService(runtime: container.applicationRuntime)
+                do {
+                    let (directory, room) = try await Task.detached { (try service.directory(), try service.forConversation(owner)) }.value
+                    guard !Task.isCancelled else { return }
+                    candidates = directory.agents.filter { $0.availability == "active" }.map { agent in
+                        let member = room?.room.room.participants.first { $0.active && $0.agentID == agent.id }
+                        return .init(expert: .init(agentID: agent.id, agentRevision: member?.agentRevision ?? agent.revision,
+                            participantID: member?.id, contextConversationID: member?.contextConversationID), name: member?.displayName ?? agent.name, detail: agent.description)
+                    }
+                } catch { self.error = error.localizedDescription }
+            }
             .navigationTitle(String(localized: "chat.message.edit"))
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
@@ -73,7 +88,7 @@ struct IOSMessageEditSheet: View {
         let store = IOSPendingMessageEdit(runtime: container.applicationRuntime, conversationID: owner)
         let input = pending ?? AppleMessageEditSubmission(operationID: draft.operationID, targetConversationID: draft.targetConversationID,
             createdAtMs: draft.createdAtMs, sourceConversationID: source, sourceMessageID: draft.sourceMessageID,
-            expectedSourceRevision: revision, expectedMessageRevision: messageRevision, text: draft.text)
+            expectedSourceRevision: revision, expectedMessageRevision: messageRevision, text: draft.text, mentions: draft.mentions)
         if canCheck {
             do {
                 if try store.runtime.editReceipt(input) == .admitted {

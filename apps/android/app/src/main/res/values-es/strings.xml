@@ -1144,7 +1144,7 @@
     <string name="chat_ui_action_not_executed">Esta acción del formulario no se ejecutó. Quítala de la cola antes de enviar otra acción.</string>
     <string name="chat_ui_action_remove">Quitar acción sin ejecutar</string>
     <string name="chat_experts">Expertos</string>
-    <string name="chat_experts_hint">Elige expertos para responder a tu próximo mensaje. La selección no concede permisos.</string>
+    <string name="chat_experts_hint">Menciona a un experto en este mensaje.</string>
     <string name="chat_experts_empty">No hay expertos activos disponibles.</string>
     <string name="chat_no_matching_experts">No hay expertos coincidentes</string>
     <string name="chat_response_failed">La respuesta falló. Es posible que el texto anterior esté incompleto.</string>
@@ -1387,4 +1387,7 @@
     <string name="models_web_host_disconnect">Desconectar host</string>
     <string name="onboarding_choose_model">Elegir un modelo</string>
     <string name="onboarding_chat_model_hint">Para empezar a chatear, conecta un servicio de modelos, descarga un modelo local o vincula un Host de Nola.</string>
+    <string name="expert_mention_needs_text">Escribe lo que quieres que haga el experto.</string>
+    <string name="expert_mention_plain">Usar como texto normal</string>
+    <string name="expert_mention_upgrade_host">Actualiza el host conectado para mencionar expertos. También puedes enviar texto normal.</string>
 </resources>

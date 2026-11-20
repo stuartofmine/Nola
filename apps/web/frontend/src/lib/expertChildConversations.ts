@@ -1,3 +1,4 @@
+import type { MainExpertSelection } from './mainExpertSelection.ts';
 import type { RoomSnapshot } from './agentRooms.ts';
 export interface ExpertChildConversation {
     conversation_id:string; revision:number; title:string; participant_id:string; agent_id:string;
@@ -23,6 +24,12 @@ export function parseExpertChildPage(value:unknown,parent:string,offset:number):
     if(value.has_more&&(value.children.length===0||value.next_offset!==offset+value.children.length)
         ||!value.has_more&&value.next_offset!==null)throw new Error('Invalid expert history page');
     return value as unknown as ExpertChildPage;
+}
+/** Retired children retain their frozen identity even if Core cannot recover the historical revision. */
+export function referencedExpertChild(child:ExpertChildConversation,target:MainExpertSelection):boolean {
+    return child.conversation_id===target.context_conversation_id && child.participant_id===target.participant_id
+        && child.agent_id===target.agent_id && (child.agent_revision===target.agent_revision
+            || !child.is_current && child.agent_revision===null);
 }
 export function currentExpertChildMember(room:RoomSnapshot,child:ExpertChildConversation){
     return child.active&&child.is_current&&child.agent_revision!==null

@@ -44,6 +44,51 @@ import XCTest
 }
 
 final class MacMainExpertDispatchContractTests: XCTestCase {
+    func testInlineMentionsUseCursorAndPreserveFrozenIdentity() throws {
+        let text = "👩🏽‍💻请@测帮我"
+        let caret = "👩🏽‍💻请@测".utf16.count
+        let query = try XCTUnwrap(ExpertMentionQuery.atCaret(in: text, selection: NSRange(location: caret, length: 0)))
+        let expert = AppleMainExpertSelectionEntry(agentID: "a", agentRevision: 3)
+        let inserted = AppleDraftMention.insertion(text: text, range: query.range, name: "测试", expert: expert, mentions: [], sourceID: nil, epoch: nil)
+        XCTAssertEqual(inserted.text, "👩🏽‍💻请@测试 帮我")
+        let again = AppleDraftMention.insertion(text: inserted.text, range: NSRange(location: inserted.text.utf16.count, length: 0),
+            name: "测试", expert: expert, mentions: inserted.mentions, sourceID: nil, epoch: nil)
+        var wire = try XCTUnwrap(AppleDraftMention.segments(again.mentions, in: again.text))
+        XCTAssertEqual(wire.segments.compactMap(\.agentID), ["a", "a"])
+        wire.selectedExperts = try AppleDraftMention.selected(again.mentions, sourceID: nil, epoch: nil)
+        XCTAssertEqual(wire.selectedExperts, [expert])
+        XCTAssertEqual(wire.runs(in: again.text), again.mentions)
+        XCTAssertNil(wire.runs(in: "stale"))
+        XCTAssertEqual(AppleDraftMention.replacing(again.mentions, range: again.mentions[0].range, with: "@测试").count, 1)
+        XCTAssertNil(ExpertMentionQuery.atEnd(of: "hello@example"))
+        XCTAssertThrowsError(try AppleDraftMention.selected(again.mentions, sourceID: "different-host", epoch: "1"))
+    }
+
+    @MainActor func testScopedExpertHistoryLoadsJournalOnlyFromItsSourceWindow() async throws {
+        let fixture = try MacAssistantJournalTestFixture(conversationID: "child-history", runID: "run", assistantMessageID: "assistant")
+        _ = try fixture.append("专家回复。")
+        _ = try fixture.finish()
+        let source = try MacApplicationPort(databaseURL: fixture.databaseURL)
+        let window = try source.loadConversationWindow(fixture.conversationID)
+        let head = try XCTUnwrap(window.assistantJournalHeads.first)
+        let page = MacExpertChildHistoryReader.Page(version: 1, conversationID: "parent", childConversationID: fixture.conversationID,
+            roomID: "room", roomRevision: 1, sourceOwner: .local, window: window, expertExchanges: [])
+        let reader = MacExpertChildHistoryReader(parentID: "parent", childID: fixture.conversationID, readJournal: { cursor in
+            XCTAssertEqual(cursor, head)
+            let snapshot = try source.openAssistantJournalSnapshot(at: cursor)
+            defer { try? source.releaseAssistantJournalSnapshot(snapshot) }
+            return try await MacJournalTextRead.publicMarkdown(at: cursor, parts: { after in
+                try source.assistantJournalParts(snapshot: snapshot, afterPartID: after)
+            }, range: { part, body, offset in
+                try source.assistantJournalRange(snapshot: snapshot, partID: part, content: body, offsetBytes: offset)
+            })
+        }, read: { _ in page })
+        await reader.load()
+        XCTAssertNil(reader.error)
+        XCTAssertEqual(reader.messages.first(where: { $0.role == .assistant })?.scopedJournalText, "专家回复。")
+        XCTAssertThrowsError(try MacCanonicalConversationRepository.projectMessages(window, disclosedJournalText: ["someone-else": "foreign"]))
+    }
+
     func testSelectedChipsBlockedBudgetRemotePayloadAndTaskSourceContracts() throws {
         let old = MacRoomParticipant(id: "member", agentID: "expert", agentRevision: 1,
             displayName: "Frozen name", description: "", contextConversationID: "old-context", active: true)
@@ -683,20 +728,19 @@ final class MacExpertRoleConfigurationTests: XCTestCase {
         XCTAssertEqual(try AppleExpertConfigurationDraft(defaults: fixture.service.directory().agents[0].defaults).templateID, fixture.role.id)
     }
 
-    func testNativeAtSelectionJoinsDirectoryExpertByIDWithoutModelRequest() async throws {
+    func testNativeAtSelectionBindsDirectoryExpertByIDWithoutModelRequest() async throws {
         let accessibility = try MacHostedAccessibilitySession()
         defer { accessibility.restore() }
         let fixture = try nativeFixture()
         defer { try? FileManager.default.removeItem(at: fixture.root) }
         let workspace = MacAgentRoomWorkspace(service: fixture.service)
-        let state = ExpertMentionUITestSelection()
         let model = MacWorkspaceModel(canonicalRepository: fixture.repository,
             localAgentRuntime: PersistenceTestLocalRuntime(), remoteHost: PersistenceTestRemoteHost(), modelApplication: fixture.port)
         let owner = try XCTUnwrap(model.selectedConversationID)
         model.presentationDidAttach()
         await model.loadSelectedConversationIfNeeded()
         await workspace.restoreConversation(owner)
-        let host = NSHostingView(rootView: ExpertMentionUITestRoot(model: model, workspace: workspace, selection: state)
+        let host = NSHostingView(rootView: ExpertMentionUITestRoot(model: model, workspace: workspace)
             .environment(\.accessibilityEnabled, true).environment(\.colorScheme, .light).preferredColorScheme(.light))
         let window = makeWindow(host, width: 980, height: 760)
         defer { model.presentationDidDetach(); window.orderOut(nil); window.contentView = nil; window.close() }
@@ -706,12 +750,10 @@ final class MacExpertRoleConfigurationTests: XCTestCase {
         input.insertText("Review @Editor", replacementRange: NSRange(location: NSNotFound, length: 0))
         try await wait { self.element(host, "chat.mention." + fixture.expert.id) != nil }
         _ = element(host, "chat.mention." + fixture.expert.id)?.accessibilityPerformPress?()
-        try await wait { state.ids.contains(fixture.expert.id) && model.draft == "Review " }
-        let association = try XCTUnwrap(fixture.service.forConversation(owner))
-        XCTAssertEqual(association.room.room.participants.first?.agentID, fixture.expert.id)
-        XCTAssertTrue(try fixture.service.submissions(roomID: association.roomID).isEmpty, "Mention selection must not call a model")
+        try await wait { model.draftMentions(owner).map { $0.expert.agentID } == [fixture.expert.id] && model.draft == "Review @"+fixture.expert.name+" " }
+        XCTAssertNil(try fixture.service.forConversation(owner), "Selecting a candidate must only edit the draft")
         for scheme: ColorScheme in [.light, .dark] {
-            host.rootView = ExpertMentionUITestRoot(model: model, workspace: workspace, selection: state)
+            host.rootView = ExpertMentionUITestRoot(model: model, workspace: workspace)
                 .environment(\.accessibilityEnabled, true).environment(\.colorScheme, scheme).preferredColorScheme(scheme)
             window.appearance = NSAppearance(named: scheme == .dark ? .darkAqua : .aqua)
             host.appearance = window.appearance
@@ -729,6 +771,9 @@ final class MacExpertRoleConfigurationTests: XCTestCase {
         await workspace.restoreConversation(conversation.id)
         try await workspace.prepareExpertMention(agentID: fixture.expert.id, expectedRevision: fixture.expert.revision,
             conversationID: conversation.id, isPersisted: true)
+        XCTAssertNil(try fixture.service.forConversation(conversation.id))
+        let room = try fixture.service.ensureForConversation(conversation.id)
+        _ = try fixture.service.join(agent: fixture.expert, room: room.room)
         let joined = try XCTUnwrap(fixture.service.forConversation(conversation.id))
         let original = try XCTUnwrap(joined.room.room.participants.first)
         _ = try fixture.service.updateAgent(fixture.expert, name: fixture.expert.name, description: "A newer directory definition",
@@ -816,17 +861,13 @@ final class MacExpertRoleConfigurationTests: XCTestCase {
     }
 }
 
-@MainActor private final class ExpertMentionUITestSelection: ObservableObject {
-    @Published var ids: Set<String> = []
-}
 private struct ExpertMentionUITestRoot: View {
     let model: MacWorkspaceModel
     @ObservedObject var workspace: MacAgentRoomWorkspace
-    @ObservedObject var selection: ExpertMentionUITestSelection
     @FocusState private var focused: Bool
     var body: some View {
         MacConversationCanvas(model: model, composerFocused: $focused,
-            expertSelection: $selection.ids, expertWorkspace: workspace)
+            expertWorkspace: workspace)
             .background(MacDesignColor.canvas).tint(MacDesignColor.brand).onAppear { focused = true }
     }
 }

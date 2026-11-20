@@ -1,4 +1,7 @@
 <script lang="ts">
+    import InlineExpertInput from './InlineExpertInput.svelte';
+    import { mentionSegments, type InlineExpertMention } from '../lib/inlineExpertMentions';
+    import { t } from '../lib/i18n';
     import { confirmInPlaceCompletion, type InPlaceResendCompletion } from '../lib/inPlaceResend.ts';
     import { workspaceUnloadScope } from '../lib/workspacePageLocation';
     const acceptsWorkspaceUnload = workspaceUnloadScope();
@@ -9,7 +12,9 @@
     import { editResendText, confirmEditedResendAdmission } from '../lib/editedResend.ts';
     import type { EditedExpertResendCompletion } from '../lib/expertMessage.ts';
     import type { EditedResendDraft, EditedResendCompletion } from '../lib/editedResend.ts';
-    let { initial, busy=false, ownerChanged=false, onsubmit, onclose }: {
+    let { mentionDirectory=[], mentionMembers=[], loadMentions, mentionEpoch, initial, busy=false, ownerChanged=false, onsubmit, onclose }: {
+        mentionDirectory?:import('../lib/agentRooms').PersistentAgent[]; mentionMembers?:import('../lib/agentRooms').RoomParticipant[];
+        loadMentions?:()=>Promise<void>; mentionEpoch?:()=>string|null;
         initial: EditedResendDraft; busy?:boolean; ownerChanged?:boolean;
         onsubmit:(draft:EditedResendDraft)=>Promise<EditedResendCompletion | EditedExpertResendCompletion | InPlaceResendCompletion>; onclose:()=>void;
     }=$props();
@@ -25,9 +30,17 @@
     function portal(node:HTMLDialogElement){document.body.appendChild(node);void tick().then(()=>{if(alive){node.showModal();editor?.focus();}});return{destroy(){node.close();node.remove();}};}
     async function save(){
         if(sending||busy||ownerChanged||!draft.input.edited_text.trim())return;
-        const captured=draft;
         sending=true;error='';
         try{
+            if(draft.mentions?.length){
+                if(!mentionSegments(draft.input.edited_text,draft.mentions).segments.some(s=>!s.agent_id&&s.text.trim()))throw Error(t($locale,'rooms.mentionTask'));
+                await loadMentions?.();
+                if(!alive||ownerChanged) return;
+                const epoch=mentionEpoch?.();
+                if(!epoch || draft.expertEpoch&&epoch!==draft.expertEpoch) throw Error(t($locale,'rooms.expertCatalogUnavailable'));
+                draft={...draft,expertEpoch:epoch};
+            }
+            const captured=draft;
             const completed=await onsubmit(captured);
             if('inPlace' in completed)confirmInPlaceCompletion(captured,completed);
             else if('receipts' in completed)confirmEditedExpertResendCompletion(captured,completed);
@@ -44,8 +57,12 @@
     <form onsubmit={event=>{event.preventDefault();void save();}}>
         <h2 id="message-edit-title">{label($locale,'edit')}</h2>
         <p class="muted">{label($locale,'detail')}</p>
-        <textarea bind:this={editor} value={draft.input.edited_text} disabled={sending}
-            aria-label={label($locale,'edit')} oninput={event=>{draft=editResendText(draft,event.currentTarget.value);error='';copied=null;}} rows="8"></textarea>
+        <InlineExpertInput id="edit-expert-message" bind:field={editor} value={draft.input.edited_text} mentions={draft.mentions??[]}
+            directory={mentionDirectory} members={mentionMembers} onload={loadMentions??(async()=>{})} disabled={sending}
+            label={label($locale,'edit')} rows={8} onedit={(value,mentions)=>{
+                draft={...editResendText(draft,value),mentions,expertEpoch:draft.expertEpoch??mentionEpoch?.()??undefined};error='';copied=null;
+            }}/>
+        {#if error && draft.mentions?.length}<button type="button" disabled={sending} onclick={()=>{draft={...draft,mentions:[],expertEpoch:undefined};error='';}}>{t($locale,'rooms.plainMentions')}</button>{/if}
         {#if ownerChanged}<p role="status">{label($locale,'changed')}</p><button type="button" onclick={copyDraft}>{label($locale,'copyDraft')}</button>{:else if busy}<p role="status">{label($locale,'wait')}</p>{/if}
         {#if copied}<p role="status">{label($locale,copied)}</p>{/if}
         {#if error}<p class="error" role="alert">{error}</p>{/if}
@@ -58,7 +75,6 @@
 <style>
     dialog{width:min(560px,calc(100vw - 32px));max-height:calc(100dvh - 32px);padding:24px;box-sizing:border-box;overflow:auto;}
     form{display:grid;gap:16px;}h2,p{margin:0;overflow-wrap:anywhere;}h2{font-size:18px;}
-    textarea{width:100%;min-height:160px;max-height:50dvh;box-sizing:border-box;resize:vertical;font:inherit;line-height:1.6;padding:12px;background:var(--canvas);color:var(--content);border:1px solid var(--border);border-radius:10px;}
     .actions{display:flex;justify-content:flex-end;gap:8px;flex-wrap:wrap;}.actions button{min-height:44px;}.error{color:var(--danger,#c63b3b);}
     @media(max-width:760px){dialog{padding:20px;}}
 </style>

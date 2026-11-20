@@ -174,6 +174,9 @@ struct MacMessageView: View {
                     }, presentationOwner: journalPresentationOwner)
                     .frame(maxWidth: .infinity, alignment: .leading)
             } else if let canonical = message.canonicalPresentation {
+                if let text = message.scopedJournalText {
+                    MacMarkdownView(markdown: text, isStreaming: false, animatesAppends: false)
+                }
                 MacCanonicalPartFlowView(conversationID: conversationID, canonical: canonical.message,
                     historicalDetails: message.historicalDetails ?? [],
                     isStreaming: isStreaming,
@@ -370,7 +373,7 @@ struct MacMessageView: View {
                     .accessibilityValue(message.canonicalPresentation == nil && message.journalReference == nil ? message.text : "")
                 } else {
                     if !message.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-                        Text(message.text)
+                        ExpertMentionText(text: message.text, mentions: message.expertMentions)
                             .font(.system(size: MacMarkdownTypography.bodySize))
                             .textSelection(.enabled)
                             .lineSpacing(MacMarkdownTypography.lineSpacing)
@@ -469,7 +472,7 @@ struct MacMessageView: View {
                             .buttonStyle(MacMessageActionButtonStyle())
                             .help(copied ? String(localized: "Copied") : String(localized: "Copy"))
                             .accessibilityLabel(copied ? String(localized: "Copied") : String(localized: "Copy"))
-                            if message.role == .user && !transcriptReadOnly {
+                            if message.role == .user && !transcriptReadOnly && editMessage.sourceAllowsEditing {
                                 Button { editMessage.open(conversationID, message) } label: {
                                     Image(systemName: "square.and.pencil").frame(width: 32, height: 32).contentShape(Rectangle())
                                 }.buttonStyle(MacMessageActionButtonStyle()).disabled(!editMessage.enabled)

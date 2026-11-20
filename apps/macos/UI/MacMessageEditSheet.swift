@@ -7,6 +7,7 @@ struct MacMessageEditSession: Identifiable {
 }
 
 struct MacMessageEditAction {
+    var sourceAllowsEditing = true
     let enabled: Bool
     let open: (String, MacChatMessage) -> Void
 }
@@ -22,6 +23,7 @@ extension EnvironmentValues {
 
 struct MacMessageEditSheet: View {
     @State var draft: AppleMessageEditDraft
+    var candidates: [AppleExpertEditCandidate] = []
     let submit: (AppleMessageEditDraft) async throws -> Void
     let cancel: () -> Void
     @State private var submitting = false
@@ -31,7 +33,7 @@ struct MacMessageEditSheet: View {
             Text("Edit and resend").font(.headline)
             Text("This message and everything after it will be replaced. Resend continues in this conversation.")
                 .font(.callout).foregroundStyle(.secondary)
-            TextEditor(text: $draft.text)
+            AppleExpertResendEditor(draft: $draft, candidates: candidates)
                 .font(.system(size: MacMarkdownTypography.bodySize))
                 .lineSpacing(MacMarkdownTypography.lineSpacing)
                 .scrollContentBackground(.hidden)

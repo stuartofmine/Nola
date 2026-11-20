@@ -3416,3 +3416,8 @@
 
 "chat.history.otherClientReadOnly" = "只读记录。要继续此对话，请在创建它的客户端中打开。";
 "chat.history.ambiguousIDs" = "两段对话的标识仅在字母大小写上不同，请在创建它们的客户端中打开。";
+
+"Write what you want the expert to do." = "写下想请专家做的事。";
+"The expert selection changed. Remove the mention and select the expert again." = "专家来源或配置已变更。请删除这处提及，重新选择专家。";
+"Keep names as plain text" = "将名字保留为普通文字";
+"View expert history" = "查看专家会话";

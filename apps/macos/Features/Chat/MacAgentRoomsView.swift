@@ -148,8 +148,9 @@ struct MacChatExpertPicker: View {
             TextField("chat.experts.search", text: $query)
             List(visibleAgents, id: \.id) { agent in
                 Button {
-                    if selection.contains(agent.id) { selection.remove(agent.id) }
-                    else { selection.insert(agent.id); selected?(agent) }
+                    if let selected { selected(agent) }
+                    else if selection.contains(agent.id) { selection.remove(agent.id) }
+                    else { selection.insert(agent.id) }
                 } label: {
                     HStack(spacing: 10) {
                         Text(String(agent.name.prefix(2)).uppercased())

@@ -1,3 +1,4 @@
+import type {ExpertMentionSegments} from './inlineExpertMentions.ts';
 import {blockedRunGuidance} from './runResult.ts';
 import {mainExpertSelectionError} from './mainExpertSelection.ts';
 import type { InPlaceResendEnvelope } from './inPlaceResend.ts';
@@ -47,7 +48,7 @@ export function observedGoalResumeRoute(owner: GoalExecutionOwner | null, contro
     return 'refresh';
 }
 
-export interface SubmissionInput { text: string; attachments: ChatTextAttachment[]; language: string; submissionId?: string; selectedExperts?:MainExpertSelection[]; expertSourceEpoch?:string }
+export interface SubmissionInput { text: string; attachments: ChatTextAttachment[]; language: string; submissionId?: string; selectedExperts?:MainExpertSelection[]; expertSourceEpoch?:string; expertMentions?:ExpertMentionSegments }
 export interface ConversationSubmissionSnapshot {
     timeline: ChatTimeline | null; turn: ChatTurn | null; challenge: unknown; reviewText: string;
     pendingSubmission: PendingSourceSubmission | null; observedCanSubmit: boolean; observedRecovery: string;
@@ -107,14 +108,20 @@ export function createConversationSubmissionController(options: {
     function stopWitnessRead() { witnessController?.abort(); witnessController = null; witnessAttempt = ''; }
     const dispatchControllers = new Set<AbortController>();
     const editedRuns = new Set<string>();
-    const editedAdmissions = new Map<string, {resolve:(receipt:SourceSubmissionReceipt)=>void; reject:(cause:unknown)=>void}>();
+    const editedAdmissions = new Map<string, {editedId?:string; resolve:(receipt:SourceSubmissionReceipt)=>void; reject:(cause:unknown)=>void}>();
     const isEditedPending = (value: PendingSourceSubmission | null) => !!value && (value.request.edited_resend_operation_id === value.identity.submission_id || value.request.in_place_resend_operation_id === value.identity.submission_id);
     const isEditedTurn = () => !!state.turn && (editedRuns.has(state.turn.identity.submissionId) || isEditedPending(state.pendingSubmission));
     function editedReceipt(value: PendingSourceSubmission) {
         if (!isEditedPending(value) || !value.receipt) return;
         const waiting = editedAdmissions.get(value.identity.submission_id);
         if (!waiting) return;
-        if (value.receipt.phase === 'admitted') { editedAdmissions.delete(value.identity.submission_id); waiting.resolve(value.receipt); }
+        if (value.receipt.phase === 'admitted') {
+            if(waiting.editedId && state.timeline){
+                state.timeline=reduceChatTimeline(state.timeline,{type:'admittedEdit',owner:state.timeline.owner,submissionId:value.identity.submission_id,
+                    editedId:waiting.editedId,replacementId:value.identity.user_message_id}).state;
+            }
+            editedAdmissions.delete(value.identity.submission_id); waiting.resolve(value.receipt);
+        }
         else if (['rejected','cancelled'].includes(value.receipt.phase)) {
             editedAdmissions.delete(value.identity.submission_id); waiting.reject(new Error(value.receipt.rejection_code ?? 'Edited resend was not admitted'));
         }
@@ -702,7 +709,8 @@ export function createConversationSubmissionController(options: {
         state.turn = createChatTurn(identity, turnIdentity);
         usageProjection.reset(); state.contextUsage = null;
         state.timeline = reduceChatTimeline(state.timeline, { type: 'beginSubmission', owner: identity, submissionId,
-            userMessageId: state.turn.identity.userMessageId, userText: modelContent }).state;
+            userMessageId: state.turn.identity.userMessageId, userText: modelContent,
+            ...(input.expertMentions && input.selectedExperts ? {expertMentions:{...input.expertMentions,selected_experts:input.selectedExperts}}:{}) }).state;
         state.pendingText = ''; state.pendingAttachmentNames = captured.map(item => item.name); state.error = ''; state.notice = '';
         const request = {
             conversationId: identity.conversationId, client_id: identity.clientId,
@@ -716,7 +724,7 @@ export function createConversationSubmissionController(options: {
             ...(edited ? {edited_resend_operation_id:edited.prepared.input.operation_id} : {}),
             ...(inPlace ? {in_place_resend_operation_id:inPlace.prepared.input.operation_id} : {}),
             ...(queuedCommandId ? {queued_user_command_id: queuedCommandId} : {}),
-            ...(input.selectedExperts?.length ? {selected_experts:structuredClone(input.selectedExperts),expected_source_store_epoch:input.expertSourceEpoch} : {}),
+            ...(input.selectedExperts?.length ? {selected_experts:structuredClone(input.selectedExperts),expected_source_store_epoch:input.expertSourceEpoch,...(input.expertMentions?{expert_mentions:input.expertMentions}:{})} : {}),
         };
         try {
             const frozenRequest = await freezeHostToolPlan(request, api);
@@ -819,8 +827,8 @@ export function createConversationSubmissionController(options: {
         state.turn=null;state.observedCanSubmit=true;
         return new Promise<SourceSubmissionReceipt>((resolve,reject)=>{
             if(editedAdmissions.has(p.run_id)){reject(new Error('Resend admission remains pending'));return;}
-            editedAdmissions.set(p.run_id,{resolve,reject});
-            void submit({text:p.input.edited_text,attachments:[],language,submissionId:p.run_id},undefined,undefined,envelope)
+            editedAdmissions.set(p.run_id,{resolve,reject,editedId:p.input.message_id});
+            void submit({text:p.input.edited_text,attachments:[],language,submissionId:p.run_id,selectedExperts:p.input.selected_experts,expertMentions:p.input.expert_mentions,expertSourceEpoch:p.input.expected_source_store_epoch},undefined,undefined,envelope)
                 .catch(cause=>failEdited(p.run_id,cause));
         });
     }

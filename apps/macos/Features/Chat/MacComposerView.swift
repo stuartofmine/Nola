@@ -13,6 +13,8 @@ final class MacAttachmentPasteTextView: NSTextView {
 
     // Draw the hint through TextKit with the same container geometry as input.
     // A SwiftUI overlay has different font metrics and ignores native padding.
+    var submitsReturn = true
+    var pastedText: ((String) -> Void)?
     var placeholder: String = "" { didSet { needsDisplay = true } }
 
     override func didChangeText() {
@@ -71,6 +73,7 @@ final class MacAttachmentPasteTextView: NSTextView {
             return
         }
         super.paste(sender)
+        pastedText?(string)
     }
 
     override func draggingEntered(_ sender: any NSDraggingInfo) -> NSDragOperation {
@@ -104,7 +107,7 @@ final class MacAttachmentPasteTextView: NSTextView {
         if editingModifiers.isEmpty, !hasMarkedText(),
            let command = [126: "up", 125: "down", 53: "dismiss", 48: "accept", 36: "accept", 76: "accept"][Int(event.keyCode)],
            mentionHandler?(command) == true { return }
-        if isReturn, editingModifiers.isEmpty, !hasMarkedText() {
+        if submitsReturn, isReturn, editingModifiers.isEmpty, !hasMarkedText() {
             submitHandler?()
             return
         }
@@ -134,14 +137,16 @@ enum MacComposerTextMeasurement {
     }
 }
 
-private struct MacComposerTextEditor: NSViewRepresentable {
+struct MacComposerTextEditor: NSViewRepresentable {
     @Binding var text: String
     let conversationID: String
     let focused: FocusState<Bool>.Binding
     let onPasteAttachments: () -> Bool
     let onDropAttachments: (NSPasteboard) -> Bool
     let onSubmit: () -> Void
+    var submitsReturn = true
     var mentionCommand: (String) -> Bool = { _ in false }
+    var mentionEditor = AppleMentionEditor()
 
     func makeCoordinator() -> Coordinator {
         Coordinator(parent: self)
@@ -184,8 +189,10 @@ private struct MacComposerTextEditor: NSViewRepresentable {
         context.coordinator.conversationID = conversationID
         textView.attachmentPasteHandler = onPasteAttachments
         textView.attachmentDropHandler = onDropAttachments
+        textView.submitsReturn = submitsReturn
         textView.submitHandler = onSubmit
         textView.mentionHandler = mentionCommand
+        textView.pastedText = mentionEditor.pasted
         textView.focusChangeHandler = { [weak coordinator = context.coordinator] in
             coordinator?.publishFocus($0)
         }
@@ -202,6 +209,7 @@ private struct MacComposerTextEditor: NSViewRepresentable {
             context.coordinator.isReplacingConversation = true
             textView.unmarkText()
             textView.undoManager?.removeAllActions()
+            context.coordinator.undoHistory = AppleMentionUndoHistory()
             textView.string = text
             textView.setSelectedRange(NSRange(location: (text as NSString).length, length: 0))
             textView.needsDisplay = true
@@ -210,14 +218,41 @@ private struct MacComposerTextEditor: NSViewRepresentable {
         if !focused.wrappedValue { context.coordinator.nativeFocusLostAwaitingPublication = false }
         textView.attachmentPasteHandler = onPasteAttachments
         textView.attachmentDropHandler = onDropAttachments
+        textView.submitsReturn = submitsReturn
         textView.submitHandler = onSubmit
         textView.mentionHandler = mentionCommand
+        textView.pastedText = mentionEditor.pasted
         textView.focusChangeHandler = { [weak coordinator = context.coordinator] in
             coordinator?.publishFocus($0)
         }
         if textView.string != text, !textView.hasMarkedText() {
             textView.string = text
             textView.needsDisplay = true
+        }
+        if !textView.hasMarkedText() {
+            if let request = mentionEditor.caretRequest, context.coordinator.lastCaret != request.revision {
+                context.coordinator.lastCaret = request.revision
+                if let previous = request.before {
+                    let current = AppleMentionEditor.Snapshot(text: text, mentions: mentionEditor.mentions, caret: request.location)
+                    context.coordinator.undoHistory.registerCompletion(textView.undoManager, before: previous, after: current) { [weak textView, weak coordinator = context.coordinator] expected, restored in
+                        guard let textView, let coordinator, textView.string == expected.text else { return false }
+                        coordinator.parent.mentionEditor.restore(restored.text, restored.mentions)
+                        textView.string = restored.text
+                        let range = NSRange(location: min(restored.caret, restored.text.utf16.count), length: 0)
+                        textView.setSelectedRange(range)
+                        return true
+                    }
+                }
+                textView.setSelectedRange(NSRange(location: min(request.location, textView.string.utf16.count), length: 0))
+            }
+            if let layout = textView.layoutManager, context.coordinator.styledText != textView.string || context.coordinator.styledMentions != mentionEditor.mentions {
+                context.coordinator.styledText = textView.string
+                context.coordinator.styledMentions = mentionEditor.mentions
+                layout.removeTemporaryAttribute(.foregroundColor, forCharacterRange: NSRange(location: 0, length: textView.string.utf16.count))
+                for mention in mentionEditor.mentions where NSMaxRange(mention.range) <= textView.string.utf16.count {
+                    layout.addTemporaryAttributes([.foregroundColor: NSColor.controlAccentColor], forCharacterRange: mention.range)
+                }
+            }
         }
         if focused.wrappedValue, !context.coordinator.nativeFocusLostAwaitingPublication,
            textView.window?.firstResponder !== textView {
@@ -245,6 +280,33 @@ private struct MacComposerTextEditor: NSViewRepresentable {
             self.parent = parent
         }
 
+        var previousSelection: NSRange?
+        var lastCaret: UUID?
+        var styledText: String?
+        var styledMentions: [AppleDraftMention] = []
+        var undoHistory = AppleMentionUndoHistory()
+        var pendingEdit: (String, NSRange, String)?
+        func textView(_ textView: NSTextView, shouldChangeTextIn affectedCharRange: NSRange, replacementString: String?) -> Bool {
+            guard !isReplacingConversation, let replacementString else { return true }
+            let range = parent.mentionEditor.deletionRange(affectedCharRange, replacement: replacementString)
+            if range != affectedCharRange, !textView.hasMarkedText() {
+                textView.insertText("", replacementRange: range)
+                return false
+            }
+            pendingEdit = (textView.string, affectedCharRange, replacementString)
+            return true
+        }
+        func textViewDidChangeSelection(_ notification: Notification) {
+            guard !isReplacingConversation, let view = notification.object as? NSTextView else { return }
+            let selection = view.selectedRange(), composing = view.hasMarkedText()
+            let next = parent.mentionEditor.caretRange(selection, previous: previousSelection)
+            previousSelection = next
+            if !composing, next != selection, NSMaxRange(next) <= view.string.utf16.count { view.setSelectedRange(next); return }
+            Task { @MainActor [weak self, weak view] in
+                guard let view, view.selectedRange() == selection else { return }
+                self?.parent.mentionEditor.selectionChanged(selection, composing)
+            }
+        }
         func textDidChange(_ notification: Notification) {
             guard !isReplacingConversation, let textView = notification.object as? NSTextView else { return }
             // Delegate edits originate from the native event, not a SwiftUI
@@ -253,6 +315,18 @@ private struct MacComposerTextEditor: NSViewRepresentable {
             // The binding getter may still read the previous display snapshot.
             // Do not use it to suppress a native edit: insert then delete can
             // return to that old value before SwiftUI renders either change.
+            if let (old, range, replacement) = pendingEdit,
+               (old as NSString).replacingCharacters(in: range, with: replacement) == textView.string {
+                pendingEdit = nil
+                if undoHistory.restore(before: old, after: textView.string, undo: textView.undoManager, editor: parent.mentionEditor) { return }
+                if parent.mentionEditor.applyEdit(old, range, replacement) {
+                    let original = parent.mentionEditor.mentions
+                    undoHistory.record(before: old, after: textView.string, original: original,
+                        current: AppleDraftMention.replacing(original, range: range, with: replacement))
+                    return
+                }
+            }
+            pendingEdit = nil
             parent.text = textView.string
         }
 
@@ -283,6 +357,7 @@ struct MacComposerView: View {
     var composerFocused: FocusState<Bool>.Binding
     var isModelConfigured = true
     var mentionCommand: (String) -> Bool = { _ in false }
+    var mentionEditor = AppleMentionEditor()
     var localCommand: () -> Bool = { false }
     @State private var fileImporterPresented = false
     @State private var fileImporterConversationID: String?
@@ -537,7 +612,7 @@ struct MacComposerView: View {
                         dictationActive = false
                         voiceInput.stop()
                     },
-                    mentionCommand: mentionCommand
+                    mentionCommand: mentionCommand, mentionEditor: mentionEditor
                 )
                 .focused(composerFocused)
                 .accessibilityLabel(String(localized: "Message Nola"))

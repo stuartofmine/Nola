@@ -12,7 +12,7 @@
     <string name="inspector_progress_unavailable">当前会话的权威进度暂不可用，可刷新重试。</string>
     <string name="inspector_completed_count">已完成 %1$d/%2$d 项</string>
     <string name="chat_experts">专家</string>
-    <string name="chat_experts_hint">选择参与下一条消息回复的专家。选择不会授予权限。</string>
+    <string name="chat_experts_hint">在这条消息中提及专家。</string>
     <string name="chat_experts_empty">暂无可用专家。</string>
     <string name="room_waiting_confirmation">等待确认</string>
     <string name="room_diagnostics">查看诊断详情</string>
@@ -1386,4 +1386,7 @@
     <string name="models_web_host_disconnect">断开连接</string>
     <string name="onboarding_choose_model">选择模型</string>
     <string name="onboarding_chat_model_hint">连接模型服务、下载本地模型，或与 Nola 宿主机配对，即可开始对话。</string>
+    <string name="expert_mention_needs_text">写下想请专家做的事。</string>
+    <string name="expert_mention_plain">转为普通文字</string>
+    <string name="expert_mention_upgrade_host">请更新所连接的宿主机以使用专家提及，也可以发送普通文字。</string>
 </resources>

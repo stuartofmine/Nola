@@ -2860,6 +2860,13 @@ public struct WebAgentProvider: LLMClient, LLMRemoteAuxiliaryInvocationProviding
             "language": Locale.current.identifier,
         ]
         if let selected = input.selectedExperts, !selected.isEmpty {
+            if let mentions = input.expertMentions {
+                payload["expert_mentions"] = ["version": mentions.version, "segments": mentions.segments.map { segment in
+                    var value = ["text": segment.text]
+                    value["agent_id"] = segment.agentID
+                    return value
+                }] as [String: Any]
+            }
             payload["expected_source_store_epoch"] = input.expertSelectionSourceEpoch
             payload["selected_experts"] = selected.map { entry -> [String: Any] in
                 ["agent_id": entry.agentID, "agent_revision": entry.agentRevision,

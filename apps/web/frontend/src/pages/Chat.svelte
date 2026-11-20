@@ -1,7 +1,9 @@
 <script lang="ts">
+    import ExpertChildHistory from '../components/ExpertChildHistory.svelte';
+    import InlineExpertInput from '../components/InlineExpertInput.svelte';
+    import { candidateIdentity, mentionSegments, mentionTargets, replaceMentionRange, partMentions, type InlineExpertMention } from '../lib/inlineExpertMentions';
     import {supportsMainExpertDelegation, ExpertRoleCatalogUnavailable} from '../lib/expertRoles';
     import {roomCommandAtSource} from '../lib/agentRooms';
-    import {mainExpertSelections} from '../lib/mainExpertSelection';
     import { currentExpertChildMember, type ExpertChildConversation } from '../lib/expertChildConversations';
     import { activityReturnPath } from '../lib/activity';
     let returnToActivity = $state(typeof window === 'undefined' ? null : activityReturnPath(new URL(window.location.href)));
@@ -48,9 +50,9 @@
     import { createConversationDraftStore, parseChatConversation, parseChatConversations } from '../lib/chatConversations';
     import type { ChatConversation } from '../lib/chatConversations';
     import {parseExpertRoles} from '../lib/expertRoles';
-    import {checkedExpertCandidate, existingExpertParticipant, rejoinedExpertParticipant, selectedExpertMembers, ExpertSelectionChanged} from '../lib/expertMentionSelection';
-    import { mentionQuery, removeMentionQuery, roomCommand, type AgentDirectory, type PersistentAgent, type RoomSnapshot, type RoomSubmission } from '../lib/agentRooms';
-    import { projectExpertSubmissions, toggleExpertParticipant } from '../lib/expertConversation';
+    import {rejoinedExpertParticipant, selectedExpertMembers, ExpertSelectionChanged} from '../lib/expertMentionSelection';
+    import { roomCommand, type AgentDirectory, type PersistentAgent, type RoomSnapshot, type RoomSubmission } from '../lib/agentRooms';
+    import { projectExpertSubmissions } from '../lib/expertConversation';
     import ExpertConversationReply from '../components/ExpertConversationReply.svelte';
     import ExpertReplyFrame from '../components/ExpertReplyFrame.svelte';
     import ExpertManager from '../components/ExpertManager.svelte';
@@ -532,7 +534,7 @@
     let submissionController: ConversationSubmissionController | null = null;
     let expertRoom = $state<RoomSnapshot | null>(null);
     let expertSourceEpoch=$state<string|null>(null);
-    function selectedExpertEpoch(){return active?workspaceHost?.expertSelectionEpochs.get(active.conversationId)??null:null;}
+    function selectedExpertEpoch(){return active?workspaceHost?.mentions.get(active.conversationId)?.epoch??null:null;}
     async function expertSourceCommand<T>(command:unknown,expectedEpoch=selectedExpertEpoch()??expertSourceEpoch):Promise<T>{
         const current=expertScope();
         let pinned=expectedEpoch;
@@ -541,7 +543,7 @@
             try{capability=await roomCommandAtSource<unknown>({type:'role_templates'},pinned);}
             catch(cause){if(cause instanceof ApiError&&cause.code==='room_source_epoch_changed')throw cause;throw new ExpertRoleCatalogUnavailable();}
             if(!current())throw Error('Expert conversation changed');
-            if(!supportsMainExpertDelegation(capability.result))throw new ExpertRoleCatalogUnavailable();
+            if(!supportsMainExpertDelegation(capability.result) || (capability.result as {features?:{inline_expert_mentions?:boolean}})?.features?.inline_expert_mentions!==true)throw new ExpertRoleCatalogUnavailable();
             pinned=capability.sourceEpoch;
         }
         const read=await roomCommandAtSource<T>(command,pinned);
@@ -550,21 +552,31 @@
         expertSourceEpoch=read.sourceEpoch;return read.result;
     }
     let expertDirectory = $state<AgentDirectory | null>(null);
-    let expertRejoin = $state<{owner:string; agent:PersistentAgent; room:RoomSnapshot; mentionDraft?:string} | null>(null);
+    let expertRejoin = $state<{owner:string; agent:PersistentAgent; room:RoomSnapshot} | null>(null);
     let expertSubmissions = $state<RoomSubmission[]>([]);
     const expertExecutionPending = $derived(expertSubmissions.some(item => ['accepted','selected','executing'].includes(item.state)));
     let expertRetryIntent = $state<AdmitExpertMessageInput | null>(null);
     let expertIntentStorageError = $state('');
     let expertResumeMessage = $state<string | null>(null);
     let expertHistoryRequest = 0;
-    let selectedExperts = $state<string[]>([]);
-    const composerUnavailable = $derived(!active || conversationWriting || selectingConversation !== null || !canInteract || selectedExperts.length > 0 && !expertRoom);
-    function updateSelectedExperts(ids: readonly string[]) {
-        if(ids.length){if(!expertSourceEpoch)throw Error('Expert source is unavailable');if(active)workspaceHost?.expertSelectionEpochs.set(active.conversationId,selectedExpertEpoch()??expertSourceEpoch);}
-        else if(active)workspaceHost?.expertSelectionEpochs.delete(active.conversationId);
-        selectedExperts = [...new Set(ids)];
-        if (active && workspaceHost) workspaceHost.expertSelections.set(active.conversationId, [...selectedExperts]);
+    let occurrences = $state<InlineExpertMention[]>([]);
+    const selectedExperts=$derived([...new Set(occurrences.map(m=>m.selection.agent_id))]);
+    const composerUnavailable = $derived(!active || conversationWriting || selectingConversation !== null || !canInteract);
+    function editComposer(text:string, next:InlineExpertMention[]) {
+        if (!active || !workspaceHost || composerUnavailable) return;
+        const epoch=selectedExpertEpoch()??expertSourceEpoch;
+        if(next.length&&!epoch) {expertError=t($locale,'rooms.expertCatalogUnavailable');return;}
+        draft=text; occurrences=next; commandDismissed=null;commandIndex=0;commandError='';expertError='';
+        workspaceHost.writeComposer(active.conversationId,text,next.length?{epoch:epoch!,occurrences:$state.snapshot(next)}:undefined);
     }
+    function insertExpert(agent:PersistentAgent) {
+        const member=expertRoom?.room.participants.find(m=>m.active&&m.agent_id===agent.id);
+        const pos=composer?.selectionStart??draft.length;
+        const result=replaceMentionRange(draft,occurrences,pos,composer?.selectionEnd??pos,'@'+(member?.display_name??agent.name),candidateIdentity(agent,member));
+        editComposer(result.text,result.mentions);
+        void tick().then(()=>{composer?.focus();composer?.setSelectionRange(result.cursor,result.cursor);});
+    }
+    function convertToPlainText() { editComposer(draft,[]); }
     let mentionFocused = $state(false);
     let commandIndex = $state(0);
     let commandDismissed = $state<string | null>(null);
@@ -602,55 +614,22 @@
         }
         return true;
     }
-    let mentionDismissed = $state<string | null>(null);
-    let mentionIndex = $state(0);
-    let mentionLoading = $state(false);
-    let mentionSelecting = $state(false);
-    let mentionDirectoryRequest = 0, mentionSelectionRequest = 0;
     const expertManifestCache = new Map<string,ExpertMessageManifest | null>();
     function expertScope(conversationId = active?.conversationId) {
         const sourceHost=hostId,sourceClient=clientId,workspace=workspaceHost,selection=draftSelection,sourceGeneration=generation;
         return () => !disposed && !!conversationId && hostId===sourceHost && clientId===sourceClient && workspaceHost===workspace
             && draftSelection===selection && generation===sourceGeneration && active?.conversationId===conversationId;
     }
-    const expertMentionQuery = $derived(mentionQuery(draft));
-    const mentionsVisible = $derived(mentionFocused && expertMentionQuery !== null && mentionDismissed !== draft);
-    const expertMentionCandidates = $derived((expertDirectory?.agents ?? []).filter(agent => agent.availability === 'active'
-        && !expertRoom?.room.participants.some(member => member.agent_id === agent.id && selectedExperts.includes(member.id))
-        && agent.name.toLocaleLowerCase().includes((expertMentionQuery ?? '').toLocaleLowerCase())));
-    async function loadMentionDirectory(text = draft) {
-        if (!canInteract || mentionQuery(text) === null || expertDirectory || mentionLoading || !active) return;
-        const scope=expertScope(),request=++mentionDirectoryRequest;
-        const current=()=>scope()&&request===mentionDirectoryRequest;
-        mentionLoading=true;
-        try {
-            const directory=await expertSourceCommand<AgentDirectory>({type:'directory'});
-            if(current()){expertDirectory=directory;expertError='';}
-        } catch(cause) {if(current())expertError=t($locale,cause instanceof ExpertRoleCatalogUnavailable?'rooms.expertCatalogUnavailable':'rooms.expertAddFailed');}
-        finally {if(current())mentionLoading=false;}
-    }
-    async function chooseMention(agentId: string) {
-        if (!canInteract || !active || expertsLoading || mentionSelecting || !expertMentionCandidates.some(agent=>agent.id===agentId)) return;
-        const owner=active.conversationId,original=draft,scope=expertScope(owner),request=++mentionSelectionRequest;
-        const current=()=>scope()&&request===mentionSelectionRequest&&canInteract;
-        mentionSelecting=true;
-        try {
-            if(!expertRoom){
-                const association=await expertSourceCommand<{conversation_id:string;room:RoomSnapshot}>({type:'ensure_for_conversation',conversation_id:owner,at_ms:Date.now()});
-                if(!current())return;
-                if(association.conversation_id!==owner)throw new Error('Expert conversation changed');
-                expertRoom=association.room;
-            }
-            await toggleExpert(agentId, original);
-            if(!current()||draft!==original)return;
-            const member=expertRoom?.room.participants.find(member=>member.agent_id===agentId&&member.active);
-            if(!member||!selectedExperts.includes(member.id))return;
-            draft=removeMentionQuery(draft);drafts.write(owner,draft);mentionIndex=0;
-            await tick();if(current())composer?.focus();
-        } catch {if(current())expertError='Unable to prepare experts for this conversation.';}
-        finally {if(scope()&&request===mentionSelectionRequest)mentionSelecting=false;}
+    async function loadMentionDirectory() {
+        if(!active || !canInteract)throw Error('Expert conversation unavailable');
+        if(expertDirectory && expertSourceEpoch)return;
+        const current=expertScope();
+        const directory=await expertSourceCommand<AgentDirectory>({type:'directory'});
+        if(current())expertDirectory=directory;
     }
     let expertsLoading = $state(false);
+    function showMentionProfile(dialog:HTMLDialogElement){dialog.showModal();return {destroy:()=>dialog.close()};}
+    let mentionProfile=$state<{name:string;parent:string;host:string;epoch:string|null;ref:import('../lib/mainExpertSelection').MainExpertSelection;member?:import('../lib/agentRooms').RoomParticipant}|null>(null);
     let managingExperts = $state(false);
     let expertAdmissionPending = $state(false);
     let expertError = $state('');
@@ -684,7 +663,6 @@
                 expertRejoin = agent && association && member?.agent_revision !== agent.revision
                     ? {...expertRejoin,agent,room:association.room} : null;
             }
-            selectedExperts = [...(workspaceHost?.expertSelections.get(conversationId) ?? [])];
             if (association) await refreshExpertSubmissions(conversationId, association.room);
         } catch(cause) { if (current()) expertError=t($locale,cause instanceof ExpertRoleCatalogUnavailable?'rooms.expertCatalogUnavailable':'rooms.expertAddFailed'); }
         finally { if (current()) expertsLoading = false; }
@@ -727,43 +705,18 @@
             expertSubmissions=incoming.sort((a,b)=>a.input.at_ms-b.input.at_ms||a.input.submission_id.localeCompare(b.input.submission_id));
         } catch {if(current())expertError=t($locale, 'chatPage.expertHistoryRefreshFailed');}
     }
-    async function toggleExpert(agentId: string, mentionDraft?: string) {
+    async function toggleExpert(agentId: string) {
         if (!canInteract || !active || !expertDirectory || expertsLoading) return;
-        const currentParticipant = expertRoom?.room.participants.find(person => person.agent_id === agentId && person.active);
-        if (currentParticipant && selectedExperts.includes(currentParticipant.id)) {
-            updateSelectedExperts(toggleExpertParticipant(selectedExperts, currentParticipant.id));
-            return;
-        }
-        const candidate = expertDirectory.agents.find(value => value.id === agentId && value.availability === 'active');
-        if (!candidate) return;
-        expertsLoading = true; expertError = '';
-        const owner = active.conversationId, scope = expertScope(owner), request = ++expertRequest;
-        const current = () => scope() && expertRequest === request;
-        try {
-            const latest = await expertSourceCommand<AgentDirectory>({type:'directory'});
-            if (!current() || !canInteract) return;
-            expertDirectory = latest;
-            const agent = checkedExpertCandidate(latest, candidate.id, candidate.revision);
-            let room = expertRoom;
-            if (!room) {
-                const association = await expertSourceCommand<{conversation_id: string; room: RoomSnapshot}>({type:'ensure_for_conversation', conversation_id:owner, at_ms:Date.now()});
-                if (!current() || !canInteract || association.conversation_id !== owner) return;
-                room = association.room; expertRoom = room;
+        const agent=expertDirectory.agents.find(a=>a.id===agentId&&a.availability==='active');
+        if(!agent)return;
+        if(selectedExperts.includes(agentId)){
+            let text=draft, next=occurrences;
+            for(const item of occurrences.filter(m=>m.selection.agent_id===agentId).reverse()){
+                const result=replaceMentionRange(text,next,item.start,item.start+item.text.length,'');
+                text=result.text;next=result.mentions;
             }
-            if (!current() || !canInteract) return;
-            let member;
-            try { member = existingExpertParticipant(room, agent); }
-            catch (cause) { expertRejoin = {owner,agent,room,mentionDraft}; throw cause; }
-            if (!member) {
-                const joined = await expertSourceCommand<RoomSnapshot>({type:'join', input:{room_id:room.room.id, expected_room_revision:room.revision, agent_id:agent.id, expected_agent_revision:agent.revision, at_ms:Date.now()}});
-                if (!current() || expertRoom?.room.id !== room.room.id) return;
-                if (joined.room.id !== room.room.id) throw new ExpertSelectionChanged();
-                expertRoom = joined;
-            }
-            const participant = expertRoom && existingExpertParticipant(expertRoom, agent);
-            if (current() && canInteract && participant) updateSelectedExperts(toggleExpertParticipant(selectedExperts, participant.id));
-        } catch (cause) { if (current()) expertError = t($locale, cause instanceof ExpertSelectionChanged ? 'rooms.expertChanged' : 'rooms.expertAddFailed'); }
-        finally { if (current()) expertsLoading = false; }
+            editComposer(text,next);
+        }else insertExpert(agent);
     }
     async function rejoinExpert() {
         const request = expertRejoin;
@@ -795,10 +748,15 @@
             if (!scope() || expertRejoin !== request) return;
             const member = rejoinedExpertParticipant(request.room, joined, request.agent);
             expertRoom = joined;
-            updateSelectedExperts([...selectedExperts.filter(id => !request.room.room.participants.some(old => old.id === id && old.agent_id === request.agent.id)),member.id]);
-            if (request.mentionDraft !== undefined && draft === request.mentionDraft) {
-                draft = removeMentionQuery(draft); drafts.write(request.owner,draft);
-            }
+            const oldMentions=occurrences.filter(m=>m.selection.agent_id===member.agent_id);
+            if(oldMentions.length){
+                let text=draft,entries=occurrences;
+                for(const old of oldMentions.reverse()){
+                    const changed=replaceMentionRange(text,entries,old.start,old.start+old.text.length,'@'+member.display_name,candidateIdentity(request.agent,member));
+                    text=changed.text;entries=changed.mentions;
+                }
+                editComposer(text,entries);
+            }else insertExpert(request.agent);
             expertRejoin = null;
         } catch (cause) {if (scope()) expertError = t($locale,cause instanceof ExpertSelectionChanged ? 'rooms.expertChanged' : 'rooms.expertAddFailed');}
         finally {if (scope()) expertsLoading = false;}
@@ -821,12 +779,11 @@
         enteringMessageIds = new Set();
         userScrollTimer = null;
         submissionController?.detach();
-        active = conversation;
+        mentionProfile=null;active = conversation;
         contentTabs = selectContentTab(workspaceHost.contentTabs.get(conversation.conversationId) ?? emptyContentTabs(), conversationTabKey);
-        mentionDismissed = null; mentionIndex = 0; mentionLoading = false; mentionSelecting = false; ++mentionDirectoryRequest; ++mentionSelectionRequest;
         ++expertRequest; expertsLoading = false; expertResumeMessage = null; managingExperts = false;
         expertRoom = null; expertSourceEpoch=null; expertDirectory = null; expertSubmissions = []; expertAdmissionPending = false;
-        selectedExperts = [...(workspaceHost.expertSelections.get(conversation.conversationId) ?? [])]; expertError = '';
+        occurrences = workspaceHost.mentions.get(conversation.conversationId)?.occurrences ?? []; expertError = '';
         expertIntentStorageError='';
         try { expertRetryIntent = loadExpertIntent(localStorage, {hostId,clientId}, conversation.conversationId); }
         catch (cause) { expertRetryIntent = null; expertIntentStorageError = cause instanceof Error ? cause.message : String(cause); }
@@ -864,7 +821,7 @@
             queuedDispatch = snapshot.queuedDispatch; queuedCancelling = snapshot.queuedCancelling;
             error = snapshot.error; notice = snapshot.notice; pendingText = snapshot.pendingText;
             pendingAttachmentNames = snapshot.pendingAttachmentNames; historicalRecoveryOwners = snapshot.historicalRecoveryOwners;
-            draft = snapshot.draft; attachments = snapshot.attachments;
+            draft = snapshot.draft; occurrences=sourceWorkspace.mentions.get(conversation.conversationId)?.occurrences??[]; attachments = snapshot.attachments;
         }, {
             cacheChanged: () => { conversationCacheReader.refresh(); void conversationManager?.refresh(); },
             captureHistory: reason => {
@@ -910,7 +867,6 @@
             const association = await expertSourceCommand<{conversation_id: string; room_id: string; room: RoomSnapshot} | null>({type:'for_conversation', conversation_id:conversationId});
             if (!current()) return;
             if (!association || association.conversation_id !== conversationId) {
-                if (selectedExperts.length) throw new Error('expert selection unavailable');
                 return;
             }
             expertRoom = association.room;
@@ -931,23 +887,26 @@
     }
     async function send() {
         if (composerUnavailable) return;
-        if (executeCommand()) return;
+        if (!occurrences.length && executeCommand()) return;
         if (attachmentsReading || knowledgeSavePending || busy || expertAdmissionPending || !active || (!draft.trim() && !attachments.length)) return;
         try { expertRetryIntent=loadExpertIntent(localStorage,{hostId,clientId},active.conversationId);expertIntentStorageError=''; }
         catch(cause){expertIntentStorageError=cause instanceof Error?cause.message:String(cause);return;}
         if (expertRetryIntent) { expertError = t($locale, 'chatPage.expertRetryPendingFirst'); return; }
-        const selected = [...selectedExperts], conversationId = active.conversationId;
-        let selectedReferences:ReturnType<typeof mainExpertSelections>;
-        try { selectedReferences=mainExpertSelections(expertRoom,selected); }
+        let selectedReferences:ReturnType<typeof mentionTargets>;
+        try { selectedReferences=mentionTargets(occurrences); }
         catch(cause){expertError=cause instanceof Error?cause.message:String(cause);return;}
+        const inline=selectedReferences.length?mentionSegments(draft,occurrences):undefined;
+        if(inline && !attachments.length && !inline.segments.some(s=>!s.agent_id&&s.text.trim())){
+            expertError=t($locale,'rooms.mentionTask');composer?.focus();return;
+        }
         if(selectedReferences.length){
-            const current=expertScope(),original=draft,originalAttachments=attachments,epoch=selectedExpertEpoch();
+            const current=expertScope(),original=draft,originalMentions=JSON.stringify(occurrences),attachmentIds=attachments.map(f=>f.id).join(','),epoch=selectedExpertEpoch();
             if(!epoch){expertError=t($locale,'rooms.expertCatalogUnavailable');return;}
             expertAdmissionPending=true;
             try{await expertSourceCommand<AgentDirectory>({type:'directory'},epoch);}
             catch(cause){if(current())expertError=t($locale,cause instanceof ExpertRoleCatalogUnavailable?'rooms.expertCatalogUnavailable':'rooms.expertChanged');return;}
             finally{if(current())expertAdmissionPending=false;}
-            if(!current()||draft!==original||attachments!==originalAttachments||JSON.stringify(selectedExperts)!==JSON.stringify(selected))return;
+            if(!current()||draft!==original||JSON.stringify(occurrences)!==originalMentions||attachments.map(f=>f.id).join(',')!==attachmentIds)return;
         }
         if ((!active.executionBackend || active.executionBackend === 'nola') && !active.selectedModelId) {
             error = 'chatSession.invalidModel';
@@ -957,7 +916,7 @@
         }
         const submissionId = crypto.randomUUID();
         const text = draft;
-        void submissionController?.submit({text: draft, attachments, language: $locale, submissionId, selectedExperts:selectedReferences,expertSourceEpoch:selectedExpertEpoch()??undefined});
+        void submissionController?.submit({text: draft, attachments, language: $locale, submissionId, selectedExperts:selectedReferences,expertSourceEpoch:selectedExpertEpoch()??undefined,expertMentions:inline});
     }
     // Historical expert-only intents are reconciled unchanged; new inputs use Main.
     async function sendExpertOnly(conversationId: string, text: string, participantIds: string[]) {
@@ -1048,19 +1007,6 @@
                 return;
             }
         }
-        if (mentionsVisible && !composing && !event.isComposing && !event.shiftKey && !event.ctrlKey && !event.metaKey && !event.altKey) {
-            if (event.key === 'Escape') { event.preventDefault(); mentionDismissed = draft; return; }
-            if (['ArrowUp', 'ArrowDown', 'Enter', 'Tab'].includes(event.key)) {
-                event.preventDefault();
-                const count = expertMentionCandidates.length;
-                if (!count) return;
-                mentionIndex = Math.min(mentionIndex, count - 1);
-                if (event.key === 'Enter' || event.key === 'Tab') void chooseMention(expertMentionCandidates[mentionIndex].id);
-                else { mentionIndex = (mentionIndex + (event.key === 'ArrowUp' ? -1 : 1) + count) % count;
-                    document.getElementById(`expert-mention-${mentionIndex}`)?.scrollIntoView({block:'nearest'}); }
-                return;
-            }
-        }
         if (!composerEnterSubmits(event, composing)) return;
         event.preventDefault(); send();
     }
@@ -1081,8 +1027,8 @@
                 captureConversationReading(); submissionController?.detach(); submissionController = null;
                 active = null; timeline = null; turn = null; contentTabs = emptyContentTabs();
                 draft = ''; attachments = []; permissionState = null; reasoningState = null;
-                mentionLoading=false;mentionSelecting=false;++mentionDirectoryRequest;++mentionSelectionRequest;++expertRequest;
-                expertRoom = null; expertSourceEpoch=null; expertDirectory = null; expertRejoin = null; selectedExperts = []; expertSubmissions = []; expertRetryIntent = null; expertIntentStorageError = ''; expertAdmissionPending = false;
+                ++expertRequest;
+                expertRoom = null; expertSourceEpoch=null; expertDirectory = null; expertRejoin = null; occurrences = []; expertSubmissions = []; expertRetryIntent = null; expertIntentStorageError = ''; expertAdmissionPending = false;
                 ++expertRequest; expertsLoading = false; managingExperts = false; historicalRecoveryOwners = []; uiSurfaces = [];
                 challenge = null; reviewText = ''; pendingText = ''; pendingAttachmentNames = []; selectedMessageId = null;
                 contextUsage = null; conversationCacheReader.select(null); error = ''; notice = '';
@@ -1109,7 +1055,8 @@
                         expertRoom=association.room;expertSourceEpoch=sourceRead.sourceEpoch;
                         expertDirectory=await expertSourceCommand<AgentDirectory>({type:'directory'},sourceRead.sourceEpoch);
                         if(disposed||active?.conversationId!==selected.conversationId)return;
-                        updateSelectedExperts([...selectedExperts.filter(id=>association.room.room.participants.some(existing=>existing.id===id&&existing.active&&existing.agent_id!==member.agent_id)),member.id]);
+                        const agent=expertDirectory.agents.find(a=>a.id===member.agent_id);
+                        if(agent)insertExpert(agent);
                     }
                 } catch { if(!disposed&&active?.conversationId===selected.conversationId)notice=t($locale,'rooms.childChanged'); }
                 if(!disposed){const url=new URL(location.href);for(const key of ['expert_context','expert_participant','expert_agent','expert_revision','expert_source_epoch'])url.searchParams.delete(key);history.replaceState(history.state,'',url);}
@@ -1245,8 +1192,8 @@
         }
         if(current()){
             await conversationManager?.refresh();
-            // Ordinary resends already rewound history before starting the observed run.
-            if (p.experts.length && current()) await submissionController?.loadHistory('replace');
+            // The Host can defer the canonical rewind until the replacement is admitted.
+            if (current()) await submissionController?.loadHistory('replace');
         }
         return completion;
     }
@@ -1285,14 +1232,26 @@
         {:else if expertDirectory}
             {#each expertDirectory.agents.filter(agent => agent.availability === 'active') as agent (agent.id)}
                 {@const member = expertRoom?.room.participants.find(person => person.agent_id === agent.id && person.active)}
-                <div class="expert-choice"><label><input type="checkbox" checked={!!member && selectedExperts.includes(member.id)} disabled={expertsLoading || !canInteract} onchange={() => void toggleExpert(agent.id)} /> <span>{agent.name}</span></label></div>
+                <div class="expert-choice"><label><input type="checkbox" checked={selectedExperts.includes(agent.id)} disabled={expertsLoading || !canInteract} onchange={() => void toggleExpert(agent.id)} /> <span>{agent.name}</span></label>
+                    {#if member && expertRoom && active && member.agent_revision!==agent.revision}
+                        <button type="button" onclick={()=>{expertRejoin={owner:active!.conversationId,room:expertRoom!,agent};void rejoinExpert();}}>{t($locale,'rooms.rejoinExpert')}</button>
+                    {/if}</div>
             {:else}<span>{t($locale, 'rooms.noExperts')}</span>{/each}
         {/if}
         {#if expertRejoin}<button type="button" disabled={expertsLoading} onclick={rejoinExpert}>{t($locale,'rooms.rejoinExpert')}</button>{/if}
         {#if expertError}<p role="alert">{expertError}</p><button type="button" disabled={expertsLoading} onclick={() => void openExperts(true)}>{t($locale, 'shell.retry')}</button>{/if}
-        {#if selectedExperts.length}<button type="button" onclick={() => { updateSelectedExperts([]); expertError = ''; }}>{t($locale, 'chatInspector.clearExperts')}</button>{/if}
+        {#if selectedExperts.length}<button type="button" onclick={convertToPlainText}>{t($locale, 'chatInspector.clearExperts')}</button>{/if}
     </section>
 {/snippet}
+{#if mentionProfile}
+    <dialog class="mention-profile" use:showMentionProfile onclose={()=>mentionProfile=null}>
+        <strong>{mentionProfile.name}</strong>{#if mentionProfile.member?.description}<p>{mentionProfile.member.description}</p>{/if}
+        {#if active?.conversationId===mentionProfile.parent && hostId===mentionProfile.host && mentionProfile.ref.participant_id && mentionProfile.ref.context_conversation_id}
+            <ExpertChildHistory parentId={mentionProfile.parent} reference={mentionProfile.ref} expectedEpoch={mentionProfile.epoch} expectedHost={mentionProfile.host}/>
+        {/if}
+        <button type="button" onclick={()=>mentionProfile=null}>{t($locale,'rooms.close')}</button>
+    </dialog>
+{/if}
 <div class="chat-page" ontouchstart={beginEdgeSwipe} ontouchend={finishEdgeSwipe} ontouchcancel={() => edgeSwipe = undefined} role="presentation" style:--sidebar-width={`${widths.sidebar}px`}>
     <header class="chat-header">
         <div class="global-navigation" class:collapsed={viewportWidth > 700 && !navigationExpanded}><a class="desktop-mark" href="/today" aria-label="Nola">n</a><WorkspaceListNavigation category={listCategory} visible={navigationExpanded} onchange={setListCategory} /><button class="sidebar-toggle panel-toggle" title={t($locale, 'shell.toggleSidebar')} aria-label={t($locale, 'shell.toggleSidebar')} aria-expanded={navigationExpanded} onclick={() => navigationExpanded = !navigationExpanded}><PrototypeIcon name="sidebar" size={18} /></button></div>
@@ -1367,6 +1326,9 @@
                 {#if !messages.length && (initializing || historyLoading)}<p class="placeholder">{t($locale, 'chatPage.loading')}</p>{:else if !active && !initializationFailed}<div class="empty-conversation"><h2>{t($locale, 'chatPage.choose')}</h2><button class="empty-navigation" onclick={() => navigationPanel.openPanel()}>{t($locale, 'shell.workspace')}</button></div>{:else if active && !messages.length && !busy && !error}<div class="empty-conversation"><h2>{t($locale, 'chatPage.welcome')}</h2><p>{t($locale, 'chatPage.welcomeHint')}</p><button onclick={() => composer?.focus()}>{t($locale, 'chatPage.placeholder')}</button></div>{/if}
                 {#each messages as message (JSON.stringify([hostId, active?.conversationId, message.id]))}
                     {@const attachmentDisplay = message.role === 'user' ? displayTextAttachmentMessage(timelineMessageText(message)) : null}
+                    {@const visibleUserText=attachmentDisplay?.displayText??timelineMessageText(message)}
+                    {@const messageMentions=message.role==='user'&&message.parts.length===1?partMentions(message.parts[0].value,visibleUserText,message.parts[0].source==='optimistic'):[]}
+
                     {#if (pendingText || pendingAttachmentNames.length) && busy && !messages.some(item => item.id === turn?.identity.userMessageId) && message.id === turn?.identity.assistantMessageId}<article class="user pending"><div class="message-content">{#if pendingText}<Markdown source={pendingText} />{/if}{#if pendingAttachmentNames.length}<ul class="attached-files">{#each pendingAttachmentNames as name}<li>{name}</li>{/each}</ul>{/if}<small>{t($locale, 'chatPage.pendingUser')}</small></div></article>{/if}
                     <article class:user={message.role === 'user'} class:selected={selectedMessageId === message.id} class:search-match={matchingMessageIds.has(message.id)} data-message-id={message.id}
                         in:fly={enteringMessageIds.has(message.id) && !reducedMotion ? { y: 8, duration: 190, easing: cubicOut } : { y: 0, duration: 0 }}
@@ -1380,9 +1342,15 @@
                             {:else if message.role === 'assistant' && message.state === 'cancelled'}
                                 <p class="run-status" role="status">{t($locale, 'activity.status.cancelled')}</p>
                             {/if}
-                            {#if attachmentDisplay}{#if attachmentDisplay.displayText}<Markdown source={attachmentDisplay.displayText} />{/if}<ul class="attached-files">{#each attachmentDisplay.files as file}<li>{file.name}{file.clipped ? ` · ${t($locale, 'chatTextAttachment.clipped')}` : ''}</li>{/each}</ul>
+                            {#if messageMentions.length}
+                                <p class="mentioned-message">{#each mentionSegments(visibleUserText,messageMentions).segments as part}{#if part.agent_id}<button class="inline-name" type="button" onclick={()=>{
+                                    const ref=messageMentions.find(m=>m.selection.agent_id===part.agent_id)!.selection;
+                                    mentionProfile={name:part.text,parent:active!.conversationId,host:message.canonicalSnapshot?.sourceHostId??hostId,epoch:expertSourceEpoch,ref,member:expertRoom?.room.participants.find(m=>m.id===ref.participant_id&&m.context_conversation_id===ref.context_conversation_id)};
+                                }}>{part.text}</button>{:else}{part.text}{/if}{/each}</p>
                             {/if}
-                            <ChatMessageContent {message} ownerKey={JSON.stringify([hostId,active?.conversationId,generation])} readingActive={contentTabs.selected===conversationTabKey} skipText={!!attachmentDisplay} taskClientId={clientId} onTaskRecovered={() => { void loadHistory('replace'); observeSelected(); }} taskOwner={canInteract && active && turn?.runId ? {conversationId: active.conversationId, runId: turn.runId, hostId} : undefined}>
+                            {#if attachmentDisplay}{#if attachmentDisplay.displayText && !messageMentions.length}<Markdown source={attachmentDisplay.displayText} />{/if}<ul class="attached-files">{#each attachmentDisplay.files as file}<li>{file.name}{file.clipped ? ` · ${t($locale, 'chatTextAttachment.clipped')}` : ''}</li>{/each}</ul>
+                            {/if}
+                            <ChatMessageContent {message} ownerKey={JSON.stringify([hostId,active?.conversationId,generation])} readingActive={contentTabs.selected===conversationTabKey} skipText={!!attachmentDisplay || !!messageMentions.length} taskClientId={clientId} onTaskRecovered={() => { void loadHistory('replace'); observeSelected(); }} taskOwner={canInteract && active && turn?.runId ? {conversationId: active.conversationId, runId: turn.runId, hostId} : undefined}>
                                 {#snippet surface(part)}
                                     {@const reference = uiSurfaceReference(part.value, active?.conversationId ?? '', message.id)}
                                     {#if reference}
@@ -1394,7 +1362,7 @@
                                 {/snippet}
                             </ChatMessageContent>
                         </div>
-                            <ChatMessageActions {message} ownerKey={JSON.stringify([hostId, active?.conversationId, generation])}
+                            <ChatMessageActions mentionDirectory={expertDirectory?.agents??[]} mentionMembers={expertRoom?.room.participants??[]} loadMentions={loadMentionDirectory} mentionEpoch={()=>expertSourceEpoch} {message} ownerKey={JSON.stringify([hostId, active?.conversationId, generation])}
                                 editSource={active ? editedResendSourceForMessage(message, {hostId, clientId, conversationId: active.conversationId}) ?? undefined : undefined}
                                 oneditresend={canInteract ? editAndResend : undefined} ownerCurrent={() => !!active && canInteract && !disposed}
                                 busy={busy || expertAdmissionPending || expertExecutionPending || conversationWriting || !canInteract} selected={selectedMessageId === message.id} onselect={() => selectedMessageId = selectedMessageId === message.id ? null : message.id} onoperation={canInteract ? (operation, messageId) => conversationManager.mutateMessage(operation, messageId, {conversationId: active?.conversationId ?? null, generation}) : undefined} />
@@ -1453,13 +1421,6 @@
                 {/key}
             {/each}
             {#if active && canInteract}
-                {#if selectedExperts.length && expertRoom}
-                    <div class="selected-mentions">
-                        {#each expertRoom.room.participants.filter(member => selectedExperts.includes(member.id)) as member (member.id)}
-                            <button type="button" onclick={() => updateSelectedExperts(selectedExperts.filter(id => id !== member.id))}>{member.display_name} ×</button>
-                        {/each}
-                    </div>
-                {/if}
 <form class="composer" onsubmit={event => { event.preventDefault(); send(); }}
                 ondragover={event => { if (event.dataTransfer?.types.includes('Files')) { event.preventDefault(); event.dataTransfer.dropEffect = busy || attachmentsReading ? 'none' : 'copy'; } }}
                 ondrop={event => { if (event.dataTransfer?.types.includes('Files')) { event.preventDefault(); void textAttachments?.addFiles([...event.dataTransfer.files]); } }}
@@ -1476,24 +1437,12 @@
                         {:else}<p>{t($locale, 'commands.invalid')}</p>{/each}
                     </div>
                 {/if}
-                {#if mentionsVisible}
-                    <div class="expert-mentions" id="expert-mentions" role="listbox" aria-label={t($locale, 'rooms.experts')}>
-                        {#if mentionLoading}<p role="status">{t($locale, 'rooms.loading')}</p>
-                        {:else if expertError}<p role="alert">{expertError}</p>
-                        {:else if !expertMentionCandidates.length}<p>{t($locale, 'rooms.noExperts')}</p>{/if}
-                        {#each expertMentionCandidates as agent, index (agent.id)}
-                            <button type="button" role="option" tabindex="-1" disabled={mentionSelecting || expertsLoading} id={`expert-mention-${index}`} aria-selected={index === mentionIndex}
-                                onpointerdown={event => event.preventDefault()} onclick={() => void chooseMention(agent.id)}>
-                                <span class="mention-avatar" aria-hidden="true">{agent.name.slice(0,1)}</span>
-                                <span class="mention-copy"><strong>{agent.name}</strong><small>{agent.description}</small></span>
-                            </button>
-                        {/each}
-                    </div>
-                {/if}
-                <textarea id="chat-composer" bind:this={composer} bind:value={draft} aria-controls={commandsVisible ? 'composer-commands' : mentionsVisible ? 'expert-mentions' : undefined} role="combobox" aria-autocomplete="list" aria-expanded={commandsVisible || mentionsVisible}
-                    aria-activedescendant={commandsVisible && commandCandidates.length ? `composer-command-${Math.min(commandIndex, commandCandidates.length - 1)}` : mentionsVisible && expertMentionCandidates.length ? `expert-mention-${Math.min(mentionIndex, expertMentionCandidates.length - 1)}` : undefined}
-                    onfocus={() => { mentionFocused = true; void loadMentionDirectory(); }} onblur={() => mentionFocused = false}
-                    oninput={event => { commandDismissed = null; commandIndex = 0; commandError = ''; mentionDismissed = null; mentionIndex = 0; if (active && !composerUnavailable) drafts.write(active.conversationId, event.currentTarget.value); void loadMentionDirectory(event.currentTarget.value); }} onkeydown={composerKeydown} oncompositionstart={() => composing = true} oncompositionend={() => composing = false} placeholder={t($locale, 'chatPage.placeholder')} disabled={composerUnavailable} aria-busy={selectingConversation !== null || conversationWriting} rows="1"></textarea>
+                {#key active.conversationId}
+                    <InlineExpertInput id="chat-composer" bind:field={composer} value={draft} mentions={occurrences} directory={expertDirectory?.agents??[]} members={expertRoom?.room.participants??[]}
+                        onedit={editComposer} onload={loadMentionDirectory} onfocus={()=>mentionFocused=true} onblur={()=>mentionFocused=false} onkeydown={composerKeydown}
+                        commandList={commandsVisible?'composer-commands':undefined} commandOption={commandsVisible&&commandCandidates.length?'composer-command-'+commandIndex:undefined}
+                        placeholder={t($locale,'chatPage.placeholder')} disabled={composerUnavailable}/>
+                {/key}
                 <div class="composer-footer">
                 {#if active}<div class="composer-attachments"><ChatTextAttachments showHelp={false} bind:this={textAttachments} draftStore={workspaceHost?.attachments} conversationId={active.conversationId} {generation} busy={busy || composerUnavailable} onattachments={(files, reading) => { attachments = [...files]; attachmentsReading = reading; }} /></div>{/if}
                 <ChatModelMenu selection={modelState} onopen={() => sessionSettings?.refreshModelCatalog()} onselect={choice => sessionSettings?.selectModel(choice)} onsettings={() => { inspectorTab = 'settings'; }} onreload={() => sessionSettings?.reloadSettings()} />
@@ -1508,7 +1457,7 @@
                     <aside class="reply-notice"><p role="status">{expertError || t($locale, 'chatPage.expertDeliveryPendingNotice')}</p><p>{expertRetryIntent.text}</p>
                         <button type="button" disabled={expertAdmissionPending || !canInteract} onclick={retryCompleteExpertIntent}>{t($locale,'shell.retry')}</button>
                     </aside>
-                {:else if expertError}<p role="alert">{expertError}</p>{#if expertRejoin}<button type="button" disabled={expertsLoading} onclick={rejoinExpert}>{t($locale,'rooms.rejoinExpert')}</button>{/if}{/if}
+                {:else if expertError}<p role="alert">{expertError}</p>{#if occurrences.length}<button type="button" onclick={convertToPlainText}>{t($locale,'rooms.plainMentions')}</button>{/if}{#if expertRejoin}<button type="button" disabled={expertsLoading} onclick={rejoinExpert}>{t($locale,'rooms.rejoinExpert')}</button>{/if}{/if}
                 {#if knowledgeSavePending}<p role="status" class="muted">{t($locale, 'chatKnowledge.beforeSend')}</p>{/if}
             </form>{:else if canBranchDuringMaintenance}
                 <aside class="reply-notice"><p role="status">{t($locale, 'chatConversations.compactionCopyHint')}</p>
@@ -1608,14 +1557,12 @@
     .expert-mentions { max-height: 224px; overflow-y: auto; overscroll-behavior: contain; border: 1px solid var(--border); border-radius: 14px; padding: 6px; margin-bottom: 8px; }
     .expert-mentions > button { width: 100%; min-height: 52px; display: flex; align-items: center; gap: 12px; text-align: start; border: 1px solid transparent; background: transparent; box-shadow: none; padding: 6px 10px; border-radius: 10px; transition: border-color 120ms ease; }
     .expert-mentions > button[aria-selected='true'] { background: var(--accent-subtle); border-color: transparent; }
-    .mention-avatar { width: 32px; height: 32px; display: grid; place-items: center; border-radius: 50%; background: var(--surface); flex-shrink: 0; }
+    .mentioned-message{white-space:pre-wrap;overflow-wrap:anywhere;margin:0}
+    .inline-name{display:inline;padding:0;min-height:0;border:0;background:none;box-shadow:none;color:var(--primary);font:inherit;font-weight:600}
+    .mention-profile{max-width:min(85vw,360px);padding:20px;border:1px solid var(--border);border-radius:12px;background:var(--canvas);color:var(--content)}
     .mention-copy { min-width: 0; display: grid; gap: 3px; }
     .mention-copy strong, .mention-copy small { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
     .mention-copy small { color: var(--muted); }
-    .selected-mentions { display:flex; flex-shrink:0; gap:6px; overflow-x:auto; padding:4px 0 0; width:calc(100% - 64px); max-width:720px; align-self:center; }
-    .selected-mentions button { min-height:44px; white-space:nowrap; padding:4px 10px; border:0; border-radius:6px; background:var(--panel); font-size:12px; }
-    @media(max-width:700px) { .selected-mentions { width:calc(100% - 40px); } }
-    @media(max-width:359px) { .selected-mentions { width:calc(100% - 32px); } }
 
     .chat-page { display: grid; grid-template-columns: minmax(0, 1fr); grid-template-rows: auto minmax(0, 1fr); gap: 0; height: 100dvh; padding: 0; overflow: hidden; }
     .chat-header { position: relative; height: 48px; min-height: 48px; padding: 0 12px 0 0; min-width: 0; display: flex; justify-content: space-between; align-items: center; gap: 8px; isolation: isolate; z-index: 1; background: var(--panel); border-bottom: 1px solid var(--border); }
@@ -1693,9 +1640,7 @@
     .run-status { margin: 0; padding: 8px 0; color: var(--muted); font-size: 12px; }
     .composer { flex-shrink: 0; width: calc(100% - 64px); max-width: 720px; align-self: center; margin: 10px 12px 16px; padding: 12px 16px; border: 1px solid var(--outline); border-radius: 16px; background: var(--surface-gradient); box-shadow: inset 0 1px 0 var(--surface-highlight), var(--surface-shadow); transition: border-color var(--motion-fast) ease, background-color var(--motion-base) var(--motion-disclosure); }
     .composer:focus-within { outline: 2px solid var(--primary); outline-offset: 2px; border-color: var(--primary); }
-    .composer textarea { width: 100%; min-height: 40px; max-height: min(30dvh, 150px); border: 0; box-shadow: none; background: transparent; color: inherit; resize: none; field-sizing: content; line-height: 1.5; font-size: max(16px, 1rem); }
-    .composer textarea::placeholder { color: var(--muted); opacity: 1; }
-    .composer textarea:focus { outline: none; } .composer-actions { display: flex; justify-content: flex-end; gap: 8px; }
+    .composer-actions { display: flex; justify-content: flex-end; gap: 8px; }
     .composer-quick-bar { display: flex; flex-shrink: 0; flex-wrap: wrap; align-items: center; gap: 16px; padding: 0 0 16px; width: 100%; margin: 0; }
     .chat-side { position:relative; display: grid; align-content: start; gap: 8px; min-width: 0; min-height:0; overflow:auto; overscroll-behavior:contain; padding: 12px; border-left: 1px solid var(--border); background: var(--canvas); }
     .inspector-content { display: grid; align-content: start; gap: 16px; min-width: 0; padding: 10px 2px 14px; }
@@ -1743,7 +1688,6 @@
         .transcript article.user .message-content { padding: 10px 12px; }
         .transcript article:has(> .response-identity) { gap: 10px; }
         .composer { width: calc(100% - 40px); margin:10px 20px 16px; padding:4px; border-radius:24px; background:var(--surface-gradient); }
-        .composer textarea { font-size: 16px; min-height: 44px; height: auto; max-height: max(44px, min(22dvh, 160px)); resize: none; padding: 10px 14px; }
         .composer-footer { align-items: center; gap: 0; }
         .composer-footer :global(.model-menu) { flex: 1; min-width: 0; max-width: none; }
         .composer-footer :global(.model-menu > summary) { min-height: 44px; justify-content: flex-start; font-size: 12px; padding-inline: 8px; }

@@ -2340,6 +2340,7 @@ actor MacAgentHostRuntime: MacLocalAgentRuntime {
                 ]
             },
         ]
+        payload["expert_mentions"] = try MacRemoteContextPayload.mentions(request.contextComponents)
         payload["selected_experts"] = try MacRemoteContextPayload.selectedExperts(request.contextComponents)
         if let epoch = try MacRemoteContextPayload.selectionEpoch(request.contextComponents) { payload["expected_source_store_epoch"] = epoch }
         if usesNolaModel { payload["expert_template_authority"] = try JSONSerialization.jsonObject(with: JSONEncoder().encode(AppleExpertTemplateAuthority.local())) }

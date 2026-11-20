@@ -93,6 +93,7 @@ enum ChatComposerAccessibility {
 }
 
 final class ChatPasteAwareTextView: UITextView {
+    var pastedText: ((String) -> Void)?
     var onPasteFiles: (([URL]) -> Void)?
     var onPasteFailure: ((Error) -> Void)?
     var mentionsVisible = false
@@ -128,10 +129,11 @@ final class ChatPasteAwareTextView: UITextView {
             return
         }
         super.paste(sender)
+        pastedText?(text)
     }
 }
 
-private struct ChatPasteAwareEditor: UIViewRepresentable {
+struct ChatPasteAwareEditor: UIViewRepresentable {
     @Binding var text: String
     let isEditable: Bool
     let focus: FocusState<Bool>.Binding
@@ -139,6 +141,7 @@ private struct ChatPasteAwareEditor: UIViewRepresentable {
     let onPasteFailure: (Error) -> Void
     var mentionsVisible = false
     var mentionCommand: (String) -> Bool = { _ in false }
+    var mentionEditor = AppleMentionEditor()
 
     func makeCoordinator() -> Coordinator { Coordinator(parent: self) }
 
@@ -159,9 +162,36 @@ private struct ChatPasteAwareEditor: UIViewRepresentable {
         context.coordinator.parent = self
         view.mentionsVisible = mentionsVisible
         view.mentionCommand = mentionCommand
+        view.pastedText = mentionEditor.pasted
         ChatComposerAccessibility.configure(view)
         view.tintColor = UIColor(DesignTokens.actionColor)
-        if view.text != text { view.text = text }
+        if view.markedTextRange == nil {
+            if view.text != text { view.text = text }
+            if let request = mentionEditor.caretRequest, context.coordinator.lastCaret != request.revision {
+                context.coordinator.lastCaret = request.revision
+                if let previous = request.before {
+                    let current = AppleMentionEditor.Snapshot(text: text, mentions: mentionEditor.mentions, caret: request.location)
+                    context.coordinator.undoHistory.registerCompletion(view.undoManager, before: previous, after: current) { [weak view, weak coordinator = context.coordinator] expected, restored in
+                        guard let view, let coordinator, view.text == expected.text else { return false }
+                        coordinator.parent.mentionEditor.restore(restored.text, restored.mentions)
+                        view.text = restored.text
+                        let range = NSRange(location: min(restored.caret, restored.text.utf16.count), length: 0)
+                        view.selectedRange = range
+                        return true
+                    }
+                }
+                view.selectedRange = NSRange(location: min(request.location, view.text.utf16.count), length: 0)
+            }
+            if context.coordinator.styledText != text || context.coordinator.styledMentions != mentionEditor.mentions {
+                context.coordinator.styledText = text
+                context.coordinator.styledMentions = mentionEditor.mentions
+                view.textStorage.addAttribute(.foregroundColor, value: UIColor.label, range: NSRange(location: 0, length: view.textStorage.length))
+                for mention in mentionEditor.mentions where NSMaxRange(mention.range) <= view.textStorage.length {
+                    view.textStorage.addAttribute(.foregroundColor, value: view.tintColor as Any, range: mention.range)
+                }
+                view.typingAttributes[.foregroundColor] = UIColor.label
+            }
+        }
         view.isEditable = isEditable
         view.onPasteFiles = onPasteFiles
         view.onPasteFailure = onPasteFailure
@@ -183,7 +213,46 @@ private struct ChatPasteAwareEditor: UIViewRepresentable {
         var parent: ChatPasteAwareEditor
         init(parent: ChatPasteAwareEditor) { self.parent = parent }
 
+        var previousSelection: NSRange?
+        var lastCaret: UUID?
+        var styledText: String?
+        var styledMentions: [AppleDraftMention] = []
+        var undoHistory = AppleMentionUndoHistory()
+        var pendingEdit: (String, NSRange, String)?
+        func textView(_ textView: UITextView, shouldChangeTextIn range: NSRange, replacementText text: String) -> Bool {
+            if text == "\n", textView.markedTextRange == nil, parent.mentionsVisible, parent.mentionCommand("accept") { return false }
+            let full = parent.mentionEditor.deletionRange(range, replacement: text)
+            if full != range, textView.markedTextRange == nil {
+                textView.selectedRange = full
+                textView.deleteBackward()
+                return false
+            }
+            pendingEdit = (textView.text, range, text)
+            return true
+        }
+        func textViewDidChangeSelection(_ textView: UITextView) {
+            let selection = textView.selectedRange, composing = textView.markedTextRange != nil
+            let next = parent.mentionEditor.caretRange(selection, previous: previousSelection)
+            previousSelection = next
+            if !composing, next != selection, NSMaxRange(next) <= textView.text.utf16.count { textView.selectedRange = next; return }
+            Task { @MainActor [weak self, weak textView] in
+                guard textView?.selectedRange == selection else { return }
+                self?.parent.mentionEditor.selectionChanged(selection, composing)
+            }
+        }
         func textViewDidChange(_ textView: UITextView) {
+            if let (old, range, replacement) = pendingEdit,
+               (old as NSString).replacingCharacters(in: range, with: replacement) == textView.text {
+                pendingEdit = nil
+                if undoHistory.restore(before: old, after: textView.text, undo: textView.undoManager, editor: parent.mentionEditor) { return }
+                if parent.mentionEditor.applyEdit(old, range, replacement) {
+                    let original = parent.mentionEditor.mentions
+                    undoHistory.record(before: old, after: textView.text, original: original,
+                        current: AppleDraftMention.replacing(original, range: range, with: replacement))
+                    return
+                }
+            }
+            pendingEdit = nil
             if parent.text != textView.text { parent.text = textView.text }
         }
         func textViewDidBeginEditing(_ textView: UITextView) {
@@ -576,6 +645,7 @@ struct ChatComposer<ModelControl: View>: View {
     let onStop: () -> Void
     var mentionsVisible = false
     var mentionCommand: (String) -> Bool = { _ in false }
+    var mentionEditor = AppleMentionEditor()
     let showsModelControl: Bool
     let modelControl: ModelControl
 
@@ -712,7 +782,7 @@ struct ChatComposer<ModelControl: View>: View {
                 onPasteFiles: { onBeginAttachFiles()(.success($0)) },
                 onPasteFailure: { onBeginAttachFiles()(.failure($0)) },
                 mentionsVisible: mentionsVisible,
-                mentionCommand: mentionCommand
+                mentionCommand: mentionCommand, mentionEditor: mentionEditor
             )
             .accessibilityIdentifier("chat.composer.input")
             .focused(focus)

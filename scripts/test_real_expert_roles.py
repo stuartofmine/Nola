@@ -137,7 +137,8 @@ def main():
                             if not data:continue
                             event=json.loads(data)
                             if event.get('type') in {'error','submission_rejected'}:
-                                raise RuntimeError('Main source rejected: '+str(event.get('reason_code') or event.get('code') or 'unconfirmed'))
+                                detail = event.get('reason_code') or event.get('code') or event.get('message') or event.get('error')
+                                raise RuntimeError(f"Main stream {event['type']}: {str(detail or 'unconfirmed')[:500]}")
                             if event.get('type')=='submission_receipt' and event.get('receipt',{}).get('phase')=='rejected':
                                 raise RuntimeError('Main source admission was rejected')
 

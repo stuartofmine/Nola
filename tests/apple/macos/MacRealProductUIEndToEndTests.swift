@@ -523,6 +523,64 @@ final class MacRealProductUIEndToEndTests: XCTestCase {
             .write(to: evidence.appendingPathComponent("report.json"))
     }
 
+    func testInlineExpertMentionAtCaretFromNativeComposer() async throws {
+        struct Canvas: View {
+            @FocusState var focus: Bool
+            let model: MacWorkspaceModel
+            @ObservedObject var workspace: MacAgentRoomWorkspace
+            var body: some View { MacConversationCanvas(model: model, composerFocused: $focus, expertWorkspace: workspace) }
+        }
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent("mention-ui-" + UUID().uuidString)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let port = try MacApplicationPort(databaseURL: directory.appendingPathComponent("test.sqlite"))
+        let service = MacAgentRoomService(runtime: port)
+        let agent = try XCTUnwrap(service.createAgent(name: "测试", description: "回归测试", defaults: .object([:]), directory: service.directory()).agents.first(where: { $0.name == "测试" }))
+        let model = MacWorkspaceModel(canonicalRepository: MacCanonicalConversationRepository(store: port), localAgentRuntime: MacAgentHostRuntime.shared,
+            remoteHost: PersistenceTestRemoteHost(), modelApplication: port)
+        model.newConversation()
+        let owner = try XCTUnwrap(model.selectedConversationID)
+        let workspace = MacAgentRoomWorkspace(service: service)
+        await workspace.refreshExpertDirectory()
+        let hosting = NSHostingView(rootView: Canvas(model: model, workspace: workspace).frame(width: 840, height: 460))
+        let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 840, height: 460), styleMask: [.titled], backing: .buffered, defer: false)
+        window.contentView = hosting; window.makeKeyAndOrderFront(nil)
+        defer { model.presentationDidDetach(); window.orderOut(nil); window.contentView = nil }
+        await settle(hosting)
+        func findEditor(_ view: NSView) -> MacAttachmentPasteTextView? {
+            if let input = view as? MacAttachmentPasteTextView { return input }
+            return view.subviews.lazy.compactMap { findEditor($0) }.first
+        }
+        let input = try XCTUnwrap(findEditor(hosting))
+        XCTAssertTrue(window.makeFirstResponder(input))
+        input.insertText("请核对。", replacementRange: NSRange(location: 0, length: 0))
+        input.setSelectedRange(NSRange(location: 1, length: 0))
+        input.insertText("@测", replacementRange: input.selectedRange())
+        await settle(hosting)
+        func screenshot(_ name: String) throws {
+            let url = directory.appendingPathComponent(name + ".png")
+            try capturePNG(hosting, to: url)
+            let attachment = XCTAttachment(contentsOfFile: url)
+            attachment.name = name; attachment.lifetime = .keepAlways; add(attachment)
+        }
+        try screenshot("mac-inline-mention-picker")
+        // Return goes through the AppKit editor and the same candidate command as a physical keyboard.
+        let key = try XCTUnwrap(NSEvent.keyEvent(with: .keyDown, location: .zero, modifierFlags: [], timestamp: 0,
+            windowNumber: window.windowNumber, context: nil, characters: "\r", charactersIgnoringModifiers: "\r", isARepeat: false, keyCode: 36))
+        input.keyDown(with: key)
+        let deadline = ContinuousClock.now + .seconds(4)
+        while model.draft == "请@测核对。", ContinuousClock.now < deadline { await settle(hosting) }
+        XCTAssertEqual(model.draft, "请@测试 核对。")
+        XCTAssertEqual(model.draftMentions(owner).map { $0.expert.agentID }, [agent.id])
+        try screenshot("mac-inline-mention-composer")
+        input.setSelectedRange(NSRange(location: "请@测试".utf16.count, length: 0))
+        input.deleteBackward(nil)
+        await settle(hosting)
+        XCTAssertEqual(model.draft, "请 核对。")
+        XCTAssertTrue(model.draftMentions(owner).isEmpty)
+        XCTAssertNil(try service.forConversation(owner))
+    }
+
     func testOrdinaryComposerMentionSendsRealExpertReply() async throws {
         let environment = ProcessInfo.processInfo.environment
         guard environment["NOLA_REAL_LLM_E2E"] == "1", let config = realLLMConfiguration(environment) else {
@@ -549,7 +607,7 @@ final class MacRealProductUIEndToEndTests: XCTestCase {
         model.newConversation()
         let createdConversation = try XCTUnwrap(model.selectedConversationID)
         let service = MacAgentRoomService(runtime: port)
-        var frozenTemplate = PromptTemplate(name: "Frozen arithmetic definition", language: "en",
+        let frozenTemplate = PromptTemplate(name: "Frozen arithmetic definition", language: "en",
             content: "You are the original arithmetic expert. Answer with the exact result marker requested by the user. Do not use tools.",
             description: "A real definition snapshot for edited resend acceptance")
         try MacPromptLibrary.service.addTemplate(frozenTemplate)
@@ -589,9 +647,9 @@ final class MacRealProductUIEndToEndTests: XCTestCase {
         let candidate = try XCTUnwrap(accessibilityElement(hosting, identifier: mentionID), accessibilityTree(hosting))
         XCTAssertEqual(candidate.accessibilityPerformPress?(), true)
         await settle(hosting)
-        XCTAssertEqual(model.draft, "")
+        XCTAssertEqual(model.draft, "@"+expert.name+" ")
         XCTAssertTrue(window.makeFirstResponder(input))
-        input.insertText("Compute 37 times 19. Reply MAC_EXPERT_RESULT= followed by the result. Do not use tools.",
+        input.insertText("Delegate to this selected expert to compute 37 times 19. Wait for its answer and reply MAC_EXPERT_RESULT= followed by the result.",
             replacementRange: NSRange(location: NSNotFound, length: 0))
         await settle(hosting)
         let send = try XCTUnwrap(accessibilityElement(hosting, identifier: "mac-composer-send"))
@@ -607,79 +665,47 @@ final class MacRealProductUIEndToEndTests: XCTestCase {
         }
         let association = try XCTUnwrap(service.forConversation(createdConversation))
         let participant = try XCTUnwrap(association.room.room.participants.first { $0.agentID == expert.id })
-        let receipt = try XCTUnwrap(service.submissions(roomID: association.roomID).first {
-            $0.selectedParticipantID == participant.id && $0.input.conversationID == createdConversation
+        // A real child exists only when Main called delegate_expert. Link it to this exact parent Run.
+        let mainRun = try await editedRunID(createdConversation, repository: repository)
+        let original = try await waitForRealTerminal(conversation: createdConversation, run: mainRun, repository: repository, application: port)
+        let sourceUser = try XCTUnwrap(original.messages.last { $0.role == .user })
+        let sourceMentions = try XCTUnwrap(sourceUser.expertMentions)
+        XCTAssertEqual(sourceMentions.runs(in: sourceUser.text)?.map(\.expert.contextConversationID), [participant.contextConversationID])
+        let sourceExchange = try XCTUnwrap(service.peerExchanges(conversationID: createdConversation).exchanges.first {
+            $0.source.isMainAgent && $0.sourceRunID == mainRun && $0.target.participant_id == participant.id
         })
-        let childRunID = try XCTUnwrap(receipt.executionID)
-        while try port.canonicalRunTerminal(conversationID: participant.contextConversationID, runID: childRunID) == nil,
-              ContinuousClock.now < answerDeadline {
-            try await Task.sleep(for: .milliseconds(100))
-        }
-        let terminal = try XCTUnwrap(try port.canonicalRunTerminal(conversationID: participant.contextConversationID, runID: childRunID))
-        let receiptDeadline = ContinuousClock.now + .seconds(10)
-        while try service.submission(roomID: association.roomID, submissionID: receipt.id)?.state == "executing",
-              ContinuousClock.now < receiptDeadline {
-            try await Task.sleep(for: .milliseconds(100))
-        }
-        await settle(hosting)
-        let text = accessibilityTree(hosting)
-        XCTAssertFalse(text.contains("mac-experts-resume-"), "A committed expert answer must not retain a cold-recovery action")
-        let loadedChild = try await repository.loadAsync(conversationID: participant.contextConversationID)
-        let child = try XCTUnwrap(loadedChild)
-        try persistCanonicalTranscript(child.messages, to: artifactURL(environment, "NOLA_MAC_REAL_UI_TRANSCRIPT"))
-        // This short expert task records one observed terminal UI state. The
-        // separate long-response case measures incremental stream transitions.
-        try JSONSerialization.data(withJSONObject: [["stage": "expert-final", "running": false,
-            "runID": terminal.runID, "assistantCharacters": child.messages.last(where: { $0.role == .assistant })?.text.count ?? 0]])
-            .write(to: artifactURL(environment, "NOLA_MAC_REAL_UI_TIMELINE"))
-        try text.write(to: artifactURL(environment, "NOLA_MAC_REAL_UI_ACCESSIBILITY"), atomically: true, encoding: .utf8)
-        try capturePNG(hosting, to: artifactURL(environment, "NOLA_MAC_REAL_UI_SCREENSHOT"))
-        XCTAssertTrue(text.contains("MAC_EXPERT_RESULT=703"), text)
-
-        // Change the live directory and template after the source Run. The
-        // production edit action must use the frozen original definition.
-        let sourceParentID = try XCTUnwrap(receipt.input.parentMessageID)
-        let sourceManifest = try XCTUnwrap(service.expertMessageSource(conversationID: createdConversation, messageID: sourceParentID))
-        let sourceEntry = try XCTUnwrap(sourceManifest.entries.first)
-        let sourceDefinition = try XCTUnwrap(sourceEntry.instruction_witness?.prompt_definitions.first {
-            $0.component_id == "prompt_template:" + frozenTemplate.id.uuidString
-        })
-        XCTAssertEqual(sourceDefinition.content, frozenTemplate.content)
-        let originalTemplateBody = frozenTemplate.content
-        frozenTemplate.content = originalTemplateBody
-        try MacPromptLibrary.service.updateTemplate(frozenTemplate)
-        XCTAssertEqual(MacPromptLibrary.service.readableTemplate(id: frozenTemplate.id)?.content, frozenTemplate.content)
+        let child = try await waitForRealTerminal(conversation: participant.contextConversationID, run: sourceExchange.exchangeID,
+            repository: repository, application: port)
+        XCTAssertTrue(original.messages.contains { $0.role == .assistant && $0.text.contains("MAC_EXPERT_RESULT=703") })
+        // Renaming the directory entry must not retarget the historical mention when only its surrounding text is edited.
         _ = try service.updateAgent(expert, name: "Changed current directory name", description: "Changed after the source Run",
             availability: "active", directory: service.directory())
-        let sourceUser = try XCTUnwrap(model.selectedMessages.first { $0.role == .user })
         let expertDraft = "UNSENT_EXPERT_SOURCE_DRAFT"
         try await typeRealComposer(expertDraft, in: hosting, window: window)
+        let preserved = try XCTUnwrap(sourceMentions.runs(in: sourceUser.text)?.first)
+        let untouched = NSMaxRange(preserved.range)
+        let replaced = NSRange(location: untouched, length: sourceUser.text.utf16.count - untouched)
         let expertTarget = try await editVisibleUserMessage(sourceUser, source: createdConversation,
-            text: "Compute 41 times 17. Reply MAC_EXPERT_EDIT_RESULT= followed by the result. Do not use tools.",
-            model: model, in: hosting, window: window)
-        let expertReplyDeadline = ContinuousClock.now + .seconds(180)
-        while !accessibilityTree(hosting).contains("MAC_EXPERT_EDIT_RESULT=697") && ContinuousClock.now < expertReplyDeadline {
-            try await Task.sleep(for: .milliseconds(100))
-        }
+            text: " Delegate to the selected expert to compute 41 times 17. Wait for its answer and reply MAC_EXPERT_EDIT_RESULT= followed by the result.",
+            replacing: replaced, model: model, in: hosting, window: window)
         XCTAssertEqual(expertTarget, createdConversation)
-        let editedParent = try await repository.loadCanonicalConversationAsync(conversationID: expertTarget)
-        let editedParentID = try XCTUnwrap(editedParent?.messages.last(where: { $0.role == "user" })?.id)
-        let actualExpertManifest = try XCTUnwrap(service.expertMessageSource(conversationID: expertTarget, messageID: editedParentID))
-        let actualExpertEntry = try XCTUnwrap(actualExpertManifest.entries.first)
-        XCTAssertEqual(actualExpertManifest.entries.count, sourceManifest.entries.count)
-        XCTAssertEqual(actualExpertEntry.participant.context_conversation_id, participant.contextConversationID)
-        XCTAssertNotEqual(actualExpertEntry.child_submission_id, childRunID)
-        let editedChild = try await waitForRealTerminal(conversation: actualExpertEntry.participant.context_conversation_id,
-            run: actualExpertEntry.child_submission_id, repository: repository, application: port)
-        XCTAssertTrue(editedChild.messages.contains { $0.role == .assistant && $0.text.contains("MAC_EXPERT_EDIT_RESULT=697") })
-        XCTAssertFalse(editedChild.messages.contains { $0.role == .assistant && $0.text.contains("MAC_EXPERT_RESULT=") })
-        XCTAssertEqual(editedParent?.messages.filter { $0.role == "user" }.count, 1)
+        XCTAssertFalse(model.selectedMessages.contains { $0.id == sourceUser.id }, "The admitted edit must retire its source before the response finishes")
+        XCTAssertEqual(model.selectedMessages.filter { $0.role == .user }.count, 1)
+        let editedMainRun = try await editedRunID(expertTarget, repository: repository)
+        let editedMain = try await waitForRealTerminal(conversation: expertTarget, run: editedMainRun, repository: repository, application: port)
+        let editedUser = try XCTUnwrap(editedMain.messages.last { $0.role == .user })
+        XCTAssertEqual(editedUser.expertMentions?.runs(in: editedUser.text)?.map(\.expert), [preserved.expert])
+        XCTAssertEqual(editedMain.messages.filter { $0.role == .user }.count, 1)
+        XCTAssertTrue(editedMain.messages.contains { $0.role == .assistant && $0.text.contains("MAC_EXPERT_EDIT_RESULT=697") })
+        XCTAssertFalse(editedMain.messages.contains { $0.role == .assistant && $0.text.contains("MAC_EXPERT_RESULT=703") })
+        let editedExchange = try XCTUnwrap(service.peerExchanges(conversationID: expertTarget).exchanges.first {
+            $0.source.isMainAgent && $0.sourceRunID == editedMainRun && $0.target == sourceExchange.target
+        })
+        let editedChild = try await waitForRealTerminal(conversation: participant.contextConversationID, run: editedExchange.exchangeID,
+            repository: repository, application: port)
         try capturePNG(hosting, to: artifactURL(environment, "NOLA_MAC_REAL_UI_SCREENSHOT").deletingLastPathComponent().appendingPathComponent("expert-edited-ui.png"))
         try await selectRealConversation(createdConversation, model: model, in: hosting)
         XCTAssertEqual(model.draft, expertDraft)
-        XCTAssertNotEqual(model.selectedMessages.first(where: { $0.role == .user })?.text, sourceUser.text)
-        XCTAssertEqual(try service.expertMessageSource(conversationID: createdConversation, messageID: sourceParentID)?.input.text,
-                       sourceManifest.input.text)
 
         // The same production editor must also work for an ordinary message.
         let newConversation = try XCTUnwrap(accessibilityElement(hosting, identifier: "workspace.newConversation"))
@@ -743,7 +769,7 @@ final class MacRealProductUIEndToEndTests: XCTestCase {
         return try XCTUnwrap(conversation?.messages.last(where: { $0.role == "user" })?.runID)
     }
 
-    private func editVisibleUserMessage(_ message: MacChatMessage, source: String, text: String,
+    private func editVisibleUserMessage(_ message: MacChatMessage, source: String, text: String, replacing range: NSRange? = nil,
                                         model: MacWorkspaceModel, in root: NSView, window: NSWindow) async throws -> String {
         let id = "mac-message-edit-" + message.id.uuidString
         let deadline = ContinuousClock.now + .seconds(45)
@@ -766,7 +792,7 @@ final class MacRealProductUIEndToEndTests: XCTestCase {
         }
         await settle(content)
         let editor = try XCTUnwrap(sheet.firstResponder as? NSTextInputClient, accessibilityTree(content))
-        editor.insertText(text, replacementRange: NSRange(location: 0, length: message.text.utf16.count))
+        editor.insertText(text, replacementRange: range ?? NSRange(location: 0, length: message.text.utf16.count))
         sheet.makeFirstResponder(content)
         await settle(content)
         let submit = try XCTUnwrap(accessibilityElement(content, identifier: "mac-message-edit-submit"), accessibilityTree(content))

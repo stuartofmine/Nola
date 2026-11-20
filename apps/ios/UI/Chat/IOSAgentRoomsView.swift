@@ -746,6 +746,7 @@ struct IOSChatExpertPicker: View {
     var allowsManagement = true
     var onManagementClosed: () -> Void = {}
     @Binding var selection: Set<String>
+    var onMention: ((IOSPersistentAgent) -> Void)? = nil
     @Environment(\.dismiss) private var dismiss
     @State private var query = ""
     @State private var showingManagement = false
@@ -778,7 +779,8 @@ struct IOSChatExpertPicker: View {
                 )
             List(visibleAgents, id: \.id) { agent in
                 Button {
-                    if selection.contains(agent.id) { selection.remove(agent.id) }
+                    if let onMention { onMention(agent) }
+                        else if selection.contains(agent.id) { selection.remove(agent.id) }
                     else { selection.insert(agent.id) }
                 } label: {
                     HStack(spacing: 10) {

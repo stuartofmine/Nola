@@ -12,6 +12,6 @@
 
 只有主 Agent 提供 `delegate_expert`。专家作为现有 Task worker 的叶子任务运行，使用自己的模型、推理档位、Skill 与权限；专家不再派发专家或临时 subagent。结果与缺失信息交回主 Agent，再由主 Agent 与用户沟通。专家历史挂在主会话下，只读；历史作者的旧格式仍可读取，新主 Agent 来源明确绑定父会话。远端主 Run 继续使用现有认证加密、SourceSubmission 与 AssistantJournal 路径，不能用本机 Runtime 代替 Host 授权。
 
-专家 chip 表示可取消的会话选择，普通准入消费该次正文与附件草稿后仍保留选择；取消 chip 不移除已加入成员或删除其上下文。Main 自行决定是否需要调用所选专家。
+输入时在光标处选择专家，已发消息在原句保留名字。下一条草稿可重新点名；当前会话中已加入的专家和子会话继续保留。交互与恢复规则见[消息内的专家提及](../../design/shared/EXPERT_MENTIONS.md)。
 
 专家叶子不提供 `request_user_input`，缺失信息由主 Agent 统一向用户确认。旧冻结专家配置若含主控控制则明确拒绝恢复执行，保留历史和可用取消操作，不改写旧捕获。

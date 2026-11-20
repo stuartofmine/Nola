@@ -40,6 +40,7 @@ import UIKit
         let hybridToolsEnabled: Bool
         let hybridCapabilities: Set<String>
         var selectedExperts: [AppleMainExpertSelectionEntry] = []
+        var expertMentions: AppleExpertMentions? = nil
         var expertSelectionSourceEpoch: String? = nil
     }
     private unowned let workspace: ChatManager
@@ -109,7 +110,7 @@ import UIKit
                 result = .success(try await execution.processMessage(input.prompt,
                     displayMessage: input.displayText, userMessageMeta: input.metadata,
                     attachments: input.attachments, userMessageID: prepared.identity.visibleUserMessageID,
-                    assistantMessageID: identity, responseStyle: input.responseStyle, selectedExperts: input.selectedExperts, expertSelectionSourceEpoch: input.expertSelectionSourceEpoch))
+                    assistantMessageID: identity, responseStyle: input.responseStyle, selectedExperts: input.selectedExperts, expertMentions: input.expertMentions, expertSelectionSourceEpoch: input.expertSelectionSourceEpoch))
             } catch {
                 execution.recordSubmissionFailure(error)
                 result = .failure(error)
@@ -325,6 +326,19 @@ public final class ChatManager: ObservableObject {
         guard let current = try expertRoomSource(owner: source.owner) else { return false }
         return current.owner == source.owner && current.provider.sameExpertConnection(as: source.provider)
             && (current.epoch == nil || current.epoch == source.epoch)
+    }
+
+    func scopedExpertHistoryCommand<T: Decodable & Sendable>(owner: UUID, source: ExpertRoomSource, command: [String: AgentCoreJSONValue]) async throws -> T {
+        func validateSource() throws {
+            guard source.owner == owner, currentConversationId == owner, let epoch = source.epoch,
+                  case .remote(let host, let canonicalEpoch) = try container.applicationRuntime.conversationSourceOwner(conversationID: owner.uuidString),
+                  host == source.provider.journalSourceHostID, epoch == canonicalEpoch,
+                  try matchesExpertRoomSource(source) else { throw IOSApplicationRuntimeError.invalidResponse }
+        }
+        try validateSource()
+        let response = try await source.provider.expertRooms(command: .object(command), expectedEpoch: source.epoch)
+        try validateSource()
+        return try JSONDecoder().decode(T.self, from: JSONEncoder().encode(response.result))
     }
 
     /// A paired address is transport configuration; Core owns the durable source.
@@ -3736,6 +3750,7 @@ public final class ChatManager: ObservableObject {
         responseStyle: PromptResponseStyle? = nil,
         inputOrigin: AgentCoreInputOrigin = .interactiveUser,
         selectedExperts: [AppleMainExpertSelectionEntry] = [],
+        expertMentions: AppleExpertMentions? = nil,
         expertSelectionSourceEpoch: String? = nil
     ) async throws -> String {
         if !isConversationExecution {
@@ -3752,7 +3767,7 @@ public final class ChatManager: ObservableObject {
             return try await session.processMessage(message, displayMessage: displayMessage,
                 userMessageMeta: userMessageMeta, attachments: attachments,
                 userMessageID: userMessageID, assistantMessageID: assistantMessageID,
-                responseStyle: responseStyle, inputOrigin: inputOrigin, selectedExperts: selectedExperts, expertSelectionSourceEpoch: expertSelectionSourceEpoch)
+                responseStyle: responseStyle, inputOrigin: inputOrigin, selectedExperts: selectedExperts, expertMentions: expertMentions, expertSelectionSourceEpoch: expertSelectionSourceEpoch)
         }
         if !selectedExperts.isEmpty { try AppleMainExpertSelectionContext(selectedExperts: selectedExperts).validate() }
         guard !messageInFlight, !processingState.blocksInput, deviceAgentCoordinator == nil else {
@@ -3880,7 +3895,7 @@ public final class ChatManager: ObservableObject {
                                 conversationID: convId.uuidString,
                                 conversationTitle: title,
                                 identity: turnIdentity,
-                                userText: message,
+                                userText: expertMentions == nil ? message : (displayMessage ?? message),
                                 userContentJSON: try? String(decoding: JSONEncoder().encode(canonicalUserMessageMeta), as: UTF8.self),
                                 contextCheckpointID: nil,
                                 createdAtMs: Int64(Date().timeIntervalSince1970 * 1_000)
@@ -4163,7 +4178,7 @@ public final class ChatManager: ObservableObject {
                     conversationId: generationConversationId,
                     preparedModel: preparedRunModel,
                     turnIdentity: turnIdentity,
-                    persistedUserText: message,
+                    persistedUserText: expertMentions == nil ? message : (displayMessage ?? message),
                     userContentJSON: roomExpertEntry == nil ? (try? String(
                         decoding: JSONEncoder().encode(canonicalUserMessageMeta),
                         as: UTF8.self
@@ -4171,7 +4186,7 @@ public final class ChatManager: ObservableObject {
                     inputOrigin: inputOrigin,
                     expectedConfigurationRevision: submittedConfigurationRevision,
                     expectedParentMessageID: submittedParentMessageID,
-                    contextComponents: (preparedCorePayload?.contextComponents ?? []) + (try mainExpertSelectionComponents(selectedExperts, expectedSourceEpoch: expertSelectionSourceEpoch)),
+                    contextComponents: (preparedCorePayload?.contextComponents ?? []) + (try mainExpertSelectionComponents(selectedExperts, expectedSourceEpoch: expertSelectionSourceEpoch, mentions: expertMentions)),
                     promptComposition: preparedPromptComposition,
                     queuedUserAdmission: queuedUIInput?.admission
                 )
@@ -4198,7 +4213,7 @@ public final class ChatManager: ObservableObject {
 
             // Build a minimal ModelInput for chat-mode streaming (providers will interpret userPrefs["message"]).
             var userPrefs: [String: String] = [
-                "message": message,
+                "message": expertMentions == nil ? message : (displayMessage ?? message),
                 "response_style": resolvedResponseStyle.rawValue,
             ]
             if let preparedCorePayload {
@@ -4259,7 +4274,7 @@ public final class ChatManager: ObservableObject {
                     dateRange: inputDateRange,
                     candidates: [],
                     userPrefs: userPrefs,
-                    attachments: attachments, selectedExperts: selectedExperts.isEmpty ? nil : selectedExperts,
+                    attachments: attachments, selectedExperts: selectedExperts.isEmpty ? nil : selectedExperts, expertMentions: expertMentions,
                     expertSelectionSourceEpoch: expertSelectionSourceEpoch
                 )
             }
@@ -4812,9 +4827,9 @@ public final class ChatManager: ObservableObject {
         return String(parsed[start...])
     }
 
-    private func mainExpertSelectionComponents(_ selected: [AppleMainExpertSelectionEntry], expectedSourceEpoch: String? = nil) throws -> [AgentCoreContextComponent] {
+    private func mainExpertSelectionComponents(_ selected: [AppleMainExpertSelectionEntry], expectedSourceEpoch: String? = nil, mentions: AppleExpertMentions? = nil) throws -> [AgentCoreContextComponent] {
         guard !selected.isEmpty else { return [] }
-        let selection = AppleMainExpertSelectionContext(selectedExperts: selected, expectedSourceStoreEpoch: expectedSourceEpoch)
+        let selection = AppleMainExpertSelectionContext(selectedExperts: selected, expectedSourceStoreEpoch: expectedSourceEpoch, expertMentions: mentions)
         try selection.validate()
         return [.init(kind: .mainExpertSelection, id: "nola.main-expert-selection",
             content: try JSONDecoder().decode(AgentCoreJSONValue.self, from: JSONEncoder().encode(selection)), source: nil)]
@@ -6193,13 +6208,16 @@ extension ChatManager {
         guard let owner = UUID(uuidString: input.conversation_id),
               let execution = executionForConversation(owner, prepareForSubmission: currentConversationId == owner)
                 ?? ensureExecutionForConversation(owner) else { throw IOSApplicationRuntimeError.invalidResponse }
-        if try runtime.editReceipt(request) == .admitted { return owner }
+        if try runtime.editReceipt(request) == .admitted {
+            NotificationCenter.default.post(name: .nolaConversationRewound, object: owner)
+            return owner
+        }
         guard execution.canBeginNewMessage, editedResendJobs[owner] == nil else { throw DeviceAgentCoordinatorError.alreadyRunning }
         let encoded = try JSONDecoder().decode(AgentCoreJSONValue.self, from: JSONEncoder().encode(input))
         let result = try runtime.executeAgentCommand(.object(["type": .string("prepare_in_place_resend"), "input": encoded]))
         let prepared = try JSONDecoder().decode(ApplePreparedInPlaceResend.self, from: JSONEncoder().encode(result))
         guard prepared.input == input else { throw IOSApplicationRuntimeError.invalidResponse }
-        NotificationCenter.default.post(name: .nolaConversationRewound, object: owner)
+        if prepared.deferred_rewind != true { NotificationCenter.default.post(name: .nolaConversationRewound, object: owner) }
         let admission = AsyncThrowingStream<UUID, Error>.makeStream()
         execution.beginSubmissionAttempt()
         execution.prepareAgentTrace(conversationId: owner, canonicalAssistantMessageID: prepared.run_id + ":assistant")
@@ -6211,13 +6229,18 @@ extension ChatManager {
             }
             execution.roomCanonicalIdentity = .init(queuedSubmissionID: prepared.run_id, userMessageID: prepared.user_message_id)
             do {
-                _ = try await execution.processMessage(input.edited_text, selectedExperts: prepared.experts.map {
+                _ = try await execution.processMessage(input.edited_text, selectedExperts: input.selected_experts ?? prepared.experts.map {
                     .init(agentID: $0.agent_id, agentRevision: $0.agent_revision, participantID: $0.participant_id, contextConversationID: $0.context_conversation_id)
-                })
+                }, expertMentions: input.expert_mentions)
                 admission.continuation.finish(throwing: DeviceAgentCoordinatorError.missingTransition)
             } catch { execution.recordSubmissionFailure(error); admission.continuation.finish(throwing: error) }
         }
-        for try await admitted in admission.stream { return admitted }
+        for try await admitted in admission.stream {
+            if prepared.deferred_rewind == true {
+                NotificationCenter.default.post(name: .nolaConversationRewound, object: admitted)
+            }
+            return admitted
+        }
         throw DeviceAgentCoordinatorError.missingTransition
     }
 

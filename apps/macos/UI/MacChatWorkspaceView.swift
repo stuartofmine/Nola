@@ -286,7 +286,13 @@ struct MacChatWorkspaceView: View {
     @State private var showsAgentRooms = false
     @State private var messageEditSession: MacMessageEditSession?
     @State private var messageEditError: String?
-    @State private var expertSelection: Set<String> = []
+    private var expertSelection: Set<String> { Set((model.selectedConversationID.map(model.draftMentions) ?? []).map { $0.expert.agentID }) }
+    private func appendMention(_ expert: AppleMainExpertSelectionEntry, name: String, owner: String) {
+        let insertion = AppleDraftMention.insertion(text: model.draft, range: NSRange(location: model.draft.utf16.count, length: 0),
+            name: name, expert: expert, mentions: model.draftMentions(owner),
+            sourceID: model.mainExpertDraftSource(owner), epoch: roomWorkspace.mainSourceEpoch?(owner))
+        model.setDraft(insertion.text, conversationID: owner, mentions: insertion.mentions)
+    }
     private var model: MacWorkspaceModel { modelOwner.model }
     @State private var selectedSection: MacWorkspaceSection
     private var navigationActions: MacWorkspaceNavigationActions {
@@ -428,8 +434,7 @@ struct MacChatWorkspaceView: View {
         )
     }
 
-    var body: some View {
-        @Bindable var model = modelOwner.model
+    private var workspaceCanvas: some View {
         GeometryReader { geometry in
             let resolvedLayoutMode = MacWorkspaceLayoutMode.resolve(
                 width: geometry.size.width,
@@ -516,14 +521,81 @@ struct MacChatWorkspaceView: View {
             model.remoteObservationForegroundChanged(false)
         }
         .background(MacDesignColor.canvas.ignoresSafeArea())
-        .environment(\.macMessageEditAction, MacMessageEditAction(enabled: !model.isRunning && !roomWorkspace.hasUnsettledExpertWork(conversationID: model.selectedConversationID)) { conversation, message in
+    }
+
+    private var mentionProfile: AppleMentionProfileActions {
+        .init(description: { expert in
+            guard let association = roomWorkspace.conversationAssociation, association.conversationID == model.selectedConversationID else { return nil }
+            return association.room.room.participants.first { $0.id == expert.participantID && $0.contextConversationID == expert.contextConversationID && $0.agentRevision == expert.agentRevision }?.description
+        }, history: openMentionHistory)
+    }
+
+    private func childPage(parent: String, offset: Int) async throws -> AppleExpertChildConversations {
+        guard model.selectedConversationID == parent else { throw CancellationError() }
+        let service = roomWorkspace.service
+        if try model.isLocalConversationSource(parent) {
+            return try await MacConversationReadTask.run { try service.childConversations(conversationID: parent, offset: offset) }
+        }
+        guard model.executionHost == .remote else { throw MacRemoteHostError.invalidResponse }
+        let value = try await model.expertRoomCommand(owner: parent, command: .object([
+            "type": .string("child_conversations"), "conversation_id": .string(parent),
+            "limit": .signedInteger(32), "offset": .signedInteger(Int64(offset))]))
+        let page = try JSONDecoder().decode(AppleExpertChildConversations.self, from: JSONEncoder().encode(value))
+        try page.validate(parentID: parent, offset: offset)
+        return page
+    }
+
+    private func readRemoteChild(_ presentation: MacExpertChildPresentation, before: Int64?) async throws -> MacExpertChildHistoryReader.Page {
+        let parent = presentation.parentID
+        guard let identity = presentation.remoteIdentity, model.executionHost == .remote,
+              identity == model.mainExpertSourceIdentity(parent), try !model.isLocalConversationSource(parent) else { throw MacRemoteHostError.invalidResponse }
+        let value = try await model.expertRoomCommand(owner: parent, command: .object([
+            "type": .string("child_history"), "conversation_id": .string(parent),
+            "child_conversation_id": .string(presentation.child.id), "before_ordinal": before.map(MacCanonicalJSONValue.signedInteger) ?? .null,
+            "limit": .signedInteger(16), "content_byte_limit": .signedInteger(160_000)]))
+        guard identity == model.mainExpertSourceIdentity(parent) else { throw CancellationError() }
+        let page = try JSONDecoder().decode(MacExpertChildHistoryReader.Page.self, from: JSONEncoder().encode(value))
+        guard page.sourceOwner == .local else { throw MacRemoteHostError.invalidResponse }
+        return page
+    }
+
+    private func presentChild(parent: String, child: AppleExpertChildConversation) throws {
+        guard parent == model.selectedConversationID else { throw CancellationError() }
+        var remoteIdentity: String?
+        if try !model.isLocalConversationSource(parent) {
+            guard model.executionHost == .remote, let identity = model.mainExpertSourceIdentity(parent) else { throw MacRemoteHostError.invalidResponse }
+            remoteIdentity = identity
+        }
+        expertChildPresentation = .init(parentID: parent, child: child, sourceID: ObjectIdentifier(roomWorkspace.service), remoteIdentity: remoteIdentity)
+    }
+
+    private func openMentionHistory(_ expert: AppleMainExpertSelectionEntry) {
+        guard let parent = model.selectedConversationID else { return }
+        Task { @MainActor in
+            do {
+                let (_, child) = try await AppleExpertChildConversations.child(for: expert, parentID: parent) { offset in
+                    try await childPage(parent: parent, offset: offset)
+                }
+                try presentChild(parent: parent, child: child)
+            } catch { if parent == model.selectedConversationID { roomWorkspace.directoryError = error.localizedDescription } }
+        }
+    }
+
+    private var configuredWorkspace: some View {
+        workspaceCanvas
+        .environment(\.expertMentionProfile, mentionProfile)
+        .environment(\.macMessageEditAction, MacMessageEditAction(sourceAllowsEditing: canReadLocalConversationFiles, enabled: !model.isRunning && !roomWorkspace.hasUnsettledExpertWork(conversationID: model.selectedConversationID)) { conversation, message in
             Task { @MainActor in
                 do { messageEditSession = .init(draft: try await model.editedResendDraft(conversationID: conversation, message: message)) }
                 catch { messageEditError = error.localizedDescription }
             }
         })
         .sheet(item: $messageEditSession) { session in
-            MacMessageEditSheet(draft: session.draft, submit: { draft in
+            MacMessageEditSheet(draft: session.draft, candidates: roomWorkspace.directory.filter { $0.availability == "active" }.map { agent in
+                let member = roomWorkspace.conversationAssociation.flatMap { $0.conversationID == session.draft.sourceConversationID ? $0.room.room.participants.first { $0.active && $0.agentID == agent.id } : nil }
+                return .init(expert: .init(agentID: agent.id, agentRevision: member?.agentRevision ?? agent.revision,
+                    participantID: member?.id, contextConversationID: member?.contextConversationID), name: member?.displayName ?? agent.name, detail: agent.description)
+            }, submit: { draft in
                 try await model.performEditedResend(draft, expertWorkspace: roomWorkspace)
                 messageEditSession = nil
             }, cancel: {
@@ -600,14 +672,15 @@ struct MacChatWorkspaceView: View {
             guard let owner, model.executionHost == .local else { return }
             localPreviewSourceConfirmed = (try? previewRepository.conversationSourceOwner(conversationID: owner)) == .local
         }
+        .task(id: "\(model.selectedConversationID ?? "")/\(model.executionHost)/\(roomWorkspace.mainSourceReady)/\(!expertSelection.isEmpty)") {
+            guard let owner = model.selectedConversationID, roomWorkspace.mainSourceReady, model.executionHost == .remote,
+                  !expertSelection.isEmpty, model.mainExpertDraftSource(owner) == nil else { return }
+            await roomWorkspace.refreshExpertDirectory()
+        }
         .task(id: model.selectedConversationID) {
             if let id = model.selectedConversationID, model.selectedConversation?.isPersisted == true {
                 await roomWorkspace.restoreConversation(id)
                 if !Task.isCancelled {
-                    expertSelection = Set(roomWorkspace.pendingExpertIDs)
-                    if let returningExpertChild, returningExpertChild.parentID == id {
-                        expertSelection.insert(returningExpertChild.agentID)
-                    }
                     if model.draft.isEmpty, let text = roomWorkspace.pendingAdmissionText {
                         model.setDraft(text, conversationID: id)
                     }
@@ -627,12 +700,7 @@ struct MacChatWorkspaceView: View {
         .onChange(of: model.selectedConversationID) { _, selectedID in
             if isEditingTitle { commitInlineTitle() }
             isTitleHovered = false
-            if let returningExpertChild, returningExpertChild.parentID == selectedID {
-                expertSelection = [returningExpertChild.agentID]
-            } else {
-                returningExpertChild = nil
-                expertSelection = []
-            }
+            if returningExpertChild?.parentID != selectedID { returningExpertChild = nil }
             activeOverlay = nil
             codeReference = nil
             if model.selectedConversation?.isPersisted == false { focusComposer(in: selectedID) }
@@ -649,6 +717,10 @@ struct MacChatWorkspaceView: View {
                 commitInlineTitle()
             }
         }
+    }
+
+    var body: some View {
+        configuredWorkspace
         .focusedSceneValue(
             \.nolaMacCommandActions,
             MacCommandActions(
@@ -664,7 +736,11 @@ struct MacChatWorkspaceView: View {
             )
         )
         .sheet(item: $expertChildPresentation) { presentation in
-            MacExpertChildHistoryView(presentation: presentation, execution: roomWorkspace.executionService) {
+            MacExpertChildHistoryView(presentation: presentation,
+                execution: presentation.remoteIdentity == nil ? roomWorkspace.executionService : nil,
+                remoteRead: { before in try await readRemoteChild(presentation, before: before) },
+                remoteText: { cursor in try await model.expertHistoryMarkdown(parent: presentation.parentID, child: presentation.child.id,
+                    identity: presentation.remoteIdentity, cursor: cursor) }) {
                 guard presentation.sourceID == ObjectIdentifier(roomWorkspace.service) else {
                     throw MacApplicationPortError.serviceUnavailable
                 }
@@ -673,7 +749,10 @@ struct MacChatWorkspaceView: View {
                 returningExpertChild = (presentation.parentID, presentation.child.agentID)
                 navigationActions.selectConversation(presentation.parentID)
                 guard model.selectedConversationID == presentation.parentID else { throw CancellationError() }
-                expertSelection.insert(presentation.child.agentID)
+                if let member = roomWorkspace.conversationAssociation?.room.room.participants.first(where: { $0.id == presentation.child.participantID && $0.active }) {
+                    appendMention(.init(agentID: member.agentID, agentRevision: member.agentRevision, participantID: member.id,
+                        contextConversationID: member.contextConversationID), name: member.displayName, owner: presentation.parentID)
+                }
                 composerFocused = true
             }
         }
@@ -684,9 +763,14 @@ struct MacChatWorkspaceView: View {
             if opensLibraryAfterPicker { opensLibraryAfterPicker = false; showsExpertManagement = true }
         }) {
             VStack {
-                MacChatExpertPicker(agents: roomWorkspace.directory, selection: $expertSelection,
+                MacChatExpertPicker(agents: roomWorkspace.directory, selection: .constant(expertSelection),
                     manage: model.executionHost == .remote ? nil : { opensLibraryAfterPicker = true; showsAgentRooms = false }, selected: { agent in
-                        if let owner = model.selectedConversationID { roomWorkspace.recordMainExpertSelection(agent, conversationID: owner) }
+                        if let owner = model.selectedConversationID {
+                            let member = roomWorkspace.conversationAssociation.flatMap { $0.conversationID == owner ? $0.room.room.participants.first { $0.active && $0.agentID == agent.id } : nil }
+                            appendMention(.init(agentID: agent.id, agentRevision: member?.agentRevision ?? agent.revision,
+                                participantID: member?.id, contextConversationID: member?.contextConversationID), name: member?.displayName ?? agent.name, owner: owner)
+                            showsAgentRooms = false
+                        }
                     })
                 if let error = roomWorkspace.directoryError {
                     MacInlineNotice(message: error, kind: .failure, dismiss: { roomWorkspace.directoryError = nil })
@@ -755,12 +839,10 @@ struct MacChatWorkspaceView: View {
         if let conversation = model.selectedConversation {
             MacExpertChildrenDisclosure(parentID: conversation.id, refreshRevision: conversation.updatedAt,
                 roomRevision: roomWorkspace.conversationAssociation?.room.revision,
-                load: { parent, offset in
-                    let service = roomWorkspace.service
-                    return try await MacConversationReadTask.run { try service.childConversations(conversationID: parent, offset: offset) }
-                }, open: { child in
-                    expertChildPresentation = .init(parentID: conversation.id, child: child,
-                        sourceID: ObjectIdentifier(roomWorkspace.service))
+                load: { parent, offset in try await childPage(parent: parent, offset: offset) },
+                open: { child in
+                    do { try presentChild(parent: conversation.id, child: child) }
+                    catch { roomWorkspace.directoryError = error.localizedDescription }
                 })
                 .id(conversation.id + ":" + String(describing: ObjectIdentifier(roomWorkspace.service)))
         }
@@ -973,22 +1055,31 @@ struct MacChatWorkspaceView: View {
                     .padding(.horizontal, 24)
                     .padding(.top, 10)
                     .accessibilityIdentifier("chat.expert-admission-error")
+                    if !expertSelection.isEmpty, let owner = model.selectedConversationID {
+                        Button(String(localized: "Keep names as plain text")) {
+                            model.setDraft(model.draft, conversationID: owner)
+                            roomWorkspace.directoryError = nil
+                        }
+                    }
                 }
                 MacConversationCanvas(
                     model: model,
                     composerFocused: $composerFocused,
-                    expertSelection: $expertSelection,
                     sendToExperts: {
-                        let text = model.draft
-                        let experts = expertSelection
-                        Task {
-                            do {
-                                let owner = try model.prepareExpertConversation()
-                                let selected = try await roomWorkspace.mainExpertSelection(conversationID: owner, agentIDs: experts)
-                                guard model.selectedConversationID == owner, model.draft == text else { return }
-                                model.send(selectedExperts: selected, expertSelectionSourceEpoch: try roomWorkspace.capturedMainSourceEpoch(owner: owner, agentIDs: experts))
-                            } catch { roomWorkspace.directoryError = error.localizedDescription }
-                        }
+                        do {
+                            guard let owner = model.selectedConversationID else { return }
+                            let spans = model.draftMentions(owner)
+                            guard let wire = AppleDraftMention.segments(spans, in: model.draft),
+                                  !model.attachments.isEmpty || wire.segments.contains(where: { $0.agentID == nil && !$0.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }) else {
+                                roomWorkspace.directoryError = String(localized: "Write what you want the expert to do.")
+                                return
+                            }
+                            let epoch = roomWorkspace.mainSourceEpoch?(owner)
+                            let source = model.mainExpertDraftSource(owner)
+                            guard model.executionHost == .local || (source != nil && epoch != nil) else { throw MacApplicationPortError.serviceUnavailable }
+                            let selected = try AppleDraftMention.selected(spans, sourceID: source, epoch: epoch)
+                            model.send(selectedExperts: selected, expertSelectionSourceEpoch: epoch)
+                        } catch { roomWorkspace.directoryError = String(localized: "The expert selection changed. Remove the mention and select the expert again.") }
                     },
                     expertWorkspace: roomWorkspace,
                     modelSetupRequired: modelSetupRequired,
@@ -1388,17 +1479,13 @@ struct MacChatWorkspaceView: View {
                     .font(.system(size: 12, weight: .semibold, design: .rounded))
                 Text("chat.experts.title")
                     .lineLimit(1)
-                if !expertSelection.isEmpty {
-                    Text(verbatim: "· \(expertSelection.count)")
-                        .font(.system(size: 11, weight: .semibold))
-                        .foregroundStyle(MacDesignColor.brand)
-                }
+
             }
             .font(.system(size: 11.5, weight: .medium))
-            .foregroundStyle(expertSelection.isEmpty ? AnyShapeStyle(.secondary) : AnyShapeStyle(MacDesignColor.brand))
+            .foregroundStyle(.secondary)
             .padding(.horizontal, 8)
             .frame(height: 28)
-            .macComposerPill(isActive: !expertSelection.isEmpty)
+            .macComposerPill(isActive: showsAgentRooms)
         }
         .buttonStyle(.plain)
         .accessibilityIdentifier("chat.experts")

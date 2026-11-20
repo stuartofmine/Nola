@@ -76,7 +76,7 @@
 | [memory](../scenarios.html?scene=memory&platform=mac) | 资料、知识与记忆 / 个人长期记忆、修正与删除 | 资料 → 长期记忆 | 4 | macOS / iOS / iPadOS / Android / Web / Windows |
 | [health](../scenarios.html?scene=health&platform=mac) | 资料、知识与记忆 / 健康数据、授权与同步 | 资料 → 健康 | 3 | macOS / iOS / iPadOS / Android |
 | [location-calendar](../scenarios.html?scene=location-calendar&platform=mac) | 资料、知识与记忆 / 位置、日历与设备来源 | 资料 → 设备来源 | 3 | macOS / iOS / iPadOS / Android |
-| [experts](../scenarios.html?scene=experts&platform=mac) | 专家、Room 与审阅 / 专家配置、子任务协作与只读会话 | 输入栏 @ 专家 / 专家与技能 / 会话 → 任务 | 4 | macOS / iOS / iPadOS / Android / Web / Windows |
+| [experts](../scenarios.html?scene=experts&platform=mac) | 专家、Room 与审阅 / 专家配置、子任务协作与只读会话 | 输入栏 @ / 已发消息中的专家名字 / 会话 → 任务 | 4 | macOS / iOS / iPadOS / Android / Web / Windows |
 | [room](../scenarios.html?scene=room&platform=mac) | 专家、Room 与审阅 / Room 创建、加入、定向消息与恢复 | 专家 / Room | 4 | macOS / iOS / iPadOS / CLI |
 | [subtask](../scenarios.html?scene=subtask&platform=mac) | 专家、Room 与审阅 / 子任务、执行者与取消 | 对话内联过程 / 会话 → 任务 | 4 | macOS / iOS / iPadOS / Android / Web / Windows / CLI |
 | [inspector](../scenarios.html?scene=inspector&platform=mac) | 专家、Room 与审阅 / 检查器三区布局与独立展开 | 桌面右栏 / 手机会话详情 | 3 | macOS / iOS / iPadOS / Android / Web / Windows |

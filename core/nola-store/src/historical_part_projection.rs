@@ -128,7 +128,43 @@ impl NolaStore {
                 }
             }
         }
+        if value.schema.is_none() && value.canonical_kind == "text" {
+            if let Some(total) = total.filter(|length| *length <= budget as u64) {
+                if let Some(frozen) = self.frozen_expert_mentions(owner)? {
+                    let (_, range) = crate::published_part_body::field_range(
+                        &self.connection, owner.conversation_id(), owner.message_id(), owner.part_id(),
+                        PartBodyField::ContentText, 0, total.max(4) as usize,
+                    )?;
+                    if range.text.len() as u64 == total && frozen.matches_text(&range.text) {
+                        let preview = value.canonical_text.replace(HistoricalTextPreview {
+                            text: range.text, total_utf8_bytes: total,
+                        });
+                        // Keep the released historical projection shape. Older readers can
+                        // ignore an unfamiliar display field in its existing field map.
+                        let payload = serde_json::from_value(serde_json::to_value(frozen)?)?;
+                        value.fields.insert("expert_mentions".into(), SemanticValue::Complete { value: payload });
+                        if encoded_size(&value)? > budget {
+                            value.fields.remove("expert_mentions");
+                            if encoded_size(&value)? > budget { value.canonical_text = preview; }
+                        }
+                    }
+                }
+            }
+        }
         finish(value, budget)
+    }
+    fn frozen_expert_mentions(&self, owner: &CanonicalPartOwner)
+        -> StoreResult<Option<nola_domain::expert_task_target::FrozenExpertMentions>>
+    {
+        let original = crate::published_part_body::resolve_field(
+            &self.connection, owner.conversation_id(), owner.message_id(),
+            owner.part_id(), PartBodyField::ContentJson)?;
+        let Some(size) = original.total_utf8_bytes().filter(|n| (1..=32768).contains(n))
+            else { return Ok(None); };
+        let raw = self.historical_token(owner, TokenSpan { start_bytes: 0, end_bytes: size, kind: TokenKind::Object })?;
+        #[derive(serde::Deserialize)]
+        struct Metadata { expert_mentions: nola_domain::expert_task_target::FrozenExpertMentions }
+        Ok(serde_json::from_str::<Metadata>(&raw).ok().map(|v| v.expert_mentions))
     }
     fn historical_token(&self, owner: &CanonicalPartOwner, span: TokenSpan) -> StoreResult<String> {
         let length = span.end_bytes - span.start_bytes;

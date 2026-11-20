@@ -19,7 +19,7 @@ internal class ConversationDraftRepository(private val root: File, private val a
     }
     @Serializable data class Configuration(val model: com.nola.domain.model.ModelInfo?, val parameters: com.nola.domain.model.ModelParameters,
         val userConfigured: Boolean = true, val hostBinding: com.nola.domain.model.ExecutionHostBinding? = null)
-    @Serializable data class Snapshot(val text: String = "", val attachments: List<AndroidChatAttachment> = emptyList(), val missingAttachments: Int = 0, val configuration: Configuration? = null)
+    @Serializable data class Snapshot(val text: String = "", val attachments: List<AndroidChatAttachment> = emptyList(), val missingAttachments: Int = 0, val configuration: Configuration? = null, val mentions: List<InlineExpertMention> = emptyList())
     data class SubmissionRevision(val owner: String, val revision: Long?)
     @Serializable private data class AttachmentRef(val id: String, val digest: String)
     @Serializable private data class Manifest(val owner: String, val revision: Long, val deleted: Boolean = false,
@@ -30,6 +30,9 @@ internal class ConversationDraftRepository(private val root: File, private val a
     private fun digest(value: String): String = java.security.MessageDigest.getInstance("SHA-256").digest(value.toByteArray())
             .joinToString("") { "%02x".format(it) }
     private fun file(key: String): File = File(root, "${digest(key)}.json")
+    // Keep the published manifest readable by older clients. Only the sidecar for
+    // the exact committed revision can supply identities for its visible text.
+    private fun mentionFile(manifest: File, revision: Long) = File(root, "${manifest.nameWithoutExtension}.$revision.mentions.json")
     private fun atomicWrite(file: File, text: String) {
         check(root.isDirectory || root.mkdirs())
         val temporary = File.createTempFile("draft-", ".tmp", root)
@@ -90,7 +93,10 @@ internal class ConversationDraftRepository(private val root: File, private val a
             }
             } catch (_: Exception) { missing++; null }
         }
-        return Snapshot(manifest.text, attachments, missing, manifest.configuration.takeIf { key.startsWith("draft:") })
+        val mentions = mentionFile(file(key), manifest.revision).takeIf { it.exists() }?.let {
+            json.decodeFromString<List<InlineExpertMention>>(it.readText()).also { refs -> inlineSelection(manifest.text, refs) }
+        }.orEmpty()
+        return Snapshot(manifest.text, attachments, missing, manifest.configuration.takeIf { key.startsWith("draft:") }, mentions)
     }
     suspend fun conditionalSave(key: String, value: Snapshot) = withContext(dispatcher) {
         locked { saveToDisk(key, value) }
@@ -115,8 +121,13 @@ internal class ConversationDraftRepository(private val root: File, private val a
             else require(resource.readText() == encoded)
             reference
         }
-        atomicWrite(file(key), json.encodeToString(Manifest(key, revision, text = value.text,
+        val manifestFile = file(key)
+        val records = mentionFile(manifestFile, revision)
+        if (value.mentions.isNotEmpty()) atomicWrite(records, json.encodeToString(value.mentions))
+        else java.nio.file.Files.deleteIfExists(records.toPath())
+        atomicWrite(manifestFile, json.encodeToString(Manifest(key, revision, text = value.text,
             attachments = references, configuration = value.configuration)))
+        previous?.let { mentionFile(manifestFile, it.revision).delete() }
         revisions[key] = revision
         return SubmissionRevision(key, revision)
     }
@@ -146,7 +157,9 @@ internal class ConversationDraftRepository(private val root: File, private val a
     } }
     private fun removeFromDisk(key: String) {
             val revision = Math.addExact(manifest(key)?.revision ?: 0L, 1L)
-            atomicWrite(file(key), json.encodeToString(Manifest(key, revision, deleted = true)))
+            val manifestFile = file(key)
+            atomicWrite(manifestFile, json.encodeToString(Manifest(key, revision, deleted = true)))
+            revisions[key]?.let { mentionFile(manifestFile, it).delete() }
             revisions[key] = revision
             if (key.startsWith("draft:")) {
                 val index = File(root, "pending-owner.json")

@@ -2,6 +2,16 @@
 
 package com.nola.ui.screen.chat
 
+import kotlinx.serialization.json.jsonArray
+import kotlinx.serialization.json.jsonObject
+import kotlinx.serialization.json.jsonPrimitive
+import androidx.compose.ui.text.TextRange
+import androidx.compose.ui.text.input.TextFieldValue
+import androidx.compose.ui.text.input.VisualTransformation
+import androidx.compose.ui.text.input.TransformedText
+import androidx.compose.ui.text.input.OffsetMapping
+import androidx.compose.ui.text.SpanStyle
+import androidx.compose.ui.text.buildAnnotatedString
 import com.nola.ui.components.NolaIconButton
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.PredictiveBackHandler
@@ -244,8 +254,10 @@ internal fun ChatScreen(
 ) {
     val state by viewModel.uiState.collectAsStateWithLifecycle()
     val editDraft by viewModel.messageEditDraft.collectAsStateWithLifecycle()
+    val availableExperts by viewModel.conversationAgentDirectory.collectAsStateWithLifecycle()
     editDraft?.let { MessageEditDialog(it, viewModel::updateMessageEditText,
-        viewModel::submitMessageEdit, viewModel::cancelMessageEdit) }
+        viewModel::submitMessageEdit, viewModel::cancelMessageEdit, availableExperts?.agents.orEmpty(),
+        viewModel::prepareExpertPicker, viewModel::inlineMentionCandidate) }
 
     val expertReplyProjections by viewModel.conversationExpertReplies.collectAsStateWithLifecycle()
     val expertReplies = remember(state.conversationId, expertReplyProjections) {
@@ -320,6 +332,7 @@ internal fun ChatScreen(
     var showContextSheet by rememberSaveable { mutableStateOf(ContextDisplayMode.Context) }
     var showContextSheetOpen by rememberSaveable(state.conversationId, state.executionHostBinding) { mutableStateOf(false) }
     var showConversations by rememberSaveable { mutableStateOf(true) }
+    var mentionDetails by remember(state.conversationId) { mutableStateOf<InlineExpertMention?>(null) }
     var expertHistoryTarget by remember { mutableStateOf<ExpertHistoryTarget?>(null) }
     expertHistoryTarget?.let { target ->
         androidx.compose.runtime.key(target) { ExpertChildHistoryDialog(target,
@@ -381,23 +394,55 @@ internal fun ChatScreen(
     val conversationActivity by viewModel.conversationActivity.collectAsStateWithLifecycle()
     val scope = rememberCoroutineScope()
     val preparingExpertPicker by viewModel.preparingExpertPicker.collectAsStateWithLifecycle()
+    mentionDetails?.let { ref ->
+        val owner = state.conversationId
+        var target by remember(owner, ref) { mutableStateOf<ExpertHistoryTarget?>(null) }
+        var description by remember(owner, ref) { mutableStateOf(ref.member?.description.orEmpty()) }
+        LaunchedEffect(owner, ref) {
+            if (owner != null && ref.member != null) {
+                val result = try { viewModel.namedExpertHistory(owner, ref) }
+                catch (cancelled: kotlinx.coroutines.CancellationException) { throw cancelled }
+                catch (_: Exception) { null }
+                target = result?.first
+                description = result?.second.orEmpty()
+            }
+        }
+        androidx.compose.material3.AlertDialog(onDismissRequest = { mentionDetails = null }, title = { Text(ref.label) },
+            text = if (description.isBlank()) null else ({ Text(description) }),
+            confirmButton = { target?.let { item -> TextButton(onClick = {
+                mentionDetails = null; expertHistoryTarget = item
+            }) { Text(stringResource(R.string.expert_child_history)) } } },
+            dismissButton = { TextButton(onClick = { mentionDetails = null }) { Text(stringResource(R.string.common_done)) } })
+    }
     var expertSourceAvailable by remember(state.conversationId) { mutableStateOf(false) }
     var showExpertPicker by rememberSaveable { mutableStateOf(false) }
     var showExpertManagement by rememberSaveable { mutableStateOf(false) }
     var colorEditingExpertId by rememberSaveable { mutableStateOf<String?>(null) }
-    val availableExperts by viewModel.conversationAgentDirectory.collectAsStateWithLifecycle()
-    val selectedExpertIds by viewModel.selectedConversationAgentIds.collectAsStateWithLifecycle()
+    val inlineMentions = composerDraft.mentions
+    val selectedExpertIds = inlineMentions.map { it.agentId }.toSet()
+    val pickerMembers by viewModel.pickerMembers.collectAsStateWithLifecycle()
+    var editor by remember(composerDraft) { mutableStateOf(TextFieldValue(inputText, TextRange(composerDraft.caret ?: inputText.length))) }
+    val editorValue = if (editor.text == inputText) editor else TextFieldValue(inputText, TextRange((composerDraft.caret ?: inputText.length).coerceIn(0, inputText.length)))
+    fun applyEdit(edit: MentionEdit) {
+        editor = edit.value
+        composerDraft.caret = edit.value.selection.end
+        composerDraft.setContent(edit.value.text, edit.mentions)
+    }
+    var undoMention by remember(composerDraft) { mutableStateOf<Pair<MentionEdit, MentionEdit>?>(null) }
     val resumableExpertMessages by viewModel.resumableExpertMessages.collectAsState()
     val resumingExpertMessage by viewModel.resumingExpertMessage.collectAsState()
     var mentionFocused by remember(state.conversationId) { mutableStateOf(false) }
     var mentionDismissed by remember(state.conversationId) { mutableStateOf<String?>(null) }
     var mentionIndex by remember(state.conversationId) { mutableIntStateOf(0) }
-    val mentionQuery = roomMentionQuery(inputText)
+    val queryRange = expertQuery(editorValue, inlineMentions)
+    val mentionQuery = queryRange?.text
+    var mentionDirectoryReady by remember(composerDraft) { mutableStateOf(false) }
     val mentionCandidates = availableExperts?.agents.orEmpty().filter {
-        expertSourceAvailable &&
-        it.availability == "active" && it.id !in selectedExpertIds &&
-            it.name.contains(mentionQuery.orEmpty(), ignoreCase = true)
-    }
+        expertSourceAvailable && mentionDirectoryReady &&
+        it.availability == "active" && (it.name.contains(mentionQuery.orEmpty(), ignoreCase = true) ||
+            it.description.contains(mentionQuery.orEmpty(), ignoreCase = true))
+    }.sortedByDescending { it.id in pickerMembers }
+    val mentionDetailsById = remember(availableExperts) { mentionDescriptions(availableExperts?.agents.orEmpty()) }
     val mentionsVisible = mentionFocused && mentionQuery != null && mentionDismissed != inputText
     val context = LocalContext.current
     var commandError by remember(state.conversationId) { mutableStateOf<String?>(null) }
@@ -449,23 +494,18 @@ internal fun ChatScreen(
     LaunchedEffect(mentionIndex, mentionsVisible) {
         if (mentionsVisible && mentionCandidates.isNotEmpty()) mentionListState.animateScrollToItem(mentionIndex.coerceIn(mentionCandidates.indices))
     }
-    LaunchedEffect(mentionQuery != null, state.conversationId) {
-        if (mentionQuery != null) {
-            if (state.conversationId == null) scope.launch { viewModel.prepareExpertPicker() }
-            else if (expertSourceAvailable) viewModel.refreshConversationExperts(restoreSelection = false)
-        }
+    LaunchedEffect(mentionQuery != null, composerDraft) {
+        mentionDirectoryReady = mentionQuery != null && viewModel.prepareExpertPicker()
     }
-    fun selectMention(id: String) {
-        if (!canMutateDraft()) return
-        if (mentionCandidates.none { it.id == id }) return
-        val original = inputText
-        val owner = state.conversationId
-        viewModel.toggleConversationExpert(id) {
-            if (viewModel.uiState.value.conversationId == owner && inputText == original && canMutateDraft()) {
-                inputText = removeRoomMentionQuery(original)
-                mentionIndex = 0
-            }
-        }
+    fun selectMention(id: String, range: TextRange = queryRange?.let { TextRange(it.start, it.end) } ?: editorValue.selection) {
+        if (!canMutateDraft() || preparingExpertPicker) return
+        val candidate = viewModel.inlineMentionCandidate(id) ?: return
+        val chosen = inlineMentions.firstOrNull { it.agentId == id } ?: candidate
+        val before = MentionEdit(editorValue, inlineMentions)
+        val inserted = insertExpert(editorValue, inlineMentions, range, chosen)
+        applyEdit(inserted)
+        undoMention = before to inserted
+        mentionIndex = 0
     }
 
     var attachments by composerDraft.attachments
@@ -670,15 +710,20 @@ internal fun ChatScreen(
                             Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
                             FilterChip(
                                 selected = agent.id in selectedExpertIds,
-                                onClick = { viewModel.toggleConversationExpert(agent.id) },
+                                onClick = { selectMention(agent.id, editorValue.selection); showExpertPicker = false },
                                 label = { Column {
                                     Text(agent.name, style = MaterialTheme.typography.bodyLarge)
-                                    if (agent.description.isNotBlank()) Text(agent.description, style = MaterialTheme.typography.bodySmall,
+                                    if (!mentionDetailsById[agent.id].isNullOrBlank()) Text(mentionDetailsById[agent.id].orEmpty(), style = MaterialTheme.typography.bodySmall,
                                         color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 2, overflow = TextOverflow.Ellipsis)
                                 } },
                                 leadingIcon = { Text(agent.name.take(1).uppercase(), fontWeight = FontWeight.Bold) },
                                 modifier = Modifier.weight(1f).padding(vertical = 4.dp).heightIn(min = 56.dp)
                             )
+                                if (pickerMembers[agent.id]?.let { it.agentRevision != agent.revision } == true) {
+                                    TextButton(onClick = { viewModel.requestLatestExpert(agent.id); showExpertPicker = false }) {
+                                        Text(stringResource(R.string.expert_rejoin_action))
+                                    }
+                                }
                                 TextButton(onClick = { colorEditingExpertId = agent.id }, modifier = Modifier.heightIn(min = 48.dp)) {
                                     Text(stringResource(R.string.expert_color_action))
                                 }
@@ -1066,6 +1111,7 @@ internal fun ChatScreen(
             transcriptStates.SaveableStateProvider(state.conversationId ?: "new-conversation") {
             ChatTranscript(
             state = state,
+            onExpertMention = { mentionDetails = it },
             onResendEditedMessage = if (state.expertContextOwner == null) viewModel::beginMessageEdit else null,
             expertReplies = expertReplies,
             resumableExpertMessages = resumableExpertMessages,
@@ -1149,17 +1195,17 @@ internal fun ChatScreen(
                             Text(expert.name.take(1), Modifier.background(MaterialTheme.colorScheme.surfaceContainer, CircleShape).padding(8.dp))
                             Column {
                                 Text(expert.name, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                                if (expert.description.isNotBlank()) Text(expert.description, style = MaterialTheme.typography.bodySmall,
+                                if (!mentionDetailsById[expert.id].isNullOrBlank()) Text(mentionDetailsById[expert.id].orEmpty(), style = MaterialTheme.typography.bodySmall,
                                     color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1, overflow = TextOverflow.Ellipsis)
                             }
                         }
                     }
                 }
             }
-            if (selectedExpertIds.isNotEmpty()) Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()).padding(horizontal = 16.dp)) {
-                selectedExpertIds.forEach { agentId ->
-                    TextButton(onClick = { viewModel.toggleConversationExpert(agentId) }) { Text("${viewModel.conversationExpertLabel(agentId)} ×") }
-                }
+            if (inlineMentions.isNotEmpty() && (state.error != null || !attachmentMessage.isNullOrEmpty())) {
+                TextButton(onClick = { if (canMutateDraft()) {
+                    composerDraft.setContent(inputText, emptyList()); attachmentMessage = null
+                } }) { Text(stringResource(R.string.expert_mention_plain)) }
             }
             state.expertHostConfirmationStatus?.let { status ->
                 Column(Modifier.fillMaxWidth().padding(horizontal = 16.dp).testTag("chat.expert.host.pending")) {
@@ -1292,7 +1338,25 @@ internal fun ChatScreen(
                 },
                 inputText = inputText,
                 draftWritable = draftWritable,
-                onInputChange = { if (canMutateDraft()) { inputText = it; mentionDismissed = null; commandDismissed = null; commandIndex = 0; commandError = null } },
+                onInputChange = {},
+                controlledEditor = editorValue,
+                inlineMentions = inlineMentions,
+                onEditorChange = { next ->
+                    if (canMutateDraft()) {
+                        val updated = editExpertText(editorValue, next, inlineMentions)
+                        if (editorValue.text != next.text) {
+                            undoMention = if (updated.mentions != inlineMentions) MentionEdit(editorValue, inlineMentions) to updated else null
+                            mentionDismissed = null; commandDismissed = null; commandIndex = 0; commandError = null
+                        }
+                        applyEdit(updated)
+                    }
+                },
+                undoMention = {
+                    val step = undoMention
+                    if (step != null && canMutateDraft() && step.second.value.text == inputText && step.second.mentions == inlineMentions) {
+                        applyEdit(step.first); undoMention = null; true
+                    } else false
+                },
                 onFocusChange = { mentionFocused = it },
                 onMentionKey = { key ->
                     if (!canMutateDraft()) false else if (commandsVisible) when (key) {
@@ -1316,8 +1380,7 @@ internal fun ChatScreen(
                 },
                 attachments = attachments,
                 attachmentMessage = composerDrafts.initializationError.value ?: composerDraft.persistenceError.value
-                    ?: if (state.executionTeardownPending && !state.processingState.isGenerating)
-                        context.getString(R.string.chat_previous_turn_settling) else attachmentMessage,
+                    ?: attachmentMessage,
                 isImportingAttachments = isImportingAttachments || composerDraft.loading.value || composerDrafts.initializing.value,
                 enabled = !preparingExpertPicker && !state.processingState.blocksInput && !state.executionTeardownPending && !state.permissionSaving && !state.permissionSaveFailed && !composerDrafts.initializing.value,
                 isGenerating = presentationReady && state.processingState.isGenerating && !inputText.startsWith("/"),
@@ -1339,9 +1402,25 @@ internal fun ChatScreen(
                     if (!canMutateDraft()) return@pasteAttachments false
                     val clipboard = context.getSystemService(android.content.Context.CLIPBOARD_SERVICE)
                         as android.content.ClipboardManager
-                    val uris = attachmentUrisFromClip(clip ?: clipboard.primaryClip)
-                    if (uris.isNotEmpty()) importAttachmentUris(uris)
-                    uris.isNotEmpty()
+                    val contents = clip ?: clipboard.primaryClip
+                    val uris = attachmentUrisFromClip(contents)
+                    if (uris.isNotEmpty()) {
+                        importAttachmentUris(uris); true
+                    } else if (contents != null && contents.itemCount > 0 && (0 until contents.itemCount).all { contents.getItemAt(it).text != null }) {
+                        val pasted = (0 until contents.itemCount).joinToString("\n") { contents.getItemAt(it).text.toString() }
+                        val start = editorValue.selection.min
+                        val end = editorValue.selection.max
+                        val text = inputText.replaceRange(start, end, pasted)
+                        val kept = inlineMentions.mapNotNull { ref -> when {
+                            ref.end <= start -> ref
+                            ref.start >= end -> ref.copy(start = ref.start + pasted.length - (end - start))
+                            else -> null
+                        } }
+                        applyEdit(MentionEdit(TextFieldValue(text, TextRange(start + pasted.length)), kept))
+                        mentionDismissed = text
+                        undoMention = null
+                        true
+                    } else false
                 },
                 onRemoveAttachment = { id -> if (canMutateDraft()) attachments = attachments.filterNot { it.id == id } },
                 onSendOrStop = sendOrStop@ {
@@ -1355,14 +1434,16 @@ internal fun ChatScreen(
                     if (executeCommand()) { /* Local command consumed before any admission. */ }
                     else if (state.processingState.isGenerating) {
                         viewModel.cancelGeneration(viewModel.composerDrafts.ownerKey(state.conversationId), state.activeResponseId)
-                    } else if (requiresPrimaryModelForComposer(state.currentModel != null, selectedExpertIds)) {
+                    } else if (attachments.isEmpty() && mentionOnly(inputText, inlineMentions)) {
+                        attachmentMessage = context.getString(R.string.expert_mention_needs_text)
+                    } else if (state.currentModel == null) {
                         showModelMenu = true
                     } else if (!state.processingState.blocksInput && !state.permissionSaving && !state.permissionSaveFailed) {
-                        val trimmed = inputText.trim()
+                        val trimmed = if (inlineMentions.isEmpty()) inputText.trim() else inputText
                         if (!isImportingAttachments && (trimmed.isNotBlank() || attachments.isNotEmpty())) {
                             viewModel.sendMessage(
                                 composeAttachmentPrompt(trimmed, attachments),
-                                expertParticipantAgentIds = selectedExpertIds,
+                                expertParticipantAgentIds = selectedExpertIds, inlineMentions = inlineMentions,
                                 messageMeta = attachmentMessageMeta(trimmed, attachments),
                                 attachments = attachments.mapNotNull { attachment ->
                                     attachment.base64Data?.let { data ->
@@ -1495,6 +1576,7 @@ internal fun ChatTranscript(
     taskRecovery: (suspend (AgentCoreTaskHandle, String, com.nola.data.local.UnknownEffectRecoveryDecision?, Boolean) -> Pair<UnknownEffectRecoveryPresentation?, Boolean>)? = null,
     onSendTaskGuidance: suspend (String, String) -> Boolean = { _, _ -> false },
     onResendEditedMessage: ((ConversationMessage) -> Unit)? = null,
+    onExpertMention: ((InlineExpertMention) -> Unit)? = null,
 ) {
     val timelineMessages = state.timelineMessages()
     val currentTimelineIds = remember(timelineMessages) { timelineMessages.map { it.id } }
@@ -1759,7 +1841,7 @@ internal fun ChatTranscript(
                     Column(Modifier.widthIn(max = 860.dp)) {
                     MessageBubble(
                         message = message,
-                        isConversationGenerating = state.processingState.blocksInput,
+                        isConversationGenerating = state.processingState.blocksInput || state.executionTeardownPending,
                         modifier = Modifier.widthIn(max = 860.dp),
                         isActiveResponse = isActiveResponse,
                         revealOnFirstComposition = isActiveResponse || message.id == state.revealResponseId,
@@ -1802,7 +1884,7 @@ internal fun ChatTranscript(
                         onSendTaskGuidance = onSendTaskGuidance,
                         onCompactionSourceRequested = onCompactionSourceRequested,
                         onLongPress = { onLongPress(message) },
-                        onResendEditedMessage = onResendEditedMessage,
+                        onResendEditedMessage = onResendEditedMessage, onExpertMention = onExpertMention,
                         uiPartContent = { part -> CanonicalUiReference(part, uiSurfaces, onUiReadHistory, onUiSubmit, onUiAccepted, onUiRestore, onUiPreview) },
                     )
                     if (message.role == com.nola.domain.model.ChatRole.user) {
@@ -2071,7 +2153,7 @@ private fun composeAttachmentPrompt(text: String, attachments: List<AndroidChatA
         appendLine()
         appendLine("[User Attachments]")
         append(attachmentBlock)
-    }.trim()
+    }
 }
 
 private const val MESSAGE_ATTACHMENTS_META_KEY = "nola.attachments"
@@ -2195,6 +2277,19 @@ private fun escapeAttachmentAttribute(value: String): String =
 
 
 @Composable
+internal fun expertMentionStyle(mentions: List<InlineExpertMention>): VisualTransformation {
+    val color = MaterialTheme.colorScheme.primary
+    return remember(mentions, color) { VisualTransformation { input ->
+        TransformedText(buildAnnotatedString {
+            append(input)
+            mentions.forEach { ref ->
+                if (input.text.startsWith(ref.label, ref.start)) addStyle(SpanStyle(color = color, fontWeight = FontWeight.SemiBold), ref.start, ref.end)
+            }
+        }, OffsetMapping.Identity)
+    } }
+}
+
+@Composable
 internal fun ChatComposerBar(
     modifier: Modifier = Modifier,
     inputText: String,
@@ -2211,13 +2306,17 @@ internal fun ChatComposerBar(
     onRemoveAttachment: (String) -> Unit,
     onSendOrStop: () -> Unit,
     onFocusChange: (Boolean) -> Unit = {},
-    onMentionKey: (Key) -> Boolean = { false }
+    onMentionKey: (Key) -> Boolean = { false },
+    controlledEditor: TextFieldValue? = null,
+    inlineMentions: List<InlineExpertMention> = emptyList(),
+    onEditorChange: ((TextFieldValue) -> Unit)? = null,
+    undoMention: () -> Boolean = { false }
 ) {
     val haptics = rememberNolaHaptics()
     var inputFocused by remember { mutableStateOf(false) }
     var editorValue by remember { mutableStateOf(androidx.compose.ui.text.input.TextFieldValue(inputText)) }
     // Keep IME composition local; programmatic mention selection updates only the text/caret.
-    val currentEditor = if (editorValue.text == inputText) editorValue else
+    val currentEditor = controlledEditor ?: if (editorValue.text == inputText) editorValue else
         androidx.compose.ui.text.input.TextFieldValue(inputText, androidx.compose.ui.text.TextRange(inputText.length))
     val attachmentContentReceiver = remember(onPasteAttachments) {
         object : ReceiveContentListener {
@@ -2268,7 +2367,10 @@ internal fun ChatComposerBar(
             border = if (inputFocused) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.outlineVariant).padding(4.dp)) {
             BasicTextField(
                 value = currentEditor,
-                onValueChange = { value -> if (draftWritable) { editorValue = value; onInputChange(value.text) } },
+                onValueChange = { value -> if (draftWritable) {
+                    if (onEditorChange != null) onEditorChange(value) else { editorValue = value; onInputChange(value.text) }
+                } },
+                visualTransformation = expertMentionStyle(inlineMentions),
                 modifier = Modifier
                     .testTag("chat.composer.input")
                     .onFocusChanged { inputFocused = it.isFocused; onFocusChange(it.isFocused) }
@@ -2277,7 +2379,14 @@ internal fun ChatComposerBar(
                     .padding(horizontal = 12.dp, vertical = 10.dp)
                     .contentReceiver(attachmentContentReceiver)
                     .onPreviewKeyEvent { event ->
-                        if (event.type == KeyEventType.KeyDown && !event.isCtrlPressed && !event.isMetaPressed && !event.isShiftPressed && !event.isAltPressed && currentEditor.composition == null && onMentionKey(event.key)) true
+                        if (event.type == KeyEventType.KeyDown && event.key == Key.Z && (event.isCtrlPressed || event.isMetaPressed) && !event.isShiftPressed && currentEditor.composition == null && undoMention()) true
+                        else if (event.type == KeyEventType.KeyDown && event.key in setOf(Key.DirectionLeft, Key.DirectionRight) &&
+                            !event.isCtrlPressed && !event.isAltPressed && !event.isMetaPressed && !event.isShiftPressed &&
+                            currentEditor.selection.collapsed && currentEditor.composition == null && onEditorChange != null &&
+                            inlineMentions.any { if (event.key == Key.DirectionLeft) it.end == currentEditor.selection.start else it.start == currentEditor.selection.start }) {
+                            val ref = inlineMentions.first { if (event.key == Key.DirectionLeft) it.end == currentEditor.selection.start else it.start == currentEditor.selection.start }
+                            onEditorChange(currentEditor.copy(selection = TextRange(if (event.key == Key.DirectionLeft) ref.start else ref.end))); true
+                        } else if (event.type == KeyEventType.KeyDown && !event.isCtrlPressed && !event.isMetaPressed && !event.isShiftPressed && !event.isAltPressed && currentEditor.composition == null && onMentionKey(event.key)) true
                         else event.type == KeyEventType.KeyDown &&
                             event.key == Key.V &&
                             (event.isCtrlPressed || event.isMetaPressed) &&
@@ -2692,6 +2801,7 @@ fun MessageBubble(
     isConversationGenerating: Boolean = false,
     assistantContainerColor: Color? = null,
     onResendEditedMessage: ((ConversationMessage) -> Unit)? = null,
+    onExpertMention: ((InlineExpertMention) -> Unit)? = null,
     uiPartContent: (@Composable (com.nola.data.local.UiReferencePresentation) -> Unit)? = null,
     readOnlyHistory: Boolean = false,
     historyAuthor: String? = null,
@@ -2775,7 +2885,11 @@ fun MessageBubble(
             }
         }
         if (isUser) {
-            HistoricalPartActions(message.historicalParts)
+            HistoricalPartActions(message.historicalParts.filterNot { part ->
+                val history = part.projection
+                history.canonicalKind == "text" && history.expertMentions != null &&
+                    history.canonicalText?.let { text -> text.toByteArray(Charsets.UTF_8).size.toLong() == history.canonicalTextUTF8Bytes } == true
+            })
             if (!readOnlyHistory) CompactionSourceActions(conversationId, message.canonicalParts, onCompactionSourceRequested)
             ModelAttemptDisclosures(message.canonicalParts)
         }
@@ -2790,7 +2904,16 @@ fun MessageBubble(
                     shape = userBubbleShape
                 ) {
                     Text(
-                        text = visibleText,
+                        text = buildAnnotatedString {
+                            append(visibleText)
+                            val refs = remember(message) { runCatching { historyMentions(message.text, message.expertMentionHistory()) }.getOrDefault(emptyList()) }
+                            for (ref in refs) {
+                                if (!visibleText.startsWith(ref.label, ref.start)) continue
+                                addStyle(SpanStyle(color = MaterialTheme.colorScheme.primary, fontWeight = FontWeight.SemiBold), ref.start, ref.end)
+                                if (onExpertMention != null) addLink(androidx.compose.ui.text.LinkAnnotation.Clickable(
+                                    ref.agentId, linkInteractionListener = { onExpertMention(ref) }), ref.start, ref.end)
+                            }
+                        },
                         modifier = Modifier.padding(horizontal = 14.dp, vertical = 11.dp),
                         style = MaterialTheme.typography.bodyLarge
                     )

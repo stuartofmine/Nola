@@ -56,6 +56,13 @@ nonisolated struct MacCanonicalMessagePresentation: Hashable, Sendable {
 }
 
 nonisolated struct MacChatMessage: Identifiable, Hashable, Codable, Sendable {
+    var expertMentions: AppleExpertMentions? {
+        for case .historical(let part) in canonicalPresentation?.message.parts ?? [] where part.projection.canonicalKind == "text" {
+            if let mentions = part.projection.expertMentions, mentions.runs(in: text) != nil { return mentions }
+        }
+        return nil
+    }
+
     enum Role: String, Hashable, Codable, Sendable {
         case user
         case assistant
@@ -89,6 +96,7 @@ nonisolated struct MacChatMessage: Identifiable, Hashable, Codable, Sendable {
     var uiSurfaceParts: [AppleUISurfacePart] = []
     var uiHistoryReferences: [AppleUISurfaceReference] = []
     var journalReference: MacJournalMessageReference? = nil
+    var scopedJournalText: String? = nil
 
     // Store location is supplied by the live repository, never by an imported
     // message/archive. Journal display bindings are ephemeral read handles.
