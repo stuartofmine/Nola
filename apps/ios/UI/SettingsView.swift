@@ -71,7 +71,7 @@ struct SettingsView: View {
 
     private var content: some View {
         settingsPage(title: L10n.settings, showsHeading: false, topInset: ownsNavigationStack ? 4 : DesignTokens.spacing_lg) {
-            if ownsNavigationStack {
+            if ownsNavigationStack && horizontalSizeClass != .compact {
                 IOSWorkspacePageHeading(title: L10n.settings).frame(minHeight: 64)
             }
             ForEach(categoryGroups.indices, id: \.self) { group in
@@ -97,6 +97,11 @@ struct SettingsView: View {
         }
         .navigationTitle(ownsNavigationStack ? "" : L10n.settings)
         .navigationBarTitleDisplayMode(.inline)
+        .toolbar {
+            if ownsNavigationStack && horizontalSizeClass == .compact {
+                IOSWorkspaceToolbarHeading(title: L10n.settings, identifier: "settings.heading")
+            }
+        }
         .toolbarBackground(DesignTokens.backgroundColor, for: .navigationBar)
         .toolbarBackground(.hidden, for: .navigationBar)
     }

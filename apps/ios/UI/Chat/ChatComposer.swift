@@ -650,7 +650,6 @@ struct ChatComposer<ModelControl: View>: View {
     let showsModelControl: Bool
     let modelControl: ModelControl
 
-    @State private var pageWidth: CGFloat = 390
     @State private var showAttachmentImporter = false
     @State private var showPhotosPicker = false
     @State private var selectedPhotoItems: [PhotosPickerItem] = []
@@ -714,7 +713,6 @@ struct ChatComposer<ModelControl: View>: View {
         }
         .padding(.horizontal, 12)
         .tint(DesignTokens.actionColor)
-        .background(IOSWorkspaceWidthObserver(width: $pageWidth))
         .padding(.top, 4)
         .padding(.bottom, 8)
         .animation(reduceMotion ? nil : .snappy(duration: 0.24), value: attachments.count)

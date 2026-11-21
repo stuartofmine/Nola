@@ -6,10 +6,8 @@ import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.animateColorAsState
 import androidx.compose.animation.core.animateDpAsState
 import androidx.compose.animation.core.tween
-import androidx.compose.animation.expandVertically
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
-import androidx.compose.animation.shrinkVertically
 import androidx.compose.foundation.border
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
@@ -156,7 +154,6 @@ fun NolaScaffold(
         val usesSideNavigation = navigationLayout != NolaNavigationLayout.Bottom
         val usesExpandedSideNavigation = navigationLayout == NolaNavigationLayout.ExpandedSide
 
-        val reduceMotion = rememberReduceMotionEnabled()
         val showBottomBar = !usesSideNavigation && !(currentRoute == NolaTab.Chat.route && chatDetailVisible)
 
         Scaffold(
@@ -164,19 +161,7 @@ fun NolaScaffold(
             containerColor = MaterialTheme.colorScheme.background,
             contentWindowInsets = if (usesSideNavigation) WindowInsets(0) else androidx.compose.material3.ScaffoldDefaults.contentWindowInsets,
             bottomBar = {
-                AnimatedVisibility(
-                    visible = showBottomBar,
-                    enter = fadeIn(tween(if (reduceMotion) 0 else NolaMotion.controlState)) +
-                        expandVertically(
-                            animationSpec = tween(if (reduceMotion) 0 else NolaMotion.base, easing = NolaMotion.emphasizedEasing),
-                            expandFrom = Alignment.Bottom
-                        ),
-                    exit = fadeOut(tween(if (reduceMotion) 0 else NolaMotion.fast)) +
-                        shrinkVertically(
-                            animationSpec = tween(if (reduceMotion) 0 else NolaMotion.controlState, easing = NolaMotion.emphasizedEasing),
-                            shrinkTowards = Alignment.Bottom
-                        )
-                ) {
+                if (showBottomBar) {
                     NolaBottomNavigation(
                         selectedTab = selectedTab,
                         onSelect = navigateToTab

@@ -954,6 +954,110 @@ final class MacSecondaryPageNavigationTests: XCTestCase {
         }
     }
 
+    func testSourceNavigationPreservesCachedManualSourceAndRefreshButtonFrame() async throws {
+        let accessibility = try MacHostedAccessibilitySession()
+        defer { accessibility.restore() }
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let registry = MacDataSourceRegistry(storeURL: root.appendingPathComponent("registry.json"))
+        let configuration = URLSessionConfiguration.ephemeral
+        configuration.protocolClasses = [SnapshotSourceURLProtocol.self]
+        let session = URLSession(configuration: configuration)
+        defer { session.invalidateAndCancel() }
+        let store = MacWebSourceStore(storeURL: root.appendingPathComponent("sources.json"),
+            registry: registry, urlSession: session)
+        let hostname = UUID().uuidString.lowercased() + ".test"
+        let source = MacWebSource(id: UUID(), name: "Design notes", url: "https://\(hostname)/notes",
+            format: .text, isEnabled: true, cachedText: "Last saved notes", lastFetchedAt: .now,
+            lastError: nil, createdAt: .now)
+        var first = source
+        first.id = UUID()
+        first.name = "Archive"
+        first.isEnabled = false
+        store.upsert(first)
+        store.upsert(source)
+        let (finish, gate) = AsyncStream<Void>.makeStream()
+        var requests = 0
+        SnapshotSourceURLProtocol.handlers[hostname] = { _ in
+            requests += 1
+            for await _ in finish { break }
+        }
+        defer {
+            gate.finish()
+            SnapshotSourceURLProtocol.handlers[hostname] = nil
+        }
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: hostname))
+        defer { defaults.removePersistentDomain(forName: hostname) }
+        let service = MacPlatformDataService(registry: registry, startsPeriodicRefresh: false, preferences: defaults)
+        let navigation = MacDataCenterNavigationState()
+        let view = MacDataCenterView(navigation: navigation, service: service, registry: registry, webSources: store,
+            initialSection: "sources").environment(\.macUsesGlobalWorkspaceChrome, true)
+            .environment(\.accessibilityEnabled, true).frame(width: 900, height: 680)
+        let host = NSHostingView(rootView: view)
+        let window = NSWindow(contentViewController: NSViewController())
+        window.isReleasedWhenClosed = false
+        window.contentView = host
+        window.setContentSize(NSSize(width: 900, height: 680))
+        window.orderFrontRegardless()
+        defer { window.close() }
+
+        func frame(_ identifier: String) throws -> NSRect {
+            host.layoutSubtreeIfNeeded()
+            let button = try XCTUnwrap(accessibilityObjects(host).first {
+                $0.accessibilityIdentifier?() == identifier
+            })
+            return try XCTUnwrap(button.accessibilityFrame?())
+        }
+        func capture(_ name: String, view: NSView) throws {
+            let image = try MacVisualPixelAssertions.captureCGImage(of: view)
+            let png = try XCTUnwrap(NSBitmapImageRep(cgImage: image).representation(using: .png, properties: [:]))
+            let attachment = XCTAttachment(data: png, uniformTypeIdentifier: "public.png")
+            attachment.name = "mac-source-" + name
+            attachment.lifetime = .keepAlways
+            add(attachment)
+        }
+
+        try await pressIdentifier("data.sources.edit." + source.id.uuidString, in: host)
+        let sheetDeadline = Date().addingTimeInterval(3)
+        while window.attachedSheet?.contentView == nil, Date() < sheetDeadline {
+            try await Task.sleep(for: .milliseconds(20))
+        }
+        let editor = try XCTUnwrap(window.attachedSheet?.contentView)
+        let nameField = try XCTUnwrap(accessibilityObjects(editor).first {
+            $0.accessibilityIdentifier?() == "webSources.editor.name"
+        })
+        let nameValue = (nameField as? any NSAccessibilityProtocol)?.accessibilityValue() as? String
+        XCTAssertEqual(nameValue, source.name)
+        try capture("editor", view: editor)
+        try await pressIdentifier("webSources.editor.cancel", in: editor)
+        XCTAssertEqual(navigation.route, .overview)
+        try await pressIdentifier("data.sources.manage", in: host)
+        XCTAssertEqual(navigation.route, .webSources)
+        XCTAssertEqual(requests, 0)
+        let idleFrame = try frame("webSources.refreshAll")
+        let attentionMetric = try frame("page.metric.web-sources-attention")
+        XCTAssertGreaterThan(idleFrame.width, 24)
+        try capture("idle", view: host)
+        try await pressIdentifier("webSources.refreshAll", in: host)
+        XCTAssertEqual(requests, 1)
+        XCTAssertTrue(store.refreshingIDs.contains(source.id))
+        XCTAssertEqual(try frame("webSources.refreshAll"), idleFrame)
+        XCTAssertEqual(try frame("page.metric.web-sources-attention"), attentionMetric)
+        try capture("refreshing", view: host)
+        gate.finish()
+        let deadline = Date().addingTimeInterval(3)
+        while store.refreshingIDs.contains(source.id), Date() < deadline {
+            try await Task.sleep(for: .milliseconds(15))
+        }
+        XCTAssertEqual(store.sources.first { $0.id == source.id }?.cachedText, "fetched original content")
+        try await pressIdentifier("page.navigation.back", in: host)
+        XCTAssertEqual(navigation.route, .overview)
+        try await pressIdentifier("data.sources.manage", in: host)
+        XCTAssertEqual(try frame("webSources.refreshAll"), idleFrame)
+        XCTAssertEqual(try frame("page.metric.web-sources-attention"), attentionMetric)
+        XCTAssertEqual(requests, 1)
+    }
+
     func testNotificationHistoryReadsAndWritesOnlyItsApplicationSupportRoot() async throws {
         let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         defer { try? FileManager.default.removeItem(at: directory) }

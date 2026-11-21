@@ -168,13 +168,6 @@ final class DataSourceStatusStore: ObservableObject {
         states.values.filter { [.needsPermission, .stale, .error, .unavailable].contains($0.phase) }.count
     }
 
-    var syncingCount: Int {
-        if isRefreshing {
-            return states.isEmpty ? systemTypes.count : states.values.filter { [.checking, .syncing].contains($0.phase) }.count
-        }
-        return states.values.filter { [.checking, .syncing].contains($0.phase) }.count
-    }
-
     var lastSuccessfulRead: Date? {
         states.values.compactMap(\.lastReadAt).max()
     }
@@ -195,20 +188,9 @@ final class DataSourceStatusStore: ObservableObject {
         isRefreshing = true
         defer { isRefreshing = false }
 
-        var syncingStates = states
-        for type in systemTypes {
-            let previous = state(for: type)
-            syncingStates[type] = DataSourceRuntimeState(
-                phase: .syncing,
-                permission: previous.permission,
-                itemCount: previous.itemCount,
-                lastReadAt: previous.lastReadAt,
-                errorMessage: nil
-            )
-        }
-        states = syncingStates
-
-        var refreshedStates = syncingStates
+        // Keep the last completed read visible while probing. The refresh
+        // control owns progress; individual rows change when results arrive.
+        var refreshedStates = states
         for type in systemTypes {
             refreshedStates[type] = await probe(type, container: container, healthDashboard: healthDashboard)
         }
@@ -625,27 +607,11 @@ struct DataSourceStatusInlineSummary: View {
                     tint: .green
                 )
 
-                if store.syncingCount > 0 {
-                    statusPill(
-                        value: store.syncingCount,
-                        label: NSLocalizedString(
-                            "data_sources.runtime.status.syncing",
-                            value: "Updating",
-                            comment: "Updating data source count"
-                        ),
-                        tint: DesignTokens.primaryColor
-                    )
-                } else {
-                    statusPill(
-                        value: store.attentionCount,
-                        label: NSLocalizedString(
-                            "data_sources.runtime.metric.attention",
-                            value: "Attention",
-                            comment: "Data sources needing attention count"
-                        ),
-                        tint: store.attentionCount > 0 ? .orange : .secondary
-                    )
-                }
+                statusPill(
+                    value: store.attentionCount,
+                    label: NSLocalizedString("data_sources.runtime.metric.attention", value: "Attention", comment: "Data sources needing attention count"),
+                    tint: store.attentionCount > 0 ? .orange : .secondary
+                )
             }
 
             if let lastRead = store.lastSuccessfulRead {
@@ -747,9 +713,7 @@ struct DataSourceOverviewHero: View {
             value: "\(store.attentionCount)",
             tint: store.attentionCount > 0 ? .orange : .secondary
         )
-        if store.syncingCount > 0 {
-            OverviewPill(icon: "arrow.triangle.2.circlepath", label: NSLocalizedString("data_sources.runtime.metric.updating", value: "Updating", comment: "Updating source metric"), value: "\(store.syncingCount)", tint: DesignTokens.primaryColor)
-        }
+
     }
 }
 
@@ -1488,20 +1452,12 @@ struct HealthDataSourceRow: View {
                         Text(L10n.homeFeatureHealthTitle)
                             .font(.body.weight(.semibold))
                         Spacer(minLength: 6)
-                        if dashboard.isLoading && dashboard.snapshot == nil {
-                            ProgressView().controlSize(.small)
-                        } else {
-                            DataSourceStatusPill(state: runtimeState)
-                        }
+                        DataSourceStatusPill(state: runtimeState)
                     }
                     VStack(alignment: .leading, spacing: 5) {
                         Text(L10n.homeFeatureHealthTitle)
                             .font(.body.weight(.semibold))
-                        if dashboard.isLoading && dashboard.snapshot == nil {
-                            ProgressView().controlSize(.small)
-                        } else {
-                            DataSourceStatusPill(state: runtimeState)
-                        }
+                        DataSourceStatusPill(state: runtimeState)
                     }
                 }
                 Text(summaryText)

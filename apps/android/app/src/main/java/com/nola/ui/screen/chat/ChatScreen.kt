@@ -16,7 +16,6 @@ import androidx.compose.ui.text.buildAnnotatedString
 import com.nola.ui.components.NolaIconButton
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.PredictiveBackHandler
-import androidx.compose.animation.SizeTransform
 import androidx.compose.animation.core.FastOutSlowInEasing
 import androidx.compose.animation.core.SeekableTransitionState
 import androidx.compose.animation.core.rememberTransition
@@ -1018,14 +1017,14 @@ internal fun ChatScreen(
             throw cancelled
         }
     }
-    navigationTransition.AnimatedContent(transitionSpec = {
+    navigationTransition.AnimatedContent(modifier = Modifier.fillMaxSize(), transitionSpec = {
         val movement = tween<androidx.compose.ui.unit.IntOffset>(260, easing = FastOutSlowInEasing)
         val transition = if (navigationReduceMotion) fadeIn(tween(0)) togetherWith fadeOut(tween(0))
         else if (targetState) (slideInHorizontally(movement, initialOffsetX = { -it * navigationDirection / 8 }) + fadeIn(tween(160))) togetherWith
             slideOutHorizontally(movement, targetOffsetX = { it * navigationDirection })
         else slideInHorizontally(movement, initialOffsetX = { it * navigationDirection }) togetherWith
             (slideOutHorizontally(movement, targetOffsetX = { -it * navigationDirection / 8 }) + fadeOut(tween(160)))
-        transition.using(SizeTransform(clip = false))
+        transition.using(null)
     }) { showingList ->
     if (showingList) {
         ConversationListScreen(
@@ -1265,6 +1264,35 @@ internal fun ChatScreen(
                 color = MaterialTheme.colorScheme.outline.copy(alpha = 0.18f)
             )
             commandError?.let { Text(it, color = MaterialTheme.colorScheme.error, modifier = Modifier.padding(horizontal = 16.dp)) }
+            val permissionStatus = state.permissionApplicationStatus
+            val hasTask = state.conversationId != null || state.processingState != ProcessingState.Idle
+            if (permissionStatus in setOf("saving", "pending", "failed") || (permissionStatus == "checking" && hasTask)) {
+                TextButton(
+                    onClick = {
+                        viewModel.beginParameterEditing()
+                        inspector = ConversationInspector.Settings
+                    },
+                    modifier = Modifier
+                        .padding(horizontal = NolaSpacing.lg)
+                        .heightIn(min = 48.dp)
+                        .testTag("chat.controls.permission")
+                ) {
+                    Text(stringResource(R.string.chat_permission_mode) + ": " + stringResource(
+                        when (state.permissionMode) {
+                            com.nola.core.AndroidAgentPermissionMode.Cautious -> R.string.chat_permission_mode_cautious
+                            com.nola.core.AndroidAgentPermissionMode.AllowAll -> R.string.chat_permission_mode_allow_all
+                        }
+                    ))
+                }
+                Text(stringResource(when (permissionStatus) {
+                    "saving" -> R.string.chat_permission_state_saving
+                    "checking" -> R.string.chat_permission_state_checking
+                    "failed" -> R.string.chat_permission_state_failed
+                    else -> R.string.chat_permission_state_pending
+                }), style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.padding(horizontal = NolaSpacing.lg).testTag("chat.controls.permission.status"))
+            }
             if (commandsVisible) {
                 LazyColumn(
                     modifier = Modifier
@@ -1609,35 +1637,6 @@ internal fun ChatScreen(
                     }
                 }
             ) }
-            if (state.permissionApplicationStatus in setOf("saving", "checking", "pending", "failed")) {
-            TextButton(
-                onClick = {
-                    viewModel.beginParameterEditing()
-                    inspector = ConversationInspector.Settings
-                },
-                modifier = Modifier
-                    .padding(horizontal = NolaSpacing.lg)
-                    .heightIn(min = 48.dp)
-                    .testTag("chat.controls.permission")
-            ) {
-                Text(stringResource(R.string.chat_permission_mode) + ": " + stringResource(
-                    when (state.permissionMode) {
-                        com.nola.core.AndroidAgentPermissionMode.Cautious -> R.string.chat_permission_mode_cautious
-                        com.nola.core.AndroidAgentPermissionMode.AllowAll -> R.string.chat_permission_mode_allow_all
-                    }
-                ))
-            }
-            Text(stringResource(when (state.permissionApplicationStatus) {
-                "saving" -> R.string.chat_permission_state_saving
-                "checking" -> R.string.chat_permission_state_checking
-                "failed" -> R.string.chat_permission_state_failed
-                "pending" -> R.string.chat_permission_state_pending
-                "active" -> R.string.chat_permission_state_active
-                else -> R.string.chat_permission_state_saved
-            }), style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                modifier = Modifier.padding(horizontal = NolaSpacing.lg).testTag("chat.controls.permission.status"))
-            }
         }
     }
 
@@ -2540,7 +2539,6 @@ internal fun ChatComposerBar(
                     .onFocusChanged { inputFocused = it.isFocused; onFocusChange(it.isFocused) }
                     .fillMaxWidth()
                     .heightIn(min = 44.dp, max = 132.dp)
-                    .padding(horizontal = 12.dp, vertical = 10.dp)
                     .contentReceiver(attachmentContentReceiver)
                     .onPreviewKeyEvent { event ->
                         if (event.type == KeyEventType.KeyDown && event.key == Key.Z && (event.isCtrlPressed || event.isMetaPressed) && !event.isShiftPressed && currentEditor.composition == null && undoMention()) true
@@ -2567,7 +2565,7 @@ internal fun ChatComposerBar(
                 maxLines = 6,
                 decorationBox = { innerTextField ->
                     Box(
-                        modifier = Modifier.fillMaxWidth(),
+                        modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 10.dp),
                         contentAlignment = Alignment.CenterStart
                     ) {
                         if (inputText.isEmpty()) {

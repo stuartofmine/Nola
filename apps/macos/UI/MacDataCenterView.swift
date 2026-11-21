@@ -50,6 +50,7 @@ struct MacDataCenterView: View {
     @State private var service: MacPlatformDataService
     @State private var registry: MacDataSourceRegistry
     @State private var webSources: MacWebSourceStore
+    @State private var editingWebSource: MacWebSource?
     private var section: MacDataCenterSection {
         get { navigation.section }
         nonmutating set { navigation.section = newValue }
@@ -79,12 +80,29 @@ struct MacDataCenterView: View {
     }
 
     var body: some View {
-        Group {
+        VStack(spacing: 0) {
             switch navigation.route {
             case .overview: center
-            case .webSources: MacWebSourcesView(navigationAction: navigation.showOverview)
+            case .webSources: MacWebSourcesView(store: webSources, navigationAction: navigation.showOverview)
             case .health: MacHealthSummaryView(navigationAction: navigation.showOverview)
             }
+        }
+        .sheet(item: $editingWebSource) { source in
+            MacWebSourceEditor(source: source) { updated in
+                try await webSources.validateAndUpsert(updated)
+                editingWebSource = nil
+            } cancel: { editingWebSource = nil }
+        }
+        .task {
+            async let platformRefresh: Void = service.refresh()
+            async let scheduledReads: Void = webSources.refreshDueSources()
+            _ = await (platformRefresh, scheduledReads)
+        }
+        .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in
+            Task { await service.refresh(synchronizeAutomations: false) }
+        }
+        .onReceive(NotificationCenter.default.publisher(for: NSUbiquitousKeyValueStore.didChangeExternallyNotification)) { _ in
+            Task { await service.refresh() }
         }
     }
 
@@ -139,13 +157,6 @@ struct MacDataCenterView: View {
             }
         }
         .background(MacPageBackground())
-        .task { await refreshAll() }
-        .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in
-            Task { await service.refresh(synchronizeAutomations: false) }
-        }
-        .onReceive(NotificationCenter.default.publisher(for: NSUbiquitousKeyValueStore.didChangeExternallyNotification)) { _ in
-            Task { await service.refresh() }
-        }
     }
 
     private var overview: some View {
@@ -329,7 +340,7 @@ struct MacDataCenterView: View {
             isTesting: webSources.refreshingIDs.contains(source.id),
             testConnection: { Task { await webSources.refresh(source) } },
             setPolicy: { registry.setPolicy($0, for: source.dataSourceID) },
-            openEditor: navigation.showWebSources
+            openEditor: { editingWebSource = source }
         )
     }
 
@@ -418,6 +429,7 @@ struct MacDataCenterView: View {
         }
         .accessibilityLabel(macDataCenterText("mac.data_center.manage_sources", "Manage Web Sources"))
         .help(macDataCenterText("mac.data_center.manage_sources", "Manage Web Sources"))
+        .accessibilityIdentifier("data.sources.manage")
     }
 
     @ViewBuilder
@@ -564,6 +576,7 @@ private struct MacWebDataSourceCard: View {
                         .font(.system(size: 11, weight: .medium))
                 }
                 .macToolbarIcon()
+                .accessibilityIdentifier("data.sources.edit." + source.id.uuidString)
                 .help(macDataCenterText("mac.data_center.contract.edit", "Edit Source"))
                 .accessibilityLabel(macDataCenterText("mac.data_center.contract.edit", "Edit Source"))
                 if hasAdditionalDetails {

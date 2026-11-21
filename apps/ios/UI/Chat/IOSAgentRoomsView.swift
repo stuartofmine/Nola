@@ -24,7 +24,8 @@ struct IOSAgentRoomsView: View {
     private enum PendingEditorAction { case edit(IOSPersistentAgent?), archive, close }
     @State private var pendingEditorAction: PendingEditorAction?
     @State private var showDiscardConfirmation = false
-    @FocusState private var editorFocused: Bool
+    private enum EditorField { case name, description }
+    @FocusState private var focusedField: EditorField?
     private var service: IOSAgentRoomService { IOSAgentRoomService(runtime: container.applicationRuntime) }
     private var editorIsDirty: Bool {
         guard let original = try? AppleExpertConfigurationDraft(defaults: editing?.defaults ?? .object([:])) else { return true }
@@ -56,6 +57,11 @@ struct IOSAgentRoomsView: View {
         }
         .nolaGroupedSurface()
         .scrollDismissesKeyboard(.immediately)
+        .simultaneousGesture(DragGesture(minimumDistance: 12).onChanged { drag in
+            if focusedField != nil, abs(drag.translation.height) > abs(drag.translation.width) {
+                focusedField = nil
+            }
+        })
         .navigationTitle("experts.manage")
         .navigationBarTitleDisplayMode(.inline)
         .sheet(isPresented: $showingTemplateLibrary, onDismiss: {
@@ -77,7 +83,7 @@ struct IOSAgentRoomsView: View {
             }
             ToolbarItemGroup(placement: .keyboard) {
                 Spacer()
-                Button(L10n.done) { editorFocused = false }
+                Button(L10n.done) { focusedField = nil }
                     .accessibilityIdentifier("experts.keyboard.done")
             }
         }
@@ -137,11 +143,11 @@ struct IOSAgentRoomsView: View {
 
     @ViewBuilder
     private var identityFields: some View {
-        TextField("room.agent_name", text: $agentName).focused($editorFocused)
-            .submitLabel(.done).onSubmit { editorFocused = false }
+        TextField("room.agent_name", text: $agentName).focused($focusedField, equals: .name)
+            .submitLabel(.done).onSubmit { focusedField = nil }
             .accessibilityIdentifier("experts.name")
         TextField("room.agent_description", text: $agentDescription, axis: .vertical)
-            .lineLimit(2...4).focused($editorFocused).accessibilityIdentifier("experts.description")
+            .lineLimit(2...4).focused($focusedField, equals: .description).accessibilityIdentifier("experts.description")
     }
 
     private var modelPicker: some View {
@@ -278,7 +284,7 @@ struct IOSAgentRoomsView: View {
     }
 
     private func requestEditorAction(_ action: PendingEditorAction) {
-        editorFocused = false
+        focusedField = nil
         if editorIsDirty { pendingEditorAction = action; showDiscardConfirmation = true }
         else { performEditorAction(action) }
     }
@@ -313,7 +319,7 @@ struct IOSAgentRoomsView: View {
     }
 
     private func saveAgent() throws {
-        editorFocused = false
+        focusedField = nil
         let original = editing?.defaults ?? .object([:])
         let saved = try AppleExpertConfigurationDraft(defaults: original)
         if configuration.reasoningEffort != saved.reasoningEffort || configuration.modelID != saved.modelID {

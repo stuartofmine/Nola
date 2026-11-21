@@ -5,7 +5,7 @@ const assert=require('node:assert/strict');
 const fs=require('node:fs');
 const base=process.env.UI_FIXTURE_URL||'http://127.0.0.1:5139';
 const out=process.env.UI_EVIDENCE_DIR||require('./test_environment.cjs').artifactPath('nola-page-matrix');
-const routes=['today','conversations','chat','activity','results','dashboard','data-sources','scheduled-actions','models','model-test','capabilities','workspace-review','settings','login'];
+const routes=['today','conversations','chat','activity','results','dashboard','data-sources','scheduled-actions','models','model-test','capabilities','workspace-review','plugin-page','settings','login'];
 const catalog=fs.readFileSync(require('node:path').join(__dirname,'../frontend/src/lib/pageRoutes.ts'),'utf8');
 assert.deepEqual([...catalog.matchAll(/'\/([^']+)':/g)].map(m=>m[1]).sort(),[...routes].sort(),'Every routed page must be included in the matrix');
 const categories=['general','providers','agent','connections','data','diagnostics'];
@@ -13,6 +13,11 @@ let invalidCapabilities=false, invalidSave=false, writes=0;
 const name='跨语言长期研究与工作区资料 ProductResearchWorkspace_2026';
 async function fixture(route){
  const p=new URL(route.request().url()).pathname;
+ if(p==='/api/desktop-plugin-pages') {
+  const entry={id:'matrix-notes',title:'研究记录',package:'matrix-notes'};
+  return route.fulfill({json:route.request().postDataJSON()?.id===entry.id
+   ? {...entry,html:'<h1>研究记录</h1><details><summary>来源</summary><p>会议记录</p></details>'} : [entry]});
+ }
  const known={
  '/api/web/session':{authenticated:true,sessionAuthenticated:false,localTrust:true,hostId:'page-matrix'},
  '/api/chat/conversations':{conversations:[]},
@@ -61,7 +66,11 @@ async function fixture(route){
    await page.screenshot({path:`${out}/${label}-${width}-${scheme}.png`,timeout:60000});
   }
   for(const route of routes){
-   await page.goto(`${base}/${route}`,{waitUntil:'networkidle'});
+   await page.goto(`${base}/${route}${route==='plugin-page'?'?id=matrix-notes':''}`,{waitUntil:'networkidle'});
+   if(route==='plugin-page'){
+    const frame=page.frameLocator('iframe[title="研究记录"]').frameLocator('iframe');
+    await frame.locator('summary').click();assert.ok(await frame.getByText('会议记录').isVisible());
+   }
    if(process.env.UI_AUDIT_MOTION==='1' && route==='today') {
     await page.evaluate(()=>{const button=document.createElement('button');button.id='audit-press-probe';button.type='button';button.textContent='操作反馈';button.style.cssText='position:fixed;right:12px;bottom:100px;z-index:100';document.body.append(button);});
     const control=page.locator('#audit-press-probe'),before=await control.boundingBox();
@@ -131,9 +140,9 @@ async function fixture(route){
    }
    if(route==='settings') {
     await page.goto(`${base}/settings?section=notifications`,{waitUntil:'networkidle'});
+    await page.locator('[id$=settings-panel-general] [id$=settings-notifications]:visible').waitFor();
     const outer=new URL(page.url()), destination=new URL(outer.searchParams.get('content')||outer.href,base);
     assert.equal(destination.searchParams.get('section'),'general','Existing notification links open General');
-    assert.ok(await page.locator('[id$=settings-panel-general] [id$=settings-notifications]:visible').count());
     assert.equal(await page.locator('[role=tab][id$=settings-tab-notifications]').count(),0,'Notifications have one home in General');
     // Native settings must mount after SPA navigation, expose a failed read,
     // and reconcile a lost write response without replaying the mutation.

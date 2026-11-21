@@ -11,7 +11,7 @@ private func macWebSourcesText(_ key: String, _ fallback: String) -> String {
 }
 
 struct MacWebSourcesView: View {
-    @State private var store = MacWebSourceStore.shared
+    @State private var store: MacWebSourceStore
     @State private var selectedID: UUID?
     @State private var editingSource: MacWebSource?
     @State private var showsEditor = false
@@ -20,7 +20,10 @@ struct MacWebSourcesView: View {
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     let navigationAction: (() -> Void)?
 
-    init(navigationAction: (() -> Void)? = nil) {
+    init(store: MacWebSourceStore? = nil, navigationAction: (() -> Void)? = nil) {
+        let store = store ?? .shared
+        _store = State(initialValue: store)
+        _selectedID = State(initialValue: store.sources.first?.id)
         self.navigationAction = navigationAction
     }
 
@@ -74,9 +77,8 @@ struct MacWebSourcesView: View {
             }
         }
         .background(MacPageBackground())
-        .task { if selectedID == nil { selectedID = store.sources.first?.id } }
         .onChange(of: store.sources.map(\.id)) { _, ids in
-            guard let selectedID, !ids.contains(selectedID) else { return }
+            if let selectedID, ids.contains(selectedID) { return }
             self.selectedID = ids.first
         }
         .sheet(isPresented: $showsEditor) {
@@ -188,7 +190,7 @@ struct MacWebSourcesView: View {
 
     private func webSourceListRow(_ source: MacWebSource) -> some View {
         let isRefreshing = store.refreshingIDs.contains(source.id)
-        return MacWebSourceRow(source: source, isRefreshing: isRefreshing)
+        return MacWebSourceRow(source: source, isRefreshing: isRefreshing, setEnabled: { store.setEnabled($0, for: source) })
             .tag(source.id)
             .contextMenu {
                 Button {
@@ -231,9 +233,10 @@ struct MacWebSourcesView: View {
         Button {
             Task { await store.refreshAll() }
         } label: {
-            refreshButtonLabel
+            MacWebSourceRefreshLabel(isRefreshing: !store.refreshingIDs.isEmpty)
         }
         .disabled(!store.refreshingIDs.isEmpty)
+        .accessibilityIdentifier("webSources.refreshAll")
     }
 
     private var addSourceButton: some View {
@@ -249,26 +252,32 @@ struct MacWebSourcesView: View {
         }
         .buttonStyle(.nolaProminent)
     }
+}
 
-    @ViewBuilder
-    private var refreshButtonLabel: some View {
-        if store.refreshingIDs.isEmpty {
-            Label {
-                Text(verbatim: macWebSourcesText("mac.web_sources.refresh", "Refresh"))
-            } icon: {
-                Image(systemName: "arrow.clockwise")
-            }
-        } else {
-            ProgressView()
-                .controlSize(.small)
-                .accessibilityLabel(macWebSourcesText("mac.web_sources.refreshing", "Refreshing"))
+private struct MacWebSourceRefreshLabel: View {
+    let isRefreshing: Bool
+
+    var body: some View {
+        Label {
+            Text(verbatim: macWebSourcesText("mac.web_sources.refresh", "Refresh"))
+        } icon: {
+            Image(systemName: "arrow.clockwise")
+                .opacity(isRefreshing ? 0 : 1)
+                .frame(width: 16, height: 16)
+                .overlay {
+                    if isRefreshing { ProgressView().controlSize(.small) }
+                }
         }
+        .accessibilityLabel(isRefreshing
+            ? macWebSourcesText("mac.web_sources.refreshing", "Refreshing")
+            : macWebSourcesText("mac.web_sources.refresh", "Refresh"))
     }
 }
 
 private struct MacWebSourceRow: View {
     let source: MacWebSource
     let isRefreshing: Bool
+    let setEnabled: (Bool) -> Void
 
     var body: some View {
         HStack(spacing: 10) {
@@ -288,7 +297,7 @@ private struct MacWebSourceRow: View {
             Spacer()
             Toggle("", isOn: Binding(
                 get: { source.isEnabled },
-                set: { MacWebSourceStore.shared.setEnabled($0, for: source) }
+                set: setEnabled
             ))
             .toggleStyle(.macSwitchControl)
             .accessibilityLabel(String(format: macWebSourcesText("mac.web_sources.enable_format", "Enable %@"), source.name))
@@ -420,12 +429,7 @@ private struct MacWebSourceDetail: View {
             Button {
                 Task { await store.refresh(source) }
             } label: {
-                if isRefreshing {
-                    ProgressView()
-                        .controlSize(.small)
-                } else {
-                    Label(macWebSourcesText("mac.web_sources.refresh", "Refresh"), systemImage: "arrow.clockwise")
-                }
+                MacWebSourceRefreshLabel(isRefreshing: isRefreshing)
             }
             .buttonStyle(.nolaProminent)
             .disabled(isRefreshing)
@@ -448,7 +452,7 @@ private struct MacWebSourceDetail: View {
     }
 }
 
-private struct MacWebSourceEditor: View {
+struct MacWebSourceEditor: View {
     let original: MacWebSource?
     let save: (MacWebSource) async throws -> Void
     let cancel: () -> Void
@@ -505,6 +509,7 @@ private struct MacWebSourceEditor: View {
             }
             Form {
                 TextField(macWebSourcesText("mac.web_sources.form.name", "Name"), text: $name)
+                    .accessibilityIdentifier("webSources.editor.name")
                     .focused($nameFocused)
                     .onChange(of: name) { _, _ in validationError = nil }
                 TextField(macWebSourcesText("mac.web_sources.form.url", "URL"), text: $url, prompt: Text("https://example.com/feed.json"))
@@ -559,6 +564,7 @@ private struct MacWebSourceEditor: View {
                 .frame(maxWidth: 300, minHeight: 34, alignment: .leading)
                 Spacer()
                 Button(isSaving ? macWebSourcesText("mac.web_sources.stop_testing", "Stop Testing") : macWebSourcesText("mac.web_sources.cancel", "Cancel"), action: requestCancel)
+                    .accessibilityIdentifier("webSources.editor.cancel")
                     .keyboardShortcut(.cancelAction)
                 Button(
                     original == nil

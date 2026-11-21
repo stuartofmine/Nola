@@ -109,11 +109,7 @@ internal fun ActivityScreen(onOpenConversation: (String) -> Unit, onOpenPlans: (
                         shape = MaterialTheme.shapes.extraLarge, label = { Text(stringResource(R.string.activity_needs_response)) })
                 }
             }
-            if (state.failed) item {
-                Text(stringResource(R.string.activity_read_failed), color = MaterialTheme.colorScheme.error)
-                TextButton(onClick = { if (state.entries.isEmpty()) refresh() else viewModel.loadMore() }) { Text(stringResource(R.string.common_retry)) }
-            }
-            if (state.hasLoaded && state.entries.isEmpty() && !state.loading && !state.failed) item {
+            if (state.hasLoaded && state.entries.isEmpty()) item {
                 Text(stringResource(if (needsResponse || source != null || search.isNotBlank()) R.string.activity_empty_filter else R.string.activity_empty),
                     color = MaterialTheme.colorScheme.onSurfaceVariant)
             }
@@ -130,8 +126,12 @@ internal fun ActivityScreen(onOpenConversation: (String) -> Unit, onOpenPlans: (
                 }
                 HorizontalDivider(thickness = 0.5.dp, color = MaterialTheme.colorScheme.outlineVariant)
             }
+            if (state.failed) item {
+                Text(stringResource(R.string.activity_read_failed), color = MaterialTheme.colorScheme.error)
+                TextButton(onClick = viewModel::retry) { Text(stringResource(R.string.common_retry)) }
+            }
             if (state.loading || (!state.hasLoaded && !state.failed)) item { CircularProgressIndicator(Modifier.size(24.dp)) }
-            if (state.cursor != null && !state.loading) item {
+            if (state.cursor != null && !state.loading && !state.failed) item {
                 TextButton(onClick = viewModel::loadMore) { Text(stringResource(R.string.activity_load_more)) }
             }
         }

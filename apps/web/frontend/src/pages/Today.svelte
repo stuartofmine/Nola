@@ -73,6 +73,7 @@
     header { display: flex; align-items: center; justify-content: space-between; gap: 16px; min-height: 52px; }
     h1 { font-size: 28px; line-height:36px; margin: 0; } h2 { font-size: 16px; margin: 0 0 12px; }
     section { margin-block: 32px; } header button { border:0; background:transparent; width:44px; padding:10px; } header svg { width:20px; height:20px; stroke:currentColor; fill:none; stroke-width:1.5; } .muted, small { color: var(--muted); font-size: .875rem; line-height: 1.6; }
+    @media (max-width: 700px) { .today-page { width: 100%; min-height: 0; flex: 1; } }
     .fact-row { display: flex; align-items: center; justify-content: space-between; gap: 16px; padding-block: 12px; border-bottom: 1px solid var(--border); min-height: 52px; }
     .fact-row > span { min-width: 0; } strong { font-weight: 500; overflow-wrap: anywhere; } small { display: block; margin-top: 4px; }
     a { color: inherit; text-decoration: none; } a:hover { color: var(--accent); } nav { display: flex; flex-wrap: wrap; gap: 16px; border-top: 1px solid var(--border); margin-top: 32px; } nav a { display: flex; align-items: center; min-height: 48px; }

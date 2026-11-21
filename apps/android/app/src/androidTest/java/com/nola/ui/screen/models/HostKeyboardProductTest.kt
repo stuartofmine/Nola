@@ -150,8 +150,10 @@ class HostKeyboardProductTest {
         ActivityScenario.launch(MainActivity::class.java).use {
             compose.waitUntil(10_000) { shown("chat.conversations.search") }
             compose.onNodeWithContentDescription(label(R.string.chat_new_chat)).performTouchInput { click() }
-            val field = tag("chat.composer.input")
-            field.performTouchInput { click() }
+            val field = tag("chat.composer.input").assertIsEnabled()
+            // Tap the visible leading padding as a user can, not just the text glyphs.
+            field.performTouchInput { click(centerLeft + androidx.compose.ui.geometry.Offset(5f, 0f)) }
+            field.assertIsFocused()
             awaitIme(true)
             field.performTextReplacement("draft survives keyboard dismissal")
             tag("chat-transcript-list").performTouchInput { click(androidx.compose.ui.geometry.Offset(4f, 4f)) }

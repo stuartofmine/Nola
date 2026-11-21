@@ -147,15 +147,17 @@ class WorkspacePageMatrixTest {
         requireIsolatedProductTestUser(context)
         // Verify OnboardingScreen renders Warm Paper & Warm Ink surfaces across both themes
         // without mutating product onboarding persistence.
-        for ((theme, isDark) in listOf("light" to false, "dark" to true)) {
-            ActivityScenario.launch(ComponentActivity::class.java).use { host ->
-                host.onActivity { activity ->
-                    activity.setContent {
-                        NolaTheme(darkTheme = isDark) {
-                            OnboardingContent(uiState = OnboardingUiState(), onComplete = {})
-                        }
+        val onboardingDark = androidx.compose.runtime.mutableStateOf(false)
+        ActivityScenario.launch(ComponentActivity::class.java).use { host ->
+            host.onActivity { activity ->
+                activity.setContent {
+                    NolaTheme(darkTheme = onboardingDark.value) {
+                        OnboardingContent(uiState = OnboardingUiState(), onComplete = {})
                     }
                 }
+            }
+            for ((theme, isDark) in listOf("light" to false, "dark" to true)) {
+                compose.runOnIdle { onboardingDark.value = isDark }
                 compose.waitForIdle()
                 compose.onNodeWithText(context.getString(R.string.onboarding_choose_model)).assertIsDisplayed()
                 compose.onNodeWithText(context.getString(R.string.onboarding_guide_action_later)).assertIsDisplayed()
@@ -406,6 +408,39 @@ class WorkspacePageMatrixTest {
                 compose.onAllNodes(hasTestTag("expert.row.$id") and hasText(context.getString(R.string.expert_archived))).fetchSemanticsNodes().isNotEmpty()
             }
             capture("expert-archived")
+        }
+    }
+
+    @Test fun newConversationComposerOpensAtItsFinalHeight() {
+        requireIsolatedProductTestUser(context)
+        ActivityScenario.launch(MainActivity::class.java).use {
+            enterWorkspace()
+            compose.onNodeWithTag("navigation.bottom").assertIsDisplayed()
+            compose.mainClock.autoAdvance = false
+            try {
+                compose.onNodeWithTag("chat.conversations.new").performClick()
+                val bottomPositions = mutableListOf<Float>()
+                repeat(22) {
+                    compose.mainClock.advanceTimeByFrame()
+                    compose.waitForIdle()
+                    compose.onAllNodesWithTag("chat.composer").fetchSemanticsNodes().singleOrNull()?.let {
+                        if (it.boundsInRoot.width > 0) bottomPositions += it.boundsInRoot.bottom
+                    }
+                }
+                org.junit.Assert.assertTrue("Too few visible composer frames: $bottomPositions", bottomPositions.size >= 12)
+                org.junit.Assert.assertTrue(
+                    "Composer moved during entry: $bottomPositions",
+                    bottomPositions.max() - bottomPositions.min() <= 1f
+                )
+            } finally {
+                compose.mainClock.autoAdvance = true
+            }
+            compose.onNodeWithTag("chat.controls.permission.status").assertDoesNotExist()
+            capture("composer-open")
+            compose.onNodeWithTag("chat.conversation.back").performClick()
+            compose.onNodeWithTag("chat.conversations.new").assertIsDisplayed()
+            compose.onNodeWithTag("navigation.bottom").assertIsDisplayed()
+            capture("composer-return")
         }
     }
 

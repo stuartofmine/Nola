@@ -3,6 +3,8 @@
     import { onMount, setContext, tick } from 'svelte';
     import { loadWorkspaceWidths } from './lib/workspaceLayout';
     let viewportWidth = $state(1280);
+    import { mobileInformationTabs } from './lib/dataSources';
+    import { resolveSettingsCategory } from './lib/settingsCategories';
     import { pageLoader } from './lib/pageRoutes';
     import { observedPageLoad } from './lib/pageLoad';
     function loadPage(path: string) {
@@ -17,6 +19,12 @@
     setContext(workspaceDraftsContext, drafts);
     const initialLocation = initialWorkspaceLocation(window.location.href, window.innerWidth);
     if (initialLocation.href !== window.location.href) window.history.replaceState(window.history.state, '', initialLocation);
+    function isMobileDetail(target: URL) {
+        const tab = target.searchParams.get('tab');
+        return target.pathname === '/data-sources' && (tab === 'usage' || mobileInformationTabs.some(item => item === tab))
+            || target.pathname === '/settings' && !!resolveSettingsCategory(target.searchParams.get('section'));
+    }
+    let loadingDetail = $state(isMobileDetail(initialLocation));
     let path = $state(initialLocation.pathname);
     let routeVersion = $state(0);
     import { darkAppearance, toggleAppearance, initializeAppearance } from './lib/appearance';
@@ -34,7 +42,7 @@
         return !event.defaultPrevented || window.confirm(t($locale, 'shell.navigationDiscard'));
     }
     function show(target: URL) {
-        path = target.pathname; routeVersion++;
+        path = target.pathname; loadingDetail = isMobileDetail(target); routeVersion++;
         page = loadPage(path);
         window.scrollTo(0, 0);
     }
@@ -113,7 +121,7 @@
 
 {#snippet pageContent()}
     {#key routeVersion}{#await page}
-        <div class="content" role="status">{t($locale, 'shell.pageLoading')}</div>
+        <div class="content" class:loading-detail={loadingDetail} role="status">{t($locale, 'shell.pageLoading')}</div>
     {:then module}
         {#if module}<module.default /><span hidden aria-hidden="true" use:pageReady></span>{:else}<div class="content" role="alert">{t($locale, 'shell.pageLoadFailed')}</div>{/if}
     {:catch}
@@ -152,7 +160,7 @@
 
 <style>
     .mobile-brand-bar { display: none; }
-    .workspace-content:has(:global(.information-back), :global(.settings-back)) .mobile-brand-bar { display:none; }
+    .workspace-content:has(.loading-detail, :global(.information-back), :global(.settings-back)) .mobile-brand-bar { display:none; }
     @media(max-width:700px) {
         .mobile-brand-bar { display:flex; align-items:center; justify-content:space-between; padding:calc(20px + env(safe-area-inset-top)) 20px 12px; min-height:80px; }
         .mobile-brand-bar a { display:flex; align-items:center; gap:14px; color:var(--content); }
@@ -165,7 +173,8 @@
 
     .mobile-primary-navigation { display: none; }
     @media (max-width: 700px) {
-        .with-mobile-navigation { padding-bottom: calc(64px + env(safe-area-inset-bottom, 0px)); }
+        .with-mobile-navigation { display: flex; flex-direction: column; min-height: 100dvh; padding-bottom: calc(58px + max(7px, env(safe-area-inset-bottom, 0px))); }
+        .with-mobile-navigation .management-shell { flex: 1; min-height: 0; }
         .mobile-primary-navigation { position: fixed; inset: auto 0 0; z-index: 30; display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 4px; padding: 5px 12px max(7px, env(safe-area-inset-bottom, 0px)); background: var(--canvas); border-top: 1px solid var(--border); }
         .mobile-primary-navigation a { min-width: 0; min-height: 52px; display: flex; flex-direction: column; gap: 4px; align-items: center; justify-content: center; padding: 4px 2px; font-size: 12px; line-height: 16px; color: var(--muted); text-decoration: none; border: 1px solid transparent; border-radius: 8px; }
         .mobile-primary-navigation a[aria-current] { color: var(--content); font-weight: 600; background: var(--panel); }

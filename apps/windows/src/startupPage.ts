@@ -9,9 +9,16 @@ export function startupPageHtml(strings: DesktopStrings, mode: "starting" | "fai
     const safeDetail = detail.replace(/[&<>"']/g, (character) => ({
         "&": "&amp;", "<": "&lt;", ">": "&gt;", "\"": "&quot;", "'": "&#39;",
     })[character] ?? character);
+    const diagnostic = safeDetail ? `<div class="detail" tabindex="0">${safeDetail}</div>` : "";
+    const content = failed
+        ? `<div class="actions">
+            <button id="nola-open-logs">${strings.openLogs}</button>
+            <button class="primary" id="nola-retry-host">${strings.retry}</button>
+        </div><p role="status" id="nola-action-status"></p>${diagnostic}`
+        : `<div class="pulse" role="status" aria-label="${strings.startingTitle}"></div>`;
     return `<!doctype html><html data-theme="auto"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width"><meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'; img-src data:"><title>${title}</title><style>
         :root{color-scheme:light dark;font-family:"Segoe UI Variable","Segoe UI","Microsoft YaHei UI","PingFang SC","Noto Sans CJK SC",sans-serif;--canvas:${LIGHT_THEME_TOKENS.canvas};--surface:${LIGHT_THEME_TOKENS.surface};--ink:${LIGHT_THEME_TOKENS.ink};--muted:${LIGHT_THEME_TOKENS.inkSecondary};--border:${LIGHT_THEME_TOKENS.border};--outline:${LIGHT_THEME_TOKENS.outline};--accent:${LIGHT_THEME_TOKENS.accent};--on-accent:${LIGHT_THEME_TOKENS.onAccent};--accent-subtle:${LIGHT_THEME_TOKENS.accentSubtle};--panel:${LIGHT_THEME_TOKENS.surfaceSubtle};background:var(--canvas);color:var(--ink)}
-        *{box-sizing:border-box}body{margin:0;min-height:100vh;display:grid;place-items:center;background:var(--canvas);-webkit-font-smoothing:antialiased}
+        *{box-sizing:border-box}body{margin:0;min-height:100vh;display:grid;place-items:start center;padding-block:clamp(12px,calc(50vh - 235px),220px) 16px;background:var(--canvas);-webkit-font-smoothing:antialiased}
         .card{width:min(480px,calc(100vw - 40px));padding:32px;border:1px solid var(--border);border-radius:16px;background:var(--surface);text-align:center}
         .mark{width:48px;height:48px;margin:0 auto 24px;display:grid;place-items:center;border-radius:12px;background:var(--accent);color:var(--on-accent);font:italic 600 30px/1 Georgia,serif}
         h1{margin:0;font-size:24px;letter-spacing:-.025em;overflow-wrap:anywhere}p{margin:12px auto 0;max-width:38ch;color:var(--muted);font-size:14px;line-height:1.65}
@@ -27,5 +34,5 @@ export function startupPageHtml(strings: DesktopStrings, mode: "starting" | "fai
         @media(max-width:500px){.card{padding:24px}}
         @media(prefers-reduced-motion:reduce){.pulse::after{animation:none;opacity:1}button{transition:none}}
         @media(forced-colors:active){button:focus-visible{outline-color:Highlight}.card,button{border:1px solid ButtonText}}
-    </style></head><body><main class="card"><div class="mark" aria-hidden="true">n</div><h1>${title}</h1><p>${body}</p>${failed && safeDetail ? `<div class="detail" tabindex="0">${safeDetail}</div>` : ""}${failed ? `<div class="actions"><button id="nola-open-logs">${strings.openLogs}</button><button class="primary" id="nola-retry-host">${strings.retry}</button></div><p role="status" id="nola-action-status"></p>` : `<div class="pulse" role="status" aria-label="${strings.startingTitle}"></div>`}</main></body></html>`;
+    </style></head><body><main class="card"><div class="mark" aria-hidden="true">n</div><h1>${title}</h1><p>${body}</p>${content}</main></body></html>`;
 }

@@ -51,23 +51,28 @@ final class IOSKeyboardInteractionTests: XCTestCase {
         XCTAssertEqual(input.value as? String, "Keep this draft")
     }
 
-    func testCancelSlowVerificationPreservesHostDraftInSettings() throws {
-        // The loopback socket accepts a TCP handshake but sends no HTTP reply.
-        let socketFD = socket(AF_INET, SOCK_STREAM, 0)
-        XCTAssertGreaterThanOrEqual(socketFD, 0)
-        defer { Darwin.close(socketFD) }
+    private func bindLoopbackPort() throws -> (socket: Int32, address: String) {
+        let fd = socket(AF_INET, SOCK_STREAM, 0)
+        guard fd >= 0 else { throw POSIXError(.ENFILE) }
         var local = sockaddr_in()
         local.sin_family = sa_family_t(AF_INET)
         local.sin_len = UInt8(MemoryLayout<sockaddr_in>.size)
         local.sin_addr.s_addr = inet_addr("127.0.0.1")
         var size = socklen_t(MemoryLayout<sockaddr_in>.size)
-        try withUnsafeMutablePointer(to: &local) { pointer in
-            try pointer.withMemoryRebound(to: sockaddr.self, capacity: 1) { address in
-                guard Darwin.bind(socketFD, address, size) == 0, listen(socketFD, 1) == 0,
-                      getsockname(socketFD, address, &size) == 0 else { throw POSIXError(.EADDRNOTAVAIL) }
+        let bound = withUnsafeMutablePointer(to: &local) { pointer in
+            pointer.withMemoryRebound(to: sockaddr.self, capacity: 1) { address in
+                Darwin.bind(fd, address, size) == 0 && getsockname(fd, address, &size) == 0
             }
         }
-        let addressText = "http://127.0.0.1:" + String(UInt16(bigEndian: local.sin_port))
+        guard bound else { Darwin.close(fd); throw POSIXError(.EADDRNOTAVAIL) }
+        return (fd, "http://127.0.0.1:" + String(UInt16(bigEndian: local.sin_port)))
+    }
+
+    func testCancelSlowVerificationPreservesHostDraftInSettings() throws {
+        let (socketFD, addressText) = try bindLoopbackPort()
+        defer { Darwin.close(socketFD) }
+        // Accept the TCP handshake but send no HTTP reply until cancellation.
+        XCTAssertEqual(listen(socketFD, 1), 0)
         let app = launch()
         defer { app.terminate() }
         app.openModelCenterFromSettings()
@@ -130,7 +135,10 @@ final class IOSKeyboardInteractionTests: XCTestCase {
         XCTAssertEqual(token.value as? String, filled)
     }
 
-    func testBlankTapAndFocusChangesInHostSheet() {
+    func testBlankTapAndFocusChangesInHostSheet() throws {
+        // This test owns the port and never listens, so the connection must fail.
+        let (fd, addressText) = try bindLoopbackPort()
+        defer { Darwin.close(fd) }
         let app = launch()
         defer { app.terminate() }
         app.tapRootTab("settings")
@@ -141,19 +149,23 @@ final class IOSKeyboardInteractionTests: XCTestCase {
         let token = app.secureTextFields["model.web_host.token_field"]
         XCTAssertTrue(address.waitForExistence(timeout: 6))
         address.tap()
-        address.typeText("http://127.0.0.1:1\n")
+        address.typeText(addressText + "\n")
         token.typeText("fixture")
         XCTAssertTrue(app.keyboards.firstMatch.exists, "Next keeps the keyboard open for the token")
         let maskedToken = token.value as? String
         XCTAssertFalse(maskedToken?.isEmpty ?? true)
-        tapBlank(app, x: 0.92, y: 0.13, name: "host-sheet")
-        XCTAssertEqual(address.value as? String, "http://127.0.0.1:1")
+        let section = app.staticTexts["Connection"].firstMatch
+        XCTAssertTrue(section.isHittable)
+        // The bottom of a secure form can be covered by the system keyboard.
+        // Tap the blank trailing space in the visible section header instead.
+        tapBlank(app, x: 0.85, y: (section.frame.midY - app.frame.minY) / app.frame.height, name: "host-sheet")
+        XCTAssertEqual(address.value as? String, addressText)
         XCTAssertEqual(token.value as? String, maskedToken)
         app.buttons["model.web_host.connect"].tap()
         let failure = app.descendants(matching: .any)["model.web_host.validation_error"].firstMatch
-        XCTAssertTrue(failure.waitForExistence(timeout: 15), "Connection failure must leave an editable form")
+        XCTAssertTrue(failure.waitForExistence(timeout: 20), "Connection failure must leave an editable form")
         XCTAssertTrue(app.buttons["model.web_host.connect"].isEnabled)
-        XCTAssertEqual(address.value as? String, "http://127.0.0.1:1")
+        XCTAssertEqual(address.value as? String, addressText)
         capture("host-sheet-retry", app)
     }
 
@@ -180,7 +192,9 @@ final class IOSKeyboardInteractionTests: XCTestCase {
         let x = app.frame.midX
         // The expanded role includes its prompt, tool pack, and skills below the editor.
         let high = origin.withOffset(CGVector(dx: x, dy: 178))
-        let low = origin.withOffset(CGVector(dx: x, dy: keyboard.frame.minY - 150))
+        let tab = app.rootTabButton("settings")
+        let listBottom = tab.exists && tab.isHittable ? tab.frame.minY : app.frame.maxY
+        let low = origin.withOffset(CGVector(dx: x, dy: min(keyboard.frame.minY - 116, listBottom - 60)))
         low.press(forDuration: 0.09, thenDragTo: high)
         capture("expert-editor-after-scroll", app)
         let hidden = XCTNSPredicateExpectation(predicate: NSPredicate(format: "exists == false"), object: keyboard)

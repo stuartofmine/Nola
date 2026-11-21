@@ -291,13 +291,14 @@ enum IOSWorkspaceDestination: String, CaseIterable, Identifiable, Hashable {
 /// one container, while editors retain their existing sheets and cancellation guards.
 struct IOSWorkspaceManagementContent: View {
     let destination: IOSWorkspaceDestination
+    var initialDirectory: [IOSConversationDirectoryEntry]? = nil
     var notificationKey: String? = nil
     var notificationRequestID: UUID? = nil
     var onModelConfigured: ((ModelInfo) -> Void)? = nil
     var body: some View {
         Group {
             switch destination {
-            case .knowledge: IOSKnowledgePointsView()
+            case .knowledge: IOSKnowledgePointsView(initialDirectory: initialDirectory)
             case .sources: HomeView(ownsNavigationStack: false)
             case .memory: PersonalIntelligenceDashboardView(embedded: true)
             case .plans: ScheduledActionsView(embedded: true)
@@ -362,10 +363,12 @@ struct IOSInformationView: View {
     var body: some View {
         NavigationStack(path: $path) {
             List {
-                IOSWorkspacePageHeading(title: String(localized: "navigation.library"), titleRowHeight: 64)
-                    .accessibilityIdentifier("information.heading")
-                    .listRowInsets(EdgeInsets(top: 4, leading: 0, bottom: 0, trailing: 0))
-                    .listRowSeparator(.hidden).listRowBackground(Color.clear)
+                if horizontalSizeClass != .compact {
+                    IOSWorkspacePageHeading(title: String(localized: "navigation.library"), titleRowHeight: 64)
+                        .accessibilityIdentifier("information.heading")
+                        .listRowInsets(EdgeInsets(top: 4, leading: 0, bottom: 0, trailing: 0))
+                        .listRowSeparator(.hidden).listRowBackground(Color.clear)
+                }
                 Section {
                 ForEach([IOSWorkspaceDestination.knowledge, .memory, .sources]) { item in
                     Button {
@@ -431,8 +434,14 @@ struct IOSInformationView: View {
             .navigationTitle("")
             .navigationBarTitleDisplayMode(.inline)
             .toolbarBackground(.hidden, for: .navigationBar)
+            .toolbar {
+                if horizontalSizeClass == .compact {
+                    IOSWorkspaceToolbarHeading(title: String(localized: "navigation.library"), identifier: "information.heading")
+                }
+            }
             .navigationDestination(for: IOSWorkspaceDestination.self) { item in
                 IOSWorkspaceManagementContent(destination: item,
+                    initialDirectory: directoryLoadedAt == nil ? nil : directory,
                     notificationKey: item == .records ? activeRequest?.notificationKey : nil,
                     notificationRequestID: item == .records ? activeRequest?.id : nil)
             }
@@ -484,6 +493,15 @@ private struct IOSKnowledgePointsView: View {
     @State private var hasLoaded = false
     @State private var loadError: String?
 
+    init(initialDirectory: [IOSConversationDirectoryEntry]?) {
+        _conversations = State(initialValue: Self.savedKnowledge(in: initialDirectory ?? []))
+        _hasLoaded = State(initialValue: initialDirectory != nil)
+    }
+
+    private static func savedKnowledge(in directory: [IOSConversationDirectoryEntry]) -> [IOSConversationDirectoryEntry] {
+        directory.filter { !$0.knowledgePoints.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
+    }
+
     var body: some View {
         List {
             if let loadError {
@@ -531,7 +549,7 @@ private struct IOSKnowledgePointsView: View {
         do {
             let loaded = try await Task.detached { try IOSWorkspaceReadFacts.conversationDirectory(runtime: runtime) }.value
             try Task.checkCancellation()
-            conversations = loaded.filter { !$0.knowledgePoints.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
+            conversations = Self.savedKnowledge(in: loaded)
             hasLoaded = true
             loadError = nil
         } catch is CancellationError { }
@@ -542,23 +560,36 @@ private struct IOSKnowledgePointsView: View {
     }
 }
 
-struct IOSWorkspaceWidthObserver: View {
-    @Binding var width: CGFloat
-    var body: some View {
-        GeometryReader { geometry in
-            Color.clear.onChange(of: geometry.size.width, initial: true) { _, value in
-                if value > 0 { width = value }
-            }
-        }
-    }
-}
-
 struct IOSWorkspaceTopEdge: ViewModifier {
     func body(content: Content) -> some View {
         if #available(iOS 26.0, *) {
             content.scrollEdgeEffectHidden(true, for: .top)
         } else {
             content
+        }
+    }
+}
+
+/// A visible root navigation bar keeps UIKit's top inset stable through a push.
+struct IOSWorkspaceToolbarHeading: ToolbarContent {
+    let title: String
+    let identifier: String
+
+    private var heading: some View {
+        Text(title)
+            .font(.system(.largeTitle, design: .serif, weight: .semibold))
+            .fixedSize(horizontal: true, vertical: false)
+            .foregroundStyle(DesignTokens.contentColor)
+            .accessibilityAddTraits(.isHeader)
+            .accessibilityIdentifier(identifier)
+    }
+
+    var body: some ToolbarContent {
+        if #available(iOS 26.0, *) {
+            ToolbarItem(placement: .topBarLeading) { heading }
+                .sharedBackgroundVisibility(.hidden)
+        } else {
+            ToolbarItem(placement: .topBarLeading) { heading }
         }
     }
 }
@@ -594,7 +625,7 @@ struct IOSConversationActivityView: View {
     var body: some View {
         let runtime = container.applicationRuntime
         VStack(spacing: 0) {
-        if isRootTab {
+        if isRootTab && horizontalSizeClass != .compact {
             IOSWorkspacePageHeading(title: String(localized: "information.activity"), titleRowHeight: 64)
                 .padding(.horizontal, pageInset)
                 .padding(.top, 4)
@@ -648,6 +679,11 @@ struct IOSConversationActivityView: View {
         .background(DesignTokens.backgroundColor)
         .navigationTitle(isRootTab ? "" : String(localized: "information.activity"))
         .navigationBarTitleDisplayMode(.inline)
+        .toolbar {
+            if isRootTab && horizontalSizeClass == .compact {
+                IOSWorkspaceToolbarHeading(title: String(localized: "information.activity"), identifier: "activity.heading")
+            }
+        }
         .toolbarBackground(.hidden, for: .navigationBar)
         .task {
             await loadNextPlan(force: false)

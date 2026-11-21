@@ -48,6 +48,9 @@ struct IOSCompactTabContainer<Tab: Hashable>: UIViewControllerRepresentable {
             }
             selected = tab
             addChild(host)
+            // Give the incoming navigation stack its real viewport before it
+            // appears. Constraints alone take effect on the next layout pass.
+            host.view.frame = view.safeAreaLayoutGuide.layoutFrame
             host.view.translatesAutoresizingMaskIntoConstraints = false
             view.addSubview(host.view)
             NSLayoutConstraint.activate([
@@ -56,6 +59,7 @@ struct IOSCompactTabContainer<Tab: Hashable>: UIViewControllerRepresentable {
                 host.view.topAnchor.constraint(equalTo: view.safeAreaLayoutGuide.topAnchor),
                 host.view.bottomAnchor.constraint(equalTo: view.safeAreaLayoutGuide.bottomAnchor),
             ])
+            view.layoutIfNeeded()
             host.didMove(toParent: self)
         }
     }

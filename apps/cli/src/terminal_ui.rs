@@ -1450,8 +1450,8 @@ fn build_frame(state: &UiState, columns: u16, rows: u16) -> Frame {
     if matches!(state.turn, TurnPhase::Idle) {
         if let Some(idle) = &state.idle_frame {
             let max_rows = usize::from(rows.saturating_sub(1).max(1)).saturating_sub(footer.len()).max(1);
-            let dropped = idle.lines.len().saturating_sub(max_rows);
-            let mut lines = idle.lines.iter().skip(dropped).cloned().collect::<Vec<_>>();
+            let dropped = idle.lines.len().saturating_sub(max_rows).min(idle.cursor_row);
+            let mut lines = idle.lines.iter().skip(dropped).take(max_rows).cloned().collect::<Vec<_>>();
             lines.extend(footer);
             let start = rows.saturating_sub(lines.len() as u16).saturating_add(1);
             let relative_cursor = idle.cursor_row.saturating_sub(dropped);
@@ -3106,6 +3106,26 @@ mod tests {
             .lines
             .iter()
             .any(|line| line.contains("private draft")));
+    }
+
+    #[test]
+    fn long_idle_draft_keeps_the_edited_line_under_the_cursor() {
+        let mut state = UiState::default();
+        state.footer = vec!["model".into(), "context".into()];
+        let lines: Vec<_> = (0..18).map(|index| format!("草稿 {index}")).collect();
+        for row in [17, 0, 6, 12, 1, 17] {
+            state.idle_frame = Some(IdleFrameState {
+                lines: lines.clone(), cursor_row: row, cursor_column: 3,
+            });
+            for rows in [7, 9, 24] {
+                let frame = build_frame(&state, 32, rows);
+                let (screen_row, column) = frame.cursor.unwrap();
+                let first_row = usize::from(rows) + 1 - frame.lines.len();
+                assert_eq!(frame.lines[usize::from(screen_row) - first_row], lines[row]);
+                assert_eq!(column, 3);
+                assert_eq!(strip_ansi(frame.lines.last().unwrap()).trim(), "context");
+            }
+        }
     }
 
     #[test]

@@ -876,13 +876,21 @@ struct MacPageMetric: Identifiable {
 
 struct MacPageMetricsBar: View {
     let metrics: [MacPageMetric]
-    var isWorking = false
+    var isWorking: Bool? = nil
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     var body: some View {
         ViewThatFits(in: .horizontal) {
             wideMetrics
             compactMetrics
+        }
+        .padding(.trailing, isWorking == nil ? 0 : 24)
+        .overlay(alignment: .trailing) {
+            if isWorking == true {
+                ProgressView()
+                    .controlSize(.small)
+                    .accessibilityLabel(String(localized: "Working"))
+            }
         }
         .padding(.horizontal, MacDesignTokens.Spacing.md)
         .frame(minHeight: 46)
@@ -901,13 +909,6 @@ struct MacPageMetricsBar: View {
                 metricView(metric)
                     .frame(minWidth: 108, maxWidth: .infinity, alignment: .leading)
             }
-
-            if isWorking {
-                ProgressView()
-                    .controlSize(.small)
-                    .padding(.leading, MacDesignTokens.Spacing.md)
-                    .accessibilityLabel(String(localized: "Working"))
-            }
         }
     }
 
@@ -917,11 +918,6 @@ struct MacPageMetricsBar: View {
                 ForEach(metrics) { metric in
                     metricView(metric)
                         .frame(minWidth: 112, alignment: .leading)
-                }
-                if isWorking {
-                    ProgressView()
-                        .controlSize(.small)
-                        .accessibilityLabel(String(localized: "Working"))
                 }
             }
             .padding(.vertical, MacDesignTokens.Spacing.xs)
@@ -953,6 +949,7 @@ struct MacPageMetricsBar: View {
             }
         }
         .accessibilityElement(children: .combine)
+        .accessibilityIdentifier("page.metric." + metric.id)
     }
 }
 

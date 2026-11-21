@@ -41,6 +41,27 @@ final class IOSCompactTabContainerTests: XCTestCase {
         XCTAssertEqual(label(host.view)?.text, "theme changed")
     }
 
+    func testSwitchingTabsUsesCurrentSafeAreaBeforeTheNextLayoutPass() throws {
+        let scene = try XCTUnwrap(UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }.first)
+        let controller = IOSCompactTabContainer<Tab>.Controller()
+        let window = UIWindow(windowScene: scene)
+        window.rootViewController = controller
+        window.makeKeyAndVisible()
+        defer { window.isHidden = true; window.rootViewController = nil; window.windowScene = nil }
+        controller.additionalSafeAreaInsets.bottom = 12
+        window.layoutIfNeeded()
+        for tab in [Tab.chat, .settings, .chat] {
+            controller.select(tab, content: AnyView(Text("Page")), revision: 0)
+            let host = try XCTUnwrap(controller.children.first)
+            let firstFrame = host.view.frame
+            XCTAssertEqual(firstFrame, controller.view.safeAreaLayoutGuide.layoutFrame)
+            window.layoutIfNeeded()
+            XCTAssertEqual(host.view.frame, firstFrame)
+            controller.additionalSafeAreaInsets.bottom += 20
+            window.layoutIfNeeded()
+        }
+    }
+
     func testReturningToActivityKeepsItsSnapshotWithoutReloading() async throws {
         let scene = try XCTUnwrap(UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }.first)
         let controller = IOSCompactTabContainer<Tab>.Controller()

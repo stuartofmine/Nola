@@ -907,41 +907,48 @@ struct WebHostConfigurationView: View {
                     Text("model.web_host.setup_payload")
                 }
 
-                TextField(
-                    NSLocalizedString("model.web_host.url", value: "Host URL", comment: "Web Host URL field"),
-                    text: Binding(get: { hostURL }, set: { value in
-                        guard hostURL != value else { return }
-                        accessToken = ""
-                        importedSetup = nil
-                        hostURL = value
-                    })
-                )
-                .textContentType(.URL)
-                .textInputAutocapitalization(.never)
-                .autocorrectionDisabled()
-                .keyboardType(.URL)
-                .focused($connectionField, equals: .url)
-                .submitLabel(.next)
-                .onSubmit { connectionField = .token }
-                .accessibilityIdentifier("model.web_host.url_field")
-                .disabled(isConnecting)
+                // Both responders must exist when Next is pressed, even when
+                // the keyboard covers the bottom of this Form.
+                VStack(spacing: 0) {
+                    TextField(
+                        NSLocalizedString("model.web_host.url", value: "Host URL", comment: "Web Host URL field"),
+                        text: Binding(get: { hostURL }, set: { value in
+                            guard hostURL != value else { return }
+                            accessToken = ""
+                            importedSetup = nil
+                            hostURL = value
+                        })
+                    )
+                    .textContentType(.URL)
+                    .textInputAutocapitalization(.never)
+                    .autocorrectionDisabled()
+                    .keyboardType(.URL)
+                    .focused($connectionField, equals: .url)
+                    .submitLabel(.next)
+                    .onSubmit { connectionField = .token }
+                    .accessibilityIdentifier("model.web_host.url_field")
+                    .frame(minHeight: 44)
 
-                SecureField(
-                    NSLocalizedString("model.web_host.token", value: "Access token", comment: "Web Host access token field"),
-                    text: $accessToken
-                )
-                // A Host access token is not a website password. Nola owns its
-                // verified Keychain persistence. A nil content type still lets
-                // UIKit infer a login form and present Save Password after
-                // pairing; mark the pairing code explicitly instead.
-                .textContentType(.oneTimeCode)
-                .focused($connectionField, equals: .token)
-                .submitLabel(.go)
-                .onSubmit { connect() }
-                .keyboardType(.asciiCapable)
-                .textInputAutocapitalization(.never)
-                .autocorrectionDisabled()
-                .accessibilityIdentifier("model.web_host.token_field")
+                    Divider()
+
+                    SecureField(
+                        NSLocalizedString("model.web_host.token", value: "Access token", comment: "Web Host access token field"),
+                        text: $accessToken
+                    )
+                    // A Host access token is not a website password. Nola owns its
+                    // verified Keychain persistence. A nil content type still lets
+                    // UIKit infer a login form and present Save Password after
+                    // pairing; mark the pairing code explicitly instead.
+                    .textContentType(.oneTimeCode)
+                    .focused($connectionField, equals: .token)
+                    .submitLabel(.go)
+                    .onSubmit { connect() }
+                    .keyboardType(.asciiCapable)
+                    .textInputAutocapitalization(.never)
+                    .autocorrectionDisabled()
+                    .accessibilityIdentifier("model.web_host.token_field")
+                    .frame(minHeight: 44)
+                }
                 .disabled(isConnecting)
                 if pairedURL != nil {
                     Text(NSLocalizedString("model.web_host.saved_token_hint", value: "Leave blank to use this host’s saved token.", comment: "Saved host token hint"))

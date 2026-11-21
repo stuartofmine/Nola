@@ -1664,13 +1664,13 @@ final class MacConversationPresentationOverlayTests: XCTestCase {
     }
 }
 
-private final class SnapshotSourceURLProtocol: URLProtocol, @unchecked Sendable {
-    @MainActor static var handlers: [String: (URLRequest) -> Void] = [:]
+final class SnapshotSourceURLProtocol: URLProtocol, @unchecked Sendable {
+    @MainActor static var handlers: [String: (URLRequest) async -> Void] = [:]
     override class func canInit(with request: URLRequest) -> Bool { true }
     override class func canonicalRequest(for request: URLRequest) -> URLRequest { request }
     override func startLoading() {
         Task { @MainActor in
-            Self.handlers[request.url!.host!]?(request)
+            await Self.handlers[request.url!.host!]?(request)
             let response = HTTPURLResponse(url: request.url!, statusCode: 200,
                 httpVersion: nil, headerFields: ["Content-Type": "text/plain"])!
             client?.urlProtocol(self, didReceive: response, cacheStoragePolicy: .notAllowed)

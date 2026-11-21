@@ -167,6 +167,22 @@ test("startupPageHtml enforces Warm Paper/Ink tokens, WCAG contrast, layout boun
 // Exercise the production bridge and startup page with a controlled Tauri command transport.
 const bridge = fs.readFileSync(path.join(repoRoot, "apps/windows/src-tauri/src/desktop-bridge.js"), "utf8");
 const startup = fs.readFileSync(path.join(repoRoot, "apps/windows/src-tauri/startup/startup.js"), "utf8");
+
+test("the startup mark stays anchored from the first paint through host failure", async ({ page }) => {
+    const firstPage = fs.readFileSync(path.join(repoRoot, "apps/windows/src-tauri/startup/index.html"), "utf8");
+    const strings = stringsFor("zh-Hans");
+    for (const viewport of [{ width: 720, height: 520 }, { width: 320, height: 568 }]) {
+        await page.setViewportSize(viewport);
+        await page.setContent(firstPage);
+        const bounds = () => page.locator(".mark").evaluate(el => el.getBoundingClientRect().toJSON());
+        const initial = await bounds();
+        for (const mode of ["starting", "failed"] as const) {
+            await page.setContent(startupPageHtml(strings, mode, "Host unavailable"));
+            expect(await bounds()).toEqual(initial);
+        }
+    }
+});
+
 const preloadHarness = `(() => {
     let enabled = false, reads = 0;
     window.__ipcCalls = [];
@@ -239,12 +255,14 @@ test("startup recovers from a missed status read and shows native action errors"
     await page.addScriptTag({content: startup});
     const logs = page.getByRole("button", {name: stringsFor("en").openLogs});
     await logs.focus();
+    const initialButton = await logs.boundingBox();
     await logs.press("Enter");
     await expect(logs).toBeDisabled();
     const rejectDiagnostics = () => page.evaluate(() =>
         (window as Window & { __rejectDiagnostics(): void }).__rejectDiagnostics());
     await rejectDiagnostics();
     await expect(page.getByRole("status")).toHaveText("Folder unavailable");
+    expect(await logs.boundingBox()).toEqual(initialButton);
     await expect(logs).toBeEnabled();
     await expect(logs).toBeFocused();
     await expect(page.locator(".detail")).toHaveText("Exit code 1");

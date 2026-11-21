@@ -296,15 +296,8 @@ struct PersonalIntelligenceDashboardView: View {
             if filteredMemories.isEmpty && loadError == nil {
                 emptyMemoryState
             } else {
-                ForEach(Array(filteredMemories.prefix(visibleMemoryCount).enumerated()), id: \.offset) { index, memory in
-                    memoryCard(memory)
-                        .transition(.opacity.combined(with: .move(edge: .bottom)))
-                        .animation(
-                            reduceMotion
-                                ? nil
-                                : DesignTokens.revealAnimation,
-                            value: selectedFilter
-                        )
+                ForEach(visibleMemories, id: \.id) { item in
+                    memoryCard(item.record)
                 }
                 if filteredMemories.count > visibleMemoryCount {
                     Button(text("personal.intelligence.memories.load_more", "Load more memories")) {
@@ -315,15 +308,18 @@ struct PersonalIntelligenceDashboardView: View {
         }
     }
 
+    private var visibleMemories: [(id: String, record: [String: AgentCoreJSONValue])] {
+        filteredMemories.prefix(visibleMemoryCount).compactMap { record in
+            guard let id = record["id"]?.jsonString else { return nil }
+            return (id, record)
+        }
+    }
+
     private func filterButton(_ filter: MemoryFilter) -> some View {
         let selected = selectedFilter == filter
         return Button {
             visibleMemoryCount = 24
-            if reduceMotion {
-                selectedFilter = filter
-            } else {
-                withAnimation(DesignTokens.disclosureAnimation) { selectedFilter = filter }
-            }
+            selectedFilter = filter
         } label: {
             Text(filterTitle(filter))
                 .font(.subheadline.weight(.medium))
@@ -331,7 +327,11 @@ struct PersonalIntelligenceDashboardView: View {
                 .padding(.horizontal, 13)
                 .padding(.vertical, 8)
                 .frame(minHeight: 44)
-                .background(selected ? DesignTokens.accentSubtleColor : .clear, in: RoundedRectangle(cornerRadius: 12))
+                .background {
+                    RoundedRectangle(cornerRadius: 12)
+                        .fill(selected ? DesignTokens.accentSubtleColor : Color.clear)
+                        .animation(reduceMotion ? nil : DesignTokens.disclosureAnimation, value: selected)
+                }
                 .overlay(RoundedRectangle(cornerRadius: 12).stroke(DesignTokens.borderColor, lineWidth: 1))
         }
         .buttonStyle(NolaPressableStyle())
@@ -897,7 +897,6 @@ struct PersonalCapabilitiesLibraryView: View {
         if libraryLoaded {
             capabilityGallery
                 .disabled(libraryReadFailed)
-                .animation(.easeInOut(duration: 0.18), value: selectedKind)
         } else if !libraryReadFailed {
             ProgressView()
         }

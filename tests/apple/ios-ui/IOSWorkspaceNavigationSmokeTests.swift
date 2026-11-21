@@ -537,6 +537,63 @@ final class IOSWorkspaceNavigationSmokeTests: XCTestCase {
         app.tapRootTab(tab, timeout: timeout)
     }
 
+    func testCompactWorkspaceEntryAndReturnKeepNavigationGeometry() throws {
+        continueAfterFailure = false
+        let app = XCUIApplication()
+        app.launchArguments = ["-ui-testing", "-AppleLanguages", "(en)", "-AppleLocale", "en_US"]
+        app.launchEnvironment["NOLA_UI_TEST_RUN_ID"] = "compact-entry-\(UUID().uuidString)"
+        app.launch()
+        defer { app.terminate() }
+        let selectedTab = app.buttons["main.tab.chat"]
+        guard UIDevice.current.userInterfaceIdiom == .phone else { throw XCTSkip("Requires iPhone navigation") }
+        XCTAssertTrue(selectedTab.waitForExistence(timeout: 5))
+        let tabY = selectedTab.frame.midY
+        func capture(_ name: String) {
+            let attachment = XCTAttachment(screenshot: app.screenshot())
+            attachment.name = name
+            attachment.lifetime = .keepAlways
+            add(attachment)
+        }
+        for (tab, entry) in [("activity", "activity.plans"), ("information", "information.knowledge"),
+                              ("settings", "settings.category.general"), ("chat", "chat.conversations.new")] {
+            app.tapRootTab(tab)
+            let row = app.buttons[entry]
+            XCTAssertTrue(row.waitForExistence(timeout: 5))
+            let rootY = row.frame.midY
+            var navigationBarBottom: CGFloat?
+            if tab != "chat" {
+                let bar = app.navigationBars.firstMatch
+                XCTAssertTrue(bar.exists)
+                let title = bar.staticTexts[tab + ".heading"].firstMatch
+                XCTAssertTrue(title.exists)
+                let textWidth = (title.label as NSString).size(withAttributes: [.font: UIFont.preferredFont(forTextStyle: .largeTitle)]).width
+                XCTAssertGreaterThanOrEqual(title.frame.width, floor(textWidth * 0.90), tab)
+                navigationBarBottom = bar.frame.maxY
+            }
+            let tabButton = app.buttons["main.tab.\(tab)"]
+            XCTAssertEqual(tabButton.frame.midY, tabY, accuracy: 1, tab)
+            row.tap()
+            let back = tab == "chat" ? app.buttons["chat.navigation.back"] : app.navigationBars.buttons.firstMatch
+            XCTAssertTrue(back.waitForExistence(timeout: 5))
+            if tab == "chat" {
+                XCTAssertFalse(tabButton.exists)
+                XCTAssertTrue(app.textViews["chat.composer.input"].isHittable)
+            } else {
+                XCTAssertEqual(tabButton.frame.midY, tabY, accuracy: 1, tab)
+                XCTAssertTrue(tabButton.isSelected, tab)
+                if let navigationBarBottom {
+                    XCTAssertEqual(app.navigationBars.firstMatch.frame.maxY, navigationBarBottom, accuracy: 1, tab)
+                }
+            }
+            capture("\(tab)-detail")
+            back.tap()
+            XCTAssertTrue(row.waitForExistence(timeout: 5))
+            XCTAssertEqual(row.frame.midY, rootY, accuracy: 1, tab)
+            XCTAssertEqual(tabButton.frame.midY, tabY, accuracy: 1, tab)
+            capture("\(tab)-returned")
+        }
+    }
+
     func testConversationListHeaderRemainsLegibleAfterReturningFromWorkspaceTabs() throws {
         try checkConversationListHeader(language: "en", locale: "en_US", dark: false, titleLabel: "Chat")
     }
@@ -1292,6 +1349,69 @@ extension IOSWorkspaceNavigationSmokeTests {
         captureAudit("data-notifications", in: app)
         app.navigationBars.buttons.element(boundBy: 0).tap()
         XCTAssertTrue(app.buttons["data.center.open"].waitForExistence(timeout: 5))
+    }
+
+    func testMemoryFiltersAndCapabilityTabsKeepReadingControlsInPlace() {
+        let app = launchSettingsAudit("library-filters")
+        defer { app.terminate() }
+        app.openWorkspaceManagement("memory")
+        let all = app.buttons["intelligence.filter.all"]
+        XCTAssertTrue(all.waitForExistence(timeout: 5))
+        let filterY = all.frame.midY
+        for key in ["facts", "preferences", "episodes", "all"] {
+            let filter = app.buttons["intelligence.filter." + key]
+            filter.tap()
+            XCTAssertTrue(filter.isSelected)
+            XCTAssertEqual(filter.frame.midY, filterY, accuracy: 1)
+        }
+        captureAudit("memory-filters", in: app)
+        app.tapRootTab("settings")
+        app.buttons["settings.category.agent"].tap()
+        let skills = app.buttons["Skills"]
+        XCTAssertTrue(skills.waitForExistence(timeout: 5))
+        let tabY = skills.frame.midY
+        for label in ["MCP", "Plugins", "Skills"] {
+            let choice = app.buttons[label]
+            choice.tap()
+            XCTAssertTrue(choice.isSelected)
+            XCTAssertEqual(choice.frame.midY, tabY, accuracy: 1)
+        }
+        captureAudit("capability-tabs", in: app)
+    }
+
+    func testDataOverviewRefreshAndReturnKeepControlsInPlace() {
+        let app = launchSettingsAudit("sources-refresh")
+        defer { app.terminate() }
+        app.openWorkspaceManagement("sources")
+        let refresh = app.buttons["data.overview.refresh"]
+        let live = app.buttons["data.center.open"]
+        let health = app.buttons["Allow Health access"]
+        let openToday = app.buttons["Today"]
+        let ready = NSPredicate(format: "exists == true AND enabled == true")
+        func waitForRefresh() {
+            XCTAssertEqual(XCTWaiter.wait(for: [XCTNSPredicateExpectation(predicate: ready, object: refresh)], timeout: 15), .completed)
+        }
+        waitForRefresh()
+        XCTAssertTrue(live.isHittable)
+        XCTAssertTrue(health.isHittable)
+        XCTAssertTrue(openToday.isHittable)
+        let controls = [live, health, openToday]
+        let positions = controls.map { $0.frame.midY }
+        refresh.tap()
+        waitForRefresh()
+        for (control, y) in zip(controls, positions) {
+            XCTAssertEqual(control.frame.midY, y, accuracy: 1, control.label)
+        }
+        captureAudit("sources-after-refresh", in: app)
+        live.tap()
+        XCTAssertTrue(app.buttons["data.center.source.contacts"].waitForExistence(timeout: 5))
+        app.navigationBars.buttons.firstMatch.tap()
+        waitForRefresh()
+        for (control, y) in zip(controls, positions) {
+            XCTAssertTrue(control.isHittable)
+            XCTAssertEqual(control.frame.midY, y, accuracy: 1, control.label)
+        }
+        captureAudit("sources-after-return", in: app)
     }
 
     func testDeviceDataSourceAccessSettingsSurviveReopening() {

@@ -1,3 +1,4 @@
+export const mobileInformationTabs = ['knowledge', 'sources', 'memory', 'plans', 'activity'] as const;
 export const sourcePolicies = ['conversationOptIn', 'askWhenRelevant', 'defaultEnabled', 'blocked'] as const;
 export const sourceKinds = ['localFile', 'http'] as const;
 export type DataSourceContract = {

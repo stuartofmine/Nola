@@ -13,8 +13,9 @@
     import { latestRequest } from '../lib/latestRequest';
     import { resultTime } from '../lib/results';
     import { conversationHref } from '../lib/conversations';
-    import { DataSourceError, newSourceId, parseSources, parseUsage, sourceDraft, sourcePayload, sourceReceipt, deletionReceipt, sourceState, disclosureKey, replaceSource, sourcePolicies, sourceKinds } from '../lib/dataSources';
+    import { DataSourceError, newSourceId, parseSources, parseUsage, sourceDraft, sourcePayload, sourceReceipt, deletionReceipt, sourceState, disclosureKey, replaceSource, sourcePolicies, sourceKinds, mobileInformationTabs } from '../lib/dataSources';
     import type { DataSource, SourceUsage } from '../lib/dataSources';
+    import RefreshButton from '../components/RefreshButton.svelte';
     import ConfirmationDialog from '../components/ConfirmationDialog.svelte';
     import Automations from './Automations.svelte';
     import MemoryCenter from '../components/MemoryCenter.svelte';
@@ -25,29 +26,38 @@
     let sources = $state<DataSource[]>([]);
     let usage = $state<SourceUsage[]>([]);
     type InformationTab = 'overview' | 'knowledge' | 'sources' | 'memory' | 'plans' | 'activity' | 'usage';
-    const tabs = $derived<InformationTab[]>(viewportWidth <= 700
-        ? ['knowledge', 'sources', 'memory', 'plans', 'activity']
-        : ['sources', 'memory', 'plans', 'usage']);
-    const requestedTab = pageLocation.read().searchParams.get('tab');
-    let memoryVisited = $state(requestedTab === 'memory');
-    const initialTabs: InformationTab[] = window.innerWidth <= 700 ? ['knowledge', 'sources', 'memory', 'plans', 'activity'] : ['sources', 'memory', 'plans', 'usage'];
-    const initialTab = initialTabs.find(item => item === requestedTab) ?? (window.innerWidth <= 700 ? 'overview' : 'sources');
+    const desktopTabs: InformationTab[] = ['sources', 'memory', 'plans', 'usage'];
+    const tabs = $derived<readonly InformationTab[]>(viewportWidth <= 700 ? mobileInformationTabs : desktopTabs);
+    function tabAt(url: URL, width: number): InformationTab {
+        const requested = url.searchParams.get('tab');
+        const compact = width <= 700;
+        const available: readonly InformationTab[] = compact ? mobileInformationTabs : desktopTabs;
+        if (requested === 'activity' || requested === 'usage') return compact ? 'activity' : 'usage';
+        return available.find(item => item === requested) ?? (compact ? 'overview' : 'sources');
+    }
+    const initialTab = tabAt(pageLocation.read(), window.innerWidth);
+    let memoryVisited = $state(initialTab === 'memory');
     let tab = $state<InformationTab>(initialTab);
     let knowledgeVisited = $state(initialTab === 'knowledge');
     let activityVisited = $state(initialTab === 'activity');
-    function selectTab(next: InformationTab) {
+    function selectTab(next: InformationTab, updateLocation = true) {
         tab = next;
         if (next === 'memory') memoryVisited = true;
         if (next === 'plans') plansVisited = true;
         if (next === 'knowledge') knowledgeVisited = true;
         if (next === 'activity') activityVisited = true;
-        if (pageLocation.active()) {
+        if (updateLocation && pageLocation.active()) {
             const target = pageLocation.read();
             if (next === 'overview') target.searchParams.delete('tab'); else target.searchParams.set('tab', next);
             pageLocation.replace(target);
         }
     }
-    $effect(() => { if (viewportWidth > 700 && tab === 'overview' || tab !== 'overview' && !tabs.includes(tab)) selectTab('sources'); });
+    function resizeSections() {
+        const width = window.innerWidth;
+        const crossed = (width <= 700) !== (viewportWidth <= 700);
+        viewportWidth = width;
+        if (crossed) selectTab(tabAt(pageLocation.read(), width), false);
+    }
     const tabLabel = (item: InformationTab) => item === 'knowledge' ? 'chatKnowledge.knowledgePoints'
         : item === 'activity' ? 'shell.informationActivity'
         : item === 'memory' && viewportWidth <= 700 ? 'memoryCenter.title' : `data_sources.tab.${item}`;
@@ -61,11 +71,55 @@
         activity: 'M21 12a9 9 0 1 1-18 0a9 9 0 1 1 18 0 M12 6v6l4 2',
     };
     const overviewLabel = (item: InformationTab) => ['knowledge', 'sources', 'activity'].includes(item) ? `shell.informationRow.${item}.title` : tabLabel(item);
+    let heading: HTMLHeadingElement;
+    let directory = $state<HTMLElement>();
+    function focusSection(previous: InformationTab) {
+        void tick().then(() => {
+            if (disposed || !pageLocation.active() || viewportWidth > 700) return;
+            const target = tab === 'overview'
+                ? directory?.querySelector<HTMLAnchorElement>(`a[href$="tab=${previous}"]`)
+                : heading;
+            target?.focus({preventScroll: true});
+        });
+    }
+    function restoreSection() {
+        if (pageLocation.key || location.pathname !== '/data-sources') return;
+        viewportWidth = window.innerWidth;
+        const next = tabAt(pageLocation.read(), viewportWidth);
+        if (next === tab) return;
+        const previous = tab;
+        if (previous !== 'overview' && next === 'overview') {
+            const modal = document.activeElement?.closest<HTMLDialogElement>('dialog:modal')
+                ?? document.querySelector<HTMLDialogElement>('dialog:modal');
+            if (modal) {
+                // Complete the editor's own cancel/discard flow before leaving its page.
+                history.forward();
+                if (typeof modal.requestClose === 'function') modal.requestClose();
+                else if (modal.dispatchEvent(new Event('cancel', {cancelable: true}))) modal.close();
+                return;
+            }
+        }
+        selectTab(next, false);
+        focusSection(previous);
+    }
+    function showDirectory() {
+        if (!pageLocation.key && history.state?.nolaInformationSection) {
+            history.back();
+            return;
+        }
+        const previous = tab;
+        selectTab('overview');
+        focusSection(previous);
+    }
     function openInformation(event: MouseEvent, item: InformationTab) {
         if (event.button !== 0 || event.ctrlKey || event.metaKey || event.shiftKey || event.altKey) return;
-        event.preventDefault(); selectTab(item);
+        event.preventDefault();
+        if (!pageLocation.key) history.pushState({...history.state, nolaInformationSection: true}, '', (event.currentTarget as HTMLAnchorElement).href);
+        selectTab(item);
+        focusSection('overview');
+        if (!pageLocation.key) window.scrollTo(0, 0);
     }
-    let plansVisited = $state(requestedTab === 'plans');
+    let plansVisited = $state(initialTab === 'plans');
     function tabKey(event: KeyboardEvent, index: number) {
         if (event.altKey || event.ctrlKey || event.metaKey) return;
         const next = event.key === 'ArrowRight' ? (index + 1) % tabs.length : event.key === 'ArrowLeft' ? (index + tabs.length - 1) % tabs.length
@@ -173,7 +227,7 @@
         if (!acceptsWorkspaceUnload(event)) return; if (dirty || operation) { event.preventDefault(); event.returnValue = ''; } }
 </script>
 
-<svelte:window bind:innerWidth={viewportWidth} onbeforeunload={beforeUnload} />
+<svelte:window onresize={resizeSections} onbeforeunload={beforeUnload} onpopstate={restoreSection} />
 <svelte:head>{#if pageLocation.active()}<title>{t($locale, 'data_sources.header.title')} — Nola</title>{/if}</svelte:head>
 <ConfirmationDialog bind:this={confirmation} />
 {#snippet usageItems(records: SourceUsage[])}
@@ -181,11 +235,11 @@
         <article class="source"><div class="row between"><strong>{record.sourceTitle || record.sourceId}</strong><span>{t($locale, disclosureKey(record))}</span></div><p>{record.purpose}</p><p class="muted">{t($locale, 'data_sources.usage.consumer')}: {record.consumer} · {resultTime(record.usedAt, $locale)}</p>{#if record.conversationId}<a class="button" href={conversationHref(record.conversationId)}>{t($locale, 'data_sources.usage.conversation')}</a>{/if}</article>
     {:else}<p class="muted">{t($locale, 'data_sources.usage.empty')}</p>{/each}
 {/snippet}
-{#if viewportWidth <= 700 && tab !== 'overview'}<div class="information-back"><button type="button" onclick={() => selectTab('overview')}><span aria-hidden="true">‹</span>{t($locale, 'shell.information')}</button></div>{/if}
-<header class="page-header" class:mobile-overview={viewportWidth <= 700 && tab === 'overview'}><div><h1 id={viewportWidth <= 700 ? `data-tab-${tab}` : undefined}>{t($locale, tab !== 'overview' ? tabLabel(tab) : 'shell.information')}</h1><p class="muted">{t($locale, tabHint(tab))}</p></div><div class="actions page-actions">{#if tab === 'sources'}<button class="primary" disabled={busy || !sourcesLoaded} onclick={() => edit()}>{t($locale, 'data_sources.action.add')}</button>{/if}</div></header>
+{#if viewportWidth <= 700 && tab !== 'overview'}<div class="information-back"><button type="button" onclick={showDirectory}><span aria-hidden="true">‹</span>{t($locale, 'shell.information')}</button></div>{/if}
+<header class="page-header" class:mobile-overview={viewportWidth <= 700 && tab === 'overview'}><div><h1 tabindex="-1" bind:this={heading} id={viewportWidth <= 700 ? `data-tab-${tab}` : undefined}>{t($locale, tab !== 'overview' ? tabLabel(tab) : 'shell.information')}</h1><p class="muted">{t($locale, tabHint(tab))}</p></div><div class="actions page-actions">{#if tab === 'sources'}<button class="primary" disabled={busy || !sourcesLoaded} onclick={() => edit()}>{t($locale, 'data_sources.action.add')}</button>{/if}</div></header>
 <div class="content management-content" class:mobile-overview={viewportWidth <= 700 && tab === 'overview'}>
     {#if viewportWidth <= 700 && tab === 'overview'}
-        <nav class="information-navigation" aria-label={t($locale, 'shell.information')}>
+        <nav bind:this={directory} class="information-navigation" aria-label={t($locale, 'shell.information')}>
             {#each tabs as item}<a href={`/data-sources?tab=${item}`} onclick={event => openInformation(event, item)}><span class="information-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><path d={informationIcons[item]} /></svg></span><span class="information-copy"><strong>{t($locale, overviewLabel(item))}</strong></span></a>{/each}
         </nav>
     {/if}
@@ -196,10 +250,10 @@
     {#if activityVisited}<div class="data-panel" id="data-panel-activity" role={viewportWidth <= 700 ? 'region' : 'tabpanel'} aria-labelledby="data-tab-activity" hidden={tab !== 'activity'}><section class="card"><h2>{t($locale, 'chatInspector.list.activity')}</h2><p class="muted">{t($locale, 'activity.results_hint')}</p><a class="button" href="/activity">{t($locale, 'chatInspector.list.activity')}</a></section></div>{/if}
     {#if notice && !editorId}<p role="status" class:error={!!formError}>{t($locale, notice)} {#if formError}{message(formError)}{/if}</p>{/if}
     <div class="card data-panel" id="data-panel-sources" role={viewportWidth <= 700 ? 'region' : 'tabpanel'} aria-labelledby="data-tab-sources" hidden={tab !== 'sources'} aria-busy={sourcesLoading || !!operation}>
-        <div class="row between"><h2>{t($locale, 'data_sources.section.sources')}</h2><button disabled={busy || sourcesLoading} onclick={loadSources}>{t($locale, 'data_sources.action.refresh')}</button></div>
+        <div class="row between"><h2>{t($locale, 'data_sources.section.sources')}</h2><RefreshButton disabled={busy} loading={sourcesLoading} refresh={loadSources} /></div>
         <p class="muted">{t($locale, 'data_sources.refresh_hint')}</p>
         {#if sourcesError}<div role="alert" class="error">{t($locale, 'data_sources.error.load')}{message(sourcesError)}{#if sourcesLoaded}<p>{t($locale, 'data_sources.stale')}</p>{/if}</div>{/if}
-        {#if sourcesLoading}<p role="status">{t($locale, 'data_sources.status.loading')}</p>{/if}
+        {#if sourcesLoading && !sourcesLoaded}<p role="status">{t($locale, 'data_sources.status.loading')}</p>{/if}
         {#if operation === 'test'}<p role="status">{t($locale, 'data_sources.status.testing')}</p>{/if}
         {#if sourcesLoaded}
             {#each sources as source (source.id)}
@@ -215,10 +269,10 @@
     <div class="data-panel" id="data-panel-plans" role={viewportWidth <= 700 ? 'region' : 'tabpanel'} aria-labelledby="data-tab-plans" hidden={tab !== 'plans'}>{#if plansVisited}<Automations embedded />{/if}</div>
     <div class="data-panel" id="data-panel-memory" role={viewportWidth <= 700 ? 'region' : 'tabpanel'} aria-labelledby="data-tab-memory" hidden={tab !== 'memory'}>{#if memoryVisited}<MemoryCenter />{/if}</div>
     <div class="card data-panel" id="data-panel-usage" role={viewportWidth <= 700 ? "region" : "tabpanel"} aria-labelledby={viewportWidth <= 700 ? "data-tab-activity" : "data-tab-usage"} hidden={tab !== 'usage' && tab !== 'activity'} aria-busy={usageLoading}>
-        <div class="row between"><h2>{t($locale, 'data_sources.section.usage')}</h2><button disabled={busy || usageLoading} onclick={loadUsage}>{t($locale, 'data_sources.action.refresh')}</button></div>
+        <div class="row between"><h2>{t($locale, 'data_sources.section.usage')}</h2><RefreshButton disabled={busy} loading={usageLoading} refresh={loadUsage} /></div>
         <p class="muted">{t($locale, 'data_sources.section.usage_hint')}</p>
         {#if usageError}<div class="error" role="alert">{t($locale, 'data_sources.usage.load_failed')}: {message(usageError)}{#if usageLoaded}<p>{t($locale, 'data_sources.stale')}</p>{/if}</div>{/if}
-        {#if usageLoading}<p role="status">{t($locale, 'activity.refreshing')}</p>{/if}
+        {#if usageLoading && !usageLoaded}<p role="status">{t($locale, 'activity.refreshing')}</p>{/if}
         {#if usageLoaded}{@render usageItems(usage)}{/if}
     </div>
 </div>
