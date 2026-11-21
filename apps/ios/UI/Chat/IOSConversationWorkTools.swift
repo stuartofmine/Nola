@@ -47,7 +47,7 @@ struct IOSConversationWorkTools: View {
                 Section {
                     HStack(spacing: 12) {
                         VStack(alignment: .leading, spacing: 6) {
-                            Text(conversationTitle).font(.headline).fixedSize(horizontal: false, vertical: true)
+                            Text(conversationTitle).font(.headline).lineLimit(2)
                             Text(modelLabel).font(.subheadline).foregroundStyle(.secondary)
                         }
                         Spacer(minLength: 8)

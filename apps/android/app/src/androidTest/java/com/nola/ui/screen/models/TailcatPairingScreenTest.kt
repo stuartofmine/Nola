@@ -21,11 +21,27 @@ import org.junit.Test
 import java.io.File
 import java.net.URI
 
-class TailcatPairingScreenTest {
-    @get:Rule val compose = createEmptyComposeRule()
+class TailcatPairingScreenTest : TailcatPairingScreenFixture() {
 
     @Test fun pairInTheAppThenVerifyAgainThroughTailcat() {
         assumeTrue(InstrumentationRegistry.getArguments().getString("liveTailcatUi") == "1")
+        verifyPairedHost(expectTailcat = true)
+    }
+
+}
+
+class TailcatUnavailablePairingScreenTest : TailcatPairingScreenFixture() {
+    @Test fun unavailableTailcatExplainsRejectedDirectConnectionAndKeepsPairing() {
+        assumeTrue(InstrumentationRegistry.getArguments().getString("liveTailcatUnavailableUi") == "1")
+        verifyPairedHost(expectTailcat = false)
+    }
+
+}
+
+abstract class TailcatPairingScreenFixture {
+    @get:Rule val compose = createEmptyComposeRule()
+
+    protected fun verifyPairedHost(expectTailcat: Boolean) {
         val instrumentation = InstrumentationRegistry.getInstrumentation()
         val context = instrumentation.targetContext
         requireIsolatedProductTestUser(context)
@@ -77,8 +93,20 @@ class TailcatPairingScreenTest {
                 assertEquals(fixture.getString("host"), runBlocking { prefs.webHostIdentity.first() })
                 connection.performScrollTo().performClick()
                 text(R.string.models_verify_again).performClick()
+                if (!expectTailcat) {
+                    val guidance = context.getString(R.string.models_direct_verify_failed_without_tailcat, 503)
+                    compose.waitUntil(50_000) { compose.onAllNodesWithText(guidance).fetchSemanticsNodes().isNotEmpty() }
+                    compose.onAllNodesWithText(guidance).onFirst().assertIsDisplayed()
+                    text(R.string.models_verify_again).assertIsEnabled()
+                    assertTrue(sheetShown())
+                    assertEquals(fixture.getString("host"), runBlocking { prefs.webHostIdentity.first() })
+                    capture("unavailable-direct")
+                    return@use
+                }
                 compose.waitUntil(50_000) { !sheetShown() }
                 text(R.string.models_web_host_verified).assertIsDisplayed()
+                compose.onNodeWithTag("models.host.verified-transport").performScrollTo()
+                    .assertTextEquals(context.getString(R.string.models_verified_via_tailcat))
                 capture("verified-host")
                 val disconnect = compose.onNodeWithTag("models.web_host.disconnect")
                 disconnect.performScrollTo().performClick()

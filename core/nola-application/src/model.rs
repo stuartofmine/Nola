@@ -79,9 +79,26 @@ pub struct ModelRuntime {
     pub updated_at_ms: i64,
 }
 
+/// One validated model-file declaration. Secrets remain in the Host vault.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct FileCatalogConnection {
+    pub input: nola_domain::model_connection::ModelConnection,
+    pub expected_revision: Option<i64>,
+    pub account: Option<nola_domain::model_connection::ModelAccount>,
+    pub expected_account_revision: Option<i64>,
+    pub models: Vec<nola_domain::model_connection::CatalogModel>,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case", deny_unknown_fields)]
 pub enum ModelCommand {
+    ApplyFileCatalog {
+        connections: Vec<FileCatalogConnection>,
+        default_connection: String,
+        default_model: String,
+        updated_at_ms: i64,
+    },
     RecordGatewayAttempt {
         input: nola_domain::model_connection::GatewayAttemptRecord,
         expected_revision: Option<i64>,
@@ -348,6 +365,7 @@ pub(crate) fn execute_model_command(
         }
     }
     match command {
+        ModelCommand::ApplyFileCatalog { .. } => Err("file catalog requires a publication transaction".into()),
         ModelCommand::ImportConnection { input, expected_revision, account, expected_account_revision,
             models, enable_models, updated_at_ms } => crate::model_connection::import_connection(
                 store, input, expected_revision, account, expected_account_revision, models, enable_models, updated_at_ms),

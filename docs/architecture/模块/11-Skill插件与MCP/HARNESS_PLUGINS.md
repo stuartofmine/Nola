@@ -1,5 +1,7 @@
 # Pi 和 DeepSeek Harness 插件
 
+简体中文 · [English](HARNESS_PLUGINS.en.md)
+
 用户可以在同一台桌面 Host 上分别管理 Pi 扩展和 DeepSeek Harness 插件。Pi 的工具、命令、事件与界面由 Pi 加载。DeepSeek Harness 的 Cordis 服务和补丁由 DSH 加载。独立的 `SKILL.md` 沿用现有 Skill 安装入口。一个仓库同时包含多种资源时，安装请求要标明选中的资源和运行位置。
 
 ## 桌面 Host 已实现的入口

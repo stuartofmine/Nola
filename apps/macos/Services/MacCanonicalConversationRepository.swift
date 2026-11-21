@@ -1244,6 +1244,18 @@ final class MacCanonicalConversationRepository {
         }
     }
 
+    func createEmptyConversation(localModel: MacLocalModelProfile? = nil) throws -> MacConversation {
+        let option = localModel.map { MacChatModelOption(source: .local, modelID: $0.id, displayName: $0.displayName) }
+        var conversation = MacConversation(title: String(localized: "New Conversation"), preview: "", updatedAt: .now,
+            isPinned: false, promptTemplateID: try MacPromptLibrary.defaultTemplateID(using: store), promptTemplateSelectionIsExplicit: true,
+            modelSelectionID: option?.id, executionHostRawValue: option == nil ? nil : MacExecutionHost.local.rawValue,
+            executionBackendRawValue: option == nil ? nil : "nola")
+        guard let revision = try ensureConversation(conversation) else { throw MacApplicationPortError.invalidResponse }
+        conversation.configurationRevision = revision
+        conversation.isPersisted = true
+        return conversation
+    }
+
     @discardableResult
     func ensureConversation(_ conversation: MacConversation) throws -> Int64? {
         guard try store.loadConversation(conversation.id) == nil else { return conversation.configurationRevision }

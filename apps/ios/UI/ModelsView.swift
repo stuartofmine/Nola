@@ -85,7 +85,7 @@ struct ModelsView: View {
                     reloadModels()
                 }.environmentObject(container).tag(1)
                 WebHostConfigurationView(
-                    existingModel: hostModels.first, embedded: true,
+                    existingModel: hostModels.first, embedded: true, presentsPasteControl: sourceTab == 2,
                     onDraftChanged: { hostHasDraft = $0 },
                     onVerificationChanged: { hostVerificationTask = $0 }
                 ) { configured, _ in
@@ -809,6 +809,7 @@ struct WebHostConfigurationView: View {
 
     let existingModel: ModelInfo?
     let embedded: Bool
+    let presentsPasteControl: Bool
     let onDraftChanged: (Bool) -> Void
     let onVerificationChanged: (Task<Void, Never>?) -> Void
     let onConnected: (ModelInfo, String) -> Void
@@ -818,6 +819,8 @@ struct WebHostConfigurationView: View {
     @State private var isConnecting = false
     @State private var verifiedAddress: String?
     @State private var pairingToForget: URL?
+    @State private var pasteboardReady = false
+    @State private var pasteboardConnection: Task<Void, Never>?
     @State private var importedSetup: AppleHostConnectionSetup?
     private enum ConnectionField: Hashable {
         case url
@@ -830,13 +833,14 @@ struct WebHostConfigurationView: View {
     @State private var errorMessage: String?
 
     init(
-        existingModel: ModelInfo?, embedded: Bool = false,
+        existingModel: ModelInfo?, embedded: Bool = false, presentsPasteControl: Bool = true,
         onDraftChanged: @escaping (Bool) -> Void = { _ in },
         onVerificationChanged: @escaping (Task<Void, Never>?) -> Void = { _ in },
         onConnected: @escaping (ModelInfo, String) -> Void
     ) {
         self.existingModel = existingModel
         self.embedded = embedded
+        self.presentsPasteControl = presentsPasteControl
         self.onConnected = onConnected
         self.onDraftChanged = onDraftChanged
         self.onVerificationChanged = onVerificationChanged
@@ -887,22 +891,31 @@ struct WebHostConfigurationView: View {
             }
 
             Section {
+                // Page-style tabs may build offscreen siblings during presentation.
+                // Constructing a system paste control contacts the pasteboard service.
                 LabeledContent {
-                    PasteButton(payloadType: String.self) { values in
-                        guard let text = values.first, let setup = AppleHostConnectionSetup.decode(text) else {
-                            errorMessage = NSLocalizedString("model.web_host.invalid_setup", value: "Copy Connection Setup from Nola on the host, then paste it here.", comment: "Invalid host setup")
-                            return
+                    if presentsPasteControl && pasteboardReady {
+                        PasteButton(payloadType: String.self) { values in
+                            guard let text = values.first, let setup = AppleHostConnectionSetup.decode(text) else {
+                                errorMessage = NSLocalizedString("model.web_host.invalid_setup", value: "Copy Connection Setup from Nola on the host, then paste it here.", comment: "Invalid host setup")
+                                return
+                            }
+                            importedSetup = setup
+                            hostURL = setup.origin.absoluteString
+                            accessToken = setup.accessToken
+                            errorMessage = nil
                         }
-                        importedSetup = setup
-                        hostURL = setup.origin.absoluteString
-                        accessToken = setup.accessToken
-                        errorMessage = nil
+                        .labelStyle(.titleAndIcon)
+                        .controlSize(.large)
+                        .frame(minHeight: 44)
+                        .disabled(isConnecting)
+                        .accessibilityLabel(Text("model.web_host.paste_setup"))
+                        .accessibilityIdentifier("model.web_host.paste_setup")
+                    } else {
+                        ProgressView().controlSize(.small)
+                            .accessibilityLabel(Text("model.web_host.paste_setup"))
+                            .frame(minHeight: 44)
                     }
-                    .labelStyle(.titleAndIcon)
-                    .frame(minHeight: 44)
-                    .disabled(isConnecting)
-                    .accessibilityLabel(Text("model.web_host.paste_setup"))
-                    .accessibilityIdentifier("model.web_host.paste_setup")
                 } label: {
                     Text("model.web_host.setup_payload")
                 }
@@ -1025,6 +1038,17 @@ struct WebHostConfigurationView: View {
                 }
                 ToolbarItem(placement: .confirmationAction) { connectButton(paired: pairedURL != nil) }
             }
+        }
+        .task(id: presentsPasteControl) {
+            guard presentsPasteControl, !pasteboardReady else { return }
+            // UIKit may wait for the pasteboard daemon the first time it is contacted.
+            // Warm its connection off the main actor; contents are delivered only by the native paste gesture.
+            let connection = pasteboardConnection ?? Task.detached(priority: .utility) {
+                _ = UIPasteboard.general.changeCount
+            }
+            pasteboardConnection = connection
+            await connection.value
+            if !Task.isCancelled { pasteboardReady = true }
         }
         .interactiveDismissDisabled(!embedded && (hasDraft || isConnecting))
         .alert(LocalizedStringKey("model.setup.discard_title"), isPresented: $confirmsDiscard) {

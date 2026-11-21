@@ -55,8 +55,12 @@ final class IOSFirstLaunchTests: XCTestCase {
     func testClosingSetupReturnsToWelcomeAndSkippingSurvivesRelaunch() {
         let app = launchWelcome()
         defer { app.terminate() }
+        let start = ContinuousClock.now
         app.buttons["onboarding.chooseModel"].tap()
         XCTAssertTrue(app.textFields["model.setup.endpoint"].waitForExistence(timeout: 5))
+        XCTAssertLessThan(start.duration(to: .now), .seconds(45),
+                          "Opening API setup must not stall on the offscreen Host pasteboard control")
+        XCTAssertFalse(app.buttons["model.web_host.paste_setup"].exists)
         app.buttons["model.setup.close"].tap()
         app.buttons["onboarding.skip"].tap()
         XCTAssertTrue(app.buttons["chat.conversations.new"].waitForExistence(timeout: 10))

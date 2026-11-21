@@ -37,11 +37,43 @@ import org.junit.Assert.assertTrue
 import org.junit.Rule
 import org.junit.Test
 import org.junit.runner.RunWith
+import androidx.compose.ui.semantics.SemanticsActions
+import androidx.compose.ui.test.SemanticsMatcher
+import androidx.compose.ui.test.assert
+import androidx.compose.ui.test.performTouchInput
+import androidx.compose.ui.test.performSemanticsAction
+import androidx.compose.ui.test.click
+import androidx.compose.ui.test.longClick
+import com.nola.domain.model.ChatRole
+import com.nola.domain.model.ConversationMessage
 import java.io.File
 
 @RunWith(AndroidJUnit4::class)
 class ChatComposerLayoutTest {
     @get:Rule val compose = createAndroidComposeRule<ComponentActivity>()
+
+    @Test fun messageBodyExposesOnlyItsLongPressMenuAndPreservesTouchGestures() {
+        var menuRequests = 0
+        compose.setContent {
+            NolaTheme {
+                MessageBubble(
+                    ConversationMessage(
+                        id = "menu-test", conversationId = "test", role = ChatRole.user,
+                        text = "A message to inspect",
+                    ),
+                    onLongPress = { menuRequests++ },
+                )
+            }
+        }
+        val body = compose.onNodeWithTag(CHAT_MESSAGE_TEST_TAG_PREFIX + "menu-test")
+        body.assert(SemanticsMatcher.keyNotDefined(SemanticsActions.OnClick))
+        body.performTouchInput { click() }
+        compose.runOnIdle { assertEquals(0, menuRequests) }
+        body.performTouchInput { longClick() }
+        compose.runOnIdle { assertEquals(1, menuRequests) }
+        body.performSemanticsAction(SemanticsActions.OnLongClick)
+        compose.runOnIdle { assertEquals(2, menuRequests) }
+    }
 
     @Test fun nativeConversationKeepsReadingWidthAcrossThemesAndFontSizes() {
         var width by mutableStateOf(320)

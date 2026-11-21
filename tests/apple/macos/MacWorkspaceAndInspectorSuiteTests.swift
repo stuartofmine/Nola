@@ -239,8 +239,9 @@ final class MacWorkspaceTabsLayoutAndComposerContractTests: XCTestCase {
     }
 
     func testPopulatedProgressRendersAtNarrowWidthInLightAndDark() throws {
-        let snapshot = try JSONDecoder().decode(MacInspectorProgressSnapshot.self, from: Data(#"{"can_pause":true,"can_resume":false,"can_cancel":true,"active":{"id":"goal-fixture","objective":"整理研究资料，完成方案与验证","status":"running","requirements":{"r":{"id":"r","description":"保留来源，并确认引用可以追溯到原文","status":"blocked"}},"work":{"entries":[{"id":"w","content":"资料已整理，等待校验引用","progress":"reported_done","supersedes":null}]}}}"#.utf8))
+        let snapshot = try JSONDecoder().decode(MacInspectorProgressSnapshot.self, from: Data(#"{"can_pause":true,"can_resume":false,"can_cancel":true,"active":{"id":"goal-fixture","objective":"整理研究资料，完成方案与验证","constraints":["保留原文件","仅使用本地资料","保留来源，并确认引用可以追溯到原文"],"status":"running","requirements":{"r":{"id":"r","description":"保留来源，并确认引用可以追溯到原文","status":"blocked"}},"work":{"entries":[{"id":"w","content":"资料已整理，等待校验引用","progress":"reported_done","supersedes":null}]}}}"#.utf8))
         let todos = try JSONDecoder().decode([MacInspectorProgressSnapshot.Todo].self, from: Data(#"[{"id":"a","content":"读取资料","status":"completed"},{"id":"b","content":"核对较长的跨语言引用与上下文，确认所有结论都有来源依据","status":"in_progress"},{"id":"c","content":"交付总结","status":"pending"}]"#.utf8))
+        XCTAssertEqual(snapshot.active?.constraintsOutsideRequirements, ["保留原文件", "仅使用本地资料"])
         for scheme in [ColorScheme.light, .dark] {
             let renderer = ImageRenderer(content: MacInspectorProgressContent(snapshot: snapshot, todos: todos, tasks: [])
                 .font(.system(size: 13)).padding(16).frame(width: 320)
@@ -248,11 +249,15 @@ final class MacWorkspaceTabsLayoutAndComposerContractTests: XCTestCase {
             let image = try XCTUnwrap(renderer.cgImage)
             XCTAssertEqual(image.width, 320)
             XCTAssertGreaterThan(image.height, 200)
+            let imageData = try XCTUnwrap(NSBitmapImageRep(cgImage: image).representation(using: .png, properties: [:]))
+            let attachment = XCTAttachment(data: imageData, uniformTypeIdentifier: "public.png")
+            attachment.name = "goal-constraints-" + (scheme == .light ? "light" : "dark")
+            attachment.lifetime = .keepAlways
+            add(attachment)
             if let artifactDir = ProcessInfo.processInfo.environment["NOLA_VISUAL_ARTIFACT_DIR"], !artifactDir.isEmpty {
                 let outputDir = URL(fileURLWithPath: artifactDir, isDirectory: true)
                 try FileManager.default.createDirectory(at: outputDir, withIntermediateDirectories: true)
-                let png = try XCTUnwrap(NSBitmapImageRep(cgImage: image).representation(using: .png, properties: [:]))
-                try png.write(to: outputDir.appendingPathComponent("nola-progress-populated-\(scheme == .light ? "light" : "dark").png"))
+                try imageData.write(to: outputDir.appendingPathComponent("nola-progress-populated-\(scheme == .light ? "light" : "dark").png"))
             }
         }
         let duplicate = try JSONDecoder().decode([MacInspectorProgressSnapshot.Todo].self, from: JSONEncoder().encode(todos.map { ["id": $0.id, "content": $0.content, "status": $0.status] }))
@@ -953,8 +958,25 @@ final class MacComposerAndInspectorLayoutTests: XCTestCase {
             XCTAssertTrue(objects(host).contains { $0.accessibilityIdentifier?() == "mac-inspector-region-" + area })
             try capture("mac-workspace-" + area)
         }
-        for section in ["extensions", "automations", "memory", "chat"] {
-            try await press("workspace.nav." + section)
+        let navigationPrefix = "workspace.nav."
+        let registered = Set(MacWorkspaceSection.sidebarSections.map(\.rawValue))
+        let visible = Set(objects(host).compactMap { object -> String? in
+            guard let id = object.accessibilityIdentifier?() ?? nil, id.hasPrefix(navigationPrefix) else { return nil }
+            return String(id.dropFirst(navigationPrefix.count))
+        })
+        XCTAssertEqual(visible, registered)
+        for section in visible.subtracting(["chat"]).sorted() + ["chat"] {
+            try await press(navigationPrefix + section)
+            let target = section == "chat" ? "workspace.searchConversation" : "workspace.heading." + section
+            let deadline = ContinuousClock.now + .seconds(5)
+            while accessibility.element(target, in: host) == nil, ContinuousClock.now < deadline {
+                try await Task.sleep(for: .milliseconds(30))
+            }
+            _ = try XCTUnwrap(accessibility.element(target, in: host), "Expected destination " + section)
+            if section == "extensions" {
+                XCTAssertNotNil(accessibility.element("workspace.extensions.tabs", in: host))
+            }
+            try await MacVisualPixelAssertions.settleLayout(window: window, hostingView: host)
             try capture("mac-destination-" + section)
         }
     }
@@ -1941,6 +1963,72 @@ final class MacRowHitRegionTests: XCTestCase {
                 try await Task.sleep(for: .milliseconds(30))
             }
             XCTAssertEqual(hasLocalCreate(), expected)
+        }
+    }
+
+    func testMCPEditorCanKeepOrDiscardAnUnsavedDraft() async throws {
+        let accessibility = try MacHostedAccessibilitySession()
+        defer { accessibility.restore() }
+        let navigation = MacExtensionsNavigationState()
+        let catalog = MacExtensionsCatalogLoader(local: { _ in [] }, host: { [] }, removedSkills: { false })
+        let host = NSHostingView(rootView: MacExtensionsCenterView(remoteHost: PersistenceTestRemoteHost(),
+            kinds: [.mcp], navigation: navigation, catalog: catalog)
+            .environment(\.accessibilityEnabled, true).frame(width: 860, height: 620))
+        let window = NSWindow(contentRect: .init(x: 0, y: 0, width: 860, height: 620),
+                              styleMask: [.titled], backing: .buffered, defer: false)
+        window.isReleasedWhenClosed = false
+        window.contentView = host
+        window.makeKeyAndOrderFront(nil)
+        defer { window.close() }
+        func wait(_ condition: () -> Bool) async throws {
+            let deadline = ContinuousClock.now + .seconds(5)
+            while !condition(), ContinuousClock.now < deadline { try await Task.sleep(for: .milliseconds(30)) }
+            XCTAssertTrue(condition())
+        }
+        let addID = "mac.extensions.action.add_mcp"
+        try await wait { accessibility.element(addID, in: host)?.isAccessibilityEnabled?() == true }
+        XCTAssertTrue(accessibility.element(addID, in: host)?.accessibilityPerformPress?() == true)
+        try await wait { window.attachedSheet?.contentView != nil }
+        let sheet = try XCTUnwrap(window.attachedSheet)
+        let content = try XCTUnwrap(sheet.contentView)
+        let nameID = "mac.mcp.editor.name"
+        try await wait { accessibility.element(nameID, in: content) != nil }
+        let name = try XCTUnwrap(objects(content).compactMap { $0 as? NSTextField }.first { $0.isEditable })
+        name.selectText(nil)
+        let editor = try XCTUnwrap(name.currentEditor() as? NSTextView)
+        editor.insertText("Draft MCP server", replacementRange: editor.selectedRange())
+        let cancel = try XCTUnwrap(accessibility.element("mac.mcp.editor.cancel", in: content))
+        for discard in [false, true] {
+            XCTAssertTrue(cancel.accessibilityPerformPress?() == true)
+            let key = discard ? "mac.extensions.detail.discard" : "Keep Editing"
+            let fallback = discard ? "Discard Changes" : "Keep Editing"
+            let title = Bundle.main.localizedString(forKey: key, value: fallback, table: nil)
+            func action() -> AnyObject? {
+                let roots = [sheet.attachedSheet, NSApp.modalWindow, sheet, window].compactMap { $0?.contentView }
+                return roots.flatMap { objects($0) }.first { element in
+                    element.accessibilityRole?() == .button &&
+                        (element.accessibilityLabel?() == title || element.accessibilityTitle?() == title)
+                }
+            }
+            try await wait { action() != nil }
+            let choice = try XCTUnwrap(action())
+            if let button = choice as? NSButton {
+                button.performClick(nil)
+            } else {
+                _ = choice.accessibilityPerformPress?()
+            }
+            if discard {
+                try await wait { window.attachedSheet == nil }
+            } else {
+                try await wait { action() == nil }
+                XCTAssertEqual(name.stringValue, "Draft MCP server")
+                let image = try MacVisualPixelAssertions.captureCGImage(of: content)
+                let data = try XCTUnwrap(NSBitmapImageRep(cgImage: image).representation(using: .png, properties: [:]))
+                let attachment = XCTAttachment(data: data, uniformTypeIdentifier: "public.png")
+                attachment.name = "mac-mcp-draft-kept"
+                attachment.lifetime = .keepAlways
+                add(attachment)
+            }
         }
     }
 

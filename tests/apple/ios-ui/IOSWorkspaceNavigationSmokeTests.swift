@@ -129,7 +129,12 @@ final class IOSWorkspaceNavigationSmokeTests: XCTestCase {
         let model = app.textFields["model.setup.modelID"]
         model.tap(); model.typeText("prompt-whitespace-model\n")
         let save = app.buttons["model.setup.save"]
-        for _ in 0..<6 where !save.isHittable { app.swipeUp() }
+        let tab = app.rootTabButton("settings")
+        for _ in 0..<6 where !save.isHittable || (tab.exists && save.frame.maxY > tab.frame.minY) {
+            app.swipeUp()
+        }
+        XCTAssertTrue(save.isHittable)
+        if tab.exists { XCTAssertLessThanOrEqual(save.frame.maxY, tab.frame.minY) }
         save.tap()
         XCTAssertTrue(app.staticTexts["Saved and set as default · not tested"].waitForExistence(timeout: 10))
         let row = app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH %@", "model.row.")).firstMatch
@@ -1084,6 +1089,7 @@ final class IOSWorkspaceNavigationSmokeTests: XCTestCase {
             attachment.name = name
             attachment.lifetime = .keepAlways
             add(attachment)
+            captureAccessibilityTree(name, in: app)
         }
         func backToSettings() {
             let back = app.navigationBars.buttons.element(boundBy: 0)
@@ -1126,9 +1132,16 @@ final class IOSWorkspaceNavigationSmokeTests: XCTestCase {
                 }
                 backToSettings()
             }
-            for (destination, title) in [("knowledge", "Knowledge points"), ("memory", "Long-term memory"), ("sources", "Data Sources")] {
-                waitAndTapRootTab("information", in: app)
-                tap("information.\(destination)")
+            waitAndTapRootTab("information", in: app)
+            let titles = ["information.knowledge": "Knowledge points", "information.memory": "Long-term memory",
+                          "information.sources": "Data Sources"]
+            let links = app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH %@", "information."))
+                .allElementsBoundByIndex.map(\.identifier)
+            XCTAssertEqual(Set(links), Set(titles.keys))
+            for identifier in links {
+                let title = try XCTUnwrap(titles[identifier])
+                let destination = String(identifier.dropFirst("information.".count))
+                tap(identifier)
                 XCTAssertTrue(app.navigationBars[title].waitForExistence(timeout: 5), destination)
                 if destination == "memory" {
                     XCTAssertTrue(app.staticTexts["No durable memories yet"].waitForExistence(timeout: 5))
@@ -1234,11 +1247,58 @@ extension IOSWorkspaceNavigationSmokeTests {
         element.tap()
     }
 
+    func testAllSettingsRowsNavigateFromTheCardEdges() throws {
+        let app = launchSettingsAudit("settings-card-edges")
+        defer { app.terminate() }
+        waitAndTapRootTab("settings", in: app)
+        let destinations = [
+            "settings.category.general": "settings.appearance",
+            "settings.models": "model.setup.source.0",
+            "settings.category.agents": "experts.save",
+            "settings.category.agent": "Plugins",
+            "settings.category.privacy": "settings.privacy.clear"
+        ]
+        let rows = app.buttons.matching(NSPredicate(
+            format: "identifier BEGINSWITH %@ OR identifier == %@", "settings.category.", "settings.models"))
+        XCTAssertTrue(rows.firstMatch.waitForExistence(timeout: 5))
+        let identifiers = rows.allElementsBoundByIndex.map(\.identifier)
+        XCTAssertEqual(Set(identifiers), Set(destinations.keys))
+        XCTAssertEqual(identifiers.count, destinations.count)
+        for (index, identifier) in identifiers.enumerated() {
+            let button = app.buttons[identifier]
+            for _ in 0..<5 where !button.isHittable { app.swipeUp() }
+            for _ in 0..<5 where !button.isHittable { app.swipeDown() }
+            XCTAssertTrue(button.isHittable)
+            let viewport = app.windows.firstMatch.frame
+            if viewport.width < 600 {
+                XCTAssertEqual(button.frame.minX, viewport.minX + 20, accuracy: 2, identifier)
+                XCTAssertEqual(button.frame.maxX, viewport.maxX - 20, accuracy: 2, identifier)
+            }
+            try XCTContext.runActivity(named: "Tap card edge " + identifier) { _ in
+                let edge: CGFloat = index.isMultiple(of: 2) ? 0.01 : 0.99
+                button.coordinate(withNormalizedOffset: CGVector(dx: edge, dy: 0.5)).tap()
+                let target = try XCTUnwrap(destinations[identifier])
+                XCTAssertTrue(app.buttons[target].waitForExistence(timeout: 5), target)
+                captureAudit("settings-edge-" + identifier, in: app)
+                app.navigationBars.buttons.firstMatch.tap()
+                XCTAssertTrue(app.buttons[identifier].waitForExistence(timeout: 5), identifier)
+            }
+        }
+    }
+
+    private func captureAccessibilityTree(_ name: String, in app: XCUIApplication) {
+        let tree = XCTAttachment(string: app.debugDescription)
+        tree.name = name + "-accessibility"
+        tree.lifetime = .keepAlways
+        add(tree)
+    }
+
     private func captureAudit(_ name: String, in app: XCUIApplication) {
         let attachment = XCTAttachment(screenshot: app.screenshot())
         attachment.name = name
         attachment.lifetime = .keepAlways
         add(attachment)
+        captureAccessibilityTree(name, in: app)
     }
 
     func testLibraryHeadingRemainsSharpAfterReturningFromSourcesInBothThemes() throws {

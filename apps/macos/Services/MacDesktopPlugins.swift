@@ -32,6 +32,13 @@ nonisolated struct MacDesktopPluginLibrary: Decodable, Sendable {
         let available: Bool
         let packages: [Package]
         let error: String?
+        var installationGuide: URL? {
+            switch runtime {
+            case "pi": URL(string: "https://pi.dev/")
+            case "dsh": URL(string: "https://github.com/deepseek-ai/deepseek-harness#run-from-npm")
+            default: nil
+            }
+        }
         var id: String { runtime + "/" + profile }
         var title: String { runtime == "pi" ? "Pi" : "DeepSeek Harness · " + (profile == "web" ? "Web" : "TUI") }
     }

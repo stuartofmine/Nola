@@ -859,7 +859,8 @@ private fun DataSourceContractSummary(source: CustomDataSourceConfig) {
                     overflow = TextOverflow.Ellipsis
                 )
                 Text(
-                    text = "${contract.format} · ${stringResource(R.string.data_sources_records_count, contract.recordCount)}",
+                    text = listOfNotNull(contract.format.takeIf(String::isNotBlank),
+                        stringResource(R.string.data_sources_records_count, contract.recordCount)).joinToString(" · "),
                     style = MaterialTheme.typography.labelSmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                     maxLines = 1,

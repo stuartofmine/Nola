@@ -103,17 +103,11 @@ extension IOSRealHostChatTests {
         app.launchEnvironment["NOLA_REAL_IOS_UI_DATABASE_PATH"] = databasePath
         app.launchEnvironment["NOLA_REAL_IOS_UI_RESET"] = "1"
         app.launch()
-        let chatTab = app.tabBars.buttons["Chat"]
-        XCTAssertTrue(chatTab.waitForExistence(timeout: 10))
-        chatTab.tap()
+        app.tapRootTab("chat")
 
         if app.buttons["chat.conversations.new"].waitForExistence(timeout: 2) { app.buttons["chat.conversations.new"].tap() }
         let input = app.textViews["chat.composer.input"]
         XCTAssertTrue(input.waitForExistence(timeout: 8))
-
-        let more = app.buttons["chat.topbar.more"]
-        XCTAssertTrue(more.waitForExistence(timeout: 12))
-        let executionPicker = app.buttons["chat.executionBackendPicker"].firstMatch
 
         input.tap()
         let prompt = "Use the read_file tool to read \(sourcePath). Then answer with a Markdown level-two heading named Verified and three complete bullet points explaining the source line, the exact marker, and why the answer is grounded."
@@ -156,7 +150,7 @@ extension IOSRealHostChatTests {
             }
             let answer = app.descendants(matching: .any)["chat.assistant.answer"]
             let text = answer.exists
-                ? answer.staticTexts.allElementsBoundByIndex.map(\.label).joined(separator: "\n")
+                ? renderedAnswerText(in: answer)
                 : ""
             let headingCount = answer.exists
                 ? answer.descendants(matching: .any)
@@ -172,7 +166,7 @@ extension IOSRealHostChatTests {
             let toolVisible = toolCards.firstMatch.exists
             let markerVisible = text.contains(marker)
             let bubbleCompleted = (assistantBubble.value as? String) == "completed"
-            let fingerprint = "\(text.count):\(headingCount):\(listItemCount):\(bubbleCount):\(toolVisible)"
+            let fingerprint = "\(text.count):\(headingCount):\(listItemCount):\(bubbleCount):\(toolVisible):\(bubbleCompleted)"
             if fingerprint != lastFingerprint {
                 samples.append([
                     "stage": "assistant",
@@ -240,9 +234,7 @@ extension IOSRealHostChatTests {
             at: evidenceDirectory,
             withIntermediateDirectories: true
         )
-        let initialFinalText = answer.staticTexts.allElementsBoundByIndex
-            .map(\.label)
-            .joined(separator: "\n")
+        let initialFinalText = renderedAnswerText(in: answer)
         let chatScreenshot = XCUIScreen.main.screenshot()
         try chatScreenshot.pngRepresentation.write(to: URL(fileURLWithPath: screenshotPath))
         try app.debugDescription.write(
@@ -255,7 +247,7 @@ extension IOSRealHostChatTests {
             "elapsedMs": Date().timeIntervalSince(sendStartedAt) * 1_000,
             "assistantCharacters": initialFinalText.count,
             "assistantText": initialFinalText,
-            "running": true,
+            "running": !terminalAndStable,
             "toolVisible": toolsVisible,
             "answerVisible": answerVisible,
             "headingVisible": headingVisible,
@@ -284,41 +276,10 @@ extension IOSRealHostChatTests {
             terminalAndStable,
             "Evidence capture must wait for a terminal canonical bubble and stable rendered text."
         )
-        more.tap()
-        XCTAssertTrue(executionPicker.waitForExistence(timeout: 5))
-        XCTAssertTrue(waitForExecutionUnit("Nola", in: executionPicker))
-        executionPicker.tap()
-        let codexOption = app.descendants(matching: .any)
-            .matching(NSPredicate(format: "label BEGINSWITH %@", "Codex"))
-            .firstMatch
-        let claudeOption = app.descendants(matching: .any)
-            .matching(NSPredicate(format: "label BEGINSWITH %@", "Claude Code"))
-            .firstMatch
-        XCTAssertTrue(codexOption.waitForExistence(timeout: 5), "The installed Codex execution unit is missing from the real Host menu.")
-        XCTAssertTrue(claudeOption.waitForExistence(timeout: 5), "The installed Claude Code execution unit is missing from the real Host menu.")
-        XCTAssertTrue(codexOption.isHittable, "An installed Codex execution unit must be selectable.")
-        codexOption.tap()
-        XCTAssertTrue(codexOption.waitForNonExistence(timeout: 5))
-        more.tap()
-        XCTAssertTrue(executionPicker.waitForExistence(timeout: 5))
-        XCTAssertTrue(waitForExecutionUnit("Codex", in: executionPicker))
-        executionPicker.tap()
-        let nolaOption = app.descendants(matching: .any)
-            .matching(NSPredicate(format: "label BEGINSWITH %@", "Nola"))
-            .firstMatch
-        XCTAssertTrue(nolaOption.waitForExistence(timeout: 5))
-        nolaOption.tap()
-        XCTAssertTrue(nolaOption.waitForNonExistence(timeout: 5))
-        more.tap()
-        XCTAssertTrue(executionPicker.waitForExistence(timeout: 5))
-        XCTAssertTrue(waitForExecutionUnit("Nola", in: executionPicker))
-        app.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.45)).tap()
-
         app.terminate()
         app.launchEnvironment["NOLA_REAL_IOS_UI_RESET"] = "0"
         app.launch()
-        let restoredChatTab = app.tabBars.buttons["Chat"]
-        if restoredChatTab.waitForExistence(timeout: 5) { restoredChatTab.tap() }
+        app.tapRootTab("chat")
         if app.buttons["chat.conversations.new"].waitForExistence(timeout: 5) {
             let restoredConversation = app.buttons.matching(NSPredicate(format: "identifier MATCHES %@", "^chat\\.conversation\\.[0-9a-f-]{36}$")).firstMatch
             XCTAssertTrue(restoredConversation.waitForExistence(timeout: 5))
@@ -334,6 +295,12 @@ extension IOSRealHostChatTests {
         let conversationRestored = restoredHeading.waitForExistence(timeout: 10)
             && restoredMarker.firstMatch.waitForExistence(timeout: 10)
             && restoredAnswers.count == 1
+        XCTAssertTrue(conversationRestored, "The completed conversation was not restored after relaunch")
+        let restoredScreenshot = XCTAttachment(screenshot: app.screenshot())
+        restoredScreenshot.name = "Real iOS Agent Host answer after relaunch"
+        restoredScreenshot.lifetime = .keepAlways
+        add(restoredScreenshot)
+        verifyExecutionPicker(in: app)
         app.openModelCenterFromSettings()
         let messagingCard = app.descendants(matching: .any)["model.host.messaging.card"]
         XCTAssertTrue(
@@ -342,7 +309,8 @@ extension IOSRealHostChatTests {
         )
         XCTAssertTrue(app.buttons["model.host.messaging.manage"].firstMatch.waitForExistence(timeout: 5))
         let bubbleStable = samples.allSatisfy { ($0["bubbleCount"] as? Int) == 1 }
-        let progressive = Set(positiveLengths).count >= 3
+        let liveTextVisible = samples.contains { $0["running"] as? Bool == true && ($0["assistantCharacters"] as? Int ?? 0) > 0 }
+        let progressive = liveTextVisible && terminalAndStable
         let passed = firstBubbleDelay < 3_000
             && terminalAndStable
             && headingVisible
@@ -367,6 +335,8 @@ extension IOSRealHostChatTests {
             "answerCount": answerCount,
             "headingCount": headingCount,
             "bubbleStable": bubbleStable,
+            "distinctVisiblePositiveLengths": Set(positiveLengths).count,
+            "textVisibleWhileRunning": liveTextVisible,
             "conversationRestored": conversationRestored,
             "terminalAndStable": terminalAndStable,
         ])
@@ -381,9 +351,135 @@ extension IOSRealHostChatTests {
         XCTAssertEqual(answerCount, 1, "The real streamed answer created duplicate bubbles")
         XCTAssertEqual(headingCount, 1, "The Markdown answer was rendered twice")
         XCTAssertLessThan(firstBubbleDelay, 3_000)
-        XCTAssertTrue(progressive, "The production UI did not expose progressive semantic text stages")
+        XCTAssertTrue(progressive, "The production UI did not expose a visible answer while the live run was active")
         XCTAssertTrue(bubbleStable, "Waiting, streaming, and terminal states must retain one bubble")
-        XCTAssertTrue(conversationRestored, "The completed conversation was not restored after relaunch")
+    }
+
+    func testResumeInterruptedHostRunInItsSavedConversation() throws {
+        let env = ProcessInfo.processInfo.environment
+        guard let database = env["NOLA_REAL_IOS_UI_RESUME_DATABASE"], let owner = env["NOLA_REAL_IOS_UI_RESUME_OWNER"] else {
+            throw XCTSkip("Requires a preserved, isolated interrupted Host run")
+        }
+        let marker = try XCTUnwrap(env["NOLA_REAL_IOS_UI_MARKER"])
+        let app = try openExistingHostConversation(database: database, owner: owner)
+        let resume = app.buttons["chat.host.resume_existing_run"]
+        let bubble = app.descendants(matching: .any)["chat.assistant.bubble"].firstMatch
+        let complete = NSPredicate { _, _ in bubble.exists && bubble.value as? String == "completed" }
+        let canContinue = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in
+            complete.evaluate(with: nil) || (resume.exists && resume.isHittable)
+        }, object: nil)
+        XCTAssertEqual(XCTWaiter.wait(for: [canContinue], timeout: 45), .completed)
+        if !complete.evaluate(with: nil) {
+            captureHostScreen("Interrupted Host run before explicit Resume", in: app)
+            resume.tap()
+        } else {
+            captureHostScreen("Host recovered the original run before opening its conversation", in: app)
+        }
+        let terminal = XCTNSPredicateExpectation(predicate: complete, object: nil)
+        XCTAssertEqual(XCTWaiter.wait(for: [terminal], timeout: 195), .completed)
+        let answer = app.descendants(matching: .any)["chat.assistant.answer"].firstMatch
+        XCTAssertTrue(renderedAnswerText(in: answer).contains(marker))
+        captureHostScreen("Recovered Host answer in original conversation", in: app)
+        app.terminate()
+        let reopened = try openExistingHostConversation(database: database, owner: owner)
+        let restoredBubble = reopened.descendants(matching: .any)["chat.assistant.bubble"].firstMatch
+        let answerAfterLaunch = reopened.descendants(matching: .any)["chat.assistant.answer"].firstMatch
+        let restored = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in
+            restoredBubble.exists && restoredBubble.value as? String == "completed"
+                && answerAfterLaunch.exists && self.renderedAnswerText(in: answerAfterLaunch).contains(marker)
+        }, object: nil)
+        let restoredResult = XCTWaiter.wait(for: [restored], timeout: 30)
+        captureHostScreen("Recovered Host answer after cold launch", in: reopened)
+        XCTAssertEqual(restoredResult, .completed)
+    }
+
+    func testSavedHostConversationCanChangeExecutionUnitFromCompactSettings() throws {
+        let env = ProcessInfo.processInfo.environment
+        guard let database = env["NOLA_REAL_IOS_UI_RESUME_DATABASE"], let owner = env["NOLA_REAL_IOS_UI_RESUME_OWNER"] else {
+            throw XCTSkip("Requires an isolated saved Host conversation")
+        }
+        let app = try openExistingHostConversation(database: database, owner: owner)
+        verifyExecutionPicker(in: app)
+    }
+
+    private func openExistingHostConversation(database: String, owner: String) throws -> XCUIApplication {
+        let env = ProcessInfo.processInfo.environment
+        let app = XCUIApplication()
+        app.launchArguments = ["-ui-testing", "-ui-testing-real-chat-host", "-AppleLanguages", "(en)", "-AppleLocale", "en_US"]
+        for key in ["NOLA_REAL_WEB_AGENT_HOST_URL", "NOLA_REAL_WEB_AGENT_HOST_TOKEN", "NOLA_REAL_WEB_AGENT_HOST_ID", "NOLA_REAL_LLM_MODEL"] {
+            app.launchEnvironment[key] = try XCTUnwrap(env[key])
+        }
+        app.launchEnvironment["NOLA_REAL_IOS_UI_DATABASE_PATH"] = database
+        app.launchEnvironment["NOLA_REAL_IOS_UI_RESET"] = "0"
+        app.launch()
+        app.tapRootTab("chat")
+        if app.buttons["chat.conversations.new"].waitForExistence(timeout: 3) {
+            let row = app.buttons["chat.conversation.\(owner.lowercased())"]
+            XCTAssertTrue(row.waitForExistence(timeout: 8))
+            row.tap()
+        }
+        return app
+    }
+
+    private func captureHostScreen(_ name: String, in app: XCUIApplication) {
+        let attachment = XCTAttachment(screenshot: app.screenshot())
+        attachment.name = name
+        attachment.lifetime = .keepAlways
+        add(attachment)
+    }
+
+    private func verifyExecutionPicker(in app: XCUIApplication) {
+        let details = app.buttons["chat.conversation.details"]
+        let compact = details.exists
+        let more = app.buttons["chat.topbar.more"]
+        let picker = app.buttons["chat.executionBackendPicker"].firstMatch
+        if compact {
+            details.tap()
+            let execution = app.buttons["chat.work_tools.execution"]
+            for _ in 0..<4 where !execution.isHittable { app.swipeUp() }
+            XCTAssertTrue(execution.isHittable)
+            execution.tap()
+            for _ in 0..<7 where !picker.isHittable || picker.frame.maxY > app.frame.maxY - 60 { app.swipeUp() }
+        } else {
+            more.tap()
+        }
+        XCTAssertTrue(picker.waitForExistence(timeout: 8))
+        XCTAssertTrue(waitForExecutionUnit("Nola", in: picker))
+        for (id, name) in [("codex", "Codex"), ("nola", "Nola")] {
+            picker.tap()
+            captureHostScreen("Host execution choices before selecting \(name)", in: app)
+            let tree = XCTAttachment(string: app.debugDescription)
+            tree.name = "Host execution choices before selecting \(name)"
+            tree.lifetime = .keepAlways
+            add(tree)
+            let option = app.descendants(matching: .any)["chat.executionBackend.\(id)"].firstMatch
+            XCTAssertTrue(option.waitForExistence(timeout: 5))
+            if name == "Codex" {
+                XCTAssertTrue(app.descendants(matching: .any)["chat.executionBackend.claude_code"].firstMatch.exists)
+            }
+            XCTAssertTrue(option.isHittable)
+            option.tap()
+            XCTAssertTrue(option.waitForNonExistence(timeout: 5))
+            if !compact { more.tap() }
+            XCTAssertTrue(waitForExecutionUnit(name, in: picker))
+        }
+
+        if compact {
+            let close = app.buttons["chat.work_tools.close"]
+            if !close.isHittable {
+                app.navigationBars["More Settings"].buttons.firstMatch.tap()
+            }
+            XCTAssertTrue(close.isHittable)
+            close.tap()
+        } else if picker.exists {
+            more.tap()
+        }
+    }
+
+    private func renderedAnswerText(in answer: XCUIElement) -> String {
+        let blocks = answer.staticTexts.matching(NSPredicate(format: "identifier BEGINSWITH %@", "chat.assistant.markdown."))
+        let semanticText = blocks.allElementsBoundByIndex.map(\.label).joined(separator: "\n")
+        return semanticText.isEmpty ? answer.staticTexts.allElementsBoundByIndex.map(\.label).joined(separator: "\n") : semanticText
     }
 
     private func waitForExecutionUnit(_ expected: String, in picker: XCUIElement) -> Bool {

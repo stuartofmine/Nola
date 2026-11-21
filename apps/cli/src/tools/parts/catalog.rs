@@ -2170,9 +2170,9 @@ fn specs_with_skills(skills: &SkillRuntimeContext) -> Vec<ToolSpec<'static>> {
                     "limit": {"type": "integer", "default": 20, "minimum": 1, "maximum": 20, "description": "Ranked results to retrieve and parse; defaults to the full top 20"},
                     "engine": {
                         "type": "string",
-                        "enum": ["auto", "bing", "bing_news", "google_news", "duckduckgo", "dashscope", "serper", "brave", "searxng", "google"],
+                        "enum": web_search_core::SEARCH_ENGINES,
                         "default": "auto",
-                        "description": "Search source. auto uses keyless Bing Web HTML, Bing News RSS, Google News RSS, and DuckDuckGo HTML."
+                        "description": "Prefer auto. It combines public web and news sources and tries an independent index if none return relevant pages. An explicit engine searches only that source."
                     },
                     "freshness": {"type": "string", "enum": ["auto", "none", "day", "week", "month", "year"], "default": "auto", "description": "Explicit freshness filter. auto preserves the raw query without inferring a filter; the model may select a concrete window before calling the tool."},
                     "language": {"type": "string", "description": "Preferred result language, such as zh-CN or en-US"},

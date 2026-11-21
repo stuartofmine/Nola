@@ -117,7 +117,11 @@
     <string name="chat_answer_source_tools">Tool results</string>
     <string name="chat_answer_basis_detail">Only sources included in this answer are shown.</string>
     <string name="chat_answer_memory_updates">%1$d memory updates</string>
-    <string name="chat_empty_no_models">Add a model in the Models tab to get started</string>
+    <string name="models_verified_via_direct">Verified over a direct connection</string>
+    <string name="models_verified_via_tailcat">Verified through Tailcat</string>
+    <string name="models_tailcat_verify_failed">Tailcat could not reach the host. Check Tailcat on the host, then verify again.</string>
+    <string name="models_direct_verify_failed_without_tailcat">The direct connection returned HTTP %1$d. Check the host address and access token. If the host requires Tailcat, install a Nola build with Tailcat support.</string>
+    <string name="chat_empty_no_models">Use a model service, a local model, or a paired Nola host.</string>
     <string name="chat_empty_mode_device">Ready on this device for writing, planning, and device actions.</string>
     <string name="chat_empty_mode_host">Connected to Web Host for project tools and longer-running work.</string>
     <string name="chat_empty_mode_hybrid">Web Host can coordinate work and request actions on this device.</string>
@@ -1386,6 +1390,7 @@
     <string name="chat_local_mcp_servers">Device MCP servers</string>
     <string name="chat_local_mcp_empty">No device MCP servers configured.</string>
     <string name="goal_discard_pending">Discard pending request</string>
+    <string name="goal_saved_constraints">Constraints</string>
     <string name="goal_constraints">Constraints (optional)</string>
     <string name="goal_constraints_hint">One constraint per line or comma-separated</string>
     <string name="goal_next_wake_format">Next check: %1$s</string>
@@ -1425,4 +1430,9 @@
     <string name="chat_document_delete_message">Delete “%1$s”? This removes it from your context.</string>
     <string name="data_heart_rate_bpm_format">%1$d bpm</string>
     <string name="chat_web_host_images_unsupported">Image attachments are not supported on Nola Web Host conversations. Switch to a local or cloud model, or remove the images.</string>
+    <string name="goal_latest_step">Latest step</string>
+    <string name="goal_step_interrupted">Interrupted</string>
+    <string name="goal_step_review_pending">Awaiting review</string>
+    <string name="goal_step_reviewed">Reviewed</string>
+    <string name="goal_host_default_unavailable">Choose an available default chat model in the Host model settings, then retry the saved request.</string>
 </resources>

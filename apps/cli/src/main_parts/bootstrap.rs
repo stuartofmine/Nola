@@ -178,8 +178,9 @@ static INTERACTIVE_PROVIDER_BEFORE_LOCAL: OnceLock<Mutex<Option<InteractiveProvi
 
 #[derive(Debug, Clone)]
 struct InteractivePastedContent {
+    start: usize,
     placeholder: String,
-    content: String,
+    content: std::sync::Arc<str>,
 }
 
 thread_local! {
@@ -231,9 +232,13 @@ impl CliApplication {
             entry::EntryIdentity::AgentHost => &no_setup,
         };
         let arguments: Vec<String> = std::env::args().skip(1).collect();
-        let mut config = match Config::from_args_with_setup(arguments.iter().cloned(), setup) {
+        let mut config = match Config::from_entry_args(arguments.iter().cloned(), setup) {
             Ok(config) => config,
-            Err(message) => {
+            Err(config::ConfigStartError::Runtime(message)) => {
+                eprintln!("{message}");
+                process::exit(1);
+            }
+            Err(config::ConfigStartError::Usage(message)) => {
                 eprintln!("{message}");
                 let topic = help_topic(&arguments).map(|name| format!(" {name}")).unwrap_or_default();
                 eprintln!("nola{topic} --help");
@@ -245,6 +250,17 @@ impl CliApplication {
         if let Err(message) = validate_agent_host_invocation(identity, &config) {
             eprintln!("{message}");
             process::exit(2);
+        }
+        if config.show_help {
+            print_help(help_topic(&arguments));
+            return;
+        }
+        if matches!(config.command, CommandMode::ConfigFile { .. } | CommandMode::ModelApplyConfig { .. }) && !config.host_request_stdin {
+            if let Err(message) = run_command(&config) {
+                eprintln!("{message}");
+                process::exit(1);
+            }
+            return;
         }
         let desktop_host_request = config.host_request_stdin;
         if desktop_host_request {
@@ -289,6 +305,12 @@ impl CliApplication {
             eprintln!("{message}");
             process::exit(2);
         }
+        if identity == entry::EntryIdentity::Cli {
+            if let Err(message) = crate::config_files::apply_at_startup(&config) {
+                eprintln!("{message}");
+                process::exit(1);
+            }
+        }
         if let Err(message) = crate::conversation_invocation::initialize_or_restore(&mut config) {
             eprintln!("{message}");
             process::exit(2);
@@ -305,11 +327,6 @@ impl CliApplication {
                 runtime_config_ready_at.duration_since(host_request_ready_at).as_millis(),
                 runtime_config_ready_at.duration_since(bootstrap_started_at).as_millis(),
             );
-        }
-
-        if config.show_help {
-            print_help(help_topic(&arguments));
-            return;
         }
 
         // Standalone CLI consumes the same saved MCP records as the Web Host.
@@ -531,6 +548,7 @@ fn run_command(config: &Config) -> Result<(), String> {
             | CommandMode::Room { .. }
             | CommandMode::ModelConnections
             | CommandMode::ModelManage
+            | CommandMode::ConfigFile { .. }
             | CommandMode::ModelApplyConfig { .. }
             | CommandMode::ModelChatgpt { .. }
             | CommandMode::ModelDiscover { .. }
@@ -705,12 +723,8 @@ fn run_command(config: &Config) -> Result<(), String> {
             })).map_err(|_| "cannot render management address")?);
             Ok(())
         }
-        CommandMode::ModelApplyConfig { path } => {
-            let selected_path = crate::model_connection_host::file_config::selected_path(path.as_deref())?;
-            let store = store::NolaStore::open_default()?;
-            let origins = vec![format!("http://localhost:{}", config.web_port), format!("http://127.0.0.1:{}", config.web_port)];
-            let result = crate::model_connection_host::file_config::apply(&store, &selected_path, &origins)?;
-            println!("{}", serde_json::to_string_pretty(&result).map_err(|_| "cannot render configuration receipt")?);
+        CommandMode::ConfigFile { .. } | CommandMode::ModelApplyConfig { .. } => {
+            println!("{}", crate::config_files::execute(config)?);
             Ok(())
         }
         CommandMode::ModelDiscover { connection_id, revision } => {
@@ -2207,11 +2221,11 @@ fn interactive_session_replay_user_line(line: &str) -> String {
     // Submitted input is durable conversation history, not another composer.
     // Give it a stable role marker and neutral foreground so it cannot be
     // confused with the live input row or assistant Markdown.
-    let line_width = terminal_columns().saturating_sub(1).max(1);
-    interactive_user_history_at_width(line, line_width, interactive_color_enabled())
+    interactive_user_history_at_width(line, terminal_columns(), interactive_color_enabled())
 }
 
-fn interactive_user_history_at_width(line: &str, line_width: usize, color: bool) -> String {
+fn interactive_user_history_at_width(line: &str, columns: usize, color: bool) -> String {
+    let line_width = crate::terminal_ui::transcript_width(columns);
     let prefix = "    › ";
     let (rows, _, _) = composer_input_multiline(line, line.len(),
         line_width.saturating_sub(display_width(prefix)).max(1), prefix);

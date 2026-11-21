@@ -1279,6 +1279,7 @@ struct MacChatWorkspaceView: View {
                         (selectedPlugin.map { Text(verbatim: $0.title) } ?? Text(selectedSection.title))
                             .font(.system(size: 16, weight: .semibold))
                             .lineLimit(1)
+                            .accessibilityIdentifier("workspace.heading." + selectedSection.rawValue)
                     }
                 }
                 Spacer(minLength: 8)

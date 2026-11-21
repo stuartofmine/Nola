@@ -2,6 +2,10 @@
 
 # MOD-01：Domain / Protocol
 
+简体中文 · [English](README.en.md)
+
+Service 命令用 request_id 查提交回执。外部工具结果用原 effect、attempt 和执行代数归位。两者即使来自同一次点击，也需分别验证。Service 版本、C ABI 和数据库 epoch 各自由边界的接收方检查。
+
 状态：现行模块职责；2026-11-08 核对当前实现入口及依赖。规范要求、静态接线与历史运行证据分别说明，不将未复测路径标记为通过。
 
 ## 设计、输入输出与生命周期
@@ -37,12 +41,12 @@ Identity、Resource、Command、Receipt 为不可变值对象；协议 DTO 不�
 
 ## 当前差距与验收
 
-当前工作与验收范围见任务入口（本地工作记录，不随仓库分发）。此前阶段实施与验证见阶段归档（本地工作记录，不随仓库分发）；更早记录见历史架构整改记录（本地工作记录，不随仓库分发）。
+已公开的验收环境、执行方式和限制见[验收范围](../../../quality/VALIDATION_SCOPE.md)。
 上述验证条目是验收要求；是否已经执行、使用的代码版本和证据必须另行记录。性能指标遵循[测量契约](../15-观测与验收/MEASUREMENT.md)，未测量项不得填写推测值。
 
 ## 当前接口入口（2026-10-28）
 
-- [中文API入口](API.zh-CN.md) / [English](API.md)：Rust Host、Core Application与Worker认证/传输边界。
-- [接口源码索引](INTERFACE_CATALOG.md)：当前固定路由、Worker匹配条件及Application命令映射。
+- [中文API入口](API.zh-CN.md) / [English](API.md)：Rust Host HTTP 与 Application Service/embedded 命令的认证及传输边界。
+- [接口源码索引](INTERFACE_CATALOG.md)：固定路由、动态分派及 Application 命令映射。
 - [运行时接口语义](CURRENT_RUNTIME_INTERFACES.md)：字段、返回、恢复、版本和摘要约束。
 - [15模块实现映射](../../总体设计/CURRENT_IMPLEMENTATION_MAP.md)：领域权威与实际源码归属。

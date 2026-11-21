@@ -2,6 +2,10 @@
 
 # MOD-14：远端 Host 与同步
 
+简体中文 · [English](README.en.md)
+
+连接宿主、用户认证和一次执行的授权各有状态。远端工作绑定源 Host、Store 与 Run，客户端用游标补读。离开页面只结束观察；停止执行使用原任务的取消请求。
+
 状态：现行模块职责；2026-11-08 核对当前实现入口及依赖。规范要求、静态接线与历史运行证据分别说明，不将未复测路径标记为通过。
 
 ## 设计、输入输出与生命周期
@@ -32,12 +36,12 @@
 
 ## 相关设计
 
-- [REMOTE_HOST_PROJECTION_CONTRACT](REMOTE_HOST_PROJECTION_CONTRACT.md)
+- [REMOTE_HOST_PROJECTION_CONTRACT](REMOTE_HOST_PROJECTION_CONTRACT.zh-CN.md)
 - [WEB_CHAT_TRANSPORT_CONTRACT](WEB_CHAT_TRANSPORT_CONTRACT.md)
 
 ## 当前差距与验收
 
-当前工作与验收范围见任务入口（本地工作记录，不随仓库分发）。此前阶段实施与验证见阶段归档（本地工作记录，不随仓库分发）；更早记录见历史架构整改记录（本地工作记录，不随仓库分发）。
+已公开的验收环境、执行方式和限制见[验收范围](../../../quality/VALIDATION_SCOPE.md)。
 上述验证条目是验收要求；是否已经执行、使用的代码版本和证据必须另行记录。性能指标遵循[测量契约](../15-观测与验收/MEASUREMENT.md)，未测量项不得填写推测值。
 
 ## 当前源提交与复制接口（2026-10-28）

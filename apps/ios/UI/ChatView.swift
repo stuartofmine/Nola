@@ -728,7 +728,10 @@ struct ChatView: View {
                 },
                 onDismissSheet: embeddedInNavigationStack ? {
                     workToolsPresentation = nil
-                } : nil
+                } : nil,
+                executionBackendPicker: currentHostExecutionBackends.isEmpty ? nil : AnyView(
+                    chatTopBar(showsHistoryToggle: false).executionBackendMenu(fillsRow: true)
+                )
             )
             .environmentObject(container)
     }

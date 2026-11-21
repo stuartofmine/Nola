@@ -9,6 +9,7 @@ import com.nola.data.remote.sse.SseClient
 import com.nola.data.remote.sse.SseEvent
 import com.nola.core.AgentCoreTaskProjection
 import com.nola.core.decodeAgentCoreTaskProjection
+import com.nola.data.remote.dto.VerifiedHostTransport
 import io.ktor.client.HttpClient
 import io.ktor.client.call.body
 import io.ktor.client.request.get
@@ -178,14 +179,16 @@ class WebHostApiServiceImpl @Inject constructor(
         token: String,
         pinnedCertificateSha256: String
     ): AgentSettingsResponse {
+        var verifiedTransport: VerifiedHostTransport? = null
         val envelope = httpGetEncrypted(
             client = httpClientFactory.clientFor(hostBaseUrl, pinnedCertificateSha256),
             hostBaseUrl = hostBaseUrl,
             token = token,
-            path = "agent/settings"
+            path = "agent/settings",
+            onRoute = { verifiedTransport = it },
         )
         val decrypted = MobileCrypto.decryptJsonObject(envelope, token)
-        return json.decodeFromJsonElement(decrypted)
+        return json.decodeFromJsonElement<AgentSettingsResponse>(decrypted).copy(verifiedTransport = verifiedTransport)
     }
 
     override suspend fun submitAgentPermissionDecision(
@@ -343,19 +346,28 @@ class WebHostApiServiceImpl @Inject constructor(
         client: HttpClient = httpClient,
         hostBaseUrl: String,
         token: String,
-        path: String
+        path: String,
+        onRoute: ((VerifiedHostTransport) -> Unit)? = null,
     ): EncryptedEnvelope {
         val url = webHostMobileUrl(hostBaseUrl, path)
         val response = client.get(url) {
             mobileAuthHeaders(token, "GET", url).forEach { (name, value) -> header(name, value) }
             header("Accept", "application/json")
         }
-        if (response.status.value !in 200..299) throw WebHostStatusException(response.status.value)
+        val route = if (onRoute == null) null else when {
+            response.call.request.attributes.getOrNull(tailcatRoutedRequest) == true -> VerifiedHostTransport.Tailcat
+            hostBaseUrl.startsWith("http://", ignoreCase = true) && !httpClientFactory.tailcatAvailable ->
+                VerifiedHostTransport.DirectWithoutTailcat
+            else -> VerifiedHostTransport.Direct
+        }
+        if (response.status.value !in 200..299) throw WebHostStatusException(response.status.value, verificationRoute = route)
+        if (route != null) onRoute?.invoke(route)
         return response.body()
     }
 }
 
-class WebHostStatusException(val statusCode: Int, val errorCode: String? = null, val expertRejection: JsonObject? = null) :
+class WebHostStatusException(val statusCode: Int, val errorCode: String? = null, val expertRejection: JsonObject? = null,
+    val verificationRoute: VerifiedHostTransport? = null) :
     IllegalStateException("Web Host request failed ($statusCode)" + (errorCode?.let { ": $it" } ?: ""))
 
 internal fun boundedWebHostErrorCode(error: JsonObject): String? =

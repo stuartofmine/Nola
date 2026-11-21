@@ -265,14 +265,8 @@ fn run_interactive_session(config: &Config, resume_pending: bool) -> Result<Inte
                             terminal_notice!("{}", ui_text(UiText::NoPendingQuestions));
                         }
                         if let Some(error) = outcome.notice { terminal_notice!("{}", format_error(&error)); }
-                        if outcome.deferred && !child_waits.is_empty() {
-                            terminal_notice!(
-                                "  ◆ {}",
-                                match current_language() {
-                                    Language::ZhHans => "子任务问题仍处于等待中，可随时输入 /questions 回答。",
-                                    _ => "Child question remains open; run /questions anytime to answer.",
-                                }
-                            );
+                        if outcome.deferred && outcome.had_questions {
+                            terminal_notice!("{}", ui_text(UiText::QuestionDeferred));
                         }
                         if let Some(run_id) = outcome.resume_run {
                             let mut emitter = Emitter::new(false);
@@ -309,13 +303,7 @@ fn run_interactive_session(config: &Config, resume_pending: bool) -> Result<Inte
         }
         queued_user_inputs.extend(interaction::take_interactive_queued_inputs());
         let prompt_footer = if edit_target.is_some() {
-            Some(
-                match current_language() {
-                    Language::ZhHans => "编辑已发送消息 · Esc 取消",
-                    _ => "Editing sent message · Esc to cancel",
-                }
-                .into(),
-            )
+            Some(ui_text(UiText::EditInputHint).to_string())
         } else if goal_entry {
             Some(ui_text(UiText::GoalInputHint).to_string())
         } else if !interactive_config.json_output {
@@ -380,15 +368,20 @@ fn run_interactive_session(config: &Config, resume_pending: bool) -> Result<Inte
             );
             crate::terminal_ui::set_footer(footer.as_deref().unwrap_or_default());
         }
-        if prompt == "/cancel-edit" {
+        let chat_commands = !goal_entry && edit_target.is_none();
+        if !goal_entry && prompt == "/cancel-edit" {
+            if edit_target.is_none() {
+                terminal_notice!("{}", ui_text(UiText::NoActiveEdit));
+                continue;
+            }
             edit_target = None;
             rejected_mentions.clear();
             persist_interactive_view_state(&mut view_store, String::new(), 0, vec![], None);
             continue;
         }
-        if !goal_entry && (prompt == "/edit" || prompt.starts_with("/edit ")) {
+        if chat_commands && (prompt == "/edit" || prompt.starts_with("/edit ")) {
             let Some(conversation) = interactive_config.session_id.as_deref() else {
-                terminal_notice!("No saved conversation to edit.");
+                terminal_notice!("{}", ui_text(UiText::NoMessageToEdit));
                 continue;
             };
             let id = prompt.strip_prefix("/edit").unwrap().trim();
@@ -408,19 +401,19 @@ fn run_interactive_session(config: &Config, resume_pending: bool) -> Result<Inte
         if prompt.is_empty() {
             continue;
         }
-        if !goal_entry && prompt == "/questions" {
+        if chat_commands && prompt == "/questions" {
             offer_user_questions = true;
             questions_requested = true;
             continue;
         }
-        if !goal_entry && is_exit_command(prompt.as_str()) {
+        if chat_commands && is_exit_command(prompt.as_str()) {
             if !interactive_config.json_output {
                 clear_interactive_prompt_area(prompt_footer.as_deref())
                     .map_err(|err| format!("{} {err}", tr(Message::FailedFlushPromptPrefix)))?;
             }
             break;
         }
-        if !goal_entry {
+        if chat_commands {
             if let Some(target) = resume_command_target(prompt.as_str()) {
                 match target {
                     Some(id) => {
@@ -450,16 +443,16 @@ fn run_interactive_session(config: &Config, resume_pending: bool) -> Result<Inte
                 continue;
             }
         }
-        if recovery_blocked && !prompt.starts_with('/') {
+        if recovery_blocked && (!chat_commands || !prompt.starts_with('/')) {
             terminal_notice!("恢复尚未完成，未发送此消息。请用 /resume 重试或选择其他会话。");
             pending_draft = Some(prompt);
             continue;
         }
-        if !goal_entry && prompt == "/" {
-            print_interactive_help();
+        if chat_commands && prompt == "/" {
+            print_interactive_help("");
             continue;
         }
-        if !prompt.starts_with('/') && interactive_config.save_session {
+        if (!chat_commands || !prompt.starts_with('/')) && interactive_config.save_session {
             if let Some(session)=interactive_config.session_id.as_deref() {
                 if let Err(error)=crate::boundary_input_intent::ensure_no_pending(session) {
                     terminal_notice!("{}",format_error(&error));
@@ -470,6 +463,8 @@ fn run_interactive_session(config: &Config, resume_pending: bool) -> Result<Inte
         }
         let submitted_command = if goal_entry {
             begin_interactive_goal_input(&prompt, &interactive_config, &mut goal_target, &mut goal_constraints)
+        } else if edit_target.is_some() {
+            Ok(SlashCommandResult::PassThrough)
         } else { handle_interactive_slash_command(
             &prompt,
             &mut interactive_config,
@@ -606,7 +601,10 @@ fn run_interactive_session(config: &Config, resume_pending: bool) -> Result<Inte
                 }
                 edit_target = None;
                 offer_user_questions = true;
-                if !result.run_outcome.is_terminal() {
+                let opens_question = !interactive_config.json_output
+                    && (interactive_config.session_id.is_some() || result.session_id.is_some())
+                    && result.run_outcome.turn_status == nola_core::agent::AgentTurnStatus::AwaitingInput;
+                if !result.run_outcome.is_terminal() && !opens_question {
                     terminal_notice!(
                         "Run remains pending ({:?}); no completion or permission decision was recorded.",
                         result.run_outcome.turn_status
@@ -932,10 +930,19 @@ fn mention_menu_focus(line: &str, cursor: usize) -> Option<usize> {
 fn set_mention_focus(line: &str, cursor: usize, index: Option<usize>) {
     MENTION_MENU.with(|m| *m.borrow_mut() = (line.into(), cursor, index));
 }
-thread_local! { static GOAL_COMPOSER_ACTIVE: Cell<bool> = const { Cell::new(false) }; }
-struct GoalComposerScope(bool);
-impl Drop for GoalComposerScope {
-    fn drop(&mut self) { GOAL_COMPOSER_ACTIVE.with(|active| active.set(self.0)); }
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum ComposerPurpose {
+    Chat,
+    Goal,
+    Edit,
+}
+
+thread_local! { static COMPOSER_PURPOSE: Cell<ComposerPurpose> = const { Cell::new(ComposerPurpose::Chat) }; }
+struct ComposerScope(ComposerPurpose);
+impl Drop for ComposerScope {
+    fn drop(&mut self) {
+        COMPOSER_PURPOSE.with(|active| active.set(self.0));
+    }
 }
 
 fn read_interactive_prompt_line(
@@ -951,7 +958,14 @@ fn read_interactive_prompt_line(
     goal_entry: bool,
 ) -> io::Result<Option<InteractivePromptInput>> {
     crate::cli_expert_mentions::begin_composer();
-    let _purpose = GoalComposerScope(GOAL_COMPOSER_ACTIVE.with(|active| active.replace(goal_entry)));
+    let purpose = if goal_entry {
+        ComposerPurpose::Goal
+    } else if edit_target.is_some() {
+        ComposerPurpose::Edit
+    } else {
+        ComposerPurpose::Chat
+    };
+    let _scope = ComposerScope(COMPOSER_PURPOSE.with(|active| active.replace(purpose)));
     if !io::stdin().is_terminal() {
         let mut raw_line = String::new();
         let read = io::stdin().read_line(&mut raw_line)?;
@@ -997,10 +1011,14 @@ fn read_interactive_prompt_line(
         String,
         usize,
         Vec<crate::cli_expert_mentions::Occurrence>,
+        Vec<InteractivePastedContent>,
         String,
     )> = None;
+    SLASH_MENU.with(|menu| *menu.borrow_mut() = SlashMenu::default());
     set_mention_focus(&line, cursor, Some(0));
     let mut pasted_contents: Vec<InteractivePastedContent> = Vec::new();
+    *history_cursor = None;
+    let mut history_draft = None;
     let mut esc_pending_clear = false;
     let mut completion_cycle: Option<ComposerCompletionCycle> = None;
     INTERACTIVE_COMPOSER_CURSOR_ROW.with(|row| row.set(0));
@@ -1191,11 +1209,12 @@ fn read_interactive_prompt_line(
                 continue;
             }
             if key.code == KeyCode::Char('z') && key.modifiers == KeyModifiers::CONTROL {
-                if let Some((previous, at, old_mentions, after)) = undo_mention.take() {
+                if let Some((previous, at, old_mentions, old_pastes, after)) = undo_mention.take() {
                     if line == after {
                         line = previous;
                         cursor = at;
                         mentions = old_mentions;
+                        pasted_contents = old_pastes;
                         redraw_interactive_prompt_line(&line, cursor, prompt_footer, config)?;
                         continue;
                     }
@@ -1204,53 +1223,64 @@ fn read_interactive_prompt_line(
             if let Some((start, end, prefix)) = query.filter(|_| {
                 is_interactive_submit_event(&key) || matches!(key.code, KeyCode::Down | KeyCode::Up)
             }) {
-                let experts = if config.save_session && config.tools_enabled {
-                    crate::cli_expert_mentions::completions(prefix, config.session_id.as_deref())
-                } else {
-                    vec![]
-                };
-                if !experts.is_empty() {
-                    let index = mention_menu_focus(&line, cursor).unwrap_or(0) % experts.len();
+                let candidates = interactive_mention_candidates(config, prefix);
+                if !candidates.is_empty() {
+                    let index = mention_menu_focus(&line, cursor).unwrap_or(0) % candidates.len();
                     if is_interactive_submit_event(&key) {
-                        let candidate = &experts[index];
-                        if let Some(run) =
-                            crate::cli_expert_mentions::completion(&candidate.token, start)
-                        {
-                            undo_mention =
-                                Some((line.clone(), cursor, mentions.clone(), String::new()));
-                            line.replace_range(start..end, &run.text);
-                            crate::cli_expert_mentions::replace(
-                                &mut mentions,
-                                start,
-                                end,
-                                run.text.len(),
-                            );
-                            cursor = run.end;
-                            let index = mentions.partition_point(|item| item.start < start);
-                            mentions.insert(index, run);
-                            if let Some(undo) = &mut undo_mention {
-                                undo.3.clone_from(&line);
-                            }
-                        }
+                        let previous = (line.clone(), cursor, mentions.clone(), pasted_contents.clone());
+                        cursor = insert_composer_candidate(&mut line, start, end, &candidates[index].0, &mut mentions, &mut pasted_contents);
+                        undo_mention = Some((previous.0, previous.1, previous.2, previous.3, line.clone()));
                         set_mention_focus(&line, cursor, None);
                     } else {
-                        let offset = if key.code == KeyCode::Up {
-                            experts.len() - 1
-                        } else {
-                            1
-                        };
-                        set_mention_focus(&line, cursor, Some((index + offset) % experts.len()));
+                        let offset = if key.code == KeyCode::Up { candidates.len() - 1 } else { 1 };
+                        set_mention_focus(&line, cursor, Some((index + offset) % candidates.len()));
                     }
                     redraw_interactive_prompt_line(&line, cursor, prompt_footer, config)?;
                     continue;
                 }
+            }
+            let mut submit_command = None;
+            let menu_handled = SLASH_MENU.with(|menu| {
+                let mut menu = menu.borrow_mut();
+                menu.sync(&line, cursor, config);
+                if !menu.is_open() { return false; }
+                match (key.code, key.modifiers) {
+                    (KeyCode::Esc, KeyModifiers::NONE) => menu.dismissed = true,
+                    (KeyCode::Up, KeyModifiers::NONE) | (KeyCode::Char('p'), KeyModifiers::CONTROL)
+                        | (KeyCode::BackTab, _) => menu.step(true),
+                    (KeyCode::Down, KeyModifiers::NONE) | (KeyCode::Char('n'), KeyModifiers::CONTROL) => menu.step(false),
+                    (KeyCode::Tab, KeyModifiers::NONE) => {
+                        let command = &menu.entries[menu.selected.unwrap_or(0)].name;
+                        line = format!("{command} ");
+                        cursor = line.len();
+                        mentions.clear();
+                        pasted_contents.clear();
+                        completion_cycle = None;
+                        // Subcommand suggestions, if any, belong to the newly inserted text.
+                    }
+                    _ if is_interactive_submit_event(&key) => {
+                        submit_command = menu.selected.map(|index| menu.entries[index].name.clone());
+                        return false;
+                    }
+                    _ => return false,
+                }
+                true
+            });
+            if menu_handled {
+                redraw_interactive_prompt_line(&line, cursor, prompt_footer, config)?;
+                continue;
             }
             if !matches!(key.code, KeyCode::Tab | KeyCode::BackTab) {
                 completion_cycle = None;
             }
             if crate::composer_media::paste_key(&key) {
                 match crate::composer_media::paste_image() {
-                    Ok(marker) => { crate::cli_expert_mentions::replace(&mut mentions,cursor,cursor,marker.len()); line.insert_str(cursor, &marker); cursor += marker.len(); }
+                    Ok(marker) => {
+                        adjust_pasted_ranges(&mut pasted_contents, cursor, cursor, marker.len());
+                        crate::cli_expert_mentions::replace(&mut mentions, cursor, cursor, marker.len());
+                        line.insert_str(cursor, &marker);
+                        cursor += marker.len();
+                    }
                     Err(error) => terminal_notice!("{}", crate::composer_media::paste_error(&error)),
                 }
                 redraw_interactive_prompt_line(&line, cursor, prompt_footer, config)?;
@@ -1261,6 +1291,12 @@ fn read_interactive_prompt_line(
                 continue;
             }
             if is_interactive_submit_event(&key) {
+                let (expanded, expanded_mentions) = if let Some(command) = submit_command {
+                    line.clone_from(&command);
+                    (command, Vec::new())
+                } else {
+                    (expanded, expanded_mentions)
+                };
                 let selection =
                     match crate::cli_expert_mentions::bind(&expanded, &expanded_mentions) {
                         Ok(value) => value,
@@ -1284,9 +1320,7 @@ fn read_interactive_prompt_line(
                         expanded_mentions,
                     )));
                 }
-                let prompt = expand_interactive_pasted_content(&line, &pasted_contents)
-                    .trim()
-                    .to_string();
+                let prompt = expanded.trim().to_string();
                 return Ok(Some(InteractivePromptInput::Submitted(prompt)));
             }
             if key.kind != KeyEventKind::Press {
@@ -1308,27 +1342,24 @@ fn read_interactive_prompt_line(
                     KeyCode::Left => cursor = r.start,
                     KeyCode::Right => cursor = r.end,
                     _ => {
-                        let old = (line.clone(), cursor, mentions.clone());
+                        let old = (line.clone(), cursor, mentions.clone(), pasted_contents.clone());
                         line.replace_range(r.start..r.end, "");
+                        adjust_pasted_ranges(&mut pasted_contents, r.start, r.end, 0);
                         cursor = r.start;
                         crate::cli_expert_mentions::replace(&mut mentions, r.start, r.end, 0);
-                        undo_mention = Some((old.0, old.1, old.2, line.clone()));
+                        undo_mention = Some((old.0, old.1, old.2, old.3, line.clone()));
                     }
                 }
                 redraw_interactive_prompt_line(&line, cursor, prompt_footer, config)?;
                 continue;
             }
-            if try_delete_pasted_placeholder(&mut line, &mut cursor, &mut pasted_contents, &key) {
-                crate::cli_expert_mentions::replace(
-                    &mut mentions,
-                    cursor,
-                    cursor + old_len - line.len(),
-                    0,
-                );
-                redraw_interactive_prompt_line(&line, cursor, prompt_footer, config)?;
-                continue;
-            }
-            if crate::composer::edit(&mut line, &mut cursor, &key) {
+            // Move inside a multiline recall until the caret reaches its outer row.
+            let recall_boundary = history_cursor.is_some() && key.modifiers.is_empty() && match key.code {
+                KeyCode::Up => !line[..cursor].contains('\n'),
+                KeyCode::Down => !line[cursor..].contains('\n'),
+                _ => false,
+            };
+            if !recall_boundary && edit_with_paste_blocks(&mut line, &mut cursor, &mut pasted_contents, &key) {
                 if old_len != line.len() {
                     let start = cursor.min(old_cursor);
                     crate::cli_expert_mentions::replace(
@@ -1338,7 +1369,6 @@ fn read_interactive_prompt_line(
                         line.len().saturating_sub(old_len),
                     );
                 }
-                retain_present_pasted_contents(&line, &mut pasted_contents);
                 redraw_interactive_prompt_line(&line, cursor, prompt_footer, config)?;
                 continue;
             }
@@ -1359,6 +1389,8 @@ fn read_interactive_prompt_line(
                             continue;
                         }
                         line.clear();
+                        *history_cursor = None;
+                        history_draft = None;
                         mentions.clear();
                         cursor = 0;
                         pasted_contents.clear();
@@ -1376,52 +1408,55 @@ fn read_interactive_prompt_line(
                             &mut completion_cycle,
                             key.code == KeyCode::BackTab,
                             &mut mentions,
+                            &mut pasted_contents,
                         )
                     {
                         set_mention_focus(&line, cursor, None);
-                        retain_present_pasted_contents(&line, &mut pasted_contents);
                         redraw_interactive_prompt_line(&line, cursor, prompt_footer, config)?;
                     }
                 }
-                KeyCode::Up if !goal_entry => {
-                    if let Some(history) =
-                        interactive_history_prompt("\x1b[A", input_history, history_cursor)
-                    {
+                KeyCode::Up | KeyCode::Down if purpose == ComposerPurpose::Chat => {
+                    let browsing = history_cursor.is_some();
+                    let direction = if key.code == KeyCode::Up { "\x1b[A" } else { "\x1b[B" };
+                    if let Some(history) = interactive_history_prompt(direction, input_history, history_cursor) {
+                        if !browsing {
+                            history_draft = Some((std::mem::take(&mut line), cursor,
+                                std::mem::take(&mut mentions), std::mem::take(&mut pasted_contents)));
+                        }
                         line = history;
-                        mentions.clear();
                         cursor = line.len();
-                        pasted_contents.clear();
-                        redraw_interactive_prompt_line(&line, cursor, prompt_footer, config)?;
-                    }
-                }
-                KeyCode::Down if !goal_entry => {
-                    if let Some(history) =
-                        interactive_history_prompt("\x1b[B", input_history, history_cursor)
-                    {
-                        line = history;
                         mentions.clear();
-                        cursor = line.len();
                         pasted_contents.clear();
-                        redraw_interactive_prompt_line(&line, cursor, prompt_footer, config)?;
+                    } else if browsing {
+                        if let Some(draft) = history_draft.take() {
+                            (line, cursor, mentions, pasted_contents) = draft;
+                        }
                     } else {
-                        line.clear();
-                        mentions.clear();
-                        cursor = 0;
-                        pasted_contents.clear();
-                        redraw_interactive_prompt_line(&line, cursor, prompt_footer, config)?;
+                        continue;
                     }
+                    undo_mention = None;
+                    if history_cursor.is_some() {
+                        SLASH_MENU.with(|menu| {
+                            let mut menu = menu.borrow_mut();
+                            menu.sync(&line, cursor, config);
+                            menu.dismissed = true;
+                        });
+                    }
+                    set_mention_focus(&line, cursor, None);
+                    redraw_interactive_prompt_line(&line, cursor, prompt_footer, config)?;
                 }
                 KeyCode::Char('c' | 'C') if key.modifiers.contains(KeyModifiers::CONTROL) => {
                     interaction::clear_interactive_execution_draft();
                     if goal_entry { return Ok(Some(InteractivePromptInput::CancelGoal)); }
                     if !line.is_empty() {
                         line.clear();
+                        *history_cursor = None;
+                        history_draft = None;
                         mentions.clear();
                         cursor = 0;
                         pasted_contents.clear();
                         esc_pending_clear = false;
                         completion_cycle = None;
-                        *history_cursor = None;
                         redraw_interactive_prompt_line(&line, cursor, prompt_footer, config)?;
                         continue;
                     }
@@ -1439,6 +1474,7 @@ fn read_interactive_prompt_line(
             completion_cycle = None;
             match crate::composer_media::paste_path(&text) {
                 Ok(Some(marker)) => {
+                    adjust_pasted_ranges(&mut pasted_contents, cursor, cursor, marker.len());
                     crate::cli_expert_mentions::replace(&mut mentions,cursor,cursor,marker.len());
                     line.insert_str(cursor, &marker); cursor += marker.len();
                     redraw_interactive_prompt_line(&line, cursor, prompt_footer, config)?;
@@ -1452,17 +1488,24 @@ fn read_interactive_prompt_line(
                 Ok(None) => {}
             }
             let sanitized = normalize_interactive_paste(&text);
-            if sanitized.chars().any(|ch| !ch.is_whitespace()) {
+            if !sanitized.is_empty() {
                 if should_collapse_pasted_content(&sanitized) {
-                    let placeholder = format!("[Pasted Content {} chars]", sanitized.chars().count());
-                    crate::cli_expert_mentions::replace(&mut mentions,cursor,cursor,placeholder.len());
+                    let chars = sanitized.chars().count();
+                    let mut placeholder = format!("[Pasted Content {chars} chars]");
+                    let mut number = 1;
+                    while pasted_contents.iter().any(|block| block.placeholder == placeholder) {
+                        number += 1;
+                        placeholder = format!("[Pasted Content {chars} chars #{number}]");
+                    }
+                    adjust_pasted_ranges(&mut pasted_contents, cursor, cursor, placeholder.len());
+                    crate::cli_expert_mentions::replace(&mut mentions, cursor, cursor, placeholder.len());
                     line.insert_str(cursor, &placeholder);
+                    let start = cursor;
                     cursor += placeholder.len();
-                    pasted_contents.push(InteractivePastedContent {
-                        placeholder,
-                        content: sanitized,
-                    });
+                    let index = pasted_contents.partition_point(|block| block.start < start);
+                    pasted_contents.insert(index, InteractivePastedContent { start, placeholder, content: sanitized.into() });
                 } else {
+                    adjust_pasted_ranges(&mut pasted_contents, cursor, cursor, sanitized.len());
                     crate::cli_expert_mentions::replace(
                         &mut mentions,
                         cursor,
@@ -1551,38 +1594,55 @@ fn handle_backslash_enter_continuation(
     }
 }
 
-fn try_delete_pasted_placeholder(
-    line: &mut String,
-    cursor: &mut usize,
-    pasted_contents: &mut Vec<InteractivePastedContent>,
-    key: &KeyEvent,
+/// Keep the original positional identity of each folded paste as the draft changes.
+fn adjust_pasted_ranges(blocks: &mut Vec<InteractivePastedContent>, start: usize, end: usize, inserted: usize) {
+    blocks.retain_mut(|block| {
+        if block.start >= end {
+            block.start = block.start - (end - start) + inserted;
+            true
+        } else {
+            block.start + block.placeholder.len() <= start
+        }
+    });
+}
+
+fn edit_with_paste_blocks(
+    line: &mut String, cursor: &mut usize, blocks: &mut Vec<InteractivePastedContent>, key: &KeyEvent,
 ) -> bool {
-    if !key.modifiers.is_empty() || !matches!(key.code, KeyCode::Backspace | KeyCode::Delete) {
-        return false;
-    }
-    let idx = (*cursor).min(line.len());
-    for pos in 0..pasted_contents.len() {
-        let placeholder = &pasted_contents[pos].placeholder;
-        if let Some(start) = line.find(placeholder.as_str()) {
-            let end = start + placeholder.len();
-            let hit = match key.code {
-                KeyCode::Backspace => idx > start && idx <= end,
-                KeyCode::Delete => idx >= start && idx < end,
-                _ => false,
-            };
-            if hit {
-                line.replace_range(start..end, "");
-                *cursor = start;
-                pasted_contents.remove(pos);
-                return true;
+    let old_len = line.len();
+    let old_cursor = *cursor;
+    if !crate::composer::edit(line, cursor, key) { return false; }
+    if blocks.is_empty() { return true; }
+    if line.len() < old_len {
+        // Word deletion and Cut can end inside the displayed label. Extend the
+        // deletion to the whole block, in the coordinates before the edit.
+        let removed = old_len - line.len();
+        let start = old_cursor.min(*cursor);
+        let end = start + removed;
+        let mut left = start;
+        let mut right = end;
+        for block in blocks.iter() {
+            let block_end = block.start + block.placeholder.len();
+            if block.start < end && block_end > start {
+                left = left.min(block.start);
+                right = right.max(block_end);
+            }
+        }
+        line.replace_range(left..right - removed, "");
+        *cursor = left;
+        adjust_pasted_ranges(blocks, left, right, 0);
+    } else if line.len() > old_len {
+        adjust_pasted_ranges(blocks, old_cursor, old_cursor, line.len() - old_len);
+    } else if *cursor != old_cursor {
+        for block in blocks.iter() {
+            let end = block.start + block.placeholder.len();
+            if block.start < *cursor && *cursor < end {
+                *cursor = if *cursor < old_cursor { block.start } else { end };
+                break;
             }
         }
     }
-    false
-}
-
-fn retain_present_pasted_contents(line: &str, pasted_contents: &mut Vec<InteractivePastedContent>) {
-    pasted_contents.retain(|item| line.contains(item.placeholder.as_str()));
+    true
 }
 
 fn interactive_effective_footer(base_footer: Option<&str>, esc_pending_clear: bool) -> Option<String> {
@@ -1603,13 +1663,18 @@ fn expand_interactive_pasted_content(
     input: &str,
     pasted_contents: &[InteractivePastedContent],
 ) -> String {
-    let mut expanded = input.to_string();
-    for pasted in pasted_contents {
-        if let Some(start) = expanded.find(&pasted.placeholder) {
-            let end = start + pasted.placeholder.len();
-            expanded.replace_range(start..end, &pasted.content);
+    let mut expanded = String::new();
+    let mut offset = 0;
+    for block in pasted_contents {
+        let end = block.start + block.placeholder.len();
+        if end > input.len() { break; }
+        if input.get(block.start..end) == Some(block.placeholder.as_str()) {
+            expanded.push_str(&input[offset..block.start]);
+            expanded.push_str(&block.content);
+            offset = end;
         }
     }
+    expanded.push_str(&input[offset..]);
     expanded
 }
 
@@ -1887,7 +1952,7 @@ fn draw_interactive_prompt_area(
     footer: Option<&str>,
     config: &Config,
 ) -> io::Result<()> {
-    let completion_line = if GOAL_COMPOSER_ACTIVE.with(Cell::get) {
+    let completion_line = if COMPOSER_PURPOSE.with(Cell::get) == ComposerPurpose::Goal {
         None
     } else {
         composer_completion_line(line, cursor, config)
@@ -2115,7 +2180,7 @@ fn interactive_input_bar_line_with_color(
         truncate_display_width_tail(text, line_width.saturating_sub(display_width(prefix)));
     let use_placeholder = is_placeholder && visible_line.is_empty();
     let visible = if use_placeholder {
-        if GOAL_COMPOSER_ACTIVE.with(Cell::get) { ui_text(UiText::GoalPlaceholder) }
+        if COMPOSER_PURPOSE.with(Cell::get) == ComposerPurpose::Goal { ui_text(UiText::GoalPlaceholder) }
         else { tr(Message::InteractiveInputPlaceholder) }
     } else {
         visible_line.as_str()
@@ -2224,12 +2289,16 @@ fn composer_prompt_footer_line(footer: &str) -> String {
 
 fn composer_completion_line(line: &str, cursor: usize, config: &Config) -> Option<String> {
     let trimmed = line.trim_start();
-    let mut parts = if trimmed.starts_with('/') {
-        matching_slash_commands_with_config(line, config)
-            .into_iter()
-            .map(|item| interactive_room_completion_label(&item.name).unwrap_or(item.name))
-            .collect::<Vec<_>>()
-    } else if let Some((_, _, prefix)) = active_at_file_token(line, cursor) {
+    let slash = SLASH_MENU.with(|menu| {
+        let mut menu = menu.borrow_mut();
+        menu.sync(line, cursor, config);
+        let (width, height) = crossterm::terminal::size().unwrap_or((80, 24));
+        menu.render(usize::from(width.saturating_sub(1)), usize::from(height))
+    });
+    if trimmed.starts_with('/') || COMPOSER_PURPOSE.with(Cell::get) == ComposerPurpose::Goal {
+        return slash;
+    }
+    let mut parts = if let Some((_, _, prefix)) = active_at_file_token(line, cursor) {
         let selected = mention_menu_focus(line, cursor)?;
         let mut items = interactive_mention_candidates(config, prefix)
             .into_iter()
@@ -2250,7 +2319,8 @@ fn composer_completion_line(line: &str, cursor: usize, config: &Config) -> Optio
     if parts.len() > 4 {
         parts.truncate(4);
     }
-    let text = format!("tab {}", parts.join("   "));
+    let hint = ui_text(UiText::MentionPickKeys);
+    let text = format!("{hint}  {}", parts.join("   "));
     let text = truncate_display_width(&text, width);
     if interactive_color_enabled() {
         Some(format!(
@@ -2937,6 +3007,7 @@ const INTERACTIVE_SLASH_COMMANDS: &[SlashCommand] = &[
     SlashCommand { name: "/mcp" },
     SlashCommand { name: "/memory" },
     SlashCommand { name: "/guide" },
+    SlashCommand { name: "/config" },
     SlashCommand { name: "/resume" },
     SlashCommand { name: "/continue" },
     SlashCommand { name: "/history" },
@@ -2977,6 +3048,7 @@ fn normalize_interactive_command(command: &str) -> Option<&'static str> {
         "/mcp" => "/mcp",
         "/memory" | "/mem" => "/memory",
         "/guide" => "/guide",
+        "/config" => "/config",
         "/resume" | "/r" => "/resume",
         "/continue" | "/c" => "/continue",
         "/history" | "/hist" => "/history",
@@ -3314,9 +3386,11 @@ fn select_interactive_session_restore(config: &Config, continue_last: bool) -> R
 include!("composer_completion.rs");
 
 fn available_interactive_models(config: Option<&Config>, query: &str) -> Vec<String> {
-    let mut models: Vec<String> = Vec::new();
-    let mut profile_names: std::collections::HashMap<String, String> =
-        std::collections::HashMap::new();
+    interactive_model_candidates(config, query).into_iter().map(|item| item.name).collect()
+}
+
+fn interactive_model_candidates(config: Option<&Config>, query: &str) -> Vec<SlashCompletion> {
+    let mut models = Vec::new();
     if config.is_some() {
         if let Ok(profiles) =
             crate::store::NolaStore::open_default().and_then(|store| store.model_profiles())
@@ -3326,11 +3400,15 @@ fn available_interactive_models(config: Option<&Config>, query: &str) -> Vec<Str
                 .filter(|p| p.enabled && p.deleted_at_ms.is_none() && p.runtime == "remote")
             {
                 let key = format!("configured:{}", profile.id);
-                profile_names.insert(
-                    key.clone(),
-                    format!("{} {} {}", profile.model_name, profile.provider, profile.id),
-                );
-                models.push(key);
+                let source: serde_json::Value = serde_json::from_str(&profile.source_json).unwrap_or_default();
+                let connection = source["connectionID"].as_str().filter(|value| !value.trim().is_empty())
+                    .unwrap_or(&profile.provider);
+                let mut label = format!("{} · {}", profile.model_name, connection);
+                if connection != profile.provider && !profile.provider.is_empty() {
+                    label.push_str(" · ");
+                    label.push_str(&profile.provider);
+                }
+                models.push(SlashCompletion { name: key, label: Some(label) });
             }
         }
     }
@@ -3340,19 +3418,19 @@ fn available_interactive_models(config: Option<&Config>, query: &str) -> Vec<Str
             config.runtime.model.as_ref().unwrap_or(&config.model),
         ] {
             let item = item.trim();
-            if !item.is_empty() && !models.iter().any(|model: &String| model.as_str() == item) {
-                models.push(item.to_string());
+            if !item.is_empty() && !models.iter().any(|model| model.name == item) {
+                models.push(SlashCompletion::plain(item));
             }
         }
     }
     if let Some(previous_model) = interactive_previous_provider_model() {
-        if !models.iter().any(|model| model == &previous_model) {
-            models.push(previous_model);
+        if !models.iter().any(|model| model.name == previous_model) {
+            models.push(SlashCompletion::plain(previous_model));
         }
     }
     for model in local_models::model_ids() {
-        if !models.iter().any(|candidate| candidate == model.as_str()) {
-            models.push(model.to_string());
+        if !models.iter().any(|candidate| candidate.name == model.as_str()) {
+            models.push(SlashCompletion::plain(model));
         }
     }
     let query = query.trim().to_ascii_lowercase();
@@ -3362,11 +3440,10 @@ fn available_interactive_models(config: Option<&Config>, query: &str) -> Vec<Str
     models
         .into_iter()
         .filter(|model| {
-            model.to_ascii_lowercase().contains(&query)
-                || profile_names
-                    .get(model)
+            model.name.to_ascii_lowercase().contains(&query)
+                || model.label.as_ref()
                     .is_some_and(|label| label.to_ascii_lowercase().contains(&query))
-                || local_models::profile(model)
+                || local_models::profile(&model.name)
                     .is_some_and(|p| p.name.to_ascii_lowercase().contains(&query))
         })
         .collect()
@@ -3416,9 +3493,7 @@ fn interactive_goal_subcommand_matches(query: &str) -> Vec<SlashCompletion> {
     ["status", "resume", "pause", "off", "start"]
         .into_iter()
         .filter(|subcommand| query.is_empty() || subcommand.starts_with(&query))
-        .map(|subcommand| SlashCompletion {
-            name: format!("/goal {subcommand}"),
-        })
+        .map(|subcommand| SlashCompletion::plain(format!("/goal {subcommand}")))
         .collect()
 }
 
@@ -3704,7 +3779,7 @@ fn handle_interactive_slash_command(
             Ok(SlashCommandResult::Handled)
         }
         "/help" => {
-            print_interactive_help();
+            print_interactive_help(trimmed.split_once(char::is_whitespace).map_or("", |(_, query)| query));
             Ok(SlashCommandResult::Handled)
         }
         "/status" => {
@@ -4036,6 +4111,17 @@ fn handle_interactive_slash_command(
             let init_args = interactive_init_command_args(trimmed).unwrap_or_default();
             if let Err(err) = run_interactive_init_command(config, &init_args) {
                 terminal_notice!("{}", format_error(&err));
+            }
+            Ok(SlashCommandResult::Handled)
+        }
+        "/config" => {
+            if trimmed.split_whitespace().count() > 1 {
+                terminal_notice!("{}", crate::config_files::usage());
+                return Ok(SlashCommandResult::Handled);
+            }
+            match crate::config_files::overview(&config.project_root, false) {
+                Ok(output) => terminal_notice!("{}", output),
+                Err(error) => terminal_notice!("{}", format_error(&error)),
             }
             Ok(SlashCommandResult::Handled)
         }
@@ -4738,7 +4824,7 @@ fn print_interactive_shortcuts_guide() {
             terminal_notice!("  跳转：Option/Alt+←/→ 或 Alt+B/F 按词跳转 · Ctrl+A/E 行首/行尾 · Ctrl+Home/End 全文首尾");
             terminal_notice!("  滚动：PgUp/PgDn · Alt+↑/↓ · Ctrl+↑/↓ · Ctrl+Home/End");
             terminal_notice!("  选专家：输入 @，上下键选择，回车插入名字。/edit 编辑已发送消息。");
-            terminal_notice!("  补全：Tab / Shift+Tab 循环补全 /命令 与 @工作区文件");
+            terminal_notice!("  补全：↑↓ 浏览 /命令，Tab 补全，Enter 执行，Esc 收起；在 @ 候选中 Enter 插入");
             terminal_notice!("  草稿：连按两次 Esc 清空输入 · /stop 停止当前运行 · /resume <id> 直接切换会话");
             terminal_notice!("  扩展：/model · /experts · /skills · /mcp · /memory · /questions · /plan");
         }
@@ -4747,7 +4833,7 @@ fn print_interactive_shortcuts_guide() {
             terminal_notice!("  Word nav: Option/Alt+Left/Right or Alt+B/F · Ctrl+A/E line · Ctrl+Home/End buffer");
             terminal_notice!("  Scroll: PgUp/PgDn · Alt+Up/Down · Ctrl+Up/Down · Ctrl+Home/End");
             terminal_notice!("  Experts: type @, choose with Up/Down, press Enter to insert. /edit reopens a sent message.");
-            terminal_notice!("  Complete: Tab / Shift+Tab cycles /commands and @workspace files");
+            terminal_notice!("  Complete: Up/Down browses /commands, Tab completes, Enter runs, Esc closes. In @ suggestions, Enter inserts.");
             terminal_notice!("  Control: Esc x2 clears draft · /stop cancels active run · /resume <id> switches session");
             terminal_notice!("  Catalog: /model · /experts · /skills · /mcp · /memory · /questions · /plan");
         }

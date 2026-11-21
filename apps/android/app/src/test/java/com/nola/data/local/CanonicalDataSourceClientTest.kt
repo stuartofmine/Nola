@@ -5,6 +5,29 @@ import org.junit.Assert.*
 import org.junit.Test
 
 class CanonicalDataSourceClientTest {
+    @Test fun validatedInputFormatPreservesCustomOutputSchemaAndDoesNotGuessFromOldSchemas() {
+        val original = buildJsonObject {
+            put("type", "object")
+            put("properties", buildJsonObject { put("items", buildJsonObject { put("type", "array") }) })
+            put("x-custom-reader", "structured")
+        }
+        assertEquals("", readSourceFormat(original))
+        val contract = com.nola.domain.model.DataSourceValidationContract(
+            sourceId = "source", readerDescription = "Custom reader", format = "JSON",
+            readRecipe = com.nola.domain.model.DataSourceReadRecipe(
+                method = com.nola.domain.model.DataSourceReadMethod.HttpGet, operationId = "read",
+                outputSchemaJson = original.toString(),
+            )
+        )
+        val annotated = contract.toCanonicalContract().getValue("readRecipe").jsonObject.getValue("outputSchema").jsonObject
+        assertEquals(original, JsonObject(annotated - "x-nola-source-format"))
+        assertEquals("JSON", readSourceFormat(annotated))
+        val existing = JsonObject(original + ("x-nola-source-format" to JsonPrimitive("NDJSON")))
+        val custom = contract.copy(readRecipe = contract.readRecipe!!.copy(outputSchemaJson = existing.toString()))
+        assertEquals(existing, custom.toCanonicalContract().getValue("readRecipe").jsonObject.getValue("outputSchema"))
+        assertEquals("", readSourceFormat(JsonObject(original + ("x-nola-source-format" to JsonNull))))
+    }
+
     @Test fun oversizedContentIsRejectedBeforeCreatingOrInvalidatingSource() {
         val commands = mutableListOf<JsonObject>()
         val directory = java.nio.file.Files.createTempDirectory("source-size-test").toFile()

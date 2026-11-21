@@ -322,11 +322,14 @@ fun ThinkingBlock(
                 modifier = Modifier
                     .fillMaxWidth()
                     .clip(RoundedCornerShape(8.dp))
-                    .clickable(enabled = thinking.isNotBlank()) {
+                    .then(if (thinking.isBlank()) Modifier else Modifier.clickable(
+                        role = androidx.compose.ui.semantics.Role.Button,
+                        onClickLabel = stringResource(if (expanded) R.string.common_collapse else R.string.common_expand),
+                    ) {
                         haptics.selection()
                         userChangedExpansion = true
                         expanded = !expanded
-                    }
+                    })
                     .heightIn(min = 48.dp)
                     .padding(horizontal = 4.dp, vertical = 8.dp),
                 verticalAlignment = Alignment.CenterVertically
@@ -1071,7 +1074,12 @@ fun NolaDisclosureBar(
             .clip(RoundedCornerShape(10.dp))
             .background(MaterialTheme.colorScheme.surfaceContainer)
             .border(0.5.dp, MaterialTheme.colorScheme.outlineVariant, RoundedCornerShape(10.dp))
-            .clickable(enabled = enabled, role = androidx.compose.ui.semantics.Role.Button, onClick = onToggle)
+            .clickable(
+                enabled = enabled,
+                role = androidx.compose.ui.semantics.Role.Button,
+                onClickLabel = stringResource(if (expanded) R.string.common_collapse else R.string.common_expand),
+                onClick = onToggle,
+            )
             .padding(horizontal = 12.dp, vertical = 10.dp),
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(8.dp),
@@ -1116,7 +1124,12 @@ fun NolaDropdownBar(
             .clip(RoundedCornerShape(10.dp))
             .background(MaterialTheme.colorScheme.surfaceContainer)
             .border(0.5.dp, MaterialTheme.colorScheme.outlineVariant, RoundedCornerShape(10.dp))
-            .clickable(enabled = enabled, role = androidx.compose.ui.semantics.Role.DropdownList, onClick = onClick)
+            .clickable(
+                enabled = enabled,
+                role = androidx.compose.ui.semantics.Role.DropdownList,
+                onClickLabel = stringResource(if (expanded) R.string.common_collapse else R.string.common_expand),
+                onClick = onClick,
+            )
             .padding(horizontal = 12.dp, vertical = 10.dp),
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(8.dp),

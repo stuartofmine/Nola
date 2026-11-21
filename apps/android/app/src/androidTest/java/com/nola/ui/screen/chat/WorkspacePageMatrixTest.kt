@@ -6,6 +6,7 @@ import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.compose.ui.graphics.asAndroidBitmap
 import androidx.compose.ui.graphics.asImageBitmap
+import androidx.compose.ui.input.key.Key
 import androidx.compose.ui.test.*
 import androidx.compose.ui.test.junit4.createEmptyComposeRule
 import androidx.test.core.app.ActivityScenario
@@ -411,6 +412,50 @@ class WorkspacePageMatrixTest {
         }
     }
 
+    @OptIn(ExperimentalTestApi::class)
+    @Test fun commandCompletionLeavesTheCursorAfterTheCommand() {
+        requireIsolatedProductTestUser(context)
+        ActivityScenario.launch(MainActivity::class.java).use {
+            enterWorkspace()
+            compose.onNodeWithTag("chat.conversations.new").performClick()
+            val input = compose.onNodeWithTag("chat.composer.input")
+            input.performClick()
+            input.performTextReplacement("/se")
+            compose.onNodeWithTag("chat.command.search").performTouchInput { click() }
+            input.performTextInput("nebula")
+            capture("composer-completed-command-argument")
+            input.assertTextEquals("/search nebula")
+
+            input.performTextReplacement("/")
+            input.performKeyInput { repeat(3) { pressKey(Key.DirectionDown) } }
+            input.performTextInput("se")
+            input.performKeyInput { pressKey(Key.Tab) }
+            input.performTextInput("orbit")
+            input.assertTextEquals("/search orbit")
+            compose.onNodeWithContentDescription(context.getString(R.string.chat_send)).performTouchInput { click() }
+            compose.onNodeWithTag("chat.conversations.search").assertTextEquals("orbit")
+            capture("composer-command-search-results")
+        }
+    }
+
+    @OptIn(ExperimentalTestApi::class)
+    @Test fun emptySuggestionListsLeaveEnterAvailableForNewlines() {
+        requireIsolatedProductTestUser(context)
+        ActivityScenario.launch(MainActivity::class.java).use {
+            enterWorkspace()
+            compose.onNodeWithTag("chat.conversations.new").performClick()
+            val input = compose.onNodeWithTag("chat.composer.input")
+            input.performClick()
+            for (prefix in listOf("/no-matching-command", "@no-matching-expert")) {
+                input.performTextReplacement(prefix)
+                input.performKeyInput { pressKey(Key.Enter) }
+                input.performTextInput("next line")
+                capture(if (prefix.startsWith('/')) "composer-unmatched-command-newline" else "composer-unmatched-mention-newline")
+                input.assertTextEquals("$prefix\nnext line")
+            }
+        }
+    }
+
     @Test fun newConversationComposerOpensAtItsFinalHeight() {
         requireIsolatedProductTestUser(context)
         ActivityScenario.launch(MainActivity::class.java).use {
@@ -652,6 +697,26 @@ class WorkspacePageMatrixTest {
             compose.waitUntil(15_000) { compose.onAllNodes(row).fetchSemanticsNodes().isNotEmpty() }
             compose.onNode(row).performScrollTo().assertIsDisplayed()
             capture("model-api-activated")
+            val prompt = "Selected model parameters $model"
+            val parameters = hasContentDescription(context.getString(R.string.common_parameters)) and hasAnyAncestor(row)
+            compose.onNode(parameters).performScrollTo().performClick()
+            val promptField = hasSetTextAction() and hasText(context.getString(R.string.models_custom_system_prompt))
+            compose.onNodeWithTag("model-parameters-list").performScrollToNode(promptField)
+            compose.onNode(promptField).performTextReplacement(prompt)
+            compose.onNodeWithTag("model-parameters-save").performClick()
+            compose.waitUntil(15_000) {
+                compose.onAllNodesWithTag("model-parameters-save").fetchSemanticsNodes().isEmpty()
+            }
+            com.nola.data.local.AndroidApplicationRuntime(context).use { runtime ->
+                val profile = runtime.listModelProfiles().single { it.modelName == model && it.selected }
+                val stored = Json.decodeFromString<com.nola.domain.model.ModelParameters>(profile.parametersJson)
+                org.junit.Assert.assertEquals(prompt, stored.customSystemPrompt)
+            }
+            compose.onNode(parameters).performScrollTo().performClick()
+            compose.onNodeWithTag("model-parameters-list").performScrollToNode(promptField)
+            compose.onNode(promptField).assertTextContains(prompt)
+            capture("selected-model-parameters-restored")
+            androidx.test.platform.app.InstrumentationRegistry.getInstrumentation().sendKeyDownUpSync(android.view.KeyEvent.KEYCODE_BACK)
             val delete = context.getString(R.string.common_delete)
             compose.onNode(hasContentDescription(delete) and hasAnyAncestor(row)).performClick()
             compose.onNode(hasText(delete) and hasClickAction()).performClick()
@@ -666,6 +731,9 @@ class WorkspacePageMatrixTest {
             tab(R.string.tab_settings)
             compose.onNodeWithText(context.getString(R.string.settings_general)).performClick()
             compose.onNodeWithText(context.getString(R.string.software_update_check)).performScrollTo()
+            val backButton = compose.onNodeWithContentDescription(context.getString(R.string.common_back))
+            backButton.assertIsDisplayed()
+            capture("general-scrolled-with-back")
             val center = compose.onNodeWithTag("settings_notification_center")
             center.performScrollTo()
             val scroller = compose.onNode(hasScrollAction())
@@ -682,6 +750,8 @@ class WorkspacePageMatrixTest {
             back(activity)
             center.assertIsDisplayed()
             org.junit.Assert.assertEquals("Returning from notifications preserves the reading position", before, range().value(), 1f)
+            backButton.performClick()
+            compose.onNodeWithText(context.getString(R.string.settings_privacy)).assertIsDisplayed()
         }
     }
 

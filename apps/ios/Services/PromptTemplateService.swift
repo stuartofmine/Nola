@@ -307,7 +307,8 @@ public final class PromptTemplateService: ObservableObject {
     public func duplicateTemplate(id: UUID) throws -> PromptTemplate {
         if persistence != nil { try reloadFromPersistence() }
         let original = try requireReadableTemplate(id: id)
-        let duplicate = newlyOwnedTemplate(PromptTemplate(name: "\(original.name) (副本)", language: original.language,
+        let format = NSLocalizedString("prompt.templates.copy_name", value: "%@ (copy)", comment: "Name of a duplicated prompt template, including the original name")
+        let duplicate = newlyOwnedTemplate(PromptTemplate(name: String.localizedStringWithFormat(format, original.name), language: original.language,
             content: original.content, description: original.description))
         try commit(templates + [duplicate], selectedID: selectedTemplateID)
         return duplicate

@@ -2,7 +2,9 @@
 
 # Rust 生产依赖与边界门禁
 
-核对：2026-11-09，依据当前 `cargo metadata --offline --no-deps --format-version 1`。下表是 normal/build 声明依赖，包含 optional/target 条件边，不包含 dev-dependency；不是运行调用图、实际链接闭包或安全证明。
+简体中文 · [English](DEPENDENCIES.en.md)
+
+2026-11-22 按工作区 manifest 重新生成下表，依据 `cargo metadata --offline --no-deps --format-version 1`。下表是 normal/build 声明依赖，包含 optional/target 条件边，不包含 dev-dependency；不是运行调用图、实际链接闭包或安全证明。
 
 ## 生产声明图
 
@@ -12,7 +14,7 @@
 | `nola_agent_engine` | `nola_domain`、`nola_host_protocol`、`nola_kernel` |
 | `nola_application` | `nola_agent_engine`、`nola_domain`、`nola_host_protocol`、`nola_kernel`、`nola_measurement`、`nola_protocol`、`nola_store_port` |
 | `nola_application_bootstrap` | `nola_application`、`nola_store` |
-| `nola_cli` | `nola-code-memory`、`nola_application`、`nola_application_bootstrap`、`nola_code_mode_host`、`nola_core`、`nola_credential_host`、`nola_domain`、`nola_host_protocol`、`nola_mcp_host`、`nola_measurement`、`nola_plugin_host`、`nola_protocol`、`nola_runtime_driver`、`nola_runtime_supervisor`、`nola_service`、`nola_service_client`、`nola_store_port`、`nola_update_host` |
+| `nola_cli` | `nola-code-memory`、`nola_application`、`nola_application_bootstrap`、`nola_code_mode_host`、`nola_core`、`nola_credential_host`、`nola_domain`、`nola_host_protocol`、`nola_mcp_host`、`nola_measurement`、`nola_plugin_host`、`nola_protocol`、`nola_runtime_driver`、`nola_runtime_supervisor`、`nola_service`、`nola_service_client`、`nola_skill_host`、`nola_store_port`、`nola_update_host` |
 | `nola_code_mode_host` | `nola_domain` |
 | `nola_core` | `nola_agent_engine`、`nola_domain`、`nola_host_protocol`、`nola_kernel` |
 | `nola_credential_host` | `nola_windows_permissions` |
@@ -21,7 +23,7 @@
 | `nola_kernel` | `nola_domain` |
 | `nola_mcp_host` | `nola_core` |
 | `nola_measurement` | 无 |
-| `nola_mobile_bindings` | `nola_application`、`nola_application_bootstrap`、`nola_core`、`nola_domain`、`nola_host_protocol`、`nola_kernel`、`nola_mcp_host`、`nola_protocol`、`nola_runtime_driver`、`nola_update_host` |
+| `nola_mobile_bindings` | `nola_application`、`nola_application_bootstrap`、`nola_core`、`nola_domain`、`nola_host_protocol`、`nola_kernel`、`nola_mcp_host`、`nola_protocol`、`nola_runtime_driver`、`nola_skill_host`、`nola_update_host` |
 | `nola_model_runtime_host` | 无 |
 | `nola_plugin_host` | `nola_domain` |
 | `nola_protocol` | `nola_domain` |
@@ -29,6 +31,7 @@
 | `nola_runtime_supervisor` | `nola_domain`、`nola_protocol`、`nola_service_client` |
 | `nola_service` | `nola_application`、`nola_application_bootstrap`、`nola_domain`、`nola_protocol`、`nola_windows_permissions` |
 | `nola_service_client` | `nola_protocol`、`nola_windows_permissions` |
+| `nola_skill_host` | 无 |
 | `nola_store` | `nola_domain`、`nola_kernel`、`nola_measurement`、`nola_store_port` |
 | `nola_store_port` | `nola_domain` |
 | `nola_update_host` | `nola_domain` |

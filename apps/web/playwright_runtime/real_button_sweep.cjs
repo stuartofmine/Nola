@@ -90,6 +90,19 @@ const {chromium}=require('playwright-core'),fs=require('node:fs'),assert=require
   await p.goto(s.url+'/data-sources');for(const name of ['资料','记忆','计划','记录']){await click('tab',name);const refresh=p.getByRole('main').getByRole('button',{name:'刷新',exact:true});for(let i=0;i<await refresh.count();i++){await refresh.nth(i).click();report.clicked.push({name:'刷新',section:name,index:i});}await capture('workspace-'+name);}await click('tab','资料');await click('button','添加数据源');await capture('new-source');await p.keyboard.press('Escape');
   await p.goto(s.url+'/capabilities');for(const [tab,button] of [['技能','新增技能'],['MCP','新增 MCP']]){await click('tab',tab);await click('button',button);await capture('new-'+tab);const cancel=p.getByRole('button',{name:'取消',exact:true});if(await cancel.isVisible())await click('button','取消');else await p.keyboard.press('Escape');}
   await click('tab','技能');await click('button','新增技能');await p.getByRole('dialog').getByLabel('名称',{exact:true}).fill('Unsaved audit draft');await click('button','取消');await p.getByRole('dialog',{name:'放弃修改？',exact:true}).waitFor();await click('button','继续编辑');assert.equal(await p.getByRole('dialog').getByLabel('名称',{exact:true}).inputValue(),'Unsaved audit draft');await click('button','取消');await click('button','放弃修改');await p.locator('dialog:modal').waitFor({state:'hidden'});
-  if(owner){await p.goto(owner);await p.locator('.transcript').getByText('WEB_BUTTON_AUDIT_OK',{exact:true}).waitFor();await capture('restored');}assert.deepEqual(report.errors,[]);assert.deepEqual(report.failedRequests.filter(request=>request.status>=500),[],'Unexpected Host server error during the button sweep');report.passed=true;
+  if(owner){
+   await p.goto(owner);
+   await p.goto(s.url+'/workspace-review');
+   await p.getByRole('tab',{name:'审阅',exact:true}).waitFor();
+   const activeId=new URL(owner).searchParams.get('conversation');
+   const catalog=await (await p.request.get(s.url+'/api/chat/conversations')).json();
+   const saved=catalog.conversations.find(conversation=>conversation.conversationId===activeId);
+   assert.ok(saved);
+   await p.locator('.sidebar-list').getByRole('button',{name:'打开会话 '+(saved.title||'新对话'),exact:true}).click();
+   await p.locator('.transcript').getByText('WEB_BUTTON_AUDIT_OK',{exact:true}).waitFor();
+   assert.equal(new URL(p.url()).searchParams.get('conversation'),new URL(owner).searchParams.get('conversation'));
+   assert.equal(new URL(p.url()).searchParams.has('content'),false);
+   await capture('restored');
+  }assert.deepEqual(report.errors,[]);assert.deepEqual(report.failedRequests.filter(request=>request.status>=500),[],'Unexpected Host server error during the button sweep');report.passed=true;
  }catch(e){report.failure=e.message;report.pendingRequests=[...pendingRequests.values()].map(({started,...request})=>({...request,elapsedMs:Date.now()-started}));await capture('failure').catch(()=>{});process.exitCode=1;}finally{fs.writeFileSync(out+'/report.json',JSON.stringify(report,null,2));console.log(JSON.stringify({passed:report.passed,clicks:report.clicked.length,failure:report.failure,out}));await b.close();}
 })();

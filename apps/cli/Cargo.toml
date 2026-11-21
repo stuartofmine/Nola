@@ -82,6 +82,7 @@ unicode-segmentation = { version = "1.12", optional = true }
 uuid = { version = "1.8", features = ["v4"] }
 url = "2.5"
 tempfile = "3"
+shlex = "2"
 nola_store_port = { path = "../../core/nola-store-port" }
 
 [dev-dependencies]

@@ -129,10 +129,10 @@
 - 实际 SIGKILL 进程组曾被 OS 拒绝，后续未重试；此前协议进程 cleanup 断言失败仍保留，不能用编译代替最终取消通过。GUI 工具自动解锁错误也未重试，不推断真实屏幕锁定状态。
 
 
-### iOS 三档推理接线
+### iOS 推理档位与已发布三档配置
 
 - `ResolveRemoteModelProfile` 对显式 request `reasoning_tier` 或 profile parameters `reasoningTier` 使用现有 Core `resolve_model_reasoning_tier`，而非只记标签；没有声明可调整档位的模型仍返回空 selection，客户端不提供可调控件、请求不编造 effort；不兼容的显式物理参数仍拒绝。未选择档位时保留服务商/模型原默认。
-- iOS 模型参数页仅对声明 effort 能力的远程模型提供服务商默认/简单/中等/复杂；Core 解析结果随 profile revision 进入 prepared client 和冻结 generation，恢复/编辑重发保持原 selection/tier，而不重新按当前偏好推算。
+- iOS 模型参数页根据当前连接和模型声明的原生 effort 显示服务商默认及可选值；Core 解析结果随 profile revision 进入 prepared client 和冻结 generation，恢复/编辑重发保持原 selection/tier，而不重新按当前偏好推算。
 - Responses 发 `reasoning.effort`，Chat Completions 发 `reasoning_effort`。summary 是独立可选能力，关闭展示不悄悄改掉已选 effort，effort none 不请求 summary。没有承诺上游必定返回公开摘要，更不展示私有思维链。
 - 本次只运行共享 Core 定向回归与编译本地 wire/状态断言，不再尝试此前被拒绝的原生窗口或进程操作；真实手机/窗口交互与真实上游输出仍须单列验收。
 

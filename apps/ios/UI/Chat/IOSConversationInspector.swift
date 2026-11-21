@@ -29,10 +29,19 @@ nonisolated struct IOSInspectorProgressFacts: Decodable, Sendable {
             }
             let id: String
             let objective: String
+            let constraints: [String]?
             let status: String
             let next_wake_at_epoch_ms: Int64?
             let requirements: [String: Requirement]
             let work: Work
+
+            var unlistedConstraints: [String] {
+                var shown = Set(requirements.values.map { $0.description.trimmingCharacters(in: .whitespacesAndNewlines) })
+                return (constraints ?? []).filter { constraint in
+                    let text = constraint.trimmingCharacters(in: .whitespacesAndNewlines)
+                    return !text.isEmpty && shown.insert(text).inserted
+                }
+            }
         }
         let active: Goal?
         let control_token: String?
@@ -194,6 +203,15 @@ struct IOSConversationInspector: View {
                                 .font(.caption).foregroundStyle(.secondary)
                         }
                     }
+                    let constraints = goal.unlistedConstraints
+                    if !constraints.isEmpty {
+                        Section(goalText("goal.constraints", "Constraints")) {
+                            ForEach(constraints.indices, id: \.self) { index in
+                                Text(verbatim: constraints[index])
+                                    .accessibilityIdentifier("goal.constraint.\(index)")
+                            }
+                        }
+                    }
                     ForEach(goal.requirements.values.sorted { $0.id < $1.id }) { requirement in
                         VStack(alignment: .leading) { Text(requirement.description); status(requirement.status) }
                     }
@@ -279,7 +297,10 @@ struct IOSConversationInspector: View {
                         if canStartNewGoal { showGoalStart = true }
                     }
                 }
-                if goalObjective.isEmpty, let draft = result.goalDraft { goalObjective = draft.objective }
+                if goalObjective.isEmpty, let draft = result.goalDraft {
+                    goalObjective = draft.objective
+                    if goalConstraints.isEmpty { goalConstraints = draft.constraints.joined(separator: "\n") }
+                }
                 if let notice = result.goalControlNotice { goalControlNotice = notice }
                 else if result.pendingGoalControl == nil { goalControlNotice = nil }
             } catch {

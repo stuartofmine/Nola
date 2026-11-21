@@ -4,7 +4,7 @@
 
 | 用途 | 入口 | 内容 |
 | --- | --- | --- |
-| 软件架构 | [架构目录](architecture/README.md) | 总体设计、所有权、接口、15 个模块与恢复契约 |
+| 软件架构 | [中文](architecture/README.md) · [English](architecture/README.en.md) | 总体设计、所有权、接口、15 个模块与恢复契约 |
 | 跨平台交互 | [设计目录](design/README.md) | 输入、消息、检查器、权限、宿主机、主题与动效 |
 | 平台接入 | [平台目录](platforms/README.md) | macOS、iOS/iPadOS、Android、Web、Windows、CLI，以及 Apple 共用设计 |
 | 可操作原型 | [原型入口](design/prototype/README.md) | 68 场景、220 状态、覆盖清单与浏览器回放 |

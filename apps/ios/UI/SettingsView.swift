@@ -84,8 +84,6 @@ struct SettingsView: View {
                         ForEach(categoryGroups[group], id: \.rawValue) { category in
                             NavigationLink { destination(category) } label: { categoryLabel(category) }
                             .buttonStyle(NolaPressableButtonStyle())
-                            .padding(.horizontal, 14)
-                            .padding(.vertical, 4)
                             .accessibilityIdentifier(category == .providers ? "settings.models" : "settings.category." + category.rawValue)
                             if category != categoryGroups[group].last {
                                 Rectangle().fill(DesignTokens.borderColor).frame(height: 0.5).padding(.leading, 48).accessibilityHidden(true)
@@ -113,7 +111,11 @@ struct SettingsView: View {
             Text(LocalizedStringKey(category.titleKey)).font(.body).foregroundStyle(.primary)
                 .frame(maxWidth: .infinity, alignment: .leading)
             Image(systemName: "chevron.right").font(.caption.weight(.medium)).foregroundStyle(.tertiary)
-        }.frame(maxWidth: .infinity, minHeight: 56).padding(.vertical, 4).contentShape(Rectangle())
+        }
+        .frame(maxWidth: .infinity, minHeight: 56)
+        .padding(.vertical, 8)
+        .padding(.horizontal, 14)
+        .contentShape(Rectangle())
     }
 
     private func categoryIcon(_ category: Category) -> String {

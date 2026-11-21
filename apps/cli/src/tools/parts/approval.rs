@@ -326,7 +326,14 @@ fn execute_tool_inner(request: &ToolRequest, ctx: &ToolContext, enforce_availabi
         "find_up" => find_up(&request.args, ctx),
         "glob" => glob_files(&request.args, ctx),
         "grep" => grep_files(&request.args, ctx),
-        "tool_search" => tool_search_with_catalog(&request.args, &ctx.skills, catalog),
+        "tool_search" => {
+            let delivery = if authority.is_core_approved() && catalog.is_some() {
+                DiscoverySchemaDelivery::NextModelStep
+            } else {
+                DiscoverySchemaDelivery::Inline
+            };
+            tool_search_with_catalog(&request.args, &ctx.skills, catalog, delivery)
+        }
         "tool_output_list" => tool_output_list_in_store(&request.args, &ctx.output_store),
         "tool_output_read" => tool_output_read_in_store(&request.args, &ctx.output_store),
         "tool_output_search" => tool_output_search_in_store(&request.args, &ctx.output_store),

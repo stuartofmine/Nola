@@ -560,14 +560,15 @@ fn resolve_llm_settings_inner(
         .unwrap_or_else(|| config.model.trim().to_string());
     let mut max_context_tokens = max_context_tokens;
 
-    if local_models::contains_model(&model) {
+    let local_engine = local_models::model_runtime(&model);
+    if let Some(engine) = &local_engine {
         let Some(local_endpoint) = local_models::running_endpoint(&model) else {
             return Err(json_response(
                 StatusCode(503),
                 json!({
                     "error": "The selected local model is not running. Start it in Model center first.",
                     "modelId": model,
-                    "backend": "llama.cpp",
+                    "backend": engine,
                     "action": "start",
                 }),
             ));
@@ -591,6 +592,12 @@ fn resolve_llm_settings_inner(
     }
 
     let mut runtime = config.runtime.clone();
+    if let Some(engine) = &local_engine {
+        runtime.provider = Some(if engine == "llama.cpp" { "llamacpp".into() } else { engine.clone() });
+        runtime.siwc = None;
+        runtime.native_model_route = None;
+        runtime.model_binding = None;
+    }
     runtime.temperature = Some(temperature);
     runtime.top_p = Some(top_p);
     runtime.max_output_tokens = Some(max_output_tokens);
@@ -609,7 +616,7 @@ fn resolve_llm_settings_inner(
         .context_window_tokens
         .unwrap_or(max_context_tokens as usize) as u64;
     // Local engine allocation is a hard ceiling, even for explicit overrides.
-    let resolved_context = if local_models::contains_model(&model) {
+    let resolved_context = if local_engine.is_some() {
         resolved_context.min(max_context_tokens)
     } else {
         resolved_context

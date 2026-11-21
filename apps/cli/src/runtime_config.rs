@@ -7,6 +7,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value};
 
 use crate::config_paths::{expand_home, project_ancestor_directories};
+use crate::model_connection_host::file_config::FileModels;
 
 pub(crate) fn reasoning_enabled(
     selection: Option<&nola_domain::generation::ReasoningSelection>,
@@ -103,6 +104,10 @@ pub struct RuntimeConfig {
     /// Startup selection references the Core catalog; never carries credentials.
     #[serde(skip)]
     pub model_binding: Option<crate::model_connection_host::file_config::ModelRef>,
+    #[serde(skip)]
+    pub(crate) model_binding_source: Option<PathBuf>,
+    #[serde(skip)]
+    pub(crate) startup_catalog_error: Option<(PathBuf, String)>,
     pub api_key: Option<String>,
     pub model: Option<String>,
     pub provider: Option<String>,
@@ -241,21 +246,52 @@ impl RuntimeConfig {
     }
 
     fn load_with_home(project_root: &Path, home: Option<&Path>) -> Result<Self, String> {
-        let mut result = RuntimeConfig::default();
+        Self::inspect_layers(config_candidates(project_root, home), false).map(|(runtime, _)| runtime)
+    }
+
+    pub(crate) fn inspect_files(project: &Path) -> Result<(Self, Option<FileModels>), String> {
+        Self::inspect_layers(config_candidates(project, crate::platform_paths::home_dir().as_deref()), false)
+    }
+
+    pub(crate) fn load_for_startup(project: &Path) -> Result<Self, String> {
+        Self::inspect_layers(config_candidates(project, crate::platform_paths::home_dir().as_deref()), true)
+            .map(|(runtime, _)| runtime)
+    }
+
+    pub(crate) fn uses_file_catalog(&self) -> bool {
+        self.model_binding.is_some() || self.startup_catalog_error.is_some()
+    }
+
+    fn inspect_layers(paths: Vec<PathBuf>, startup: bool) -> Result<(Self, Option<FileModels>), String> {
+        let mut result = Self::default();
+        let mut catalog = None;
         // Only declarations read from user configuration belong in this list.
         // Product defaults are evaluated by the Kernel invocation profile and
         // trusted tool/resource contracts, never fabricated as user grants.
-        for path in config_candidates(project_root, home) {
+        for path in paths {
             let Some(value) = read_jsonc_file(&path)? else {
                 continue;
             };
             result.sources.push(path.clone());
-            result.merge_value(value, &path)?;
+            if let Some(file_catalog) = result.merge_layer(value, &path, startup)? {
+                catalog = Some(file_catalog);
+            }
         }
-        Ok(result)
+        Ok((result, catalog))
     }
 
-    fn merge_value(&mut self, value: Value, source: &Path) -> Result<(), String> {
+    pub(crate) fn from_file(value: Value, path: &Path) -> Result<(Self, Option<FileModels>), String> {
+        let mut result = Self::default();
+        result.sources.push(path.to_owned());
+        let catalog = result.merge_value(value, path)?;
+        Ok((result, catalog))
+    }
+
+    fn merge_value(&mut self, value: Value, source: &Path) -> Result<Option<FileModels>, String> {
+        self.merge_layer(value, source, false)
+    }
+
+    fn merge_layer(&mut self, value: Value, source: &Path, startup: bool) -> Result<Option<FileModels>, String> {
         let Some(obj) = value.as_object() else {
             return Err(format!("{} must contain a JSON object", source.display()));
         };
@@ -281,15 +317,27 @@ impl RuntimeConfig {
         }
 
         let llm = obj.get("llm").and_then(Value::as_object);
-        if let Some(value) = llm.filter(|value| value.contains_key("connections") || value.contains_key("default_model")) {
-            let models = crate::model_connection_host::file_config::FileModels::parse(Value::Object(value.clone()))?;
-            self.model_binding = Some(models.default_model);
+        if obj.get("llm").is_some_and(|value| !value.is_null() && !value.is_object()) {
+            return Err(format!("{}: llm must be an object", source.display()));
+        }
+        let catalog = if let Some(value) = llm.filter(|value| value.contains_key("connections") || value.contains_key("default_model")) {
+            let models = match FileModels::parse_at(Value::Object(value.clone()), source) {
+                Ok(models) => Some(models),
+                Err(error) if startup => {
+                    self.startup_catalog_error.get_or_insert_with(|| (source.to_owned(), error));
+                    None
+                }
+                Err(error) => return Err(error),
+            };
+            self.model_binding = models.as_ref().map(|models| models.default_model.clone());
+            self.model_binding_source = Some(source.to_owned());
             self.endpoint = None;
             self.api_key = None;
             self.model = None;
             self.provider = None;
             self.llm_fallbacks.clear();
-        }
+            models
+        } else { None };
         if let Some(tier) = obj.get("reasoning_tier").or_else(|| llm.and_then(|value| value.get("reasoning_tier"))) {
             self.reasoning_tier = serde_json::from_value(tier.clone())
                 .map_err(|error| format!("{}: invalid reasoning_tier: {error}", source.display()))?;
@@ -308,8 +356,8 @@ impl RuntimeConfig {
         self.provider = string_from(obj, "provider")
             .or_else(|| llm.and_then(|m| string_from_map(m, "provider")))
             .or(self.provider.take());
-        if self.model_binding.is_some() && (self.endpoint.is_some() || self.api_key.is_some() || self.model.is_some() || self.provider.is_some()) {
-            return Err("cannot mix connection catalog configuration with a single-route configuration layer".into());
+        if self.uses_file_catalog() && (self.endpoint.is_some() || self.api_key.is_some() || self.model.is_some() || self.provider.is_some()) {
+            return Err(format!("{}: cannot mix connection catalog configuration from {} with a single-route configuration layer", source.display(), self.model_binding_source.as_deref().unwrap_or(source).display()));
         }
         if let Some(value) = llm
             .and_then(|m| m.get("fallbacks"))
@@ -480,7 +528,7 @@ impl RuntimeConfig {
                     .or_insert(agent);
             }
         }
-        Ok(())
+        Ok(catalog)
     }
 }
 
@@ -563,7 +611,7 @@ fn merge_runtime_external_execution(target: &mut RuntimeExternalExecution, obj: 
         .or(target.max_line_bytes);
 }
 
-fn config_candidates(project_root: &Path, home: Option<&Path>) -> Vec<PathBuf> {
+pub(crate) fn config_candidates(project_root: &Path, home: Option<&Path>) -> Vec<PathBuf> {
     let mut out = Vec::new();
     if let Some(home) = home {
         out.push(home.join(".nola/config.jsonc"));
@@ -584,67 +632,29 @@ fn config_candidates(project_root: &Path, home: Option<&Path>) -> Vec<PathBuf> {
     out
 }
 
-fn read_jsonc_file(path: &Path) -> Result<Option<Value>, String> {
-    let text = match fs::read_to_string(path) {
-        Ok(text) => text,
-        Err(err) if err.kind() == std::io::ErrorKind::NotFound => return Ok(None),
-        Err(err) => return Err(format!("read {} failed: {err}", path.display())),
-    };
-    let stripped = strip_json_comments(&text);
-    serde_json::from_str(&stripped)
-        .map(Some)
-        .map_err(|err| format!("parse {} failed: {err}", path.display()))
-}
-
-fn strip_json_comments(input: &str) -> String {
-    let mut out = String::with_capacity(input.len());
-    let mut chars = input.chars().peekable();
-    let mut in_string = false;
-    let mut escaped = false;
-    while let Some(ch) = chars.next() {
-        if in_string {
-            out.push(ch);
-            if escaped {
-                escaped = false;
-            } else if ch == '\\' {
-                escaped = true;
-            } else if ch == '"' {
-                in_string = false;
-            }
-            continue;
-        }
-        if ch == '"' {
-            in_string = true;
-            out.push(ch);
-            continue;
-        }
-        if ch == '/' && chars.peek() == Some(&'/') {
-            chars.next();
-            for next in chars.by_ref() {
-                if next == '\n' {
-                    out.push('\n');
-                    break;
-                }
-            }
-            continue;
-        }
-        if ch == '/' && chars.peek() == Some(&'*') {
-            chars.next();
-            let mut prev = '\0';
-            for next in chars.by_ref() {
-                if prev == '*' && next == '/' {
-                    break;
-                }
-                if next == '\n' {
-                    out.push('\n');
-                }
-                prev = next;
-            }
-            continue;
-        }
-        out.push(ch);
+pub(crate) fn read_jsonc_file(path: &Path) -> Result<Option<Value>, String> {
+    use std::io::Read;
+    let mut options = fs::OpenOptions::new();
+    options.read(true);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt;
+        options.custom_flags(libc::O_NONBLOCK);
     }
-    out
+    let failure = |err| format!("read {} failed: {err}", path.display());
+    let mut file = match options.open(path) {
+        Ok(file) => file,
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+        Err(err) => return Err(failure(err)),
+    };
+    if !file.metadata().map_err(failure)?.is_file() {
+        return Err(format!("{}: expected a regular configuration file", path.display()));
+    }
+    let mut text = String::new();
+    file.read_to_string(&mut text).map_err(failure)?;
+    crate::model_connection_host::parse_config_jsonc(&text)
+        .map(Some)
+        .map_err(|err| format!("{}: {err}", path.display()))
 }
 
 fn parse_agent(value: &Value) -> Result<RuntimeAgent, String> {
@@ -1027,9 +1037,8 @@ mod tests {
     #[test]
     fn strips_jsonc_comments_without_touching_strings() {
         let input = r#"{"url":"http://x/y",/* hide */"n":1}// tail"#;
-        let stripped = strip_json_comments(input);
-        assert!(stripped.contains("http://x/y"));
-        assert!(!stripped.contains("hide"));
+        let value = crate::model_connection_host::parse_config_jsonc(input).unwrap();
+        assert_eq!(value, serde_json::json!({"url":"http://x/y","n":1}));
     }
 
     #[test]
@@ -1186,7 +1195,7 @@ mod tests {
                 serde_json::json!({"llm": {"fallbacks": [{"model": "missing-endpoint"}]}}),
                 Path::new("/workspace/.nola/config.json"),
             )
-            .expect_err("fallback endpoint is required");
+            .err().expect("fallback endpoint is required");
         assert!(
             error.contains("fallbacks[0].endpoint is required"),
             "{error}"

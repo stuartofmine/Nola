@@ -80,10 +80,14 @@ internal suspend fun verifyWebHostConnection(
     return identity.id
 }
 
-internal fun webHostConnectionMessage(context: Context, error: Throwable): String {
+internal fun webHostConnectionMessage(context: Context, error: Throwable, verifyingPairedHost: Boolean = false): String {
     val raw = error.message.orEmpty()
     val normalized = raw.lowercase()
     return when {
+        error is com.nola.data.remote.api.TailcatConnectionException -> context.getString(R.string.models_tailcat_verify_failed)
+        verifyingPairedHost && error is com.nola.data.remote.api.WebHostStatusException &&
+            error.verificationRoute == com.nola.data.remote.dto.VerifiedHostTransport.DirectWithoutTailcat ->
+            context.getString(R.string.models_direct_verify_failed_without_tailcat, error.statusCode)
         error is WebHostVerificationException && error.failure == WebHostVerificationFailure.UnsupportedProtocol ->
             context.getString(R.string.models_error_host_protocol)
         error is WebHostVerificationException && error.failure == WebHostVerificationFailure.IdentityChanged ->

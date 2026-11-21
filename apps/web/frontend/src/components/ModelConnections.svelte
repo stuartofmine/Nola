@@ -1,7 +1,7 @@
 <script lang="ts">
     import { workspacePageApi } from '../lib/workspacePageLocation';
     const api = workspacePageApi(unscopedApi);
-    import { onMount } from 'svelte';
+    import { onMount, tick } from 'svelte';
     import GatewayClients from './GatewayClients.svelte';
     import SourceAccounts from './SourceAccounts.svelte';
     import ModelCapabilityProbe from './ModelCapabilityProbe.svelte';
@@ -31,6 +31,8 @@
     }
     let inventory = $state<ConnectionInventory>({connections: [], accounts: [], selections: []});
     let query = $state('');
+    let expanded = $state<Record<string, boolean>>({});
+    $effect(() => { if (openConnectionId) expanded[openConnectionId] = true; });
     const visibleConnections = $derived(inventory.connections.filter(item => `${item.document.connection.display_name} ${item.document.connection.base_url} ${(item.document.catalog?.models ?? []).map(model => model.display_name).join(' ')}`.toLocaleLowerCase().includes(query.trim().toLocaleLowerCase())));
     function modelEnabled(connectionId: string, key: string) {
         return inventory.selections.some(item => item.connection_id === connectionId && item.catalog_key === key && item.enabled);
@@ -91,9 +93,19 @@
         finally { if (alive && !signal.aborted) loading = false; }
     }
     async function operation(action: () => Promise<void>) {
-        if (busy) return; busy = true; failed = null;
+        if (busy) return;
+        const trigger = document.activeElement;
+        busy = true; failed = null;
         try { await action(); } catch { if (alive) failed = 'connections.failed'; }
-        finally { if (alive) busy = false; }
+        finally {
+            if (alive) {
+                busy = false;
+                await tick();
+                if (trigger instanceof HTMLElement && trigger.isConnected && document.activeElement === document.body) {
+                    trigger.focus({preventScroll: true});
+                }
+            }
+        }
     }
     function toggle(snapshot: ConnectionSnapshot, key: string, enabled: boolean) {
         void operation(async () => {
@@ -180,7 +192,8 @@
     {#if !loading && !failed && inventory.connections.length && !visibleConnections.length}<p class="muted" role="status">{t($locale, 'connections.noMatches')}</p>{/if}
     {#each visibleConnections as snapshot (snapshot.document.connection.id)}
         {@const connection = snapshot.document.connection}
-        <details class="connection-detail" open={openConnectionId === connection.id}><summary class="connection-summary"><svg class="connection-chevron" aria-hidden="true" viewBox="0 0 16 16"><path d="m6 3 5 5-5 5" /></svg><span class="connection-identity"><strong>{connection.display_name}</strong><small title={connection.base_url}>{connection.base_url}</small></span><span class="connection-count">{snapshot.document.catalog?.models.length ?? 0} · {t($locale, connection.enabled ? 'connections.enabled' : 'connections.disabled')}</span></summary>
+        <details class="connection-detail" open={expanded[connection.id] ?? false}
+            ontoggle={event => { expanded[connection.id] = event.currentTarget.open; }}><summary class="connection-summary"><svg class="connection-chevron" aria-hidden="true" viewBox="0 0 16 16"><path d="m6 3 5 5-5 5" /></svg><span class="connection-identity"><strong>{connection.display_name}</strong><small title={connection.base_url}>{connection.base_url}</small></span><span class="connection-count">{snapshot.document.catalog?.models.length ?? 0} · {t($locale, connection.enabled ? 'connections.enabled' : 'connections.disabled')}</span></summary>
         <div class="connection-body">
             <button disabled={busy} onclick={() => discover(snapshot)}>{t($locale, 'connections.discover')}</button>
             {#each inventory.accounts.filter(item => item.account.id === connection.account_id) as item}<p class="muted">{item.account.display_name}</p>{/each}

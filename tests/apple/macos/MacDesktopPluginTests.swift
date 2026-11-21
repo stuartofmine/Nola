@@ -6,6 +6,37 @@ import XCTest
 
 @MainActor
 final class MacDesktopPluginTests: XCTestCase {
+    func testMissingRuntimeOffersItsGuideAndRefreshPreservesThePackageDraft() async throws {
+        let session = try MacHostedAccessibilitySession()
+        defer { session.restore() }
+        for (runtime, expected) in [("pi", "pi.dev"), ("dsh", "github.com")] {
+            var opened: URL?
+            var refreshed = false
+            let profile = MacDesktopPluginLibrary.Profile(runtime: runtime, profile: "web",
+                available: false, packages: [], error: nil)
+            let view = MacAddPluginSheet(profiles: [profile], source: .constant("@example/draft"),
+                destination: .constant(profile.id), updating: false, failure: nil,
+                refresh: { refreshed = true }, cancel: {}, install: { _, _ in XCTFail("Uninstalled runtime") })
+                .environment(\.openURL, OpenURLAction { opened = $0; return .handled })
+                .environment(\.accessibilityEnabled, true)
+            let host = NSHostingView(rootView: view)
+            let window = NSWindow(contentRect: .init(x: 0, y: 0, width: 460, height: 500),
+                styleMask: [.titled], backing: .buffered, defer: false)
+            window.isReleasedWhenClosed = false
+            window.contentView = host
+            window.makeKeyAndOrderFront(nil)
+            defer { window.close() }
+            try await wait { self.element(host, "workspace.plugins.runtimeGuide") != nil }
+            XCTAssertTrue(element(host, "workspace.plugins.runtimeGuide")?.accessibilityPerformPress?() == true)
+            XCTAssertEqual(opened?.host, expected)
+            XCTAssertTrue(element(host, "workspace.plugins.refreshRuntime")?.accessibilityPerformPress?() == true)
+            XCTAssertTrue(refreshed)
+            XCTAssertEqual(firstTextField(host)?.stringValue, "@example/draft")
+            XCTAssertFalse(try XCTUnwrap(element(host, "workspace.plugins.confirmInstall")?.isAccessibilityEnabled?()))
+            try await attachView(host, name: "mac-plugin-runtime-guide-" + runtime)
+        }
+    }
+
     func testInstalledPageOpensFromWorkspaceSidebarAndClosesWhenRemoved() async throws {
         let ax = try MacHostedAccessibilitySession()
         defer { ax.restore() }

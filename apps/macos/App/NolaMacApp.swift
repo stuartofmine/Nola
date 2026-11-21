@@ -825,6 +825,7 @@ enum MacNotificationAuthorizationPolicy {
 }
 
 struct MacSettingsView: View {
+    static let minimumWidth: CGFloat = 760
     @StateObject private var defaultChatModel = MacDefaultChatModelPresentation()
     @Environment(\.openURL) private var openURL
     @AppStorage("nola.mac.settings.category") private var selectedCategory = MacSettingsCategory.general
@@ -929,7 +930,7 @@ struct MacSettingsView: View {
             .background(MacPageBackground())
         }
         .frame(
-            minWidth: 760,
+            minWidth: Self.minimumWidth,
             idealWidth: 820,
             minHeight: 540,
             idealHeight: 620

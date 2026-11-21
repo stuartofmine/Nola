@@ -90,7 +90,82 @@ function chatGPTSetupPrototype() {
 }
 function modelSourceTabs(){return `<div class="tabs" role="tablist" aria-label="模型来源">${[['service','API 账户'],['chatgpt','ChatGPT 授权'],['import','配置文件导入'],['local','本地模型'],['host','宿主机']].map(([id,title])=>`<button role="tab" aria-selected="${modelSetupSource===id}" data-action="model-source:${id}">${title}</button>`).join('')}</div>`}
 
-function modelsView(){if(['overview','chatgpt','import'].includes(modelSetupSource)){const intro=modelSetupSource==='overview'?`<div class="objects">${[['service','models','连接 API 账户','使用服务地址和 API 密钥。'],['chatgpt','person','这台 Mac 上的 ChatGPT 授权','通过官方授权流程连接账户；与 API 密钥分开。'],['import','file','从这台 Mac 导入','只导入 API 配置，先预览来源和凭据状态。']].map(([id,ic,title,desc])=>`<button class="object-row" data-action="model-source:${id}"><div class="object-icon">${svg(ic)}</div><div class="object-copy"><h3>${title}</h3><p>${desc}</p></div>${svg('chevron')}</button>`).join('')}</div>`:modelSetupSource==='chatgpt'?`${chatGPTSetupPrototype()}`:`<div class="detail-section"><h2>预览后导入 API 配置</h2><p>选择 Codex、OpenCode 等来源的 API 配置；先核对服务地址、模型和密钥状态，再确认导入。</p><p>ChatGPT 订阅登录不是 API 配置，请使用上方「ChatGPT 授权」。来源缺少密钥时会明确显示，不能把空连接标为可用。</p><button class="text-action" data-action="model-source:chatgpt">改用 ChatGPT 授权</button><p class="dialog-note">原型不读取本机文件，真实文件选择与预览在客户端执行。</p></div>`;return `<section class="page model-setup-page">${crumbs('模型')}${pageHead('模型','先选择来源，再配置和启用。')}${modelSourceTabs()}${intro}</section>`;}if(modelSetupSource==='local')return `<section class="page">${crumbs('模型')}${pageHead('模型','')}${modelSourceTabs()}<h2>本地模型</h2><p class="dialog-note">选择本地模型后才进入下载与设备兼容检查；不会因没有模型而自动要求下载。</p><div class="objects">${models.filter(m=>m.provider==='本地模型').map(m=>`<button class="object-row" data-action="model:${models.indexOf(m)}"><div class="object-copy"><h3>${esc(m.name)}</h3><p>${esc(m.info)}</p></div>${svg('chevron')}</button>`).join('')}</div></section>`;if(modelSetupSource==='host')return `<section class="page">${crumbs('模型')}${pageHead('模型','')}${modelSourceTabs()}<div class="model-setup-form"><p>在「设置 → 连接」中配对要使用的 Nola 服务器。</p><a href="scenarios.html?scene=host-pair&amp;platform=mac">打开连接设置</a></div></section>`;return `<section class="page model-setup-page">${crumbs('模型')}${pageHead('模型','')}${modelSourceTabs()}<form id="model-setup-form" class="model-setup-form"><label>服务地址<input name="endpoint" type="url" value="${esc(modelSetupDraft.endpoint)}" placeholder="https://api.example.com/v1" autocomplete="url" required></label><label>API 密钥 <span class="meta">按服务要求填写</span><input name="secret" type="password" placeholder="原型中请勿输入真实密钥" autocomplete="off"></label><label>默认模型 ID<input name="modelId" value="${esc(modelSetupDraft.modelId)}" placeholder="服务提供的模型标识" autocapitalize="none" spellcheck="false" required></label><button type="button" class="text-action" data-action="model-discovery-preview">发现模型</button><label>接口协议<select name="protocol"><option value="chat_completions" ${modelSetupDraft.protocol==='chat_completions'?'selected':''}>Chat Completions</option><option value="responses" ${modelSetupDraft.protocol==='responses'?'selected':''}>Responses</option><option value="anthropic" ${modelSetupDraft.protocol==='anthropic'?'selected':''}>Anthropic Messages</option></select></label><p class="meta">服务支持时，使用 Responses 以同时使用工具和推理。</p><details class="model-setup-advanced"><summary>高级设置</summary><label>连接名称 <span class="meta">选填</span><input name="name" value="${esc(modelSetupDraft.name)}" placeholder="默认使用服务域名"></label></details><p class="meta">保存后默认启用，并设为默认模型。无需先发现模型。</p><p id="model-setup-error" role="alert" hidden></p><button class="primary" type="submit">保存并使用</button><p class="dialog-note">交互原型：仅更新本页演示状态，不保存密钥、不联网、不验证模型可用性。</p></form><details class="model-setup-existing"><summary>已配置模型 <span class="meta">${models.length}</span></summary><p class="meta">当前默认：${esc(defaultModel)}</p><div class="objects">${models.map((m,i)=>`<button class="object-row" data-action="model:${i}"><div class="object-copy"><h3>${esc(m.name)}${m.name===defaultModel?' · 默认':''}</h3><p>${esc(m.provider)} · ${esc(m.endpoint||m.info)}</p></div>${svg('chevron')}</button>`).join('')}</div></details></section>`}
+const localSetup = { engine:'llama.cpp', source:'Hugging Face', query:'', candidates:[], installed:null, searched:false, engineLocal:true, engineReady:{'llama.cpp':false,vLLM:false,MLX:true} };
+function refreshLocalSetupPlan() {
+    const examples = {
+        'llama.cpp': [
+            {name:'unsloth/Qwen3.5-2B-GGUF',variant:'Unsloth Dynamic · Qwen3.5-2B-UD-Q4_K_XL.gguf',size:'1.34 GB',memory:'3.4 GiB',context:131072},
+            {name:'unsloth/DeepSeek-R1-Distill-Qwen-7B-GGUF',variant:'DeepSeek-R1-Distill-Qwen-7B-Q4_K_M.gguf',size:'4.7 GB',memory:'10.5 GiB',context:98304,limit:'按演示设备的内存预算估算需缩短上下文。'}
+        ],
+        vLLM: [{name:'Qwen/Qwen2.5-3B-Instruct',variant:'safetensors BF16',size:'6.2 GB',memory:'9.4 GiB',context:16384,limit:'按演示设备的内存预算估算需缩短上下文。'}],
+        MLX: [{name:'mlx-community/Qwen2.5-3B-Instruct-4bit',variant:'MLX 4-bit',size:'1.9 GB',memory:'4.2 GiB',context:32768,limit:'模型原生上下文上限为 32,768。'}]
+    };
+    localSetup.candidates = examples[localSetup.engine].filter(sample => sample.name.toLowerCase().includes(localSetup.query.toLowerCase()));
+    localSetup.searched = true;
+}
+refreshLocalSetupPlan();
+function localEngineSetupPrototype() {
+    const engine=localSetup.engine, ready=localSetup.engineReady[engine];
+    const guide=engine==='vLLM'?'https://docs.vllm.ai/projects/vllm-metal/en/stable/installation/':'https://github.com/ggml-org/llama.cpp/blob/master/docs/install.md';
+    const alternative=Object.keys(localSetup.engineReady).find(value=>value!==engine && localSetup.engineReady[value]);
+    return `<section class="detail-section" aria-label="运行状态"><h2>${esc(engine)} ${ready?'已就绪':'尚未安装'}</h2>
+        ${ready?'':`<p>${localSetup.engineLocal?'可通过 Homebrew 安装。模型可以先下载。':'请在宿主机本机安装引擎，再回到这里重新检测。模型可先下载。'}</p>`}
+        <div class="action-wrap">
+            ${!ready && localSetup.engineLocal?`<button class="secondary" data-action="local-engine-install">安装 ${esc(engine)}（演示）</button>`:''}
+            ${!ready?`<a href="${guide}" target="_blank" rel="noopener noreferrer">官方安装指南</a>`:''}
+            ${!ready && alternative?`<button class="text-action" data-action="local-engine-switch:${alternative}">切换到 ${alternative}</button>`:''}
+            ${!ready && engine==='vLLM'?'<button class="text-action" data-action="model-source:service">连接 vLLM 服务</button>':''}
+            <button class="text-action" data-action="local-engine-recheck">重新检测</button>
+        </div></section>`;
+}
+function localModelSetupPrototype() {
+    const plans = localSetup.candidates.map((demo,index) => `<section class="detail-section local-model-preview">
+        <h2>${esc(demo.name)}</h2><p>${esc(localSetup.source)} · ${esc(demo.variant)}</p>
+        <p>预计下载 ${demo.size} · 预计运行内存 ${demo.memory} · 推荐上下文 ${demo.context.toLocaleString('zh-CN')}</p>
+        ${demo.limit?`<p class="muted">备选方案，${demo.limit}</p>`:''}
+        <button class="primary" data-action="local-confirm-plan:${index}">确认下载（演示）</button></section>`).join('');
+    return `<section class="page">${crumbs('模型')}${pageHead('模型','')}${modelSourceTabs()}
+        <section class="detail-section"><h2>宿主机硬件</h2><p>Apple M5 · 10 核 · 16 GiB 统一内存 · 18 GB 可用磁盘（演示）</p></section>
+        <p class="muted">上下文目标 128K（131,072 tokens）</p>
+        <form class="model-setup-form" id="local-model-plan">
+            <label>推理引擎<select name="engine">${['llama.cpp','vLLM','MLX'].map(value=>`<option ${localSetup.engine===value?'selected':''}>${value}</option>`).join('')}</select></label>
+            <label>下载来源<select name="source">${['Hugging Face','ModelScope'].map(value=>`<option ${localSetup.source===value?'selected':''}>${value}</option>`).join('')}</select></label>
+            <label>模型名称<input name="query" value="${esc(localSetup.query)}" placeholder="可留空，按硬件推荐"></label>
+            <button class="primary" type="submit">${localSetup.query?'搜索模型':'刷新推荐'}</button>
+        </form>
+        ${localEngineSetupPrototype()}
+        ${plans || (localSetup.searched && localSetup.query ? '<p>演示目录中没有匹配的模型。</p>' : '')}
+        ${localSetup.installed?`<section class="detail-section"><h2>已安装（演示）</h2><p>${esc(localSetup.installed.name)} · ${esc(localSetup.installed.engine)} · 上下文 ${localSetup.installed.context.toLocaleString('zh-CN')}</p></section>`:''}
+        <details class="prototype-state-controls"><summary>演示连接方式</summary><button class="text-action" data-action="local-engine-trust:local" aria-pressed="${localSetup.engineLocal}">本机</button><button class="text-action" data-action="local-engine-trust:remote" aria-pressed="${!localSetup.engineLocal}">远程宿主机</button></details></section>`;
+}
+document.addEventListener('submit', event => {
+    if (event.target.id !== 'local-model-plan') return;
+    event.preventDefault();
+    const form = new FormData(event.target);
+    localSetup.engine = form.get('engine');
+    localSetup.source = form.get('source');
+    localSetup.query = form.get('query').trim();
+    refreshLocalSetupPlan();
+    render();
+});
+document.addEventListener('input', event => {
+    const form = event.target.closest('#local-model-plan');
+    if (!form) return;
+    const current = new FormData(form);
+    localSetup.engine = current.get('engine');
+    localSetup.source = current.get('source');
+    localSetup.query = current.get('query').trim();
+    if (!localSetup.query) {
+        refreshLocalSetupPlan();
+        render();
+        return;
+    }
+    localSetup.searched = false;
+    form.querySelector('[type="submit"]').textContent = '搜索模型';
+    localSetup.candidates = [];
+    form.parentElement.querySelectorAll('.local-model-preview').forEach(section => section.remove());
+});
+function modelsView(){if(['overview','chatgpt','import'].includes(modelSetupSource)){const intro=modelSetupSource==='overview'?`<div class="objects">${[['service','models','连接 API 账户','使用服务地址和 API 密钥。'],['chatgpt','person','这台 Mac 上的 ChatGPT 授权','通过官方授权流程连接账户；与 API 密钥分开。'],['import','file','从这台 Mac 导入','只导入 API 配置，先预览来源和凭据状态。']].map(([id,ic,title,desc])=>`<button class="object-row" data-action="model-source:${id}"><div class="object-icon">${svg(ic)}</div><div class="object-copy"><h3>${title}</h3><p>${desc}</p></div>${svg('chevron')}</button>`).join('')}</div>`:modelSetupSource==='chatgpt'?`${chatGPTSetupPrototype()}`:`<div class="detail-section"><h2>预览后导入 API 配置</h2><p>选择 Codex、OpenCode 等来源的 API 配置；先核对服务地址、模型和密钥状态，再确认导入。</p><p>ChatGPT 订阅登录不是 API 配置，请使用上方「ChatGPT 授权」。来源缺少密钥时会明确显示，不能把空连接标为可用。</p><button class="text-action" data-action="model-source:chatgpt">改用 ChatGPT 授权</button><p class="dialog-note">原型不读取本机文件，真实文件选择与预览在客户端执行。</p></div>`;return `<section class="page model-setup-page">${crumbs('模型')}${pageHead('模型','先选择来源，再配置和启用。')}${modelSourceTabs()}${intro}</section>`;}if(modelSetupSource==='local')return localModelSetupPrototype();if(modelSetupSource==='host')return `<section class="page">${crumbs('模型')}${pageHead('模型','')}${modelSourceTabs()}<div class="model-setup-form"><p>在「设置 → 连接」中配对要使用的 Nola 服务器。</p><a href="scenarios.html?scene=host-pair&amp;platform=mac">打开连接设置</a></div></section>`;return `<section class="page model-setup-page">${crumbs('模型')}${pageHead('模型','')}${modelSourceTabs()}<form id="model-setup-form" class="model-setup-form"><label>服务地址<input name="endpoint" type="url" value="${esc(modelSetupDraft.endpoint)}" placeholder="https://api.example.com/v1" autocomplete="url" required></label><label>API 密钥 <span class="meta">按服务要求填写</span><input name="secret" type="password" placeholder="原型中请勿输入真实密钥" autocomplete="off"></label><label>默认模型 ID<input name="modelId" value="${esc(modelSetupDraft.modelId)}" placeholder="服务提供的模型标识" autocapitalize="none" spellcheck="false" required></label><button type="button" class="text-action" data-action="model-discovery-preview">发现模型</button><label>接口协议<select name="protocol"><option value="chat_completions" ${modelSetupDraft.protocol==='chat_completions'?'selected':''}>Chat Completions</option><option value="responses" ${modelSetupDraft.protocol==='responses'?'selected':''}>Responses</option><option value="anthropic" ${modelSetupDraft.protocol==='anthropic'?'selected':''}>Anthropic Messages</option></select></label><p class="meta">服务支持时，使用 Responses 以同时使用工具和推理。</p><details class="model-setup-advanced"><summary>高级设置</summary><label>连接名称 <span class="meta">选填</span><input name="name" value="${esc(modelSetupDraft.name)}" placeholder="默认使用服务域名"></label></details><p class="meta">保存后默认启用，并设为默认模型。无需先发现模型。</p><p id="model-setup-error" role="alert" hidden></p><button class="primary" type="submit">保存并使用</button><p class="dialog-note">交互原型：仅更新本页演示状态，不保存密钥、不联网、不验证模型可用性。</p></form><details class="model-setup-existing"><summary>已配置模型 <span class="meta">${models.length}</span></summary><p class="meta">当前默认：${esc(defaultModel)}</p><div class="objects">${models.map((m,i)=>`<button class="object-row" data-action="model:${i}"><div class="object-copy"><h3>${esc(m.name)}${m.name===defaultModel?' · 默认':''}</h3><p>${esc(m.provider)} · ${esc(m.endpoint||m.info)}</p></div>${svg('chevron')}</button>`).join('')}</div></details></section>`}
 function bindModelSetup(root){const form=root.querySelector('#model-setup-form');if(!form)return;form.oninput=()=>{const f=new FormData(form);for(const k of ['endpoint','modelId','protocol','name'])modelSetupDraft[k]=String(f.get(k)||'')};form.onsubmit=e=>{e.preventDefault();const f=new FormData(form),endpoint=String(f.get('endpoint')).trim(),modelId=String(f.get('modelId')).trim();let url;try{url=new URL(endpoint);if(!['https:','http:'].includes(url.protocol)||url.username||url.password||url.search||url.hash||!modelId)throw Error()}catch{const error=form.querySelector('#model-setup-error');error.textContent='请填写有效的 HTTP(S) 服务地址和模型 ID，地址中不要包含密钥或查询参数。';error.hidden=false;return}const protocol=String(f.get('protocol')),name=String(f.get('name')).trim()||url.hostname;const model={name:modelId,provider:'API 连接',info:name,endpoint,modelId,protocol,state:'已启用 · 未测试'};const existing=models.findIndex(m=>m.endpoint===endpoint&&m.modelId===modelId&&m.protocol===protocol);if(existing<0)models.push(model);else models[existing]=model;defaultModel=model.name;form.querySelector('[name=secret]').value='';modelSetupDraft={endpoint:'',modelId:'',protocol:'chat_completions',name:''};if(modelSetupReturn){const id=modelSetupReturn;modelSetupReturn=null;const c=conversations.find(c=>c.id===id);if(c)c.model=model.name;navigate('chat',id)}else render();toast('演示配置已保存，并设为默认模型；未执行联网测试')}}
 
 function dataView(){let found=documents.filter(d=>dataFilter==='全部'||d.type===dataFilter);return `<section class="page">${crumbs('资料')}${pageHead('资料','让值得保留的内容，有一个位置。','add-document','添加资料')}<div class="tabs" role="group" aria-label="资料类型">${['全部','文档','笔记','链接'].map(t=>`<button class="${dataFilter===t?'selected':''}" data-action="data-filter:${t}">${t}</button>`).join('')}</div><div class="objects">${found.length?found.map(d=>{let i=documents.indexOf(d);return `<button class="object-row" data-action="document:${i}"><div class="object-icon">${svg(d.type==='链接'?'link':d.type==='笔记'?'edit':'file')}</div><div class="object-copy"><h3>${esc(d.name)}</h3><p>${esc(d.info)}</p></div><span class="object-meta">${esc(d.size)}</span>${svg('chevron','chevron')}</button>`}).join(''):`<div class="empty-state">${svg('file')}<h2>还没有${dataFilter}</h2><p>添加一份资料，或从对话里保存。</p><button class="primary" data-action="add-document">添加资料</button></div>`}</div></section>`}
@@ -127,6 +202,11 @@ if(a==='model-discovery-preview'){openDialog('发现模型',`<p class="dialog-no
 if(a==='prototype-chatgpt-auth'){modelSetupSource='chatgpt';closeDialog();navigate('models');return}
 if(a==='account-preview-phase'){accountPreviewPhase=v;render();return}
 if(a==='account-preview-enable'){if(!document.querySelector('#account-demo-model')?.checked){toast('请先选择一个演示模型');return}if(!models.some(m=>m.modelId==='prototype-account-model'))models.push({name:'ChatGPT · 演示模型',modelId:'prototype-account-model',provider:'ChatGPT 授权 · 演示',info:'low / medium / high · 未实测',state:'演示配置 · 未验证'});accountPreviewPhase='enabled';render();return}
+if(a==='local-engine-install' && localSetup.engineLocal && ['llama.cpp','vLLM'].includes(localSetup.engine)){localSetup.engineReady[localSetup.engine]=true;render();return}
+if(a==='local-engine-trust'){localSetup.engineLocal=v==='local';render();return}
+if(a==='local-engine-switch' && localSetup.engineReady[v]){localSetup.engine=v;refreshLocalSetupPlan();render();return}
+if(a==='local-engine-recheck'){toast('演示引擎状态已刷新');return}
+if(a==='local-confirm-plan'){const chosen=localSetup.candidates[Number(v)];if(!chosen)return;localSetup.installed={name:chosen.name,engine:localSetup.engine,context:chosen.context};localSetup.candidates=[];render();return}
 if(a==='model-source'){modelSetupSource=v;if(architectureModule?.getMode()==='desktop')architectureModule.openSettings('providers');else render();return}
 if(a==='conversation-search'){openDialog('搜索对话',`<label>搜索当前对话<input id="conversation-search" type="search" autocomplete="off"></label><p id="conversation-search-count" role="status" class="meta">输入关键词查找当前对话</p>`);return}
 if(a==='configure-chat-model'){modelSetupSource='overview';modelSetupReturn=activeId;closeDialog();navigate('models');return}

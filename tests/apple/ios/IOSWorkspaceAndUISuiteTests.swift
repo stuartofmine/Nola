@@ -182,12 +182,60 @@ final class IOSConversationInspectorTests: XCTestCase {
         XCTAssertEqual(plan.todos.first?.status, "pending")
     }
 
+    private var goalFixture: Data { Data(#"{"control_token":"token","can_pause":true,"can_resume":false,"can_cancel":true,"applied_operations":{},"active":{"id":"goal","objective":"Ship","status":"running","requirements":{"r":{"id":"r","description":"Review","status":"blocked"}},"work":{"entries":[{"id":"old","content":"Old","progress":"planned","supersedes":null},{"id":"new","content":"New","progress":"reported_done","supersedes":"old"}]}}}"#.utf8) }
+
     func testGoalWorkDoesNotPromoteReportedDoneToCompletion() throws {
-        let data = Data(#"{"control_token":"token","can_pause":true,"can_resume":false,"can_cancel":true,"applied_operations":{},"active":{"id":"goal","objective":"Ship","status":"running","requirements":{"r":{"id":"r","description":"Review","status":"blocked"}},"work":{"entries":[{"id":"old","content":"Old","progress":"planned","supersedes":null},{"id":"new","content":"New","progress":"reported_done","supersedes":"old"}]}}}"#.utf8)
+        let data = goalFixture
         let projection = try JSONDecoder().decode(IOSInspectorProgressFacts.GoalProjection.self, from: data)
         XCTAssertEqual(projection.active?.work.current.map(\.id), ["new"])
         XCTAssertEqual(projection.active?.work.current.first?.progress, "reported_done")
         XCTAssertEqual(projection.active?.requirements["r"]?.status, "blocked")
+    }
+
+    @MainActor func testReopenedGoalInspectorDisplaysEachSavedConstraint() async throws {
+        let legacy = try JSONDecoder().decode(IOSInspectorProgressFacts.GoalProjection.self, from: goalFixture)
+        XCTAssertNil(legacy.active?.constraints)
+        var payload = try XCTUnwrap(JSONSerialization.jsonObject(with: goalFixture) as? [String: Any])
+        var active = try XCTUnwrap(payload["active"] as? [String: Any])
+        let constraints = ["Keep source files", "Run tests offline"]
+        active["constraints"] = constraints
+        active["requirements"] = ["r": ["id": "r", "description": constraints[0], "status": "blocked"]]
+        payload["active"] = active
+        let saved = try JSONSerialization.data(withJSONObject: payload)
+        let scene = try XCTUnwrap(UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }.first)
+        for opening in 1...2 {
+            let inspector = IOSConversationInspector(pane: .goals, conversationID: "owner", loadProgress: { owner in
+                let projection = try JSONDecoder().decode(IOSInspectorProgressFacts.GoalProjection.self, from: saved)
+                XCTAssertEqual(projection.active?.unlistedConstraints, [constraints[1]])
+                XCTAssertEqual(projection.active?.requirements["r"]?.status, "blocked")
+                return .init(facts: .init(conversation_id: owner, goal_projection: projection, task_projection: nil), plan: nil)
+            }, documents: [], processingState: .idle)
+            let controller = UIHostingController(rootView: inspector.environment(\.locale, Locale(identifier: "en")))
+            let window = UIWindow(windowScene: scene)
+            window.frame = CGRect(x: 0, y: 0, width: 390, height: 844)
+            window.rootViewController = controller
+            window.makeKeyAndVisible()
+            defer { window.isHidden = true; window.rootViewController = nil }
+            var words = ""
+            for _ in 0..<12 {
+                try await Task.sleep(for: .milliseconds(200))
+                controller.view.layoutIfNeeded()
+                let image = UIGraphicsImageRenderer(bounds: window.bounds).image { _ in
+                    window.drawHierarchy(in: window.bounds, afterScreenUpdates: true)
+                }
+                let request = VNRecognizeTextRequest()
+                try VNImageRequestHandler(cgImage: XCTUnwrap(image.cgImage)).perform([request])
+                words = (request.results ?? []).compactMap { $0.topCandidates(1).first?.string }.joined(separator: "\n")
+                if constraints.allSatisfy({ words.contains($0) }) {
+                    let attachment = XCTAttachment(image: image)
+                    attachment.name = "Goal constraints opening \(opening)"
+                    attachment.lifetime = .keepAlways
+                    add(attachment)
+                    break
+                }
+            }
+            for constraint in constraints { XCTAssertEqual(words.components(separatedBy: constraint).count - 1, 1, words) }
+        }
     }
 
     func testGoalControlsUseCoreObservationForNeedsUserAndRejectForeignOwner() throws {

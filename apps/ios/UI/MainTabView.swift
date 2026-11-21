@@ -48,10 +48,11 @@ struct MainTabView: View {
             if horizontalSizeClass == .compact {
                 IOSCompactTabContainer(selection: selectedTabBinding.wrappedValue,
                     contentRevision: "\(colorScheme)-\(dynamicTypeSize)-\(locale.identifier)-\(layoutDirection)") { tab in
-                    AnyView(tabContent(tab, compact: true)
-                        .safeAreaInset(edge: .bottom, spacing: 0) {
-                            if tab != .chat { compactNavigation(for: tab) }
-                        }
+                    AnyView(VStack(spacing: 0) {
+                        tabContent(tab, compact: true)
+                            .frame(maxWidth: .infinity, maxHeight: .infinity)
+                        if tab != .chat { compactNavigation(for: tab) }
+                    }
                         .environmentObject(container)
                         .environment(\.colorScheme, colorScheme)
                         .environment(\.dynamicTypeSize, dynamicTypeSize)

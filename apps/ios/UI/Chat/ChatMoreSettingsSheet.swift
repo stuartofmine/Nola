@@ -38,6 +38,7 @@ struct ChatMoreSettingsSheet: View {
     var contextDestination: (() -> AnyView)? = nil
     var skillLibraryDestination: (() -> AnyView)? = nil
     var onDismissSheet: (() -> Void)? = nil
+    var executionBackendPicker: AnyView? = nil
 
     @State private var showForgetPairingConfirmation = false
     @State private var statusMessage: String?
@@ -339,6 +340,9 @@ struct ChatMoreSettingsSheet: View {
                 .font(.callout).foregroundStyle(.secondary)
             Text(String(localized: "execution.scope.child")).font(.callout).foregroundStyle(.secondary)
             if selectedModel?.isWebBackend == true {
+                if let executionBackendPicker {
+                    executionBackendPicker
+                }
                 if let model = selectedModel,
                    let rawURL = model.baseURL,
                    let url = URL(string: rawURL) {

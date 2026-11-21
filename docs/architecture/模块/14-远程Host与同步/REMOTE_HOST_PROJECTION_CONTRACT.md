@@ -2,6 +2,8 @@
 
 # Remote Host Projection Contract
 
+[简体中文](REMOTE_HOST_PROJECTION_CONTRACT.zh-CN.md) · English
+
 Status: target authority/import contract, reviewed 2026-10-15. Current caller
 coverage remains an implementation task; these rules do not assert migration complete.
 
@@ -60,27 +62,11 @@ That transaction advances together:
 9. The same imported Attempt cannot be charged once as a source aggregate and
    again through its replica events.
 
-## Migration rule
+## Adapter boundary
 
-The former `FinishRemoteConversationTurn(assistant_text, metadata)` port is an
-invalid abstraction because it lets every client manufacture a competing
-assistant record. Platform adapters must migrate to the projection commit port;
-the old port and raw Store remote-transition primitives are removed after all
-callers use the contracted port.
+External executors retain their opaque session IDs. Their adapters correlate model deltas, tool observations, completion, failure and cancellation with the admitted Host effect. Application owns the resulting parts. The current Application command enum has no FinishRemoteConversationTurn or CommitExternalExecutionProjection variant. The projection commit name in the decision above describes the transaction responsibility. Consult the current command and paired routes for wire names.
 
-External agent executors are Hosts, not alternate Application layers. Codex,
-Claude Code, and OpenCode events must enter the same Host response/Core reducer
-path as native model and tool effects. An executor adapter may retain its own
-opaque session ID, but it cannot write Store-shaped Parts, infer assistant
-identity, or persist a separate transcript.
-
-The temporary `CommitExternalExecutionProjection` command violates this rule:
-it accepts adapter-authored Store Parts and calls `commit_remote_transition`
-without a Core checkpoint or correlated ModelStream effect. It is a deletion
-target, not a supported compatibility contract. Migration is complete only
-when external executors translate their stream into correlated `ModelDelta`,
-`ToolCallProgress`, `ModelCompleted`, `Failed`, or cancellation Host responses,
-and this command is no longer decodable by Application.
+[Application commands](../../../../core/nola-application/src/application_command.rs) · [Paired routes](../../../../apps/cli/src/web_parts/routes.rs)
 
 ## Visual acceptance
 

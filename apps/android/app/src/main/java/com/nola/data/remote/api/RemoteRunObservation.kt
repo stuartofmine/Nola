@@ -18,6 +18,8 @@ data class RemoteRunObservation(
     val canSubmit: Boolean,
     val submissionReceipt: JsonObject?,
     val contextUsage: JsonObject? = null,
+    val goalExecution: JsonObject? = null,
+    val taskExecution: JsonObject? = null,
 )
 
 private fun JsonObject.requiredText(key: String): String = getValue(key).jsonPrimitive.let {
@@ -102,5 +104,19 @@ fun decodeRemoteRunObservation(response: JsonObject, hostId: String, clientId: S
     require(recovery != RemoteRunRecovery.ResumeRequired || workerState == "absent")
     val receipt = value.getValue("submission_receipt").takeUnless { it == JsonNull }?.jsonObject
     receipt?.let { decodeObservedSubmissionReceipt(it, hostId, clientId, key) }
-    return RemoteRunObservation(key, status, workerState, generation, recovery, admission, seal, permissions, canSubmit, receipt, contextUsage)
+    val goal = value["goal_execution"]?.takeUnless { it == JsonNull }?.jsonObject
+    goal?.let {
+        it.requiredText("goal_id"); it.requiredText("contract_id"); it.requiredText("control_token")
+        require(it.requiredText("run_id") == key.runId && admission != null) { "Goal observation owner mismatch" }
+    }
+    val task = value["task_execution"]?.takeUnless { it == JsonNull }?.jsonObject
+    task?.let {
+        it.requiredText("parent_run_id"); it.requiredText("task_id")
+        require(it.requiredText("kind") == "task_child" && it.requiredText("child_conversation_id") == conversationId &&
+            it.requiredText("parent_conversation_id") != conversationId && receipt == null && goal == null &&
+            !canSubmit && permissions.isEmpty() && recovery in setOf(RemoteRunRecovery.Observe, RemoteRunRecovery.Terminal) &&
+            admission != null) { "Invalid read-only task observation" }
+    }
+    return RemoteRunObservation(key, status, workerState, generation, recovery, admission, seal, permissions,
+        canSubmit, receipt, contextUsage, goal, task)
 }

@@ -34,22 +34,16 @@ fn interactive_room_completions(rest: &str) -> Vec<SlashCompletion> {
     let Ok(room)=interactive_room_snapshot(id) else { return vec![]; };
     room.room.participants().iter().filter(|member|member.active)
         .filter(|member|member.display_name.to_lowercase().starts_with(&query.to_lowercase()) || member.id.starts_with(query))
-        .map(|member|SlashCompletion {name:format!("/room {id} @{} ",room_mention_token(member,room.room.participants()))})
+        .map(|member| {
+            let token = room_mention_token(member, room.room.participants());
+            let label = if token == member.display_name {
+                format!("@{}", member.display_name)
+            } else {
+                format!("@{} · {token}", member.display_name)
+            };
+            SlashCompletion { name: format!("/room {id} @{token} "), label: Some(label) }
+        })
         .take(4).collect()
-}
-
-fn interactive_room_completion_label(completion: &str) -> Option<String> {
-    let rest=completion.strip_prefix("/room ")?;
-    let (id,tail)=rest.split_once(' ')?;
-    let token=tail.trim().strip_prefix('@')?;
-    let room=interactive_room_snapshot(id).ok()?;
-    let member=room.room.participants().iter().find(|member|member.active && room_mention_token(member,room.room.participants())==token)?;
-    Some(if token == member.display_name {
-        format!("@{}", member.display_name)
-    } else {
-        // Equal public names must remain distinguishable in the candidate row.
-        format!("@{} · {}", member.display_name, token)
-    })
 }
 
 fn interactive_room_command(rest: &str, config: &Config) -> Result<(),String> {

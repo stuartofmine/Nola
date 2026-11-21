@@ -27,7 +27,7 @@ internal object ApplicationCommandEffect {
         "load_task_child_conversation_window", "load_conversation_projection_v1", "load_conversation_projection_page_v1",
         "capture_mobile_delegation_configuration", "load_mobile_task_child_configuration",
         "load_mobile_task_wake_plan", "inspect_mobile_permission_request", "inspect_mobile_mcp_request", "load_conversation_source_owner", "load_conversation_projection_window_v1", "load_conversation_projection_window_update_v1",
-        "load_conversation_tail_snapshot", "load_conversation_tail_snapshot_v1", "load_conversation_context_usage_v1",
+        "load_conversation_tail_snapshot_v1", "load_conversation_context_usage_v1",
         "read_remote_submission_intent", "read_admitted_remote_run_identity", "read_remote_submission_request", "list_open_user_input_waits",
         "load_user_input_wait", "load_conversation_permission_projection_v1"
     )

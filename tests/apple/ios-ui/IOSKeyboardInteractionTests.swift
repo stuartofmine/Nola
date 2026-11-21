@@ -124,7 +124,14 @@ final class IOSKeyboardInteractionTests: XCTestCase {
         address.typeText("2\n")
         XCTAssertEqual(address.value as? String, original + "2")
         XCTAssertNotEqual(token.value as? String, filled)
-        app.keyboards.buttons["Go"].tap()
+        let go = app.keyboards.buttons["Go"]
+        if go.exists, go.isHittable, app.frame.contains(go.frame) {
+            go.tap()
+        } else {
+            // With a hardware keyboard the secure field owns focus while the
+            // software keyboard's accessibility nodes remain below the window.
+            token.typeText("\n")
+        }
         let error = app.descendants(matching: .any)["model.web_host.validation_error"].firstMatch
         XCTAssertTrue(error.waitForExistence(timeout: 5))
         XCTAssertTrue(error.label.contains("Enter the access token for this host"), error.label)
@@ -205,6 +212,13 @@ final class IOSKeyboardInteractionTests: XCTestCase {
         XCTAssertFalse(name.isHittable)
         capture("expert-editor-role-scrolled", app)
         for _ in 0..<12 where !name.isHittable { app.swipeDown() }
+        XCTAssertEqual(name.value as? String, draft)
+        name.tap()
+        XCTAssertTrue(keyboard.waitForExistence(timeout: 4))
+        let done = app.buttons["experts.keyboard.done"]
+        XCTAssertTrue(done.isHittable)
+        done.tap()
+        XCTAssertTrue(keyboard.waitForNonExistence(timeout: 4))
         XCTAssertEqual(name.value as? String, draft)
     }
 

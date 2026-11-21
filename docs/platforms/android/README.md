@@ -22,6 +22,12 @@
 
 从会话菜单打开「进度」，输入目标和可选约束。启动时，Android 会读取当前模型、工具目录和权限，交给 Core 保存为该目标的执行配置。暂停后可以恢复原目标。取消目标后，设备会确认原运行已经停止。随后可以在同一会话内开始下一个目标，已完成的回复会保留。
 
+### 配对宿主会话中的 Goal
+
+在宿主上执行普通聊天后，可从同一会话的「进度」启动 Goal。会话已选模型时使用该模型。会话继承宿主设置时，宿主在启动时解析自己的默认聊天模型，并将档案和版本保存至 Goal 的执行配置。此后更换宿主默认模型，暂停的 Goal 仍可用原档案继续。默认模型不可用时，请在宿主的模型设置中选好可用档案，再回到手机重试已保存的请求。
+
+宿主执行中的任务可能需要一点时间才会暂停。「进度」会查询这次操作的回执，确认暂停后显示「恢复」。如果长时间显示待确认，点刷新或重新打开「进度」即可查询同一次操作。
+
 ### Privacy export on Android
 
 Settings → Privacy → Export readable archive creates a ZIP with a `manifest.json` identifying `nola.android.personal-export` version 2. Each conversation has a Markdown document containing the user and assistant text, including committed messages still in the SQLite write-ahead log. The ZIP also contains `profile/memory.json`, `settings/model_parameters.json`, and `settings/preferences.json`. Markdown files can be opened independently or added to the document library.

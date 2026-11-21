@@ -8,7 +8,7 @@ use std::{
     io::{self, Read, Seek},
     path::{Path, PathBuf},
     sync::{Arc, Mutex},
-    time::Duration,
+    time::{Duration, Instant},
 };
 use url::Url;
 
@@ -18,17 +18,54 @@ pub const RESOURCE_TREE: &str = ".nola-package";
 const PACKAGE_REFERENCE: &str = "nola://github-skills/";
 const GITHUB_PREFIX: &str = "https://github.com/";
 const PACKAGE_LIMIT: u64 = 32 * 1024 * 1024;
+const GET_TIMEOUT: Duration = Duration::from_secs(25);
 
 fn client() -> Result<Client, String> {
     Client::builder()
         .user_agent("Nola-Skill-Installer/1")
         .redirect(reqwest::redirect::Policy::none())
-        .timeout(Duration::from_secs(25))
+        .timeout(GET_TIMEOUT)
         .build()
         .map_err(|e| e.to_string())
 }
+
+/// Retry gateway outages within the time budget for the original GET.
+fn github_get(client: &Client, url: Url) -> Result<reqwest::blocking::Response, String> {
+    let deadline = Instant::now() + GET_TIMEOUT;
+    let mut delays = [Duration::from_millis(250), Duration::from_secs(1)].into_iter();
+    loop {
+        let response = client
+            .get(url.clone())
+            .timeout(deadline.saturating_duration_since(Instant::now()))
+            .send()
+            .map_err(|e| e.to_string())?;
+        if !matches!(response.status().as_u16(), 502..=504) {
+            return Ok(response);
+        }
+        let Some(mut delay) = delays.next() else {
+            return Ok(response);
+        };
+        if let Some(value) = response.headers().get(reqwest::header::RETRY_AFTER) {
+            // For a date, an unrecognised hint, or a long wait, surface the response
+            // instead of guessing and issuing a request before GitHub permits it.
+            let Some(seconds) = value.to_str().ok().and_then(|s| s.parse::<u64>().ok()) else {
+                return Ok(response);
+            };
+            if seconds > 2 {
+                return Ok(response);
+            }
+            delay = delay.max(Duration::from_secs(seconds));
+        }
+        if delay >= deadline.saturating_duration_since(Instant::now()) {
+            return Ok(response);
+        }
+        drop(response);
+        std::thread::sleep(delay);
+    }
+}
+
 fn read_url(client: &Client, url: Url, limit: u64) -> Result<Vec<u8>, String> {
-    let response = client.get(url).send().map_err(|e| e.to_string())?;
+    let response = github_get(client, url)?;
     read_response(response, limit)
 }
 
@@ -256,7 +293,7 @@ fn archive_inventory(
             "https://codeload.github.com",
             &[&source.owner, &source.repo, "zip", &reference],
         );
-        let response = client.get(url).send().map_err(|e| e.to_string())?;
+        let response = github_get(client, url)?;
         if response.status().as_u16() == 404 && !path.is_empty() && !commit_id(&reference) {
             let (next, rest) = path.split_once('/').unwrap_or((path, ""));
             reference.push('/');
@@ -380,7 +417,7 @@ fn load_inventory(
         url.query_pairs_mut()
             .append_pair("sha", &reference)
             .append_pair("per_page", "1");
-        let response = client.get(url).send().map_err(|e| e.to_string())?;
+        let response = github_get(client, url)?;
         if rate_limited(&response) {
             return archive_inventory(source, client, scratch);
         }
@@ -417,7 +454,7 @@ fn load_inventory(
     );
     url.query_pairs_mut().append_pair("recursive", "1");
     source.revision = revision.into();
-    let response = client.get(url).send().map_err(|e| e.to_string())?;
+    let response = github_get(client, url)?;
     if rate_limited(&response) {
         return archive_inventory(source, client, scratch);
     }
@@ -685,12 +722,17 @@ pub fn prepare_with(
 pub fn markdown_frontmatter_body(text: &str) -> Option<(&str, &str)> {
     let text = text.strip_prefix('\u{feff}').unwrap_or(text);
     let (opening, rest) = text.split_once('\n')?;
-    if opening.trim_end() != "---" { return None; }
+    if opening.trim_end() != "---" {
+        return None;
+    }
     let mut offset = 0;
     for line in rest.split_inclusive('\n') {
         if line.trim_end() == "---" {
             let header = rest[..offset].strip_suffix('\n').unwrap_or(&rest[..offset]);
-            return Some((header.strip_suffix('\r').unwrap_or(header), &rest[offset + line.len()..]));
+            return Some((
+                header.strip_suffix('\r').unwrap_or(header),
+                &rest[offset + line.len()..],
+            ));
         }
         offset += line.len();
     }
@@ -728,6 +770,61 @@ mod tests {
             kind: "blob".into(),
             mode: mode.into(),
             size: Some(size),
+        }
+    }
+
+    #[test]
+    fn github_get_retries_a_gateway_failure_at_the_same_revision() {
+        use std::io::{BufRead, BufReader, Write};
+        use std::net::TcpListener;
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let url = Url::parse(&format!(
+            "http://{}/owner/repo/0123456789abcdef0123456789abcdef01234567/SKILL.md",
+            listener.local_addr().unwrap()
+        ))
+        .unwrap();
+        let path = url.path().to_owned();
+        let server = std::thread::spawn(move || {
+            for status in ["503 Service Unavailable", "200 OK"] {
+                let (mut stream, _) = listener.accept().unwrap();
+                let mut request = String::new();
+                BufReader::new(&stream).read_line(&mut request).unwrap();
+                assert_eq!(request, format!("GET {path} HTTP/1.1\r\n"));
+                write!(
+                    stream,
+                    "HTTP/1.1 {status}\r\nContent-Length: 5\r\nConnection: close\r\n\r\nskill"
+                )
+                .unwrap();
+            }
+        });
+        let client = Client::builder().no_proxy().build().unwrap();
+        assert_eq!(read_url(&client, url, 5).unwrap(), b"skill");
+        server.join().unwrap();
+    }
+
+    #[test]
+    fn github_get_preserves_permanent_failures_quota_and_server_waits() {
+        use std::{io::Write, net::TcpListener};
+        let client = Client::builder().no_proxy().build().unwrap();
+        for (status, extra) in [
+            (403, "X-RateLimit-Remaining: 0\r\n"),
+            (404, ""),
+            (429, ""),
+            (503, "Retry-After: 120\r\n"),
+            (503, "Retry-After: Wed, 20 Nov 2030 00:00:00 GMT\r\n"),
+        ] {
+            let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+            let url = Url::parse(&format!("http://{}/", listener.local_addr().unwrap())).unwrap();
+            let server = std::thread::spawn(move || {
+                let (mut stream, _) = listener.accept().unwrap();
+                let mut buf = [0; 2048];
+                let _ = stream.read(&mut buf).unwrap();
+                write!(stream, "HTTP/1.1 {status} Test\r\n{extra}Content-Length: 0\r\nConnection: close\r\n\r\n").unwrap();
+            });
+            let response = github_get(&client, url).unwrap();
+            assert_eq!(response.status().as_u16(), status);
+            assert_eq!(rate_limited(&response), matches!(status, 403 | 429));
+            server.join().unwrap();
         }
     }
 
@@ -856,8 +953,17 @@ mod tests {
     #[test]
     fn first_frontmatter_boundary_wins_across_line_endings() {
         let mixed = "\u{feff}---\r\nname: formatter\r\ndescription: Edit\r\n---\r\nKeep this body.\n---\nMore.";
-        assert_eq!(markdown_frontmatter_body(mixed), Some(("name: formatter\r\ndescription: Edit", "Keep this body.\n---\nMore.")));
-        assert_eq!(markdown_frontmatter_body("---\nname: formatter\n---"), Some(("name: formatter", "")));
+        assert_eq!(
+            markdown_frontmatter_body(mixed),
+            Some((
+                "name: formatter\r\ndescription: Edit",
+                "Keep this body.\n---\nMore."
+            ))
+        );
+        assert_eq!(
+            markdown_frontmatter_body("---\nname: formatter\n---"),
+            Some(("name: formatter", ""))
+        );
     }
 
     #[test]

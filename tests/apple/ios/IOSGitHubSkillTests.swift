@@ -5,6 +5,27 @@ import XCTest
 
 @MainActor
 final class IOSGitHubSkillTests: XCTestCase {
+    func testInstallGitHubPackageAndReopenItsSettingsRecord() async throws {
+        guard let path = ProcessInfo.processInfo.environment["NOLA_GITHUB_SKILL_UI_FIXTURE_ROOT"] else {
+            throw XCTSkip("Requires a disposable on-device GitHub Skill fixture")
+        }
+        let database = URL(fileURLWithPath: path, isDirectory: true).appendingPathComponent("nola.db")
+        let runtime = try IOSApplicationRuntime(databaseURL: database)
+        let source = "https://github.com/Yuan1z0825/nature-skills/tree/main/skills/nature-paper-card"
+        let package = try await IOSGitHubSkillPackages.request(["operation": "prepare", "url": source], runtime: runtime)
+        _ = try await IOSGitHubSkillPackages.shared.register(package, runtime: runtime, permit: nil)
+        let reopened = try IOSApplicationRuntime(databaseURL: database)
+        let store = CanonicalChatMemoryProfileStore(applicationRuntime: reopened)
+        let matches = try store.loadCapabilityLibrary().uploadedSkills.filter { $0.name == "nature-paper-card" }
+        XCTAssertEqual(matches.count, 1)
+        let reference = try XCTUnwrap(matches.first?.packageReference)
+        let pinnedURL = try XCTUnwrap(IOSGitHubSkillPackages.sourceURL(reference: reference))
+        XCTAssertEqual(pinnedURL.pathComponents.last, "nature-paper-card")
+        let revision = try XCTUnwrap(pinnedURL.pathComponents.drop(while: { $0 != "tree" }).dropFirst().first)
+        XCTAssertEqual(revision.count, 40)
+        XCTAssertTrue(revision.allSatisfy(\.isHexDigit))
+    }
+
     func testInstalledPackagesRequireActivationAndHonorCurrentEnablement() async throws {
         let root = FileManager.default.temporaryDirectory.appendingPathComponent("ios-skill-fixture-\(UUID())")
         defer { try? FileManager.default.removeItem(at: root) }

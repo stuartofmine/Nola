@@ -762,11 +762,48 @@ fn route_request(
     if matches!(path, "/api/model-import/plan" | "/api/model-import/commit") {
         return if method == &Method::Post { model_import_response(request, config, path.ends_with("/commit")) } else { method_not_allowed() };
     }
+    if path == "/api/local-models/engine-status" {
+        if !matches!(method, &Method::Get | &Method::Head) { return method_not_allowed(); }
+        let engine = query_param(url, "engine").unwrap_or_default();
+        if !matches!(engine.as_str(), "llama.cpp" | "vllm") {
+            return json_response(StatusCode(400), json!({"error":"Unknown desktop engine."}));
+        }
+        let local = source_management_peer_allowed(request.remote_addr(), config.tailcat_ingress)
+            && request_header(request, "Host").and_then(|host| reqwest::Url::parse(&format!("http://{host}")).ok())
+                .is_some_and(|url| matches!(url.host_str(), Some("localhost" | "127.0.0.1" | "[::1]")));
+        return match crate::model_acquisition::engine_status(&engine, local) {
+            Ok(value) => json_response(StatusCode(200), value),
+            Err(message) => json_response(StatusCode(400), json!({"error":message})),
+        };
+    }
+    if path == "/api/local-models/setup-engine" {
+        if method != &Method::Post { return method_not_allowed(); }
+        if !source_management_request_allowed(request, config.tailcat_ingress) {
+            return json_response(StatusCode(403), json!({"error":"Open model settings on the Host to install an engine.","code":"install_on_host"}));
+        }
+        #[derive(serde::Deserialize)]
+        #[serde(deny_unknown_fields)]
+        struct Setup { engine: String }
+        let input = match read_json::<Setup>(request) { Ok(input) => input, Err(response) => return response };
+        if !matches!(input.engine.as_str(), "llama.cpp" | "vllm") {
+            return json_response(StatusCode(400), json!({"error":"Unknown desktop engine."}));
+        }
+        return match crate::model_acquisition::setup_engine(&input.engine) {
+            Ok(value) => json_response(StatusCode(200), value),
+            Err(message) => json_response(StatusCode(409), json!({"error":message})),
+        };
+    }
+    if path == "/api/local-models/hardware" {
+        return if matches!(method, &Method::Get | &Method::Head) { json_response(StatusCode(200), crate::model_acquisition::hardware()) } else { method_not_allowed() };
+    }
+    if let Some(action) = path.strip_prefix("/api/local-models/").filter(|action| matches!(*action, "search" | "recommend" | "install" | "install-plan" | "cancel")) {
+        return if method == &Method::Post { acquisition::handle(request, action, config.tailcat_ingress) } else { method_not_allowed() };
+    }
     if path == "/api/local-models" {
         return match method {
             &Method::Get | &Method::Head => json_response(
                 StatusCode(200),
-                with_local_first(local_models::catalog_json()),
+                with_local_first(acquisition::catalog()),
             ),
             _ => method_not_allowed(),
         };
@@ -2144,12 +2181,10 @@ fn local_model_action_response(
             ),
             Err(error) => json_response(StatusCode(400), json!({"error": error})),
         },
-        (&Method::Post, "stop") => {
-            if local_models::running_model_id().as_deref() == Some(model_id) {
-                local_models::shutdown();
-            }
-            json_response(StatusCode(200), json!({"ok": true, "modelId": model_id}))
-        }
+        (&Method::Post, "stop") => match local_models::stop_model(Some(model_id)) {
+            Ok(()) => json_response(StatusCode(200), json!({"ok": true, "modelId": model_id})),
+            Err(error) => json_response(StatusCode(409), json!({"error": error})),
+        },
         (&Method::Post, "configuration") => {
             #[derive(serde::Deserialize)]
             #[serde(rename_all = "camelCase", deny_unknown_fields)]
@@ -3659,6 +3694,7 @@ fn dispatch_conversation_goal_control(
         "schedule" => GoalControlAction::Schedule,
         _ => return goal_control_result(StatusCode(400), json!({"error":"unsupported Goal action"})),
     };
+    let expected_goal_id = input.expected_goal_id.clone();
     let envelope = match application.prepare_goal_control_intent(PrepareGoalControlIntent {
         conversation_id: conversation_id.into(), operation_id: input.operation_id,
         action, expected_goal_id: input.expected_goal_id,
@@ -3713,7 +3749,8 @@ fn dispatch_conversation_goal_control(
             .and_then(|request| submit_agent_core_goal_command(&request, envelope))
             .map(|_| ())
     } else if input.action.trim() == "resume" {
-        new_web_goal_invocation(config, conversation_id)
+        expected_goal_id.as_deref().ok_or_else(|| "Goal resume requires the observed Goal identity".to_owned())
+            .and_then(|goal_id| web_goal_invocation_for_selection(config, conversation_id, Some(goal_id)))
             .and_then(|request| crate::core_agent_runtime::rebind_goal_execution(&request))
             .and_then(|_| apply_idle_web_goal_control(conversation_id, envelope))
     } else {
@@ -3733,6 +3770,9 @@ fn dispatch_conversation_goal_control(
             Err(error) => goal_control_result(StatusCode(500), json!({"error": error})),
             }
         },
+        Err(error) if error == GOAL_HOST_DEFAULT_UNAVAILABLE => goal_control_result(StatusCode(409), json!({
+            "code": "goal_host_default_unavailable", "conversationId": conversation_id, "operationId": operation_id, "error": error
+        })),
         Err(error) => goal_control_result(StatusCode(409), json!({"error": error})),
     }
 }

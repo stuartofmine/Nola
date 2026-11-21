@@ -39,6 +39,7 @@ class WebHostHttpClientFactory @Inject constructor(
     private val sharedClient: HttpClient,
     private val tailcat: NolaTailcatTransport? = null
 ) {
+    internal val tailcatAvailable: Boolean get() = tailcat?.available == true
     private val routedSharedClient by lazy { tailcat?.route(sharedClient.config {}) ?: sharedClient }
     private val pinnedClients = ConcurrentHashMap<String, HttpClient>()
     private val controlClients = ConcurrentHashMap<String, HttpClient>()

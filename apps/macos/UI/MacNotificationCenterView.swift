@@ -68,7 +68,7 @@ struct MacNotificationCenterView: View {
                     compactContent
                 } else {
                     HSplitView {
-                        notificationSidebar
+                        notificationSidebar(showsEmptyState: false)
                             .frame(minWidth: 280, idealWidth: 320, maxWidth: 390)
                         detail
                             .frame(minWidth: 420, maxWidth: .infinity, maxHeight: .infinity)
@@ -178,7 +178,7 @@ struct MacNotificationCenterView: View {
             }
             .transition(.move(edge: .trailing).combined(with: .opacity))
         } else {
-            notificationSidebar
+            notificationSidebar(showsEmptyState: true)
                 .transition(.move(edge: .leading).combined(with: .opacity))
         }
     }
@@ -238,7 +238,7 @@ struct MacNotificationCenterView: View {
         .background(MacDesignColor.chrome)
     }
 
-    private var notificationSidebar: some View {
+    private func notificationSidebar(showsEmptyState: Bool) -> some View {
         VStack(spacing: 10) {
             Picker(macNotificationText("mac.notifications.filter.label", "Filter"), selection: $filter) {
                 ForEach(Filter.allCases) { filter in
@@ -250,6 +250,7 @@ struct MacNotificationCenterView: View {
 
             TextField(macNotificationText("mac.notifications.search", "Search notifications"), text: $query)
                 .textFieldStyle(.roundedBorder)
+                .accessibilityIdentifier("mac.notifications.search")
 
             List {
                 if needsAuthorizationAttention {
@@ -269,25 +270,9 @@ struct MacNotificationCenterView: View {
                         }
                     }
                 }
-                if matchingItems.isEmpty, !store.items.isEmpty, !store.isLoading {
-                    Section {
-                        VStack(alignment: .leading, spacing: 8) {
-                            Label(
-                                macNotificationText("mac.notifications.empty.filtered.title", "No Matching Notifications"),
-                                systemImage: "line.3.horizontal.decrease.circle"
-                            )
-                            .font(.system(size: 13, weight: .semibold))
-                            Text(macNotificationText("mac.notifications.empty.filtered.detail", "Adjust the search or filter to see more notifications."))
-                                .font(.system(size: 11.5))
-                                .foregroundStyle(.secondary)
-                            Button(macNotificationText("mac.notifications.empty.filtered.reset", "Reset Filters")) {
-                                query = ""
-                                filter = .all
-                            }
-                            .buttonStyle(.borderless)
-                        }
-                        .padding(.vertical, 8)
-                    }
+                if showsEmptyState, matchingItems.isEmpty, !store.isLoading {
+                    notificationEmptyState
+                        .listRowBackground(Color.clear)
                 }
             }
             .listStyle(.sidebar)
@@ -365,7 +350,16 @@ struct MacNotificationCenterView: View {
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
             .background(MacPageBackground())
-        } else if store.items.isEmpty && !store.isLoading {
+        } else if matchingItems.isEmpty && !store.isLoading {
+            notificationEmptyState
+        } else {
+            ContentUnavailableView(macNotificationText("mac.notifications.select", "Select a Notification"), systemImage: "bell")
+        }
+    }
+
+    @ViewBuilder
+    private var notificationEmptyState: some View {
+        if store.items.isEmpty {
             VStack(spacing: MacDesignTokens.Spacing.lg) {
                 Image(systemName: "bell.slash")
                     .font(.system(size: 21, weight: .medium))
@@ -381,7 +375,7 @@ struct MacNotificationCenterView: View {
                     .frame(maxWidth: 420)
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity)
-        } else if matchingItems.isEmpty && !store.isLoading {
+        } else {
             ContentUnavailableView {
                 Label(
                     macNotificationText("mac.notifications.empty.filtered.title", "No Matching Notifications"),
@@ -395,9 +389,8 @@ struct MacNotificationCenterView: View {
                     filter = .all
                 }
                 .buttonStyle(.nolaProminent)
+                .accessibilityIdentifier("mac.notifications.resetFilters")
             }
-        } else {
-            ContentUnavailableView(macNotificationText("mac.notifications.select", "Select a Notification"), systemImage: "bell")
         }
     }
 

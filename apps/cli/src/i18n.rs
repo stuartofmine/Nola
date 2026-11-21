@@ -514,6 +514,36 @@ pub enum UiText {
     MissingDefaultModel,
     DefaultModelChoices,
     ApplyConfigAgain,
+    ApplyConfigHelp,
+    FileHelpShow,
+    FileHelpEdit,
+    FileHelpCheck,
+    FileHelpPreview,
+    FileHelpApply,
+    FileHelpExample,
+    FileOverview,
+    FileAutomatic,
+    FileDisabled,
+    FileHostUnavailable,
+    FileHostDefault,
+    FileNone,
+    FileLoadOrder,
+    FileSettings,
+    FileModelSource,
+    FileDeclaredDefault,
+    FileApplied,
+    FileStartup,
+    FileSkipped,
+    FilePreview,
+    FileChecked,
+    FileRouteModel,
+    FileRuntimeOnly,
+    FileNotSaved,
+    LocateModelConfig,
+    CheckModelConfigFile,
+    CheckModelConfigSize,
+    CheckModelConfigJson,
+    AddModelConfigLlm,
     PermissionDigitHint,
     PermissionScrollHint,
     HelpSources,
@@ -565,6 +595,14 @@ pub enum UiText {
     AutonomousGoal,
     GoalIntro,
     GoalInputHint,
+    SlashMenuKeys,
+    MentionPickKeys,
+    HelpMoreCommands,
+    HelpEdit,
+    HelpCancelEdit,
+    EditInputHint,
+    NoActiveEdit,
+    NoMessageToEdit,
     GoalPlaceholder,
     GoalLifecycle,
     Constraints,
@@ -579,6 +617,10 @@ pub enum UiText {
     HelpRoom,
     NoRooms,
     NoPendingQuestions,
+    QuestionKeyHint,
+    QuestionLineHint,
+    QuestionDeferred,
+    DeclineQuestion,
     PermissionInstructionOption,
     PermissionInstructionCommand,
     NoConfiguredMcp,
@@ -696,12 +738,102 @@ fn ui_text_for(language: Language, key: UiText) -> &'static str {
             "llm.connections の ID の組を llm.default_model に設定してください。例", "llm.connections의 ID 조합을 llm.default_model에 입력하세요. 예시",
             "Для llm.default_model выберите пару идентификаторов из llm.connections, например:",
         ],
+        UiText::FileHelpShow => ["查看配置加载顺序和文件声明的模型。", "查看設定載入順序和檔案宣告的模型。", "Show configuration files in load order and the model they declare.", "Konfigurationsdateien in Ladereihenfolge und Modell anzeigen.", "Mostrar los archivos en orden de carga y el modelo declarado.", "Afficher les fichiers dans leur ordre de chargement et le modèle déclaré.", "設定ファイルの読み込み順と宣言されたモデルを表示。", "설정 파일의 로드 순서와 선언된 모델을 표시합니다.", "Показать порядок загрузки файлов и объявленную модель."],
+        UiText::FileHelpEdit => ["用编辑器打开配置文件。", "用編輯器開啟設定檔。", "Open a configuration file in your editor.", "Konfigurationsdatei im Editor öffnen.", "Abrir un archivo de configuración en el editor.", "Ouvrir un fichier de configuration dans l’éditeur.", "設定ファイルをエディターで開く。", "편집기로 설정 파일을 엽니다.", "Открыть файл конфигурации в редакторе."],
+        UiText::FileHelpCheck => ["检查启动配置，或单独检查指定文件。", "檢查啟動設定，或單獨檢查指定檔案。", "Validate the startup layers or one file.", "Startkonfiguration oder eine Datei prüfen.", "Validar la configuración de inicio o un archivo.", "Vérifier la configuration de démarrage ou un fichier.", "起動設定または指定ファイルを検証。", "시작 설정 또는 지정한 파일을 검사합니다.", "Проверить настройки запуска или отдельный файл."],
+        UiText::FileHelpPreview => ["预览文件要写入宿主的连接和默认模型。", "預覽檔案要寫入主機的連線和預設模型。", "Preview the connections and Host default declared by the file.", "Deklarierte Verbindungen und Host-Standardmodell anzeigen.", "Previsualizar las conexiones y el modelo predeterminado declarados.", "Prévisualiser les connexions et le modèle par défaut déclarés.", "接続とホストの既定モデルの設定をプレビュー。", "연결과 호스트 기본 모델 설정을 미리 봅니다.", "Предпросмотр подключений и модели хоста по умолчанию."],
+        UiText::FileHelpApply => ["立即应用（可选）。", "立即套用（可選）。", "Apply immediately (optional).", "Sofort anwenden (optional).", "Aplicar ahora (opcional).", "Appliquer maintenant (facultatif).", "今すぐ適用（任意）。", "즉시 적용합니다(선택 사항).", "Применить сразу (необязательно)."],
+        UiText::FileHelpExample => ["输出可编辑的模型目录 JSON 示例。", "輸出可編輯的模型目錄 JSON 範例。", "Print an editable model catalog as JSON.", "Bearbeitbares JSON-Beispiel ausgeben.", "Mostrar un catálogo de ejemplo en JSON.", "Afficher un exemple de catalogue JSON à modifier.", "編集可能な JSON カタログの例を出力。", "편집할 수 있는 JSON 카탈로그 예제를 출력합니다.", "Вывести пример каталога в JSON для редактирования."],
+        UiText::FileOverview => ["查看配置文件和模型来源", "查看設定檔案和模型來源", "Show configuration files and model source", "Konfiguration und Modellquelle anzeigen", "Ver archivos de configuración y origen del modelo", "Voir les fichiers de configuration et la source du modèle", "設定ファイルとモデルの参照元を表示", "설정 파일과 모델 출처 보기", "Показать файлы конфигурации и источник модели"],
+        UiText::FileAutomatic => ["自动选择", "自動選擇", "Automatic", "Automatisch", "Automático", "Automatique", "自動", "자동", "Автоматически"],
+        UiText::FileDisabled => ["（已停用）", "（已停用）", " (disabled)", " (deaktiviert)", " (deshabilitado)", " (désactivé)", "（無効）", " (사용 안 함)", " (отключена)"],
+        UiText::FileHostUnavailable => ["不可用 · nola model connections", "無法使用 · nola model connections", "Unavailable · nola model connections", "Nicht verfügbar · nola model connections", "No disponible · nola model connections", "Indisponible · nola model connections", "利用不可 · nola model connections", "사용할 수 없음 · nola model connections", "Недоступно · nola model connections"],
+        UiText::FileHostDefault => ["宿主已保存的默认模型", "主機已儲存的預設模型", "Saved Host default", "Gespeichertes Host-Standardmodell", "Modelo predeterminado guardado en el host", "Modèle par défaut enregistré sur l’hôte", "ホストに保存された既定モデル", "호스트에 저장된 기본 모델", "Сохранённая модель хоста"],
+        UiText::FileNone => ["未找到配置文件。", "找不到設定檔。", "No configuration files found.", "Keine Konfigurationsdateien gefunden.", "No se encontraron archivos de configuración.", "Aucun fichier de configuration trouvé.", "設定ファイルが見つかりません。", "설정 파일을 찾을 수 없습니다.", "Файлы конфигурации не найдены."],
+        UiText::FileLoadOrder => ["配置文件（按加载顺序）", "設定檔（依載入順序）", "Files in startup order", "Dateien in Ladereihenfolge", "Archivos en orden de carga", "Fichiers par ordre de chargement", "読み込み順の設定ファイル", "로드 순서에 따른 설정 파일", "Файлы в порядке загрузки"],
+        UiText::FileSettings => ["文件运行设置", "檔案執行設定", "File settings", "Einstellungen aus Dateien", "Ajustes de los archivos", "Paramètres des fichiers", "ファイルの設定", "파일 설정", "Параметры из файлов"],
+        UiText::FileModelSource => ["模型目录", "模型目錄", "Model catalog", "Modellkatalog", "Catálogo de modelos", "Catalogue de modèles", "モデルカタログ", "모델 카탈로그", "Каталог моделей"],
+        UiText::FileDeclaredDefault => ["文件声明的宿主默认模型", "檔案宣告的主機預設模型", "Declared Host default", "Deklariertes Host-Standardmodell", "Modelo predeterminado declarado", "Modèle par défaut déclaré", "ファイルで宣言した既定モデル", "파일에 선언된 기본 모델", "Модель по умолчанию в файле"],
+        UiText::FileStartup => ["下次启动自动应用。", "下次啟動時自動套用。", "Applied automatically on startup.", "Wird beim Start automatisch angewendet.", "Se aplica automáticamente al iniciar.", "Application automatique au démarrage.", "起動時に自動適用します。", "시작할 때 자동으로 적용합니다.", "Применяется автоматически при запуске."],
+        UiText::FileSkipped => ["已跳过模型配置", "已略過模型設定", "Skipped model configuration", "Modellkonfiguration übersprungen", "Configuración de modelos omitida", "Configuration de modèles ignorée", "モデル設定をスキップしました", "모델 설정을 건너뜁니다", "Конфигурация моделей пропущена"],
+        UiText::FileApplied => ["已保存到这台宿主。", "已儲存到這台主機。", "Saved to this Host.", "Auf diesem Host gespeichert.", "Guardado en este host.", "Enregistré sur cet hôte.", "このホストに保存しました。", "이 호스트에 저장했습니다.", "Сохранено на этом хосте."],
+        UiText::FilePreview => ["仅预览文件声明。应用时还会核对已有连接和凭据。", "僅預覽檔案宣告。套用時也會核對現有連線和憑證。", "Preview only. Apply also checks stored connections and credentials.", "Vorschau. Beim Anwenden werden bestehende Verbindungen und Zugangsdaten geprüft.", "Vista previa. Al aplicar se comprueban las conexiones y credenciales existentes.", "Aperçu. L’application vérifie aussi les connexions et identifiants existants.", "プレビューです。適用時に既存の接続と認証情報を確認します。", "미리보기입니다. 적용 시 기존 연결과 인증 정보를 확인합니다.", "Предпросмотр. При применении проверяются существующие подключения и учётные данные."],
+        UiText::FileChecked => ["文件配置检查通过。", "檔案設定檢查通過。", "File configuration is valid.", "Dateikonfiguration gültig.", "Configuración de archivo válida.", "Configuration du fichier valide.", "ファイルの設定は有効です。", "파일 설정이 유효합니다.", "Настройки файла прошли проверку."],
+        UiText::FileRouteModel => ["直连模型", "直連模型", "Route model", "Direktes Modell", "Modelo de conexión directa", "Modèle en connexion directe", "直接接続のモデル", "직접 연결 모델", "Модель прямого подключения"],
+        UiText::FileRuntimeOnly => ["运行设置在启动时读取。这组文件无需导入模型目录。", "執行設定在啟動時讀取。這組檔案無須匯入模型目錄。", "Runtime settings take effect at startup. This file set has no catalog to publish.", "Laufzeiteinstellungen gelten ab dem Start. Diese Dateien enthalten keinen zu importierenden Katalog.", "Los ajustes se leen al iniciar. Estos archivos no declaran un catálogo para importar.", "Les paramètres sont lus au démarrage. Ces fichiers ne déclarent aucun catalogue à importer.", "実行設定は起動時に読み込まれます。インポートするカタログはありません。", "실행 설정은 시작할 때 읽습니다. 가져올 카탈로그가 없습니다.", "Настройки читаются при запуске. В этих файлах нет каталога для импорта."],
+        UiText::FileNotSaved => ["未保存文件。", "未儲存檔案。", "No file saved.", "Keine Datei gespeichert.", "No se guardó ningún archivo.", "Aucun fichier enregistré.", "ファイルは保存されませんでした。", "파일을 저장하지 않았습니다.", "Файл не сохранён."],
+        UiText::ApplyConfigHelp => [
+            "读取指定的 JSON 或 JSONC 文件，保存 llm.connections 并选择 llm.default_model。省略路径时读取 ~/.nola/config.json 或 ~/.nola/config.jsonc。",
+            "讀取指定的 JSON 或 JSONC 檔案，儲存 llm.connections 並選取 llm.default_model。省略路徑時讀取 ~/.nola/config.json 或 ~/.nola/config.jsonc。",
+            "Save llm.connections and select llm.default_model from a JSON or JSONC file. The default file is ~/.nola/config.json or ~/.nola/config.jsonc.",
+            "llm.connections speichern und llm.default_model aus einer JSON- oder JSONC-Datei auswählen. Standarddatei: ~/.nola/config.json oder ~/.nola/config.jsonc.",
+            "Guarda llm.connections y selecciona llm.default_model desde JSON o JSONC. Por defecto se usa ~/.nola/config.json o ~/.nola/config.jsonc.",
+            "Enregistre llm.connections et sélectionne llm.default_model depuis un fichier JSON ou JSONC. Par défaut, utilise ~/.nola/config.json ou ~/.nola/config.jsonc.",
+            "JSON または JSONC から llm.connections を保存し、llm.default_model を選択します。既定のファイルは ~/.nola/config.json または ~/.nola/config.jsonc です。",
+            "JSON 또는 JSONC 파일에서 llm.connections를 저장하고 llm.default_model을 선택합니다. 기본 파일은 ~/.nola/config.json 또는 ~/.nola/config.jsonc입니다.",
+            "Сохраняет llm.connections и выбирает llm.default_model из файла JSON или JSONC. По умолчанию используется ~/.nola/config.json или ~/.nola/config.jsonc.",
+        ],
+        UiText::LocateModelConfig => [
+            "未找到默认配置。请指定一个 JSON 或 JSONC 配置文件：",
+            "找不到預設設定。請指定一個 JSON 或 JSONC 設定檔：",
+            "No default configuration found. Specify a JSON or JSONC configuration file:",
+            "Keine Standardkonfiguration gefunden. Eine JSON- oder JSONC-Datei angeben:",
+            "No se encontró la configuración predeterminada. Indica un archivo JSON o JSONC:",
+            "Configuration par défaut introuvable. Indiquez un fichier JSON ou JSONC :",
+            "既定の設定が見つかりません。JSON または JSONC の設定ファイルを指定してください。",
+            "기본 설정이 없습니다. JSON 또는 JSONC 설정 파일을 지정하세요.",
+            "Конфигурация по умолчанию не найдена. Укажите файл JSON или JSONC:",
+        ],
+        UiText::CheckModelConfigFile => [
+            "请检查文件路径和读取权限。",
+            "請檢查檔案路徑與讀取權限。",
+            "Check the file path and read permissions.",
+            "Dateipfad und Leserechte prüfen.",
+            "Comprueba la ruta y los permisos de lectura.",
+            "Vérifiez le chemin et les droits de lecture.",
+            "ファイルのパスと読み取り権限を確認してください。",
+            "파일 경로와 읽기 권한을 확인하세요.",
+            "Проверьте путь к файлу и права чтения.",
+        ],
+        UiText::CheckModelConfigSize => [
+            "请选择不超过 2 MiB 的普通文件。",
+            "請選擇不超過 2 MiB 的一般檔案。",
+            "Choose a regular file no larger than 2 MiB.",
+            "Eine reguläre Datei von höchstens 2 MiB wählen.",
+            "Selecciona un archivo normal de hasta 2 MiB.",
+            "Choisissez un fichier ordinaire de 2 Mio au maximum.",
+            "2 MiB 以下の通常ファイルを選択してください。",
+            "2 MiB 이하의 일반 파일을 선택하세요.",
+            "Выберите обычный файл размером не более 2 МиБ.",
+        ],
+        UiText::CheckModelConfigJson => [
+            "请检查文件中的 JSON 或 JSONC 语法。",
+            "請檢查檔案中的 JSON 或 JSONC 語法。",
+            "Check the JSON or JSONC syntax in this file.",
+            "Die JSON- oder JSONC-Syntax in dieser Datei prüfen.",
+            "Revisa la sintaxis JSON o JSONC del archivo.",
+            "Vérifiez la syntaxe JSON ou JSONC du fichier.",
+            "このファイルの JSON または JSONC 構文を確認してください。",
+            "파일의 JSON 또는 JSONC 구문을 확인하세요.",
+            "Проверьте синтаксис JSON или JSONC в файле.",
+        ],
+        UiText::AddModelConfigLlm => [
+            "请在文件顶层添加 llm 对象。",
+            "請在檔案頂層加入 llm 物件。",
+            "missing llm object at the top level of this file",
+            "Das Objekt llm auf der obersten Ebene der Datei ergänzen.",
+            "Añade el objeto llm en la raíz del archivo.",
+            "Ajoutez l’objet llm à la racine du fichier.",
+            "ファイルの最上位に llm オブジェクトを追加してください。",
+            "파일의 최상위에 llm 객체를 추가하세요.",
+            "Добавьте объект llm на верхнем уровне файла.",
+        ],
         UiText::ApplyConfigAgain => [
             "保存配置后重新运行", "儲存設定後重新執行", "Save the configuration, then rerun", "Konfiguration speichern und erneut ausführen",
             "Guarda la configuración y vuelve a ejecutar", "Enregistrez la configuration et relancez", "設定を保存し、次のコマンドを再実行してください。",
             "설정을 저장한 후 다시 실행하세요.", "Сохраните конфигурацию и повторите команду",
         ],
-        UiText::PermissionDigitHint => ["1/2 直接应用", "1/2 直接套用", "1/2 apply immediately", "1/2 sofort anwenden", "1/2 aplicar de inmediato", "1/2 appliquer directement", "1/2 ですぐに適用", "1/2 즉시 적용", "1/2 применить сразу"],
+        UiText::PermissionDigitHint => ["↑↓ 或 1/2 选择 · Enter 应用 · Esc 取消", "↑↓ 或 1/2 選擇 · Enter 套用 · Esc 取消", "↑↓ or 1/2 select · Enter applies · Esc cancels", "↑↓ oder 1/2 wählen · Enter übernehmen · Esc abbrechen", "↑↓ o 1/2 elegir · Intro aplicar · Esc cancelar", "↑↓ ou 1/2 choisir · Entrée appliquer · Échap annuler", "↑↓ または 1/2 選択 · Enter 適用 · Esc キャンセル", "↑↓ 또는 1/2 선택 · Enter 적용 · Esc 취소", "↑↓ или 1/2 выбрать · Enter применить · Esc отмена"],
         UiText::PermissionScrollHint => ["PgUp/PgDn 翻页 · ↑/↓ 选择", "PgUp/PgDn 翻頁 · ↑/↓ 選擇", "PgUp/PgDn: details · ↑/↓: select", "PgUp/PgDn blättern · ↑/↓ wählen", "PgUp/PgDn detalles · ↑/↓ elegir", "PgUp/PgDn détails · ↑/↓ choisir", "PgUp/PgDn 詳細 · ↑/↓ 選択", "PgUp/PgDn 상세 · ↑/↓ 선택", "PgUp/PgDn детали · ↑/↓ выбор"],
         UiText::HelpSources => [
             "管理数据源：/sources [list|add|test|remove|enable|disable|inherit]",
@@ -782,6 +914,29 @@ fn ui_text_for(language: Language, key: UiText) -> &'static str {
             "ルームに送信します。@ と Tab でメンバーを選び、省略すると自動で割り当てます。",
             "방에 메시지를 보냅니다. @ 입력 후 Tab으로 멤버를 선택하거나 @를 생략해 자동으로 배정합니다.",
             "Отправить сообщение в комнату. Введите @ и нажмите Tab для выбора участника или опустите @ для автоназначения.",
+        ],
+        UiText::DeclineQuestion => [
+            "拒绝回答", "拒絕回答", "Decline to answer", "Antwort ablehnen", "Rechazar la pregunta",
+            "Refuser de répondre", "回答を辞退", "답변 거절", "Отказаться от ответа",
+        ],
+        UiText::QuestionDeferred => [
+            "问题已保留，输入 /questions 继续回答。", "已保留問題，輸入 /questions 繼續回答。",
+            "Question saved. Use /questions to answer it.", "Frage zurückgestellt. Mit /questions antworten.",
+            "Pregunta pendiente. Usa /questions para responder.", "Question en attente. Tapez /questions pour répondre.",
+            "質問は保留中です。/questions で回答できます。", "질문을 보류했습니다. /questions 로 답변하세요.",
+            "Вопрос отложен. Введите /questions, чтобы ответить.",
+        ],
+        UiText::QuestionKeyHint => [
+            "↑↓ 选择 · Enter 确认 · Esc 稍后回答", "↑↓ 選擇 · Enter 確認 · Esc 稍後回答",
+            "↑↓ select · Enter to confirm · Esc to answer later", "↑↓ wählen · Enter bestätigen · Esc später antworten",
+            "↑↓ elegir · Intro confirmar · Esc responder después", "↑↓ choisir · Entrée confirmer · Échap répondre plus tard",
+            "↑↓ 選択 · Enter 確定 · Esc 後で回答", "↑↓ 선택 · Enter 확인 · Esc 나중에 답변",
+            "↑↓ выбор · Enter подтвердить · Esc ответить позже",
+        ],
+        UiText::QuestionLineHint => [
+            "/decline 拒绝回答 · q 稍后回答", "/decline 拒絕回答 · q 稍後回答", "/decline to decline · q to answer later",
+            "/decline ablehnen · q später antworten", "/decline rechazar · q responder después", "/decline refuser · q répondre plus tard",
+            "/decline 辞退 · q 後で回答", "/decline 거절 · q 나중에 답변", "/decline отказаться · q ответить позже",
         ],
         UiText::NoPendingQuestions => [
             "当前没有待回答的问题。", "目前沒有待回答的問題。", "No pending questions.",
@@ -903,6 +1058,14 @@ fn ui_text_for(language: Language, key: UiText) -> &'static str {
         UiText::Completed => ["已完成", "已完成", "Completed", "Abgeschlossen", "Completada", "Terminée", "完了", "완료됨", "Завершено"],
         UiText::Failed => ["失败", "失敗", "Failed", "Fehlgeschlagen", "Fallida", "Échec", "失敗", "실패", "Ошибка"],
         UiText::GoalIntro => ["把要完成的结果写在下方，例如：检查 CLI 交互，修复问题并运行测试。Nola 会持续推进；需要你补充信息或授权时会暂停。", "請在下方填寫要達成的結果，例如：檢查 CLI 互動、修正問題並執行測試。Nola 會持續推進；需要您補充資訊或授權時會暫停。", "Describe the result below, for example: review the CLI, fix interaction issues, and run tests. Nola keeps working and pauses when it needs your input or permission.", "Beschreibe unten das Ergebnis. Nola arbeitet weiter und pausiert bei Rückfragen oder nötiger Erlaubnis.", "Describe abajo el resultado. Nola continúa y se detiene cuando necesita información o permiso.", "Décrivez le résultat ci-dessous. Nola continue et s’arrête si une précision ou une autorisation est nécessaire.", "下に達成したい結果を入力してください。Nola は作業を進め、確認や権限が必要な場合に一時停止します。", "아래에 달성할 결과를 입력하세요(예: CLI 상호작용 검토, 문제 수정 및 테스트 실행). Nola가 계속 진행하며 입력이나 권한이 필요할 때 일시 중지합니다.", "Опишите результат ниже. Nola продолжит работу и остановится, если нужны уточнения или разрешение."],
+        UiText::SlashMenuKeys => ["↑↓ 选择 · Tab 补全 · Enter 执行 · Esc 收起", "↑↓ 選擇 · Tab 補全 · Enter 執行 · Esc 收起", "↑↓ select · Tab complete · Enter run · Esc close", "↑↓ wählen · Tab ergänzen · Enter ausführen · Esc schließen", "↑↓ elegir · Tab completar · Intro ejecutar · Esc cerrar", "↑↓ choisir · Tab compléter · Entrée exécuter · Échap fermer", "↑↓ 選択 · Tab 補完 · Enter 実行 · Esc 閉じる", "↑↓ 선택 · Tab 완성 · Enter 실행 · Esc 닫기", "↑↓ выбор · Tab дополнить · Enter выполнить · Esc закрыть"],
+        UiText::MentionPickKeys => ["↑↓ 选择 · Enter 插入", "↑↓ 選擇 · Enter 插入", "↑↓ select · Enter insert", "↑↓ auswählen · Enter einfügen", "↑↓ elegir · Intro insertar", "↑↓ choisir · Entrée insérer", "↑↓ 選択 · Enter 挿入", "↑↓ 선택 · Enter 삽입", "↑↓ выбор · Enter вставить"],
+        UiText::HelpMoreCommands => ["/help all 查看全部 · /help 命令名 查看用法", "/help all 查看全部 · /help 指令名 查看用法", "/help all for every command · /help <command> for details", "/help all für alle Befehle · /help <Befehl> für Details", "/help all para ver todo · /help <comando> para detalles", "/help all pour tout afficher · /help <commande> pour les détails", "/help all ですべて表示 · /help <コマンド> で使い方を表示", "/help all 전체 보기 · /help <명령> 사용법", "/help all — все команды · /help <команда> — подробности"],
+        UiText::HelpEdit => ["编辑并重发本会话中的消息", "編輯並重送此對話中的訊息", "Edit and resend a message in this conversation", "Nachricht bearbeiten und erneut senden", "Editar y reenviar un mensaje", "Modifier et renvoyer un message", "会話のメッセージを編集して再送", "대화의 메시지를 수정하고 다시 보내기", "Изменить и отправить сообщение заново"],
+        UiText::HelpCancelEdit => ["取消编辑，返回对话", "取消編輯並返回對話", "Cancel editing and return to chat", "Bearbeitung abbrechen", "Cancelar la edición", "Annuler la modification", "編集を取り消して会話に戻る", "편집 취소 후 대화로 돌아가기", "Отменить редактирование"],
+        UiText::EditInputHint => ["编辑已发送消息 · Enter 重发 · Esc 取消", "編輯已傳送訊息 · Enter 重送 · Esc 取消", "Editing sent message · Enter to resend · Esc to cancel", "Nachricht bearbeiten · Enter erneut senden · Esc abbrechen", "Editar mensaje · Intro para reenviar · Esc para cancelar", "Modifier le message · Entrée pour renvoyer · Échap pour annuler", "送信済みメッセージを編集 · Enter で再送 · Esc でキャンセル", "보낸 메시지 편집 · Enter로 다시 보내기 · Esc로 취소", "Редактирование · Enter для отправки · Esc для отмены"],
+        UiText::NoActiveEdit => ["当前没有正在编辑的消息。", "目前沒有正在編輯的訊息。", "No message is being edited.", "Keine Nachricht wird bearbeitet.", "No hay ningún mensaje en edición.", "Aucun message en cours de modification.", "編集中のメッセージはありません。", "편집 중인 메시지가 없습니다.", "Сейчас ни одно сообщение не редактируется."],
+        UiText::NoMessageToEdit => ["此会话还没有可编辑的消息。", "此對話還沒有可編輯的訊息。", "No saved conversation to edit.", "Kein gespeichertes Gespräch zum Bearbeiten.", "No hay conversación guardada para editar.", "Aucune conversation enregistrée à modifier.", "編集できる会話がありません。", "편집할 저장된 대화가 없습니다.", "Нет сохранённого диалога для редактирования."],
         UiText::GoalInputHint => ["目标 · Enter 开始 · Alt+Enter 换行 · Esc 返回对话", "目標 · Enter 開始 · Alt+Enter 換行 · Esc 返回對話", "Goal · Enter start · Alt+Enter newline · Esc return to chat", "Ziel · Enter starten · Alt+Enter neue Zeile · Esc zurück", "Objetivo · Enter iniciar · Alt+Enter nueva línea · Esc volver", "Objectif · Entrée démarrer · Alt+Entrée nouvelle ligne · Échap retour", "目標 · Enter 開始 · Alt+Enter 改行 · Esc 会話に戻る", "목표 · Enter 시작 · Alt+Enter 줄 바꿈 · Esc 대화로 돌아가기", "Цель · Enter начать · Alt+Enter новая строка · Esc назад"],
         UiText::GoalPlaceholder => ["你希望 Nola 完成什么？", "您希望 Nola 完成什麼？", "What should Nola accomplish?", "Was soll Nola erledigen?", "¿Qué debe completar Nola?", "Que doit accomplir Nola ?", "Nola に何を達成してほしいですか？", "Nola가 무엇을 완료하길 원하시나요?", "Что должна выполнить Nola?"],
         UiText::GoalLifecycle => ["Nola 会持续推进，需要你提供信息或授权时暂停。/goal 查看状态 · /goal pause 暂停 · /goal resume 继续 · /goal off 结束目标", "Nola 會持續推進，需要您提供資訊或授權時暫停。/goal 檢視狀態 · /goal pause 暫停 · /goal resume 繼續 · /goal off 結束目標", "Nola keeps working and pauses for input or permission. /goal status · /goal pause · /goal resume · /goal off", "Nola arbeitet weiter und pausiert bei Rückfragen. /goal status · /goal pause · /goal resume · /goal off", "Nola continúa y se detiene para pedir información. /goal status · /goal pause · /goal resume · /goal off", "Nola continue et s’arrête pour une précision. /goal status · /goal pause · /goal resume · /goal off", "確認が必要な場合は一時停止します。/goal status · /goal pause · /goal resume · /goal off", "Nola가 계속 진행하며 입력이나 권한이 필요할 때 일시 중지합니다. /goal status · /goal pause · /goal resume · /goal off", "Nola продолжает работу и останавливается для уточнений. /goal status · /goal pause · /goal resume · /goal off"],
@@ -1440,6 +1603,7 @@ pub fn help_text_for(language: Language) -> &'static str {
   nola server [选项]
   nola server --host 127.0.0.1 --port <port> --tailcat-ingress [--tailcat-helper <path> --tailcat-helper-sha256 <sha256>]
   nola sessions
+  nola config [show | edit [path] | check [path] | apply [path] [--dry-run] | example]
   nola room list | directory | create <title> | show <id> | join <room> <agent> | send <room> <text> [--to <participant>] | recover <room>
   nola skills [list|find <name-or-github-url>|install <github-url>|enable <id>|disable <id>]
   nola mcp [list|add <name> <target> [args...]|remove <id>|enable <id>|disable <id>]
@@ -1483,7 +1647,7 @@ pub fn help_text_for(language: Language) -> &'static str {
   --no-save                   本次运行不保存到会话
   --output PATH               init 输出 NOLA.md 路径；wiki 输出 wiki 路径
   --force                     覆盖已存在的 init/wiki 输出文件
-  --dry-run                   预览 init/wiki 输出但不写文件
+  --dry-run                   预览 init/wiki 输出或 config apply 的模型目录
   --host HOST                 web 服务监听地址，默认 127.0.0.1
   --port PORT                 web 服务端口，默认 5001
   --web-root PATH             web 资源目录，默认优先 <project>/apps/web，其次 <project>/web
@@ -1523,6 +1687,7 @@ pub fn help_text_for(language: Language) -> &'static str {
   nola server [選項]
   nola server --host 127.0.0.1 --port <port> --tailcat-ingress [--tailcat-helper <path> --tailcat-helper-sha256 <sha256>]
   nola sessions
+  nola config [show | edit [path] | check [path] | apply [path] [--dry-run] | example]
   nola room list | directory | create <title> | show <id> | join <room> <agent> | send <room> <text> [--to <participant>] | recover <room>
   nola skills [list|find <name-or-github-url>|install <github-url>|enable <id>|disable <id>]
   nola mcp [list|add <name> <target> [args...]|remove <id>|enable <id>|disable <id>]
@@ -1566,7 +1731,7 @@ pub fn help_text_for(language: Language) -> &'static str {
   --no-save                   本次執行不儲存至工作階段
   --output PATH               init 輸出 NOLA.md 路徑；wiki 輸出 wiki 路徑
   --force                     覆蓋已存在的 init/wiki 輸出檔案
-  --dry-run                   預覽 init/wiki 輸出但不寫入檔案
+  --dry-run                   預覽 init/wiki 輸出或 config apply 的模型目錄
   --host HOST                 web 伺服器監聽位址，預設 127.0.0.1
   --port PORT                 web 伺服器連接埠，預設 5001
   --web-root PATH             web 資源目錄，預設依序尋找 <project>/apps/web 與 <project>/web
@@ -1606,6 +1771,7 @@ Usage:
   nola server [options]
   nola server --host 127.0.0.1 --port <port> --tailcat-ingress [--tailcat-helper <path> --tailcat-helper-sha256 <sha256>]
   nola sessions
+  nola config [show | edit [path] | check [path] | apply [path] [--dry-run] | example]
   nola room list | directory | create <title> | show <id> | join <room> <agent> | send <room> <text> [--to <participant>] | recover <room>
   nola skills [list|find <name-or-github-url>|install <github-url>|enable <id>|disable <id>]
   nola mcp [list|add <name> <target> [args...]|remove <id>|enable <id>|disable <id>]
@@ -1649,7 +1815,7 @@ Options:
   --no-save               Do not save this run to a session
   --output PATH           init NOLA.md output path; wiki output path
   --force                 Overwrite existing init/wiki output files
-  --dry-run               Preview init/wiki output without writing files
+  --dry-run               Preview init/wiki output or the config apply catalog
   --host HOST             Web server bind host, default 127.0.0.1
   --port PORT             Web server port, default 5001
   --web-root PATH         Web asset root, default <project>/apps/web or <project>/web
@@ -1689,6 +1855,7 @@ Verwendung:
   nola server [Optionen]
   nola server --host 127.0.0.1 --port <port> --tailcat-ingress [--tailcat-helper <path> --tailcat-helper-sha256 <sha256>]
   nola sessions
+  nola config [show | edit [path] | check [path] | apply [path] [--dry-run] | example]
   nola room list | directory | create <title> | show <id> | join <room> <agent> | send <room> <text> [--to <participant>] | recover <room>
   nola skills [list|find <name-or-github-url>|install <github-url>|enable <id>|disable <id>]
   nola mcp [list|add <name> <target> [args...]|remove <id>|enable <id>|disable <id>]
@@ -1732,7 +1899,7 @@ Optionen:
   --no-save                   Diesen Lauf nicht als Sitzung speichern
   --output PATH               Ausgabepfad für init NOLA.md beziehungsweise wiki
   --force                     Vorhandene init/wiki-Ausgabedateien überschreiben
-  --dry-run                   init/wiki-Ausgabe nur anzeigen, ohne Dateien zu schreiben
+  --dry-run                   Vorschau für init/wiki oder den Katalog von config apply
   --host HOST                 Bind-Adresse des Webservers, Standard 127.0.0.1
   --port PORT                 Port des Webservers, Standard 5001
   --web-root PATH             Stammverzeichnis der Webressourcen, Standard <project>/apps/web oder <project>/web
@@ -1771,6 +1938,7 @@ Uso:
   nola server [opciones]
   nola server --host 127.0.0.1 --port <port> --tailcat-ingress [--tailcat-helper <path> --tailcat-helper-sha256 <sha256>]
   nola sessions
+  nola config [show | edit [path] | check [path] | apply [path] [--dry-run] | example]
   nola room list | directory | create <title> | show <id> | join <room> <agent> | send <room> <text> [--to <participant>] | recover <room>
   nola skills [list|find <name-or-github-url>|install <github-url>|enable <id>|disable <id>]
   nola mcp [list|add <name> <target> [args...]|remove <id>|enable <id>|disable <id>]
@@ -1814,7 +1982,7 @@ Opciones:
   --no-save                   No guardar esta ejecución en una sesión
   --output PATH               Ruta de salida de init NOLA.md o de wiki
   --force                     Sobrescribir los archivos de salida de init/wiki
-  --dry-run                   Previsualizar init/wiki sin escribir archivos
+  --dry-run                   Previsualizar init/wiki o el catálogo de config apply
   --host HOST                 Dirección del servidor web, predeterminada 127.0.0.1
   --port PORT                 Puerto del servidor web, predeterminado 5001
   --web-root PATH             Raíz de recursos web, predeterminada <project>/apps/web o <project>/web
@@ -1853,6 +2021,7 @@ Utilisation :
   nola server [options]
   nola server --host 127.0.0.1 --port <port> --tailcat-ingress [--tailcat-helper <path> --tailcat-helper-sha256 <sha256>]
   nola sessions
+  nola config [show | edit [path] | check [path] | apply [path] [--dry-run] | example]
   nola room list | directory | create <title> | show <id> | join <room> <agent> | send <room> <text> [--to <participant>] | recover <room>
   nola skills [list|find <name-or-github-url>|install <github-url>|enable <id>|disable <id>]
   nola mcp [list|add <name> <target> [args...]|remove <id>|enable <id>|disable <id>]
@@ -1896,7 +2065,7 @@ Options :
   --no-save                   Ne pas enregistrer cette exécution dans une session
   --output PATH               Chemin de sortie de init NOLA.md ou du wiki
   --force                     Remplacer les fichiers de sortie init/wiki existants
-  --dry-run                   Prévisualiser init/wiki sans écrire de fichier
+  --dry-run                   Prévisualiser init/wiki ou le catalogue de config apply
   --host HOST                 Adresse d'écoute du serveur web, 127.0.0.1 par défaut
   --port PORT                 Port du serveur web, 5001 par défaut
   --web-root PATH             Racine des ressources web, <project>/apps/web ou <project>/web par défaut
@@ -1935,6 +2104,7 @@ Fichiers de configuration :
   nola server [オプション]
   nola server --host 127.0.0.1 --port <port> --tailcat-ingress [--tailcat-helper <path> --tailcat-helper-sha256 <sha256>]
   nola sessions
+  nola config [show | edit [path] | check [path] | apply [path] [--dry-run] | example]
   nola room list | directory | create <title> | show <id> | join <room> <agent> | send <room> <text> [--to <participant>] | recover <room>
   nola skills [list|find <name-or-github-url>|install <github-url>|enable <id>|disable <id>]
   nola mcp [list|add <name> <target> [args...]|remove <id>|enable <id>|disable <id>]
@@ -1978,7 +2148,7 @@ Fichiers de configuration :
   --no-save                   この実行をセッションに保存しない
   --output PATH               init の NOLA.md または wiki の出力先
   --force                     既存の init/wiki 出力ファイルを上書き
-  --dry-run                   ファイルを書かずに init/wiki 出力をプレビュー
+  --dry-run                   init/wiki の出力または config apply のカタログをプレビュー
   --host HOST                 Web サーバーの待受アドレス。既定 127.0.0.1
   --port PORT                 Web サーバーのポート。既定 5001
   --web-root PATH             Web リソースのルート。既定 <project>/apps/web または <project>/web
@@ -2017,6 +2187,7 @@ Fichiers de configuration :
   nola server [옵션]
   nola server --host 127.0.0.1 --port <port> --tailcat-ingress [--tailcat-helper <path> --tailcat-helper-sha256 <sha256>]
   nola sessions
+  nola config [show | edit [path] | check [path] | apply [path] [--dry-run] | example]
   nola room list | directory | create <title> | show <id> | join <room> <agent> | send <room> <text> [--to <participant>] | recover <room>
   nola skills [list|find <name-or-github-url>|install <github-url>|enable <id>|disable <id>]
   nola mcp [list|add <name> <target> [args...]|remove <id>|enable <id>|disable <id>]
@@ -2060,7 +2231,7 @@ Fichiers de configuration :
   --no-save                   이번 실행을 세션에 저장하지 않음
   --output PATH               init NOLA.md 또는 wiki 출력 경로
   --force                     기존 init/wiki 출력 파일 덮어쓰기
-  --dry-run                   파일을 쓰지 않고 init/wiki 출력 미리보기
+  --dry-run                   init/wiki 출력 또는 config apply 카탈로그 미리보기
   --host HOST                 웹 서버 바인딩 호스트 (기본값: 127.0.0.1)
   --port PORT                 웹 서버 포트 (기본값: 5001)
   --web-root PATH             웹 리소스 루트 (기본값: <project>/apps/web 또는 <project>/web)
@@ -2099,6 +2270,7 @@ Fichiers de configuration :
   nola server [параметры]
   nola server --host 127.0.0.1 --port <port> --tailcat-ingress [--tailcat-helper <path> --tailcat-helper-sha256 <sha256>]
   nola sessions
+  nola config [show | edit [path] | check [path] | apply [path] [--dry-run] | example]
   nola room list | directory | create <title> | show <id> | join <room> <agent> | send <room> <text> [--to <participant>] | recover <room>
   nola skills [list|find <name-or-github-url>|install <github-url>|enable <id>|disable <id>]
   nola mcp [list|add <name> <target> [args...]|remove <id>|enable <id>|disable <id>]
@@ -2142,7 +2314,7 @@ Fichiers de configuration :
   --no-save                   Не сохранять этот запуск в сеанс
   --output PATH               Путь вывода init NOLA.md или wiki
   --force                     Перезаписать существующие файлы init/wiki
-  --dry-run                   Предпросмотр init/wiki без записи файлов
+  --dry-run                   Предпросмотр init/wiki или каталога для config apply
   --host HOST                 Адрес веб-сервера, по умолчанию 127.0.0.1
   --port PORT                 Порт веб-сервера, по умолчанию 5001
   --web-root PATH             Корень веб-ресурсов, по умолчанию <project>/apps/web или <project>/web

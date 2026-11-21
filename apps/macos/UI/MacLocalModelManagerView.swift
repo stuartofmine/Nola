@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 // File Overview:
-// - Purpose: Native desktop management for the shared Apple-client MLX model cache.
+// - Purpose: Manages the native desktop model library and local inference engines.
 
 import AppKit
 import Combine
@@ -20,9 +20,13 @@ struct MacLocalModelManagerView: View {
     @StateObject private var editing: MacLocalModelEditingState
     @State private var deletionTarget: ModelDownloader.ModelType?
     @State private var errorMessage: String?
+    @Environment(\.openWindow) private var openWindow
+    @State private var openingChatID: String?
     @State private var selectedModelID: String
     @State private var startingModel: ModelDownloader.ModelType?
     @State private var runtimeRefreshID = UUID()
+    @State private var installedProfiles: [MacLocalModelProfile] = []
+    @State private var removingID: String?
     @State private var dynamicDeletionTarget: MacLocalModelProfile?
     private var searchText: String { editing.searchText }
     private var inspectedModelID: String? {
@@ -33,20 +37,28 @@ struct MacLocalModelManagerView: View {
         get { editing.showsCompactDetail }
         nonmutating set { editing.showsCompactDetail = newValue }
     }
+    @ObservedObject private var acquisition: MacLocalModelAcquisition
+    @AppStorage("nola.local-model.download-source") private var hubSource = "huggingface"
+    @AppStorage("nola.local-model.engine") private var hubEngine = MacLocalInferenceEngine.defaultForMac
+    @State private var showsAcquisition = false
     @State private var showsDownloadSettings = false
     @State private var showsCancelDownloadConfirmation = false
     @State private var parameterRoute: MacModelParametersRoute?
     let navigationAction: (() -> Void)?
     let showsHeader: Bool
+    let openConversation: ((String) -> Void)?
 
     init(navigationAction: (() -> Void)? = nil, showsHeader: Bool = true,
          downloader: ModelDownloader? = nil,
          preference: MacDefaultChatModelPresentation? = nil,
-         editingState: MacLocalModelEditingState? = nil) {
+         editingState: MacLocalModelEditingState? = nil,
+         acquisition: MacLocalModelAcquisition? = nil, openConversation: ((String) -> Void)? = nil) {
         self.navigationAction = navigationAction
         self.showsHeader = showsHeader
         _downloader = StateObject(wrappedValue: downloader ?? ModelDownloader(logger: Logger.shared))
         self.preference = preference ?? MacDefaultChatModelPresentation()
+        self.acquisition = acquisition ?? .shared
+        self.openConversation = openConversation
         _editing = StateObject(wrappedValue: editingState ?? MacLocalModelEditingState())
         _selectedModelID = State(initialValue: MacLocalModelConfigurationStore.shared.selectedModelID)
     }
@@ -101,6 +113,24 @@ struct MacLocalModelManagerView: View {
             preference.reload()
         }
         .onReceive(NotificationCenter.default.publisher(for: .macDefaultChatModelDidChange)) { _ in preference.reload() }
+        .sheet(isPresented: $showsAcquisition) {
+            MacModelAcquisitionSheet(acquisition: acquisition, source: $hubSource)
+        }
+        .onChange(of: acquisition.phase) { _, phase in
+            guard case .installed(let id) = phase else { return }
+            installedProfiles = MacLocalModelProfile.installed
+            inspectedModelID = id
+            showsCompactDetail = true
+            editing.searchText = ""
+            showsAcquisition = false
+            runtimeRefreshID = UUID()
+            preference.reload()
+        }
+        .onAppear {
+            downloader.preferredSource = hubSource == "modelscope" ? .modelscope : .huggingface
+            installedProfiles = MacLocalModelProfile.installed
+        }
+        .onChange(of: hubSource) { _, value in downloader.preferredSource = value == "modelscope" ? .modelscope : .huggingface }
         .onChange(of: downloader.downloadedModels) { _, _ in preference.reload() }
         .sheet(isPresented: Binding(
             get: { parameterRoute != nil },
@@ -134,17 +164,27 @@ struct MacLocalModelManagerView: View {
             Button(String(localized: "Cancel", table: "ModelCenter"), role: .cancel) { dynamicDeletionTarget = nil }
             Button(String(localized: "Delete", table: "ModelCenter"), role: .destructive) {
                 guard let profile = dynamicDeletionTarget else { return }
-                do {
-                    try MacLocalModelProfile.removeInstalled(profile)
-                    if selectedModelID == profile.id {
-                        let fallback = MacLocalModelProfile.recommended
-                        selectedModelID = fallback.id
-                        try MacLocalModelConfigurationStore.shared.select(fallback)
-                    }
-                }
-                catch { errorMessage = error.localizedDescription }
                 dynamicDeletionTarget = nil
-                runtimeRefreshID = UUID()
+                removingID = profile.id
+                Task {
+                    defer {
+                        removingID = nil
+                        installedProfiles = MacLocalModelProfile.installed
+                        MacLocalModelConfigurationStore.shared.invalidateReadinessCache()
+                        preference.reload()
+                    }
+                    do {
+                        try await MacModelAcquisitionClient().remove(profile.id)
+                        _ = try preference.store.application.deleteModelProfile(profile.id,
+                            deletedAtMs: Int64(Date().timeIntervalSince1970 * 1000))
+                        if selectedModelID == profile.id {
+                            let fallback = MacLocalModelProfile.recommended
+                            try MacLocalModelConfigurationStore.shared.select(fallback)
+                            selectedModelID = fallback.id
+                        }
+                        inspectedModelID = nil
+                    } catch { errorMessage = error.localizedDescription }
+                }
             }
         } message: {
             Text(String(localized: "The downloaded model files will be removed from this Mac.", table: "ModelCenter"))
@@ -170,7 +210,7 @@ struct MacLocalModelManagerView: View {
     }
 
     private var visibleInstalledModels: [MacLocalModelProfile] {
-        MacLocalModelProfile.installed.filter {
+        installedProfiles.filter {
             searchText.isEmpty || $0.displayName.localizedCaseInsensitiveContains(searchText)
                 || $0.id.localizedCaseInsensitiveContains(searchText)
         }
@@ -183,10 +223,17 @@ struct MacLocalModelManagerView: View {
                 TextField(String(localized: "Search models", table: "ModelCenter"), text: $editing.searchText)
                     .textFieldStyle(.plain)
                     .accessibilityIdentifier("local-model-search")
-                refreshButton
+                if !showsHeader { refreshButton }
             }
             .padding(14)
             Divider()
+            Button { showsAcquisition = true } label: {
+                Label(String(localized: "Download a model", table: "ModelCenter"), systemImage: "arrow.down.circle")
+                    .frame(maxWidth: .infinity, alignment: .leading)
+            }
+            .buttonStyle(.borderless)
+            .accessibilityIdentifier("local-acquire-open")
+            .padding(.horizontal, 14).padding(.vertical, 8)
             ScrollView {
                 LazyVStack(alignment: .leading, spacing: 6) {
                     ForEach(visibleBuiltInModels, id: \.rawValue) { model in
@@ -231,7 +278,7 @@ struct MacLocalModelManagerView: View {
     private var detailModelID: String { inspectedModelID ?? selectedModelID }
 
     private func localModelRow(id: String, name: String, downloaded: Bool) -> some View {
-        let profile = MacLocalModelProfile.resolve(id)
+        let profile = (MacLocalModelProfile.all + installedProfiles).first { $0.id == id }
         let running = profile.map(MacMLXOpenAIService.shared.isRunning) ?? false
         let loading = MacMLXOpenAIService.shared.status.modelID == id
             && MacMLXOpenAIService.shared.status.isStarting
@@ -308,8 +355,8 @@ struct MacLocalModelManagerView: View {
                         Label(String(localized: "Recommended for this Mac", table: "ModelCenter"), systemImage: "sparkles")
                             .font(.callout).foregroundStyle(.secondary)
                     }
-                } else if let profile = MacLocalModelProfile.installed.first(where: { $0.id == detailModelID }) {
-                    installedModelCard(profile)
+                } else if let profile = installedProfiles.first(where: { $0.id == detailModelID }) {
+                    installedModelCard(profile).disabled(removingID == profile.id)
                 } else {
                     Text(String(localized: "Select a model to view its details", table: "ModelCenter"))
                         .foregroundStyle(.secondary)
@@ -331,6 +378,7 @@ struct MacLocalModelManagerView: View {
 
     private var refreshButton: some View {
         Button {
+            installedProfiles = MacLocalModelProfile.installed
             downloader.refreshDownloadedModelsAsync()
         } label: {
             Image(systemName: "arrow.clockwise")
@@ -338,6 +386,7 @@ struct MacLocalModelManagerView: View {
         .macToolbarIcon()
         .help(String(localized: "Refresh", table: "ModelCenter"))
         .accessibilityLabel(String(localized: "Refresh", table: "ModelCenter"))
+        .accessibilityIdentifier("local-model-refresh")
         .disabled(downloader.isDownloading)
     }
 
@@ -460,7 +509,7 @@ struct MacLocalModelManagerView: View {
 
     private func modelCard(_ model: ModelDownloader.ModelType) -> some View {
         let downloaded = downloader.isModelDownloaded(model)
-        let profile = MacLocalModelProfile.resolve(model.rawValue)
+        let profile = MacLocalModelProfile.all.first(where: { $0.id == model.rawValue })
         let running = profile.map(MacMLXOpenAIService.shared.isRunning) ?? false
         return VStack(alignment: .leading, spacing: 11) {
             HStack(alignment: .top, spacing: 13) {
@@ -520,6 +569,9 @@ struct MacLocalModelManagerView: View {
                 Spacer(minLength: 0)
             }
 
+            if downloaded {
+                MacLocalEngineSetupView(acquisition: acquisition, engine: .mlx, modelDownloaded: true)
+            }
             Divider().opacity(0.45)
 
             ViewThatFits(in: .horizontal) {
@@ -551,7 +603,7 @@ struct MacLocalModelManagerView: View {
                         .font(.system(size: 14, weight: .semibold))
                         .fixedSize(horizontal: false, vertical: true)
                     HStack(spacing: 6) {
-                        Text("MLX").font(.system(size: 9, weight: .bold)).padding(.horizontal, 7).padding(.vertical, 3)
+                        Text(verbatim: profile.engine?.title ?? profile.runtime).font(.system(size: 9, weight: .bold)).padding(.horizontal, 7).padding(.vertical, 3)
                             .background(Color.primary.opacity(0.055), in: Capsule())
                         if selected {
                             MacStatusBadge(
@@ -576,11 +628,21 @@ struct MacLocalModelManagerView: View {
                             .foregroundStyle(MacDesignColor.brand)
                         }
                     }
-                    Text(profile.id).font(.system(size: 10.5, design: .monospaced)).foregroundStyle(.secondary).textSelection(.enabled)
-                    Text("64K+ · \(profile.downloadText) · \(profile.parameterCount)")
-                        .font(.system(size: 10, weight: .medium)).foregroundStyle(.secondary)
+                    if let repository = profile.repository {
+                        Text(verbatim: repository).font(.caption).foregroundStyle(.secondary).textSelection(.enabled)
+                    }
+                    Text(verbatim: [String(localized: "Context window", table: "ModelCenter") + " " + profile.contextTokens.formatted(),
+                                    profile.downloadText, profile.format.uppercased()].joined(separator: " · "))
+                        .font(.caption).foregroundStyle(.secondary)
                 }
                 Spacer(minLength: 0)
+            }
+            if let engine = profile.engine {
+                MacLocalEngineSetupView(acquisition: acquisition, engine: engine, modelDownloaded: true) {
+                    hubEngine = .mlx
+                    acquisition.query = ""
+                    showsAcquisition = true
+                }
             }
             Divider().opacity(0.45)
             ViewThatFits(in: .horizontal) {
@@ -602,6 +664,7 @@ struct MacLocalModelManagerView: View {
         running: Bool,
         starting: Bool
     ) -> some View {
+                chatButton(profile, running: running)
                 if !selected {
                     Button {
                         do {
@@ -615,7 +678,7 @@ struct MacLocalModelManagerView: View {
                     } label: {
                         Label(String(localized: "Use for Start", table: "ModelCenter"), systemImage: "checkmark.circle")
                     }
-                    .buttonStyle(.nolaProminent)
+                    .buttonStyle(.bordered)
                     .disabled(runningModelProfile != nil || MacMLXOpenAIService.shared.status.isStarting)
                 }
                 Button {
@@ -640,7 +703,7 @@ struct MacLocalModelManagerView: View {
                         }
                     }
                     .buttonStyle(.nolaProminent)
-                    .disabled(runningModelProfile != nil || MacMLXOpenAIService.shared.status.isStarting)
+                    .disabled(!engineReady(for: profile) || runningModelProfile != nil || MacMLXOpenAIService.shared.status.isStarting)
                 }
                 Menu {
                     Button(String(localized: "Reveal", table: "ModelCenter")) { if let directory = profile.installedDirectory { NSWorkspace.shared.activateFileViewerSelecting([directory]) } }
@@ -654,6 +717,9 @@ struct MacLocalModelManagerView: View {
     @ViewBuilder
     private func modelActions(_ model: ModelDownloader.ModelType, downloaded: Bool, running: Bool) -> some View {
         if downloaded {
+            if let profile = MacLocalModelProfile.all.first(where: { $0.id == model.rawValue }) {
+                chatButton(profile, running: running)
+            }
             if selectedModelID != model.rawValue {
                 Button(String(localized: "Use for Start", table: "ModelCenter")) {
                     do {
@@ -713,22 +779,23 @@ struct MacLocalModelManagerView: View {
             Button {
                 download(model)
             } label: {
-                Label(String(localized: "Download", table: "ModelCenter"), systemImage: "arrow.down")
+                Label(String(localized: "Download a model", table: "ModelCenter"), systemImage: "arrow.down")
             }
                 .buttonStyle(.nolaProminent)
+                .accessibilityIdentifier("local-acquire-preset-" + model.rawValue)
                 .disabled(downloader.isDownloading)
         }
     }
 
     private var runningModel: ModelDownloader.ModelType? {
         ModelDownloader.ModelType.allCases.first { model in
-            guard let profile = MacLocalModelProfile.resolve(model.rawValue) else { return false }
+            guard let profile = MacLocalModelProfile.all.first(where: { $0.id == model.rawValue }) else { return false }
             return MacMLXOpenAIService.shared.isRunning(profile)
         }
     }
 
     private var runningModelProfile: MacLocalModelProfile? {
-        MacLocalModelProfile.available.first(where: MacMLXOpenAIService.shared.isRunning)
+        (MacLocalModelProfile.all + installedProfiles).first(where: MacMLXOpenAIService.shared.isRunning)
     }
 
     private var storageCard: some View {
@@ -804,9 +871,9 @@ struct MacLocalModelManagerView: View {
     }
 
     private var downloadSourcePicker: some View {
-        Picker(String(localized: "Download Source", table: "ModelCenter"), selection: $downloader.preferredSource) {
-            Text("Hugging Face").tag(ModelDownloader.ModelSource.huggingface)
-            Text("ModelScope").tag(ModelDownloader.ModelSource.modelscope)
+        Picker(String(localized: "Download Source", table: "ModelCenter"), selection: $hubSource) {
+            Text("Hugging Face").tag("huggingface")
+            Text("ModelScope").tag("modelscope")
         }
         .labelsHidden()
         .pickerStyle(.segmented)
@@ -834,14 +901,24 @@ struct MacLocalModelManagerView: View {
 
     private func download(_ model: ModelDownloader.ModelType) {
         errorMessage = nil
-        Task {
-            do { try await downloader.downloadModel(model) }
-            catch { /* Downloader owns the single, actionable failure state. */ }
+        if !acquisition.downloading {
+            let repository = hubSource == "modelscope"
+                ? URL(string: model.modelscopeURL)?.pathComponents.suffix(2).joined(separator: "/") ?? model.huggingfaceRepo
+                : model.huggingfaceRepo
+            if let installed = installedProfiles.first(where: { $0.engine == .mlx && $0.repository == repository }) {
+                inspectedModelID = installed.id
+                showsCompactDetail = true
+                return
+            }
+            hubEngine = .mlx
+            acquisition.query = repository
+            acquisition.updateInputs(engine: .mlx, source: hubSource)
         }
+        showsAcquisition = true
     }
 
     private func startLocalModel(_ model: ModelDownloader.ModelType) {
-        guard let profile = MacLocalModelProfile.resolve(model.rawValue) else { return }
+        guard let profile = MacLocalModelProfile.all.first(where: { $0.id == model.rawValue }) else { return }
         errorMessage = nil
         startingModel = model
         Task {
@@ -854,6 +931,39 @@ struct MacLocalModelManagerView: View {
                 startingModel = nil
                 runtimeRefreshID = UUID()
                 NotificationCenter.default.post(name: .nolaMacConfigurationDidChange, object: nil)
+            }
+        }
+    }
+
+    private func engineReady(for profile: MacLocalModelProfile) -> Bool {
+        profile.engine.flatMap { acquisition.engines[$0]?.ready } ?? false
+    }
+
+    private func chatButton(_ profile: MacLocalModelProfile, running: Bool) -> some View {
+        Button {
+            openLocalChat(profile)
+        } label: {
+            Label(String(localized: "Chat with this model", table: "ModelCenter"), systemImage: "bubble.left")
+        }
+        .buttonStyle(.nolaProminent)
+        .disabled(openingChatID != nil || !engineReady(for: profile) || (runningModelProfile != nil && !running)
+            || MacMLXOpenAIService.shared.status.isStarting)
+        .accessibilityIdentifier("local-model-chat-" + profile.id)
+    }
+
+    private func openLocalChat(_ profile: MacLocalModelProfile) {
+        guard openingChatID == nil, engineReady(for: profile) else { return }
+        openingChatID = profile.id
+        errorMessage = nil
+        Task {
+            defer { openingChatID = nil }
+            do {
+                let application = preference.store.application
+                _ = try await MacMLXOpenAIService.shared.start(profile, applicationPort: application)
+                let conversation = try MacCanonicalConversationRepository(store: application).createEmptyConversation(localModel: profile)
+                if let openConversation { openConversation(conversation.id) } else { openWindow(value: conversation.id) }
+            } catch {
+                errorMessage = error.localizedDescription
             }
         }
     }

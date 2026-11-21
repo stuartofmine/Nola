@@ -26,7 +26,8 @@ internal fun expertQuery(value: TextFieldValue, mentions: List<InlineExpertMenti
     val previous = value.text.getOrNull(start - 1)
     if (previous != null && (previous in 'A'..'Z' || previous in 'a'..'z' || previous in '0'..'9' || previous in "._%+-")) return null
     val query = value.text.substring(start + 1, end)
-    return if (query.all { it.isLetterOrDigit() || it == '_' || it == '-' }) ExpertQuery(start, end, query) else null
+    if (query.startsWith(' ')) return null
+    return if (query.all { it.isLetterOrDigit() || it == '_' || it == '-' || it == ' ' }) ExpertQuery(start, end, query) else null
 }
 
 internal data class MentionEdit(val value: TextFieldValue, val mentions: List<InlineExpertMention>)

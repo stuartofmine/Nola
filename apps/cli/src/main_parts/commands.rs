@@ -401,7 +401,8 @@ fn start_interactive_local_model(config: &mut Config, model_id: &str) -> Result<
     config.runtime.endpoint = Some(endpoint.base_url);
     config.runtime.api_key = Some(endpoint.api_key);
     config.runtime.model = Some(endpoint.model_id.clone());
-    config.runtime.provider = Some("llamacpp".to_string());
+    let engine = local_models::model_runtime(&endpoint.model_id).ok_or("Local model disappeared")?;
+    config.runtime.provider = Some(if engine == "llama.cpp" { "llamacpp".into() } else { engine.clone() });
     config.runtime.siwc = None;
     config.runtime.selected_profile = None;
     config.runtime.model_binding = None;
@@ -416,9 +417,10 @@ fn start_interactive_local_model(config: &mut Config, model_id: &str) -> Result<
         })
         .unwrap_or_default();
     terminal_notice!(
-        "  {} {} · llama.cpp · {}K{}",
+        "  {} {} · {} · {}K{}",
         tr(Message::InteractiveModelStatusPrefix),
         endpoint.model_id,
+        engine,
         endpoint.context_window_tokens / 1024,
         runtime
     );
@@ -1151,7 +1153,6 @@ const ALL_PERMISSION_LEVELS: [PermissionLevel; 2] = PermissionLevel::ALL;
 enum PermissionPickerAction {
     Scroll(bool),
     Select(usize),
-    SelectAndConfirm(usize),
     Confirm,
     Cancel,
     Ignore,
@@ -1170,8 +1171,8 @@ fn permission_picker_action(key: KeyEvent, selected: usize) -> PermissionPickerA
     match key.code {
         KeyCode::Up | KeyCode::BackTab | KeyCode::Char('k') => Select((selected + ALL_PERMISSION_LEVELS.len() - 1) % ALL_PERMISSION_LEVELS.len()),
         KeyCode::Down | KeyCode::Tab | KeyCode::Char('j') => Select((selected + 1) % ALL_PERMISSION_LEVELS.len()),
-        KeyCode::Char('1') => SelectAndConfirm(0),
-        KeyCode::Char('2') => SelectAndConfirm(1),
+        KeyCode::Char('1') => Select(0),
+        KeyCode::Char('2') => Select(1),
         KeyCode::Enter => Confirm,
         KeyCode::Esc => Cancel,
         _ => Ignore,
@@ -1210,11 +1211,6 @@ fn interactive_permission_panel(config: &mut Config) -> io::Result<()> {
                 PermissionPickerAction::Confirm => {
                     crate::terminal_ui::clear_permission_frame();
                     apply_interactive_permission_level(config, levels[selected_idx]);
-                    return Ok(());
-                }
-                PermissionPickerAction::SelectAndConfirm(index) => {
-                    crate::terminal_ui::clear_permission_frame();
-                    apply_interactive_permission_level(config, levels[index]);
                     return Ok(());
                 }
                 PermissionPickerAction::Cancel => {
@@ -1290,8 +1286,7 @@ fn render_permission_picker(
         row(&format!("{marker} {}  {}", i + 1, level.display()), INTERACTIVE_ACCENT, selected);
     }
     row(levels[selected_idx].description(), INTERACTIVE_DIM, false);
-    row(localized.selection_hint, INTERACTIVE_DIM, false);
-    row(crate::i18n::ui_text(crate::i18n::UiText::PermissionDigitHint), INTERACTIVE_DIM, false);
+    row(ui_text(UiText::PermissionDigitHint), INTERACTIVE_DIM, false);
     push_picker_border(&mut out, "╰", "╯", inner, INTERACTIVE_ACCENT, color);
     out
 }
@@ -1355,16 +1350,43 @@ fn print_interactive_models(config: &Config) {
     terminal_notice!("{}", tr(Message::InteractiveModelUsageHint));
 }
 
-fn print_interactive_help() {
-    terminal_notice!("{}", tr(Message::InteractiveAvailableCommands));
+fn print_interactive_help(query: &str) {
+    let query = query.trim();
     let rows = interactive_help_rows();
-    let command_width = rows
-        .iter()
-        .map(|(command, _)| display_width(command))
-        .max()
-        .unwrap_or(0);
-    for (command, hint) in rows {
-        terminal_notice!("  {}  {hint}", pad_right_width(&command, command_width));
+    let visible: Vec<_> = if query.is_empty() {
+        ["/new", "/resume", "/edit", "/model", "/allow", "/goal", "/guide"]
+            .into_iter()
+            .filter_map(|name| rows.iter().find(|(usage, _)| usage.split_whitespace().next() == Some(name)))
+            .collect()
+    } else if query.eq_ignore_ascii_case("all") {
+        rows.iter().collect()
+    } else {
+        let requested = format!("/{}", query.trim_start_matches('/'));
+        let command = normalize_interactive_command(&requested).unwrap_or(&requested);
+        rows.iter().filter(|(usage, _)| usage.split_whitespace().next() == Some(command)).collect()
+    };
+    if visible.is_empty() {
+        terminal_notice!("  {query} · {}", tr(Message::InteractiveUnknownCommandHint));
+    } else {
+        terminal_notice!("{}", tr(Message::InteractiveAvailableCommands));
+        let visible: Vec<_> = visible.into_iter().map(|(usage, description)| {
+            let label = if query.is_empty() { usage.split_whitespace().next().unwrap_or(usage) } else { usage };
+            (label, description)
+        }).collect();
+        let width = visible.iter().map(|(label, _)| display_width(label)).max().unwrap_or(0);
+        for (label, description) in visible {
+            terminal_notice!("  {}  {description}", pad_right_width(label, width));
+            if !query.is_empty() && !query.eq_ignore_ascii_case("all") {
+                match label {
+                    "/goal" => terminal_notice!("  {}", tr(Message::InteractiveSlashGoalUsage)),
+                    "/model" => terminal_notice!("  {}", tr(Message::InteractiveModelUsageHint)),
+                    _ => {}
+                }
+            }
+        }
+    }
+    if !query.eq_ignore_ascii_case("all") {
+        terminal_notice!("  {}", ui_text(UiText::HelpMoreCommands));
     }
 }
 
@@ -1394,6 +1416,8 @@ fn interactive_help_rows() -> Vec<(String, String)> {
             "/sources".to_string(),
             ui_text(UiText::HelpSources).to_string(),
         ),
+        ("/edit [message-id]".into(), ui_text(UiText::HelpEdit).into()),
+        ("/cancel-edit".into(), ui_text(UiText::HelpCancelEdit).into()),
         (
             "/goal".to_string(),
             tr(Message::InteractiveSlashGoalHint).to_string(),
@@ -1481,6 +1505,10 @@ fn interactive_help_rows() -> Vec<(String, String)> {
             .to_string(),
         ),
         (
+            "/config".to_string(),
+            crate::config_files::overview_label().to_string(),
+        ),
+        (
             "/guide".to_string(),
             match current_language() {
                 Language::ZhHans => "显示快捷键与交互操作指南",
@@ -1510,7 +1538,7 @@ fn interactive_help_rows() -> Vec<(String, String)> {
         ),
         (
             "/quit".to_string(),
-            tr(Message::InteractiveSlashQuitHint).to_string(),
+            tr(Message::InteractiveSlashExitHint).to_string(),
         ),
     ]
 }
@@ -1868,7 +1896,10 @@ impl interaction::ClientCommandHandler for LiveCliCommands {
                 }
                 result
             }
-            "/help" => { print_interactive_help(); Ok(()) }
+            "/help" => {
+                print_interactive_help(input.trim().split_once(char::is_whitespace).map_or("", |(_, query)| query));
+                Ok(())
+            }
             "/status" => print_interactive_prompt_card(&config, 0),
             "/history" => print_interactive_session_history(&config),
             _ => {

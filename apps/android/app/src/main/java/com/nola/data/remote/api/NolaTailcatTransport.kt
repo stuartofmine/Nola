@@ -47,6 +47,9 @@ internal fun tailcatStartupErrorCode(error: Exception, stage: String): String {
     return "$phase:${error.javaClass.simpleName}"
 }
 
+internal val tailcatRoutedRequest = io.ktor.util.AttributeKey<Boolean>("NolaTailcatRoutedRequest")
+internal class TailcatConnectionException(detail: String) : IOException(detail)
+
 /** Optional embedded SDK, memory-only grants. Never changes saved Host identity,
  * credentials, TLS policy, Core permissions, or Run cancellation state. */
 @Singleton
@@ -145,6 +148,7 @@ class NolaTailcatTransport @Inject constructor(
         client.plugin(HttpSend).intercept { request ->
             val endpoint = withContext(Dispatchers.IO) { endpoint(request) }
             if (endpoint != null) {
+                request.attributes.put(tailcatRoutedRequest, true)
                 val target = URI(endpoint)
                 request.url.protocol = io.ktor.http.URLProtocol.HTTP
                 request.url.host = target.host
@@ -190,7 +194,7 @@ class NolaTailcatTransport @Inject constructor(
             if (failure is CancellationException) throw failure
             synchronized(guard) { entries.remove(origin, entry) }
             close(entry)
-            throw IOException("Tailcat connection failed (${tailcatStartupErrorCode(failure, entry.startupStage)})")
+            throw TailcatConnectionException("Tailcat connection failed (${tailcatStartupErrorCode(failure, entry.startupStage)})")
         }
         if (entries[origin] !== entry) throw IOException("Host transport configuration changed")
         if (ready.second <= System.currentTimeMillis() + 30_000) {

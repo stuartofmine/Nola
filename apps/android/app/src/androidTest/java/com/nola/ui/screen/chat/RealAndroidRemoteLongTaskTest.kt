@@ -226,13 +226,19 @@ class RealAndroidRemoteLongTaskTest {
             }
             if (compose.onAllNodesWithTag(tag).fetchSemanticsNodes().isNotEmpty())
                 compose.onNodeWithTag(tag).performScrollTo().performClick()
+            var completed: JSONObject? = null
             compose.waitUntil(240_000) {
-                val observed = state()
+                val observed = try {
+                    state()
+                } catch (_: java.net.SocketTimeoutException) {
+                    return@waitUntil false
+                }
                 assertEquals(original.getString("runId"), observed.getString("runId"))
                 assertEquals(1, observed.getInt("runCount"))
-                observed.optString("outcome") == "answered"
+                completed = observed.takeIf { it.optString("outcome") == "answered" }
+                completed != null
             }
-            val final = state()
+            val final = requireNotNull(completed)
             assertEquals(1, final.getInt("starts"))
             assertEquals(config().getInt("steps"), final.getInt("ticks"))
             assertTrue(final.getBoolean("resultValid"))

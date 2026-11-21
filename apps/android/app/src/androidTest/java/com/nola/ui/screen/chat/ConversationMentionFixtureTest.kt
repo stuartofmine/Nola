@@ -15,7 +15,7 @@ class ConversationMentionFixtureTest {
     @Test fun configureExpertsThroughCore() {
         assumeTrue(InstrumentationRegistry.getArguments().getString("mentionFixture") == "true")
         val context = InstrumentationRegistry.getInstrumentation().targetContext
-        check(context.noBackupFilesDir.path.contains("/10/")) { "Requires dedicated acceptance user 10" }
+        requireIsolatedProductTestUser(context)
         val db = SQLiteDatabase.openDatabase(File(context.noBackupFilesDir, "nola-product.db").path, null, SQLiteDatabase.OPEN_READONLY)
         val defaults = db.use {
             it.rawQuery("SELECT settings_json FROM conversation_settings", null).use { cursor ->

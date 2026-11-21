@@ -1035,13 +1035,14 @@ actor MacAgentHostRuntime: MacLocalAgentRuntime {
             localEndpoint = nil
             first = nil
         } else if primary["kind"] as? String == "native" {
-            guard let primaryProfile, primary["adapter"] as? String == "mlx",
+            guard let primaryProfile,
                   primary["adapter_contract_revision"] as? Int == 1,
                   primary["model_id"] as? String == primaryProfile,
                   let reference = primary["profile_ref"] as? [String: Any],
                   reference["profile_id"] as? String == primaryProfile,
                   let revision = reference["admitted_revision"] as? Int64,
-                  let profile = MacLocalModelProfile.resolve(primaryProfile) else {
+                  let profile = MacLocalModelProfile.resolve(primaryProfile),
+                  let adapter = profile.engine?.adapter, primary["adapter"] as? String == adapter else {
                 throw MacLocalAgentResumeError.credentialUnavailable
             }
             let endpoint = try await MacMLXOpenAIService.shared.start(profile,
@@ -1821,13 +1822,13 @@ actor MacAgentHostRuntime: MacLocalAgentRuntime {
                                   let frozen = try JSONSerialization.jsonObject(with: port.preparedGoalNativeRoute(
                                     conversationID: request.conversationID, goalID: goalID)) as? [String: Any],
                                   NSDictionary(dictionary: frozen).isEqual(to: proposed),
-                                  proposed["adapter"] as? String == "mlx",
                                   proposed["adapter_contract_revision"] as? Int == 1,
                                   let modelID = proposed["model_id"] as? String,
                                   let reference = proposed["profile_ref"] as? [String: Any],
                                   reference["profile_id"] as? String == modelID,
                                   let revision = reference["admitted_revision"] as? Int64,
-                                  let profile = MacLocalModelProfile.resolve(modelID) else {
+                                  let profile = MacLocalModelProfile.resolve(modelID),
+                                  let adapter = profile.engine?.adapter, proposed["adapter"] as? String == adapter else {
                                 throw MacLocalAgentResumeError.credentialUnavailable
                             }
                             let endpoint = try await MacMLXOpenAIService.shared.start(profile,

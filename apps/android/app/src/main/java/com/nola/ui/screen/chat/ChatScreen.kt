@@ -58,7 +58,12 @@ import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
-import androidx.compose.foundation.combinedClickable
+import androidx.compose.foundation.gestures.awaitEachGesture
+import androidx.compose.foundation.gestures.awaitFirstDown
+import androidx.compose.foundation.gestures.awaitLongPressOrCancellation
+import androidx.compose.foundation.gestures.waitForUpOrCancellation
+import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.semantics.onLongClick
 import androidx.compose.foundation.content.ReceiveContentListener
 import androidx.compose.foundation.content.TransferableContent
 import androidx.compose.foundation.content.contentReceiver
@@ -328,7 +333,9 @@ internal fun ChatScreen(
     var renameTarget by remember { mutableStateOf<Pair<String, String>?>(null) }
     var renameDraft by remember { mutableStateOf("") }
     var showExecutionBackendMenu by remember { mutableStateOf(false) }
-    var inspector by rememberSaveable(state.conversationId, state.executionHostBinding) { mutableStateOf<ConversationInspector?>(null) }
+    // Opening an inspector is navigation within this conversation. Its panel reloads
+    // the authoritative content when the asynchronous Host binding becomes available.
+    var inspector by rememberSaveable(state.conversationId) { mutableStateOf<ConversationInspector?>(null) }
     val showMoreSettings = inspector == ConversationInspector.Settings
     var showContextSheet by rememberSaveable { mutableStateOf(ContextDisplayMode.Context) }
     var showContextSheetOpen by rememberSaveable(state.conversationId, state.executionHostBinding) { mutableStateOf(false) }
@@ -454,12 +461,13 @@ internal fun ChatScreen(
             it.description.contains(mentionQuery.orEmpty(), ignoreCase = true))
     }.sortedByDescending { it.id in pickerMembers }
     val mentionDetailsById = remember(availableExperts) { mentionDescriptions(availableExperts?.agents.orEmpty()) }
-    val mentionsVisible = mentionFocused && mentionQuery != null && mentionDismissed != inputText
+    val mentionsVisible = mentionFocused && mentionQuery != null && mentionDismissed != inputText &&
+        (' ' !in mentionQuery || mentionCandidates.isNotEmpty())
     val context = LocalContext.current
     var commandError by remember(state.conversationId) { mutableStateOf<String?>(null) }
     var commandDismissed by remember(state.conversationId) { mutableStateOf<String?>(null) }
-    var commandIndex by remember(state.conversationId) { mutableIntStateOf(0) }
     val commandQuery = ComposerCommand.query(inputText)
+    var commandIndex by remember(state.conversationId, commandQuery) { mutableIntStateOf(0) }
     val commandCandidates = ComposerCommand.entries.filter { commandQuery != null &&
         (it.name.startsWith(commandQuery) || context.getString(it.label).contains(commandQuery, ignoreCase = true)) }
     val commandsVisible = mentionFocused && commandQuery != null && commandDismissed != inputText
@@ -477,7 +485,13 @@ internal fun ChatScreen(
         catch (_: Exception) { false }
         if (!expertSourceAvailable && !showExpertManagement) showExpertPicker = false
     }
-    fun completeCommand(command: ComposerCommand) { if (!canMutateDraft()) return; inputText = "/${command.name} "; commandError = null; commandIndex = 0 }
+    fun completeCommand(command: ComposerCommand) {
+        if (!canMutateDraft()) return
+        val completed = "/${command.name} "
+        applyEdit(MentionEdit(TextFieldValue(completed, TextRange(completed.length)), emptyList()))
+        undoMention = null
+        commandError = null
+    }
     fun executeCommand(): Boolean {
         if (!canMutateDraft()) return false
         val parsed = ComposerCommand.parse(inputText) ?: return false
@@ -497,7 +511,7 @@ internal fun ChatScreen(
             ComposerCommand.permissions -> inspector = ConversationInspector.Settings
             ComposerCommand.plan -> onOpenPlans()
             ComposerCommand.search -> { conversationSearch = parsed.second; showConversations = true; dismissNavigationKeyboard() }
-            ComposerCommand.stop -> viewModel.cancelGeneration(viewModel.composerDrafts.ownerKey(state.conversationId), state.activeResponseId)
+            ComposerCommand.stop -> if (state.hostGoalInProgress) inspector = ConversationInspector.Progress else viewModel.cancelGeneration(viewModel.composerDrafts.ownerKey(state.conversationId), state.activeResponseId)
             ComposerCommand.help -> inputText = "/"
         }
         return true
@@ -1245,7 +1259,7 @@ internal fun ChatScreen(
             onCompactionSourceConsumed = viewModel::consumeCompactionSourceTarget,
             onCancelTask = { taskId -> viewModel.cancelAgentTask(viewModel.composerDrafts.ownerKey(state.conversationId), taskId) },
             loadTaskDetail = viewModel::loadTaskChildDetail,
-            taskRecovery = viewModel::taskRecovery,
+            taskRecovery = if (state.executionHostBinding == null) viewModel::taskRecovery else null,
             onSendTaskGuidance = { taskId, message -> viewModel.sendAgentTaskGuidance(viewModel.composerDrafts.ownerKey(state.conversationId), taskId, message).await() },
             scrollToMessageId = pendingScrollToMessageId,
             onScrollToMessageConsumed = { pendingScrollToMessageId = null },
@@ -1522,7 +1536,7 @@ internal fun ChatScreen(
                         val updated = editExpertText(editorValue, next, inlineMentions)
                         if (editorValue.text != next.text) {
                             undoMention = if (updated.mentions != inlineMentions) MentionEdit(editorValue, inlineMentions) to updated else null
-                            mentionDismissed = null; commandDismissed = null; commandIndex = 0; commandError = null
+                            mentionDismissed = null; commandDismissed = null; commandError = null
                         }
                         applyEdit(updated)
                     }
@@ -1535,15 +1549,15 @@ internal fun ChatScreen(
                 },
                 onFocusChange = { mentionFocused = it },
                 onMentionKey = { key ->
-                    if (!canMutateDraft()) false else if (commandsVisible) when (key) {
+                    if (!canMutateDraft()) false else if (commandsVisible && (commandCandidates.isNotEmpty() || key == Key.Escape)) when (key) {
                         Key.Escape -> { commandDismissed = inputText; true }
                         Key.Enter, Key.Tab -> { commandCandidates.getOrNull(commandIndex)?.let(::completeCommand); true }
                         Key.DirectionUp, Key.DirectionDown -> {
-                            if (commandCandidates.isNotEmpty()) commandIndex = (commandIndex + (if (key == Key.DirectionUp) -1 else 1) + commandCandidates.size) % commandCandidates.size
+                            commandIndex = (commandIndex + (if (key == Key.DirectionUp) -1 else 1) + commandCandidates.size) % commandCandidates.size
                             true
                         }
                         else -> false
-                    } else if (!mentionsVisible) false else when (key) {
+                    } else if (!mentionsVisible || (mentionCandidates.isEmpty() && key != Key.Escape)) false else when (key) {
                         Key.Escape -> { mentionDismissed = inputText; true }
                         Key.Enter, Key.Tab -> { mentionCandidates.getOrNull(mentionIndex)?.let { selectMention(it.id) }; true }
                         Key.DirectionUp, Key.DirectionDown -> {
@@ -1559,6 +1573,7 @@ internal fun ChatScreen(
                     ?: attachmentMessage,
                 isImportingAttachments = isImportingAttachments || composerDraft.loading.value || composerDrafts.initializing.value,
                 enabled = !preparingExpertPicker && !state.processingState.blocksInput && !state.executionTeardownPending && !state.permissionSaving && !state.permissionSaveFailed && !composerDrafts.initializing.value,
+                showGoalProgress = state.hostGoalInProgress,
                 isGenerating = presentationReady && state.processingState.isGenerating && !inputText.startsWith("/"),
                 onAttach = {
                     if (canMutateDraft() && !isImportingAttachments) {
@@ -1600,6 +1615,7 @@ internal fun ChatScreen(
                 },
                 onRemoveAttachment = { id -> if (canMutateDraft()) attachments = attachments.filterNot { it.id == id } },
                 onSendOrStop = sendOrStop@ {
+                    if (state.hostGoalInProgress) { inspector = ConversationInspector.Progress; return@sendOrStop }
                     if (!hasCurrentDraftScope()) return@sendOrStop
                     // Stopping an exact active owner must remain available even
                     // when a separate draft cannot currently be persisted.
@@ -2468,6 +2484,7 @@ internal fun ChatComposerBar(
     onPasteAttachments: (ClipData?) -> Boolean,
     onRemoveAttachment: (String) -> Unit,
     onSendOrStop: () -> Unit,
+    showGoalProgress: Boolean = false,
     onFocusChange: (Boolean) -> Unit = {},
     onMentionKey: (Key) -> Boolean = { false },
     controlledEditor: TextFieldValue? = null,
@@ -2604,7 +2621,7 @@ internal fun ChatComposerBar(
                 Box(Modifier.weight(1f)) { modelControl() }
 
                 val canSend = inputText.trim().isNotEmpty() || attachments.isNotEmpty()
-                val sendEnabled = isGenerating || (draftWritable && (inputText.startsWith("/") || (enabled && !isImportingAttachments && canSend)))
+                val sendEnabled = showGoalProgress || isGenerating || (draftWritable && (inputText.startsWith("/") || (enabled && !isImportingAttachments && canSend)))
                 val sendBackground = when {
                     isGenerating -> MaterialTheme.colorScheme.primary
                     sendEnabled -> MaterialTheme.colorScheme.primary
@@ -2626,8 +2643,8 @@ internal fun ChatComposerBar(
                 ) {
                     Box(modifier = Modifier.testTag("chat.composer.send")) {
                         Icon(
-                            painterResource(if (isGenerating) R.drawable.nola_stop else R.drawable.nola_arrow),
-                            contentDescription = if (isGenerating) stringResource(R.string.chat_stop) else stringResource(R.string.chat_send),
+                            painterResource(when { showGoalProgress -> R.drawable.nola_goal; isGenerating -> R.drawable.nola_stop; else -> R.drawable.nola_arrow }),
+                            contentDescription = stringResource(when { showGoalProgress -> R.string.inspector_progress; isGenerating -> R.string.chat_stop; else -> R.string.chat_send }),
                             modifier = Modifier.size(19.dp)
                         )
                     }
@@ -2966,7 +2983,7 @@ fun MessageBubble(
     taskRecovery: (suspend (AgentCoreTaskHandle, String, com.nola.data.local.UnknownEffectRecoveryDecision?, Boolean) -> Pair<UnknownEffectRecoveryPresentation?, Boolean>)? = null,
     onSendTaskGuidance: suspend (String, String) -> Boolean = { _, _ -> false },
     onCompactionSourceRequested: (CompactionSourceNavigator.Request) -> Unit = {},
-    onLongPress: () -> Unit = {},
+    onLongPress: (() -> Unit)? = null,
     contentPadding: PaddingValues = PaddingValues(horizontal = nolaPageGutter(), vertical = 6.dp),
     isConversationGenerating: Boolean = false,
     assistantContainerColor: Color? = null,
@@ -3026,7 +3043,8 @@ fun MessageBubble(
     val messageLongPress = remember(hapticFeedback) {
         {
             hapticFeedback.performHapticFeedback(HapticFeedbackType.LongPress)
-            latestLongPress()
+            latestLongPress?.invoke()
+            Unit
         }
     }
     val context = LocalContext.current
@@ -3037,7 +3055,17 @@ fun MessageBubble(
         modifier = modifier
             .weight(1f)
             .testTag(CHAT_MESSAGE_TEST_TAG_PREFIX + message.id)
-            .then(if (readOnlyHistory) Modifier else Modifier.combinedClickable(onClick = {}, onLongClick = messageLongPress)),
+            .then(if (readOnlyHistory || onLongPress == null) Modifier else Modifier
+                .pointerInput(message.id) {
+                    awaitEachGesture {
+                        val down = awaitFirstDown()
+                        val held = awaitLongPressOrCancellation(down.id) ?: return@awaitEachGesture
+                        held.consume()
+                        messageLongPress()
+                        waitForUpOrCancellation()?.consume()
+                    }
+                }
+                .semantics { onLongClick { messageLongPress(); true } }),
         horizontalAlignment = alignment
     ) {
         if (readOnlyHistory && historyAuthor != null) {

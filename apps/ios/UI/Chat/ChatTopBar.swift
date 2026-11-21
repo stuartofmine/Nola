@@ -216,7 +216,7 @@ struct ChatTopBar: View {
                 .accessibilityIdentifier("chat.inspector.progress")
             Button(String(localized: "inspector.resources", table: "ConversationInspector"), systemImage: "folder", action: onShowResources)
                 .accessibilityIdentifier("chat.inspector.resources")
-            if !executionBackends.isEmpty { executionBackendMenu }
+            if !executionBackends.isEmpty { executionBackendMenu() }
             Divider()
             Button(NSLocalizedString("chat.more_settings.title", value: "Conversation Settings", comment: "Conversation settings"),
                    systemImage: "slider.horizontal.3", action: onShowConversationSettings)
@@ -230,7 +230,7 @@ struct ChatTopBar: View {
         .help(String(localized: "chat.more_settings.title"))
     }
 
-    private var executionBackendMenu: some View {
+    func executionBackendMenu(fillsRow: Bool = false) -> some View {
         Menu {
             if selectedExecutionBackend?.capabilities.supports_permission_bridge == false {
                 Text(String(localized: "execution.scope.noApprovalBridge"))
@@ -245,9 +245,20 @@ struct ChatTopBar: View {
                     )
                 }
                 .disabled(backend.availabilityState != .available)
+                .accessibilityIdentifier("chat.executionBackend.\(backend.id)")
             }
         } label: {
-            Label(selectedExecutionBackend?.display_name ?? "Nola", systemImage: "terminal")
+            if fillsRow {
+                HStack {
+                    Text("chat.execution_unit.choose").foregroundStyle(.primary)
+                    Spacer(minLength: 8)
+                    Label(selectedExecutionBackend?.display_name ?? "Nola", systemImage: "terminal")
+                }
+                .frame(maxWidth: .infinity, minHeight: 44)
+                .contentShape(Rectangle())
+            } else {
+                Label(selectedExecutionBackend?.display_name ?? "Nola", systemImage: "terminal")
+            }
         }
         .buttonStyle(.plain)
         .disabled(!executionBackendSelectionEnabled)

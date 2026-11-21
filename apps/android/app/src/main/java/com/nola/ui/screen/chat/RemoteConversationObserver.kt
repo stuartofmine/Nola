@@ -31,7 +31,8 @@ internal class RemoteConversationObserver {
         resume: suspend (RemoteRunKey) -> Unit,
         pause: suspend (Long) -> Unit = { delay(it) },
         reconcileSubmission: suspend () -> Boolean = { true },
-        admittedKey: () -> RemoteRunKey? = { null }, stopAtTerminal: Boolean = false) {
+        admittedKey: () -> RemoteRunKey? = { null }, stopAtTerminal: Boolean = false,
+        presentHostExecution: (suspend (RemoteRunObservation) -> Unit)? = null) {
         if (context == contextId && job?.isActive == true && runningCurrent?.invoke() == true) return
         stop()
         if (context != contextId) {
@@ -53,6 +54,17 @@ internal class RemoteConversationObserver {
                     ensureActive(); if (!current()) break
                     if (observation == null) { onAbsent(); break }
                     key = observation.key
+                    if (presentHostExecution != null && observation.submissionReceipt == null &&
+                        (observation.goalExecution != null || observation.taskExecution != null)) {
+                        presentHostExecution(observation)
+                        if (observation.recovery == RemoteRunRecovery.Terminal) {
+                            if (observation.canSubmit || observation.taskExecution != null) break
+                            key = null
+                        }
+                        failures = 0
+                        pause(1_000)
+                        continue
+                    }
                     val terminalCommitted = catchUp(observation)
                     ensureActive(); if (!current()) break
                     onObservation(observation, terminalCommitted)

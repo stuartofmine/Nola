@@ -5,6 +5,12 @@ import androidx.activity.ComponentActivity
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.width
+import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.unit.Density
+import androidx.compose.ui.test.assertIsSelected
+import androidx.compose.ui.test.performTouchInput
+import androidx.compose.ui.test.click
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -26,6 +32,7 @@ import androidx.compose.ui.unit.dp
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import com.nola.R
 import com.nola.data.local.datastore.AppearancePreference
+import com.nola.ui.fetchTextLayoutResult
 import com.nola.ui.assertSingleLineNoOverflow
 import com.nola.ui.theme.NolaTheme
 import org.junit.Assert.assertEquals
@@ -38,6 +45,58 @@ import org.junit.runner.RunWith
 class SettingsScreenUiTest {
     @get:Rule
     val compose = createAndroidComposeRule<ComponentActivity>()
+
+    @Test
+    fun largeTextAppearanceOptionsRemainReadableAndSelectable() {
+        var appearance by mutableStateOf(AppearancePreference.System)
+        compose.setContent {
+            val density = LocalDensity.current
+            CompositionLocalProvider(LocalDensity provides Density(density.density, fontScale = 2f)) {
+                NolaTheme(darkTheme = appearance == AppearancePreference.Dark) {
+                    Box(Modifier.width(224.dp).height(440.dp)) {
+                        SettingsContent(
+                            state = SettingsUiState(isLoading = false),
+                            appearance = appearance,
+                            onAppearanceChange = { appearance = it },
+                            onRefresh = {},
+                            detailState = remember { mutableStateOf<String?>("general") },
+                        )
+                    }
+                }
+            }
+        }
+        val title = compose.activity.getString(R.string.settings_general)
+        compose.onNodeWithText(title, useUnmergedTree = true).assertSingleLineNoOverflow(title)
+        for (heading in listOf(R.string.appearance_title, R.string.notifications_title)) {
+            val label = compose.activity.getString(heading).uppercase()
+            val layout = compose.onNodeWithText(label, useUnmergedTree = true).performScrollTo().fetchTextLayoutResult()
+            assertTrue("Section title must be fully visible: $label", !layout.hasVisualOverflow &&
+                (0 until layout.lineCount).none { layout.isLineEllipsized(it) })
+        }
+        for ((choice, labelId) in listOf(
+            AppearancePreference.Dark to R.string.appearance_dark,
+            AppearancePreference.Light to R.string.appearance_light,
+            AppearancePreference.System to R.string.appearance_system,
+        )) {
+            val label = compose.activity.getString(labelId)
+            compose.onNodeWithText(label, useUnmergedTree = true).performScrollTo()
+                .assertSingleLineNoOverflow(label)
+            val button = compose.onNodeWithText(label)
+            button.performTouchInput { click() }
+            button.assertIsSelected()
+            compose.runOnIdle { assertEquals(choice, appearance) }
+            if (choice == AppearancePreference.Dark) {
+                val image = androidx.test.platform.app.InstrumentationRegistry
+                    .getInstrumentation().uiAutomation.takeScreenshot()
+                try {
+                    java.io.File(compose.activity.filesDir, "settings-large-text-dark.png")
+                        .outputStream().use { image.compress(android.graphics.Bitmap.CompressFormat.PNG, 100, it) }
+                } finally {
+                    image.recycle()
+                }
+            }
+        }
+    }
 
     @Test
     fun rejectedClearStaysInTheConfirmationAndCanBeCancelled() {

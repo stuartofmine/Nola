@@ -25,6 +25,7 @@
     let savedDraft = $state('');
     let copyNotice = $state('');
     let workerUncertain = $state(false);
+    const channelsConfigured = $derived(!!settings?.backend_url.trim() && settings.has_access_token);
     let disposed = false, workerVersion = 0, channelsVersion = 0, editorVersion = 0;
     const workerRead = latestRequest<WorkerSettings>(), channelsRead = latestRequest<Channel[]>();
     const busy = $derived(saving || confirming);
@@ -53,7 +54,7 @@
     }
     async function loadChannels() {
         if (!settings || workerLoading || workerError || workerUncertain) return;
-        if (!settings.backend_url.trim() || !settings.has_access_token) {
+        if (!channelsConfigured) {
             channelsRead.cancel(); ++channelsVersion; channelsLoading = false;
             channels = []; channelsLoaded = false; connectionError = '';
             connectionNotice = 'messaging.setupRequired';
@@ -150,7 +151,7 @@
             <p class="muted">{t($locale, 'messaging.workerHint')}</p><button class="primary" disabled={!workerDirty}>{t($locale, saving ? 'models.saving' : 'models.save')}</button>
         </fieldset>{/if}
     </form>
-    <div class="row between"><h3>{t($locale, 'messaging.connections')}</h3><div class="actions"><button disabled={busy || channelsLoading || workerLoading || workerUncertain} onclick={loadChannels}>{t($locale, 'models.reload')}</button><button disabled={busy || workerLoading || workerUncertain || !channelsLoaded} onclick={() => open()}>{t($locale, 'messaging.add')}</button></div></div>
+    <div class="row between"><h3>{t($locale, 'messaging.connections')}</h3><div class="actions"><button disabled={busy || channelsLoading || workerLoading || workerUncertain || !!workerError || !channelsConfigured} onclick={loadChannels}>{t($locale, 'models.reload')}</button><button disabled={busy || workerLoading || workerUncertain || !channelsLoaded} onclick={() => open()}>{t($locale, 'messaging.add')}</button></div></div>
     {#if channelsLoading}<p role="status">{t($locale, 'remote.loading')}</p>{/if}
     {#if connectionError}<p role="alert" class="error">{t($locale, connectionError)}</p>{/if}
     {#if connectionNotice}<p role="status">{t($locale, connectionNotice)}</p>{/if}

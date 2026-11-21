@@ -106,6 +106,8 @@ data class UnreadCountResponse(
     val unreadCount: Int = 0
 )
 
+enum class VerifiedHostTransport { Direct, DirectWithoutTailcat, Tailcat }
+
 @Serializable
 data class AgentSettingsResponse(
     @SerialName("source_store_epoch") val sourceStoreEpoch: String? = null,
@@ -129,7 +131,8 @@ data class AgentSettingsResponse(
     @SerialName("model_profiles") val modelProfiles: List<HostModelProfileDto> = emptyList(),
     @SerialName("default_chat_model_revision") val defaultChatModelRevision: Long? = null,
     @SerialName("default_chat_model_resolution") val defaultChatModelResolution: HostModelResolutionDto? = null,
-    val messaging: MessagingStatusDto? = null
+    val messaging: MessagingStatusDto? = null,
+    @kotlinx.serialization.Transient val verifiedTransport: VerifiedHostTransport? = null
 )
 
 @Serializable

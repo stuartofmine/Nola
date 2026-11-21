@@ -75,7 +75,7 @@ sh scripts/clean_rust_workspace.sh --apply  # 清理 Nola native Debug workspace
 APFS 实测可用空间增加约 39.4 GiB，不能把逻辑清理量与物理释放量混为一谈。
 完成 Rust 回归、签名 Debug 与隔离 Test 构建后 target 约 7.7 GiB；构建脚本 41 项测试通过，
 包括默认预览、checkout 范围固定、显式应用、超量仅提醒及签名产物的精确 staging 权限。
-完整规则见[软件设计文档](../总体设计/SOFTWARE_DESIGN.md#rust-构建与缓存存储策略2026-10-08)。
+完整规则见[Rust 构建性能与存储策略](RUST_BUILD_PERFORMANCE.md)。
 
 Core 只生成 Rust `rlib`，原生静态/动态库由 `nola_mobile_bindings` 单独输出。
 此前 Core 同时声明三种 crate-type，产生没有指纹后缀的 `deps/libnola_core.rlib`；

@@ -175,45 +175,46 @@ internal class ConversationComposerDrafts(private val repository: ConversationDr
     }
     fun forConversation(id: String?): ConversationComposerDraft {
         val owner = key(id)
-        return drafts.getOrPut(owner) {
-            lateinit var draft: ConversationComposerDraft
-            draft = ConversationComposerDraft() {
-                editRevisions[owner] = (editRevisions[owner] ?: 0) + 1
-                if (repository != null && owner !in retired && drafts[owner] === draft) {
-                    // A read must finish before edits can acquire the observed
-                    // CAS revision. Never save an empty loading placeholder.
-                    if (draft.loading.value) return@ConversationComposerDraft
-                    val snapshot = ConversationDraftRepository.Snapshot(draft.text.value, draft.attachments.value,
-                        mentions = draft.mentions, configuration = draft.configuration.value.takeIf { owner.startsWith("draft:") })
-                    val save = saves.async {
-                        try {
-                            val revision = repository.conditionalSave(owner, snapshot)
-                            if (owner !in retired && drafts[owner] === draft) {
-                                draft.persistenceStatus.value = ConversationComposerDraft.PersistenceStatus.Ready
-                                draft.persistenceError.value = null
-                            }
-                            revision
+        drafts[owner]?.let { return it }
+        lateinit var draft: ConversationComposerDraft
+        draft = ConversationComposerDraft() {
+            editRevisions[owner] = (editRevisions[owner] ?: 0) + 1
+            if (repository != null && owner !in retired && drafts[owner] === draft) {
+                // A read must finish before edits can acquire the observed
+                // CAS revision. Never save an empty loading placeholder.
+                if (draft.loading.value) return@ConversationComposerDraft
+                val snapshot = ConversationDraftRepository.Snapshot(draft.text.value, draft.attachments.value,
+                    mentions = draft.mentions, configuration = draft.configuration.value.takeIf { owner.startsWith("draft:") })
+                val save = saves.async {
+                    try {
+                        val revision = repository.conditionalSave(owner, snapshot)
+                        if (owner !in retired && drafts[owner] === draft) {
+                            draft.persistenceStatus.value = ConversationComposerDraft.PersistenceStatus.Ready
+                            draft.persistenceError.value = null
                         }
-                        catch (cancelled: kotlinx.coroutines.CancellationException) { throw cancelled }
-                        catch (error: Exception) {
-                            if (owner !in retired && drafts[owner] === draft) {
-                                draft.persistenceError.value = error.localizedMessage
-                                draft.persistenceStatus.value = if (error is ConversationDraftRepository.Conflict)
-                                    ConversationComposerDraft.PersistenceStatus.Conflict else ConversationComposerDraft.PersistenceStatus.Error
-                            }
-                            throw error
-                        }
+                        revision
                     }
-                    lastSaves[owner] = save
-                    pendingSaves.add(save)
-                    save.invokeOnCompletion { pendingSaves.remove(save) }
+                    catch (cancelled: kotlinx.coroutines.CancellationException) { throw cancelled }
+                    catch (error: Exception) {
+                        if (owner !in retired && drafts[owner] === draft) {
+                            draft.persistenceError.value = error.localizedMessage
+                            draft.persistenceStatus.value = if (error is ConversationDraftRepository.Conflict)
+                                ConversationComposerDraft.PersistenceStatus.Conflict else ConversationComposerDraft.PersistenceStatus.Error
+                        }
+                        throw error
+                    }
                 }
+                lastSaves[owner] = save
+                pendingSaves.add(save)
+                save.invokeOnCompletion { pendingSaves.remove(save) }
             }
-            draft.loading.value = repository != null
-            if (repository != null) draft.persistenceStatus.value = ConversationComposerDraft.PersistenceStatus.Loading
-            if (repository != null) loads[owner] = callbacks.launch { loadDraft(owner, draft) }
-            draft
         }
+        draft.loading.value = repository != null
+        if (repository != null) draft.persistenceStatus.value = ConversationComposerDraft.PersistenceStatus.Loading
+        // An immediately resumed load must already see this owner and draft.
+        drafts[owner] = draft
+        if (repository != null) loads[owner] = callbacks.launch { loadDraft(owner, draft) }
+        return draft
     }
 
     private suspend fun loadDraft(owner: String, draft: ConversationComposerDraft) {

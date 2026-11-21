@@ -69,7 +69,7 @@ struct MacRuntimePluginManagerView: View {
             if updating && !adding { ProgressView().controlSize(.small) }
         }
         .sheet(isPresented: $adding) {
-            MacAddPluginSheet(profiles: profiles, source: $source, destination: $destination, updating: updating, failure: failure,
+            MacAddPluginSheet(profiles: profiles, source: $source, destination: $destination, updating: updating, failure: failure ?? libraryError, refresh: refresh,
                 cancel: { adding = false; failure = nil },
                 install: { mutate($0, action: "install", source: $1) })
         }
@@ -147,13 +147,14 @@ struct MacRuntimePluginManagerView: View {
     }
 }
 
-private struct MacAddPluginSheet: View {
+struct MacAddPluginSheet: View {
     typealias Profile = MacDesktopPluginLibrary.Profile
     let profiles: [Profile]
     @Binding var source: String
     @Binding var destination: String?
     let updating: Bool
     let failure: String?
+    let refresh: () -> Void
     let cancel: () -> Void
     let install: (Profile, String) -> Void
     private var selected: Profile? {
@@ -188,6 +189,14 @@ private struct MacAddPluginSheet: View {
                             selected.runtime == "pi" ? "Pi" : "DeepSeek Harness"))
                     .font(.callout).foregroundStyle(.secondary)
                     .accessibilityIdentifier("workspace.plugins.missingRuntime")
+                HStack(spacing: 14) {
+                    if let guide = selected.installationGuide {
+                        Link(String(localized: "Installation guide", table: "ModelCenter"), destination: guide)
+                            .accessibilityIdentifier("workspace.plugins.runtimeGuide")
+                    }
+                    Button(String(localized: "Refresh"), action: refresh)
+                        .accessibilityIdentifier("workspace.plugins.refreshRuntime")
+                }
             } else if let error = selected?.error {
                 Text(verbatim: error).font(.callout).foregroundStyle(MacDesignColor.danger).textSelection(.enabled)
             }

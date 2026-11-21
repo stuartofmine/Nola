@@ -36,16 +36,20 @@
         && (!!endpointId || (!!endpointName.trim() && validEndpointURL(baseURL)))
         && !profiles.some(profile => profile.endpoint.id === endpointId && profile.modelName.toLowerCase() === modelName.trim().toLowerCase()));
 
-    export function open(endpoint?: RemoteProfile['endpoint'], initialModelName = '') {
+    export function open(endpoint?: RemoteProfile['endpoint'], initialModelName = '', initialEndpointName = '') {
         endpointId = endpoint?.id ?? '';
-        endpointName = endpoint?.name ?? '';
+        endpointName = endpoint?.name ?? initialEndpointName;
         baseURL = endpoint?.baseURL ?? '';
         wireProtocol = endpoint?.wireProtocol ?? 'chat_completions';
         modelName = initialModelName; displayName = ''; priority = 50; capabilities = ['chat'];
         executionCapabilities = importExecutionCapabilities();
         baseline = draftSnapshot();
         opened = true;
-        void tick().then(() => { if (opened && dialog?.isConnected && !dialog.open) dialog.showModal(); });
+        void tick().then(() => {
+            if (!opened || !dialog?.isConnected || dialog.open) return;
+            dialog.showModal();
+            dialog.querySelector<HTMLInputElement>(initialEndpointName ? 'input[type=url]' : 'input:not(:disabled)')?.focus({preventScroll: true});
+        });
     }
     async function close(event?: Event) {
         event?.preventDefault();

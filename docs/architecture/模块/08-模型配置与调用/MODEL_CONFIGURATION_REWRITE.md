@@ -15,7 +15,7 @@
 1. Core新建远程profile写入topK/repetitionPenalty=null；Apple共享ModelParameters将其定义为非可选整数/浮点。Mac模型选择在解码阶段失败，用户看到回车不发送。
 2. MacLocalAgentRuntime以topK!=40和repetitionPenalty!=1判断是否发送；参数是否显式设置被错误替换成与UI默认值的数值比较。
 3. ConversationParameterSnapshot读取把null重新补成40/1，保存整对象；一次无关编辑也可能把本地采样参数带进Responses。
-4. CLI文件是显式导入入口，Core目录是运行权威，但启动、apply-config与模型中心的关系未在产品入口解释；缺少默认引用和凭据时只抛底层错误。
+4. 旧 CLI 需要手动导入，缺少默认引用时很难定位。现行 CLI 与 Web Host 启动时整批校验并应用目录；出错提示包含文件及修复入口。见[文件配置与回滚](MODEL_FILE_CONFIGURATION.md)。
 5. 未知模型能力曾被固化为false；改成工具默认true只能修正产品默认值，不能替代能力来源、显式覆盖和provider声明的完整设计。
 6. 模型目录、UI显示参数、请求参数混在parametersJSON。Rust/Swift/Kotlin/TS各自解码、补默认和过滤，缺少同一份跨语言契约样本。
 

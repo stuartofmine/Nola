@@ -30,6 +30,8 @@ CLI 可以通过带认证的本地 HTTP 服务，为 Web 和远程客户端提�
 
 ## 架构
 
+[中文架构指南](docs/architecture/README.md) · [English architecture guide](docs/architecture/README.en.md)
+
 | 组件 | 实现 | 职责 |
 | --- | --- | --- |
 | macOS · `apps/macos/` | SwiftUI / AppKit | 原生桌面客户端与平台 Host 集成 |
@@ -41,7 +43,7 @@ CLI 可以通过带认证的本地 HTTP 服务，为 Web 和远程客户端提�
 | Core · `core/` | Rust、C ABI / JNI | 领域契约、Agent 执行、Application Service、持久化与 Host 接口 |
 | Apple 共享代码 · `shared/apple/` | Swift | 共用展示组件与协议代码 |
 
-各原生客户端拥有自己的界面；macOS App 不是 CLI 的外壳。对话和持久运行状态由本地 Application Service 与 Store 管理。远程 Host 访问需要认证和明确授权。
+各原生客户端拥有自己的界面；macOS App 不是 CLI 的外壳。桌面 Service 与移动端嵌入式 Application 共用业务命令和存储契约。远程 Host 访问需要认证和明确授权。
 
 ## 从源码运行
 
@@ -59,7 +61,7 @@ cargo build --locked -p nola_cli -p nola_service --bins
 
 也可运行 `./dev.sh` 执行上述本地构建与启动，使用 `WEB_HOST`、`WEB_PORT` 设置监听地址。
 
-模型可在 Web/原生客户端设置中配置，也可使用 `nola model apply-config`。`llm.default_model` 必须引用同一份配置中声明的连接和模型。
+模型可在 Web/原生客户端设置中配置，也可运行 `nola config` 查看文件来源和宿主已保存的默认模型。保存文件后，下次启动会自动校验并应用连接、模型与默认选择。配置有误时，Nola 提示出错文件并保留已保存的模型目录。`llm.default_model` 必须引用同一份配置中声明的连接和模型。
 
 CLI 交互中，按 `Ctrl+V` 添加剪贴板图片，也可粘贴图片的绝对路径。图片分析需要模型声明图片输入能力。权限拒绝后，用 `/allow` 查看会话权限；配置中的显式拒绝规则和操作系统权限需要在各自来源处修改，然后明确要求重试。
 

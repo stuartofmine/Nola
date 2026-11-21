@@ -1410,16 +1410,9 @@ fn render_user_question_prompt(prompt: &UserQuestionPrompt, selected: Option<usi
     }
     let decline_index = prompt.options.len() + usize::from(prompt.allow_freeform);
     let decline_marker = if selected == Some(decline_index) { "›" } else { " " };
-    let decline_label = match crate::i18n::current_language() {
-        crate::i18n::Language::ZhHans => "拒绝回答此问题",
-        _ => "Decline to answer",
-    };
-    rows.push(format!("{decline_marker} {decline_label}"));
-    rows.push(localized.selection_hint.to_string());
-    rows.push(match crate::i18n::current_language() {
-        crate::i18n::Language::ZhHans => "Esc: 保留问题稍后回答 · Alt+↑↓/PgUp/PgDn: 滚动",
-        _ => "Esc: keep open for later · Alt+↑↓/PgUp/PgDn: scroll",
-    }.to_string());
+    rows.push(format!("{decline_marker} {}", ui_text(UiText::DeclineQuestion)));
+    let hint = if selected.is_some() { UiText::QuestionKeyHint } else { UiText::QuestionLineHint };
+    rows.push(ui_text(hint).to_string());
 
     let inner = adaptive_panel_inner_width(&rows, terminal_columns());
     let mut out = String::new();
@@ -1835,6 +1828,7 @@ mod tests {
         assert!(crate::execution_context::current_execution_id().is_none());
     }
     use crate::runtime_input::RuntimeInput;
+    use crate::i18n::{interaction_text, ui_text, UiText};
     use super::{
         adaptive_panel_inner_width, append_execution_input, confirmation_answer_is_yes,
         display_width, modal_scroll_direction, render_user_question_prompt,
@@ -2233,6 +2227,11 @@ mod tests {
             allow_freeform: true,
         };
         let rendered = render_user_question_prompt(&prompt, Some(0));
+        assert!(rendered.contains(ui_text(UiText::QuestionKeyHint)));
+        assert!(!rendered.contains(interaction_text().selection_hint));
+        let line_mode = render_user_question_prompt(&prompt, None);
+        assert!(line_mode.contains("/decline"));
+        assert!(!line_mode.contains("Esc"));
         for word in [
             "Preserve",
             "every",

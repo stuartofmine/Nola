@@ -3290,3 +3290,4 @@
 "Icon could not be rendered" = "Не удалось отобразить значок";
 
 "model.center.selection_error.title" = "Не удалось выбрать модель";
+"prompt.templates.copy_name" = "%@ (копия)";

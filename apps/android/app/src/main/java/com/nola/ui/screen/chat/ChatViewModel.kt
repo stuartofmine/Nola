@@ -867,7 +867,13 @@ class ChatViewModel @Inject constructor(
         val run = taskParentRun(task, messageId)
         val binding = checkNotNull(conversationRepo.getConversation(parent)).executionHostBinding
         val transport = binding?.let { webAgentProvider.journalTransport(resolveBoundHost(it)) }
-        com.nola.data.repository.readTaskChildDetail(parent, run, task.id, child, before, transport != null) { command ->
+        val callId = task.lineage.parentCallId
+        val message = _uiState.value.messages.singleOrNull { (it.meta?.get("nola.canonicalMessageID") ?: it.id) == messageId }
+        val origin = message?.canonicalParts?.filterIsInstance<ConversationProjectionV1.Part.Tool>()
+            ?.singleOrNull { it.toolCallId == callId }
+        val expertCallId = callId?.takeIf { origin?.capabilityId in setOf("delegate_expert", "expert_exchange") }
+        com.nola.data.repository.readTaskChildDetail(parent, run, task.id, child, before, transport != null,
+            expertCallId = expertCallId, expertQuery = { command -> expertHistoryCommand(parent, command) }) { command ->
             if (transport != null) transport(command).getValue("result") else applicationRuntime.execute(command)
         }
     }
@@ -952,7 +958,15 @@ class ChatViewModel @Inject constructor(
                     if (value == null) remove(key) else putString(key, value)
                 }.commit()) { "Could not persist Goal operation" } },
                 observe = { webAgentProvider.conversationProgress(owner, host) },
-                transport = { webAgentProvider.goalControl(it, host) })
+                transport = { intent ->
+                    try {
+                        webAgentProvider.goalControl(intent, host)
+                    } catch (failure: com.nola.data.remote.api.WebHostStatusException) {
+                        if (failure.statusCode == 409 && failure.errorCode == "goal_host_default_unavailable")
+                            throw IllegalStateException(context.getString(R.string.goal_host_default_unavailable), failure)
+                        throw failure
+                    }
+                })
         } }
 
     private val localGoalWakes = mutableSetOf<String>()
@@ -1074,7 +1088,18 @@ class ChatViewModel @Inject constructor(
 
     internal suspend fun loadConversationProgress(owner: String): com.nola.data.repository.ConversationProgress = withContext(Dispatchers.IO) {
         val host = resolveConversationProgressHost(owner)
-        if (host != null) webAgentProvider.conversationProgress(owner, host) else conversationProgress.load(owner)
+        if (host == null) return@withContext conversationProgress.load(owner)
+        val progress = webAgentProvider.conversationProgress(owner, host)
+        remoteGoalMutex.withLock {
+            val preferences = context.getSharedPreferences("goal-control-intents", android.content.Context.MODE_PRIVATE)
+            val key = "${host.expectedHostId}:$owner"
+            preferences.getString(key, null)?.let { raw ->
+                com.nola.data.local.settleRemoteGoalReceipt(Json.parseToJsonElement(raw).jsonObject, host.expectedHostId, progress) {
+                    check(preferences.edit().remove(key).commit()) { context.getString(R.string.goal_operation_failed) }
+                }
+            }
+        }
+        progress
     }
 
     internal val roomDrafts = androidx.compose.runtime.mutableStateMapOf<String, RoomComposerState>()
@@ -2304,7 +2329,7 @@ class ChatViewModel @Inject constructor(
                 if (current()) {
                     val terminal = terminalCommitted && (observation.canSubmit || _uiState.value.expertContextOwner != null) &&
                         observation.recovery == com.nola.data.remote.api.RemoteRunRecovery.Terminal
-                    var state = _uiState.value.copy(processingState = if (terminal) ProcessingState.Idle else ProcessingState.Streaming,
+                    var state = _uiState.value.copy(hostGoalInProgress = false, processingState = if (terminal) ProcessingState.Idle else ProcessingState.Streaming,
                         error = if (observation.recovery == com.nola.data.remote.api.RemoteRunRecovery.Inconsistent)
                             context.getString(R.string.chat_agent_error) else null)
                     // These are the original live nonce challenges, not trace
@@ -2314,8 +2339,11 @@ class ChatViewModel @Inject constructor(
                         require(wire.getValue("canonical_run_id").jsonPrimitive.content == observation.key.runId)
                         val event = com.nola.data.remote.sse.decodeSsePayload(wire.toString(), null) as? SseEvent.PermissionRequest
                             ?: error("Observation permission is not a typed live challenge")
+                        val permissionClient = if (observation.goalExecution != null && event.clientId == "web-goal")
+                            "web-goal" else configuration.clientId
+                        require(observation.submissionReceipt != null || permissionClient == "web-goal")
                         val next = acceptHostPermissionEvent(state, event, convId, configuration.expectedHostId,
-                            configuration.clientId, System.currentTimeMillis() / 1_000L)
+                            permissionClient, System.currentTimeMillis() / 1_000L)
                             ?: error("Observation permission identity mismatch")
                         state = next; permission = next.permissionRequest
                     }
@@ -2352,7 +2380,22 @@ class ChatViewModel @Inject constructor(
                 resume(key).collect { event -> if (current()) handleAgentEvent(event, convId) }
             }, reconcileSubmission = { reconcileRemoteSubmissionBeforeRun(convId, configuration, ::current) },
             admittedKey = { remoteObservationInitialKey.takeIf { _uiState.value.activeResponseId != null } },
-            stopAtTerminal = _uiState.value.expertContextOwner != null)
+            stopAtTerminal = _uiState.value.expertContextOwner != null,
+            presentHostExecution = { observation ->
+                val pending = withContext(Dispatchers.IO) { conversationRepo.readRemoteSubmissionIntent(convId) }
+                require(pending == null) { "A Host execution cannot acknowledge a mobile submission" }
+                if (current()) {
+                    remoteAdmissionReceipt = null
+                    remoteSubmissionAdmitted = false
+                    executionSession.permissionSourceUnconfirmed = !observation.canSubmit
+                    permissionSession.setHostRequest(null)
+                    _uiState.update { state -> state.copy(
+                        hostGoalInProgress = observation.goalExecution != null && !observation.canSubmit,
+                        processingState = if (observation.canSubmit) ProcessingState.Idle else ProcessingState.AwaitingRecovery,
+                        activeResponseId = null, activeResponseStartedAt = null, permissionRequest = null, error = null,
+                    ) }
+                }
+            })
     }
 
     private suspend fun reconcileRemoteSubmissionBeforeRun(convId: String, configuration: WebAgentProvider.Config,
@@ -5499,8 +5542,10 @@ class ChatViewModel @Inject constructor(
         val configuration = resolveBoundHost(binding)
         val source = parentId?.let { applicationRuntime.conversationSourceOwner(it) }
         if (source is com.nola.data.local.ConversationSourceOwner.Remote) require(source.hostId == configuration.expectedHostId)
-        if (source == com.nola.data.local.ConversationSourceOwner.Local && parentId != null)
-            require(applicationRuntime.executeQuery(buildJsonObject { put("type", "load_conversation_tail_snapshot"); put("conversation_id", parentId); put("message_limit", 1); put("part_text_limit", 1); put("part_json_limit", 1) }).jsonObject.getValue("total_message_count").jsonPrimitive.long == 0L) { "Local history cannot be used as a remote expert parent" }
+        if (source == com.nola.data.local.ConversationSourceOwner.Local && parentId != null) {
+            val local = applicationRuntime.loadConversationProjectionWindowV1(parentId, null, limit = 1, contentByteLimit = 4096)
+            require(local.totalMessageCount == 0L) { "Local history cannot be used as a remote expert parent" }
+        }
         check(source != com.nola.data.local.ConversationSourceOwner.Unavailable)
         var capturedEpoch = (source as? com.nola.data.local.ConversationSourceOwner.Remote)?.storeEpoch ?: expectedStoreEpoch
         require(expectedStoreEpoch == null || capturedEpoch == expectedStoreEpoch)

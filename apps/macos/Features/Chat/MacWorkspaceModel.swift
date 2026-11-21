@@ -2652,7 +2652,7 @@ final class MacWorkspaceModel {
         }
         let parameters = MacLocalModelConfigurationStore(applicationPort: modelApplication).parameters(for: profile)
         return min(
-            max(MacLocalModelProfile.minimumContextTokens, parameters.maxContextLength),
+            max(profile.configurableContext.lowerBound, parameters.maxContextLength),
             profile.nativeContextTokens
         )
     }
@@ -3135,22 +3135,10 @@ final class MacWorkspaceModel {
     }
 
     func newConversation() {
-        let defaultTemplate: UUID?
-        do { defaultTemplate = try MacPromptLibrary.defaultTemplateID() }
-        catch { conversationOperationError = error.localizedDescription; return }
-        var conversation = MacConversation(
-            title: String(localized: "New Conversation"),
-            preview: "",
-            updatedAt: .now,
-            isPinned: false,
-            promptTemplateID: defaultTemplate,
-            promptTemplateSelectionIsExplicit: true
-        )
+        let conversation: MacConversation
         do {
             guard let canonicalRepository else { throw MacApplicationPortError.invalidResponse }
-            conversation.configurationRevision = try canonicalRepository.ensureConversation(conversation)
-            guard conversation.configurationRevision != nil else { throw MacApplicationPortError.invalidResponse }
-            conversation.isPersisted = true
+            conversation = try canonicalRepository.createEmptyConversation()
         } catch {
             conversationOperationError = error.localizedDescription
             return
@@ -3166,7 +3154,7 @@ final class MacWorkspaceModel {
         draftsByConversation[conversation.id] = ""
         attachmentsByConversation[conversation.id] = []
         loadedDraftIDs.insert(conversation.id)
-        selectedPromptTemplateID = defaultTemplate
+        selectedPromptTemplateID = conversation.promptTemplateID
         // An outstanding request belongs to its original conversation. The
         // selectedPendingRemotePermission projection hides it in this new one.
     }
@@ -4498,7 +4486,7 @@ final class MacWorkspaceModel {
                     for: localProfile
                 )
                 runContextWindowTokens = min(
-                    max(MacLocalModelProfile.minimumContextTokens, parameters.maxContextLength),
+                    max(localProfile.configurableContext.lowerBound, parameters.maxContextLength),
                     localProfile.nativeContextTokens
                 )
             }

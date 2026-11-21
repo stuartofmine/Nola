@@ -3275,3 +3275,4 @@
 "Icon could not be rendered" = "アイコンを描画できませんでした";
 
 "model.center.selection_error.title" = "モデルを選択できませんでした";
+"prompt.templates.copy_name" = "%@（コピー）";

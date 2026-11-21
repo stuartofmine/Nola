@@ -16,6 +16,7 @@ import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.animation.togetherWith
 import androidx.compose.foundation.background
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.draw.clip
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.clickable
@@ -23,8 +24,12 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.ColumnScope
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.widthIn
+import com.nola.ui.components.nolaPageGutter
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
@@ -33,7 +38,8 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.selection.selectable
 import androidx.compose.foundation.selection.selectableGroup
-import androidx.compose.material3.RadioButton
+import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.text.rememberTextMeasurer
 import com.nola.data.local.datastore.AppearancePreference
 import com.nola.ui.components.NolaIconButton
 import androidx.compose.foundation.layout.width
@@ -82,7 +88,6 @@ import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
-import androidx.compose.ui.unit.sp
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.compose.LocalLifecycleOwner
@@ -349,18 +354,9 @@ internal fun SettingsContent(
         },
         label = "settings-detail-section"
     ) { activeDetail ->
-    NolaPage(scrollKey = activeDetail ?: "root", topPadding = 0.dp, savedScrollOffsets = settingsScrollOffsets) {
+    SettingsPage(activeDetail, settingsScrollOffsets, onBack = { detailSection = null }) {
         if (activeDetail == null) {
             NolaRootPageTitle(stringResource(R.string.settings_title))
-        } else Row(Modifier.fillMaxWidth().heightIn(min = 64.dp), verticalAlignment = Alignment.CenterVertically) {
-            NolaIconButton(label = stringResource(R.string.common_back), onClick = { detailSection = null }) {
-                Icon(painterResource(R.drawable.nola_back), stringResource(R.string.common_back))
-            }
-            Text(stringResource(if (activeDetail == "general") R.string.settings_general else if (activeDetail == "appearance") R.string.appearance_title else if (activeDetail == "privacy") R.string.settings_privacy else if (activeDetail == "notifications") R.string.notifications_title else R.string.settings_title),
-                Modifier.weight(1f), style = MaterialTheme.typography.titleMedium, textAlign = TextAlign.Center, maxLines = 1, overflow = TextOverflow.Ellipsis)
-            Spacer(Modifier.size(48.dp))
-        }
-        if (activeDetail == null) {
             MobileSettingsGroup(R.string.settings_group_preferences) {
                 IMSettingsRow(R.drawable.nola_settings, R.string.settings_general) { detailSection = "general" }
             }
@@ -375,7 +371,7 @@ internal fun SettingsContent(
                 IMSettingsRow(R.drawable.nola_review, R.string.settings_privacy) { detailSection = "privacy" }
             }
             SettingsAutomationCard(onScheduledActions)
-            return@NolaPage
+            return@SettingsPage
         }
 
         if (state.loadFailed) {
@@ -407,21 +403,7 @@ internal fun SettingsContent(
         if (activeDetail == "general" || activeDetail == "appearance") {
         NolaCard(plain = true) {
             NolaSectionTitle(title = stringResource(R.string.appearance_title))
-            Row(Modifier.fillMaxWidth().background(MaterialTheme.colorScheme.surfaceContainer, NolaContinuousShape(10.dp)).padding(3.dp).selectableGroup(), horizontalArrangement = Arrangement.spacedBy(2.dp)) {
-                AppearancePreference.entries.forEach { choice ->
-                    Box(Modifier.weight(1f).heightIn(min = 48.dp)
-                        .clip(NolaContinuousShape(8.dp))
-                        .background(if (appearance == choice) MaterialTheme.colorScheme.surface else androidx.compose.ui.graphics.Color.Transparent, NolaContinuousShape(8.dp))
-                        .selectable(selected = appearance == choice, role = Role.RadioButton,
-                            onClick = { onAppearanceChange(choice) }), contentAlignment = Alignment.Center) {
-                        Text(stringResource(when (choice) {
-                            AppearancePreference.System -> R.string.appearance_system
-                            AppearancePreference.Light -> R.string.appearance_light
-                            AppearancePreference.Dark -> R.string.appearance_dark
-                        }), fontSize = 14.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                    }
-                }
-            }
+            AppearanceChoices(appearance, onAppearanceChange)
         }
 
         }
@@ -522,6 +504,86 @@ internal fun SettingsContent(
         }
         }
     }
+    }
+}
+
+@Composable
+private fun AppearanceChoices(selected: AppearancePreference, onSelect: (AppearancePreference) -> Unit) {
+    val choices = listOf(
+        AppearancePreference.System to stringResource(R.string.appearance_system),
+        AppearancePreference.Light to stringResource(R.string.appearance_light),
+        AppearancePreference.Dark to stringResource(R.string.appearance_dark),
+    )
+    val style = MaterialTheme.typography.labelLarge
+    val density = LocalDensity.current
+    val measurer = rememberTextMeasurer()
+    BoxWithConstraints(Modifier.fillMaxWidth()
+        .background(MaterialTheme.colorScheme.surfaceContainer, NolaContinuousShape(10.dp))
+        .padding(3.dp).selectableGroup()) {
+        val spacing = 2.dp
+        val padding = 8.dp
+        val segmentWidth = (maxWidth - spacing * (choices.size - 1)) / choices.size
+        val fits = choices.all { (_, label) ->
+            val labelWidth = measurer.measure(label, style = style, softWrap = false).size.width
+            with(density) { labelWidth.toDp() } + padding * 2 <= segmentWidth
+        }
+        val option: @Composable (AppearancePreference, String, Modifier) -> Unit = { choice, label, modifier ->
+            Box(modifier.heightIn(min = 48.dp)
+                .clip(NolaContinuousShape(8.dp))
+                .background(if (selected == choice) MaterialTheme.colorScheme.surface else Color.Transparent)
+                .selectable(selected = selected == choice, role = Role.RadioButton, onClick = { onSelect(choice) })
+                .padding(horizontal = padding, vertical = 4.dp), contentAlignment = Alignment.Center) {
+                Text(label, modifier = Modifier.fillMaxWidth(), style = style, textAlign = TextAlign.Center)
+            }
+        }
+        if (fits) {
+            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(spacing)) {
+                choices.forEach { (choice, label) -> option(choice, label, Modifier.weight(1f)) }
+            }
+        } else {
+            Column(verticalArrangement = Arrangement.spacedBy(spacing)) {
+                choices.forEach { (choice, label) -> option(choice, label, Modifier.fillMaxWidth()) }
+            }
+        }
+    }
+}
+
+@Composable
+private fun SettingsPage(
+    section: String?,
+    scrollOffsets: MutableMap<String, Int>,
+    onBack: () -> Unit,
+    content: @Composable ColumnScope.() -> Unit,
+) {
+    Column(
+        Modifier.fillMaxSize().background(MaterialTheme.colorScheme.background),
+        horizontalAlignment = Alignment.CenterHorizontally,
+    ) {
+        if (section != null) SettingsDetailHeader(section, onBack)
+        NolaPage(scrollKey = section ?: "root", topPadding = 0.dp, savedScrollOffsets = scrollOffsets,
+            content = content)
+    }
+}
+
+@Composable
+private fun SettingsDetailHeader(section: String, onBack: () -> Unit) {
+    val title = when (section) {
+        "general" -> R.string.settings_general
+        "appearance" -> R.string.appearance_title
+        "privacy" -> R.string.settings_privacy
+        "notifications" -> R.string.notifications_title
+        else -> R.string.settings_title
+    }
+    Row(
+        Modifier.widthIn(max = 840.dp).fillMaxWidth().heightIn(min = 56.dp)
+            .padding(horizontal = nolaPageGutter()),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        NolaIconButton(label = stringResource(R.string.common_back), onClick = onBack) {
+            Icon(painterResource(R.drawable.nola_back), stringResource(R.string.common_back))
+        }
+        Text(stringResource(title), style = MaterialTheme.typography.titleLarge,
+            modifier = Modifier.weight(1f).padding(start = NolaSpacing.xs))
     }
 }
 

@@ -62,8 +62,13 @@ nonisolated struct MacInspectorProgressSnapshot: Decodable, Equatable, Sendable 
         let id: String
         let objective: String
         let status: String
+        let constraints: [String]?
         let next_wake_at_epoch_ms: Int64?
         let requirements: [String: Requirement]
+        var constraintsOutsideRequirements: [String] {
+            let descriptions = Set(requirements.values.map(\.description))
+            return (constraints ?? []).filter { !descriptions.contains($0) }
+        }
         let work: Work
     }
     let active: Goal?
@@ -409,6 +414,14 @@ struct MacInspectorProgressContent: View, Equatable {
                 }
             }
             if let goal = snapshot?.active {
+                if !goal.constraintsOutsideRequirements.isEmpty {
+                    section("inspector.section.constraints") {
+                        ForEach(Array(goal.constraintsOutsideRequirements.enumerated()), id: \.offset) { _, constraint in
+                            Text(constraint).textSelection(.enabled)
+                                .fixedSize(horizontal: false, vertical: true)
+                        }
+                    }
+                }
                 if !goal.requirements.isEmpty {
                     section("inspector.section.requirements") {
                         ForEach(goal.requirements.values.sorted { $0.id < $1.id }) { requirement in

@@ -69,6 +69,7 @@ data class ModelsUiState(
     val webHostToken: String = "",
     val webHostCertificateSha256: String = "",
     val hostMessaging: MessagingStatusDto? = null,
+    val verifiedHostTransport: com.nola.data.remote.dto.VerifiedHostTransport? = null,
     val openingHostManagement: Boolean = false,
     val showParameters: Boolean = false,
     val parameterTarget: ModelInfo? = null,
@@ -229,6 +230,10 @@ class ModelsViewModel @Inject constructor(
                         webHostToken = webHostToken,
                         webHostCertificateSha256 = webHostCertificateSha256,
                         hostMessaging = hostSettings?.messaging,
+                        verifiedHostTransport = hostSettings?.verifiedTransport ?: it.verifiedHostTransport.takeIf { _ ->
+                            hasWebHostConfig && it.webHostUrl == webHostUrl && it.webHostToken == webHostToken &&
+                                it.webHostCertificateSha256 == webHostCertificateSha256
+                        },
                         selectedModelId = if (modelService.isPlaceholder) savedDefault?.selectionId else modelService.currentProfileId ?: modelService.currentModelId,
                         selectedModelSource = if (modelService.isPlaceholder) savedDefault?.source else modelService.currentModelSource.toModelSource()
                     )
@@ -685,6 +690,7 @@ class ModelsViewModel @Inject constructor(
                     webHostCertificateSha256 = "",
                     webHostModel = null,
                     hostMessaging = null,
+                    verifiedHostTransport = null,
                     connectionTestResult = null,
                     connectionTestSucceeded = null,
                     selectedModelId = if (wasSelected) null else it.selectedModelId,
@@ -730,10 +736,12 @@ class ModelsViewModel @Inject constructor(
 
         webHostConnectionJob?.cancel()
         webHostConnectionJob = viewModelScope.launch {
+            var verifyingPairedHost = false
             try {
                 val normalizedUrl = com.nola.data.remote.api.normalizeWebHostBaseUrl(url)
                 val savedOrigin = prefs.webHostBaseUrl.first()
                 val previousIdentity = if (sameWebHostDestination(savedOrigin, normalizedUrl)) prefs.webHostIdentity.first() else ""
+                verifyingPairedHost = previousIdentity.isNotEmpty()
                 val settings = kotlinx.coroutines.withTimeout(15_000) { webHostApi.getAgentSettings(
                         hostBaseUrl = normalizedUrl,
                         token = token.trim(),
@@ -763,6 +771,7 @@ class ModelsViewModel @Inject constructor(
                         selectedModelSource = if (!hostIsDefault && it.selectedModelSource == ModelInfo.ModelSource.WebHost) null else it.selectedModelSource,
                         webHostModel = hostModel,
                         hostMessaging = settings.messaging,
+                        verifiedHostTransport = settings.verifiedTransport,
                         connectionTestResult = successMessage,
                         connectionTestSucceeded = true
                     )
@@ -776,7 +785,7 @@ class ModelsViewModel @Inject constructor(
             } catch (cancelled: CancellationException) {
                 throw cancelled
             } catch (e: Exception) {
-                val message = webHostConnectionMessage(context, e)
+                val message = webHostConnectionMessage(context, e, verifyingPairedHost)
                 publishStatus(message, false)
                 onComplete(false, message)
             }

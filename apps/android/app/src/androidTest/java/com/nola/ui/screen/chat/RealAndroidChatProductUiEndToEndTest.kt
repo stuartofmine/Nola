@@ -65,25 +65,6 @@ class RealAndroidChatProductUiEndToEndTest {
         }
     }
 
-    private fun confirmRealProviderCapabilities(modelId: String) {
-        val context = InstrumentationRegistry.getInstrumentation().targetContext
-        composeRule.onNode(androidx.compose.ui.test.hasContentDescription(context.getString(R.string.models_execution_capabilities)) and
-            androidx.compose.ui.test.hasAnyAncestor(hasTestTag(MODEL_ROW_TEST_TAG_PREFIX + modelId)))
-            .performProductScrollTo().performProductClick()
-        val save = composeRule.onNodeWithText(context.getString(R.string.common_save))
-        // The exact owned model may already have this declaration after an earlier turn.
-        if (runCatching { save.assertIsEnabled() }.isSuccess) {
-            save.performProductScrollTo().performProductClick()
-        } else {
-            composeRule.onNodeWithText(context.getString(R.string.common_cancel))
-                .performProductScrollTo().performProductClick()
-        }
-        composeRule.waitUntil(15_000) { composeRule.mainClock.advanceTimeBy(32);
-            composeRule.onAllNodesWithText(context.getString(R.string.models_execution_capabilities_hint))
-                .fetchSemanticsNodes().isEmpty()
-        }
-    }
-
     // Exercise the actual once-only UI approval; never blanket-authorize unrelated tools.
     private fun approveVisibleToolOnce(
         scenario: ActivityScenario<MainActivity>,
@@ -142,7 +123,7 @@ class RealAndroidChatProductUiEndToEndTest {
                 composeRule.onNodeWithText(context.getString(R.string.models_title)).performProductClick()
                 val modelTag = MODEL_ROW_TEST_TAG_PREFIX + model
                 composeRule.waitUntil(20_000) { composeRule.onAllNodesWithTag(modelTag).fetchSemanticsNodes().isNotEmpty() }
-                confirmRealProviderCapabilities(model)
+                composeRule.confirmFixtureCapabilities(model)
                 val use = composeRule.onAllNodes(androidx.compose.ui.test.hasText(context.getString(R.string.models_use)) and
                     androidx.compose.ui.test.hasAnyAncestor(hasTestTag(modelTag)), useUnmergedTree = true)
                 if (use.fetchSemanticsNodes().isNotEmpty()) use[0].performProductScrollTo().performProductClick()
@@ -153,8 +134,18 @@ class RealAndroidChatProductUiEndToEndTest {
                     composeRule.waitUntil(20_000) { composeRule.onAllNodes(hasTestTag("chat.composer.input") and isEnabled()).fetchSemanticsNodes().isNotEmpty() }
                     composeRule.onNodeWithTag("chat.composer.input").performProductInput(prompt)
                     val send = androidx.compose.ui.test.hasContentDescription(context.getString(R.string.chat_send))
-                    composeRule.waitUntil(20_000) {
-                        composeRule.onAllNodes(send and isEnabled()).fetchSemanticsNodes().isNotEmpty()
+                    try {
+                        composeRule.waitUntil(20_000) {
+                            composeRule.onAllNodes(send and isEnabled()).fetchSemanticsNodes().isNotEmpty()
+                        }
+                    } catch (error: androidx.compose.ui.test.ComposeTimeoutException) {
+                        File(context.filesDir, "github-skill-composer-tree.txt").writeText(
+                            composeRule.onAllNodes(androidx.compose.ui.test.isRoot(), useUnmergedTree = true).printToString()
+                        )
+                        File(context.filesDir, "github-skill-composer-failed.png").outputStream().use { output ->
+                            instrumentation.uiAutomation.takeScreenshot().compress(android.graphics.Bitmap.CompressFormat.PNG, 100, output)
+                        }
+                        throw error
                     }
                     composeRule.onNodeWithTag("chat.composer.input").assertTextEquals(prompt)
                     composeRule.onNode(send).performProductClick()
@@ -261,7 +252,7 @@ class RealAndroidChatProductUiEndToEndTest {
                 throw failure
             }
             val modelRowTag = MODEL_ROW_TEST_TAG_PREFIX + config.getString("model")
-            confirmRealProviderCapabilities(config.getString("model"))
+            composeRule.confirmFixtureCapabilities(config.getString("model"))
             val use = composeRule.onAllNodes(androidx.compose.ui.test.hasText(context.getString(R.string.models_use)) and
                 androidx.compose.ui.test.hasAnyAncestor(androidx.compose.ui.test.hasTestTag(modelRowTag)), useUnmergedTree = true)
             if (use.fetchSemanticsNodes().isNotEmpty()) {
@@ -576,7 +567,7 @@ class RealAndroidChatProductUiEndToEndTest {
             composeRule.onNodeWithContentDescription(context.getString(R.string.tab_settings)).performProductClick()
             composeRule.onNodeWithText(context.getString(R.string.models_title)).performProductClick()
             composeRule.waitUntil(15_000) { composeRule.mainClock.advanceTimeBy(32); composeRule.onAllNodesWithTag(MODEL_ROW_TEST_TAG_PREFIX + config.getString("model"), useUnmergedTree = true).fetchSemanticsNodes().isNotEmpty() }
-            confirmRealProviderCapabilities(config.getString("model"))
+            composeRule.confirmFixtureCapabilities(config.getString("model"))
             val useModel = androidx.compose.ui.test.hasText(context.getString(R.string.models_use)) and
                 androidx.compose.ui.test.hasAnyAncestor(hasTestTag(MODEL_ROW_TEST_TAG_PREFIX + config.getString("model")))
             if (composeRule.onAllNodes(useModel, useUnmergedTree = true).fetchSemanticsNodes().isNotEmpty()) {
@@ -764,7 +755,7 @@ class RealAndroidChatProductUiEndToEndTest {
                 }
                 throw failure
             }
-            confirmRealProviderCapabilities(config.getString("model"))
+            composeRule.confirmFixtureCapabilities(config.getString("model"))
             val useModel = composeRule.onAllNodesWithText(context.getString(R.string.models_use))
             if (useModel.fetchSemanticsNodes().isNotEmpty()) {
                 composeRule.onNodeWithText(context.getString(R.string.models_use)).performProductScrollTo().performProductClick()

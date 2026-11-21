@@ -784,6 +784,14 @@
         } catch (cause) {if (scope()) expertError = t($locale,cause instanceof ExpertSelectionChanged ? 'rooms.expertChanged' : 'rooms.expertAddFailed');}
         finally {if (scope()) expertsLoading = false;}
     }
+    function openConversationFromList(conversation: ChatConversation) {
+        if (active?.conversationId === conversation.conversationId) {
+            if (contentTabs.selected !== conversationTabKey) updateContentTabs(selectContentTab(contentTabs, conversationTabKey));
+        } else {
+            void selectConversation(conversation);
+        }
+        if (viewportWidth <= 700) navigationPanel?.closePanel();
+    }
     async function selectConversation(conversation: ChatConversation) {
         if (disposed || !workspaceHost || active?.conversationId === conversation.conversationId) return;
         const selection = ++draftSelection;
@@ -1334,7 +1342,7 @@
         <aside class="chat-navigation" id="chat-workspace-navigation">
             <div class="compact-list-categories"><WorkspaceListNavigation category={listCategory} onchange={setListCategory} /></div>
             <div class="sidebar-section" hidden={listCategory !== 'conversations'}>
-            <ChatConversationManager navigationDisabled={initializing || initializationFailed} bind:this={conversationManager} bind:writing={conversationWriting} confirm={request => messageConfirmation.ask(request)} messageIds={messages.map(messageMutationId).filter((id): id is string => id !== null)} activeId={active?.conversationId ?? null} highlightSelection={!selectedContentTab} {generation} busy={busy || !!active && !canInteract} hasMessages={messages.length > 0} {canBranchDuringMaintenance} {selectedMessageId} onselect={conversation => { selectConversation(conversation); if (viewportWidth <= 700) navigationPanel?.closePanel(); }} onchange={changed} />
+            <ChatConversationManager navigationDisabled={initializing || initializationFailed} bind:this={conversationManager} bind:writing={conversationWriting} confirm={request => messageConfirmation.ask(request)} messageIds={messages.map(messageMutationId).filter((id): id is string => id !== null)} activeId={active?.conversationId ?? null} highlightSelection={!selectedContentTab} {generation} busy={busy || !!active && !canInteract} hasMessages={messages.length > 0} {canBranchDuringMaintenance} {selectedMessageId} onselect={openConversationFromList} onchange={changed} />
             </div>
             <div class="sidebar-section" hidden={listCategory !== 'resources'}><WorkspaceResourceNavigation onopen={openManagementTab}
                 selectedPath={selectedContentTab?.kind === 'page' ? selectedContentTab.path : ''} /></div>

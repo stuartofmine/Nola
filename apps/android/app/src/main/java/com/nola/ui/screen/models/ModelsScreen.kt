@@ -441,6 +441,15 @@ fun ModelsScreen(
                 subtitle = state.webHostUrl.ifBlank { stringResource(R.string.models_desktop_bridge) },
                 icon = Icons.Filled.Security, tint = MaterialTheme.colorScheme.primary,
                 onClick = { showWebHostSheet = true })
+            state.verifiedHostTransport?.let { route ->
+                Text(
+                    stringResource(if (route == com.nola.data.remote.dto.VerifiedHostTransport.Tailcat)
+                        R.string.models_verified_via_tailcat else R.string.models_verified_via_direct),
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.testTag("models.host.verified-transport"),
+                )
+            }
             state.webHostModel?.let { webHostModel ->
                 ModelListCard(
                     title = stringResource(R.string.models_web_host),

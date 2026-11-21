@@ -644,6 +644,7 @@ struct ChatBubble: View {
                         UnevenRoundedRectangle(topLeadingRadius: 5, bottomLeadingRadius: 14,
                                 bottomTrailingRadius: 14, topTrailingRadius: 14).fill(assistantBubbleFill ?? Color.clear)
                     }
+                    .accessibilityElement(children: .contain)
                     .accessibilityIdentifier("chat.assistant.answer")
             }
         case .uiSurface:

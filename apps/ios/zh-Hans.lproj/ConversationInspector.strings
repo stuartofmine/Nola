@@ -42,6 +42,7 @@
 
 "goal.example" = "例如：整理项目资料，给出带来源的总结。";
 
+"goal.constraints" = "约束";
 "goal.optional_constraints" = "约束（可选）";
 
 "goal.cancel_title" = "结束此目标？";

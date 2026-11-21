@@ -3450,3 +3450,4 @@
 "Icon could not be rendered" = "Icon could not be rendered";
 
 "model.center.selection_error.title" = "Could not select model";
+"prompt.templates.copy_name" = "%@ (copy)";

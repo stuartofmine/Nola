@@ -80,7 +80,11 @@
     <string name="chat_answer_source_tools">Résultats des outils</string>
     <string name="chat_answer_basis_detail">Seules les sources réellement utilisées dans cette réponse sont affichées.</string>
     <string name="chat_answer_memory_updates">%1$d mises à jour de mémoire</string>
-    <string name="chat_empty_no_models">Ajoutez un modèle dans l’onglet Modèles pour commencer</string>
+    <string name="models_verified_via_direct">Connexion directe vérifiée</string>
+    <string name="models_verified_via_tailcat">Connexion via Tailcat vérifiée</string>
+    <string name="models_tailcat_verify_failed">Tailcat ne peut pas joindre l’hôte. Vérifiez Tailcat sur l’hôte, puis réessayez.</string>
+    <string name="models_direct_verify_failed_without_tailcat">La connexion directe a renvoyé HTTP %1$d. Vérifiez l’adresse de l’hôte et le jeton. Si l’hôte exige Tailcat, installez une version de Nola compatible avec Tailcat.</string>
+    <string name="chat_empty_no_models">Utilisez un service de modèles, un modèle local ou un hôte Nola associé.</string>
     <string name="chat_add_model_cta">Ajouter un modèle</string>
     <string name="chat_placeholder_ready">Nola est prêt. Configurez un endpoint LLM dans Modèles pour commencer à discuter.</string>
     <string name="chat_placeholder_configure_model">Configurez un endpoint LLM dans Modèles pour activer le chat.</string>
@@ -1376,6 +1380,7 @@
     <string name="chat_local_mcp_servers">Serveurs MCP de l’appareil</string>
     <string name="chat_local_mcp_empty">Aucun serveur MCP configuré sur l’appareil.</string>
     <string name="goal_discard_pending">Annuler la demande en attente</string>
+    <string name="goal_saved_constraints">Contraintes</string>
     <string name="goal_constraints">Contraintes (facultatif)</string>
     <string name="goal_constraints_hint">Une contrainte par ligne ou séparées par des virgules</string>
     <string name="goal_next_wake_format">Prochaine vérification : %1$s</string>
@@ -1415,4 +1420,9 @@
     <string name="chat_document_delete_message">Supprimer « %1$s » ? Il sera retiré de votre contexte.</string>
     <string name="data_heart_rate_bpm_format">%1$d bpm</string>
     <string name="chat_web_host_images_unsupported">Les pièces jointes d’images ne sont pas prises en charge dans les conversations Nola Web Host. Passez à un modèle local ou cloud, ou supprimez les images.</string>
+    <string name="goal_latest_step">Dernière étape</string>
+    <string name="goal_step_interrupted">Interrompue</string>
+    <string name="goal_step_review_pending">En attente de vérification</string>
+    <string name="goal_step_reviewed">Vérifiée</string>
+    <string name="goal_host_default_unavailable">Choisissez un modèle de chat par défaut disponible dans les réglages de l’hôte, puis réessayez la demande enregistrée.</string>
 </resources>

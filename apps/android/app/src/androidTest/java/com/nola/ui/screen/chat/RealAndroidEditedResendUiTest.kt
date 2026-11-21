@@ -31,26 +31,42 @@ class RealAndroidEditedResendUiTest {
     @get:Rule val compose = createEmptyComposeRule()
     private val clickedQaUiRequests = mutableSetOf<String>()
 
-    @Test fun inlineCardPermissionIsVisibleApprovedAndRenderedByRealModel() {
+    @Test fun inertInlineCardRendersWithoutPermissionThroughRealModel() {
         val context = InstrumentationRegistry.getInstrumentation().targetContext
         requireIsolatedProductTestUser(context)
-        AndroidApplicationRuntime(context).use { runtime -> createRealAnsweredSource(false, runtime, null, requireUiCard = true) }
+        AndroidApplicationRuntime(context).use { runtime -> createRealAnsweredSource(runtime, requireUiCard = true) }
     }
 
     @Test fun ordinaryEditRewindsSameOwnerAndReplacesSourceOutput() = exercise(false)
-    @Test fun expertEditRewindsExistingChildrenAndKeepsSameParent() = exercise(true)
+    @Test fun replayingHistoricalExpertOnlyReceiptPreservesTemplateAndParent() = exercise(true)
 
     private fun exercise(expert: Boolean) {
         val context = InstrumentationRegistry.getInstrumentation().targetContext
         requireIsolatedProductTestUser(context)
         val runtime = AndroidApplicationRuntime(context)
         runtime.use {
-            val template = if (expert) createRealExpertTemplateFixture(context, runtime) else null
-            val source = createRealAnsweredSource(expert, runtime, template)
+            // Fresh selections are main-agent mentions. The old, direct-dispatch
+            // edit path is reachable only from a previously committed receipt.
+            val history = if (expert) {
+                val file = File(context.filesDir, "historical-expert-edit-fixture.json")
+                org.junit.Assume.assumeTrue("A retained expert-only conversation and template capture are required", file.isFile)
+                JSONObject(file.readText())
+            } else null
+            val template = history?.getJSONObject("template")?.let {
+                RealExpertTemplateFixture(it.getString("id"), it.getString("name"), it.getString("body"),
+                    it.getString("owner"), it.getLong("catalogRevision"))
+            }
+            val source = if (history == null) createRealAnsweredSource(runtime) else {
+                val parent = history.getString("conversationId")
+                val message = history.getString("userMessageId")
+                val record = runtime.loadConversationProjectionV1(parent)
+                check(record.messages.any { it.messageId == message && it.role == ConversationProjectionV1.Role.User })
+                Triple(parent, message, record)
+            }
             val originalManifest = if (expert) checkNotNull(runtime.expertMessageSource(source.first, source.second)) else null
             val changedCatalogRevision = if (template != null) {
                 assertRealExpertTemplateCapture(runtime, checkNotNull(originalManifest), template)
-                template.catalogRevision
+                updateRealExpertTemplateFixture(runtime, template)
             } else null
             var sourceBefore = source.third
             val conversationsBefore = runtime.listConversations().map { it.id }.toSet()
@@ -185,7 +201,7 @@ class RealAndroidEditedResendUiTest {
         }
     }
 
-    private fun createRealAnsweredSource(expert: Boolean, runtime: AndroidApplicationRuntime, template: RealExpertTemplateFixture?, requireUiCard: Boolean = false): Triple<String, String, ConversationProjectionV1> {
+    private fun createRealAnsweredSource(runtime: AndroidApplicationRuntime, requireUiCard: Boolean = false): Triple<String, String, ConversationProjectionV1> {
         val context = InstrumentationRegistry.getInstrumentation().targetContext
         val fixture = JSONObject(File(context.filesDir, "nola-real-llm-e2e.json").readText())
         val modelName = fixture.getString("model")
@@ -210,6 +226,7 @@ class RealAndroidEditedResendUiTest {
             compose.onNodeWithText(context.getString(R.string.models_title)).clickProduct()
             val rowTag = com.nola.ui.screen.models.MODEL_ROW_TEST_TAG_PREFIX + modelName
             compose.waitUntil(15_000) { compose.mainClock.advanceTimeBy(32); compose.onAllNodesWithTag(rowTag).fetchSemanticsNodes().isNotEmpty() }
+            compose.confirmFixtureCapabilities(modelName)
             val use = compose.onAllNodes(hasText(context.getString(R.string.models_use)) and hasAnyAncestor(hasTestTag(rowTag)), useUnmergedTree = true)
             if (use.fetchSemanticsNodes().isNotEmpty()) {
                 compose.mainClock.autoAdvance = true
@@ -230,38 +247,6 @@ class RealAndroidEditedResendUiTest {
                         ?.any { modelName in it.text } == true
                 }
             }
-            if (expert) {
-                val expertName = "Real edit expert " + System.nanoTime().toString().takeLast(7)
-                compose.onNodeWithTag("chat.topbar.more").clickProduct()
-                compose.onNodeWithTag("chat.experts.open").clickProduct()
-                compose.waitUntil(15_000) {
-                    compose.mainClock.advanceTimeBy(32)
-                    compose.onAllNodesWithTag("chat.experts.manage").fetchSemanticsNodes().isNotEmpty()
-                }
-                compose.onNodeWithTag("chat.experts.manage").clickProduct()
-                compose.waitUntil(15_000) { compose.mainClock.advanceTimeBy(32); compose.onAllNodesWithTag("expert.create").fetchSemanticsNodes().any { !it.config.contains(androidx.compose.ui.semantics.SemanticsProperties.Disabled) } }
-                compose.onNodeWithTag("expert.create").assertIsEnabled().clickProduct()
-                compose.onNodeWithTag("expert.editor.name").performTextInput(expertName)
-                compose.onNodeWithTag("expert.editor.description").performTextInput("Answers the requested short arithmetic task.")
-                if (template != null) {
-                    compose.mainClock.autoAdvance = true
-                    compose.onNodeWithTag("expert.editor.template").performScrollTo().assertIsDisplayed().performClick()
-                    compose.waitUntil(15_000) { compose.onAllNodesWithTag("expert.template.${template.id}").fetchSemanticsNodes().isNotEmpty() }
-                    compose.onNodeWithTag("expert.template.${template.id}").assertIsDisplayed().performClick()
-                    compose.mainClock.autoAdvance = false
-                }
-                compose.mainClock.autoAdvance = true
-                compose.onNodeWithTag("expert.editor.save").performScrollTo().assertIsDisplayed().performClick()
-                compose.mainClock.autoAdvance = false
-                compose.mainClock.advanceTimeBy(400)
-                compose.waitUntil(15_000) { compose.mainClock.advanceTimeBy(32); compose.onAllNodesWithTag("expert.editor.save").fetchSemanticsNodes().isEmpty() }
-                compose.onNodeWithText(context.getString(R.string.common_back)).clickProduct()
-                compose.mainClock.autoAdvance = true
-                compose.onNodeWithTag("chat.experts.list").performScrollToNode(hasText(expertName))
-                compose.mainClock.autoAdvance = false
-                compose.onNodeWithText(expertName).clickProduct()
-                compose.onNodeWithText(context.getString(R.string.common_done)).clickProduct()
-            }
             compose.waitUntil(15_000) {
                 compose.mainClock.advanceTimeBy(32)
                 compose.onAllNodesWithTag("chat.composer.input").fetchSemanticsNodes()
@@ -281,28 +266,12 @@ class RealAndroidEditedResendUiTest {
                     if (index < 0) continue
                     val user = projection.messages[index]
                     val manifest = runtime.expertMessageSource(conversation.id, user.messageId)
-                    if (expert) {
-                        if (manifest == null || manifest.entries.size != 1) continue
-                        val entry = manifest.entries.single()
-                        val receipt = com.nola.data.repository.AgentRoomRepository(runtime).submission(manifest.input.roomId, entry.childSubmissionId)
-                        if (receipt == null || receipt.executionId != entry.childSubmissionId ||
-                            receipt.contextConversationId != entry.participant.contextConversationId) continue
-                        approvePendingQaUi(runtime, entry.participant.contextConversationId, entry.childAssistantMessageId, entry.childSubmissionId)
-                        val childAnswered = sourceHasAnsweredSeal(runtime, entry.participant.contextConversationId,
-                            entry.childUserMessageId, entry.childAssistantMessageId)
-                        if (receipt.state !in setOf("completed", "completed_with_warnings") ||
-                            entry.modelWitness == null || entry.instructionWitness == null || !childAnswered) continue
-                        val answer = runtime.loadConversationProjectionV1(entry.participant.contextConversationId).messages
-                            .single { it.messageId == entry.childAssistantMessageId }.parts.filterIsInstance<ConversationProjectionV1.Part.Text>().joinToString("\n") { it.markdown }
-                        if (marker !in answer) continue
-                    } else {
-                        if (manifest != null) continue
-                        val assistant = projection.messages.getOrNull(index + 1) ?: continue
-                        if (assistant.role != ConversationProjectionV1.Role.Assistant) continue
-                        approvePendingQaUi(runtime, conversation.id, assistant.messageId)
-                        if (!sourceHasAnsweredSeal(runtime, conversation.id, user.messageId, assistant.messageId)) continue
-                        if (marker !in assistant.parts.filterIsInstance<ConversationProjectionV1.Part.Text>().joinToString("\n") { it.markdown }) continue
-                    }
+                    if (manifest != null) continue
+                    val assistant = projection.messages.getOrNull(index + 1) ?: continue
+                    if (assistant.role != ConversationProjectionV1.Role.Assistant) continue
+                    approvePendingQaUi(runtime, conversation.id, assistant.messageId)
+                    if (!sourceHasAnsweredSeal(runtime, conversation.id, user.messageId, assistant.messageId)) continue
+                    if (marker !in assistant.parts.filterIsInstance<ConversationProjectionV1.Part.Text>().joinToString("\n") { it.markdown }) continue
                     source = Triple(conversation.id, user.messageId, projection)
                 }
                 if (source == null) Thread.sleep(60)
@@ -318,9 +287,10 @@ class RealAndroidEditedResendUiTest {
                 val userIndex = current.messages.indexOfFirst { it.messageId == source!!.second }
                 val assistant = current.messages[userIndex + 1]
                 val tool = assistant.parts.filterIsInstance<ConversationProjectionV1.Part.Tool>().single { it.capabilityId == "render_ui" }
-                val permission = checkNotNull(tool.permission)
-                check(permission.requestId in clickedQaUiRequests && permission.decision == "allow_once" &&
-                    tool.state == ConversationProjectionV1.ActivityState.Completed) { "Actual one-off Core permission and render completion were not confirmed" }
+                check(tool.permission == null && clickedQaUiRequests.isEmpty() &&
+                    tool.state == ConversationProjectionV1.ActivityState.Completed) {
+                    "A read-only text card must render without prompting the user"
+                }
                 val surface = assistant.parts.filterIsInstance<ConversationProjectionV1.Part.UiSurface>().single().surface
                 check(surface.identity.owner.conversation_id == current.conversationId &&
                     surface.identity.owner.message_id == assistant.messageId)
@@ -339,7 +309,7 @@ class RealAndroidEditedResendUiTest {
                     .compress(android.graphics.Bitmap.CompressFormat.PNG, 100, output) }
                 File(context.filesDir, "real-inline-permission-report.json").writeText(JSONObject()
                     .put("conversation_id", current.conversationId).put("assistant_message_id", assistant.messageId)
-                    .put("request_id", permission.requestId).put("decision", permission.decision)
+                    .put("permission_required", false)
                     .put("tool_call_id", tool.toolCallId).put("surface_id", surface.identity.surface_id)
                     .put("generation", surface.identity.generation).put("surface_revision", surface.revision)
                     .put("arguments_sha256", RealExpertTemplateFixture.sha(renderedRequest.toString()))

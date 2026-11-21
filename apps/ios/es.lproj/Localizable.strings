@@ -3289,3 +3289,4 @@
 "Icon could not be rendered" = "No se pudo renderizar el icono";
 
 "model.center.selection_error.title" = "No se pudo seleccionar el modelo";
+"prompt.templates.copy_name" = "%@ (copia)";

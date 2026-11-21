@@ -15,6 +15,15 @@ internal fun remoteGoalControlInput(operationId: String, action: String, goalId:
 }
 
 /** Persists transport intent, never derives or owns Goal state. */
+internal fun settleRemoteGoalReceipt(intent: JsonObject, hostId: String, progress: ConversationProgress, clear: () -> Unit): Boolean {
+    require(intent["expected_host_id"] == JsonPrimitive(hostId) && intent["conversation_id"] == JsonPrimitive(progress.conversationId))
+    val operationId = intent.getValue("control").jsonObject.getValue("operationId").jsonPrimitive.content
+    val receipt = progress.goalControl?.appliedOperations?.get(operationId) ?: return false
+    clear()
+    receipt.rejection?.let { error(it) }
+    return true
+}
+
 internal suspend fun submitRecoverableGoalControl(
     proposed: JsonObject?, hostId: String, conversationId: String,
     read: () -> String?, write: (String?) -> Unit,
@@ -31,13 +40,7 @@ internal suspend fun submitRecoverableGoalControl(
     val operationId = intent.getValue("control").jsonObject.getValue("operationId").jsonPrimitive.content
     require(operationId.isNotBlank())
     if (saved == null) write(intent.toString())
-    fun settled(progress: ConversationProgress): Boolean {
-        require(progress.conversationId == conversationId)
-        val receipt = progress.goalControl?.appliedOperations?.get(operationId) ?: return false
-        write(null)
-        receipt.rejection?.let { error(it) }
-        return true
-    }
+    fun settled(progress: ConversationProgress) = settleRemoteGoalReceipt(intent, hostId, progress) { write(null) }
     if (saved != null) {
         val current = observe()
         if (settled(current)) return current

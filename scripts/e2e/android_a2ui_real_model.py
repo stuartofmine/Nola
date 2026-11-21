@@ -9,6 +9,7 @@ No logcat, model settings export, provider body capture or production data reset
 import argparse
 import json
 import os
+import shlex
 from pathlib import Path
 import subprocess
 import tempfile
@@ -106,6 +107,19 @@ def main() -> int:
         result = json.loads(device("exec-out", "run-as", "com.nola", "cat", "files/a2ui-real-model-result.json"))
         if result.get("passed") is not True or result.get("realProvider") is not True:
             raise RuntimeError("No complete real-model acceptance receipt")
+        conversation = result.get("conversation")
+        if not isinstance(conversation, str) or not conversation.strip():
+            raise RuntimeError("Missing original conversation for cold-start verification")
+        print(json.dumps({"stage": "reopening_submitted_surface_after_force_stop"}), flush=True)
+        device("shell", "am", "force-stop", "com.nola")
+        cold = device("shell", "am", "instrument", "-w", "-r", "-e", "disposableA2uiFixture", "true",
+                      "-e", "evidenceConversation", shlex.quote(conversation), "-e", "class",
+                      target + "#reopenPersistedSubmittedSurface",
+                      "com.nola.test/androidx.test.runner.AndroidJUnitRunner", timeout=180)
+        (evidence / "cold-reopen.log").write_bytes(cold.replace(secret.encode(), b"[redacted]"))
+        if b"OK (1 test)" not in cold:
+            raise RuntimeError("Submitted form did not reopen in the original conversation")
+        result["coldProcessReopened"] = True
         (evidence / "result.json").write_text(json.dumps(result, indent=2))
         print(json.dumps({"passed": True, "evidence": str(evidence)}))
         return 0

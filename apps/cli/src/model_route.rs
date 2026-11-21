@@ -72,8 +72,7 @@ pub(crate) fn validate_native_transport(
         Some(url::Host::Ipv6(ip)) => ip.is_loopback(),
         _ => false,
     };
-    if route.adapter != nola_host_protocol::HostNativeModelAdapter::Mlx
-        || route.profile_ref.is_none() || route.model_id != model
+    if route.profile_ref.is_none() || route.model_id != model
         || credential.trim().is_empty() || !loopback
         || !matches!(url.scheme(), "http" | "https")
         || !url.username().is_empty() || url.password().is_some()

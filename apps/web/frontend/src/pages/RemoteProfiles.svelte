@@ -25,8 +25,16 @@
     let confirmation: ConfirmationHandle;
     let endpointEditor: ModelEndpointEditor;
     let credentialEditor: EndpointCredentialEditor;
-    let creation: CreateRemoteModel;
-    let { profiles, openProfileId = '', reload, onSelectionSaved }: { profiles: RemoteProfile[]; openProfileId?: string; reload: () => Promise<void>; onSelectionSaved: (profiles: RemoteProfile[]) => void } = $props();
+    let creation = $state<CreateRemoteModel>();
+    let { profiles, openProfileId = '', requestedEndpointName = $bindable(''), reload, onSelectionSaved }: { profiles: RemoteProfile[]; openProfileId?: string; requestedEndpointName?: string; reload: () => Promise<void>; onSelectionSaved: (profiles: RemoteProfile[]) => void } = $props();
+    $effect(() => {
+        const name = requestedEndpointName;
+        const editor = creation;
+        if (editor && name) {
+            requestedEndpointName = '';
+            untrack(() => editor.open(undefined, '', name));
+        }
+    });
     let openedProfileId = '';
     let editing = $state<RemoteProfile>();
     let draft = $state<RemoteProfile['parameters']>({});
@@ -162,7 +170,10 @@
     }
     function closeMenu(target: EventTarget | null) {
         const details = target instanceof Element ? target.closest('details') : null;
-        if (details) details.open = false;
+        if (details) {
+            details.open = false;
+            details.querySelector('summary')?.focus({preventScroll: true});
+        }
     }
     async function reloadCatalog() {
         if (catalogDirty && !await confirmation.ask({ title: t($locale, 'remote.discard_title'),
@@ -208,7 +219,7 @@
 {#if discoveryError}<p class="notice error" role="alert">{t($locale, 'remote.discovery_failed')}: {discoveryError}</p>{/if}
 {#if discoveryNotice}<p role="status">{discoveryNotice}</p>{/if}
 <div class="catalog-actions">
-    <button type="button" class:primary={!catalogDirty} disabled={busy} onclick={() => creation.open()}>{t($locale, 'remote.add_endpoint_model')}</button>
+    <button type="button" class:primary={!catalogDirty} disabled={busy} onclick={() => creation?.open()}>{t($locale, 'remote.add_endpoint_model')}</button>
     {#if catalogDirty}
         <button type="button" class="danger" disabled={busy} onclick={confirmDiscardCatalog}>{t($locale, 'models.discard')}</button>
         <button type="button" class="primary" disabled={busy || !!catalogError} onclick={saveCatalog}>{t($locale, busy ? 'models.saving' : 'models.save')}</button>
@@ -253,11 +264,11 @@
                     <div class="actions">
                     {#if endpointDiscoveryMatchesSaved(savedCatalog, draftCatalog, group.endpoint.id) && discovered.length}
                         <details class="discovered" use:dismissibleDisclosure><summary>{t($locale, 'remote.add_discovered')} ({discovered.length})</summary>
-                            <div class="discovered-list" popover="manual" use:anchoredPopover>{#each discovered as name (name)}<button type="button" disabled={busy} onclick={event => { closeMenu(event.currentTarget); creation.open(group.endpoint, name); }}>{name}</button>{/each}</div>
+                            <div class="discovered-list" popover="manual" use:anchoredPopover>{#each discovered as name (name)}<button type="button" disabled={busy} onclick={event => { closeMenu(event.currentTarget); creation?.open(group.endpoint, name); }}>{name}</button>{/each}</div>
                         </details>
                     {/if}
                     <button disabled={busy || !!discoveringEndpoint || !endpointDiscoveryMatchesSaved(savedCatalog, draftCatalog, group.endpoint.id)} onclick={() => discover(group)}>{discoveringEndpoint === group.endpoint.id ? t($locale, 'remote.discovering') : t($locale, 'remote.discover')}</button>
-                    <button disabled={busy} onclick={() => creation.open(group.endpoint)}>{t($locale, 'remote.add_model')}</button>
+                    <button disabled={busy} onclick={() => creation?.open(group.endpoint)}>{t($locale, 'remote.add_model')}</button>
                 </div>{/if}
             </div>
             {#each group.models as model (model.id)}

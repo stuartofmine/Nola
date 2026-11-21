@@ -258,6 +258,10 @@
             <p class="objective">{goal.objective}</p>
             {#if goal.executionBlocker}<p class="error" role="alert">{t($locale, 'chatActivity.configurationUnavailable')}</p>{/if}
             <p class="muted">{t($locale, goalStatus)} · {t($locale, 'chatActivity.progress', { done: goal.completedRequirements, total: goal.totalRequirements })}</p>
+            {#if goal.constraintsOutsideRequirements.length}
+                <h4>{t($locale, 'chatActivity.constraints')}</h4>
+                <ul>{#each goal.constraintsOutsideRequirements as constraint}<li>{constraint}</li>{/each}</ul>
+            {/if}
             {#if goal.requirements.length}<ul class="checklist" aria-label={t($locale, 'chatInspector.requirements')}>
                 {#each goal.requirements as requirement (requirement.id)}<li>
                     <span aria-hidden="true">{requirement.status === 'completed' ? '✓' : '○'}</span>

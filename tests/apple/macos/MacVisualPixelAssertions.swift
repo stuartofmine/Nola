@@ -110,7 +110,7 @@ enum MacVisualPixelAssertions {
             isDark: isDark
         )
         assertMetrics(metrics, name: name, isDark: isDark, file: file, line: line)
-        try writeDebugArtifactIfConfigured(cgImage: cgImage, name: name)
+        try writeDebugArtifactIfConfigured(cgImage: cgImage, view: hostingView, name: name)
         return metrics
     }
 
@@ -213,7 +213,7 @@ enum MacVisualPixelAssertions {
             isDark: isDark
         )
         assertMetrics(metrics, name: name, isDark: isDark, file: file, line: line)
-        try writeDebugArtifactIfConfigured(cgImage: cgImage, name: name)
+        try writeDebugArtifactIfConfigured(cgImage: cgImage, view: sheetHost, name: name)
         return metrics
     }
 
@@ -445,7 +445,7 @@ enum MacVisualPixelAssertions {
         )
     }
 
-    private static func writeDebugArtifactIfConfigured(cgImage: CGImage, name: String) throws {
+    private static func writeDebugArtifactIfConfigured(cgImage: CGImage, view: NSView, name: String) throws {
         guard let directory = ProcessInfo.processInfo.environment["NOLA_VISUAL_ARTIFACT_DIR"],
               !directory.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
             return
@@ -455,5 +455,11 @@ enum MacVisualPixelAssertions {
         let rep = NSBitmapImageRep(cgImage: cgImage)
         let png = try XCTUnwrap(rep.representation(using: .png, properties: [:]))
         try png.write(to: outputDir.appendingPathComponent(name + ".png"), options: .atomic)
+        let session = try MacHostedAccessibilitySession()
+        defer { session.restore() }
+        let controls = session.visibleControls(in: view)
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
+        try encoder.encode(controls).write(to: outputDir.appendingPathComponent(name + "-controls.json"), options: .atomic)
     }
 }

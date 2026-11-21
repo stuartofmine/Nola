@@ -2,7 +2,11 @@
 
 基础字段记录：2026-10-28。2026-11-08 重新核对总体接口索引、制品及模块所有权；下方专项字段仍保留其原核对范围，未重新执行每个 handler 的动态验收。本页描述已有接口，不引入新服务或新协议；不构成所有平台全部验收通过的声明。
 
-协议或存储格式不匹配必须明确拒绝；不提供旧字段别名、双读双写、迁移或自动重建数据。A2UI 固定 v0.9.1；HTTP 路径中的 v2、SubmissionFrontier 的 protocol_version=1 与 A2UI 版本属于不同协议域，不得混用。
+协议或存储格式不匹配必须明确拒绝；保留原始数据。首发前开发格式不迁移；后续已发布格式的升级遵循[版本兼容政策](../../总体设计/VERSION_COMPATIBILITY.md)。A2UI 固定 v0.9.1；HTTP 路径中的 v2、SubmissionFrontier 的 protocol_version=1 与 A2UI 版本属于不同协议域，不得混用。
+
+## CLI 启动与模型目录事务
+
+CLI 对话、init、wiki、Web 和 server 从有效文件读取模型目录。Host 先验证来源、路由与凭据，再通过顶层 `model` 命令中的 `apply_file_catalog` 一次性提交连接、模型及默认选择。目录出错时可继续使用之前可用的默认模型；文件语法错误阻止启动。该嵌套命令没有增加新的 HTTP 路径或顶层 wire tag。[启动入口](../../../../apps/cli/src/config_files.rs) · [命令定义](../../../../core/nola-application/src/model.rs) · [Application 事务](../../../../core/nola-application/src/application_command/capability_catalog.rs)
 
 ## 当前实现导航（2026-11-08）
 
@@ -157,7 +161,7 @@ service 与 embedded C ABI 复用 bootstrap `RuntimeOwnerGuard`：在原 writer 
 
 新增 `resolve_effective_model_parameters` 只读 Application 查询的源码已接线，**尚待当前批编测与原生执行 caller 迁移**。输入严格区分 `current_conversation`（会话、配置 revision、预期 profile pin）与 `candidate_preview`（候选 profile pin、可选会话配置 pin）；同一一致读快照读取配置、模型目录与默认选择事实，复用上述纯解析函数。返回已验证的 profile、model key、原稀疏覆盖、独立展示字段和有效生成值；不返回 endpoint、credential reference 或完整 source_json。配置/profile 漂移或本机可核对的选择不一致明确拒绝。
 
-`mlx` / `llama.cpp` 目前返回 `local_baseline_unavailable`，源 Host 执行返回 `source_host_required`；不能将本机默认值冒充这些来源的权威参数。源 Host 未经本机核验时 `verified_model_profile` / `model_key` 为 null。本批不替换其已有发送能力；这些来源的 baseline 及平台 caller 尚未完成，不能以查询存在宣称所有来源已统一。专家私有 preview 的新必需字段 `effective_parameters` 使用同一解析器，原 `model_declaration.parameters` 保持原事实。详细约束见有效参数设计（本地工作记录，不随仓库分发）。
+`mlx` / `llama.cpp` / `vllm` 目前返回 `local_baseline_unavailable`，源 Host 执行返回 `source_host_required`；不能将本机默认值冒充这些来源的权威参数。源 Host 未经本机核验时 `verified_model_profile` / `model_key` 为 null。本批不替换其已有发送能力；这些来源的 baseline 及平台 caller 尚未完成，不能以查询存在宣称所有来源已统一。专家私有 preview 的新必需字段 `effective_parameters` 使用同一解析器，原 `model_declaration.parameters` 保持原事实。详细约束见有效参数设计（本地工作记录，不随仓库分发）。
 
 ### 公开思考输出与请求控制
 

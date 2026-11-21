@@ -5952,7 +5952,8 @@
             "value": "重试"
           }
         }
-      }
+      },
+      "extractionState": "stale"
     },
     "Retry Save": {
       "localizations": {

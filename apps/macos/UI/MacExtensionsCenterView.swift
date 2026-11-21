@@ -2061,6 +2061,8 @@ private struct MacMCPServerEditorSheet: View {
     let onSaved: () -> Void
     let onCancel: () -> Void
 
+    private let originalDraft: MacManagedMCPServerDraft
+    @State private var confirmsDiscard = false
     @State private var draft: MacManagedMCPServerDraft
     @State private var isSaving = false
     @State private var errorMessage: String?
@@ -2075,12 +2077,11 @@ private struct MacMCPServerEditorSheet: View {
         self.store = store
         self.onSaved = onSaved
         self.onCancel = onCancel
-        switch mode {
-        case .add:
-            _draft = State(initialValue: MacManagedMCPServerDraft())
-        case .edit(_, let existing):
-            _draft = State(initialValue: existing)
+        originalDraft = switch mode {
+        case .add: MacManagedMCPServerDraft()
+        case .edit(_, let existing): existing
         }
+        _draft = State(initialValue: originalDraft)
     }
 
     private var title: String {
@@ -2100,6 +2101,7 @@ private struct MacMCPServerEditorSheet: View {
                     macExtensionsText("mac.extensions.mcp_editor.name", "Name"),
                     text: $draft.displayName
                 )
+                .accessibilityIdentifier("mac.mcp.editor.name")
                 Picker(
                     macExtensionsText("mac.extensions.mcp_editor.transport", "Transport"),
                     selection: $draft.transport
@@ -2169,22 +2171,32 @@ private struct MacMCPServerEditorSheet: View {
                         .controlSize(.small)
                 }
                 Spacer()
-                Button(macExtensionsText("mac.extensions.action.cancel", "Cancel"), action: onCancel)
+                Button(macExtensionsText("mac.extensions.action.cancel", "Cancel")) {
+                    if draft == originalDraft { onCancel() } else { confirmsDiscard = true }
+                }
+                    .accessibilityIdentifier("mac.mcp.editor.cancel")
                     .keyboardShortcut(.cancelAction)
                     .disabled(isSaving)
                 Button(macExtensionsText("mac.extensions.detail.save", "Save")) {
                     save()
                 }
                 .buttonStyle(.nolaProminent)
+                .accessibilityIdentifier("mac.mcp.editor.save")
                 .keyboardShortcut(.defaultAction)
                 .disabled(isSaving || draft.displayName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || draft.commandOrURL.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
             }
+        }
+        .confirmationDialog(macExtensionsText("mac.extensions.detail.discard_title", "Discard unsaved changes?"),
+                            isPresented: $confirmsDiscard, titleVisibility: .visible) {
+            Button(String(localized: "Keep Editing"), role: .cancel) {}
+            Button(macExtensionsText("mac.extensions.detail.discard", "Discard Changes"), role: .destructive,
+                   action: onCancel)
         }
         .padding(20)
         .frame(width: 460)
         .frame(minHeight: 340, idealHeight: 420)
         .background(MacDesignColor.canvas)
-        .interactiveDismissDisabled(isSaving)
+        .interactiveDismissDisabled(isSaving || draft != originalDraft)
     }
 
     private func save() {

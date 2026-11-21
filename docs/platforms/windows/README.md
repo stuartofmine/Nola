@@ -1,5 +1,7 @@
 # Windows
 
+在「模型 → 本地模型」查看本机硬件，选择引擎和下载源，留空模型名即可获取推荐，也可以输入指定模型。推荐优先考虑本机能开到 128K 的方案，同等窗口下优先选择 Unsloth 量化。桌面安装包已包含 llama.cpp，选中即可查看模型。其他引擎可在下载模型前查看安装指南和检测状态。核对下载大小、预计内存和建议窗口后，确认下载。[本地模型推荐、下载与启动](../../architecture/模块/08-模型配置与调用/DESKTOP_LOCAL_MODELS.md)
+
 实现位于 [windows](../../../apps/windows)，Tauri 2 使用系统 WebView2 承载共享 Web 界面，通过随包的 Rust Host 访问本地会话。安装包使用当前用户范围的 NSIS。
 
 桌面主窗口连接本应用启动的 Host；在浏览器中访问其他机器的 Host 地址。 [连接宿主机的操作与边界](../../design/shared/HOST_CONNECTION_WORKFLOW.md)。

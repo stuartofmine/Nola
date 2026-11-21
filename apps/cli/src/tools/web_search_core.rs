@@ -235,6 +235,11 @@ impl Freshness {
     }
 }
 
+pub(super) const SEARCH_ENGINES: &[&str] = &[
+    "auto", "bing", "bing_news", "google_news", "duckduckgo", "dashscope", "serper",
+    "brave", "searxng", "google", "baidu", "sogou", "360search",
+];
+
 #[derive(Clone, Debug)]
 struct SearchRequest {
     query: String,
@@ -261,25 +266,8 @@ impl SearchRequest {
             SEARCH_RESULT_COUNT as i64,
         )? as usize;
         let engine = optional_string(args, "engine", "auto")?;
-        if !matches!(
-            engine.as_str(),
-            "auto"
-                | "dashscope"
-                | "serper"
-                | "brave"
-                | "searxng"
-                | "google_news"
-                | "bing_news"
-                | "duckduckgo"
-                | "google"
-                | "bing"
-                | "baidu"
-                | "sogou"
-        ) {
-            return Err(error(
-                "engine must be auto, dashscope, serper, brave, searxng, google_news, bing_news, duckduckgo, google, bing, baidu, or sogou"
-                    .to_string(),
-            ));
+        if !SEARCH_ENGINES.contains(&engine.as_str()) {
+            return Err(error(format!("engine must be one of {}", SEARCH_ENGINES.join(", "))));
         }
         let freshness_value = args.get("freshness").and_then(Value::as_str);
         let freshness = Freshness::parse(freshness_value)?;
@@ -381,6 +369,7 @@ struct ProviderOutput {
 
 #[derive(Clone, Debug)]
 enum Provider {
+    Search360,
     BaiduWeb,
     SogouWeb,
     GoogleWeb,
@@ -398,6 +387,7 @@ impl Provider {
     fn label(&self) -> &'static str {
         match self {
             Self::BaiduWeb => "baidu_json",
+            Self::Search360 => "360search_html",
             Self::SogouWeb => "sogou_mobile_html",
             Self::GoogleWeb => "google_web_html",
             Self::BingWeb => "bing_web_html",
@@ -425,23 +415,20 @@ pub fn execute(args: &Map<String, Value>) -> WebSearchOutcome {
         Ok(providers) => providers,
         Err(outcome) => return outcome,
     };
-    let mut attempts = Vec::new();
-    let warnings = Vec::new();
     let mut handles = Vec::new();
-    for (index, provider) in providers.into_iter().enumerate() {
+    for provider in providers {
         let provider_label = provider.label().to_string();
         let provider_client = client.clone();
         let provider_request = request.clone();
         handles.push((
-            index,
             provider_label,
             thread::spawn(move || search_provider(&provider_client, &provider, &provider_request)),
         ));
     }
-    let mut completed = handles
+    let completed = handles
         .into_iter()
-        .map(|(index, provider, handle)| {
-            let result = handle.join().unwrap_or_else(|_| {
+        .map(|(provider, handle)| {
+            handle.join().unwrap_or_else(|_| {
                 Err(ProviderAttempt {
                     provider,
                     status: "internal_error".to_string(),
@@ -451,13 +438,26 @@ pub fn execute(args: &Map<String, Value>) -> WebSearchOutcome {
                     latency_ms: 0,
                     detail: Some("search provider worker terminated unexpectedly".to_string()),
                 })
-            });
-            (index, result)
+            })
         })
         .collect::<Vec<_>>();
-    completed.sort_by_key(|(index, _)| *index);
+    complete_provider_search(&request, completed, || {
+        search_provider(&client, &Provider::Search360, &request)
+    })
+}
+
+fn complete_provider_search(
+    request: &SearchRequest,
+    mut results: Vec<Result<ProviderOutput, ProviderAttempt>>,
+    fallback: impl FnOnce() -> Result<ProviderOutput, ProviderAttempt>,
+) -> WebSearchOutcome {
+    let has_hits = results.iter().any(|result| result.as_ref().is_ok_and(|out| !out.hits.is_empty()));
+    if request.engine == "auto" && !has_hits {
+        results.push(fallback());
+    }
+    let mut attempts = Vec::new();
     let mut provider_hits = Vec::new();
-    for (_, result) in completed {
+    for result in results {
         match result {
             Ok(output) => {
                 attempts.push(output.attempt);
@@ -466,24 +466,15 @@ pub fn execute(args: &Map<String, Value>) -> WebSearchOutcome {
             Err(attempt) => attempts.push(attempt),
         }
     }
-    finish_search(&request, attempts, provider_hits, warnings)
+    finish_search(request, attempts, provider_hits, Vec::new())
 }
 
-// HTTP results, including empty/partial results, are terminal for this tool.
-// This layer has no browser fallback or native browser authority.
+// HTTP search does not implicitly escalate to browser control.
 fn finish_search(request: &SearchRequest, attempts: Vec<ProviderAttempt>,
     provider_hits: Vec<Vec<SearchHit>>, mut warnings: Vec<String>) -> WebSearchOutcome {
-    let mut hits = fuse_provider_hits(provider_hits, request.result_count.saturating_mul(3))
-        .into_iter()
-        .filter(|hit| search_hit_matches_query(&request.query, hit))
-        .take(request.result_count)
-        .collect::<Vec<_>>();
-    for (index, hit) in hits.iter_mut().enumerate() {
-        hit.search_rank = index + 1;
-    }
-
+    let hits = fuse_provider_hits(provider_hits, request.result_count);
     if hits.is_empty() {
-        return error(format_provider_failure(&request.query, &attempts));
+        return error(format_provider_failure(request, &attempts));
     }
     if hits.len() < request.result_count {
         warnings.push(format!(
@@ -553,6 +544,7 @@ fn finish_search(request: &SearchRequest, attempts: Vec<ProviderAttempt>,
 /// Source URLs remain complete, typed model evidence even when the human report
 /// is cropped by a later Host/Core budget. A link is never cut into a fake URL.
 fn model_source_evidence(report: &SearchReport) -> Value {
+    const EXCERPT_CHARS: usize = 320;
     let mut sources = Vec::new();
     // Candidates without usable evidence remain diagnostics, not citation support.
     let mut ranked = report.results.iter()
@@ -561,13 +553,13 @@ fn model_source_evidence(report: &SearchReport) -> Value {
     ranked.sort_by(|a, b| b.evidence_score.cmp(&a.evidence_score).then_with(|| a.search_rank.cmp(&b.search_rank)));
     let mut projection = json!({"type":"web_search_evidence", "query":report.query,
         "status":report.status,"searched_at":report.searched_at,"sources":[],"sources_omitted":report.results.len(),
-        "guidance":"Use only excerpts that support the claim; cite their exact source URLs in the answer. Missing support is unknown, not verification. Fetch an exact source URL when more original text is needed; omitted sources are not model-visible evidence."});
+        "guidance":"Answer the requested facts using their exact source URLs. Only include names, dates and other details explicitly supported by the cited excerpt. Omit unsupported incidental details. Fetch an exact source URL when more original text is needed; omitted sources are not model-visible evidence."});
     for page in ranked {
         let source = json!({"source_id":format!("search-rank:{}",page.search_rank),
             "url":page.final_url.as_deref().unwrap_or(&page.url), "title":truncate(&page.title,96),
             "published_at":page.published_at,"status":page.status,
-            "excerpts":page.evidence.iter().take(1).map(|text|truncate(text,160)).collect::<Vec<_>>(),
-            "excerpts_truncated":page.evidence.len() > 1 || page.evidence.iter().any(|text|text.chars().count() > 160)});
+            "excerpts":page.evidence.iter().take(1).map(|text|query_excerpt(text, &report.query, EXCERPT_CHARS)).collect::<Vec<_>>(),
+            "excerpts_truncated":page.evidence.len() > 1 || page.evidence.iter().any(|text|text.chars().count() > EXCERPT_CHARS)});
         let cost = sources.iter().map(|value: &Value| value.to_string().chars().count() + 1).sum::<usize>();
         if projection.to_string().chars().count() + cost + source.to_string().chars().count() > 11_500 { continue; }
         sources.push(source);
@@ -703,6 +695,7 @@ fn configured_providers(request: &SearchRequest) -> Result<Vec<Provider>, ToolOu
         "duckduckgo" => Some(Provider::DuckDuckGo),
         "bing" => Some(Provider::BingWeb),
         "baidu" => Some(Provider::BaiduWeb),
+        "360search" => Some(Provider::Search360),
         "sogou" => Some(Provider::SogouWeb),
         "google" => Some(Provider::GoogleWeb),
         _ => None,
@@ -742,6 +735,7 @@ fn search_provider(
     let started = Instant::now();
     let result = match provider {
         Provider::BaiduWeb => search_baidu_json(client, request),
+        Provider::Search360 => search_360_html(client, request),
         Provider::SogouWeb => search_sogou_html(client, request),
         Provider::GoogleWeb => search_google_html(client, request),
         Provider::BingWeb => search_bing_html(client, request),
@@ -756,18 +750,9 @@ fn search_provider(
         Provider::Searxng(url) => search_searxng(client, url, request),
     };
     match result {
-        Ok((status, hits)) => Ok(ProviderOutput {
-            attempt: ProviderAttempt {
-                provider: provider.label().to_string(),
-                status: "ok".to_string(),
-                http_status: Some(status),
-                raw_results: hits.len(),
-                accepted_results: hits.len(),
-                latency_ms: started.elapsed().as_millis(),
-                detail: None,
-            },
-            hits,
-        }),
+        Ok((status, hits)) => Ok(relevant_provider_output(
+            &request.query, provider.label(), status, hits, started.elapsed(),
+        )),
         Err((status, detail)) => Err(ProviderAttempt {
             provider: provider.label().to_string(),
             status: classify_provider_error(&detail).to_string(),
@@ -777,6 +762,32 @@ fn search_provider(
             latency_ms: started.elapsed().as_millis(),
             detail: Some(detail),
         }),
+    }
+}
+
+fn relevant_provider_output(
+    query: &str, provider: &str, http_status: u16, mut hits: Vec<SearchHit>, elapsed: Duration,
+) -> ProviderOutput {
+    let raw_results = hits.len();
+    hits.retain(|hit| search_hit_matches_query(query, hit));
+    let status = if raw_results == 0 {
+        "no_results"
+    } else if hits.is_empty() {
+        "no_relevant_results"
+    } else {
+        "ok"
+    };
+    ProviderOutput {
+        attempt: ProviderAttempt {
+            provider: provider.to_owned(),
+            status: status.to_owned(),
+            http_status: Some(http_status),
+            raw_results,
+            accepted_results: hits.len(),
+            latency_ms: elapsed.as_millis(),
+            detail: None,
+        },
+        hits,
     }
 }
 
@@ -969,6 +980,55 @@ fn parse_baidu_json_results(body: &str, first_rank: usize) -> Result<Vec<SearchH
 fn decode_html_text(value: &str) -> String {
     let fragment = Html::parse_fragment(value);
     normalize_text(&fragment.root_element().text().collect::<Vec<_>>().join(" "))
+}
+
+fn search_360_html(
+    client: &Client,
+    request: &SearchRequest,
+) -> Result<(u16, Vec<SearchHit>), (Option<u16>, String)> {
+    let mut params = vec![("q", request.query.as_str())];
+    let range = match request.freshness {
+        Freshness::None => None,
+        Freshness::Day => Some("d"),
+        Freshness::Week => Some("w"),
+        Freshness::Month => Some("m"),
+        Freshness::Year => Some("y"),
+    };
+    if let Some(range) = range {
+        params.push(("adv_t", range));
+    }
+    let response = client.get("https://www.so.com/s")
+        .query(&params)
+        .header("User-Agent", SEARCH_BROWSER_USER_AGENT)
+        .header("Accept-Language", &request.language)
+        .send()
+        .map_err(|err| (None, err.to_string()))?;
+    let (status, _, final_url, body) = read_response(response, SEARCH_RESPONSE_BYTES)?;
+    if status != 200 {
+        return Err((Some(status), format!("HTTP {status}")));
+    }
+    if final_url.contains("captcha") || final_url.contains("wappass.so.com") {
+        return Err((Some(status), "360 Search bot challenge".into()));
+    }
+    let hits = parse_360_html_results(&body, request.result_count + 10);
+    if hits.is_empty() {
+        return Err((Some(status), "360 Search returned no parseable HTML results".into()));
+    }
+    Ok((status, hits))
+}
+
+fn parse_360_html_results(body: &str, limit: usize) -> Vec<SearchHit> {
+    let document = Html::parse_document(body);
+    let rows = Selector::parse("li.res-list").unwrap();
+    let heading = Selector::parse("h3.res-title a[data-mdurl]").unwrap();
+    let summary = Selector::parse(".res-desc, .res-rich").unwrap();
+    document.select(&rows).enumerate().filter_map(|(index, row)| {
+        let anchor = row.select(&heading).next()?;
+        let snippet = row.select(&summary).next()
+            .map(|element| element.text().collect::<String>()).unwrap_or_default();
+        search_hit("360search_html", index + 1, anchor.text().collect(),
+            anchor.value().attr("data-mdurl")?.to_owned(), snippet, None, None, None)
+    }).take(limit).collect()
 }
 
 fn search_sogou_html(
@@ -2206,7 +2266,7 @@ fn format_report(report: &SearchReport) -> String {
     lines.push("\n## Provider attempts".to_string());
     for attempt in &report.provider_attempts {
         lines.push(format!(
-            "- {}: status={}, HTTP={}, results={}, latency={}ms{}",
+            "- {}: status={}, HTTP={}, relevant={}/{}, latency={}ms{}",
             attempt.provider,
             attempt.status,
             attempt
@@ -2214,6 +2274,7 @@ fn format_report(report: &SearchReport) -> String {
                 .map(|value| value.to_string())
                 .unwrap_or_else(|| "n/a".to_string()),
             attempt.accepted_results,
+            attempt.raw_results,
             attempt.latency_ms,
             attempt
                 .detail
@@ -2492,8 +2553,30 @@ fn representative_evidence_for_query(
         .into_iter()
         .filter(|(score, _)| *score > 0)
         .take(limit)
-        .map(|(_, paragraph)| paragraph.chars().take(700).collect())
+        .map(|(_, paragraph)| query_excerpt(paragraph, query, 700))
         .collect()
+}
+
+// Preserve a contiguous passage when a long paragraph must fit the evidence budget.
+fn query_excerpt(text: &str, query: &str, limit: usize) -> String {
+    let chars: Vec<char> = text.chars().collect();
+    if chars.len() <= limit {
+        return text.to_owned();
+    }
+    let last = chars.len() - limit;
+    let terms = relevance_terms(query);
+    let mut best_score = 0;
+    let mut best_start = 0;
+    for start in (0..last).step_by((limit / 2).max(1)).chain(std::iter::once(last)) {
+        let window: String = chars[start..start + limit].iter().collect();
+        let normalized = normalized_search_text(&window, limit);
+        let score = terms.iter().filter(|term| normalized.contains(term.as_str())).count();
+        if score > best_score {
+            best_score = score;
+            best_start = start;
+        }
+    }
+    chars[best_start..best_start + limit].iter().collect()
 }
 
 fn document_relevance_score(query: &str, title: &str, snippet: &str, body: &str) -> i32 {
@@ -3120,14 +3203,16 @@ fn classify_provider_error(detail: &str) -> &'static str {
     }
 }
 
-fn format_provider_failure(query: &str, attempts: &[ProviderAttempt]) -> String {
+fn format_provider_failure(request: &SearchRequest, attempts: &[ProviderAttempt]) -> String {
     let attempts = attempts
         .iter()
         .map(|attempt| {
             format!(
-                "{}: {}{}",
+                "{}: {} ({}/{} relevant){}",
                 attempt.provider,
                 attempt.status,
+                attempt.accepted_results,
+                attempt.raw_results,
                 attempt
                     .detail
                     .as_ref()
@@ -3137,9 +3222,12 @@ fn format_provider_failure(query: &str, attempts: &[ProviderAttempt]) -> String 
         })
         .collect::<Vec<_>>()
         .join("; ");
-    format!(
-        "Web search could not retrieve ranked pages for '{query}'. Provider attempts: {attempts}. Do not answer from model memory."
-    )
+    let recovery = if request.engine == "auto" {
+        "All automatic sources were attempted. Use a materially different query or another available source before asking the user for more clues."
+    } else {
+        "Use engine=auto to search independent sources with the same query."
+    };
+    format!("Web search could not retrieve ranked pages for '{}'. Provider attempts: {attempts}. {recovery} Do not answer from model memory.", request.query)
 }
 
 fn utc_now_string() -> String {
@@ -3235,6 +3323,87 @@ mod tests {
     use super::*;
     use std::io::{BufRead, BufReader, Write as _};
     use std::net::TcpListener;
+
+    #[test]
+    fn web_search_falls_back_only_when_auto_has_no_relevant_results() {
+        let query = r#""夜上" "我的极品美女上司" 小说"#;
+        let args = json!({"query":query, "parse_pages":false, "limit":1});
+        let mut request = SearchRequest::parse(args.as_object().unwrap()).unwrap();
+        let html = r#"<ul>
+            <li class="res-list"><h3 class="res-title"><a data-mdurl="http://localhost/private">invalid</a></h3></li>
+            <li class="res-list"><h3 class="res-title"><a href="/link">wrapper</a></h3></li>
+            <li class="res-list"><h3 class="res-title"><a href="/link" data-mdurl="https://reader.example/book">作者专访</a></h3>
+            <p class="res-desc">夜上谈《<em>我的极品美女上司</em>》的写作过程</p></li></ul>"#;
+        let relevant = || {
+            let hits = parse_360_html_results(html, 1);
+            assert_eq!(hits.len(), 1);
+            assert_eq!(hits[0].url, "https://reader.example/book");
+            Ok(relevant_provider_output(query, "360search_html", 200, hits, Duration::ZERO))
+        };
+        let unrelated = || {
+            let hit = search_hit("bing_web_html", 1, "The Beach Boys".into(),
+                "https://example.org/music".into(), String::new(), None, None, None).unwrap();
+            Ok(relevant_provider_output(query, "bing_web_html", 200, vec![hit], Duration::ZERO))
+        };
+        let recovered = complete_provider_search(&request, vec![unrelated()], relevant);
+        assert!(!recovered.error, "{}", recovered.text);
+        assert!(recovered.text.contains("https://reader.example/book"));
+        assert!(recovered.text.contains("status=no_relevant_results, HTTP=200, relevant=0/1"));
+        assert!(!recovered.text.contains("example.org/music"));
+        let primary = complete_provider_search(&request, vec![relevant()], || panic!("unneeded fallback"));
+        assert!(!primary.error);
+
+        request.engine = "bing".into();
+        let explicit = complete_provider_search(&request, vec![unrelated()], || panic!("explicit engine"));
+        assert!(explicit.error);
+        assert!(explicit.text.contains("0/1 relevant"));
+        assert!(explicit.text.contains("engine=auto"));
+    }
+
+    #[test]
+    fn web_search_keeps_relevant_lower_ranks_before_fusion_and_limit() {
+        let query = "current research";
+        let args = json!({"query":query, "parse_pages":false, "limit":1});
+        let request = SearchRequest::parse(args.as_object().unwrap()).unwrap();
+        let hits = (1..=6).map(|rank| {
+            let title = if rank == 6 { query } else { "Archives" };
+            search_hit("fixture", rank, title.into(), format!("https://example.org/{rank}"),
+                String::new(), None, None, None).unwrap()
+        }).collect();
+        let output = relevant_provider_output(query, "fixture", 200, hits, Duration::ZERO);
+        let outcome = complete_provider_search(&request, vec![Ok(output)], || panic!("unneeded fallback"));
+        assert!(!outcome.error);
+        assert!(outcome.text.contains("https://example.org/6"));
+    }
+
+    #[test]
+    fn web_search_excerpt_preserves_the_matching_passage_inside_long_paragraphs() {
+        let claim = "夜上开始创作《我的极品美女上司》";
+        let paragraph = format!("{}{}{}", "无关内容。".repeat(180), claim, "背景。".repeat(15));
+        let query = "夜上 我的极品美女上司 小说";
+        let evidence = representative_evidence_for_query(&[paragraph.clone()], query, 1);
+        let excerpt = query_excerpt(&evidence[0], query, 160);
+        assert!(excerpt.contains(claim));
+        assert!(paragraph.contains(&excerpt));
+        assert_eq!(excerpt.chars().count(), 160);
+    }
+
+    #[test]
+    #[ignore = "uses live search providers and publisher pages"]
+    fn web_search_live_book_lookup() {
+        let args = json!({"query": r#""夜上" "我的极品美女上司" 小说"#});
+        let outcome = execute(args.as_object().unwrap());
+        println!("{}", outcome.text);
+        assert!(!outcome.error);
+        let evidence = outcome.evidence.unwrap();
+        assert!(evidence["sources"].as_array().unwrap().iter().any(|source| {
+            source["url"].as_str().is_some_and(|url| url.starts_with("http"))
+                && source["excerpts"].as_array().unwrap().iter().any(|excerpt| {
+                    let text = normalized_search_text(excerpt.as_str().unwrap(), 1000);
+                    text.contains("夜上") && text.contains("我的极品美女上司")
+                })
+        }));
+    }
 
     #[test]
     fn empty_and_partial_http_results_finish_without_browser_escalation() {

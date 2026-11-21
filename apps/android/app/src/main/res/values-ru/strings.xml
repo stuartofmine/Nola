@@ -80,7 +80,11 @@
     <string name="chat_answer_source_tools">Результаты инструментов</string>
     <string name="chat_answer_basis_detail">Показаны только источники, реально использованные в этом ответе.</string>
     <string name="chat_answer_memory_updates">%1$d обновлений памяти</string>
-    <string name="chat_empty_no_models">Добавьте модель на вкладке «Модели», чтобы начать</string>
+    <string name="models_verified_via_direct">Прямое соединение проверено</string>
+    <string name="models_verified_via_tailcat">Соединение через Tailcat проверено</string>
+    <string name="models_tailcat_verify_failed">Tailcat не смог подключиться к хосту. Проверьте Tailcat на хосте и повторите проверку.</string>
+    <string name="models_direct_verify_failed_without_tailcat">Прямое соединение вернуло HTTP %1$d. Проверьте адрес хоста и токен доступа. Если хост требует Tailcat, установите версию Nola с поддержкой Tailcat.</string>
+    <string name="chat_empty_no_models">Используйте модель из сервиса, локальную модель или сопряжённый хост Nola.</string>
     <string name="chat_add_model_cta">Добавить модель</string>
     <string name="chat_placeholder_ready">Nola готов. Настройте LLM-эндпоинт в разделе «Модели», чтобы начать чат.</string>
     <string name="chat_placeholder_configure_model">Настройте LLM-эндпоинт в разделе «Модели», чтобы включить чат.</string>
@@ -1376,6 +1380,7 @@
     <string name="chat_local_mcp_servers">Локальные MCP-серверы</string>
     <string name="chat_local_mcp_empty">Локальные MCP-серверы не настроены.</string>
     <string name="goal_discard_pending">Отменить ожидающий запрос</string>
+    <string name="goal_saved_constraints">Ограничения</string>
     <string name="goal_constraints">Ограничения (необязательно)</string>
     <string name="goal_constraints_hint">По одному в строке или через запятую</string>
     <string name="goal_next_wake_format">Следующая проверка: %1$s</string>
@@ -1415,4 +1420,9 @@
     <string name="chat_document_delete_message">Удалить «%1$s»? Он будет удалён из контекста.</string>
     <string name="data_heart_rate_bpm_format">%1$d уд/мин</string>
     <string name="chat_web_host_images_unsupported">Вложения изображений не поддерживаются в диалогах Nola Web Host. Переключитесь на локальную или облачную модель либо удалите изображения.</string>
+    <string name="goal_latest_step">Последний шаг</string>
+    <string name="goal_step_interrupted">Прерван</string>
+    <string name="goal_step_review_pending">Ожидает проверки</string>
+    <string name="goal_step_reviewed">Проверен</string>
+    <string name="goal_host_default_unavailable">Выберите доступную модель чата по умолчанию в настройках хоста и повторите сохранённый запрос.</string>
 </resources>

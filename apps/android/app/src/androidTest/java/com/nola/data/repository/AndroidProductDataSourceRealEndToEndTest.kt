@@ -31,6 +31,7 @@ import kotlinx.coroutines.withTimeout
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.put
+import com.nola.domain.model.ModelWireProtocol
 import org.json.JSONObject
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -181,6 +182,12 @@ class AndroidProductDataSourceRealEndToEndTest {
                     )
                 )
                 assertEquals("JSON", saved.validationContract?.format)
+                AndroidApplicationRuntime(context).use { reopened ->
+                    val reopenedStore = MemoryProfileDataStore(context, SecureTokenStore(context), reopened)
+                    val restored = AndroidDataSourceRepository(reopenedStore, AndroidDataSourceReader(sourceClient))
+                        .snapshot().first.single { it.id == saved.id }
+                    assertEquals("JSON", restored.validationContract?.format)
+                }
                 assertTrue(saved.cachedContent.contains(fact))
 
                 val conversationId = "android-product-e2e-${UUID.randomUUID()}"
@@ -230,7 +237,7 @@ class AndroidProductDataSourceRealEndToEndTest {
                         baseUrl = endpoint,
                         apiKey = apiKey,
                         model = model,
-                        temperature = 0f,
+                        wireProtocol = requireNotNull(ModelWireProtocol.fromWireValue(config.optString("protocol", "chat_completions"))),
                         maxCompletionTokens = 512,
                     )
                 }
@@ -302,7 +309,7 @@ class AndroidProductDataSourceRealEndToEndTest {
                         baseUrl = endpoint,
                         apiKey = apiKey,
                         model = model,
-                        temperature = 0f,
+                        wireProtocol = requireNotNull(ModelWireProtocol.fromWireValue(config.optString("protocol", "chat_completions"))),
                         maxCompletionTokens = 256,
                     )
                 }

@@ -44,6 +44,11 @@ fn mobile_model_profile_catalog(store: &NolaStore) -> Result<Vec<Value>, String>
 /// This execution Host resolves its own preference. Runtime facts describe the
 /// bound-profile execution path exposed by this API, not another device's runtime.
 fn mobile_default_chat_model_projection(store: &NolaStore) -> Result<(Value, Option<i64>), String> {
+    let (resolution, revision) = host_default_chat_model(store)?;
+    Ok((serde_json::to_value(resolution).map_err(|error| error.to_string())?, revision))
+}
+
+fn host_default_chat_model(store: &NolaStore) -> Result<(nola_application::model_selection::ChatModelResolution, Option<i64>), String> {
     use nola_application::model_selection::{ChatModelCandidate, ChatModelIntent, ModelAvailability, resolve_chat_model};
     let mut application = crate::application_port::CliApplicationPort::persistent(store.path())?;
     let setting: Option<nola_application::ProductSetting> = application.execute(
@@ -60,7 +65,7 @@ fn mobile_default_chat_model_projection(store: &NolaStore) -> Result<(Value, Opt
                 allowed_for_chat: source["capabilities"].as_array().is_some_and(|values| values.contains(&json!("chat"))) })
         }).collect::<Result<Vec<_>, String>>()?;
     let resolution = resolve_chat_model(&ChatModelIntent::Inherit, setting.as_ref().map(|value| value.value_json.as_str()), &candidates);
-    Ok((serde_json::to_value(resolution).map_err(|error| error.to_string())?, setting.map(|value| value.revision)))
+    Ok((resolution, setting.map(|value| value.revision)))
 }
 
 fn load_bound_intent_profile(

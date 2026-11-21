@@ -31,7 +31,11 @@
         draft = { ...snapshot.draft };
         error = '';
         const owner = snapshot;
-        void tick().then(() => { if (snapshot === owner && dialog?.isConnected && !dialog.open) dialog.showModal(); });
+        void tick().then(() => {
+            if (snapshot !== owner || !dialog?.isConnected || dialog.open) return;
+            dialog.showModal();
+            dialog.querySelector<HTMLInputElement>('input:not(:disabled)')?.focus({preventScroll: true});
+        });
     }
     function setBusy(value: boolean) { busy = value; onBusyChange(value); }
     async function discardConfirmed() {

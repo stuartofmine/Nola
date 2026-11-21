@@ -29,6 +29,7 @@
 
 "goal.example" = "Exemple : organisez les documents du projet et préparez une synthèse avec les sources.";
 
+"goal.constraints" = "Contraintes";
 "goal.optional_constraints" = "Contraintes (facultatif)";
 
 "goal.cancel_title" = "Terminer cet objectif ?";

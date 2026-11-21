@@ -10,6 +10,11 @@ class ConversationProgressRepositoryTest {
         put("revision",3); put("control_generation",2); put("control_token",token)
         put("active",buildJsonObject {
             put("id","goal"); put("objective","Ship"); put("status","paused")
+            put("contracts", buildJsonArray {
+                add(buildJsonObject { put("execution_run_id", "original-run"); put("objective", "Review the change"); put("status", "interrupted") })
+                add(buildJsonObject { put("execution_run_id", JsonNull) })
+            })
+            put("constraints", buildJsonArray { add("Use the existing workspace") })
             put("requirements",buildJsonObject { put("r", buildJsonObject {
                 put("id","r"); put("description","Validate"); put("status","pending")
             }) })
@@ -24,6 +29,8 @@ class ConversationProgressRepositoryTest {
     @Test fun usesExplicitCoreGoalIdentityTokenAndOperationLedger() {
         val result = ConversationProgressRepository.decodeRemote("a","host",remote())
         assertEquals("paused",result.status)
+        assertEquals(GoalContractRun("original-run", "Review the change", "interrupted"), result.latestContractRun)
+        assertEquals(listOf("Use the existing workspace"), result.constraints)
         assertEquals("pending",result.requirements.single().status)
         val control = requireNotNull(result.goalControl)
         assertEquals("goal",control.goalId); assertEquals("opaque-token",control.controlToken)

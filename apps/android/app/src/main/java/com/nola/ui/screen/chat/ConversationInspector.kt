@@ -10,6 +10,7 @@ import androidx.compose.material.icons.filled.Tune
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
+import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.selected
@@ -118,6 +119,30 @@ internal fun ConversationProgressPanel(
         }
         loading = false
     }
+    // A paired Host may acknowledge the command before its worker applies it.
+    // Follow the original receipt while this panel is visible, without sending another control.
+    LaunchedEffect(owner, host, pending, submitting) {
+        if (owner == null || host == null || !pending || submitting) return@LaunchedEffect
+        for (delayMillis in listOf(500L, 1_000L, 2_000L, 4_000L, 6_000L, 8_000L, 10_000L, 12_000L, 15_000L)) {
+            kotlinx.coroutines.delay(delayMillis)
+            try {
+                value = load(owner)
+                pending = pendingControl(owner)
+                if (!pending) {
+                    controlError = null
+                    return@LaunchedEffect
+                }
+            } catch (cancelled: kotlinx.coroutines.CancellationException) {
+                throw cancelled
+            } catch (failure: Exception) {
+                pending = try { pendingControl(owner) }
+                catch (cancelled: kotlinx.coroutines.CancellationException) { throw cancelled }
+                catch (_: Exception) { true }
+                controlError = failure.message ?: operationFailedMessage
+                return@LaunchedEffect
+            }
+        }
+    }
     cancelRequest?.let { observed ->
         AlertDialog(onDismissRequest = { cancelRequest = null },
             title = { Text(stringResource(R.string.goal_cancel)) },
@@ -130,7 +155,7 @@ internal fun ConversationProgressPanel(
             IconButton(onClick = { refresh++ }, enabled = !loading) { Icon(Icons.Filled.Refresh, stringResource(R.string.common_refresh)) }
         }
         Column(Modifier.weight(1f).imePadding().verticalScroll(rememberScrollState()).padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-            if (loading) LinearProgressIndicator(Modifier.fillMaxWidth())
+            if (loading || submitting) LinearProgressIndicator(Modifier.fillMaxWidth())
             if (failed) {
                 Text(stringResource(R.string.inspector_progress_unavailable), color = MaterialTheme.colorScheme.error)
                 TextButton(onClick = { refresh++ }) { Text(stringResource(R.string.common_refresh)) }
@@ -204,6 +229,23 @@ internal fun ConversationProgressPanel(
                 }
                 progress.objective?.let { Text(it, style = MaterialTheme.typography.titleMedium) }
                 progress.status?.let { Text(progressStatusText(it), style = MaterialTheme.typography.labelMedium) }
+                progress.latestContractRun?.let { run ->
+                    Column(Modifier.testTag("goal.contract.${run.runId}")) {
+                        Text(stringResource(R.string.goal_latest_step), style = MaterialTheme.typography.titleSmall)
+                        if (run.objective.isNotBlank() && run.objective != progress.objective) {
+                            Text(run.objective, style = MaterialTheme.typography.bodyMedium)
+                        }
+                        Text(progressStatusText(run.status), style = MaterialTheme.typography.labelMedium,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    }
+                }
+                val additionalConstraints = progress.constraints.filterNot { constraint -> progress.requirements.any { it.text == constraint } }
+                if (additionalConstraints.isNotEmpty()) {
+                    Text(stringResource(R.string.goal_saved_constraints), style = MaterialTheme.typography.titleSmall)
+                    for (constraint in additionalConstraints) {
+                        Text(constraint, style = MaterialTheme.typography.bodyMedium)
+                    }
+                }
                 progress.nextWakeAtEpochMs?.let { wakeMs ->
                     val formattedWake = remember(wakeMs) {
                         java.text.DateFormat.getDateTimeInstance(java.text.DateFormat.SHORT, java.text.DateFormat.SHORT)
@@ -232,8 +274,11 @@ internal fun ConversationProgressPanel(
 
 @Composable
 private fun progressStatusText(status: String): String = when (status) {
-    "running" -> stringResource(R.string.canonical_running)
+    "executing", "running" -> stringResource(R.string.canonical_running)
     "completed", "succeeded" -> stringResource(R.string.canonical_completed)
+    "interrupted" -> stringResource(R.string.goal_step_interrupted)
+    "awaiting_audit" -> stringResource(R.string.goal_step_review_pending)
+    "audited" -> stringResource(R.string.goal_step_reviewed)
     "cancelled" -> stringResource(R.string.canonical_cancelled)
     "failed" -> stringResource(R.string.canonical_failed)
     "paused", "suspended" -> stringResource(R.string.scheduled_paused)

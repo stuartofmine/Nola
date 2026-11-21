@@ -76,15 +76,15 @@ struct IOSAgentRoomsView: View {
             }.environmentObject(container)
         }
         .toolbar {
-            if !embeddedInNavigationStack {
+            if focusedField != nil {
+                ToolbarItem(placement: .confirmationAction) {
+                    Button(L10n.done) { focusedField = nil }
+                        .accessibilityIdentifier("experts.keyboard.done")
+                }
+            } else if !embeddedInNavigationStack {
                 ToolbarItem(placement: .confirmationAction) {
                     Button("room.done") { requestEditorAction(.close) }.accessibilityIdentifier("experts.management.done")
                 }
-            }
-            ToolbarItemGroup(placement: .keyboard) {
-                Spacer()
-                Button(L10n.done) { focusedField = nil }
-                    .accessibilityIdentifier("experts.keyboard.done")
             }
         }
         .onAppear(perform: reloadEditorData)

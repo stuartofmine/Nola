@@ -175,9 +175,19 @@ mod paired_goal_control_tests {
             parameters_json: json!({"temperature":0.7,"topP":0.9,"maxOutputTokens":4096,"maxContextLength":32768}).to_string(),
             selected:true, enabled:true, revision:1, created_at_ms:1, updated_at_ms:1, deleted_at_ms:None,
         }).unwrap();
-        store.create_web_conversation(&json!(WebConversation::new(
-            "paired-goal".into(), "Goal".into(), now_string(), now_string(),
-        ))).unwrap();
+        // Paired clients create their conversation by sending a model_intent on the
+        // first turn. The canonical conversation has no explicit model preference.
+        let mut application = crate::application_port::CliApplicationPort::persistent_default().unwrap();
+        for id in ["paired-goal", "unconfigured-goal"] {
+            application.create_conversation(nola_application::CreateConversation {
+                id: id.into(), title: "Goal".into(), settings_json: None, created_at_ms: 1, updated_at_ms: 1,
+            }).unwrap();
+        }
+        let mut explicit = WebConversation::new("explicit-goal".into(), "Explicit".into(), now_string(), now_string());
+        explicit.selected_model_id = "paired-goal-model".into();
+        explicit.selected_model_source = "cloud".into();
+        store.create_web_conversation(&json!(explicit)).unwrap();
+        let original_settings = application.load_conversation_settings("paired-goal").unwrap();
         let input = |host: &str, conversation: &str, mut control: Value| {
             control["operationId"] = json!(uuid::Uuid::new_v4().to_string());
             PairedGoalControlRequest {
@@ -209,6 +219,19 @@ mod paired_goal_control_tests {
         assert!(stale["error"].is_string(), "stale control must return an explicit rejection");
         assert_eq!(crate::session::load_session_goal_projection("paired-goal").unwrap().unwrap()
             .active.unwrap().status, nola_core::agent::goal::GoalStatus::Paused);
+        // Changing the Host default affects new inherited Goals only. The original
+        // conversation keeps its settings and the admitted Goal keeps its binding.
+        let _: Value = application.execute(nola_application::ApplicationCommand::PutProductSetting {
+            key: "chat.default_model".into(), updated_at_ms: 2,
+            value_json: json!({"version":1,"selection":{"kind":"profile","profile_id":"removed-profile"}}).to_string(),
+        }).unwrap();
+        let (status, missing) = settled_paired_goal_control("host", input("host", "unconfigured-goal",
+            json!({"action":"start","objective":"Do not silently use another model"})), &config);
+        assert_eq!(status, StatusCode(409), "{missing}");
+        assert_eq!(missing["code"], "goal_host_default_unavailable");
+        assert_eq!(application.load_conversation_settings("paired-goal").unwrap(), original_settings);
+        assert_eq!(new_web_goal_invocation(&config, "explicit-goal").unwrap().model_settings.model, "fixture");
+        assert_eq!(web_goal_invocation_for_selection(&config, "paired-goal", goal_id.as_str()).unwrap().model_settings.model, "fixture");
         let (status, resumed) = settled_paired_goal_control("host", input("host", "paired-goal",
             json!({"action":"resume","expectedGoalId":goal_id,
                 "expectedControlToken":paused["goalProjection"]["control_token"]})), &config);

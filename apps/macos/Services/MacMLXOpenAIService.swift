@@ -59,9 +59,11 @@ nonisolated final class MacMLXOpenAIService: @unchecked Sendable {
         let modelID: String
         let contextWindowTokens: Int
         let profileRevision: Int64?
+        let engine: MacLocalInferenceEngine
 
         init(baseURL: String, apiKey: String, modelID: String, contextWindowTokens: Int,
-             profileRevision: Int64? = nil) {
+             profileRevision: Int64? = nil, engine: MacLocalInferenceEngine = .mlx) {
+            self.engine = engine
             self.baseURL = baseURL
             self.apiKey = apiKey
             self.modelID = modelID
@@ -73,7 +75,7 @@ nonisolated final class MacMLXOpenAIService: @unchecked Sendable {
             guard let revision = profileRevision, revision > 0 else {
                 throw MacLocalAgentResumeError.credentialUnavailable
             }
-            return ["adapter": "mlx", "adapter_contract_revision": 1, "model_id": modelID,
+            return ["adapter": engine.adapter, "adapter_contract_revision": 1, "model_id": modelID,
                     "profile_ref": ["profile_id": modelID, "admitted_revision": revision]]
         }
     }
@@ -215,7 +217,7 @@ nonisolated final class MacMLXOpenAIService: @unchecked Sendable {
               expectedRevision == nil || expectedRevision == revision,
               let record = try applicationPort.modelProfile(endpoint.modelID),
               record.enabled, record.deletedAtMs == nil, record.provider == "local",
-              record.runtime == "mlx", record.modelName == endpoint.modelID,
+              record.runtime == endpoint.engine.rawValue, record.modelName == endpoint.modelID,
               record.revision == revision,
               lock.withLock({ endpointValue == endpoint && process?.isRunning == true
                   && activeApplicationPort?.databaseURL == applicationPort.databaseURL }) else {
@@ -226,6 +228,7 @@ nonisolated final class MacMLXOpenAIService: @unchecked Sendable {
     private func startOnce(_ profile: MacLocalModelProfile, expectedRevision: Int64?,
                            applicationPort: MacApplicationPort) async throws -> Endpoint {
         let startedAt = Date()
+        guard let engine = profile.engine else { throw CocoaError(.fileReadCorruptFile) }
         let (parameters, installedDirectory, profileRevision) = try await MainActor.run {
             let store = MacLocalModelConfigurationStore(applicationPort: applicationPort)
             // Existing canonical profiles are authority. Starting an execution
@@ -235,7 +238,7 @@ nonisolated final class MacMLXOpenAIService: @unchecked Sendable {
                 try store.persist(profile: profile, selected: store.selectedModelID == profile.id)
             }
             guard let record = try applicationPort.modelProfile(profile.id),
-                  record.enabled, record.deletedAtMs == nil, record.runtime == "mlx",
+                  record.enabled, record.deletedAtMs == nil, record.runtime == profile.runtime,
                   record.provider == "local", record.modelName == profile.id,
                   expectedRevision == nil || record.revision == expectedRevision,
                   let parameterData = record.parametersJSON.data(using: .utf8),
@@ -254,7 +257,7 @@ nonisolated final class MacMLXOpenAIService: @unchecked Sendable {
         stopRunningProcessForReplacement()
         lock.withLock { activeApplicationPort = applicationPort }
         let contextWindowTokens = min(
-            max(MacLocalModelProfile.minimumContextTokens, parameters.maxContextLength),
+            max(profile.configurableContext.lowerBound, parameters.maxContextLength),
             profile.nativeContextTokens
         )
         let token = UUID().uuidString.replacingOccurrences(of: "-", with: "")
@@ -285,7 +288,6 @@ nonisolated final class MacMLXOpenAIService: @unchecked Sendable {
         ))
 
         let child = Process()
-        child.executableURL = try helperExecutableURL()
         let standardInput = Pipe()
         let standardOutput = Pipe()
         child.standardInput = standardInput
@@ -296,9 +298,41 @@ nonisolated final class MacMLXOpenAIService: @unchecked Sendable {
             self.handleUnexpectedTermination(child, status: process.terminationStatus)
         }
         do {
+            let external = engine == .mlx ? nil : try MacExternalLocalModelLaunch(
+                profile: profile, token: token, context: contextWindowTokens
+            )
+            if let external {
+                child.executableURL = external.executable
+                child.arguments = external.arguments
+                child.standardInput = FileHandle.nullDevice
+                child.standardOutput = FileHandle.nullDevice
+            } else {
+                child.executableURL = try helperExecutableURL()
+            }
+            try Task.checkCancellation()
             try child.run()
             MacOwnedChildProcessRegistry.shared.register(child)
             lock.withLock { process = child }
+            func markReady(_ port: UInt16) throws -> Endpoint {
+                try Task.checkCancellation()
+                let endpoint = Endpoint(baseURL: "http://127.0.0.1:\(port)/v1", apiKey: token,
+                    modelID: profile.id, contextWindowTokens: contextWindowTokens,
+                    profileRevision: profileRevision, engine: engine)
+                try lock.withLock {
+                    guard process === child, child.isRunning else { throw MacMLXSupervisorError.runtimeExited }
+                    endpointValue = endpoint
+                }
+                setStatus(.init(phase: .ready, modelID: profile.id, displayName: profile.displayName,
+                    errorDescription: nil, startedAt: startedAt, phaseStartedAt: .now), endpoint: endpoint,
+                    processID: Int64(child.processIdentifier))
+                return endpoint
+            }
+            if let external {
+                setStatus(.init(phase: .loadingWeights, modelID: profile.id, displayName: profile.displayName,
+                    errorDescription: nil, startedAt: startedAt, phaseStartedAt: .now), processID: Int64(child.processIdentifier))
+                try await external.waitForModel(profile.id, token: token, process: child)
+                return try markReady(external.port)
+            }
             try standardInput.fileHandleForWriting.write(contentsOf: JSONEncoder().encode(configuration))
             try standardInput.fileHandleForWriting.close()
 
@@ -320,23 +354,7 @@ nonisolated final class MacMLXOpenAIService: @unchecked Sendable {
                     ), processID: Int64(child.processIdentifier))
                 case "ready":
                     guard let port = event.port else { throw MacMLXSupervisorError.invalidRuntimeEvent }
-                    let endpoint = Endpoint(
-                        baseURL: "http://127.0.0.1:\(port)/v1",
-                        apiKey: token,
-                        modelID: profile.id,
-                        contextWindowTokens: contextWindowTokens,
-                        profileRevision: profileRevision
-                    )
-                    lock.withLock { endpointValue = endpoint }
-                    setStatus(.init(
-                        phase: .ready,
-                        modelID: profile.id,
-                        displayName: profile.displayName,
-                        errorDescription: nil,
-                        startedAt: startedAt,
-                        phaseStartedAt: .now
-                    ), endpoint: endpoint, processID: Int64(child.processIdentifier))
-                    return endpoint
+                    return try markReady(port)
                 case "failed":
                     throw MacLocalModelChatStartupError.unavailable(
                         event.error ?? String(localized: "Unable to start the local model service.")
@@ -348,10 +366,13 @@ nonisolated final class MacMLXOpenAIService: @unchecked Sendable {
             throw MacMLXSupervisorError.runtimeExited
         } catch {
             lock.withLock {
-                if process === child { process = nil }
-                endpointValue = nil
+                if process === child {
+                    process = nil
+                    endpointValue = nil
+                }
             }
             terminate(child)
+            if Task.isCancelled { throw CancellationError() }
             setStatus(.init(
                 phase: .failed,
                 modelID: profile.id,
@@ -359,7 +380,7 @@ nonisolated final class MacMLXOpenAIService: @unchecked Sendable {
                 errorDescription: error.localizedDescription,
                 startedAt: startedAt,
                 phaseStartedAt: .now
-            ), processID: Int64(child.processIdentifier))
+            ), processID: child.processIdentifier > 0 ? Int64(child.processIdentifier) : nil)
             throw error
         }
     }

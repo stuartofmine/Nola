@@ -30,6 +30,8 @@ Configure a model connection and select a declared model before starting a conve
 
 ## Architecture
 
+[Architecture guide](docs/architecture/README.en.md) · [中文架构指南](docs/architecture/README.md)
+
 | Component | Implementation | Responsibility |
 | --- | --- | --- |
 | macOS · `apps/macos/` | SwiftUI / AppKit | Native desktop client and platform Host integration |
@@ -41,7 +43,7 @@ Configure a model connection and select a declared model before starting a conve
 | Core · `core/` | Rust, C ABI / JNI | Domain contracts, Agent execution, Application Service, persistence and Host interfaces |
 | Shared Apple code · `shared/apple/` | Swift | Shared presentation and protocol code |
 
-Native clients have their own UI; the macOS client is not a CLI wrapper. Conversations and durable runtime state are managed by the local Application Service and Store. Remote Host access requires authentication and explicit authorization.
+Native clients have their own UI; the macOS client is not a CLI wrapper. The desktop Service and embedded mobile Application use the same business commands and Store contracts. Remote Host access requires authentication and explicit authorization.
 
 See [source layout](docs/engineering/SOURCE_LAYOUT.md) for platform roots, shared modules and test locations.
 
@@ -61,7 +63,7 @@ cargo build --locked -p nola_cli -p nola_service --bins
 
 The same local build/start sequence is available as `./dev.sh`; `WEB_HOST` and `WEB_PORT` configure the listener.
 
-For model configuration, use the Web/native settings or `nola model apply-config`. `llm.default_model` must name a connection and model declared in the same configuration.
+For model configuration, use the Web/native settings or run `nola config` to inspect file sources and the saved Host default. Save your changes and start Nola. Startup validates the catalog and applies its connections, models and default together. If validation fails, Nola reports the file and keeps the saved catalog. `llm.default_model` must name a connection and model declared in the same configuration.
 
 In the interactive CLI, `Ctrl+V` attaches a clipboard image; an absolute image path can also be pasted. Image analysis requires declared image-input support. After a permission denial, `/allow` opens conversation permissions. Explicit configuration denials and operating-system permissions must be changed at their source; request a retry afterward.
 
@@ -90,7 +92,7 @@ Prototype replays, native UI checks, and real-model execution have separate scop
 
 The reissued **1.0.0 is the first supported baseline**. All Nola-owned protocol, ABI and database format/epoch versions start at **1**. Earlier development formats are unsupported. Application version/build numbers are separate from contract versions; external standards retain their own version identifiers.
 
-Subsequent releases must preserve published interfaces and stored data, with explicit negotiation for protocol changes and tested, recoverable migrations for data changes. Unsupported formats are rejected without automatically deleting or rebuilding user data. See the [compatibility policy](docs/architecture/总体设计/VERSION_COMPATIBILITY.md).
+Subsequent releases must preserve published interfaces and stored data, with explicit negotiation for protocol changes and tested, recoverable migrations for data changes. Unsupported formats are rejected without automatically deleting or rebuilding user data. See the [compatibility policy](docs/architecture/总体设计/VERSION_COMPATIBILITY.en.md).
 
 ## Updates and releases
 

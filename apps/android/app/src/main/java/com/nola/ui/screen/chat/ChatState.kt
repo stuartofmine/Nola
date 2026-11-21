@@ -50,6 +50,7 @@ data class ChatUiState(
     val unknownEffectRecovery: UnknownEffectRecoveryPresentation? = null,
     val resolvingUnknownEffects: Boolean = false,
     val processingState: ProcessingState = ProcessingState.Idle,
+    val hostGoalInProgress: Boolean = false,
     val executionTeardownPending: Boolean = false,
     val currentResponse: String = "",
     val journalResponse: ConversationMessage? = null,
@@ -350,7 +351,7 @@ internal fun ChatUiState.applyCanonicalContextUsage(
 
 /** Absence of a Run does not erase a committed rejection of its submission. */
 internal fun ChatUiState.withRemoteOwnerAbsent(preserveSubmissionOutcome: Boolean): ChatUiState = copy(
-    processingState = ProcessingState.Idle, permissionRequest = null,
+    processingState = ProcessingState.Idle, hostGoalInProgress = false, permissionRequest = null,
     activeResponseId = null, activeResponseStartedAt = null,
     error = if (preserveSubmissionOutcome) error else null,
     permissionConfigurationOwner = com.nola.data.local.PermissionConfigurationOwner.Inactive,

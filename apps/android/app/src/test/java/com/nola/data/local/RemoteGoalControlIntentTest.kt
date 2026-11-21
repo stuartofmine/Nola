@@ -61,6 +61,17 @@ class RemoteGoalControlIntentTest {
         }
         assertEquals(intent().toString(), saved)
     }
+    @Test fun progressRefreshOnlySettlesTheAcceptedOwnerAndOperation() {
+        var clearCount = 0
+        val clear = { clearCount++; Unit }
+        assertFalse(settleRemoteGoalReceipt(intent(), "host", progress(), clear))
+        assertFalse(settleRemoteGoalReceipt(intent("other-operation"), "host", progress(true), clear))
+        assertFails { settleRemoteGoalReceipt(intent(), "foreign-host", progress(true), clear) }
+        assertEquals(0, clearCount)
+        assertTrue(settleRemoteGoalReceipt(intent(), "host", progress(true), clear))
+        assertEquals(1, clearCount)
+    }
+
     @Test fun differentPayloadAndForeignResponseCannotReplaceIntent() = runTest {
         var saved: String? = intent().toString()
         assertFailsWith<IllegalArgumentException> {

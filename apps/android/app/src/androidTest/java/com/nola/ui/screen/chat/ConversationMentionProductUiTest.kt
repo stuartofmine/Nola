@@ -125,7 +125,7 @@ class ConversationMentionProductUiTest {
             File(context.filesDir, "expert-mention-real-retired.png").outputStream().use { file ->
                 InstrumentationRegistry.getInstrumentation().uiAutomation.takeScreenshot().compress(android.graphics.Bitmap.CompressFormat.PNG, 100, file)
             }
-            compose.onNodeWithText(context.getString(R.string.expert_child_close)).performClick()
+            compose.onNode(hasContentDescription(context.getString(R.string.common_back)) and hasAnyAncestor(isDialog())).performClick()
             compose.onNodeWithTag("chat.conversation.back").performClick()
             compose.onNodeWithContentDescription(context.getString(R.string.chat_new_chat)).performClick()
             compose.onNodeWithTag("chat.composer.input").assert(SemanticsMatcher.expectValue(androidx.compose.ui.semantics.SemanticsProperties.EditableText, androidx.compose.ui.text.AnnotatedString("")))

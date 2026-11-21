@@ -15,6 +15,10 @@ class InlineExpertMentionTest {
 
     @Test fun cursorImeAndEmail() {
         assertEquals("研", expertQuery(value("😀请@研确认", 5), emptyList())?.text)
+        val multiword = "@Arithmetic reviewer"
+        assertEquals("Arithmetic reviewer", expertQuery(value(multiword, multiword.length), emptyList())?.text)
+        assertNull(expertQuery(value("@ Arithmetic", 12), emptyList()))
+        assertNull(expertQuery(value("@one\ntwo", 8), emptyList()))
         assertNull(expertQuery(value("someone@abc.cn", 11), emptyList()))
         assertNull(expertQuery(TextFieldValue("@研", TextRange(2), TextRange(1,2)), emptyList()))
     }

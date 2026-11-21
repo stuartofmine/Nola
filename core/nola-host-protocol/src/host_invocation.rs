@@ -117,7 +117,7 @@ impl HostModelRouteBinding {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
-pub enum HostNativeModelAdapter { Mlx, LlamaCpp }
+pub enum HostNativeModelAdapter { Mlx, LlamaCpp, Vllm }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -529,7 +529,13 @@ mod tests {
         assert_eq!(serde_json::from_value::<HostModelRouteBinding>(wire.clone()).unwrap(), native);
         let mut other = wire;
         other["adapter"] = serde_json::json!("mlx");
-        assert_ne!(serde_json::from_value::<HostModelRouteBinding>(other).unwrap(), native);
+        assert_ne!(serde_json::from_value::<HostModelRouteBinding>(other.clone()).unwrap(), native);
+        other["adapter"] = serde_json::json!("vllm");
+        let vllm: HostModelRouteBinding = serde_json::from_value(other.clone()).unwrap();
+        vllm.validate().unwrap();
+        assert_eq!(serde_json::to_value(vllm).unwrap(), other);
+        other["adapter"] = serde_json::json!("missing_engine");
+        assert!(serde_json::from_value::<HostModelRouteBinding>(other).is_err());
     }
 
     #[test]

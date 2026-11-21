@@ -1,58 +1,51 @@
-> **发布兼容约束：重新发布的 Nola 1.0.0 是首个受支持基线，Nola 自有协议、ABI 与数据库格式/epoch 从 1 开始；此前开发格式不保留兼容或转换代码。从本次发布起，后续版本须维护已发布接口与数据兼容，破坏性变更必须有明确版本协商、升级说明及回归测试；数据库迁移必须可验证、可回滚并保护原始数据。未知或不支持的格式明确拒绝，不得自动删除、重建或静默改写用户数据。外部服务标准协议沿用其自身版本。**
+# Nola 软件架构设计
 
-# 软件架构设计
+简体中文 · [English](README.en.md)
 
-[A2UI 统一运行时契约](模块/13-客户端投影/A2UI_RUNTIME_CONTRACT.md)：已有共享运行时与跨端接入，Rust 权威与客户端渲染边界；验证范围见阶段归档。
+用户发送消息时，客户端向 Application 提交命令，Agent 引擎提出状态转换，Store 提交后由 Host 调用模型或执行工具，客户端再读取已提交的 journal。在手机观察配对宿主的任务时，Run 仍归源宿主。排查故障时，先根据这条链路确定哪个组件拥有待核对的事实。
 
-本目录描述目标边界与既有契约，不宣称实现已经全部收敛。当前工作见任务入口（本地工作记录，不随仓库分发）；此前实现差距与验证范围见阶段归档（本地工作记录，不随仓库分发）。
+## 架构指南
 
-本次核对入口（2026-11-08）：
+| 入口 | 内容 |
+| --- | --- |
+| [系统设计](总体设计/SOFTWARE_DESIGN.md) | 一次输入如何变成持久消息、模型请求和工具效果 |
+| [产品与架构要求](总体设计/REQUIREMENTS.md) | 跨端场景、REQ-ARCH 与 REQ-RUN 验收条件 |
+| [部署与源码映射](总体设计/CURRENT_IMPLEMENTATION_MAP.md) | 六个客户端、执行进程、原生制品与各模块入口 |
+| [Rust 声明依赖](总体设计/DEPENDENCIES.md) | Cargo 工作区直接生产依赖与实际耦合 |
+| [命令与模块契约](模块契约.md) | 请求身份、事务回执、版本冲突、错误归属 |
+| [执行与故障恢复](总体设计/跨模块流程与恢复.md) | 编辑重发、长任务、压缩、断线与取消 |
+| [模型文件与启动](模块/08-模型配置与调用/MODEL_FILE_CONFIGURATION.md) | 文件优先级、事务发布、凭据绑定与失败行为 |
+| [API 入口](模块/01-领域与协议/API.zh-CN.md) | Rust Host HTTP、Service 命令和嵌入式端口 |
+| [版本与数据兼容](总体设计/VERSION_COMPATIBILITY.md) | 1.0.0 基线、版本协商、可回滚迁移与旧数据保护 |
+| [分发与更新](总体设计/SOFTWARE_UPDATE_ARCHITECTURE.md) | 签名 feed、目标制品、平台安装交接 |
 
-- [架构源码核对与真实差距](总体设计/ARCHITECTURE_SOURCE_AUDIT_20261108.md)：部署、制品、15 模块事实及未解决实现差距。
-- [当前实现映射](总体设计/CURRENT_IMPLEMENTATION_MAP.md)、[实际声明依赖](总体设计/DEPENDENCIES.md)：各模块的具体入口及真实耦合。
-- [接口源码索引](模块/01-领域与协议/INTERFACE_CATALOG.md)、[接口语义](模块/01-领域与协议/CURRENT_RUNTIME_INTERFACES.md)：路由、command tag 与字段/来源边界。
-- [客户端交互与配置](模块/13-客户端投影/CLIENT_INTERACTION_AND_CONFIGURATION.md)、[生成参数合同](模块/08-模型配置与调用/GENERATION_OVERRIDE_CONTRACT.md)：近期原生档位和 UI 接线。
+- [所有权](总体设计/架构决策与所有权.md) · [Core、Application 与 Host](总体设计/CORE_HOST_ARCHITECTURE.md) · [部署分层](总体设计/CORE_HOST_LAYERING.md)
 
-已直接修正 Store、journal、记忆、自动化、Room、MCP/传输及原生制品的陈旧描述。静态接线不宣称运行问题已修复，旧阶段证据保留原日期与覆盖范围。
+## 模块
 
-## 阅读顺序
+每个模块说明状态归属、输入输出、失败处理与源码入口。编号划分职责，一个模块可以涉及多个 crate。
 
-涉及权限与恢复时阅读[执行权限与证据边界](总体设计/执行权限与证据边界_20261016.md)，其两档权限、活动政策提交、证据隔离及启动前失败闭环属于现行约束，不沿用历史三档定义。
+- [MOD-01 · 领域与协议](模块/01-领域与协议/README.md)
+- [MOD-02 · Core与状态机](模块/02-Core与状态机/README.md)
+- [MOD-03 · Application与事务](模块/03-Application与事务/README.md)
+- [MOD-04 · 存储与索引](模块/04-存储与索引/README.md)
+- [MOD-05 · 执行与恢复](模块/05-执行与恢复/README.md)
+- [MOD-06 · 工具与证据](模块/06-工具与证据/README.md)
+- [MOD-07 · 权限与平台](模块/07-权限与平台/README.md)
+- [MOD-08 · 模型配置与调用](模块/08-模型配置与调用/README.md)
+- [MOD-09 · 上下文与压缩](模块/09-上下文与压缩/README.md)
+- [MOD-10 · Goal任务与子代理](模块/10-Goal任务与子代理/README.md)
+- [MOD-11 · Skill插件与MCP](模块/11-Skill插件与MCP/README.md)
+- [MOD-12 · 记忆数据源与自动化](模块/12-记忆数据源与自动化/README.md)
+- [MOD-13 · 客户端投影](模块/13-客户端投影/README.md)
+- [MOD-14 · 远程Host与同步](模块/14-远程Host与同步/README.md)
+- [MOD-15 · 观测与验收](模块/15-观测与验收/README.md)
 
-先读[软件架构总纲](总体设计/SOFTWARE_DESIGN.md)，再读以下所有权与流程。
-文档按职责分工，共用一套术语；日期记录仅代表当时实现/证据，版本数字以代码声明为准。
-整体复核与已纠正问题见复核记录（本地工作记录，不随仓库分发）。
+## 专题与验收
 
-- [架构决策与所有权](总体设计/架构决策与所有权.md)：聚合、写端口、配置冻结、版本与对象职责。
-- [跨模块流程与恢复](总体设计/跨模块流程与恢复.md)：发送、切换、工具、压缩、子代理、计量和故障恢复。
-- [问题映射与验收标准](总体设计/问题映射与验收标准.md)：此前问题的责任边界和性能测量口径。
+主线架构指南和 15 个模块均可切换中英文。补充规范和带日期的审计保留原文。源码入口用于确认实现位置；验收范围记录实际运行的设备、模型与场景。例如，提交回执能验证事务成功，回到页面能否继续输入需要在目标客户端操作验证。
 
-1. [需求](总体设计/REQUIREMENTS.md)与总纲确定目标/范围。
-2. [Core/Host 分层](总体设计/CORE_HOST_LAYERING.md)、[依赖方向](总体设计/DEPENDENCIES.md)。
-3. [模块目录及公共协议](模块契约.md)：进入各模块子目录阅读输入输出、对象封装、生命周期、错误与验收。
-4. [会话聚合契约](模块/04-存储与索引/CONVERSATION_AGGREGATE_CONTRACT_20261015.md)：配置、数据、草稿跟随会话；窗口不拥有业务事实。
-
-## 近期接线同步（2026-11-10）
-
-[本轮验收](../quality/VALIDATION_SCOPE.md)补充客户端 → Host 长任务、Android 安全审阅文本与未知/失败状态的边界。客户端恢复原 Run，不重新提交物理命令；停止观察与持久取消分开。配对、模型配置、Skill/MCP 启用均不直接产生具体工具授权。
-
-[全业务原型](../design/prototype/docs/BUSINESS-SCENARIOS.md)只拥有演示状态，不创建真实 Application、Store 或 Host。覆盖全部设计场景不表示全部原生实现/验收。部署索引同步移除独立 Backend 角色，保留源 Host 权威及可选传输边界；没有修改协议、ABI、数据库格式或 epoch。
-
-## 架构约束
-
-- Application 协调唯一业务写入；Core 决策，Store 原子提交，Host 执行已准入副作用，客户端只提交命令和消费投影。
-- 应用、会话、Run、Task、窗口分别拥有各自生命周期。异步结果绑定原始身份与版本，不读取当前选中会话来决定写入目标。
-- 面向对象以封装状态、不变量和端口为目的，不以增加 class、crate 或协议数量作为模块化成果。
-- 输入输出须包含身份、版本、错误和恢复语义；禁止将任意 JSON 或字符串错误作为已经类型化的证明。
-- 会话配置、上下文、任务进度、usage 都有明确持久化所有者；压缩不转移所有权。
-- 性能阈值依据实测基线，未测量标记未知。规范见[测量契约](模块/15-观测与验收/MEASUREMENT.md)。
-
-## 工程规范
-
-- [Rust 编译与缓存](工程规范/RUST_BUILD_CACHE.md)
-- [跨语言编码规范](工程规范/CODING_STANDARDS_RUST_SWIFT_KOTLIN.md)
-- [测试架构](模块/15-观测与验收/TESTING_ARCHITECTURE.md)
-
-交互规范独立维护于 [UI和交互设计](../design/README.md)，历史实现证据独立维护于历史任务（本地工作记录，不随仓库分发）。
-
-软件分发与更新见[更新架构](总体设计/SOFTWARE_UPDATE_ARCHITECTURE.md)：Host 所有权、签名 feed、数据格式拒绝、完整包下载、平台安装交接与发布配置边界。
+- [所有权决策](总体设计/架构决策与所有权.md) · [Core 与 Host 分层](总体设计/CORE_HOST_LAYERING.md) · [执行权限与证据](总体设计/执行权限与证据边界_20261016.md)
+- [运行时接口](模块/01-领域与协议/CURRENT_RUNTIME_INTERFACES.md) · [A2UI 运行时](模块/13-客户端投影/A2UI_RUNTIME_CONTRACT.md) · [会话聚合](模块/04-存储与索引/CONVERSATION_AGGREGATE_CONTRACT_20261015.md)
+- [交互与原型](../design/README.md) · [各平台接入](../platforms/README.md) · [验收范围](../quality/VALIDATION_SCOPE.md) · [11 月 8 日源码审计](总体设计/ARCHITECTURE_SOURCE_AUDIT_20261108.md)
+- [Rust 构建缓存](工程规范/RUST_BUILD_CACHE.md) · [跨语言编码规范](工程规范/CODING_STANDARDS_RUST_SWIFT_KOTLIN.md) · [测试架构](模块/15-观测与验收/TESTING_ARCHITECTURE.md)
