@@ -113,7 +113,7 @@ internal fun ActivityScreen(onOpenConversation: (String) -> Unit, onOpenPlans: (
                 Text(stringResource(R.string.activity_read_failed), color = MaterialTheme.colorScheme.error)
                 TextButton(onClick = { if (state.entries.isEmpty()) refresh() else viewModel.loadMore() }) { Text(stringResource(R.string.common_retry)) }
             }
-            if (state.entries.isEmpty() && !state.loading && !state.failed) item {
+            if (state.hasLoaded && state.entries.isEmpty() && !state.loading && !state.failed) item {
                 Text(stringResource(if (needsResponse || source != null || search.isNotBlank()) R.string.activity_empty_filter else R.string.activity_empty),
                     color = MaterialTheme.colorScheme.onSurfaceVariant)
             }
@@ -130,7 +130,7 @@ internal fun ActivityScreen(onOpenConversation: (String) -> Unit, onOpenPlans: (
                 }
                 HorizontalDivider(thickness = 0.5.dp, color = MaterialTheme.colorScheme.outlineVariant)
             }
-            if (state.loading) item { CircularProgressIndicator(Modifier.size(24.dp)) }
+            if (state.loading || (!state.hasLoaded && !state.failed)) item { CircularProgressIndicator(Modifier.size(24.dp)) }
             if (state.cursor != null && !state.loading) item {
                 TextButton(onClick = viewModel::loadMore) { Text(stringResource(R.string.activity_load_more)) }
             }

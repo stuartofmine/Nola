@@ -196,7 +196,7 @@ struct MacUserInputCard: View {
             guard canSubmit else { return }
             submit(answers)
         }
-        .buttonStyle(.borderedProminent)
+        .buttonStyle(.nolaProminent)
         .disabled(!canSubmit)
         .accessibilityIdentifier("user-input-submit")
     }
@@ -325,10 +325,51 @@ struct MacConversationSearchBar: View {
             TextField("Find in conversation", text: $model.transcriptSearchText)
                 .textFieldStyle(.plain)
                 .focused($focused)
+                .onSubmit {
+                    model.stepTranscriptSearchMatch(by: 1)
+                }
             if !model.transcriptSearchText.isEmpty {
+                Button {
+                    model.transcriptSearchText = ""
+                } label: {
+                    Image(systemName: "xmark.circle.fill")
+                        .foregroundStyle(.tertiary)
+                }
+                .buttonStyle(MacInlineIconButtonStyle(size: 24))
+                .help(String(localized: "Clear Search"))
+                .accessibilityLabel(String(localized: "Clear Search"))
+                .accessibilityIdentifier("workspace.clearTranscriptSearch")
+
                 Text("\(model.transcriptMatchCount) found")
                     .font(.system(size: 10.5, weight: .medium))
                     .foregroundStyle(.secondary)
+                    .monospacedDigit()
+
+                HStack(spacing: 2) {
+                    Button {
+                        model.stepTranscriptSearchMatch(by: -1)
+                    } label: {
+                        Image(systemName: "chevron.up")
+                            .font(.system(size: 11, weight: .semibold))
+                    }
+                    .buttonStyle(MacInlineIconButtonStyle(size: 24))
+                    .disabled(model.transcriptMatchCount == 0)
+                    .help(String(localized: "Previous Match"))
+                    .accessibilityLabel(String(localized: "Previous Match"))
+                    .accessibilityIdentifier("workspace.previousTranscriptMatch")
+
+                    Button {
+                        model.stepTranscriptSearchMatch(by: 1)
+                    } label: {
+                        Image(systemName: "chevron.down")
+                            .font(.system(size: 11, weight: .semibold))
+                    }
+                    .buttonStyle(MacInlineIconButtonStyle(size: 24))
+                    .disabled(model.transcriptMatchCount == 0)
+                    .help(String(localized: "Next Match"))
+                    .accessibilityLabel(String(localized: "Next Match"))
+                    .accessibilityIdentifier("workspace.nextTranscriptMatch")
+                }
             }
             Button {
                 model.isTranscriptSearchVisible = false
@@ -342,7 +383,7 @@ struct MacConversationSearchBar: View {
         }
         .padding(.horizontal, 14)
         .frame(height: 36)
-        .background(.bar)
+        .background(MacDesignColor.chrome)
         .overlay(alignment: .bottom) { Divider() }
         .task {
             await Task.yield()

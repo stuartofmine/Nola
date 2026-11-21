@@ -47,8 +47,10 @@ struct MacOnboardingView: View {
     }
 
     var body: some View {
-        ZStack {
+        ZStack(alignment: .top) {
             MacPageBackground()
+            MacWindowDragRegion()
+                .frame(height: 40)
             ScrollView {
                 VStack(alignment: .leading, spacing: 16) {
                     Text("mac.welcome.title")
@@ -73,7 +75,6 @@ struct MacOnboardingView: View {
             .defaultScrollAnchor(.center, for: .alignment)
             .padding(.top, 40)
         }
-        .background(alignment: .top) { MacWindowDragRegion().frame(height: 40) }
         .background {
             MacChatWindowChromeConfigurator(title: String(localized: "mac.welcome.title"))
                 .frame(width: 0, height: 0)
@@ -87,16 +88,8 @@ struct MacOnboardingView: View {
             onComplete()
         } label: {
             Text("mac.welcome.connect")
-                .font(.body.weight(.semibold))
-                .foregroundStyle(MacDesignColor.onPrimaryAction)
-                .padding(.horizontal, 16)
-                .frame(minHeight: MacDesignTokens.Control.iconButton)
-                .background(MacDesignColor.primaryAction.opacity(isConnectHovered ? 0.84 : 1),
-                    in: RoundedRectangle(cornerRadius: MacDesignTokens.Radius.control))
-                .contentShape(Rectangle())
         }
-        .buttonStyle(.plain)
-        .onHover { isConnectHovered = $0 }
+        .buttonStyle(.nolaProminent)
         .keyboardShortcut(.defaultAction)
         .accessibilityIdentifier("onboarding.connect")
 

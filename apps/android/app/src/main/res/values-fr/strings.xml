@@ -1402,4 +1402,17 @@
     <string name="harness_device_note">Connectez l’ordinateur qui exécute vos extensions pour les utiliser ici.</string>
     <string name="harness_connect">Connecter un hôte</string>
     <string name="harness_changed">L’hôte a changé. Rouvrez la gestion des extensions.</string>
+    <string name="chat_role_user">Vous</string>
+    <string name="chat_ui_entry_unavailable">L’entrée interactive n’est pas disponible.</string>
+    <string name="expert_editor_selected_model_unavailable">Le modèle sélectionné n’est pas disponible.</string>
+    <string name="expert_editor_selected_template_unreadable">Le modèle sélectionné n’est plus lisible.</string>
+    <string name="software_update_error_unsupported_arch">Architecture de mise à jour non prise en charge</string>
+    <string name="software_update_error_service_unavailable">Service de mise à jour indisponible</string>
+    <string name="software_update_error_check_failed">Échec de la vérification des mises à jour</string>
+    <string name="software_update_error_unreadable_package">Le fichier téléchargé n’est pas un paquet Android lisible</string>
+    <string name="software_update_error_package_mismatch">Le paquet APK ou la version ne correspond pas à cette mise à jour</string>
+    <string name="chat_document_delete_title">Supprimer le document</string>
+    <string name="chat_document_delete_message">Supprimer « %1$s » ? Il sera retiré de votre contexte.</string>
+    <string name="data_heart_rate_bpm_format">%1$d bpm</string>
+    <string name="chat_web_host_images_unsupported">Les pièces jointes d’images ne sont pas prises en charge dans les conversations Nola Web Host. Passez à un modèle local ou cloud, ou supprimez les images.</string>
 </resources>

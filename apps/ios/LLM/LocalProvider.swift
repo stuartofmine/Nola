@@ -306,13 +306,14 @@ public final class LocalProvider: LLMClient, LLMAgentCapabilityProviding {
         let customSystemPrompt = input.userPrefs["custom_system_prompt"]
 
         return AsyncThrowingStream { continuation in
-            Task {
+            let task = Task {
                 switch promptResult {
                 case .failure(let err):
                     continuation.finish(throwing: err)
                     return
                 case .success(let prompt):
                     do {
+                        try Task.checkCancellation()
                         let systemPrompt: String
                         if !isChat {
                             systemPrompt = PromptTemplates.summarizationSystem
@@ -326,6 +327,9 @@ public final class LocalProvider: LLMClient, LLMAgentCapabilityProviding {
                         }
                         let stream = try await self.generationStream(prompt: prompt, systemPrompt: systemPrompt, enableThinking: self.enableThinking)
                         for try await chunk in stream {
+                            if Task.isCancelled {
+                                break
+                            }
                             continuation.yield(chunk)
                         }
                         continuation.finish()
@@ -333,6 +337,9 @@ public final class LocalProvider: LLMClient, LLMAgentCapabilityProviding {
                         continuation.finish(throwing: error)
                     }
                 }
+            }
+            continuation.onTermination = { @Sendable _ in
+                task.cancel()
             }
         }
     }

@@ -26,7 +26,7 @@
     </select></label>
     <span class="scope">{t($locale, 'chatPermissionMode.scope')}</span>
     {#if state?.applicationStatus && state.applicationStatus !== 'saved'}<span class="notice" role="status" aria-live="polite">{t($locale, `chatPermissionMode.${state.applicationStatus}`)}</span>{/if}
-    {#if state?.canSave}<button type="button" class="save" onclick={onsave}>{t($locale, state.saving ? 'chatSession.saving' : 'chatSession.save')}</button>{/if}
+    {#if state?.canSave}<button type="button" class="save" disabled={state.saving || state.busy} onclick={onsave}>{t($locale, state.saving ? 'chatSession.saving' : 'chatSession.save')}</button>{/if}
     {#if state?.conflict || state?.errorKey}<button type="button" onclick={onreload} disabled={state.busy}>{t($locale, 'chatSession.reload')}</button>{/if}
     {#if state?.errorKey}<span class="error" role="alert">{t($locale, state.errorKey)}</span>{/if}
 </div>

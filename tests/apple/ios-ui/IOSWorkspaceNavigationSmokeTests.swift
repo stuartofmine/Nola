@@ -309,7 +309,11 @@ final class IOSWorkspaceNavigationSmokeTests: XCTestCase {
         for _ in 0..<6 where !expert.element.isHittable { app.swipeDown() }
         XCTAssertEqual(expert.count, 1)
         let expertID = String(expert.element.identifier.dropFirst("experts.edit.".count))
-        app.buttons["experts.management.done"].tap()
+        if app.buttons["experts.management.done"].exists {
+            app.buttons["experts.management.done"].tap()
+        } else if app.navigationBars.buttons.element(boundBy: 0).exists {
+            app.navigationBars.buttons.element(boundBy: 0).tap()
+        }
         app.tapRootTab("chat")
         let newChat = app.buttons["chat.conversations.new"]
         XCTAssertTrue(newChat.waitForExistence(timeout: 5)); newChat.tap()
@@ -1043,9 +1047,9 @@ final class IOSWorkspaceNavigationSmokeTests: XCTestCase {
             backToSettings()
 
             tap("settings.category.agents")
-            XCTAssertTrue(app.buttons["experts.management.done"].waitForExistence(timeout: 5))
+            XCTAssertTrue(app.buttons["experts.save"].waitForExistence(timeout: 5))
             try capture("experts-\(theme)", isDark: isDark)
-            tap("experts.management.done")
+            backToSettings()
 
             let categories = [
                 ("settings.models", app.buttons["model.setup.source.0"]),

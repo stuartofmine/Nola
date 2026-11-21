@@ -272,7 +272,7 @@ struct MacWorkspaceReviewView: View {
                 }
                 Spacer()
                 Button(macWorkspaceReviewText("mac.workspace.commit.all", "Commit All Changes")) { showsCommitConfirmation = true }
-                    .buttonStyle(.borderedProminent)
+                    .buttonStyle(.nolaProminent)
                     .controlSize(.small)
                     .disabled(!canCommit(snapshot))
                     .accessibilityIdentifier("mac-git-commit-all")
@@ -565,7 +565,7 @@ private struct MacGitDiffDetail: View {
             } label: {
                 Label(macWorkspaceReviewText("mac.workspace.open", "Open"), systemImage: "arrow.up.forward.app")
             }
-            .buttonStyle(.borderedProminent)
+            .buttonStyle(.nolaProminent)
             Button {
                 MacQuickLookController.shared.preview([fileURL])
             } label: {

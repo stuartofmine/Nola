@@ -5,6 +5,8 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.ExperimentalLayoutApi
+import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
@@ -12,7 +14,6 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.material3.CircularProgressIndicator
@@ -43,6 +44,7 @@ import java.text.DateFormat
 import java.util.Date
 
 /** Core-authored facts from one snapshot; no client-made daily report or authorization. */
+@OptIn(ExperimentalLayoutApi::class)
 @Composable
 internal fun TodayScreen(
     onOpenWorkspace: (Int) -> Unit,
@@ -56,7 +58,7 @@ internal fun TodayScreen(
     val date = remember(now) { DateFormat.getDateInstance(DateFormat.FULL).format(Date(now)) }
     val snapshot = state.snapshot
     LazyColumn(
-        modifier = Modifier.fillMaxSize().background(MaterialTheme.colorScheme.background).statusBarsPadding().testTag("workspace.today"),
+        modifier = Modifier.fillMaxSize().background(MaterialTheme.colorScheme.background).testTag("workspace.today"),
         verticalArrangement = Arrangement.spacedBy(8.dp),
     ) {
         item {
@@ -69,10 +71,13 @@ internal fun TodayScreen(
             }
         }
         item {
-            Row(Modifier.fillMaxWidth().padding(horizontal = 12.dp), verticalAlignment = Alignment.CenterVertically) {
+            FlowRow(
+                Modifier.fillMaxWidth().padding(horizontal = 12.dp),
+                horizontalArrangement = Arrangement.spacedBy(4.dp),
+                verticalArrangement = Arrangement.spacedBy(4.dp)
+            ) {
                 TextButton(onClick = onOpenConversations, modifier = Modifier.heightIn(min = 48.dp)) { Text(stringResource(R.string.tab_chat)) }
                 TextButton(onClick = { onOpenWorkspace(0) }, modifier = Modifier.heightIn(min = 48.dp)) { Text(stringResource(R.string.today_manage)) }
-                Spacer(Modifier.weight(1f))
                 TextButton(onClick = responses::refresh, enabled = !state.loading, modifier = Modifier.heightIn(min = 48.dp)) {
                     Text(stringResource(R.string.common_refresh))
                 }

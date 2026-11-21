@@ -12,6 +12,7 @@ import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.defaultMinSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
@@ -236,7 +237,7 @@ fun HomeDashboard(
             ) {
                 NolaStatCard(
                     title = stringResource(R.string.data_heart_rate),
-                    value = healthSummary?.averageHeartRateBpm?.takeIf { it > 0 }?.let { "$it bpm" } ?: "—",
+                    value = healthSummary?.averageHeartRateBpm?.takeIf { it > 0 }?.let { stringResource(R.string.data_heart_rate_bpm_format, it) } ?: "—",
                     icon = Icons.Filled.Favorite,
                     modifier = Modifier.weight(1f),
                     tint = NolaColors.danger
@@ -535,6 +536,7 @@ private fun NotificationBellButton(
     Box(
         modifier = Modifier
             .size(48.dp)
+            .clip(RoundedCornerShape(NolaRadius.md))
             .clickable(role = androidx.compose.ui.semantics.Role.Button) { onClick() },
         contentAlignment = Alignment.Center
     ) {
@@ -556,10 +558,11 @@ private fun NotificationBellButton(
             Box(
                 modifier = Modifier
                     .align(Alignment.TopEnd)
-                    .size(18.dp)
+                    .defaultMinSize(minWidth = 18.dp, minHeight = 18.dp)
                     .clip(CircleShape)
                     .background(MaterialTheme.colorScheme.error)
-                    .border(1.5.dp, MaterialTheme.colorScheme.surface, CircleShape),
+                    .border(1.5.dp, MaterialTheme.colorScheme.surface, CircleShape)
+                    .padding(horizontal = 4.dp),
                 contentAlignment = Alignment.Center
             ) {
                 Text(

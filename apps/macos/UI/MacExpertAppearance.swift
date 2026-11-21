@@ -52,8 +52,10 @@ struct MacExpertColorEditor: View {
                     guard let data = AppleExpertAppearance.saving(draft, agentID: agentID, in: stored) else { return }
                     stored = data; dismiss()
                 } label: {
-                    Text(String(localized: "Save")).frame(minHeight: 32)
-                }.keyboardShortcut(.defaultAction)
+                    Text(String(localized: "Save"))
+                }
+                .buttonStyle(.nolaProminent)
+                .keyboardShortcut(.defaultAction)
             }
         }.padding(24).frame(width: 360)
             .background(MacDesignColor.canvas)

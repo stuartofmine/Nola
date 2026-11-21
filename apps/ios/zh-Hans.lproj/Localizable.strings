@@ -1773,6 +1773,7 @@
 "common.frequency.weekly" = "每周";
 "common.no.zh" = "否";
 "common.retry" = "重试";
+"common.search" = "搜索";
 "common.unknown" = "未知";
 "common.yes.zh" = "是";
 "data.subtitle.local_first" = "本机数据源、定时动作与最近执行状态。";
@@ -2998,6 +2999,7 @@
 
 "room.pending_expert_message" = "原专家消息尚有待启动的任务。";
 "room.resume_complete_experts" = "恢复原专家消息";
+"room.retry_expert_reply" = "重试专家回复";
 
 // Expert directory management
 "experts.manage" = "管理专家";
@@ -3435,3 +3437,5 @@
 "harness.device_note" = "连接运行插件的电脑，就能在这里使用它的插件。";
 "harness.connect" = "连接桌面 Host";
 "harness.pair" = "连接其他 Host";
+
+"Icon could not be rendered" = "无法渲染图标";

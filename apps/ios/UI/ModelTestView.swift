@@ -25,6 +25,7 @@ struct ModelTestView: View {
     @State private var outputModelOutput: ModelOutput = .empty
     @State private var isRunning: Bool = false
     @State private var isStreaming: Bool = false
+    @State private var streamTask: Task<Void, Never>?
     @State private var errorMessage: String?
     @State private var currentTokens: Int = 0
     
@@ -137,7 +138,7 @@ struct ModelTestView: View {
                                         TextField("4096", value: $maxTokens, format: .number.grouping(.never))
                                             .keyboardType(.numberPad)
                                             .multilineTextAlignment(.trailing)
-                                            .textFieldStyle(.roundedBorder)
+                                            .nolaInputFieldSurface()
                                             .frame(width: 112)
                                             .monospacedDigit()
                                             .onChange(of: maxTokens) { _, newValue in
@@ -327,7 +328,7 @@ struct ModelTestView: View {
                                 }
                             }
                             .padding(.horizontal, 12)
-                            .padding(.bottom, 12)
+                            .padding(.bottom, 96)
                         }
                     }
                     
@@ -336,24 +337,38 @@ struct ModelTestView: View {
                         Spacer()
                         HStack {
                             Spacer()
-                            Button(action: { Task { await runStream() } }) {
-                                    HStack(spacing: 8) {
+                            Button(action: {
+                                if isRunning {
+                                    streamTask?.cancel()
+                                    streamTask = nil
+                                    isRunning = false
+                                    isStreaming = false
+                                } else {
+                                    streamTask?.cancel()
+                                    streamTask = Task { await runStream() }
+                                }
+                            }) {
+                                HStack(spacing: 8) {
                                     Image(systemName: isRunning ? "stop.fill" : "waveform.path")
                                     Text(isRunning ? L10n.modelTestStop : L10n.modelTestRun)
                                         .fontWeight(.semibold)
                                 }
                                 .frame(height: 50)
                                 .frame(maxWidth: .infinity)
-                                .background(Color.blue)
-                                .foregroundColor(.white)
+                                .background(isRunning ? DesignTokens.dangerColor : DesignTokens.actionColor)
+                                .foregroundColor(DesignTokens.onActionColor)
                                 .cornerRadius(12)
                             }
-                            .disabled(isRunning && promptText.isEmpty)
+                            .disabled(!isRunning && promptText.isEmpty)
                             .padding(16)
                         }
                     }
                 }
                 .background(DesignTokens.backgroundColor)
+            }
+            .onDisappear {
+                streamTask?.cancel()
+                streamTask = nil
             }
             .toolbar(.hidden, for: .navigationBar)
             .sheet(isPresented: $showSettings) {
@@ -490,6 +505,7 @@ struct ModelTestView: View {
 
             var chunkIdx = 0
             for try await chunk in stream {
+                try Task.checkCancellation()
                 chunkIdx += 1
                 accumulated += chunk
 
@@ -562,6 +578,8 @@ struct ModelTestView: View {
             // Always ensure outputText is updated (even if decode failed)
             outputText = parseAccumulatedOutput(accumulated)
             appendLog("PARSED_OUTPUT: \(outputText.prefix(2000))")
+        } catch is CancellationError {
+            appendLog("Streaming cancelled")
         } catch {
             errorMessage = error.localizedDescription
             appendLog("Streaming failed: \(error.localizedDescription)", level: .error)
@@ -571,6 +589,7 @@ struct ModelTestView: View {
 
         isRunning = false
         isStreaming = false
+        streamTask = nil
     }
 
     private func exampleInputJSON() -> String {
@@ -741,11 +760,11 @@ struct SettingsSheet: View {
                 if !useLocal {
                     Section(header: Text(L10n.modelTestCloudLabel)) {
                         TextField(L10n.settingsBaseURL, text: $container.baseURLString)
-                            .textFieldStyle(.roundedBorder)
+                            .nolaInputFieldSurface()
                         SecureField(L10n.settingsAPIKey, text: $container.apiKey)
-                            .textFieldStyle(.roundedBorder)
+                            .nolaInputFieldSurface()
                         TextField(L10n.settingsModel, text: $container.model)
-                            .textFieldStyle(.roundedBorder)
+                            .nolaInputFieldSurface()
                         Button(action: { container.saveCredentials() }) {
                             HStack {
                                 Image(systemName: "checkmark.circle.fill")

@@ -855,6 +855,7 @@ struct MacSettingsView: View {
     @State private var retrievalEnabled = MacAssistantPreferences.retrievalEnabled
     @State private var memoryEnabled = MacAssistantPreferences.memoryEnabled
     @State private var contextLimit = MacAssistantPreferences.contextLimit
+    @FocusState private var contextLimitFocused: Bool
     @AppStorage(MacRunNotificationPreferenceKeys.agentCompletion) private var agentCompletionNotifications = false
     @AppStorage(MacRunNotificationPreferenceKeys.notificationsEnabled) private var notificationsEnabled = true
     private let skipsAutomaticHostVerification: Bool
@@ -1216,6 +1217,16 @@ struct MacSettingsView: View {
         }
     }
 
+    private var isManagedServerStarting: Bool {
+        if case .starting = managedServer.state { return true }
+        return false
+    }
+
+    private func commitContextLimit() {
+        contextLimit = min(max(contextLimit, 16_384), 2_000_000)
+        MacAssistantPreferences.setContextLimit(contextLimit)
+    }
+
     private var managedServerControlCard: some View {
         VStack(alignment: .leading, spacing: 12) {
             Toggle(
@@ -1224,6 +1235,7 @@ struct MacSettingsView: View {
             )
             .font(.callout.weight(.semibold))
             .toggleStyle(.macSwitch)
+            .disabled(isManagedServerStarting)
             .onChange(of: managedServerEnabled) { _, enabled in
                 if enabled {
                     Task {
@@ -1288,7 +1300,7 @@ struct MacSettingsView: View {
                                 } label: {
                                     Label(macSettingsText("mac.settings.server.copy_setup", "Copy Connection Setup"), systemImage: "doc.on.doc")
                                 }
-                                .buttonStyle(.borderedProminent)
+                                .buttonStyle(.nolaProminent)
                                 .tint(MacDesignColor.brand)
                                 .accessibilityIdentifier("mac.server.copySetup")
                             }
@@ -1645,7 +1657,7 @@ struct MacSettingsView: View {
                             systemImage: "arrow.up.forward.app"
                         )
                     }
-                    .buttonStyle(.borderedProminent)
+                    .buttonStyle(.nolaProminent)
 
                     Button {
                         MacModelCenterNavigationState.shared.showLocalModels()
@@ -1693,9 +1705,17 @@ struct MacSettingsView: View {
                     TextField(macSettingsText("mac.settings.agent.tokens", "Tokens"), value: $contextLimit, format: .number)
                         .frame(minWidth: 100, idealWidth: 120, maxWidth: 160)
                         .multilineTextAlignment(.trailing)
+                        .focused($contextLimitFocused)
                         .onSubmit {
-                            contextLimit = min(max(contextLimit, 16_384), 2_000_000)
-                            MacAssistantPreferences.setContextLimit(contextLimit)
+                            commitContextLimit()
+                        }
+                        .onChange(of: contextLimitFocused) { wasFocused, isFocused in
+                            if wasFocused && !isFocused {
+                                commitContextLimit()
+                            }
+                        }
+                        .onDisappear {
+                            commitContextLimit()
                         }
                 }
                 Text(macSettingsText("mac.settings.agent.context_commit", "Press Return to save. Supported range: 16,384–2,000,000 tokens."))
@@ -1837,7 +1857,7 @@ struct MacSettingsView: View {
                             Label(hostPrimaryActionTitle, systemImage: "checkmark.shield")
                         }
                     }
-                    .buttonStyle(.borderedProminent)
+                    .buttonStyle(.nolaProminent)
                     .tint(MacDesignColor.brand)
                     .controlSize(.large)
                     .disabled(checkingHost || !canVerifyHostDraft)
@@ -2364,16 +2384,8 @@ struct MacApplicationStartupGate<Content: View>: View {
                                 attempt += 1
                             } label: {
                                 Text("mac.startup.incompatible.recover", tableName: "Startup")
-                                    .font(.body.weight(.medium))
-                                    .foregroundStyle(MacDesignColor.onPrimaryAction)
-                                    .padding(.horizontal, 18)
-                                    .padding(.vertical, 9)
-                                    .background(
-                                        MacDesignColor.primaryAction,
-                                        in: RoundedRectangle(cornerRadius: 8)
-                                    )
                             }
-                            .buttonStyle(.plain)
+                            .buttonStyle(.nolaProminent)
                             .accessibilityIdentifier("mac.startup.recover")
                             .keyboardShortcut(.defaultAction)
                         }

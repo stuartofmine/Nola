@@ -1196,14 +1196,15 @@ fn route_request(
 
     if let Some((source_id, suffix)) = data_source_route(path) {
         return match (method, suffix) {
-            (&Method::Patch, "") => update_data_source_response(request, source_id),
-            (&Method::Delete, "") => delete_data_source_response(source_id),
-            (&Method::Post, "test") => test_data_source_response(source_id),
+            (&Method::Patch, "") => update_data_source_response(request, &source_id),
+            (&Method::Delete, "") => delete_data_source_response(&source_id),
+            (&Method::Post, "test") => test_data_source_response(&source_id),
             _ => method_not_allowed(),
         };
     }
 
     if let Some((conversation_id, suffix)) = chat_conversation_route(path) {
+        let conversation_id = conversation_id.as_str();
         return match (method, suffix) {
             (&Method::Get, "") | (&Method::Head, "") => read_conversation_response(conversation_id),
             (&Method::Get, "queued-input") | (&Method::Head, "queued-input") => conversation_queued_input_response(conversation_id, url),
@@ -1253,25 +1254,39 @@ fn route_request(
             (&Method::Get, suffix) | (&Method::Head, suffix)
                 if suffix.starts_with("resources/") =>
             {
+                let Some(resource_id) = decode_path_segment(suffix.trim_start_matches("resources/")) else {
+                    return json_response(StatusCode(400), json!({"error": "invalid resource id"}));
+                };
                 read_conversation_pdf_resource_response(
                     conversation_id,
-                    suffix.trim_start_matches("resources/"),
+                    &resource_id,
                     method == &Method::Head,
                 )
             }
             (&Method::Delete, suffix) if suffix.starts_with("resources/") => {
+                let Some(resource_id) = decode_path_segment(suffix.trim_start_matches("resources/")) else {
+                    return json_response(StatusCode(400), json!({"error": "invalid resource id"}));
+                };
                 delete_conversation_resource_response(
                     conversation_id,
-                    suffix.trim_start_matches("resources/"),
+                    &resource_id,
                 )
             }
-            (&Method::Patch, suffix) if suffix.starts_with("messages/") => update_message_response(
-                request,
-                conversation_id,
-                suffix.trim_start_matches("messages/"),
-            ),
+            (&Method::Patch, suffix) if suffix.starts_with("messages/") => {
+                let Some(message_id) = decode_path_segment(suffix.trim_start_matches("messages/")) else {
+                    return json_response(StatusCode(400), json!({"error": "invalid message id"}));
+                };
+                update_message_response(
+                    request,
+                    conversation_id,
+                    &message_id,
+                )
+            }
             (&Method::Delete, suffix) if suffix.starts_with("messages/") => {
-                delete_message_response(conversation_id, suffix.trim_start_matches("messages/"))
+                let Some(message_id) = decode_path_segment(suffix.trim_start_matches("messages/")) else {
+                    return json_response(StatusCode(400), json!({"error": "invalid message id"}));
+                };
+                delete_message_response(conversation_id, &message_id)
             }
             (&Method::Post, "truncate") => {
                 truncate_conversation_response(config, request, conversation_id)
@@ -1321,10 +1336,13 @@ fn route_request(
                 memory_search_response(url, conversation_id)
             }
             (&Method::Patch, suffix) if suffix.starts_with("data-sources/") => {
+                let Some(source_id) = decode_path_segment(suffix.trim_start_matches("data-sources/")) else {
+                    return json_response(StatusCode(400), json!({"error": "invalid data source id"}));
+                };
                 update_conversation_data_source_response(
                     request,
                     conversation_id,
-                    suffix.trim_start_matches("data-sources/"),
+                    &source_id,
                 )
             }
             _ => method_not_allowed(),
@@ -1333,7 +1351,9 @@ fn route_request(
 
     if let Some(id) = path.strip_prefix("/api/memory/") {
         if method != &Method::Delete { return method_not_allowed(); }
-        let id = percent_decode(id);
+        let Some(id) = decode_path_segment(id) else {
+            return json_response(StatusCode(400), json!({"error": "Invalid memory id"}));
+        };
         let result = crate::application_port::CliApplicationPort::persistent_default()
             .and_then(|mut application| crate::memory_admin::delete_memory(&mut application, &id));
         return match result {
@@ -1343,6 +1363,7 @@ fn route_request(
     }
 
     if let Some((action_id, suffix)) = scheduled_action_route(path) {
+        let action_id = action_id.as_str();
         return match (method, suffix) {
             (&Method::Delete, "") => delete_scheduled_action_response(action_id),
             (&Method::Patch, "") => update_scheduled_action_response(request, action_id),
@@ -1354,7 +1375,7 @@ fn route_request(
 
     if let Some(result_id) = result_detail_route(path) {
         return match method {
-            &Method::Get | &Method::Head => result_detail_response(result_id),
+            &Method::Get | &Method::Head => result_detail_response(&result_id),
             _ => method_not_allowed(),
         };
     }

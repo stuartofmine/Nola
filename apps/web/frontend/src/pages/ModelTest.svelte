@@ -483,7 +483,7 @@
 <div class="model-test-page">
     <header class="page-header">
         <div><h1>{t($locale, 'modelTest.title')}</h1><p class="muted">{t($locale, 'modelTest.subtitle')}</p></div>
-        <div class="actions"><a href="/models">{t($locale, 'modelTest.back')}</a>{#if target === 'local' ? activeLocal : activeRemote}<a class="button" href={modelTestParametersUrl(target, (target === 'local' ? activeLocal : activeRemote)!.id)}>{t($locale, 'modelTest.parameters')}</a>{/if}<button class="primary" onclick={busy ? stop : run} disabled={loading || cleaning || turn?.phase === 'cancel_requested' || !busy && !canRun}>{t($locale, busy ? 'modelTest.stop' : 'modelTest.run')}</button></div>
+        <div class="actions"><a class="button" href="/models">{t($locale, 'modelTest.back')}</a>{#if target === 'local' ? activeLocal : activeRemote}<a class="button" href={modelTestParametersUrl(target, (target === 'local' ? activeLocal : activeRemote)!.id)}>{t($locale, 'modelTest.parameters')}</a>{/if}<button class="primary" onclick={busy ? stop : run} disabled={loading || cleaning || turn?.phase === 'cancel_requested' || !busy && !canRun}>{t($locale, busy ? 'modelTest.stop' : 'modelTest.run')}</button></div>
     </header>
     {#if error}<p class="notice error" role="alert">{error}</p>{/if}
     {#if warning}<p class="notice" role="status">{warning}{#if conversation}<a href={`/chat?conversation=${encodeURIComponent(conversation.conversationId)}`}>{t($locale, 'modelTest.openConversation')}</a>{/if}</p>{/if}

@@ -14,6 +14,7 @@
 }
 :root {
     --font-interface: 'Nola Inter', system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', 'PingFang SC', 'Hiragino Sans GB', 'Microsoft YaHei UI', 'Noto Sans CJK SC', 'Noto Sans SC', sans-serif;
+    --font-display: ui-serif, 'New York', 'Songti SC', 'Noto Serif CJK SC', Georgia, serif;
     --font-code: 'Nola Code', ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
     --a2ui-font-family: var(--font-interface);
     --a2ui-font-family-monospace: var(--font-code);
@@ -22,7 +23,7 @@
     color-scheme: light dark;
     --content: #242923;
     color: var(--content); background: var(--canvas); font-size: 100%; line-height: 1.5;
-    --canvas: #faf8f4; --surface: #ffffff; --rail: #f1efe8; --panel: #f1efe8; --border: #dedcd3; --muted: #5e665e;
+    --canvas: #faf8f4; --surface: #ffffff; --surface-elevated: #ffffff; --rail: #f1efe8; --panel: #f1efe8; --border: #dedcd3; --muted: #5e665e;
     --primary: #345d50; --on-primary: #ffffff;
     --accent: #345d50; --on-accent: #ffffff; --accent-subtle: #e3ebe3; --outline: #777e74;
     --switch-on: #237047; --switch-off: #dddad3; --switch-off-border: #c4c0b7;
@@ -35,7 +36,7 @@
     --control-hit-size: 36px;
     --text-title: 1.75rem; --text-section: 1rem; --text-body: 1rem; --text-detail: .8125rem;
     --section-space: 28px;
-    --radius-control: 12px; --radius-message: 18px;
+    --radius-control: 10px; --radius-message: 18px;
     --success: #237047; --warning: #865400; --info: #1f5f8b;
     --a2ui-color-text: var(--content); --a2ui-color-text-muted: var(--muted);
     --a2ui-color-primary: var(--primary); --a2ui-color-on-primary: var(--on-primary);
@@ -48,7 +49,7 @@
 @media (prefers-color-scheme: dark) {
     :root:not([data-appearance="light"]) {
         color-scheme: dark;
-        --content: #f1f1e9; --canvas: #1b1c1a; --surface: #222420; --rail: #222420; --panel: #292c27; --border: #383d35; --muted: #b5baaf;
+        --content: #f1f1e9; --canvas: #1b1c1a; --surface: #222420; --surface-elevated: #30332e; --rail: #222420; --panel: #292c27; --border: #383d35; --muted: #b5baaf;
         --primary: #a8c9b7; --on-primary: #192b22; --accent: #a8c9b7; --on-accent: #192b22; --accent-subtle: #303f36; --outline: #899084;
         --switch-on: #2e8b57; --switch-off: #3a3935; --switch-off-border: #52504b;
         --hover: var(--accent-subtle);
@@ -65,20 +66,34 @@
 @media (prefers-reduced-motion: reduce) {
     :root { --motion-fast: 0ms; --motion-base: 0ms; --motion-slow: 0ms; --motion-selection: 0ms; }
 }
-* { box-sizing: border-box; }
-body { margin: 0; font-size: var(--text-body); background: var(--canvas); color: var(--content); }
+* { box-sizing: border-box; scrollbar-width: thin; scrollbar-color: var(--border) transparent; }
+::-webkit-scrollbar { width: 8px; height: 8px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb { background: var(--border); border-radius: 999px; border: 2px solid transparent; background-clip: content-box; }
+::-webkit-scrollbar-thumb:hover { background: var(--outline); background-clip: content-box; }
+::-webkit-scrollbar-corner { background: transparent; }
+body { margin: 0; font-size: var(--text-body); background: var(--canvas); color: var(--content); -webkit-font-smoothing: antialiased; }
 code, pre, kbd, samp { font-family: var(--font-code); font-variant-ligatures: none; }
 .skip-content { position: fixed; inset-block-start: 8px; inset-inline-start: 8px; z-index: 100; padding: 12px 16px; background: var(--surface); border: 2px solid var(--accent); border-radius: var(--radius-control); transform: translateY(-200%); }
 .skip-content:focus { transform: none; }
 button, input, select, textarea { font: inherit; font-size: .875rem; }
+button, .button, a, input, select, textarea, summary { -webkit-tap-highlight-color: transparent; }
 label, nav, small { font-size: .875rem; }
-button, .button { border: 1px solid var(--outline); background: var(--surface-gradient); box-shadow: var(--control-shadow); color: inherit; border-radius: var(--radius-control); padding: 8px 12px; min-height: var(--control-hit-size); min-width: var(--control-hit-size); cursor: pointer; overflow-wrap: anywhere; transition: background-color var(--motion-fast) ease, border-color var(--motion-selection) var(--motion-disclosure), color var(--motion-selection) var(--motion-disclosure), transform var(--motion-fast) ease-out; }
+button, .button { border: 1px solid var(--border); background: var(--surface-gradient); box-shadow: var(--control-shadow); color: inherit; border-radius: var(--radius-control); padding: 8px 12px; min-height: var(--control-hit-size); min-width: var(--control-hit-size); cursor: pointer; overflow-wrap: anywhere; transition: background-color var(--motion-fast) ease, border-color var(--motion-selection) var(--motion-disclosure), color var(--motion-selection) var(--motion-disclosure), transform var(--motion-fast) ease-out; }
 .button { display: inline-flex; align-items: center; justify-content: center; text-align: center; }
 button:disabled { opacity: 1; color: var(--muted); background: var(--panel); border-color: var(--border); cursor: not-allowed; }
+a.button[aria-disabled="true"] { opacity: 1; color: var(--muted); background: var(--panel); border-color: var(--border); cursor: not-allowed; }
 button.primary { background: var(--primary); border-color: var(--primary); color: var(--on-primary); font-weight: 600; }
 button.primary:disabled { color: var(--muted); background: var(--panel); border-color: var(--border); }
-@media (hover: hover) { button:not(:disabled):hover, .button:hover { background: var(--accent-subtle); } button.primary:not(:disabled):hover { background: color-mix(in srgb, var(--primary) 88%, var(--canvas)); } }
-button:not(:disabled):active, .button:active { background: var(--accent-subtle); }
+@media (hover: hover) {
+    button:not(:disabled):hover, .button:not([aria-disabled="true"]):hover { background: var(--accent-subtle); border-color: var(--outline); }
+    button.primary:not(:disabled):hover { background: color-mix(in srgb, var(--primary) 88%, var(--canvas)); border-color: color-mix(in srgb, var(--primary) 88%, var(--canvas)); }
+    button.danger:not(:disabled):hover { background: color-mix(in srgb, var(--danger) 12%, transparent); border-color: var(--danger); }
+    input:not(:disabled):hover, select:not(:disabled):hover, textarea:not(:disabled):hover { border-color: var(--outline); }
+}
+button:not(:disabled):active, .button:not([aria-disabled="true"]):active { background: color-mix(in srgb, var(--accent-subtle) 82%, var(--border)); }
+button.primary:not(:disabled):active { background: color-mix(in srgb, var(--primary) 78%, var(--canvas)); border-color: color-mix(in srgb, var(--primary) 78%, var(--canvas)); color: var(--on-primary); }
+button.danger:not(:disabled):active { background: color-mix(in srgb, var(--danger) 20%, transparent); border-color: var(--danger); }
 @media (prefers-reduced-motion: no-preference) {
     button:not(:disabled):active, .button:active { transform: none; }
 }
@@ -109,7 +124,8 @@ p { margin: 6px 0; } .muted, small { color: var(--muted); }
 .identity { min-width: 0; flex: 1 1 220px; overflow-wrap: anywhere; }
 .identity + button { flex-shrink: 0; }
 .fields { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 16px; }
-label { display: grid; gap: 8px; min-width: 0; } input, select, textarea { color: inherit; background: var(--surface-gradient); box-shadow: var(--control-shadow); border: 1px solid var(--outline); border-radius: var(--radius-control); padding: 8px 12px; width: 100%; min-width: 0; max-width: 100%; }
+label { display: grid; gap: 8px; min-width: 0; } input, select, textarea { color: inherit; background: var(--surface-gradient); box-shadow: var(--control-shadow); border: 1px solid var(--border); border-radius: var(--radius-control); padding: 8px 12px; width: 100%; min-width: 0; max-width: 100%; transition: border-color var(--motion-fast) ease; }
+input:not([role='switch']):disabled, select:disabled, textarea:disabled { color: var(--muted); background: var(--panel); border-color: var(--border); cursor: not-allowed; opacity: .75; }
 textarea { resize: vertical; line-height: 1.5; }
 select {
     min-height: var(--control-hit-size); cursor: pointer;
@@ -119,6 +135,8 @@ select {
     background-repeat: no-repeat;
     background-position: right 10px center;
 }
+select option { background: var(--surface); color: var(--content); }
+input[type='search']::-webkit-search-cancel-button { cursor: pointer; opacity: .65; }
 label:has(select), label[for] { cursor: pointer; }
 label:has(> input:is([type='checkbox'], [type='radio'])) {
     display: flex; align-items: center; gap: 8px; min-height: var(--control-hit-size);
@@ -155,7 +173,7 @@ input[type='checkbox'][role='switch']:checked::after {
 input[type='checkbox'][role='switch']:disabled {
     opacity: 0.55; cursor: not-allowed;
 }
-details:not(.model-menu, .row-actions, .compact-actions, .discovered, .attachment-help, .inspector-section, .connection-detail, .endpoint-card, .skill-info, .citation-detail, .technical, .journal-detail, .reference-details, [data-reply-disclosure]) > summary {
+details:not(.model-menu, .row-actions, .compact-actions, .discovered, .attachment-help, .inspector-section, .connection-detail, .endpoint-card, .skill-info, .citation-detail, .technical, .journal-detail, .reference-details, .reasoning-menu, .action-disclosure, .help, .guidance, .tool-input, [data-reply-disclosure]) > summary {
     list-style: none;
     width: 100%;
     min-height: 36px;
@@ -171,10 +189,10 @@ details:not(.model-menu, .row-actions, .compact-actions, .discovered, .attachmen
     font-weight: 550;
     box-sizing: border-box;
 }
-details:not(.model-menu, .row-actions, .compact-actions, .discovered, .attachment-help, .inspector-section, .connection-detail, .endpoint-card, .skill-info, .citation-detail, .technical, .journal-detail, .reference-details, [data-reply-disclosure]) > summary::-webkit-details-marker {
+details:not(.model-menu, .row-actions, .compact-actions, .discovered, .attachment-help, .inspector-section, .connection-detail, .endpoint-card, .skill-info, .citation-detail, .technical, .journal-detail, .reference-details, .reasoning-menu, .action-disclosure, .help, .guidance, .tool-input, [data-reply-disclosure]) > summary::-webkit-details-marker {
     display: none;
 }
-details:not(.model-menu, .row-actions, .compact-actions, .discovered, .attachment-help, .inspector-section, .connection-detail, .endpoint-card, .skill-info, .citation-detail, .technical, .journal-detail, .reference-details, [data-reply-disclosure]) > summary::after {
+details:not(.model-menu, .row-actions, .compact-actions, .discovered, .attachment-help, .inspector-section, .connection-detail, .endpoint-card, .skill-info, .citation-detail, .technical, .journal-detail, .reference-details, .reasoning-menu, .action-disclosure, .help, .guidance, .tool-input, [data-reply-disclosure]) > summary::after {
     content: '';
     width: 12px;
     height: 12px;
@@ -186,10 +204,10 @@ details:not(.model-menu, .row-actions, .compact-actions, .discovered, .attachmen
     mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2.2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='m6 9 6 6 6-6'/%3E%3C/svg%3E") center / contain no-repeat;
     transition: transform var(--motion-fast) ease;
 }
-details:not(.model-menu, .row-actions, .compact-actions, .discovered, .attachment-help, .inspector-section, .connection-detail, .endpoint-card, .skill-info, .citation-detail, .technical, .journal-detail, .reference-details, [data-reply-disclosure])[open] > summary::after {
+details:not(.model-menu, .row-actions, .compact-actions, .discovered, .attachment-help, .inspector-section, .connection-detail, .endpoint-card, .skill-info, .citation-detail, .technical, .journal-detail, .reference-details, .reasoning-menu, .action-disclosure, .help, .guidance, .tool-input, [data-reply-disclosure])[open] > summary::after {
     transform: rotate(180deg);
 }
-details:not(.model-menu, .row-actions, .compact-actions, .discovered, .attachment-help, .inspector-section, .connection-detail, .endpoint-card, .skill-info, .citation-detail, .technical, .journal-detail, .reference-details, [data-reply-disclosure]) > summary:hover {
+details:not(.model-menu, .row-actions, .compact-actions, .discovered, .attachment-help, .inspector-section, .connection-detail, .endpoint-card, .skill-info, .citation-detail, .technical, .journal-detail, .reference-details, .reasoning-menu, .action-disclosure, .help, .guidance, .tool-input, [data-reply-disclosure]) > summary:hover {
     background: var(--accent-subtle);
     border-color: var(--outline);
 }
@@ -199,8 +217,17 @@ pre { max-width: 100%; overflow: auto; }
 .notice { padding: 12px 16px; border: 1px solid var(--border); border-radius: var(--radius); } .error { color: var(--danger); }
 .actions { display: flex; flex-wrap: wrap; gap: 8px; justify-content: flex-end; }
 progress { width: 100%; accent-color: var(--accent); }
-dialog { color: var(--content); background: var(--surface-gradient); border: 1px solid var(--border); border-radius: 16px; max-width: 580px; width: calc(100% - 32px); max-height: calc(100dvh - 32px); padding: 24px; overflow: auto; overscroll-behavior: contain; box-shadow: 0 12px 40px #0003;  }
-dialog::backdrop { background: #0006; }
+dialog { color: var(--content); background: var(--surface-elevated, var(--surface)); border: 1px solid var(--border); border-radius: 16px; max-width: 580px; width: calc(100% - 32px); max-height: calc(100dvh - 32px); padding: 24px; overflow: auto; overscroll-behavior: contain; box-shadow: 0 12px 40px rgb(0 0 0 / .22); }
+dialog::backdrop { background: rgb(0 0 0 / .4); backdrop-filter: blur(3px); transition: opacity var(--motion-base) ease-out, overlay var(--motion-base) allow-discrete, display var(--motion-base) allow-discrete; }
+dialog:modal { transition: opacity var(--motion-base) ease-out, transform var(--motion-base) ease-out, overlay var(--motion-base) allow-discrete, display var(--motion-base) allow-discrete; }
+@starting-style {
+    dialog:modal { opacity: 0; transform: translateY(4px); }
+    dialog:modal::backdrop { opacity: 0; }
+}
+[popover]:popover-open { transition: opacity var(--motion-base) ease-out, transform var(--motion-base) ease-out, overlay var(--motion-base) allow-discrete, display var(--motion-base) allow-discrete; }
+@starting-style {
+    [popover]:popover-open { opacity: 0; transform: translateY(4px); }
+}
 dialog form { display: grid; gap: 20px; }
 /* Shared material keeps management groups on the same reading axis. */
 .management-content { padding-top: 8px; gap: var(--section-space); font-size: var(--text-body); line-height: 1.6; }
@@ -211,8 +238,7 @@ dialog form { display: grid; gap: 20px; }
 .management-content :where(p, small) { max-width: 76ch; }
 .management-content :where(p a, dd a) { text-decoration: underline; text-underline-offset: 3px; }
 .management-content [role='tabpanel']:not([hidden]) { animation: section-arrive var(--motion-base) ease-out; }
-dialog:modal { animation: section-arrive var(--motion-base) ease-out; }
-@keyframes section-arrive { from { opacity: .5; } to { opacity: 1; } }
+@keyframes section-arrive { from { opacity: .5; transform: translateY(4px); } to { opacity: 1; transform: translateY(0); } }
 .management-content form.card { background: var(--surface-gradient); padding: 24px; border-color: var(--outline); }
 .management-content :where([role='alert']) { overflow-wrap: anywhere; }
 @media (max-width: 760px) {
@@ -235,7 +261,7 @@ dialog:modal { animation: section-arrive var(--motion-base) ease-out; }
 
 :root[data-appearance="dark"] {
     color-scheme: dark;
-    --content: #f1f1e9; --canvas: #1b1c1a; --surface: #222420; --rail: #222420; --panel: #292c27; --border: #383d35; --muted: #b5baaf;
+    --content: #f1f1e9; --canvas: #1b1c1a; --surface: #222420; --surface-elevated: #30332e; --rail: #222420; --panel: #292c27; --border: #383d35; --muted: #b5baaf;
     --primary: #a8c9b7; --on-primary: #192b22; --accent: #a8c9b7; --on-accent: #192b22; --accent-subtle: #303f36; --outline: #899084;
     --switch-on: #2e8b57; --switch-off: #3a3935; --switch-off-border: #52504b;
     --hover: var(--accent-subtle);

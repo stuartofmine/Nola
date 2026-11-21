@@ -1114,7 +1114,14 @@ class ChatViewModel @Inject constructor(
         var permissionMirror: Job? = null
         try {
             if (current.state == "accepted") {
-                current = roomCoordinator.select(room, current)
+                val ownerHostId = current.input.conversationId?.let { id ->
+                    withContext(Dispatchers.IO) {
+                        conversationRepo.getConversation(id)?.executionHostBinding?.let { binding ->
+                            runCatching { resolveBoundHost(binding).expectedHostId }.getOrNull()
+                        }
+                    }
+                }
+                current = roomCoordinator.select(room, current, remoteHostId = ownerHostId)
             }
             if (current.state !in setOf("selected", "executing")) return
             val contextId = requireNotNull(current.contextConversationId)
@@ -1168,21 +1175,28 @@ class ChatViewModel @Inject constructor(
             val executionModel = capturedExpertModel?.model ?: checkNotNull(snapshot.currentModel) {
                 "The original expert model declaration is unavailable"
             }
+            val (executionProfileId, executionProfileRevision) = if (executionModel.source == ModelInfo.ModelSource.Local) {
+                val localProfile = withContext(Dispatchers.IO) { applicationRuntime.modelProfile(executionModel.id) }
+                (executionModel.profileId ?: localProfile?.id ?: executionModel.id) to
+                    (executionModel.profileRevision ?: localProfile?.revision ?: 0L)
+            } else {
+                requireNotNull(executionModel.profileId) to requireNotNull(executionModel.profileRevision)
+            }
             val persisted = withContext(Dispatchers.IO) { agentRooms.executionIntent(current) }
             val intent = persisted ?: buildJsonObject {
                 put("execution_id", manifestEntry?.childSubmissionId ?: UUID.randomUUID().toString())
                 put("envelope", buildJsonObject {
                     put("kind", "native"); put("platform", "android")
                     put("conversation_configuration_revision", requireNotNull(snapshot.configurationRevision))
-                    put("model_profile_id", requireNotNull(executionModel.profileId)); put("model_profile_revision", requireNotNull(executionModel.profileRevision))
+                    put("model_profile_id", executionProfileId); put("model_profile_revision", executionProfileRevision)
                     put("expected_parent_message_id", parent?.let(::JsonPrimitive) ?: JsonNull); put("text", current.input.text)
                 })
             }
             val envelope = intent.getValue("envelope").jsonObject
             check(envelope["platform"]?.jsonPrimitive?.content == "android"
                 && envelope["conversation_configuration_revision"]?.jsonPrimitive?.longOrNull == snapshot.configurationRevision
-                && envelope["model_profile_id"]?.jsonPrimitive?.content == executionModel.profileId
-                && envelope["model_profile_revision"]?.jsonPrimitive?.longOrNull == executionModel.profileRevision
+                && envelope["model_profile_id"]?.jsonPrimitive?.content == executionProfileId
+                && envelope["model_profile_revision"]?.jsonPrimitive?.longOrNull == executionProfileRevision
                 && envelope["expected_parent_message_id"] == (parent?.let(::JsonPrimitive) ?: JsonNull))
             if (persisted == null) current = withContext(Dispatchers.IO) { agentRooms.prepareExecution(current, intent) }
             val claim = withContext(Dispatchers.IO) { agentRooms.claimExecution(current) }
@@ -1234,7 +1248,9 @@ class ChatViewModel @Inject constructor(
                                 it.id == "${current.executionId}:assistant" && it.conversationId == contextId && it.role == ChatRole.assistant
                             }
                         }
-                        checkNotNull(exact) { "The exact completed expert assistant is unavailable" }
+                        if (current.state == "completed") {
+                            checkNotNull(exact) { "The exact completed expert assistant is unavailable" }
+                        }
                         publishConversationExpertReply(parentId, participant, current, "", terminalMessage = exact)
                     }
                     break
@@ -1296,7 +1312,14 @@ class ChatViewModel @Inject constructor(
         viewModelScope.launch {
             runCatching {
                 withContext(Dispatchers.IO) { agentRooms.cancelPending(value) }
-                runCatching { roomCoordinator.cancel(value) }
+                val ownerHostId = value.input.conversationId?.let { id ->
+                    withContext(Dispatchers.IO) {
+                        conversationRepo.getConversation(id)?.executionHostBinding?.let { binding ->
+                            runCatching { resolveBoundHost(binding).expectedHostId }.getOrNull()
+                        }
+                    }
+                }
+                runCatching { roomCoordinator.cancel(value, remoteHostId = ownerHostId) }
                 refreshRoomSubmissions(value.input.roomId, value.input.conversationId)
             }
         }
@@ -1654,6 +1677,33 @@ class ChatViewModel @Inject constructor(
         viewModelScope.launch {
             memoryProfileDataStore.skillCatalog.collect { skills ->
                 _uiState.update { it.copy(uploadedSkills = skills) }
+            }
+        }
+        viewModelScope.launch {
+            memoryProfileDataStore.profile.collect { profile ->
+                val previousSnapshot = memoryEditorSnapshot
+                val previousLongTerm = previousSnapshot?.longTermMemory?.joinToString("\n")
+                val previousUserPrefs = previousSnapshot?.userPreferences?.joinToString("\n")
+                memoryEditorSnapshot = profile
+                _uiState.update { state ->
+                    val longTermDirty = previousLongTerm != null && state.longTermMemory != previousLongTerm
+                    val userPrefsDirty = previousUserPrefs != null && state.userPreferences != previousUserPrefs
+                    state.copy(
+                        longTermMemory = if (longTermDirty) state.longTermMemory else profile.longTermMemory.joinToString("\n"),
+                        userPreferences = if (userPrefsDirty) state.userPreferences else profile.userPreferences.joinToString("\n"),
+                        uploadedSkills = profile.uploadedSkills,
+                        uploadedDocuments = profile.uploadedDocuments,
+                        mcpServers = profile.mcpServers,
+                        customDataSources = profile.customDataSources,
+                        dataSources = buildDataSources(
+                            uploadedDocuments = profile.uploadedDocuments,
+                            hostUploadedDocuments = state.hostUploadedDocuments,
+                            mcpServers = profile.mcpServers,
+                            hostMcpServers = state.hostMcpServers,
+                            customDataSources = profile.customDataSources,
+                        ),
+                    )
+                }
             }
         }
         viewModelScope.launch {
@@ -3350,13 +3400,13 @@ class ChatViewModel @Inject constructor(
         viewModelScope.launch {
             healthConnectionState = readHealthConnectionState()
             val profile = chatRepo.getMemoryProfile()
-            val state = _uiState.value
-            _uiState.update {
-                it.copy(
+            _uiState.update { state ->
+                state.copy(
+                    mcpServers = profile.mcpServers,
                     dataSources = buildDataSources(
                         uploadedDocuments = state.uploadedDocuments,
                         hostUploadedDocuments = state.hostUploadedDocuments,
-                        mcpServers = state.mcpServers,
+                        mcpServers = profile.mcpServers,
                         hostMcpServers = state.hostMcpServers,
                         customDataSources = profile.customDataSources
                     ),
@@ -3367,8 +3417,10 @@ class ChatViewModel @Inject constructor(
     }
 
     suspend fun compactNow() {
-        val convId = _uiState.value.conversationId ?: return
-        checkAutoCompact(convId)
+        val state = _uiState.value
+        if (state.processingState.blocksInput) return
+        val convId = state.conversationId ?: return
+        checkAutoCompact(convId, mode = "force_summary")
     }
 
     fun reloadContextState() {
@@ -3745,6 +3797,7 @@ class ChatViewModel @Inject constructor(
 
     fun beginMessageEdit(message: ConversationMessage) {
         if (_messageEditDraft.value?.busy == true || _uiState.value.processingState.blocksInput) return
+        if (_uiState.value.currentModel?.source == ModelInfo.ModelSource.WebHost) return
         viewModelScope.launch {
             try {
                 val source = message.conversationId
@@ -3857,10 +3910,17 @@ class ChatViewModel @Inject constructor(
                     dispatchExpertManifest(manifest)
                     loadConversation(owner)
                 } else {
-                    sendMessage(input.editedText, submissionIdentity = prepared.runId, canonicalUserMessageId = prepared.userMessageId, inlineMentions = draft.mentions)
+                    val started = sendMessage(input.editedText, submissionIdentity = prepared.runId, canonicalUserMessageId = prepared.userMessageId, inlineMentions = draft.mentions)
+                    if (!started) {
+                        error(_uiState.value.error ?: "Resend was not admitted")
+                    }
                     kotlinx.coroutines.withTimeout(30_000) {
                         while (withContext(Dispatchers.IO) { applicationRuntime.loadRunIdentity(prepared.runId) } == null) {
-                            if (_uiState.value.processingState == ProcessingState.Error) error(_uiState.value.error ?: "Resend was not admitted")
+                            val currentState = _uiState.value
+                            if (currentState.processingState == ProcessingState.Error ||
+                                (currentState.processingState == ProcessingState.Idle && currentState.error != null)) {
+                                error(currentState.error ?: "Resend was not admitted")
+                            }
                             delay(50)
                         }
                     }
@@ -3940,8 +4000,8 @@ class ChatViewModel @Inject constructor(
         canonicalUserMessageId: String? = null,
         capturedExpertModel: com.nola.core.AndroidTurnModelSnapshot? = null,
         inlineMentions: List<InlineExpertMention> = emptyList(),
-    ) {
-        if (text.isBlank() && attachments.isEmpty()) return
+    ): Boolean {
+        if (text.isBlank() && attachments.isEmpty()) return false
         val state = capturedExpertModel?.let { _uiState.value.copy(currentModel = it.model, currentParameters = it.parameters) } ?: _uiState.value
         if (context.applicationInfo.flags and android.content.pm.ApplicationInfo.FLAG_DEBUGGABLE != 0) {
             val existing = runRegistry.find(composerDrafts.ownerKey(state.conversationId))
@@ -3955,11 +4015,11 @@ class ChatViewModel @Inject constructor(
             state.conversationId == editedResend.input.targetConversationId && text == editedResend.input.editedText &&
             attachments.isEmpty() && messageMeta == null && queuedAdmission == null && remoteQueuedCommandId == null &&
             expertParticipantAgentIds.isEmpty()))
-        if (state.taskChildOwner != null) return
+        if (state.taskChildOwner != null) return false
         require((remoteQueuedCommandId == null) == (remoteQueuedConfiguration == null))
         require(remoteQueuedCommandId == null || (remoteQueuedCommandId == submissionIdentity &&
             state.currentModel?.source == ModelInfo.ModelSource.WebHost && queuedAdmission == null && attachments.isEmpty()))
-        if (preparingExpertPicker.value || state.processingState.blocksInput || state.permissionSaving || state.permissionSaveFailed) return
+        if (preparingExpertPicker.value || state.processingState.blocksInput || state.permissionSaving || state.permissionSaveFailed) return false
         val draftOwner = if (submissionIdentity == null) composerDrafts.ownerKey(state.conversationId) else null
         val pendingExpertAdmission = draftOwner?.let { pendingExpertAdmissionByDraft.find(it, state.conversationId) }
         val selectedExpertIds = if (submissionIdentity == null) pendingExpertAdmission?.selectedAgentIds ?: expertParticipantAgentIds else emptySet()
@@ -3967,10 +4027,10 @@ class ChatViewModel @Inject constructor(
         if (selectedExpertIds.isNotEmpty() && pendingExpertAdmission != null) {
             if (attachments.isNotEmpty() || !messageMeta.isNullOrEmpty()) {
                 _uiState.update { it.copy(error = "Expert-only messages currently support plain text only. Remove attachments and try again.") }
-                return
+                return false
             }
             val owner = requireNotNull(draftOwner)
-            if (!activeExpertAdmissionDrafts.add(owner)) return
+            if (!activeExpertAdmissionDrafts.add(owner)) return false
             val selectionChanged = pendingExpertAdmission != null && expertParticipantAgentIds != pendingExpertAdmission.selectedAgentIds
             if (pendingExpertAdmission != null) selectedConversationAgentIds.value = pendingExpertAdmission.selectedAgentIds
             _uiState.update { it.copy(processingState = ProcessingState.BuildingContext,
@@ -3996,28 +4056,32 @@ class ChatViewModel @Inject constructor(
                             context.getString(R.string.expert_profile_changed) else failure.message ?: "Expert messages could not be confirmed") else current }
                 } finally { activeExpertAdmissionDrafts.remove(owner) }
             }
-            return
+            return true
         }
         val selectedExpertSource = if (inlineMentions.isEmpty()) expertPickerSource else inlineMentions.first().let { ref -> ref.host?.let { ExpertPickerSource(it, checkNotNull(ref.epoch)) } }
         val selectedExpertContext = runCatching {
             inlineSelection(text, inlineMentions) ?: mainExpertSelection(selectedExpertIds, selectedConversationAgentRevisions.toMap(), selectedConversationAgentParticipants.toMap())?.let { selection ->
                 selectedExpertSource?.let { JsonObject(selection + ("expected_source_store_epoch" to JsonPrimitive(it.epoch))) } ?: selection
             }
-        }.getOrElse { _uiState.update { it.copy(error = context.getString(R.string.expert_profile_changed)) }; return }
+        }.getOrElse { _uiState.update { it.copy(error = context.getString(R.string.expert_profile_changed)) }; return false }
         if (state.currentModel == null) {
             _uiState.update { it.copy(error = context.getString(R.string.chat_no_model_selected)) }
-            return
+            return false
+        }
+        if (state.currentModel.source == ModelInfo.ModelSource.WebHost && attachments.isNotEmpty()) {
+            _uiState.update { it.copy(error = context.getString(R.string.chat_web_host_images_unsupported)) }
+            return false
         }
         if (selectedExpertContext != null && state.currentModel.source != ModelInfo.ModelSource.WebHost &&
             state.currentModel.executionCapabilitiesDeclared && !state.currentModel.executionCapabilities.toolCalls) {
             _uiState.update { it.copy(error = context.getString(R.string.expert_main_requires_tools)) }
-            return
+            return false
         }
         val existingExpertAdmission = pendingExpertAdmissionByDraft.find(
             composerDrafts.ownerKey(state.conversationId), state.conversationId)
         if (existingExpertAdmission != null) {
             _uiState.update { it.copy(error = "An expert message is still awaiting confirmation. Restore its original text and select its experts to retry.") }
-            return
+            return false
         }
         val targetGoalConversationId = state.conversationId
         if (submissionIdentity == null && editedResend == null && selectedExpertIds.isEmpty() && attachments.isEmpty() &&
@@ -4060,17 +4124,21 @@ class ChatViewModel @Inject constructor(
                     } finally {
                         activeGoalReplies.remove(targetGoalConversationId)
                     }
+                    if (displayedState.value.conversationId != targetGoalConversationId) {
+                        return@launch
+                    }
                     dispatchSendMessage(
                         text, messageMeta, attachments, submissionIdentity, queuedAdmission,
                         remoteQueuedCommandId, remoteQueuedConfiguration, expertParticipantAgentIds,
                         editedResend, canonicalUserMessageId, capturedExpertModel, inlineMentions,
+                        expectedConversationId = targetGoalConversationId,
                     )
                 }
-                return
+                return true
             }
-            return
+            return false
         }
-        dispatchSendMessage(
+        return dispatchSendMessage(
             text, messageMeta, attachments, submissionIdentity, queuedAdmission,
             remoteQueuedCommandId, remoteQueuedConfiguration, expertParticipantAgentIds,
             editedResend, canonicalUserMessageId, capturedExpertModel, inlineMentions,
@@ -4090,8 +4158,12 @@ class ChatViewModel @Inject constructor(
         canonicalUserMessageId: String? = null,
         capturedExpertModel: com.nola.core.AndroidTurnModelSnapshot? = null,
         inlineMentions: List<InlineExpertMention> = emptyList(),
-    ) {
+        expectedConversationId: String? = null,
+    ): Boolean {
         val state = capturedExpertModel?.let { _uiState.value.copy(currentModel = it.model, currentParameters = it.parameters) } ?: _uiState.value
+        if (expectedConversationId != null && state.conversationId != expectedConversationId) {
+            return false
+        }
         val draftOwner = if (submissionIdentity == null) composerDrafts.ownerKey(state.conversationId) else null
         val pendingExpertAdmission = draftOwner?.let { pendingExpertAdmissionByDraft.find(it, state.conversationId) }
         val selectedExpertIds = if (submissionIdentity == null) pendingExpertAdmission?.selectedAgentIds ?: expertParticipantAgentIds else emptySet()
@@ -4100,24 +4172,28 @@ class ChatViewModel @Inject constructor(
             inlineSelection(text, inlineMentions) ?: mainExpertSelection(selectedExpertIds, selectedConversationAgentRevisions.toMap(), selectedConversationAgentParticipants.toMap())?.let { selection ->
                 selectedExpertSource?.let { JsonObject(selection + ("expected_source_store_epoch" to JsonPrimitive(it.epoch))) } ?: selection
             }
-        }.getOrElse { _uiState.update { it.copy(error = context.getString(R.string.expert_profile_changed)) }; return }
+        }.getOrElse { _uiState.update { it.copy(error = context.getString(R.string.expert_profile_changed)) }; return false }
         if (state.currentModel == null) {
             _uiState.update { it.copy(error = context.getString(R.string.chat_no_model_selected)) }
-            return
+            return false
+        }
+        if (state.currentModel.source == ModelInfo.ModelSource.WebHost && attachments.isNotEmpty()) {
+            _uiState.update { it.copy(error = context.getString(R.string.chat_web_host_images_unsupported)) }
+            return false
         }
         if (selectedExpertContext != null && state.currentModel.source != ModelInfo.ModelSource.WebHost &&
             state.currentModel.executionCapabilitiesDeclared && !state.currentModel.executionCapabilities.toolCalls) {
             _uiState.update { it.copy(error = context.getString(R.string.expert_main_requires_tools)) }
-            return
+            return false
         }
         val executionOwner = composerDrafts.ownerKey(state.conversationId)
         if (runRegistry.find(executionOwner)?.runtime?.hasOutstandingGeneration() == true) {
             _uiState.update { it.copy(error = context.getString(R.string.chat_previous_turn_settling)) }
-            return
+            return false
         }
         if (state.currentModel?.source == ModelInfo.ModelSource.Local && !runRegistry.localAvailable(executionOwner)) {
             _uiState.update { it.copy(error = "Waiting for the device execution resource. Your draft is retained.") }
-            return
+            return false
         }
         val session = runRegistry.beginExecution(executionOwner, state)
         if (state.currentModel?.source == ModelInfo.ModelSource.Local) check(runRegistry.acquireLocal(session))
@@ -4332,6 +4408,7 @@ class ChatViewModel @Inject constructor(
                 clearGenerationJobIfCurrent(coroutineContext[Job])
             }
         }
+        return true
     }
 
     private suspend fun runDeviceAgentResponse(
@@ -5784,7 +5861,7 @@ class ChatViewModel @Inject constructor(
         )}
     }
 
-    private suspend fun checkAutoCompact(convId: String) {
+    private suspend fun checkAutoCompact(convId: String, mode: String = "normal") {
         val conv = conversationRepo.getConversation(convId) ?: return
         val messages = conversationRepo.getActiveMessages(convId)
         val state = _uiState.value
@@ -5809,7 +5886,21 @@ class ChatViewModel @Inject constructor(
             currentUserText = messages.lastOrNull { it.role == ChatRole.user }?.text.orEmpty(),
             route = route,
             tools = tools,
+            mode = mode,
         )
+        val refreshedConv = withContext(Dispatchers.IO) { conversationRepo.getConversation(convId) }
+        val refreshedMessages = withContext(Dispatchers.IO) { conversationRepo.getActiveMessages(convId) }
+        if (mode == "force_summary" ||
+            refreshedConv?.sessionMemory != conv.sessionMemory ||
+            refreshedMessages.size != messages.size
+        ) {
+            _uiState.update { current ->
+                if (current.conversationId != convId) current else current.copy(
+                    sessionMemory = refreshedConv?.sessionMemory ?: current.sessionMemory,
+                    messages = refreshedMessages,
+                )
+            }
+        }
     }
 
     private suspend fun prepareFinalContext(

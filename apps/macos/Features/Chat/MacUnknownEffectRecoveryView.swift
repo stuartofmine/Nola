@@ -110,6 +110,7 @@ struct MacUnknownEffectRecoveryView: View {
                         // Deliberately no Return/default-action shortcut for risk authorization.
                     }
                 }.font(.system(size: 13)).padding(24).frame(minWidth: 400, idealWidth: 460)
+                    .background(MacDesignColor.canvas)
             }
         }
         .accessibilityIdentifier("chat.unknown.recovery")

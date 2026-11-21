@@ -77,8 +77,10 @@
                 {#if record.summary}<p>{record.summary}</p>{/if}
                 <p class="muted">{t($locale, 'memoryCenter.source')}: {record.source} · {t($locale, 'memoryCenter.confidence')}: {new Intl.NumberFormat($locale, {style: 'percent', maximumFractionDigits: 0}).format(record.confidence)}</p>
                 {#if record.tags.length}<p class="muted">{record.tags.join(' · ')}</p>{/if}
-                <button disabled={loading || removing || editing} onclick={event => edit(record, event.currentTarget)}>{t($locale, 'memoryCenter.revise')}</button>
-                <button class="danger" disabled={loading || removing} onclick={event => remove(record.id, event.currentTarget)}>{t($locale, 'memoryCenter.delete')}</button>
+                <div class="actions">
+                    <button disabled={loading || removing || editing} onclick={event => edit(record, event.currentTarget)}>{t($locale, 'memoryCenter.revise')}</button>
+                    <button class="danger" disabled={loading || removing} onclick={event => remove(record.id, event.currentTarget)}>{t($locale, 'memoryCenter.delete')}</button>
+                </div>
             </article>
         {:else}<p role="status">{t($locale, 'memoryCenter.empty')}</p>{/each}
     {/if}

@@ -1412,4 +1412,17 @@
     <string name="harness_device_note">Connect the computer that runs your plugins to use them here.</string>
     <string name="harness_connect">Connect desktop Host</string>
     <string name="harness_changed">Host pairing changed. Open plugin management again.</string>
+    <string name="chat_role_user">You</string>
+    <string name="chat_ui_entry_unavailable">Interactive entry is unavailable.</string>
+    <string name="expert_editor_selected_model_unavailable">The selected model is unavailable.</string>
+    <string name="expert_editor_selected_template_unreadable">The selected template is no longer readable.</string>
+    <string name="software_update_error_unsupported_arch">Unsupported update architecture</string>
+    <string name="software_update_error_service_unavailable">Update service unavailable</string>
+    <string name="software_update_error_check_failed">Update check failed</string>
+    <string name="software_update_error_unreadable_package">The download is not a readable Android package</string>
+    <string name="software_update_error_package_mismatch">The APK package or version does not match this update</string>
+    <string name="chat_document_delete_title">Delete Document</string>
+    <string name="chat_document_delete_message">Delete “%1$s”? This removes it from your context.</string>
+    <string name="data_heart_rate_bpm_format">%1$d bpm</string>
+    <string name="chat_web_host_images_unsupported">Image attachments are not supported on Nola Web Host conversations. Switch to a local or cloud model, or remove the images.</string>
 </resources>

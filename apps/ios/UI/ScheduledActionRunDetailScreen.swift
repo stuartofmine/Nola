@@ -593,6 +593,7 @@ private struct JournalDetailSheet: View {
                                 Task { await load() }
                             }
                             .buttonStyle(.bordered)
+                            .frame(minHeight: 44)
                         }
                     } else if let journal = journal {
                         VStack(alignment: .leading, spacing: 8) {
@@ -619,6 +620,7 @@ private struct JournalDetailSheet: View {
                 }
                 .padding(16)
             }
+            .background(DesignTokens.backgroundColor)
             .navigationTitle(L10n.scheduledActionRunDetailViewAnalysis)
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {

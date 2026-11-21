@@ -98,7 +98,7 @@
         </section>
     {/if}
 </div>
-<dialog use:ownDialog bind:this={dialog} oncancel={close} aria-labelledby="result-detail-title">
+<dialog use:ownDialog bind:this={dialog} oncancel={close} onclick={event => { if (event.target === dialog) close(); }} aria-labelledby="result-detail-title">
     <div class="result-section" aria-busy={detailLoading}>
         <div class="row between"><h2 id="result-detail-title">{detail?.sourceName || t($locale, 'activity.detail')}</h2><button onclick={() => close()} aria-label={t($locale, 'activity.close_detail')}>{t($locale, 'activity.close')}</button></div>
         {#if detailLoading}<p role="status">{t($locale, 'activity.loading_detail')}</p>{/if}

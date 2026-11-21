@@ -398,7 +398,7 @@ struct MacPageHeader<Subtitle: View, Actions: View>: View {
                         Text(title).font(.system(size: 20, weight: .semibold))
                         subtitle().font(.callout).foregroundStyle(.secondary)
                     }.frame(maxWidth: .infinity, alignment: .leading)
-                    actions()
+                    actionGroup
                 }
                 .padding(.horizontal, MacDesignTokens.Layout.pageGutter)
                 .padding(.top, 24).padding(.bottom, 12)
@@ -1252,6 +1252,84 @@ private struct MacActionButtonBody<Label: View>: View {
                 border: isEnabled && isHovered ? MacDesignColor.controlOutline : MacDesignColor.borderSubtle,
                 cornerRadius: MacDesignTokens.Radius.control, raised: false))
             .foregroundStyle(isEnabled ? Color.primary : Color.secondary)
+            .onHover { isHovered = isEnabled && $0 }
+            .onChange(of: isEnabled) { _, enabled in if !enabled { isHovered = false } }
+            .opacity(isEnabled ? 1 : 0.45)
+            .animation(reduceMotion ? nil : .easeOut(duration: MacDesignTokens.Motion.hover), value: isHovered)
+            .animation(reduceMotion ? nil : .easeOut(duration: MacDesignTokens.Motion.hover), value: isPressed)
+    }
+}
+
+/// Primary prominent CTA style that preserves WCAG AA contrast in both Light and Dark Mode.
+struct NolaProminentButtonStyle: ButtonStyle {
+    var isDestructive = false
+
+    func makeBody(configuration: Configuration) -> some View {
+        NolaProminentButtonBody(
+            label: configuration.label,
+            isPressed: configuration.isPressed,
+            isDestructive: isDestructive || configuration.role == .destructive
+        )
+    }
+}
+
+extension ButtonStyle where Self == NolaProminentButtonStyle {
+    static var nolaProminent: NolaProminentButtonStyle { NolaProminentButtonStyle() }
+    static var nolaDestructiveProminent: NolaProminentButtonStyle { NolaProminentButtonStyle(isDestructive: true) }
+}
+
+private struct NolaProminentButtonBody<Label: View>: View {
+    let label: Label
+    let isPressed: Bool
+    let isDestructive: Bool
+    @State private var isHovered = false
+    @Environment(\.isEnabled) private var isEnabled
+    @Environment(\.controlSize) private var controlSize
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+
+    private var insets: EdgeInsets {
+        switch controlSize {
+        case .mini: return EdgeInsets(top: 2, leading: 6, bottom: 2, trailing: 6)
+        case .small: return EdgeInsets(top: 4, leading: 10, bottom: 4, trailing: 10)
+        case .large: return EdgeInsets(top: 8, leading: 16, bottom: 8, trailing: 16)
+        default: return EdgeInsets(top: 6, leading: 12, bottom: 6, trailing: 12)
+        }
+    }
+
+    private var minHeight: CGFloat {
+        switch controlSize {
+        case .mini: return 18
+        case .small: return 24
+        case .large: return 34
+        default: return 28
+        }
+    }
+
+    private var cornerRadius: CGFloat {
+        switch controlSize {
+        case .mini: return 6
+        case .small: return 7
+        case .large: return MacDesignTokens.Radius.control
+        default: return 8
+        }
+    }
+
+    private var fillColor: Color {
+        let base = isDestructive ? MacDesignColor.danger : MacDesignColor.primaryAction
+        if !isEnabled { return base }
+        if isPressed { return base.opacity(0.78) }
+        if isHovered { return base.opacity(0.88) }
+        return base
+    }
+
+    var body: some View {
+        label
+            .fontWeight(.medium)
+            .foregroundStyle(MacDesignColor.onPrimaryAction)
+            .padding(insets)
+            .frame(minHeight: minHeight)
+            .background(fillColor, in: RoundedRectangle(cornerRadius: cornerRadius, style: .continuous))
+            .contentShape(RoundedRectangle(cornerRadius: cornerRadius, style: .continuous))
             .onHover { isHovered = isEnabled && $0 }
             .onChange(of: isEnabled) { _, enabled in if !enabled { isHovered = false } }
             .opacity(isEnabled ? 1 : 0.45)

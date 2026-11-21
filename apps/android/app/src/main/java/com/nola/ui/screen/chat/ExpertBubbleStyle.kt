@@ -30,6 +30,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.luminance
 import androidx.compose.ui.platform.LocalContext
@@ -97,6 +98,7 @@ internal fun ExpertBubbleColorEditor(agentId: String, name: String, onDismiss: (
                 ExpertBubbleColor.entries.forEach { candidate ->
                     Row(Modifier.fillMaxWidth().heightIn(min = 48.dp)
                         .testTag("expert.color.${candidate.key}")
+                        .clip(RoundedCornerShape(8.dp))
                         .selectable(selected = candidate == draft, role = Role.RadioButton, onClick = { draft = candidate })
                         .padding(horizontal = 4.dp), verticalAlignment = Alignment.CenterVertically,
                         horizontalArrangement = Arrangement.spacedBy(12.dp)) {

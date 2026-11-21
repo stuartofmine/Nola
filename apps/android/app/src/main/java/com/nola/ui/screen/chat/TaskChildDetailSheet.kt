@@ -68,7 +68,7 @@ internal fun TaskChildDetailSheet(load: suspend (Long?) -> ConversationProjectio
     }
     ModalBottomSheet(onDismissRequest = close, sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true),
         modifier = Modifier.dismissImeOnBlankTap().testTag("chat.task.detail")) {
-        Column(Modifier.fillMaxWidth().weight(1f, false).navigationBarsPadding().verticalScroll(rememberScrollState()).padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+        Column(Modifier.fillMaxWidth().weight(1f, false).imePadding().navigationBarsPadding().verticalScroll(rememberScrollState()).padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
             TextButton(onClick = close, modifier = Modifier.testTag("chat.task.detail.back")) { Text(stringResource(R.string.chat_task_details_back)) }
             Text(stringResource(R.string.chat_task_details), style = MaterialTheme.typography.titleMedium)
             if (recovery != null) {
@@ -85,7 +85,12 @@ internal fun TaskChildDetailSheet(load: suspend (Long?) -> ConversationProjectio
                 var activityChoices by remember { mutableStateOf(CanonicalActivityDisclosureChoices()) }
                 CanonicalPartReaderBoundary(checkNotNull(conversationId), message.messageId, message.parts) { onReadText ->
                 Column(Modifier.testTag("chat.task.detail.message.${message.messageId}"), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                    Text(message.role.name, style = MaterialTheme.typography.labelMedium)
+                    val roleLabel = when (message.role) {
+                        ConversationProjectionV1.Role.User -> stringResource(R.string.chat_role_user)
+                        ConversationProjectionV1.Role.Assistant -> stringResource(R.string.app_name)
+                        ConversationProjectionV1.Role.System -> stringResource(R.string.appearance_system)
+                    }
+                    Text(roleLabel, style = MaterialTheme.typography.labelMedium)
                     canonicalMessageBlocks(message.parts).forEach { block -> key(block.key) {
                         when (block) {
                             is CanonicalMessageBlock.Activity -> CanonicalActivityCards(block.parts, isLive = false, choices = activityChoices, onChoicesChanged = { activityChoices = it }, onReadText = onReadText)

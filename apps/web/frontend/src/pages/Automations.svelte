@@ -29,6 +29,7 @@
     let query = $state('');
     let filter = $state('all');
     let draft = $state(newAutomationDraft());
+    let draftBaseline = $state('');
     let creating = $state(false);
     let editing = $state<Automation>();
     let skills = $state<AutomationSkill[]>([]);
@@ -48,14 +49,16 @@
         editorOpener = document.activeElement instanceof HTMLElement ? document.activeElement : undefined;
         editing = action ? structuredClone($state.snapshot(action)) : undefined;
         draft = editing ? automationEditDraft(editing) : newAutomationDraft();
+        draftBaseline = JSON.stringify(draft);
         creating = true; error = '';
         void refreshSkills();
         await tick(); if (!disposed && pageLocation.active()) formElement?.querySelector('input')?.focus();
     }
     async function closeEditor() {
         if (busy) return;
-        if (!await confirmation.ask({ title: t($locale, 'automation.cancel'), description: t($locale, 'automation.discardBody'), confirmLabel: t($locale, 'automation.discard'), destructive: true })) return;
-        creating = false; editing = undefined; draft = newAutomationDraft();
+        const dirty = JSON.stringify(draft) !== draftBaseline;
+        if (dirty && !await confirmation.ask({ title: t($locale, 'automation.cancel'), description: t($locale, 'automation.discardBody'), confirmLabel: t($locale, 'automation.discard'), destructive: true })) return;
+        creating = false; editing = undefined; draft = newAutomationDraft(); draftBaseline = '';
         await tick(); if (!disposed && pageLocation.active()) editorOpener?.focus();
     }
     let disposed = false;
@@ -165,7 +168,7 @@
                 <fieldset aria-label={t($locale, 'automation.skills')}>
                     <legend>{t($locale, 'automation.skills')}</legend>
                     {#if skillsLoading}<p role="status">{t($locale, 'automation.loading')}</p>{/if}
-                    {#if skillsFailed}<p role="alert">{t($locale, 'automation.skillsFailed')}</p><button type="button" onclick={refreshSkills}>{t($locale, 'automation.refresh')}</button>{/if}
+                    {#if skillsFailed}<p role="alert" class="error">{t($locale, 'automation.skillsFailed')}</p><button type="button" onclick={refreshSkills}>{t($locale, 'automation.refresh')}</button>{/if}
                     {#each skills as skill (skill.id)}
                         <label class="skill-option"><input type="checkbox" value={skill.id} bind:group={draft.skillIds} /> <span>{skill.name}</span></label>
                     {/each}
@@ -179,7 +182,7 @@
                 <div class="grid"><label>{t($locale, 'automation.frequency')}<select bind:value={draft.frequency}><option value="daily">{t($locale, 'automation.daily')}</option><option value="weekly">{t($locale, 'automation.weekly')}</option></select></label><label>{t($locale, 'automation.time')}<input type="time" bind:value={draft.time} required /></label>
                 {#if draft.frequency === 'weekly'}<label>{t($locale, 'automation.weekday')}<select bind:value={draft.weekday}>{#each [1, 2, 3, 4, 5, 6, 7] as day}<option value={day}>{automationWeekday(day, $locale)}</option>{/each}</select></label>{/if}</div>
                 <p class="muted">{t($locale, 'automation.localTimezone')}</p></fieldset>
-                <div class="buttons"><button class="primary" type="submit">{t($locale, 'automation.save')}</button><button type="button" onclick={closeEditor}>{t($locale, 'automation.cancel')}</button></div>
+                <div class="buttons"><button class="primary" type="submit">{t($locale, busy ? 'models.saving' : 'automation.save')}</button><button type="button" onclick={closeEditor}>{t($locale, 'automation.cancel')}</button></div>
             </fieldset>
         </form>
     {/if}
@@ -193,7 +196,7 @@
             {#if action.url && action.url !== executionSpec?.root}<p class="source">{action.url}</p>{/if}
             {#if executionSpec}<p class="task-prompt">{executionSpec.prompt}</p><dl class="execution-context"><div><dt>{t($locale, 'automation.workspaceRoot')}</dt><dd>{executionSpec.root}</dd></div><div><dt>{t($locale, 'automation.permissionProfile')}</dt><dd>{t($locale, `automation.permission.${executionSpec.permission}`)}</dd></div></dl>{/if}
             <p class="muted">{automationKnown(action) || action.format === 'reminder' ? t($locale, `automation.format.${action.format}`) : `${t($locale, 'automation.unknown')}: ${action.format}`} · {t($locale, 'automation.schedule')}: {['daily', 'weekly'].includes(action.frequency) ? t($locale, `automation.${action.frequency}`) : action.frequency} {action.time} {action.frequency === 'weekly' && action.weekday ? automationWeekday(action.weekday, $locale) : ''} · {action.timezone === 'local' ? t($locale, 'modelDisplay.localTimezone') : action.timezone}</p>
-            {#if action.format === 'script'}<details open={action.scriptApproved !== true}><summary>{t($locale, 'automation.scriptPreview')}</summary>{#if script}<pre>{script.script}</pre><p>{t($locale, 'automation.cwd')}: {script.cwd || action.scriptCwd || t($locale, 'automation.unspecified')}</p><p class="muted">{t($locale, 'automation.policyHint')}</p>{:else}<p role="alert">{t($locale, 'automation.scriptUnavailable')}</p>{/if}</details>{/if}
+            {#if action.format === 'script'}<details open={action.scriptApproved !== true}><summary>{t($locale, 'automation.scriptPreview')}</summary>{#if script}<pre>{script.script}</pre><p>{t($locale, 'automation.cwd')}: {script.cwd || action.scriptCwd || t($locale, 'automation.unspecified')}</p><p class="muted">{t($locale, 'automation.policyHint')}</p>{:else}<p role="alert" class="error">{t($locale, 'automation.scriptUnavailable')}</p>{/if}</details>{/if}
             <div class="buttons"><button disabled={busy || !capabilities.manualRun || !automationCanRun(action)} onclick={() => mutate(action, 'run')}>{t($locale, 'automation.runNow')}</button><button disabled={busy || !Number.isSafeInteger(action.revision) || action.revision! <= 0 || !automationKnown(action) || (!action.enabled && !automationCanRun(action))} onclick={() => mutate(action, 'toggle')}>{t($locale, action.enabled ? 'automation.pause' : 'automation.enable')}</button>{#if action.format === 'script' && action.scriptApproved !== true}<button disabled={busy || !automationCanApprove(action)} onclick={() => mutate(action, 'approve')}>{t($locale, 'automation.approve')}</button>{/if}<a href={automationHistoryLink(action)}>{t($locale, 'automation.history')}</a><ActionDisclosure label={t($locale, 'remote.more_actions')}><button class="danger" disabled={busy} onclick={() => mutate(action, 'delete')}>{t($locale, 'automation.delete')}</button></ActionDisclosure></div>
         </article>
     {/each}

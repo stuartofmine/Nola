@@ -6,9 +6,12 @@
     import { locale, t } from '../lib/i18n';
     import { loadModelCatalog } from '../lib/modelCatalog';
     import type { RemoteProfile } from '../lib/modelProfiles';
+    import ConfirmationDialog from './ConfirmationDialog.svelte';
+    import type { ConfirmationHandle } from '../lib/confirmation';
     type Plan = {plan_id: string; source: string; path: string; owned_fields: string[]; expires_at_ms: number};
     type Receipt = {receipt_id: string; source: string; path: string; owned_fields: string[]};
     let { gateway, openAccess }: { gateway: { enabled: boolean; revision: number }; openAccess: () => void } = $props();
+    let confirmation: ConfirmationHandle;
     let source = $state('open_code'), path = $state(''), model = $state('');
     let profiles = $state<RemoteProfile[]>([]), receipts = $state<Receipt[]>([]);
     let plan = $state<Plan | null>(null), planIdentity = $state('');
@@ -34,7 +37,15 @@
             if (alive) { receipts = [...receipts, receipt]; plan = null; }
         });
     }
-    function disconnect(receipt: Receipt) {
+    async function disconnect(receipt: Receipt) {
+        if (busy) return;
+        const accepted = await confirmation.ask({
+            title: t($locale, 'connections.disconnectClient'),
+            description: `${receipt.source} · ${receipt.path}`,
+            confirmLabel: t($locale, 'connections.disconnectClient'),
+            destructive: true,
+        });
+        if (!accepted || !alive) return;
         void perform(async () => {
             await api('/api/model-gateway/clients/disconnect', {method: 'POST', body: JSON.stringify({receipt_id: receipt.receipt_id})});
             if (alive) receipts = receipts.filter(item => item.receipt_id !== receipt.receipt_id);
@@ -47,6 +58,7 @@
     });
 </script>
 
+<ConfirmationDialog bind:this={confirmation} />
 <details><summary>{t($locale, 'connections.connectClient')}</summary>
     <p>{t($locale, 'connections.clientHint')}</p>
     <form onsubmit={event => { event.preventDefault(); preview(); }}>
@@ -57,10 +69,10 @@
         <button disabled={busy || !gateway.enabled || !path.trim() || !model}>{t($locale, 'connections.preview')}</button>
     </form>
     {#if busy}<p role="status">{t($locale, 'rooms.saving')}</p>{/if}
-    {#if failed}<p role="alert">{t($locale, 'connections.failed')}</p>{/if}
+    {#if failed}<p role="alert" class="error">{t($locale, 'connections.failed')}</p>{/if}
     {#if plan}<p>{plan.source} · {plan.path}</p><ul>{#each plan.owned_fields as field}<li><code>{field}</code></li>{/each}</ul>
         <button disabled={busy || Date.now() >= plan.expires_at_ms} onclick={commit}>{t($locale, 'connections.confirmClient')}</button>{/if}
-    {#each receipts as receipt (receipt.receipt_id)}<p>{receipt.source} · {receipt.path}</p><button disabled={busy} onclick={() => disconnect(receipt)}>{t($locale, 'connections.disconnectClient')}</button>{/each}
+    {#each receipts as receipt (receipt.receipt_id)}<p>{receipt.source} · {receipt.path}</p><button class="danger" disabled={busy} onclick={() => disconnect(receipt)}>{t($locale, 'connections.disconnectClient')}</button>{/each}
 </details>
 
-<style>form { display: grid; gap: 12px; padding: 12px 0; } summary { cursor: pointer; min-height: 44px; padding: 10px 0; } p, code { overflow-wrap: anywhere; }</style>
+<style>form { display: grid; gap: 12px; padding: 12px 0; } summary { cursor: pointer; min-height: 44px; padding: 10px 12px; } p, code { overflow-wrap: anywhere; }</style>

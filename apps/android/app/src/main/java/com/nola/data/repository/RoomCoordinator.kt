@@ -2,6 +2,7 @@
 package com.nola.data.repository
 
 import com.nola.data.local.AndroidApplicationRuntime
+import com.nola.data.local.conversationSourceOwner
 import com.nola.data.local.datastore.PreferenceDataStore
 import com.nola.data.remote.api.WebHostApiService
 import kotlinx.coroutines.Dispatchers
@@ -17,11 +18,37 @@ class RoomCoordinator @Inject constructor(
     private val runtime: AndroidApplicationRuntime,
     private val models:com.nola.llm.ModelService,
 ) {
-    suspend fun cancel(submission: RoomSubmission) {
-        val host = prefs.webHostIdentity.first()
+    private suspend fun resolveRemoteHostId(
+        submission: RoomSubmission,
+        room: AgentRoomSnapshot? = null,
+        explicitRemoteHostId: String? = null,
+    ): String? {
+        explicitRemoteHostId?.trim()?.takeIf { it.isNotEmpty() }?.let { return it }
+        val conversationId = submission.input.conversationId
+            ?: submission.contextConversationId
+            ?: room?.room?.participants?.firstOrNull { it.active }?.contextConversationId
+            ?: return null
+        val owner = withContext(Dispatchers.IO) {
+            runCatching { runtime.conversationSourceOwner(conversationId) }.getOrNull()
+        }
+        return (owner as? com.nola.data.local.ConversationSourceOwner.Remote)
+            ?.hostId
+            ?.takeIf { it.isNotBlank() }
+    }
+
+    suspend fun cancel(submission: RoomSubmission, remoteHostId: String? = null) {
+        val remoteHost = resolveRemoteHostId(submission, explicitRemoteHostId = remoteHostId)
         val operation = submission.input.submissionId.lowercase()
-        if(host.isBlank()) {runtime.execute(buildJsonObject {put("type","auxiliary_invocation");put("command",buildJsonObject {
-            put("type","cancel");put("operation_id",operation);put("at_ms",System.currentTimeMillis())})});return}
+        if (remoteHost == null) {
+            runtime.execute(buildJsonObject {
+                put("type", "auxiliary_invocation"); put("command", buildJsonObject {
+                    put("type", "cancel"); put("operation_id", operation); put("at_ms", System.currentTimeMillis())
+                })
+            })
+            return
+        }
+        val host = prefs.webHostIdentity.first()
+        require(host == remoteHost)
         api.auxiliaryCommand(prefs.webHostBaseUrl.first(), prefs.webHostToken.first(), "cancel", buildJsonObject {
             put("expected_host_id", host); put("operation_id", operation); put("attempt_id", "$operation:physical")
         }, prefs.webHostCertificateSha256.first())
@@ -62,20 +89,24 @@ class RoomCoordinator @Inject constructor(
         return Json.decodeFromJsonElement<RoomSubmission>(selected)
     }
 
-    suspend fun select(room: AgentRoomSnapshot, submission: RoomSubmission): RoomSubmission {
+    suspend fun select(
+        room: AgentRoomSnapshot,
+        submission: RoomSubmission,
+        remoteHostId: String? = null,
+    ): RoomSubmission {
         fun reconcile(host:String?):RoomSubmission? {
             val result=runtime.execute(buildJsonObject {put("type","reconcile_room_routing");put("room_id",room.room.id)
                 put("submission_id",submission.input.submissionId);put("source_host_id",host?.let(::JsonPrimitive) ?: JsonNull);put("at_ms",System.currentTimeMillis())})
             return result.takeUnless {it is JsonNull}?.let { Json.decodeFromJsonElement<RoomSubmission>(it) }
         }
-        val originalHost=prefs.webHostIdentity.first()
-        reconcile(originalHost.takeIf {it.isNotBlank()})?.let {return it}
-        if (originalHost.isBlank()) return localRoute(room,submission)
+        val remoteHost = resolveRemoteHostId(submission, room, explicitRemoteHostId = remoteHostId)
+        reconcile(remoteHost)?.let { return it }
+        if (remoteHost == null) return localRoute(room, submission)
         val base = prefs.webHostBaseUrl.first()
         val token = prefs.webHostToken.first()
         val host = prefs.webHostIdentity.first()
         val certificate = prefs.webHostCertificateSha256.first()
-        require(base.isNotBlank() && token.isNotBlank() && host.isNotBlank())
+        require(base.isNotBlank() && token.isNotBlank() && host.isNotBlank() && host == remoteHost)
         val operation = submission.input.submissionId.lowercase()
         suspend fun call(action: String, input: JsonObject): JsonObject = api.auxiliaryCommand(base, token, action, input, certificate).also {
             require(it["source_host_id"]?.jsonPrimitive?.content == host)

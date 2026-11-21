@@ -45,6 +45,7 @@ struct MLXTestView: View {
             }
             .padding()
         }
+        .background(DesignTokens.backgroundColor)
         .navigationTitle(L10n.modelTestTitle)
     }
 
@@ -52,8 +53,10 @@ struct MLXTestView: View {
 
     @ViewBuilder
     private var statusSection: some View {
-        GroupBox(label: Label(L10n.modelManagementTitle, systemImage: "cpu")) {
+        NolaCard {
             VStack(alignment: .leading, spacing: 8) {
+                Label(L10n.modelManagementTitle, systemImage: "cpu")
+                    .font(.headline)
                 HStack {
                     Circle()
                         .fill(isModelDownloaded ? Color.green : Color.orange)
@@ -77,21 +80,23 @@ struct MLXTestView: View {
                         .foregroundColor(.orange)
                 }
             }
-            .padding(.top, 4)
+            .frame(maxWidth: .infinity, alignment: .leading)
         }
     }
 
     @ViewBuilder
     private var paramsSection: some View {
-        GroupBox(label: Label(L10n.mlxTestParamsTitle, systemImage: "slider.horizontal.3")) {
+        NolaCard {
             VStack(alignment: .leading, spacing: 12) {
+                Label(L10n.mlxTestParamsTitle, systemImage: "slider.horizontal.3")
+                    .font(.headline)
                 HStack {
                     Text(L10n.modelTestMaxTokens)
                     Spacer()
                     TextField("512", value: $maxTokens, format: .number.grouping(.never))
                         .keyboardType(.numberPad)
                         .multilineTextAlignment(.trailing)
-                        .textFieldStyle(.roundedBorder)
+                        .nolaInputFieldSurface()
                         .frame(width: 104)
                         .monospacedDigit()
                         .onChange(of: maxTokens) { _, newValue in
@@ -108,7 +113,7 @@ struct MLXTestView: View {
                     TextField("0.7", value: $temperature, format: .number.precision(.fractionLength(2)))
                         .keyboardType(.decimalPad)
                         .multilineTextAlignment(.trailing)
-                        .textFieldStyle(.roundedBorder)
+                        .nolaInputFieldSurface()
                         .frame(width: 104)
                         .monospacedDigit()
                         .onChange(of: temperature) { _, newValue in
@@ -123,6 +128,7 @@ struct MLXTestView: View {
                     .font(.caption)
                     .foregroundColor(.secondary)
             }
+            .frame(maxWidth: .infinity, alignment: .leading)
         }
     }
 
@@ -135,6 +141,7 @@ struct MLXTestView: View {
                 Label(L10n.modelRunLocal, systemImage: "play.circle.fill")
             }
             .buttonStyle(.borderedProminent)
+            .foregroundStyle(DesignTokens.onActionColor)
             .disabled(!isModelDownloaded || isRunning)
 
             if isRunning { ProgressView().padding(.leading, 8) }
@@ -144,8 +151,10 @@ struct MLXTestView: View {
     @ViewBuilder
     private var resultSection: some View {
         if !output.items.isEmpty || output.explain != nil {
-            GroupBox(label: Label(L10n.modelTestResultTitle, systemImage: "checkmark.seal")) {
+            NolaCard {
                 VStack(alignment: .leading, spacing: 8) {
+                    Label(L10n.modelTestResultTitle, systemImage: "checkmark.seal")
+                        .font(.headline)
                     HStack {
                         Text(L10n.modelTestGeneratedItems)
                         Text(String(format: "%d", output.items.count))
@@ -182,6 +191,7 @@ struct MLXTestView: View {
                         }
                     }
                 }
+                .frame(maxWidth: .infinity, alignment: .leading)
             }
         }
     }
@@ -189,8 +199,10 @@ struct MLXTestView: View {
     @ViewBuilder
     private var logsSection: some View {
         if !log.isEmpty {
-            GroupBox(label: Label(L10n.mlxTestLogsTitle, systemImage: "text.justify")) {
+            NolaCard {
                 VStack(alignment: .leading, spacing: 6) {
+                    Label(L10n.mlxTestLogsTitle, systemImage: "text.justify")
+                        .font(.headline)
                     ForEach(Array(log.suffix(50)), id: \.self) { line in
                         Text(line)
                             .font(.caption2)
@@ -198,6 +210,7 @@ struct MLXTestView: View {
                             .frame(maxWidth: .infinity, alignment: .leading)
                     }
                 }
+                .frame(maxWidth: .infinity, alignment: .leading)
             }
         }
     }

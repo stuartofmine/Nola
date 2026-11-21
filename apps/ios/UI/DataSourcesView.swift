@@ -520,7 +520,7 @@ struct DataSourcesView: View {
             .accessibilityIdentifier("data.center.screen")
             .background(DesignTokens.backgroundColor)
             .navigationTitle(L10n.dataSourcesTitle)
-            .navigationBarTitleDisplayMode(.large)
+            .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .topBarTrailing) {
                     Button {

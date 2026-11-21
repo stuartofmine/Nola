@@ -43,11 +43,14 @@
     <h2>{loginState?.labels.title ?? t($locale, 'settings.desktop.title')}</h2>
     {#if loginState}
     <p class="muted">{loginState.labels.body}</p>
-    <button type="button" disabled={!loginState.available || busy || failed} aria-pressed={loginState.enabled} onclick={toggle}>
-        {loginState.available ? (loginState.enabled ? loginState.labels.enabled : loginState.labels.disabled) : loginState.labels.unavailable}
-    </button>
+    {#if loginState.available}
+    <label class="toggle"><input type="checkbox" role="switch" checked={loginState.enabled} disabled={busy || failed} onchange={event => { event.currentTarget.checked = loginState!.enabled; void toggle(); }} />{loginState.enabled ? loginState.labels.enabled : loginState.labels.disabled}</label>
+    {:else}
+    <p class="muted">{loginState.labels.unavailable}</p>
+    {/if}
     {/if}
     {#if busy}<p role="status">{t($locale, 'rooms.loading')}</p>{/if}
-    {#if failed}<p role="alert">{t($locale, 'settings.desktop.failed')}</p><button type="button" disabled={busy} onclick={load}>{t($locale, 'models.reload')}</button>{/if}
+    {#if failed}<p role="alert" class="error">{t($locale, 'settings.desktop.failed')}</p><button type="button" disabled={busy} onclick={load}>{t($locale, 'models.reload')}</button>{/if}
 </section>
 {/if}
+<style>.toggle { display: flex; align-items: center; gap: 8px; } .toggle input { width: auto; flex-shrink: 0; }</style>

@@ -37,21 +37,30 @@ struct IOSMessageEditSheet: View {
     var body: some View {
         NavigationStack {
             Form {
-                Section {
-                    AppleExpertResendEditor(draft: $draft, candidates: candidates).frame(minHeight: 180).disabled(submitting || pending != nil)
-                        .scrollContentBackground(.hidden)
-                        .padding(12)
-                        .background(DesignTokens.backgroundColor)
-                        .overlay(RoundedRectangle(cornerRadius: 12).stroke(DesignTokens.strongBorderColor, lineWidth: 1))
-                        .accessibilityLabel(String(localized: "chat.message.edit"))
-                        .accessibilityIdentifier("chat.message.editor")
-                } footer: { Text(pending == nil ? "chat.message.editPreservesOriginal" : "chat.message.editSavedForReview") }
-                if ownerIsRunning && !canCheck { Section { Text("chat.message.editWait").foregroundStyle(.secondary) } }
-                if !available { Section { Text("chat.message.resendUnavailable").foregroundStyle(.secondary) } }
-                if let error { Section { Text(error).foregroundStyle(DesignTokens.dangerColor).textSelection(.enabled) } }
+                Group {
+                    Section {
+                        AppleExpertResendEditor(draft: $draft, candidates: candidates).frame(minHeight: 180).disabled(submitting || pending != nil)
+                            .scrollContentBackground(.hidden)
+                            .padding(12)
+                            .background(DesignTokens.backgroundColor)
+                            .overlay(RoundedRectangle(cornerRadius: 12).stroke(DesignTokens.strongBorderColor, lineWidth: 1))
+                            .accessibilityLabel(String(localized: "chat.message.edit"))
+                            .accessibilityIdentifier("chat.message.editor")
+                    } footer: {
+                        if pending == nil {
+                            Text("chat.message.editPreservesOriginal")
+                        } else {
+                            Text("chat.message.editSavedForReview")
+                        }
+                    }
+                    if ownerIsRunning && !canCheck { Section { Text("chat.message.editWait").foregroundStyle(.secondary) } }
+                    if !available { Section { Text("chat.message.resendUnavailable").foregroundStyle(.secondary) } }
+                    if let error { Section { Text(error).foregroundStyle(DesignTokens.dangerColor).textSelection(.enabled) } }
+                }
+                .listRowBackground(DesignTokens.surfaceColor)
+                .listRowSeparatorTint(DesignTokens.borderColor)
             }
-            .scrollContentBackground(.hidden)
-            .background(DesignTokens.backgroundColor)
+            .nolaGroupedSurface()
             .task(id: draft.sourceConversationID) {
                 guard let owner = draft.sourceConversationID, let id = UUID(uuidString: owner),
                       (try? container.applicationRuntime.conversationSourceOwner(conversationID: id.uuidString)) == .local else { return }

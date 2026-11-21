@@ -53,7 +53,7 @@ internal fun MessageEditDialog(draft: AndroidMessageEditDraft, onText: (String, 
         update(insertExpert(editor, draft.mentions, TextRange(range.start, range.end), ref))
     }
     AlertDialog(containerColor = MaterialTheme.colorScheme.background,
-        modifier = Modifier.dismissImeOnBlankTap(),
+        modifier = Modifier.dismissImeOnBlankTap().imePadding(),
         onDismissRequest = { if (!draft.busy && !draft.outcomePending) onCancel() },
         title = { Text(stringResource(R.string.chat_edit_resend)) },
         text = { Column(Modifier.heightIn(max = 440.dp).verticalScroll(rememberScrollState())) {

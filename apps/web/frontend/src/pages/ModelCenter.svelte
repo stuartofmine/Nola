@@ -220,7 +220,7 @@
     </div>
     <div id="panel-api" role="tabpanel" tabindex="0" aria-labelledby="tab-api" hidden={tab !== 'api'}><ApiModels openProfileId={tab === 'api' ? linkedModelId : ''} /></div>
 </div>
-<dialog use:ownDialog bind:this={dialog} oncancel={closeEditor} aria-label={t($locale, 'models.configureTitle', { name: editing?.displayName || editing?.name || editing?.id || '' })}>
+<dialog use:ownDialog bind:this={dialog} oncancel={closeEditor} onclick={event => { if (event.target === dialog && !busy) void closeEditor(); }} aria-label={t($locale, 'models.configureTitle', { name: editing?.displayName || editing?.name || editing?.id || '' })}>
     {#if draft && editing}
         <form onsubmit={save} aria-busy={!!busy}>
             <div><h2>{editing.displayName || editing.name || editing.id}</h2><p class="muted">{t($locale, 'models.nextStart')}</p></div>
@@ -241,7 +241,7 @@
     .models-header p { margin-top: 8px; }
     .models-header > a { background: transparent; border-color: transparent; }
     .models-content { max-width: 1120px; padding: 0 32px 48px; gap: 24px; }
-    .tabs { background: transparent; padding: 0; gap: 8px; border-radius: 0; }
+    .tabs { background: transparent; border: 0; padding: 0; gap: 8px; border-radius: 0; }
     .tabs button { padding-inline: 20px; }
     .models { display: grid; margin-top: 24px; border-bottom: 1px solid var(--border); }
     .model-row { display: grid; grid-template-columns: minmax(0, 1fr) auto; column-gap: 24px; row-gap: 8px; padding: 24px 0; border-top: 1px solid var(--border); min-width: 0; }

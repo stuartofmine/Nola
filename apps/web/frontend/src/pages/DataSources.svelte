@@ -222,7 +222,7 @@
         {#if usageLoaded}{@render usageItems(usage)}{/if}
     </div>
 </div>
-<dialog use:ownDialog bind:this={dialog} oncancel={close} aria-labelledby="source-editor-title">
+<dialog use:ownDialog bind:this={dialog} oncancel={close} onclick={event => { if (event.target === dialog && !busy) void close(); }} aria-labelledby="source-editor-title">
     {#if editorId}<form onsubmit={event => { event.preventDefault(); void mutate('save'); }} aria-busy={!!operation}>
         <h2 id="source-editor-title">{t($locale, existing ? 'data_sources.modal.edit_title' : 'data_sources.modal.add_title')}</h2>
         {#if formError}<div class="error" role="alert">{#if notice}{t($locale, notice)} {/if}{message(formError)}</div>{/if}

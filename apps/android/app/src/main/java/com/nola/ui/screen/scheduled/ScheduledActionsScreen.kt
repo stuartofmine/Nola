@@ -16,9 +16,11 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
@@ -29,6 +31,7 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.ui.draw.clip
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
@@ -226,6 +229,7 @@ fun ScheduledActionsScreen(
 
     Scaffold(
         containerColor = MaterialTheme.colorScheme.background,
+        contentWindowInsets = WindowInsets(0),
         topBar = {
             NolaTopAppBar(
                 title = stringResource(R.string.scheduled_title),
@@ -424,7 +428,11 @@ fun ScheduledActionsScreen(
                         Text(stringResource(R.string.scheduled_no_automations), style = MaterialTheme.typography.titleMedium)
                         Text(stringResource(R.string.scheduled_no_automations_message), style = MaterialTheme.typography.bodyMedium,
                             color = MaterialTheme.colorScheme.onSurfaceVariant)
-                        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        @OptIn(androidx.compose.foundation.layout.ExperimentalLayoutApi::class)
+                        androidx.compose.foundation.layout.FlowRow(
+                            horizontalArrangement = Arrangement.spacedBy(8.dp),
+                            verticalArrangement = Arrangement.spacedBy(4.dp)
+                        ) {
                             androidx.compose.material3.Button(onClick = {
                                 viewModel.beginEditing()
                                 editingAction = null
@@ -477,12 +485,12 @@ fun ScheduledActionsScreen(
             if (state.recentResults.isNotEmpty()) {
                 item {
                     Surface(
+                        onClick = {
+                            showsRecentActivity = !showsRecentActivity
+                        },
                         modifier = Modifier
                             .fillMaxWidth()
-                            .testTag("scheduled.recent.toggle")
-                            .clickable(role = Role.Button) {
-                                showsRecentActivity = !showsRecentActivity
-                            },
+                            .testTag("scheduled.recent.toggle"),
                         shape = MaterialTheme.shapes.large,
                         color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.34f)
                     ) {
@@ -788,10 +796,10 @@ fun ScheduledActionCard(
                 latestResult?.let { result ->
                     val detail = result.failureReason?.takeUnless { it == "permission_required" } ?: result.llmSummaryText
                     Surface(
+                        onClick = onResultClick,
                         modifier = Modifier
                             .fillMaxWidth()
-                            .testTag("scheduled.result.${action.id}")
-                            .clickable(role = Role.Button, onClick = onResultClick),
+                            .testTag("scheduled.result.${action.id}"),
                         shape = MaterialTheme.shapes.medium,
                         color = resultStatusColor(result.status).copy(alpha = 0.08f)
                     ) {
@@ -1046,6 +1054,8 @@ internal fun ExecutionResultDetailSheet(
                         Row(
                             modifier = Modifier
                                 .fillMaxWidth()
+                                .heightIn(min = 48.dp)
+                                .clip(RoundedCornerShape(8.dp))
                                 .clickable(role = Role.Button) {
                                     showsTechnicalDetails = !showsTechnicalDetails
                                 }

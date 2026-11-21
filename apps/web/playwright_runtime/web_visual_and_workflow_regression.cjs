@@ -17,7 +17,7 @@ const uiIndex = path.join(webRoot, 'app/static/ui/index.html');
 const EXPECTED_ROUTES = [
     'today', 'conversations', 'chat', 'activity', 'results', 'dashboard',
     'data-sources', 'scheduled-actions', 'models', 'model-test',
-    'capabilities', 'workspace-review', 'settings', 'login',
+    'capabilities', 'workspace-review', 'settings', 'login', 'plugin-page',
 ];
 
 const SETTINGS_CATEGORIES = ['general', 'providers', 'agent', 'connections', 'data', 'diagnostics'];

@@ -3,6 +3,30 @@
 
 #[cfg(test)]
 #[test]
+fn mobile_login_lru_eviction_exempts_persistent_host_access_token() {
+    let mut tokens = HashMap::new();
+    let now = Instant::now();
+    let host_token = "persistent-host-token";
+    // Make the persistent host token the oldest entry in the map.
+    tokens.insert(host_token.to_string(), now - StdDuration::from_secs(600));
+    for idx in 1..32 {
+        tokens.insert(
+            format!("mobile-token-{idx}"),
+            now - StdDuration::from_secs(300 - idx as u64),
+        );
+    }
+    assert_eq!(tokens.len(), 32);
+
+    insert_mobile_token_locked(&mut tokens, "mobile-token-new".to_string(), Some(host_token), now);
+
+    assert!(tokens.contains_key(host_token), "persistent host token must never be evicted");
+    assert!(tokens.contains_key("mobile-token-new"));
+    assert!(!tokens.contains_key("mobile-token-1"), "oldest non-host token should be evicted");
+    assert_eq!(tokens.len(), 32);
+}
+
+#[cfg(test)]
+#[test]
 fn mobile_attachment_text_decodes_utf8_and_utf16_bom() {
     let utf8 =
         extract_mobile_attachment_text(b"\xEF\xBB\xBFalpha\nbeta", "notes.md", "text/markdown")

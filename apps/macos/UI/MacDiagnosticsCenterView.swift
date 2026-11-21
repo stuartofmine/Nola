@@ -603,7 +603,7 @@ struct MacDiagnosticsCenterView: View {
                 Button(String(localized: "Detailed Logging")) {
                     detailedLoggingEnabled = true
                 }
-                .buttonStyle(.borderedProminent)
+                .buttonStyle(.nolaProminent)
             }
         }
         .padding(32)

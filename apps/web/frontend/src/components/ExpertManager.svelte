@@ -160,10 +160,10 @@
 </script>
 <svelte:window onbeforeunload={event => {if (dirty || saving || uncertain) {event.preventDefault(); event.returnValue = '';}}} />
 <ConfirmationDialog bind:this={confirmation} />
-<dialog use:portal bind:this={dialog} aria-label={t($locale, 'rooms.manageExperts')} oncancel={close}>
+<dialog use:portal bind:this={dialog} aria-label={t($locale, 'rooms.manageExperts')} oncancel={close} onclick={event => { if (event.target === dialog && !saving) void close(); }}>
     <header><h2>{t($locale, 'rooms.manageExperts')}</h2><button disabled={saving} onclick={() => close()}>{t($locale, 'rooms.close')}</button></header>
     {#if loading}<p role="status">{t($locale, 'rooms.loading')}</p>{/if}
-    {#if error}<p role="alert">{t($locale, catalogUnavailable ? 'rooms.expertCatalogUnavailable' : 'rooms.failed')}</p><button disabled={saving} onclick={refresh}>{t($locale, 'rooms.refresh')}</button>{/if}
+    {#if error}<p role="alert" class="error">{t($locale, catalogUnavailable ? 'rooms.expertCatalogUnavailable' : 'rooms.failed')}</p><button disabled={saving} onclick={refresh}>{t($locale, 'rooms.refresh')}</button>{/if}
     <nav aria-label={t($locale, 'rooms.experts')}>
         <button disabled={saving || uncertain} aria-pressed={!editing} onclick={() => select(null)}>{t($locale, 'rooms.createAgent')}</button>
         {#each directory.agents as agent (agent.id)}<button disabled={saving || uncertain} aria-pressed={editing?.id === agent.id} onclick={() => select(agent)}>{agent.name}{agent.availability === 'active' ? '' : ` · ${t($locale, 'rooms.inactive')}`}</button>{/each}
@@ -216,8 +216,8 @@
                 <details><summary>{t($locale, 'rooms.roleSkills')} · {selectedRole.skills.length}</summary>{#each selectedRole.skills as skill}<h3>{expertLocalized(skill.name, $locale)}</h3><pre>{skill.instructions}</pre>{/each}</details>
             </section>{/if}
             <p class="muted">{t($locale,'rooms.roleNextIntroduction')}</p>
-            <label class="enabled"><input type="checkbox" bind:checked={enabled} />{t($locale, 'rooms.enabled')}</label>
-            <button type="submit" disabled={!name.trim() || !dirty || (!executor && effort !== 'automatic' && !allowedEfforts.includes(effort))}>{t($locale, 'rooms.saveAgent')}</button>
+            <label class="enabled"><input type="checkbox" role="switch" bind:checked={enabled} />{t($locale, 'rooms.enabled')}</label>
+            <button type="submit" class="primary" disabled={!name.trim() || !dirty || (!executor && effort !== 'automatic' && !allowedEfforts.includes(effort))}>{t($locale, saving ? 'rooms.saving' : 'rooms.saveAgent')}</button>
         </fieldset>
     </form>
 </dialog>

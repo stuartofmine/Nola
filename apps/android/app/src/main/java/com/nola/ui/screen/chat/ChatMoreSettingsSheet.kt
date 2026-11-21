@@ -5,6 +5,11 @@ import com.nola.ui.components.ForgetHostPairingDialog
 import androidx.compose.foundation.selection.toggleable
 import androidx.compose.ui.semantics.Role
 
+import androidx.compose.animation.AnimatedContent
+import androidx.compose.animation.core.tween
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.togetherWith
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -12,17 +17,22 @@ import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.ExperimentalLayoutApi
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.GridView
 import androidx.compose.material.icons.filled.Storage
@@ -52,6 +62,7 @@ import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
@@ -61,9 +72,11 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.nola.R
@@ -192,6 +205,8 @@ fun ChatMoreSettingsScreen(
     onSaveMemoryProfile: suspend () -> Unit,
     onOpenContextSettings: () -> Unit,
     onOpenSkillLibrary: () -> Unit,
+    onDismissGuardStateChange: (saving: Boolean, dirty: Boolean) -> Unit = { _, _ -> },
+    dismissAttemptTick: Int = 0,
     onBack: () -> Unit
 ) {
     var showModelParameters by remember(selectedModel?.selectionId) { mutableStateOf(false) }
@@ -232,9 +247,21 @@ fun ChatMoreSettingsScreen(
         localLongTermMemory != longTermMemory ||
         localUserPreferences != userPreferences
     val requestBack = {
-        if (!isSaving && !parameterSaving) {
+        if (!isSaving && !parameterSaving && !conversationLimitsSaving && !permissionSaving) {
             if (hasUnsavedChanges) showDiscardDialog = true else onBack()
         }
+    }
+    LaunchedEffect(isSaving, parameterSaving, conversationLimitsSaving, permissionSaving, hasUnsavedChanges) {
+        onDismissGuardStateChange(
+            isSaving || parameterSaving || conversationLimitsSaving || permissionSaving,
+            hasUnsavedChanges
+        )
+    }
+    DisposableEffect(Unit) {
+        onDispose { onDismissGuardStateChange(false, false) }
+    }
+    LaunchedEffect(dismissAttemptTick) {
+        if (dismissAttemptTick > 0) requestBack()
     }
 
     val scope = rememberCoroutineScope()
@@ -266,63 +293,19 @@ fun ChatMoreSettingsScreen(
         if (statusMessage == message) statusMessage = null
     }
 
-    if (showModelParameters && selectedModel != null) {
-        val editingModel = selectedModel
-        key(editingModel.selectionId) {
-            ModelParametersSheet(
-                modelName = editingModel.name,
-                supportsTopK = editingModel.source == ModelInfo.ModelSource.Local,
-                supportsStreamOutput = editingModel.source != ModelInfo.ModelSource.WebHost,
-                parameters = draftParameters,
-                reasoningEfforts = reasoningEfforts,
-                saving = parameterSaving,
-                error = parameterError,
-                draftVersion = parameterDraftVersion,
-                dismissOnSubmit = false,
-                onDismiss = { if (!parameterSaving) showModelParameters = false },
-                onReload = {
-                    if (!parameterSaving) {
-                        if (onReloadParameters()) {
-                            parameterError = null
-                            parameterDraftVersion += 1
-                        } else { parameterError = saveFailed }
-                    }
-                },
-                onUpdate = { parameters ->
-                    if (!parameterSaving) {
-                        parameterSaving = true
-                        parameterError = null
-                        scope.launch {
-                            try {
-                                onSaveParameters(parameters)
-                                if (currentModelId == editingModel.selectionId) showModelParameters = false
-                            } catch (cancelled: kotlinx.coroutines.CancellationException) {
-                                throw cancelled
-                            } catch (error: Exception) {
-                                if (currentModelId == editingModel.selectionId) parameterError = error.localizedMessage ?: saveFailed
-                            } finally {
-                                if (currentModelId == editingModel.selectionId) parameterSaving = false
-                            }
-                        }
-                    }
-                }
-            )
-        }
-    }
-
     if (showConversationLimits) {
         val parsedContext = contextLimitText.trim().takeIf(String::isNotEmpty)?.toIntOrNull()
         val parsedOutput = outputLimitText.trim().takeIf(String::isNotEmpty)?.toIntOrNull()
         val contextValid = contextLimitText.isBlank() || parsedContext in ModelParameterLimits.remoteContextTokens
         val outputValid = outputLimitText.isBlank() || parsedOutput in ModelParameterLimits.outputTokens
         AlertDialog(
-            modifier = Modifier.dismissImeOnBlankTap(),
+            modifier = Modifier.dismissImeOnBlankTap().imePadding(),
             onDismissRequest = { if (!conversationLimitsSaving) showConversationLimits = false },
             title = { Text(stringResource(R.string.chat_conversation_limits_title)) },
             text = {
-                Column(Modifier.verticalScroll(rememberScrollState())) {
+                Column(Modifier.verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                     Text(stringResource(R.string.chat_conversation_limits_hint), style = MaterialTheme.typography.bodySmall)
-                    Spacer(Modifier.height(NolaSpacing.md))
+                    Spacer(Modifier.height(NolaSpacing.xs))
                     OutlinedTextField(
                         value = contextLimitText,
                         onValueChange = { contextLimitText = it },
@@ -330,6 +313,8 @@ fun ChatMoreSettingsScreen(
                         placeholder = { Text(draftParameters.maxContextTokens.toString()) },
                         isError = !contextValid,
                         enabled = !conversationLimitsSaving,
+                        singleLine = true,
+                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
                         modifier = Modifier.fillMaxWidth().testTag("conversation-context-limit"),
                     )
                     OutlinedTextField(
@@ -339,6 +324,8 @@ fun ChatMoreSettingsScreen(
                         placeholder = { Text(draftParameters.maxCompletionTokens.toString()) },
                         isError = !outputValid,
                         enabled = !conversationLimitsSaving,
+                        singleLine = true,
+                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
                         modifier = Modifier.fillMaxWidth().testTag("conversation-output-limit"),
                     )
                     conversationLimitsError?.let { Text(it, color = MaterialTheme.colorScheme.error) }
@@ -368,18 +355,79 @@ fun ChatMoreSettingsScreen(
                             }
                         }
                     },
-                ) { Text(stringResource(R.string.common_save)) }
+                ) {
+                    if (conversationLimitsSaving) {
+                        CircularProgressIndicator(Modifier.size(16.dp), strokeWidth = 2.dp)
+                    } else {
+                        Text(stringResource(R.string.common_save))
+                    }
+                }
             },
         )
     }
 
-    BackHandler { requestBack() }
+    BackHandler(enabled = !(showModelParameters && selectedModel != null)) { requestBack() }
     if (showDiscardDialog) {
         DiscardChangesDialog(onDiscard = onBack, onKeepEditing = { showDiscardDialog = false })
     }
 
+    val reduceMotion = com.nola.ui.components.rememberReduceMotionEnabled()
+    AnimatedContent(
+        targetState = showModelParameters && selectedModel != null,
+        transitionSpec = {
+            fadeIn(tween(if (reduceMotion) 0 else com.nola.ui.components.NolaMotion.controlState)) togetherWith
+                fadeOut(tween(if (reduceMotion) 0 else com.nola.ui.components.NolaMotion.fast))
+        },
+        label = "chat-more-settings-step"
+    ) { showingParameters ->
+    if (showingParameters && selectedModel != null) {
+        val editingModel = selectedModel
+        key(editingModel.selectionId) {
+            com.nola.ui.components.ModelParametersContent(
+                modelName = editingModel.name,
+                supportsTopK = editingModel.source == ModelInfo.ModelSource.Local,
+                supportsStreamOutput = editingModel.source != ModelInfo.ModelSource.WebHost,
+                parameters = draftParameters,
+                reasoningEfforts = reasoningEfforts,
+                saving = parameterSaving,
+                error = parameterError,
+                draftVersion = parameterDraftVersion,
+                dismissOnSubmit = false,
+                showBackTopBar = true,
+                modifier = Modifier.fillMaxSize(),
+                onDismiss = { if (!parameterSaving) showModelParameters = false },
+                onReload = {
+                    if (!parameterSaving) {
+                        if (onReloadParameters()) {
+                            parameterError = null
+                            parameterDraftVersion += 1
+                        } else { parameterError = saveFailed }
+                    }
+                },
+                onUpdate = { parameters ->
+                    if (!parameterSaving) {
+                        parameterSaving = true
+                        parameterError = null
+                        scope.launch {
+                            try {
+                                onSaveParameters(parameters)
+                                if (currentModelId == editingModel.selectionId) showModelParameters = false
+                            } catch (cancelled: kotlinx.coroutines.CancellationException) {
+                                throw cancelled
+                            } catch (error: Exception) {
+                                if (currentModelId == editingModel.selectionId) parameterError = error.localizedMessage ?: saveFailed
+                            } finally {
+                                if (currentModelId == editingModel.selectionId) parameterSaving = false
+                            }
+                        }
+                    }
+                }
+            )
+        }
+    } else {
     Scaffold(
         containerColor = MaterialTheme.colorScheme.background,
+        contentWindowInsets = WindowInsets(0),
         snackbarHost = { SnackbarHost(snackbarHostState) },
         topBar = {
             NolaTopAppBar(
@@ -598,12 +646,19 @@ fun ChatMoreSettingsScreen(
                     enabled = !permissionSaving,
                     onSelected = { mode ->
                         if (!permissionSaving) {
+                            val previousMode = localPermissionMode
                             localPermissionMode = mode
                             permissionSaving = true
                             scope.launch {
                                 try { onPermissionModeChange(mode) }
-                                catch (cancelled: kotlinx.coroutines.CancellationException) { throw cancelled }
-                                catch (error: Exception) { errorMessage = error.localizedMessage ?: saveFailed }
+                                catch (cancelled: kotlinx.coroutines.CancellationException) {
+                                    localPermissionMode = previousMode
+                                    throw cancelled
+                                }
+                                catch (error: Exception) {
+                                    localPermissionMode = previousMode
+                                    errorMessage = error.localizedMessage ?: saveFailed
+                                }
                                 finally { permissionSaving = false }
                             }
                         }
@@ -728,6 +783,8 @@ fun ChatMoreSettingsScreen(
         }
         }
     }
+    }
+    }
 
     if (showPersonalIntelligence) {
         PersonalIntelligenceDialog(onDismiss = { showPersonalIntelligence = false })
@@ -743,6 +800,7 @@ private fun SettingsNavigationRow(
 ) {
     Surface(
         onClick = onClick,
+        shape = RoundedCornerShape(10.dp),
         color = MaterialTheme.colorScheme.surface.copy(alpha = 0f)
     ) {
         Row(
@@ -773,10 +831,10 @@ private fun SettingsNavigationRow(
                     overflow = TextOverflow.Ellipsis
                 )
             }
-            Text(
-                "›",
-                style = MaterialTheme.typography.titleLarge,
-                color = MaterialTheme.colorScheme.onSurfaceVariant
+            Icon(
+                Icons.AutoMirrored.Filled.KeyboardArrowRight,
+                contentDescription = null,
+                tint = MaterialTheme.colorScheme.onSurfaceVariant
             )
         }
     }
@@ -793,10 +851,14 @@ private fun HostComputerUseStatusBlock(status: HostComputerUseStatus) {
     Column(verticalArrangement = Arrangement.spacedBy(NolaSpacing.xs)) {
         Row(
             modifier = Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.SpaceBetween,
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
             verticalAlignment = Alignment.CenterVertically
         ) {
-            Text(stringResource(R.string.chat_computer_use_host), style = MaterialTheme.typography.bodyMedium)
+            Text(
+                stringResource(R.string.chat_computer_use_host),
+                modifier = Modifier.weight(1f),
+                style = MaterialTheme.typography.bodyMedium
+            )
             Text(
                 statusText,
                 style = MaterialTheme.typography.labelMedium,
@@ -830,10 +892,14 @@ private fun HostNativeBrowserStatusBlock(status: HostNativeBrowserStatus) {
     Column(verticalArrangement = Arrangement.spacedBy(NolaSpacing.xs)) {
         Row(
             modifier = Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.SpaceBetween,
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
             verticalAlignment = Alignment.CenterVertically
         ) {
-            Text(stringResource(R.string.chat_native_browser_host), style = MaterialTheme.typography.bodyMedium)
+            Text(
+                stringResource(R.string.chat_native_browser_host),
+                modifier = Modifier.weight(1f),
+                style = MaterialTheme.typography.bodyMedium
+            )
             Text(
                 statusText,
                 style = MaterialTheme.typography.labelMedium,
@@ -900,6 +966,7 @@ fun ToggleRow(label: String, checked: Boolean, onCheckedChange: (Boolean) -> Uni
     Row(
         modifier = Modifier
             .fillMaxWidth()
+            .clip(RoundedCornerShape(8.dp))
             .toggleable(value = checked, role = Role.Switch, onValueChange = onCheckedChange)
             .heightIn(min = 48.dp)
             .padding(vertical = 4.dp),

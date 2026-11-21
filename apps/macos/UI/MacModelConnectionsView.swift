@@ -34,7 +34,6 @@ struct MacModelConnectionsView: View {
     @State private var importBridge: MacModelImportBridge?
     @State private var probeBridge: MacModelImportBridge?
     @State private var probeConfirmation: MacModelProbeConfirmation?
-    @State private var showingProbe = false
     @State private var probeRunning = false
     @State private var managementHost: MacRemoteHostConfiguration?
     @State private var showingSiwc = false
@@ -191,7 +190,7 @@ struct MacModelConnectionsView: View {
                     status = String(localized: "Connection saved. Discover and enable models before using it.", table: "ModelCenter")
                 }
             }
-            .buttonStyle(.borderedProminent)
+            .buttonStyle(.nolaProminent)
             .disabled(name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || !Self.isValidEndpoint(endpoint))
             if !endpoint.isEmpty && !Self.isValidEndpoint(endpoint) {
                 Text(String(localized: "Enter an HTTP or HTTPS address without embedded credentials.", table: "ModelCenter"))
@@ -294,7 +293,7 @@ struct MacModelConnectionsView: View {
                             status = String(localized: "Enabled models are available in the chat model picker.", table: "ModelCenter")
                         }
                     }
-                    .buttonStyle(.borderedProminent)
+                    .buttonStyle(.nolaProminent)
                     // Applying also adopts newly discovered capability metadata for enabled models.
                     .disabled(busy)
                 }
@@ -312,7 +311,7 @@ struct MacModelConnectionsView: View {
                     Label(String(localized: "Connections and accounts", table: "ModelCenter"), systemImage: "network")
                 } actions: {
                     Button(String(localized: "Connect an API account", table: "ModelCenter")) { workspace = .api }
-                        .buttonStyle(.borderedProminent)
+                        .buttonStyle(.nolaProminent)
                     Button(String(localized: "Import from this Mac", table: "ModelCenter")) { workspace = .imports }
                 }
             }
@@ -403,7 +402,7 @@ struct MacModelConnectionsView: View {
                                     status = String(localized: "Connection enabled. Discover or enable models below.", table: "ModelCenter")
                                 }
                             }
-                            .buttonStyle(.borderedProminent)
+                            .buttonStyle(.nolaProminent)
                             .disabled(busy)
                         }
                     }
@@ -460,8 +459,8 @@ struct MacModelConnectionsView: View {
         }
         .task { if refreshOnAppear { reload(); managementHost = MacRemoteHostConfigurationStore.shared.load() } }
         .navigationTitle(String(localized: "Connections and accounts", table: "ModelCenter"))
-        .sheet(isPresented: $showingProbe, onDismiss: { if !probeRunning { cancelProbe() } }) {
-            probeSheet
+        .sheet(item: $probeConfirmation, onDismiss: { if !probeRunning { cancelProbe() } }) { confirmation in
+            probeSheet(confirmation)
         }
         .sheet(isPresented: $showingSiwc, onDismiss: reload) {
             MacSiwcSignInView(application: service.application, account: siwcAccount, showAccounts: {
@@ -543,7 +542,6 @@ struct MacModelConnectionsView: View {
                     probeBridge = bridge
                     do {
                         probeConfirmation = try await bridge.prepareProbe(snapshot: connection, model: model)
-                        showingProbe = true
                     } catch { bridge.cancel(); probeBridge = nil; throw error }
                 }
             }
@@ -551,40 +549,38 @@ struct MacModelConnectionsView: View {
                 onSave: { reload() }, onError: { error = $0 })
         }
     }
-    private var probeSheet: some View {
+    private func probeSheet(_ confirmation: MacModelProbeConfirmation) -> some View {
         VStack(alignment: .leading, spacing: 16) {
             Text(String(localized: "Test this model?", table: "ModelCenter")).font(.title2).bold()
-            if let confirmation = probeConfirmation {
-                LabeledContent(String(localized: "Model", table: "ModelCenter"), value: confirmation.model_id)
-                LabeledContent(String(localized: "Protocol", table: "ModelCenter"), value: confirmation.protocol)
-                LabeledContent(String(localized: "Account", table: "ModelCenter"), value: accounts.first(where: { $0.id == confirmation.account_id })?.account.display_name ?? confirmation.account_id ?? String(localized: "Anonymous endpoint", table: "ModelCenter"))
-                if let connection = connections.first(where: { $0.id == confirmation.connection_id }) {
-                    Text(connection.document.connection.base_url)
-                        .font(.callout).foregroundStyle(.secondary).textSelection(.enabled)
-                        .fixedSize(horizontal: false, vertical: true)
-                }
-                Text(String(localized: "This sends one short text request and may incur provider charges. It does not test tools, images, or reasoning capabilities.", table: "ModelCenter"))
+            LabeledContent(String(localized: "Model", table: "ModelCenter"), value: confirmation.model_id)
+            LabeledContent(String(localized: "Protocol", table: "ModelCenter"), value: confirmation.protocol)
+            LabeledContent(String(localized: "Account", table: "ModelCenter"), value: accounts.first(where: { $0.id == confirmation.account_id })?.account.display_name ?? confirmation.account_id ?? String(localized: "Anonymous endpoint", table: "ModelCenter"))
+            if let connection = connections.first(where: { $0.id == confirmation.connection_id }) {
+                Text(connection.document.connection.base_url)
+                    .font(.callout).foregroundStyle(.secondary).textSelection(.enabled)
                     .fixedSize(horizontal: false, vertical: true)
-                if probeRunning {
-                    ProgressView(String(localized: "Testing text response…", table: "ModelCenter"))
-                    Text(String(localized: "Stopping cannot undo a request already sent. An uncertain result is not retried automatically.", table: "ModelCenter"))
-                        .font(.callout).foregroundStyle(.secondary)
-                }
-                HStack {
-                    Spacer()
-                    Button(probeRunning ? String(localized: "Stop test", table: "ModelCenter") : String(localized: "Cancel", table: "ModelCenter")) { cancelProbe() }
-                        .keyboardShortcut(.cancelAction)
-                    Button(String(localized: "Send one test request", table: "ModelCenter")) { confirmProbe(confirmation) }
-                        .buttonStyle(.borderedProminent).disabled(probeRunning)
-                }
+            }
+            Text(String(localized: "This sends one short text request and may incur provider charges. It does not test tools, images, or reasoning capabilities.", table: "ModelCenter"))
+                .fixedSize(horizontal: false, vertical: true)
+            if probeRunning {
+                ProgressView(String(localized: "Testing text response…", table: "ModelCenter"))
+                Text(String(localized: "Stopping cannot undo a request already sent. An uncertain result is not retried automatically.", table: "ModelCenter"))
+                    .font(.callout).foregroundStyle(.secondary)
+            }
+            HStack {
+                Spacer()
+                Button(probeRunning ? String(localized: "Stop test", table: "ModelCenter") : String(localized: "Cancel", table: "ModelCenter")) { cancelProbe() }
+                    .keyboardShortcut(.cancelAction)
+                Button(String(localized: "Send one test request", table: "ModelCenter")) { confirmProbe(confirmation) }
+                    .buttonStyle(.nolaProminent).disabled(probeRunning)
             }
         }
         .padding(24).frame(width: 440)
+        .background(MacDesignColor.canvas)
         .interactiveDismissDisabled(probeRunning)
     }
     private func cancelProbe() {
         probeBridge?.cancel(); probeBridge = nil; probeConfirmation = nil
-        showingProbe = false
         if probeRunning {
             operationTask?.cancel()
             status = String(localized: "Test stopped. A request already sent may still be charged; its result may be unknown.", table: "ModelCenter")
@@ -596,7 +592,7 @@ struct MacModelConnectionsView: View {
         perform {
             defer {
                 bridge.cancel(); probeBridge = nil; probeConfirmation = nil
-                showingProbe = false; probeRunning = false
+                probeRunning = false
             }
             _ = try await bridge.confirmProbe(requestID: confirmation.request_id, acknowledgePossibleCharges: true)
             status = String(localized: "Text response verified. Other capabilities were not tested.", table: "ModelCenter")
@@ -699,7 +695,7 @@ struct MacModelConnectionsView: View {
                 Toggle(String(localized: "Enable imported models for chat", table: "ModelCenter"), isOn: $enableImportedModels)
                     .toggleStyle(.macSwitch)
                 Button(String(localized: "Confirm import", table: "ModelCenter")) { confirmImport(plan) }
-                    .buttonStyle(.borderedProminent)
+                    .buttonStyle(.nolaProminent)
                     .disabled(importSelection.isEmpty || plan.candidates.contains { importSelection.contains($0.id) && $0.existing_revision != nil && !importUpdates.contains($0.id) })
                     .accessibilityIdentifier("model.import.confirm")
                 Button(String(localized: "Discard preview", table: "ModelCenter")) { invalidateImport() }

@@ -195,6 +195,7 @@ struct ChatBubble: View {
         .sheet(isPresented: $showManualCopy) {
             NavigationStack {
                 ScrollView { Text(copyableText).textSelection(.enabled).frame(maxWidth: .infinity, alignment: .leading).padding(20) }
+                    .background(DesignTokens.backgroundColor)
                     .navigationTitle(String(localized: "chat.message.copy"))
                     .toolbar { ToolbarItem(placement: .confirmationAction) { Button(L10n.close) { showManualCopy = false } } }
             }
@@ -286,7 +287,7 @@ struct ChatBubble: View {
             }
             if unique.count > 3 {
                 Button { showsAllSources.toggle() } label: {
-                    Text(showsAllSources ? "chat.sources.fewer" : "chat.sources.all")
+                    (showsAllSources ? Text("chat.sources.fewer") : Text("chat.sources.all"))
                         .font(.caption).foregroundStyle(DesignTokens.secondaryContentColor).frame(minHeight: 44)
                 }.buttonStyle(.plain).accessibilityIdentifier("chat.sources.toggle")
             }
@@ -2423,7 +2424,7 @@ private struct ChatCoreTaskProjectionView: View {
                                 text: guidanceBinding(for: task.id)
                             )
                             .font(.caption)
-                            .textFieldStyle(.roundedBorder)
+                            .nolaInputFieldSurface()
                             .submitLabel(.send)
                             .onSubmit { sendGuidance(task.id) }
 
@@ -3506,7 +3507,7 @@ struct HostPermissionDecisionCard: View {
         if request.deviceBridge != true {
             VStack(alignment: .leading, spacing: 6) {
                 TextField(NSLocalizedString("chat.permission.instruction.placeholder", value: "Additional guidance", comment: "Permission guidance input"), text: $permissionInstruction, axis: .vertical)
-                    .textFieldStyle(.roundedBorder)
+                    .nolaInputFieldSurface()
                     .accessibilityIdentifier("chat.permission.instruction.input")
                 Text(NSLocalizedString("chat.permission.instruction.notice", value: "Guidance does not authorize or change tool arguments; the original call still needs explicit approval. Limit: 4 KiB per note, 16 notes and 16 KiB total. You can still approve or deny after reaching the limit.", comment: "Instruction does not authorize"))
                     .font(.caption2).foregroundColor(.secondary)
@@ -3945,7 +3946,7 @@ private struct IOSSkillSummary: View {
                 }
                 .nolaGroupedSurface()
                 .navigationTitle(title).toolbar { ToolbarItem(placement: .confirmationAction) { Button("common.done") { showsDetails = false } } }
-            }.presentationDetents([.medium]).presentationDragIndicator(.visible)
+            }.presentationDetents([.medium, .large]).presentationDragIndicator(.visible)
         }
     }
 }

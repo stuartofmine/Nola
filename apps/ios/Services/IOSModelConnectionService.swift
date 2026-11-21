@@ -103,9 +103,16 @@ nonisolated final class IOSModelConnectionService: Sendable {
         let id = previous?.id ?? UUID().uuidString.lowercased()
         var accountID = previous?.document.connection.account_id
         var account: AgentCoreJSONValue = .null
-        let sameCredential = try previous.map {
-            try credential(connectionID: $0.id, endpoint: endpoint, wireProtocol: wireProtocol).secret == secret
-        } ?? false
+        let sameCredential: Bool
+        if let previous, previous.document.connection.enabled {
+            if secret.isEmpty {
+                sameCredential = try credential(connectionID: previous.id, endpoint: endpoint, wireProtocol: wireProtocol).secret == secret
+            } else {
+                sameCredential = (try? credential(connectionID: previous.id, endpoint: endpoint, wireProtocol: wireProtocol).secret) == secret
+            }
+        } else {
+            sameCredential = false
+        }
         if !secret.isEmpty && !sameCredential {
             let reference = try credentials.storeAccountSecret(secret, connectionID: id,
                 endpoint: endpoint, protocols: [wireProtocol])
@@ -176,6 +183,12 @@ nonisolated final class IOSModelConnectionService: Sendable {
     }
     func disconnect(_ snapshot: IOSModelConnectionSnapshot) throws -> IOSModelConnectionSnapshot {
         var document = snapshot.document; document.connection.enabled = false
+        let input = try JSONDecoder().decode(AgentCoreJSONValue.self, from: JSONEncoder().encode(document.connection))
+        return try command(["type": .string("save_connection"), "input": input,
+            "expected_revision": .signedInteger(snapshot.revision), "updated_at_ms": now])
+    }
+    func reconnect(_ snapshot: IOSModelConnectionSnapshot) throws -> IOSModelConnectionSnapshot {
+        var document = snapshot.document; document.connection.enabled = true
         let input = try JSONDecoder().decode(AgentCoreJSONValue.self, from: JSONEncoder().encode(document.connection))
         return try command(["type": .string("save_connection"), "input": input,
             "expected_revision": .signedInteger(snapshot.revision), "updated_at_ms": now])

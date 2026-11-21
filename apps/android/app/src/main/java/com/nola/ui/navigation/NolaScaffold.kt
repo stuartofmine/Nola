@@ -6,8 +6,10 @@ import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.animateColorAsState
 import androidx.compose.animation.core.animateDpAsState
 import androidx.compose.animation.core.tween
+import androidx.compose.animation.expandVertically
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
+import androidx.compose.animation.shrinkVertically
 import androidx.compose.foundation.border
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
@@ -16,6 +18,7 @@ import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.consumeWindowInsets
@@ -25,6 +28,7 @@ import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.selection.selectable
@@ -152,11 +156,27 @@ fun NolaScaffold(
         val usesSideNavigation = navigationLayout != NolaNavigationLayout.Bottom
         val usesExpandedSideNavigation = navigationLayout == NolaNavigationLayout.ExpandedSide
 
+        val reduceMotion = rememberReduceMotionEnabled()
+        val showBottomBar = !usesSideNavigation && !(currentRoute == NolaTab.Chat.route && chatDetailVisible)
+
         Scaffold(
             modifier = Modifier.fillMaxSize(),
             containerColor = MaterialTheme.colorScheme.background,
+            contentWindowInsets = if (usesSideNavigation) WindowInsets(0) else androidx.compose.material3.ScaffoldDefaults.contentWindowInsets,
             bottomBar = {
-                if (!usesSideNavigation && !(currentRoute == NolaTab.Chat.route && chatDetailVisible)) {
+                AnimatedVisibility(
+                    visible = showBottomBar,
+                    enter = fadeIn(tween(if (reduceMotion) 0 else NolaMotion.controlState)) +
+                        expandVertically(
+                            animationSpec = tween(if (reduceMotion) 0 else NolaMotion.base, easing = NolaMotion.emphasizedEasing),
+                            expandFrom = Alignment.Bottom
+                        ),
+                    exit = fadeOut(tween(if (reduceMotion) 0 else NolaMotion.fast)) +
+                        shrinkVertically(
+                            animationSpec = tween(if (reduceMotion) 0 else NolaMotion.controlState, easing = NolaMotion.emphasizedEasing),
+                            shrinkTowards = Alignment.Bottom
+                        )
+                ) {
                     NolaBottomNavigation(
                         selectedTab = selectedTab,
                         onSelect = navigateToTab
@@ -167,8 +187,10 @@ fun NolaScaffold(
             Row(
                 modifier = Modifier
                     .fillMaxSize()
-                    .padding(padding)
-                    .consumeWindowInsets(padding)
+                    .then(
+                        if (usesSideNavigation) Modifier
+                        else Modifier.padding(padding).consumeWindowInsets(padding)
+                    )
             ) {
                 if (usesSideNavigation) {
                     NolaWideNavigation(
@@ -182,7 +204,9 @@ fun NolaScaffold(
                     navController = navController,
                     onChatDetailChanged = { chatDetailVisible = it },
                     compact = !usesSideNavigation,
-                    modifier = Modifier.weight(1f)
+                    modifier = Modifier
+                        .weight(1f)
+                        .then(if (usesSideNavigation) Modifier.statusBarsPadding().navigationBarsPadding() else Modifier)
                 )
             }
         }
@@ -277,6 +301,8 @@ private fun NolaWideNavigation(
             Column(
                 modifier = Modifier
                     .fillMaxSize()
+                    .statusBarsPadding()
+                    .navigationBarsPadding()
                     .padding(horizontal = 8.dp, vertical = 14.dp),
                 horizontalAlignment = Alignment.CenterHorizontally
             ) {

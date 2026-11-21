@@ -154,6 +154,16 @@
         busy = false;
     }
     function discardCatalog() { savedCatalog = copyRemoteCatalog(profiles); draftCatalog = copyRemoteCatalog(profiles); selectionError = ''; }
+    async function confirmDiscardCatalog() {
+        if (busy) return;
+        if (catalogDirty && !await confirmation.ask({ title: t($locale, 'remote.discard_title'),
+            description: t($locale, 'remote.discard_body'), confirmLabel: t($locale, 'models.discard'), destructive: true })) return;
+        discardCatalog();
+    }
+    function closeMenu(target: EventTarget | null) {
+        const details = target instanceof Element ? target.closest('details') : null;
+        if (details) details.open = false;
+    }
     async function reloadCatalog() {
         if (catalogDirty && !await confirmation.ask({ title: t($locale, 'remote.discard_title'),
             description: t($locale, 'remote.discard_body'), confirmLabel: t($locale, 'models.discard'), destructive: true })) return;
@@ -200,7 +210,7 @@
 <div class="catalog-actions">
     <button type="button" class:primary={!catalogDirty} disabled={busy} onclick={() => creation.open()}>{t($locale, 'remote.add_endpoint_model')}</button>
     {#if catalogDirty}
-        <button type="button" disabled={busy} onclick={discardCatalog}>{t($locale, 'models.discard')}</button>
+        <button type="button" class="danger" disabled={busy} onclick={confirmDiscardCatalog}>{t($locale, 'models.discard')}</button>
         <button type="button" class="primary" disabled={busy || !!catalogError} onclick={saveCatalog}>{t($locale, busy ? 'models.saving' : 'models.save')}</button>
     {/if}
 </div>
@@ -226,13 +236,13 @@
                     <button disabled={busy || !group.endpoint.id} onclick={() => editEndpoint(group.endpoint.id)}>{t($locale, 'remote.edit_endpoint')}</button>
                 </div>
                 <details class="compact-actions" use:dismissibleDisclosure><summary>{t($locale, 'remote.more_actions')}</summary><div class="compact-menu" popover="manual" use:anchoredPopover>
-                    <button disabled={busy || !group.endpoint.id} onclick={() => editEndpoint(group.endpoint.id)}>{t($locale, 'remote.edit_endpoint')}</button>
-                    <button disabled={busy || catalogDirty || !savedCatalog.some(model => model.endpoint.id === group.endpoint.id)} onclick={() => credentialEditor.open(group.endpoint.id, group.endpoint.name || '')}>{t($locale, 'remote.credentials')}</button>
+                    <button disabled={busy || !group.endpoint.id} onclick={event => { closeMenu(event.currentTarget); editEndpoint(group.endpoint.id); }}>{t($locale, 'remote.edit_endpoint')}</button>
+                    <button disabled={busy || catalogDirty || !savedCatalog.some(model => model.endpoint.id === group.endpoint.id)} onclick={event => { closeMenu(event.currentTarget); credentialEditor.open(group.endpoint.id, group.endpoint.name || ''); }}>{t($locale, 'remote.credentials')}</button>
                     {#if group.models.some(model => model.provider === 'openai-compatible')}
                         {@const position = editableGroups.findIndex(item => item.endpoint.id === group.endpoint.id)}
-                        <button disabled={busy || position <= 0} onclick={() => mutateCatalog('move_endpoint', group.endpoint.id, group.endpoint.name, -1)}>{t($locale, 'remote.move_up')}</button>
-                        <button disabled={busy || position >= editableGroups.length - 1} onclick={() => mutateCatalog('move_endpoint', group.endpoint.id, group.endpoint.name, 1)}>{t($locale, 'remote.move_down')}</button>
-                        <button class="danger" disabled={busy} onclick={() => mutateCatalog('delete_endpoint', group.endpoint.id, group.endpoint.name)}>{t($locale, 'remote.delete_endpoint')}</button>
+                        <button disabled={busy || position <= 0} onclick={event => { closeMenu(event.currentTarget); void mutateCatalog('move_endpoint', group.endpoint.id, group.endpoint.name, -1); }}>{t($locale, 'remote.move_up')}</button>
+                        <button disabled={busy || position >= editableGroups.length - 1} onclick={event => { closeMenu(event.currentTarget); void mutateCatalog('move_endpoint', group.endpoint.id, group.endpoint.name, 1); }}>{t($locale, 'remote.move_down')}</button>
+                        <button class="danger" disabled={busy} onclick={event => { closeMenu(event.currentTarget); void mutateCatalog('delete_endpoint', group.endpoint.id, group.endpoint.name); }}>{t($locale, 'remote.delete_endpoint')}</button>
                     {/if}
                 </div></details>
             </header>
@@ -243,7 +253,7 @@
                     <div class="actions">
                     {#if endpointDiscoveryMatchesSaved(savedCatalog, draftCatalog, group.endpoint.id) && discovered.length}
                         <details class="discovered" use:dismissibleDisclosure><summary>{t($locale, 'remote.add_discovered')} ({discovered.length})</summary>
-                            <div class="discovered-list" popover="manual" use:anchoredPopover>{#each discovered as name (name)}<button type="button" disabled={busy} onclick={() => creation.open(group.endpoint, name)}>{name}</button>{/each}</div>
+                            <div class="discovered-list" popover="manual" use:anchoredPopover>{#each discovered as name (name)}<button type="button" disabled={busy} onclick={event => { closeMenu(event.currentTarget); creation.open(group.endpoint, name); }}>{name}</button>{/each}</div>
                         </details>
                     {/if}
                     <button disabled={busy || !!discoveringEndpoint || !endpointDiscoveryMatchesSaved(savedCatalog, draftCatalog, group.endpoint.id)} onclick={() => discover(group)}>{discoveringEndpoint === group.endpoint.id ? t($locale, 'remote.discovering') : t($locale, 'remote.discover')}</button>
@@ -261,13 +271,13 @@
                             <button class="danger" disabled={busy || members.length <= 1} onclick={() => mutateCatalog('delete_model', model.id, model.displayName || model.modelName)}>{t($locale, 'remote.delete_model')}</button>
                         {/if}
                     </div><details class="compact-actions" use:dismissibleDisclosure><summary>{t($locale, 'remote.more_actions')}</summary><div class="compact-menu" popover="manual" use:anchoredPopover>
-                        <button onclick={() => edit(model)} disabled={busy}>{t($locale, 'models.configure')}…</button>
+                        <button onclick={event => { closeMenu(event.currentTarget); void edit(model); }} disabled={busy}>{t($locale, 'models.configure')}…</button>
                         {#if model.provider === 'openai-compatible'}
                             {@const members = group.models.filter(value => value.provider === 'openai-compatible')}
                             {@const position = members.findIndex(value => value.id === model.id)}
-                            <button disabled={busy || position <= 0} onclick={() => mutateCatalog('move_model', model.id, model.displayName || model.modelName, -1)}>{t($locale, 'remote.move_up')}</button>
-                            <button disabled={busy || position >= members.length - 1} onclick={() => mutateCatalog('move_model', model.id, model.displayName || model.modelName, 1)}>{t($locale, 'remote.move_down')}</button>
-                            <button class="danger" disabled={busy || members.length <= 1} onclick={() => mutateCatalog('delete_model', model.id, model.displayName || model.modelName)}>{t($locale, 'remote.delete_model')}</button>
+                            <button disabled={busy || position <= 0} onclick={event => { closeMenu(event.currentTarget); void mutateCatalog('move_model', model.id, model.displayName || model.modelName, -1); }}>{t($locale, 'remote.move_up')}</button>
+                            <button disabled={busy || position >= members.length - 1} onclick={event => { closeMenu(event.currentTarget); void mutateCatalog('move_model', model.id, model.displayName || model.modelName, 1); }}>{t($locale, 'remote.move_down')}</button>
+                            <button class="danger" disabled={busy || members.length <= 1} onclick={event => { closeMenu(event.currentTarget); void mutateCatalog('delete_model', model.id, model.displayName || model.modelName); }}>{t($locale, 'remote.delete_model')}</button>
                         {/if}
                     </div></details></div>
                     {#if model.provider === 'openai-compatible'}<label class="inline-toggle"><input type="checkbox" role="switch" checked={model.enabled} disabled={busy} aria-label={`${t($locale, 'remote.enable_model')}: ${model.displayName || model.modelName}`} onchange={event => setModelEnabled(model, event.currentTarget.checked)} />{t($locale, 'remote.enable_model')}</label>{/if}
@@ -286,7 +296,7 @@
         </details>
     {/each}
 </div>
-<dialog use:ownDialog bind:this={dialog} oncancel={close} aria-label={t($locale, 'remote.configure_title', { name: editing?.displayName || editing?.modelName || '' })}>
+<dialog use:ownDialog bind:this={dialog} oncancel={close} onclick={event => { if (event.target === dialog && !busy) void close(); }} aria-label={t($locale, 'remote.configure_title', { name: editing?.displayName || editing?.modelName || '' })}>
     {#if editing}<form onsubmit={save} aria-busy={busy}>
         <div><h2>{editing.displayName || editing.modelName}</h2><p class="muted">{t($locale, 'remote.defaults_hint')}</p></div>
         {#if error}<div role="alert" class="error"><p>{error}</p><button type="button" disabled={busy} onclick={() => close(undefined, true)}>{t($locale, 'remote.discard_refresh')}</button></div>{/if}
@@ -371,7 +381,10 @@
     </form>{/if}
 </dialog>
 <style>
-    .endpoint-summary { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+    .endpoint-summary { display: flex; align-items: center; justify-content: space-between; gap: 12px; list-style: none; }
+    .endpoint-summary::-webkit-details-marker { display: none; }
+    .endpoint-summary::after { content: ''; width: 12px; height: 12px; flex: none; background: currentColor; opacity: .65; -webkit-mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2.2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='m6 9 6 6 6-6'/%3E%3C/svg%3E") center / contain no-repeat; mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2.2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='m6 9 6 6 6-6'/%3E%3C/svg%3E") center / contain no-repeat; transition: transform var(--motion-fast) ease; }
+    .endpoint-card[open] > .endpoint-summary::after { transform: rotate(180deg); }
     .endpoint-card[open] > summary { margin-bottom: 16px; }
     .catalog-actions { display:flex;flex-wrap:wrap;gap:8px;justify-content:flex-end;margin:16px 0 }
     .empty-catalog,.routing-policy{padding:12px 0;color:var(--muted);line-height:1.6}

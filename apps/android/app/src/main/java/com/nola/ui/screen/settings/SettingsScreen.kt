@@ -10,7 +10,13 @@ import android.provider.Settings
 import android.text.format.Formatter
 import android.widget.Toast
 import androidx.activity.compose.BackHandler
+import androidx.compose.animation.AnimatedContent
+import androidx.compose.animation.core.tween
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.togetherWith
 import androidx.compose.foundation.background
+import androidx.compose.ui.draw.clip
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
@@ -295,18 +301,33 @@ internal fun SettingsContent(
         )
     }
 
-    NolaPage(scrollKey = detailSection ?: "root", topPadding = if (detailSection == null) 0.dp else NolaSpacing.xl) {
-        if (detailSection == null) {
+    val reduceMotion = com.nola.ui.components.rememberReduceMotionEnabled()
+    val settingsScrollOffsets = rememberSaveable(
+        saver = androidx.compose.runtime.saveable.mapSaver(
+            save = { map -> map.toMap() },
+            restore = { restored -> restored.mapValues { (_, v) -> v as Int }.toMutableMap() },
+        )
+    ) { mutableMapOf<String, Int>() }
+    AnimatedContent(
+        targetState = detailSection,
+        transitionSpec = {
+            fadeIn(tween(if (reduceMotion) 0 else com.nola.ui.components.NolaMotion.controlState)) togetherWith
+                fadeOut(tween(if (reduceMotion) 0 else com.nola.ui.components.NolaMotion.fast))
+        },
+        label = "settings-detail-section"
+    ) { activeDetail ->
+    NolaPage(scrollKey = activeDetail ?: "root", topPadding = 0.dp, savedScrollOffsets = settingsScrollOffsets) {
+        if (activeDetail == null) {
             NolaRootPageTitle(stringResource(R.string.settings_title))
-        } else Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+        } else Row(Modifier.fillMaxWidth().heightIn(min = 64.dp), verticalAlignment = Alignment.CenterVertically) {
             NolaIconButton(label = stringResource(R.string.common_back), onClick = { detailSection = null }) {
                 Icon(painterResource(R.drawable.nola_back), stringResource(R.string.common_back))
             }
-            Text(stringResource(if (detailSection == "general") R.string.settings_general else if (detailSection == "appearance") R.string.appearance_title else if (detailSection == "privacy") R.string.settings_privacy else if (detailSection == "notifications") R.string.notifications_title else R.string.settings_title),
-                Modifier.weight(1f), style = MaterialTheme.typography.titleMedium, textAlign = TextAlign.Center)
+            Text(stringResource(if (activeDetail == "general") R.string.settings_general else if (activeDetail == "appearance") R.string.appearance_title else if (activeDetail == "privacy") R.string.settings_privacy else if (activeDetail == "notifications") R.string.notifications_title else R.string.settings_title),
+                Modifier.weight(1f), style = MaterialTheme.typography.titleMedium, textAlign = TextAlign.Center, maxLines = 1, overflow = TextOverflow.Ellipsis)
             Spacer(Modifier.size(48.dp))
         }
-        if (detailSection == null) {
+        if (activeDetail == null) {
             MobileSettingsGroup(R.string.settings_group_preferences) {
                 IMSettingsRow(R.drawable.nola_settings, R.string.settings_general) { detailSection = "general" }
             }
@@ -350,12 +371,13 @@ internal fun SettingsContent(
             )
         }
 
-        if (detailSection == "general" || detailSection == "appearance") {
+        if (activeDetail == "general" || activeDetail == "appearance") {
         NolaCard(plain = true) {
             NolaSectionTitle(title = stringResource(R.string.appearance_title))
             Row(Modifier.fillMaxWidth().background(MaterialTheme.colorScheme.surfaceContainer, NolaContinuousShape(10.dp)).padding(3.dp).selectableGroup(), horizontalArrangement = Arrangement.spacedBy(2.dp)) {
                 AppearancePreference.entries.forEach { choice ->
-                    Box(Modifier.weight(1f).heightIn(min = 44.dp)
+                    Box(Modifier.weight(1f).heightIn(min = 48.dp)
+                        .clip(NolaContinuousShape(8.dp))
                         .background(if (appearance == choice) MaterialTheme.colorScheme.surface else androidx.compose.ui.graphics.Color.Transparent, NolaContinuousShape(8.dp))
                         .selectable(selected = appearance == choice, role = Role.RadioButton,
                             onClick = { onAppearanceChange(choice) }), contentAlignment = Alignment.Center) {
@@ -363,7 +385,7 @@ internal fun SettingsContent(
                             AppearancePreference.System -> R.string.appearance_system
                             AppearancePreference.Light -> R.string.appearance_light
                             AppearancePreference.Dark -> R.string.appearance_dark
-                        }), fontSize = 14.sp, maxLines = 1)
+                        }), fontSize = 14.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
                     }
                 }
             }
@@ -371,7 +393,7 @@ internal fun SettingsContent(
 
         }
 
-        if (detailSection == "general") {
+        if (activeDetail == "general") {
             SettingsNotificationsCard(onNotifications, { openNotificationSettings(context) }, notificationsAllowed)
         NolaCard(plain = true) {
             NolaSectionTitle(title = stringResource(R.string.settings_about))
@@ -396,7 +418,7 @@ internal fun SettingsContent(
         }
         }
 
-        if (detailSection == "privacy") {
+        if (activeDetail == "privacy") {
         NolaCard(plain = true) {
             NolaSectionTitle(title = stringResource(R.string.settings_data_management))
             Row(
@@ -465,6 +487,7 @@ internal fun SettingsContent(
         }
         }
     }
+    }
 }
 
 @Composable
@@ -481,6 +504,7 @@ private fun IMSettingsRow(icon: Int, label: Int, onClick: () -> Unit) {
     Row(
         Modifier
             .fillMaxWidth()
+            .clip(RoundedCornerShape(10.dp))
             .clickable(onClick = onClick)
             .heightIn(min = 62.dp)
             .padding(horizontal = 4.dp, vertical = 10.dp),
@@ -635,6 +659,7 @@ fun SettingsNavRow(
     Row(
         modifier = modifier
             .fillMaxWidth()
+            .clip(RoundedCornerShape(10.dp))
             .clickable(enabled = enabled, role = Role.Button) { onClick() }
             .heightIn(min = 56.dp)
             .padding(horizontal = NolaSpacing.sm, vertical = NolaSpacing.sm),
@@ -704,6 +729,7 @@ fun SettingsCopyRow(label: String, value: String, enabled: Boolean = true, onCli
     BoxWithConstraints(
         modifier = Modifier
             .fillMaxWidth()
+            .clip(RoundedCornerShape(10.dp))
             .clickable(enabled = enabled, role = Role.Button) { onClick() }
             .heightIn(min = 56.dp)
             .padding(vertical = NolaSpacing.sm)
@@ -765,6 +791,7 @@ fun SettingsActionRow(
     Row(
         modifier = Modifier
             .fillMaxWidth()
+            .clip(RoundedCornerShape(10.dp))
             .clickable(enabled = enabled, role = Role.Button) { onClick() }
             .heightIn(min = 56.dp)
             .padding(vertical = NolaSpacing.sm),

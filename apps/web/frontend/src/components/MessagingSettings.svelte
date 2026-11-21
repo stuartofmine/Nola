@@ -95,7 +95,8 @@
     }
     async function open(channel?: Channel) {
         if (busy || editing || workerLoading || workerUncertain) return;
-        baseline = channel ? structuredClone(channel) : undefined; editing = channelDraft(channel); savedDraft = JSON.stringify(editing); editorError = ''; connectionNotice = ''; copyNotice = ''; ++editorVersion;
+        const snapshot = channel ? $state.snapshot(channel) : undefined;
+        baseline = snapshot ? structuredClone(snapshot) : undefined; editing = channelDraft(snapshot); savedDraft = JSON.stringify(editing); editorError = ''; connectionNotice = ''; copyNotice = ''; ++editorVersion;
         await tick(); if (!disposed) dialog.showModal();
     }
     async function close(event?: Event) {
@@ -108,7 +109,7 @@
     async function saveChannel(event: SubmitEvent) {
         event.preventDefault(); if (busy || !editing) return;
         let payload;
-        try { payload = channelPayload(editing, baseline); } catch (cause) { editorError = messagingErrorKey(cause); return; }
+        try { payload = channelPayload($state.snapshot(editing), baseline ? $state.snapshot(baseline) : undefined); } catch (cause) { editorError = messagingErrorKey(cause); return; }
         const version = editorVersion;
         if (payload.enabled) {
             confirming = true;
@@ -157,7 +158,7 @@
         <button class="card connection" disabled={busy || workerLoading} onclick={() => open(channel)}><span class="row between"><strong>{channel.display_name || channel.connection_id}</strong><span>{channel.enabled ? ['connected','degraded','awaiting_verification'].includes(channel.state) ? t($locale, `messaging.${channel.state}`) : channel.state : t($locale, 'remote.disabled')}</span></span><span>{providerName(channel.kind)} · {channel.connection_id}</span><small class="muted">{resultTime(channel.last_received_at, $locale)}</small></button>
     {:else}<p class="muted">{t($locale, 'messaging.empty')}</p>{/each}{/if}
 </section>
-<dialog use:ownDialog bind:this={dialog} oncancel={close} aria-labelledby="messaging-editor-title">
+<dialog use:ownDialog bind:this={dialog} oncancel={close} onclick={event => { if (event.target === dialog && !busy) void close(); }} aria-labelledby="messaging-editor-title">
     {#if editing}<form onsubmit={saveChannel} aria-busy={saving}><h2 id="messaging-editor-title">{t($locale, 'messaging.title')}</h2><p class="muted">{t($locale, 'messaging.refsHint')}</p>
         {#if editorError}<p class="error" role="alert">{t($locale, editorError)}</p>{/if}
         <fieldset disabled={busy}><label>{t($locale, 'messaging.kind')}<select value={editing.kind} disabled={!!baseline} onchange={event => { editing = channelDraft(undefined, event.currentTarget.value); }}>

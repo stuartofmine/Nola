@@ -83,7 +83,7 @@ struct MacExpertChildHistoryView: View {
                         .accessibilityIdentifier("expert.child.continue")
                 }.padding(12)
             }
-        }.background(MacDesignColor.canvas).frame(minWidth: 560, minHeight: 480)
+        }.frame(minWidth: 560, minHeight: 480).background(MacDesignColor.canvas)
             .task(id: presentation.id) {
                 if presentation.remoteIdentity != nil, let remoteRead {
                     let value = MacExpertChildHistoryReader(parentID: presentation.parentID, childID: presentation.child.id, readJournal: remoteText, read: remoteRead)

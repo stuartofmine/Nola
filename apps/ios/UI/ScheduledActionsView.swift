@@ -160,9 +160,9 @@ struct ScheduledActionsView: View {
                 }
 
         }
-        .navigationTitle(NSLocalizedString("scheduled.actions.redesigned.title", value: "Automation & Scheduling", comment: "Scheduled actions redesigned page title"))
+        .navigationTitle(embedded ? NSLocalizedString("scheduled.actions.redesigned.title", value: "Automation & Scheduling", comment: "Scheduled actions redesigned page title") : "")
         .navigationBarTitleDisplayMode(.inline)
-        .toolbar(embedded ? .visible : .hidden, for: .navigationBar)
+        .toolbarBackground(.hidden, for: .navigationBar)
         .refreshable {
             refreshNonce += 1
             await loadLatestRuns()
@@ -487,7 +487,8 @@ private struct ScheduledActionsFilterBar: View {
                     } label: {
                         Image(systemName: "xmark.circle.fill")
                             .foregroundStyle(.tertiary)
-                            .frame(width: 32, height: 44)
+                            .frame(width: 44, height: 44)
+                            .contentShape(Rectangle())
                     }
                     .buttonStyle(.plain)
                     .accessibilityLabel(NSLocalizedString("common.clear", value: "Clear", comment: "Clear search"))
@@ -509,7 +510,8 @@ private struct ScheduledActionsFilterBar: View {
                                 .foregroundStyle(selected ? Color.primary : Color.secondary)
                                 .padding(.horizontal, 11)
                                 .padding(.vertical, 7)
-                                .frame(minHeight: 40)
+                                .frame(minHeight: 44)
+                                .contentShape(Capsule())
                                 .background(
                                     selected ? DesignTokens.accentSubtleColor : Color.clear,
                                     in: Capsule()

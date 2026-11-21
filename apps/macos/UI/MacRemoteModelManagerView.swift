@@ -800,7 +800,7 @@ struct MacRemoteModelManagerView: View {
                 )
             }
         }
-        .buttonStyle(.borderedProminent)
+        .buttonStyle(.nolaProminent)
         .disabled(!hasUnsavedChanges || isSaving || loadError != nil || needsReload || draftValidationMessage != nil)
     }
 
@@ -2118,7 +2118,7 @@ struct MacAddRemoteModelSheet: View {
                 Button(primaryActionTitle) {
                     performPrimaryAction()
                 }
-                .buttonStyle(.borderedProminent)
+                .buttonStyle(.nolaProminent)
                 .keyboardShortcut(.defaultAction)
                 .disabled(currentValidationMessage != nil)
                 .accessibilityIdentifier("model-add.primary")

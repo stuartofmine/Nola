@@ -324,6 +324,7 @@ internal fun ChatScreen(
     var showModelMenu by remember { mutableStateOf(false) }
     var showIMSearch by rememberSaveable { mutableStateOf(false) }
     var imSearch by rememberSaveable { mutableStateOf("") }
+    var pendingScrollToMessageId by remember(state.conversationId) { mutableStateOf<String?>(null) }
     var showActions by remember { mutableStateOf(false) }
     var renameTarget by remember { mutableStateOf<Pair<String, String>?>(null) }
     var renameDraft by remember { mutableStateOf("") }
@@ -333,12 +334,21 @@ internal fun ChatScreen(
     var showContextSheet by rememberSaveable { mutableStateOf(ContextDisplayMode.Context) }
     var showContextSheetOpen by rememberSaveable(state.conversationId, state.executionHostBinding) { mutableStateOf(false) }
     var showConversations by rememberSaveable { mutableStateOf(true) }
+    fun setShowConversations(show: Boolean) {
+        showConversations = show
+        onDetailVisibilityChanged(!show)
+    }
     var mentionDetails by remember(state.conversationId) { mutableStateOf<InlineExpertMention?>(null) }
     var expertHistoryTarget by remember { mutableStateOf<ExpertHistoryTarget?>(null) }
     expertHistoryTarget?.let { target ->
         androidx.compose.runtime.key(target) { ExpertChildHistoryDialog(target,
             load = { before -> viewModel.loadExpertChildHistory(target, before) },
-            onContinue = { viewModel.continueExpertChildHistory(target.parentId, target.child); showConversations = false },
+            onContinue = {
+                viewModel.continueExpertChildHistory(target.parentId, target.child)
+                inspector = null
+                mentionDetails = null
+                setShowConversations(false)
+            },
             onClose = { expertHistoryTarget = null }) }
     }
     renameTarget?.let { (targetId, _) ->
@@ -377,12 +387,12 @@ internal fun ChatScreen(
         if (requestedNewConversation) {
             dismissNavigationKeyboard()
             viewModel.newConversation()
-            showConversations = false
+            setShowConversations(false)
             onRequestedConversationConsumed()
         } else requestedConversationId?.let { owner ->
             dismissNavigationKeyboard()
             viewModel.loadConversation(owner)
-            showConversations = false
+            setShowConversations(false)
             onRequestedConversationConsumed()
         }
     }
@@ -412,7 +422,7 @@ internal fun ChatScreen(
         androidx.compose.material3.AlertDialog(onDismissRequest = { mentionDetails = null }, title = { Text(ref.label) },
             text = if (description.isBlank()) null else ({ Text(description) }),
             confirmButton = { target?.let { item -> TextButton(onClick = {
-                mentionDetails = null; expertHistoryTarget = item
+                expertHistoryTarget = item
             }) { Text(stringResource(R.string.expert_child_history)) } } },
             dismissButton = { TextButton(onClick = { mentionDetails = null }) { Text(stringResource(R.string.common_done)) } })
     }
@@ -682,7 +692,7 @@ internal fun ChatScreen(
             showContextSheetOpen -> showContextSheetOpen = false
             inspector != null -> inspector = null
             showExpertPicker -> if (showExpertManagement && expertSourceAvailable) showExpertManagement = false else { showExpertManagement = false; showExpertPicker = false }
-            else -> { dismissNavigationKeyboard(); viewModel.loadConversations(); showConversations = true }
+            else -> { dismissNavigationKeyboard(); viewModel.loadConversations(); setShowConversations(true) }
         }
     }
 
@@ -700,7 +710,7 @@ internal fun ChatScreen(
                     showExpertManagement = false
                     if (expertSourceAvailable) viewModel.refreshConversationExperts(restoreSelection = false) else showExpertPicker = false
                 })
-            } else Column(Modifier.fillMaxWidth().navigationBarsPadding().padding(horizontal = 20.dp, vertical = 12.dp)) {
+            } else Column(Modifier.fillMaxWidth().imePadding().navigationBarsPadding().padding(horizontal = 20.dp, vertical = 12.dp)) {
                 TextButton(onClick = { showExpertManagement = true }, modifier = Modifier.testTag("chat.experts.manage").heightIn(min = 48.dp)) { Text(stringResource(R.string.expert_manage)) }
                 Text(stringResource(R.string.chat_experts), style = MaterialTheme.typography.titleLarge)
                 Text(stringResource(R.string.chat_experts_hint), style = MaterialTheme.typography.bodySmall,
@@ -709,27 +719,34 @@ internal fun ChatScreen(
                 if (agents.isEmpty()) {
                     Text(stringResource(R.string.chat_experts_empty), modifier = Modifier.padding(vertical = 20.dp))
                 } else {
-                    LazyColumn(Modifier.heightIn(max = 420.dp).testTag("chat.experts.list")) {
+                    LazyColumn(Modifier.weight(1f, fill = false).testTag("chat.experts.list")) {
                         items(agents, key = { it.id }) { agent ->
-                            Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-                            FilterChip(
-                                selected = agent.id in selectedExpertIds,
-                                onClick = { selectMention(agent.id, editorValue.selection); showExpertPicker = false },
-                                label = { Column {
-                                    Text(agent.name, style = MaterialTheme.typography.bodyLarge)
-                                    if (!mentionDetailsById[agent.id].isNullOrBlank()) Text(mentionDetailsById[agent.id].orEmpty(), style = MaterialTheme.typography.bodySmall,
-                                        color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 2, overflow = TextOverflow.Ellipsis)
-                                } },
-                                leadingIcon = { Text(agent.name.take(1).uppercase(), fontWeight = FontWeight.Bold) },
-                                modifier = Modifier.weight(1f).padding(vertical = 4.dp).heightIn(min = 56.dp)
-                            )
-                                if (pickerMembers[agent.id]?.let { it.agentRevision != agent.revision } == true) {
-                                    TextButton(onClick = { viewModel.requestLatestExpert(agent.id); showExpertPicker = false }) {
-                                        Text(stringResource(R.string.expert_rejoin_action))
+                            Column(Modifier.fillMaxWidth().padding(vertical = 4.dp)) {
+                                FilterChip(
+                                    selected = agent.id in selectedExpertIds,
+                                    onClick = { selectMention(agent.id, editorValue.selection); showExpertPicker = false },
+                                    label = { Column {
+                                        Text(agent.name, style = MaterialTheme.typography.bodyLarge, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                                        if (!mentionDetailsById[agent.id].isNullOrBlank()) Text(mentionDetailsById[agent.id].orEmpty(), style = MaterialTheme.typography.bodySmall,
+                                            color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 2, overflow = TextOverflow.Ellipsis)
+                                    } },
+                                    leadingIcon = { Text(agent.name.take(1).uppercase(), fontWeight = FontWeight.Bold) },
+                                    modifier = Modifier.fillMaxWidth().heightIn(min = 56.dp)
+                                )
+                                @OptIn(androidx.compose.foundation.layout.ExperimentalLayoutApi::class)
+                                androidx.compose.foundation.layout.FlowRow(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    horizontalArrangement = Arrangement.spacedBy(8.dp, Alignment.End),
+                                    verticalArrangement = Arrangement.spacedBy(4.dp)
+                                ) {
+                                    if (pickerMembers[agent.id]?.let { it.agentRevision != agent.revision } == true) {
+                                        TextButton(onClick = { viewModel.requestLatestExpert(agent.id) }, modifier = Modifier.heightIn(min = 48.dp)) {
+                                            Text(stringResource(R.string.expert_rejoin_action))
+                                        }
                                     }
-                                }
-                                TextButton(onClick = { colorEditingExpertId = agent.id }, modifier = Modifier.heightIn(min = 48.dp)) {
-                                    Text(stringResource(R.string.expert_color_action))
+                                    TextButton(onClick = { colorEditingExpertId = agent.id }, modifier = Modifier.heightIn(min = 48.dp)) {
+                                        Text(stringResource(R.string.expert_color_action))
+                                    }
                                 }
                             }
                         }
@@ -743,10 +760,32 @@ internal fun ChatScreen(
     }
 
     if (inspector != null || showContextSheetOpen) {
+        var sheetSaving by remember { mutableStateOf(false) }
+        var sheetDirty by remember { mutableStateOf(false) }
+        var sheetDismissTick by remember { mutableIntStateOf(0) }
+        val requestSheetDismiss = {
+            when (com.nola.ui.components.editorDismissDecision(sheetSaving, sheetDirty)) {
+                com.nola.ui.components.EditorDismissDecision.Allow -> {
+                    inspector = null
+                    showContextSheetOpen = false
+                }
+                com.nola.ui.components.EditorDismissDecision.Busy -> Unit
+                com.nola.ui.components.EditorDismissDecision.ConfirmDiscard -> {
+                    sheetDismissTick += 1
+                }
+            }
+        }
+        val inspectorSheetState = com.nola.ui.components.rememberGuardedEditorSheetState(
+            saving = sheetSaving,
+            dirty = sheetDirty,
+            onDiscardRequested = { sheetDismissTick += 1 },
+        )
         ModalBottomSheet(
             modifier = Modifier.dismissImeOnBlankTap(),
-            onDismissRequest = { inspector = null; showContextSheetOpen = false }, sheetState = androidx.compose.material3.rememberModalBottomSheetState(skipPartiallyExpanded = true)) {
-        Box(Modifier.fillMaxWidth().fillMaxHeight(0.92f).navigationBarsPadding()) {
+            onDismissRequest = requestSheetDismiss,
+            sheetState = inspectorSheetState,
+        ) {
+        Box(Modifier.fillMaxWidth().fillMaxHeight(0.92f).imePadding().navigationBarsPadding()) {
         if (inspector == ConversationInspector.Progress) {
             ConversationProgressPanel(
                 state = state,
@@ -761,7 +800,6 @@ internal fun ChatScreen(
                             convId,
                             load = { viewModel.loadExpertChildren(convId, it) },
                             onOpen = {
-                                inspector = null
                                 expertHistoryTarget = it
                             }
                         )
@@ -822,6 +860,11 @@ internal fun ChatScreen(
                 showContextSheet = ContextDisplayMode.Skills
                 showContextSheetOpen = true
             },
+            onDismissGuardStateChange = { saving, dirty ->
+                sheetSaving = saving
+                sheetDirty = dirty
+            },
+            dismissAttemptTick = sheetDismissTick,
             onBack = { inspector = null }
         )
     }
@@ -871,6 +914,11 @@ internal fun ChatScreen(
             onCompact = { viewModel.compactNow() },
             onReload = { viewModel.reloadContextState() },
             onSearchMemory = { query -> viewModel.searchMemoryForContext(query) },
+            onDismissGuardStateChange = { saving, dirty ->
+                sheetSaving = saving
+                sheetDirty = dirty
+            },
+            dismissAttemptTick = sheetDismissTick,
             onBack = { showContextSheetOpen = false }
         )
     }
@@ -885,13 +933,53 @@ internal fun ChatScreen(
             onDismissRequest = { showIMSearch = false },
             sheetState = androidx.compose.material3.rememberModalBottomSheetState(skipPartiallyExpanded = true)) {
             Column(Modifier.fillMaxWidth().fillMaxHeight(.92f).imePadding().navigationBarsPadding().padding(16.dp)) {
-                androidx.compose.material3.OutlinedTextField(value = imSearch, onValueChange = { imSearch = it },
-                    label = { Text(stringResource(R.string.chat_search_loaded_title)) }, modifier = Modifier.fillMaxWidth())
+                val query = imSearch.trim()
+                val matches = remember(surfaceMessages, query) {
+                    if (query.isEmpty()) emptyList()
+                    else surfaceMessages.filter { it.text.contains(query, ignoreCase = true) }
+                }
+                androidx.compose.material3.OutlinedTextField(
+                    value = imSearch,
+                    onValueChange = { imSearch = it },
+                    label = { Text(stringResource(R.string.chat_search_loaded_title)) },
+                    singleLine = true,
+                    trailingIcon = if (imSearch.isNotEmpty()) {
+                        {
+                            IconButton(onClick = { imSearch = "" }) {
+                                Icon(Icons.Filled.Close, contentDescription = stringResource(R.string.common_dismiss))
+                            }
+                        }
+                    } else null,
+                    modifier = Modifier.fillMaxWidth()
+                )
                 Text(stringResource(R.string.chat_search_loaded_scope), style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.padding(vertical = 12.dp))
-                LazyColumn(Modifier.weight(1f, fill = false).heightIn(max = 480.dp)) {
-                    items(surfaceMessages.filter { imSearch.isNotEmpty() && it.text.contains(imSearch, ignoreCase = true) }, key = { it.id }) {
-                        Text(it.text, modifier = Modifier.padding(vertical = 12.dp), style = MaterialTheme.typography.bodyLarge)
+                if (query.isNotEmpty() && matches.isEmpty()) {
+                    Text(
+                        stringResource(R.string.chat_no_search_results),
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.padding(vertical = 12.dp)
+                    )
+                } else {
+                    LazyColumn(Modifier.weight(1f, fill = false).heightIn(max = 480.dp)) {
+                        items(matches, key = { it.id }) { matched ->
+                            Text(
+                                matched.text,
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .clip(RoundedCornerShape(8.dp))
+                                    .clickable(role = Role.Button) {
+                                        pendingScrollToMessageId = matched.id
+                                        showIMSearch = false
+                                    }
+                                    .heightIn(min = 48.dp)
+                                    .padding(horizontal = 8.dp, vertical = 12.dp),
+                                style = MaterialTheme.typography.bodyLarge,
+                                maxLines = 4,
+                                overflow = TextOverflow.Ellipsis,
+                            )
+                        }
                     }
                 }
             }
@@ -915,7 +1003,7 @@ internal fun ChatScreen(
             }
             dismissNavigationKeyboard()
             viewModel.loadConversations()
-            showConversations = true
+            setShowConversations(true)
         } catch (cancelled: kotlinx.coroutines.CancellationException) {
             // Cancelling the system gesture keeps the same chat and draft.
             kotlinx.coroutines.withContext(kotlinx.coroutines.NonCancellable) {
@@ -940,12 +1028,12 @@ internal fun ChatScreen(
             onConversationSelected = {
                 dismissNavigationKeyboard()
                 viewModel.loadConversation(it)
-                showConversations = false
+                setShowConversations(false)
             },
             onNewConversation = {
                 dismissNavigationKeyboard()
                 viewModel.newConversation()
-                showConversations = false
+                setShowConversations(false)
             },
             onDeleteConversation = { viewModel.deleteConversation(it) },
             onRenameConversation = viewModel::renameConversation,
@@ -981,7 +1069,7 @@ internal fun ChatScreen(
         ) {
             NolaIconButton(
                 label = stringResource(R.string.common_back),
-                onClick = { dismissNavigationKeyboard(); viewModel.loadConversations(); showConversations = true },
+                onClick = { dismissNavigationKeyboard(); viewModel.loadConversations(); setShowConversations(true) },
                 modifier = Modifier.testTag("chat.conversation.back")
             ) {
                 Icon(painterResource(R.drawable.nola_back), contentDescription = stringResource(R.string.common_back))
@@ -991,6 +1079,7 @@ internal fun ChatScreen(
                     .weight(1f)
                     .heightIn(min = 48.dp)
                     .testTag("chat.topbar.title")
+                    .clip(RoundedCornerShape(8.dp))
                     .clickable { showActions = true }
                     .padding(horizontal = NolaSpacing.sm),
                 verticalArrangement = Arrangement.Center
@@ -1012,7 +1101,7 @@ internal fun ChatScreen(
                     },
                     style = MaterialTheme.typography.labelSmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    maxLines = 2,
+                    maxLines = 1,
                     overflow = TextOverflow.Ellipsis
                 )
             }
@@ -1036,18 +1125,10 @@ internal fun ChatScreen(
                     ) {
                         Icon(painterResource(R.drawable.nola_more), contentDescription = stringResource(R.string.common_more))
                     }
-                    if (showActions) ModalBottomSheet(
-                        modifier = Modifier.dismissImeOnBlankTap(),
-                        onDismissRequest = { showActions = false },
-                        sheetState = androidx.compose.material3.rememberModalBottomSheetState(skipPartiallyExpanded = true)
+                    DropdownMenu(
+                        expanded = showActions,
+                        onDismissRequest = { showActions = false }
                     ) {
-                        Column(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .verticalScroll(rememberScrollState())
-                                .navigationBarsPadding()
-                                .padding(bottom = 32.dp)
-                        ) {
                         state.conversationId?.let { activeConversationId ->
                             DropdownMenuItem(
                                 text = { Text(stringResource(R.string.chat_rename_conversation)) },
@@ -1085,7 +1166,6 @@ internal fun ChatScreen(
                                 }
                             })
                         }
-                        }
                     }
                 }
 
@@ -1121,7 +1201,7 @@ internal fun ChatScreen(
             ChatTranscript(
             state = state,
             onExpertMention = { mentionDetails = it },
-            onResendEditedMessage = if (state.expertContextOwner == null) viewModel::beginMessageEdit else null,
+            onResendEditedMessage = if (state.expertContextOwner == null && state.currentModel?.source != ModelInfo.ModelSource.WebHost) viewModel::beginMessageEdit else null,
             expertReplies = expertReplies,
             resumableExpertMessages = resumableExpertMessages,
             resumingExpertMessage = resumingExpertMessage,
@@ -1160,7 +1240,9 @@ internal fun ChatScreen(
             onCancelTask = { taskId -> viewModel.cancelAgentTask(viewModel.composerDrafts.ownerKey(state.conversationId), taskId) },
             loadTaskDetail = viewModel::loadTaskChildDetail,
             taskRecovery = viewModel::taskRecovery,
-            onSendTaskGuidance = { taskId, message -> viewModel.sendAgentTaskGuidance(viewModel.composerDrafts.ownerKey(state.conversationId), taskId, message).await() }
+            onSendTaskGuidance = { taskId, message -> viewModel.sendAgentTaskGuidance(viewModel.composerDrafts.ownerKey(state.conversationId), taskId, message).await() },
+            scrollToMessageId = pendingScrollToMessageId,
+            onScrollToMessageConsumed = { pendingScrollToMessageId = null },
         )
             }
         }
@@ -1177,32 +1259,82 @@ internal fun ChatScreen(
             )
             commandError?.let { Text(it, color = MaterialTheme.colorScheme.error, modifier = Modifier.padding(horizontal = 16.dp)) }
             if (commandsVisible) {
-                LazyColumn(Modifier.fillMaxWidth().heightIn(max = 224.dp).padding(horizontal = 16.dp)
-                    .border(1.dp, MaterialTheme.colorScheme.outlineVariant, RoundedCornerShape(14.dp))) {
+                LazyColumn(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .heightIn(max = 180.dp)
+                        .padding(horizontal = 16.dp, vertical = 4.dp)
+                        .clip(RoundedCornerShape(14.dp))
+                        .background(MaterialTheme.colorScheme.surface)
+                        .border(1.dp, MaterialTheme.colorScheme.outlineVariant, RoundedCornerShape(14.dp)),
+                    contentPadding = PaddingValues(6.dp)
+                ) {
                     items(commandCandidates, key = { it.name }) { command ->
-                        Row(Modifier.fillMaxWidth().heightIn(min = 52.dp).testTag("chat.command.${command.name}")
-                            .background(if (commandCandidates.getOrNull(commandIndex) == command) MaterialTheme.colorScheme.primaryContainer else androidx.compose.ui.graphics.Color.Transparent, RoundedCornerShape(10.dp))
-                            .clickable { completeCommand(command) }.padding(12.dp), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                            Text("/${command.name}"); Text(stringResource(command.label), color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .heightIn(min = 52.dp)
+                                .testTag("chat.command.${command.name}")
+                                .clip(RoundedCornerShape(10.dp))
+                                .background(if (commandCandidates.getOrNull(commandIndex) == command) MaterialTheme.colorScheme.primaryContainer else androidx.compose.ui.graphics.Color.Transparent)
+                                .clickable { completeCommand(command) }
+                                .padding(horizontal = 12.dp, vertical = 8.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(12.dp)
+                        ) {
+                            Text("/${command.name}", fontWeight = FontWeight.Medium)
+                            Text(
+                                stringResource(command.label),
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis,
+                                modifier = Modifier.weight(1f)
+                            )
                         }
                     }
                     if (commandCandidates.isEmpty()) item { Text(stringResource(R.string.composer_command_invalid), Modifier.padding(12.dp)) }
                 }
             }
             if (mentionsVisible) {
-                LazyColumn(Modifier.fillMaxWidth().heightIn(max = 224.dp).padding(horizontal = 16.dp)
-                    .border(1.dp, MaterialTheme.colorScheme.outlineVariant, RoundedCornerShape(14.dp)),
-                    state = mentionListState, contentPadding = PaddingValues(6.dp)) {
+                LazyColumn(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .heightIn(max = 180.dp)
+                        .padding(horizontal = 16.dp, vertical = 4.dp)
+                        .clip(RoundedCornerShape(14.dp))
+                        .background(MaterialTheme.colorScheme.surface)
+                        .border(1.dp, MaterialTheme.colorScheme.outlineVariant, RoundedCornerShape(14.dp)),
+                    state = mentionListState,
+                    contentPadding = PaddingValues(6.dp)
+                ) {
                     if (mentionCandidates.isEmpty()) item { Text(stringResource(R.string.chat_no_matching_experts), Modifier.padding(12.dp)) }
                     items(mentionCandidates, key = { it.id }) { expert ->
-                        Row(Modifier.fillMaxWidth().heightIn(min = 52.dp)
-                            .background(if (mentionCandidates.getOrNull(mentionIndex)?.id == expert.id)
-                                MaterialTheme.colorScheme.primaryContainer else androidx.compose.ui.graphics.Color.Transparent, RoundedCornerShape(10.dp))
-                            .clickable { selectMention(expert.id) }.padding(horizontal = 12.dp, vertical = 8.dp),
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .heightIn(min = 52.dp)
+                                .clip(RoundedCornerShape(10.dp))
+                                .background(if (mentionCandidates.getOrNull(mentionIndex)?.id == expert.id)
+                                    MaterialTheme.colorScheme.primaryContainer else androidx.compose.ui.graphics.Color.Transparent)
+                                .clickable { selectMention(expert.id) }
+                                .padding(horizontal = 12.dp, vertical = 8.dp),
                             verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                            Text(expert.name.take(1), Modifier.background(MaterialTheme.colorScheme.surfaceContainer, CircleShape).padding(8.dp))
-                            Column {
+                            horizontalArrangement = Arrangement.spacedBy(12.dp)
+                        ) {
+                            Box(
+                                modifier = Modifier
+                                    .size(32.dp)
+                                    .clip(CircleShape)
+                                    .background(MaterialTheme.colorScheme.surfaceContainer),
+                                contentAlignment = Alignment.Center
+                            ) {
+                                Text(
+                                    expert.name.take(1).uppercase(),
+                                    style = MaterialTheme.typography.labelMedium,
+                                    fontWeight = FontWeight.SemiBold
+                                )
+                            }
+                            Column(Modifier.weight(1f)) {
                                 Text(expert.name, maxLines = 1, overflow = TextOverflow.Ellipsis)
                                 if (!mentionDetailsById[expert.id].isNullOrBlank()) Text(mentionDetailsById[expert.id].orEmpty(), style = MaterialTheme.typography.bodySmall,
                                     color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1, overflow = TextOverflow.Ellipsis)
@@ -1504,24 +1636,6 @@ internal fun ChatScreen(
     }
     }
 
-    learningMessage?.let { message ->
-        ChatLearningFeedbackSheet(
-            message = message,
-            onDismiss = { learningMessage = null },
-            onSave = { statement, appliesToFuture ->
-                recordLearningFeedback(PersonalIntelligenceCore.from(context), message, statement, appliesToFuture)
-                if (appliesToFuture) {
-                    intelligenceViewModel.saveEntry(
-                        kind = IntelligenceEntryKind.Preference,
-                        index = null,
-                        value = statement
-                    )
-                }
-                learningMessage = null
-            }
-        )
-    }
-
     actionMessage?.let { message ->
         ChatMessageActionSheet(
             message = message,
@@ -1534,10 +1648,17 @@ internal fun ChatScreen(
                 )
                 actionMessage = null
             },
-            onTeach = if (message.role == ChatRole.assistant && !state.processingState.isGenerating) {
-                {
+            onSaveLearning = if (message.role == ChatRole.assistant && !state.processingState.isGenerating) {
+                { statement, appliesToFuture ->
+                    recordLearningFeedback(PersonalIntelligenceCore.from(context), message, statement, appliesToFuture)
+                    if (appliesToFuture) {
+                        intelligenceViewModel.saveEntry(
+                            kind = IntelligenceEntryKind.Preference,
+                            index = null,
+                            value = statement
+                        )
+                    }
                     actionMessage = null
-                    learningMessage = message
                 }
             } else {
                 null
@@ -1556,9 +1677,7 @@ internal fun ChatTranscript(
     onResumeExpertMessage: (String) -> Unit = {},
     uiSurfaces: List<com.nola.data.local.UiSnapshot> = emptyList(),
     uiSurfaceFailure: String? = null,
-    onUiSubmit: suspend (com.nola.data.local.UiSubmission) -> com.nola.ui.generative.UiSubmissionOutcome = {
-        com.nola.ui.generative.UiSubmissionOutcome.Rejected("交互入口不可用。")
-    },
+    onUiSubmit: (suspend (com.nola.data.local.UiSubmission) -> com.nola.ui.generative.UiSubmissionOutcome)? = null,
     onCancelQueuedUiAction: () -> Unit = {},
     onUiAccepted: (com.nola.data.local.UiInteractionReceipt) -> Unit = {},
     onUiRestore: suspend (com.nola.data.local.UiSurfaceIdentity) -> com.nola.data.local.UiSubmission? = { null },
@@ -1586,7 +1705,12 @@ internal fun ChatTranscript(
     onSendTaskGuidance: suspend (String, String) -> Boolean = { _, _ -> false },
     onResendEditedMessage: ((ConversationMessage) -> Unit)? = null,
     onExpertMention: ((InlineExpertMention) -> Unit)? = null,
+    scrollToMessageId: String? = null,
+    onScrollToMessageConsumed: () -> Unit = {},
 ) {
+    val uiEntryUnavailable = stringResource(R.string.chat_ui_entry_unavailable)
+    val effectiveOnUiSubmit: suspend (com.nola.data.local.UiSubmission) -> com.nola.ui.generative.UiSubmissionOutcome =
+        onUiSubmit ?: { com.nola.ui.generative.UiSubmissionOutcome.Rejected(uiEntryUnavailable) }
     val timelineMessages = state.timelineMessages()
     val currentTimelineIds = remember(timelineMessages) { timelineMessages.map { it.id } }
     val expertFollowSignal = remember(expertReplies) {
@@ -1632,6 +1756,22 @@ internal fun ChatTranscript(
 
     // Drag events cannot be conflated with a layout snapshot. Stop following
     // as soon as the pointer takes ownership, before its first scroll delta.
+    LaunchedEffect(scrollToMessageId) {
+        val targetId = scrollToMessageId ?: return@LaunchedEffect
+        val resolvedId = if (timelineMessages.any { it.id == targetId }) targetId
+        else expertReplies.entries.firstOrNull { (_, replies) -> replies.any { it.message?.id == targetId } }?.key
+        val msgIndex = resolvedId?.let { id -> timelineMessages.indexOfFirst { it.id == id } } ?: -1
+        if (msgIndex >= 0) {
+            val headerCount =
+                (if (state.compactionSourceStatus != CompactionSourceStatus.Idle) 1 else 0) +
+                (if (state.rejectedQueuedUiAction?.takeIf { it.identity.conversationId == state.conversationId } != null) 1 else 0) +
+                (if (uiSurfaceFailure != null) 1 else 0)
+            followsLatest = false
+            val targetIndex = headerCount + msgIndex
+            if (currentReduceMotion) listState.scrollToItem(targetIndex) else listState.animateScrollToItem(targetIndex)
+        }
+        onScrollToMessageConsumed()
+    }
     LaunchedEffect(listState.interactionSource) {
         listState.interactionSource.interactions.collect { interaction ->
             if (interaction is androidx.compose.foundation.interaction.DragInteraction.Start) {
@@ -1894,13 +2034,13 @@ internal fun ChatTranscript(
                         onCompactionSourceRequested = onCompactionSourceRequested,
                         onLongPress = { onLongPress(message) },
                         onResendEditedMessage = onResendEditedMessage, onExpertMention = onExpertMention,
-                        uiPartContent = { part -> CanonicalUiReference(part, uiSurfaces, onUiReadHistory, onUiSubmit, onUiAccepted, onUiRestore, onUiPreview) },
+                        uiPartContent = { part -> CanonicalUiReference(part, uiSurfaces, onUiReadHistory, effectiveOnUiSubmit, onUiAccepted, onUiRestore, onUiPreview) },
                     )
                     if (message.role == com.nola.domain.model.ChatRole.user) {
                         expertReplies[message.id].orEmpty().forEach { reply ->
                             ConversationExpertReplyBubble(reply, Modifier.padding(top = 6.dp), onResolveHostPermission,
                                 onResolveLocalPermission, onHostPermissionInstruction, onLocalPermissionInstruction,
-                                uiPartContent = { part -> CanonicalUiReference(part, uiSurfaces, onUiReadHistory, onUiSubmit, onUiAccepted, onUiRestore, onUiPreview) })
+                                uiPartContent = { part -> CanonicalUiReference(part, uiSurfaces, onUiReadHistory, effectiveOnUiSubmit, onUiAccepted, onUiRestore, onUiPreview) })
                         }
                         if (message.id in resumableExpertMessages) TextButton(onClick = { onResumeExpertMessage(message.id) },
                             enabled = resumingExpertMessage == null) { Text(stringResource(R.string.chat_resume_expert_message)) }
@@ -2054,7 +2194,7 @@ internal fun ChatErrorRecoveryCard(
                     Icon(
                         Icons.Filled.Close,
                         contentDescription = stringResource(R.string.chat_error_dismiss),
-                        tint = MaterialTheme.colorScheme.onErrorContainer,
+                        tint = MaterialTheme.colorScheme.onSurfaceVariant,
                         modifier = Modifier.size(15.dp)
                     )
                 }
@@ -3122,19 +3262,19 @@ private fun CompactionSourceActions(
             return@forEach
         }
         Card(
+            onClick = {
+                onRequested(
+                    CompactionSourceNavigator.Request(
+                        conversationId = conversationId,
+                        compactionPartId = compaction.partId,
+                        sourceItemIds = compaction.sourceItemIds,
+                        sourceFingerprint = compaction.sourceFingerprint,
+                    )
+                )
+            },
             modifier = Modifier
                 .fillMaxWidth()
-                .padding(bottom = 6.dp)
-                .clickable {
-                    onRequested(
-                        CompactionSourceNavigator.Request(
-                            conversationId = conversationId,
-                            compactionPartId = compaction.partId,
-                            sourceItemIds = compaction.sourceItemIds,
-                            sourceFingerprint = compaction.sourceFingerprint,
-                        )
-                    )
-                },
+                .padding(bottom = 6.dp),
             colors = CardDefaults.cardColors(
                 containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.32f),
             ),
@@ -3434,61 +3574,264 @@ internal fun openAnswerSource(context: android.content.Context, source: AnswerSo
     }
 }
 
+private enum class MessageActionSheetStep { Actions, TeachFeedback }
+
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 private fun ChatMessageActionSheet(
     message: ConversationMessage,
     onDismiss: () -> Unit,
     onCopy: () -> Unit,
-    onTeach: (() -> Unit)?
+    onSaveLearning: ((String, Boolean) -> Unit)?
 ) {
+    val reduceMotion = rememberReduceMotionEnabled()
+    var step by remember(message.id) { mutableStateOf(MessageActionSheetStep.Actions) }
+    var focus by remember(message.id) { mutableStateOf(ChatLearningFocus.Concise) }
+    var note by rememberSaveable(message.id) { mutableStateOf("") }
+    var appliesToFuture by rememberSaveable(message.id) { mutableStateOf(true) }
+    var discard by remember { mutableStateOf(false) }
+    var discardToActions by remember { mutableStateOf(false) }
+    val dirty = step == MessageActionSheetStep.TeachFeedback &&
+        (note.isNotEmpty() || !appliesToFuture || focus != ChatLearningFocus.Concise)
+    val requestDismiss = {
+        if (dirty) {
+            discardToActions = false
+            discard = true
+        } else {
+            onDismiss()
+        }
+    }
+    val requestBackToActions = {
+        if (dirty) {
+            discardToActions = true
+            discard = true
+        } else {
+            step = MessageActionSheetStep.Actions
+        }
+    }
+    if (discard) {
+        com.nola.ui.components.DiscardChangesDialog(
+            onDiscard = {
+                discard = false
+                if (discardToActions) {
+                    note = ""
+                    appliesToFuture = true
+                    focus = ChatLearningFocus.Concise
+                    step = MessageActionSheetStep.Actions
+                } else {
+                    onDismiss()
+                }
+            },
+            onKeepEditing = { discard = false }
+        )
+    }
+    val defaultStatement = stringResource(focus.statementRes)
+
     ModalBottomSheet(
         modifier = Modifier.dismissImeOnBlankTap(),
-        onDismissRequest = onDismiss,
-        sheetState = androidx.compose.material3.rememberModalBottomSheetState(skipPartiallyExpanded = true)) {
-        Column(
-            modifier = Modifier
-                .fillMaxWidth()
-                .navigationBarsPadding()
-                .padding(horizontal = 18.dp)
-                .padding(bottom = 24.dp),
-            verticalArrangement = Arrangement.spacedBy(10.dp)
-        ) {
-            Text(
-                stringResource(R.string.chat_message_actions_title),
-                style = MaterialTheme.typography.titleMedium,
-                fontWeight = FontWeight.SemiBold,
-                modifier = Modifier.padding(horizontal = 4.dp)
-            )
-            Text(stringResource(R.string.canonical_reader_snapshot),
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant)
-            SelectionContainer {
-                Text(
-                    message.text,
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .heightIn(max = 320.dp)
-                        .verticalScroll(rememberScrollState())
-                        .clip(RoundedCornerShape(NolaRadius.md))
-                        .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.46f))
-                        .padding(horizontal = 13.dp, vertical = 11.dp),
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                )
-            }
-            ChatMessageActionRow(
-                icon = Icons.Filled.ContentCopy,
-                title = stringResource(R.string.chat_message_action_copy),
-                onClick = onCopy
-            )
-            if (onTeach != null) {
-                ChatMessageActionRow(
-                    icon = Icons.Filled.AutoAwesome,
-                    title = stringResource(R.string.chat_message_action_teach),
-                    tint = MaterialTheme.colorScheme.primary,
-                    onClick = onTeach
-                )
+        onDismissRequest = requestDismiss,
+        sheetState = com.nola.ui.components.rememberGuardedEditorSheetState(false, dirty) {
+            discardToActions = false
+            discard = true
+        }
+    ) {
+        AnimatedContent(
+            targetState = step,
+            transitionSpec = {
+                fadeIn(tween(if (reduceMotion) 0 else NolaMotion.controlState)) togetherWith
+                    fadeOut(tween(if (reduceMotion) 0 else NolaMotion.fast))
+            },
+            label = "chat-message-action-sheet-step"
+        ) { currentStep ->
+            when (currentStep) {
+                MessageActionSheetStep.Actions -> {
+                    Column(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .verticalScroll(rememberScrollState())
+                            .navigationBarsPadding()
+                            .padding(horizontal = 18.dp)
+                            .padding(bottom = 24.dp),
+                        verticalArrangement = Arrangement.spacedBy(10.dp)
+                    ) {
+                        Text(
+                            stringResource(R.string.chat_message_actions_title),
+                            style = MaterialTheme.typography.titleMedium,
+                            fontWeight = FontWeight.SemiBold,
+                            modifier = Modifier.padding(horizontal = 4.dp)
+                        )
+                        Text(stringResource(R.string.canonical_reader_snapshot),
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        SelectionContainer {
+                            Text(
+                                message.text,
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .heightIn(max = 260.dp)
+                                    .verticalScroll(rememberScrollState())
+                                    .clip(RoundedCornerShape(NolaRadius.md))
+                                    .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.46f))
+                                    .padding(horizontal = 13.dp, vertical = 11.dp),
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
+                        }
+                        ChatMessageActionRow(
+                            icon = Icons.Filled.ContentCopy,
+                            title = stringResource(R.string.chat_message_action_copy),
+                            onClick = onCopy
+                        )
+                        if (onSaveLearning != null) {
+                            ChatMessageActionRow(
+                                icon = Icons.Filled.AutoAwesome,
+                                title = stringResource(R.string.chat_message_action_teach),
+                                tint = MaterialTheme.colorScheme.primary,
+                                onClick = { step = MessageActionSheetStep.TeachFeedback }
+                            )
+                        }
+                    }
+                }
+                MessageActionSheetStep.TeachFeedback -> {
+                    Column(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .verticalScroll(rememberScrollState())
+                            .imePadding()
+                            .navigationBarsPadding()
+                            .padding(horizontal = 20.dp)
+                            .padding(bottom = 28.dp),
+                        verticalArrangement = Arrangement.spacedBy(18.dp)
+                    ) {
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(4.dp)
+                        ) {
+                            NolaIconButton(
+                                label = stringResource(R.string.common_back),
+                                onClick = requestBackToActions
+                            ) {
+                                Icon(painterResource(R.drawable.nola_back), contentDescription = stringResource(R.string.common_back))
+                            }
+                            Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                                Text(
+                                    stringResource(R.string.chat_learning_title),
+                                    style = MaterialTheme.typography.titleLarge,
+                                    fontWeight = FontWeight.SemiBold
+                                )
+                                Text(
+                                    stringResource(R.string.chat_learning_subtitle),
+                                    style = MaterialTheme.typography.bodyMedium,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                            }
+                        }
+
+                        Column(verticalArrangement = Arrangement.spacedBy(7.dp)) {
+                            Text(
+                                stringResource(R.string.chat_learning_preview),
+                                style = MaterialTheme.typography.labelSmall,
+                                fontWeight = FontWeight.SemiBold,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                            Text(
+                                message.text,
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .clip(RoundedCornerShape(NolaRadius.md))
+                                    .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.52f))
+                                    .padding(12.dp),
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                maxLines = 3,
+                                overflow = TextOverflow.Ellipsis
+                            )
+                        }
+
+                        Row(
+                            modifier = Modifier.horizontalScroll(rememberScrollState()),
+                            horizontalArrangement = Arrangement.spacedBy(8.dp)
+                        ) {
+                            ChatLearningFocus.entries.forEach { item ->
+                                FilterChip(
+                                    selected = focus == item,
+                                    onClick = { focus = item },
+                                    label = { Text(stringResource(item.titleRes)) }
+                                )
+                            }
+                        }
+
+                        Column(verticalArrangement = Arrangement.spacedBy(7.dp)) {
+                            Text(
+                                stringResource(R.string.chat_learning_note),
+                                style = MaterialTheme.typography.labelLarge,
+                                fontWeight = FontWeight.SemiBold
+                            )
+                            Box(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .heightIn(min = 92.dp)
+                                    .clip(RoundedCornerShape(NolaRadius.md))
+                                    .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.48f))
+                                    .padding(12.dp)
+                            ) {
+                                BasicTextField(
+                                    value = note,
+                                    onValueChange = { note = it },
+                                    modifier = Modifier.fillMaxWidth(),
+                                    textStyle = MaterialTheme.typography.bodyMedium.copy(color = MaterialTheme.colorScheme.onSurface),
+                                    cursorBrush = SolidColor(MaterialTheme.colorScheme.primary)
+                                )
+                                if (note.isEmpty()) {
+                                    Text(
+                                        stringResource(R.string.chat_learning_note_placeholder),
+                                        style = MaterialTheme.typography.bodyMedium,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.72f)
+                                    )
+                                }
+                            }
+                        }
+
+                        Row(
+                            modifier = Modifier.fillMaxWidth().clip(RoundedCornerShape(8.dp)).toggleable(value = appliesToFuture, role = Role.Switch, onValueChange = { appliesToFuture = it }),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(12.dp)
+                        ) {
+                            Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                                Text(
+                                    stringResource(R.string.chat_learning_future),
+                                    style = MaterialTheme.typography.bodyMedium,
+                                    fontWeight = FontWeight.SemiBold
+                                )
+                                Text(
+                                    stringResource(R.string.chat_learning_future_detail),
+                                    style = MaterialTheme.typography.labelSmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                            }
+                            NolaSwitch(checked = appliesToFuture, onCheckedChange = null)
+                        }
+
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.End,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            TextButton(onClick = requestBackToActions) {
+                                Text(stringResource(R.string.chat_learning_cancel))
+                            }
+                            TextButton(
+                                onClick = {
+                                    val detail = note.trim()
+                                    onSaveLearning?.invoke(if (detail.isEmpty()) defaultStatement else "$defaultStatement $detail", appliesToFuture)
+                                }
+                            ) {
+                                Text(stringResource(R.string.chat_learning_save), fontWeight = FontWeight.SemiBold)
+                            }
+                        }
+                    }
+                }
             }
         }
     }
@@ -3538,154 +3881,6 @@ private enum class ChatLearningFocus(
     Tone(R.string.chat_learning_focus_tone, R.string.chat_learning_statement_tone),
     Context(R.string.chat_learning_focus_context, R.string.chat_learning_statement_context),
     Correction(R.string.chat_learning_focus_correction, R.string.chat_learning_statement_correction)
-}
-
-@OptIn(ExperimentalMaterial3Api::class)
-@Composable
-private fun ChatLearningFeedbackSheet(
-    message: ConversationMessage,
-    onDismiss: () -> Unit,
-    onSave: (String, Boolean) -> Unit
-) {
-    var focus by remember { mutableStateOf(ChatLearningFocus.Concise) }
-    var note by rememberSaveable(message.id) { mutableStateOf("") }
-    var appliesToFuture by rememberSaveable(message.id) { mutableStateOf(true) }
-    var discard by remember { mutableStateOf(false) }
-    val dirty = note.isNotEmpty() || !appliesToFuture || focus != ChatLearningFocus.Concise
-    val requestDismiss = { if (dirty) discard = true else onDismiss() }
-    if (discard) com.nola.ui.components.DiscardChangesDialog(onDiscard = onDismiss, onKeepEditing = { discard = false })
-    val defaultStatement = stringResource(focus.statementRes)
-
-    ModalBottomSheet(
-        modifier = Modifier.dismissImeOnBlankTap(),
-        onDismissRequest = requestDismiss, sheetState = com.nola.ui.components.rememberGuardedEditorSheetState(false, dirty) { discard = true }) {
-        Column(
-            modifier = Modifier
-                .fillMaxWidth()
-                .verticalScroll(rememberScrollState())
-                .imePadding()
-                .navigationBarsPadding()
-                .padding(horizontal = 20.dp)
-                .padding(bottom = 28.dp),
-            verticalArrangement = Arrangement.spacedBy(18.dp)
-        ) {
-            Column(verticalArrangement = Arrangement.spacedBy(5.dp)) {
-                Text(
-                    stringResource(R.string.chat_learning_title),
-                    style = MaterialTheme.typography.titleLarge,
-                    fontWeight = FontWeight.SemiBold
-                )
-                Text(
-                    stringResource(R.string.chat_learning_subtitle),
-                    style = MaterialTheme.typography.bodyMedium,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                )
-            }
-
-            Column(verticalArrangement = Arrangement.spacedBy(7.dp)) {
-                Text(
-                    stringResource(R.string.chat_learning_preview),
-                    style = MaterialTheme.typography.labelSmall,
-                    fontWeight = FontWeight.SemiBold,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                )
-                Text(
-                    message.text,
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .clip(RoundedCornerShape(NolaRadius.md))
-                        .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.52f))
-                        .padding(12.dp),
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    maxLines = 3,
-                    overflow = TextOverflow.Ellipsis
-                )
-            }
-
-            Row(
-                modifier = Modifier.horizontalScroll(rememberScrollState()),
-                horizontalArrangement = Arrangement.spacedBy(8.dp)
-            ) {
-                ChatLearningFocus.entries.forEach { item ->
-                    FilterChip(
-                        selected = focus == item,
-                        onClick = { focus = item },
-                        label = { Text(stringResource(item.titleRes)) }
-                    )
-                }
-            }
-
-            Column(verticalArrangement = Arrangement.spacedBy(7.dp)) {
-                Text(
-                    stringResource(R.string.chat_learning_note),
-                    style = MaterialTheme.typography.labelLarge,
-                    fontWeight = FontWeight.SemiBold
-                )
-                Box(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .heightIn(min = 92.dp)
-                        .clip(RoundedCornerShape(NolaRadius.md))
-                        .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.48f))
-                        .padding(12.dp)
-                ) {
-                    BasicTextField(
-                        value = note,
-                        onValueChange = { note = it },
-                        modifier = Modifier.fillMaxWidth(),
-                        textStyle = MaterialTheme.typography.bodyMedium.copy(color = MaterialTheme.colorScheme.onSurface),
-                        cursorBrush = SolidColor(MaterialTheme.colorScheme.primary)
-                    )
-                    if (note.isEmpty()) {
-                        Text(
-                            stringResource(R.string.chat_learning_note_placeholder),
-                            style = MaterialTheme.typography.bodyMedium,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.72f)
-                        )
-                    }
-                }
-            }
-
-            Row(
-                modifier = Modifier.fillMaxWidth().toggleable(value = appliesToFuture, role = Role.Switch, onValueChange = { appliesToFuture = it }),
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(12.dp)
-            ) {
-                Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
-                    Text(
-                        stringResource(R.string.chat_learning_future),
-                        style = MaterialTheme.typography.bodyMedium,
-                        fontWeight = FontWeight.SemiBold
-                    )
-                    Text(
-                        stringResource(R.string.chat_learning_future_detail),
-                        style = MaterialTheme.typography.labelSmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                    )
-                }
-                NolaSwitch(checked = appliesToFuture, onCheckedChange = null)
-            }
-
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.End,
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                TextButton(onClick = requestDismiss) {
-                    Text(stringResource(R.string.chat_learning_cancel))
-                }
-                TextButton(
-                    onClick = {
-                        val detail = note.trim()
-                        onSave(if (detail.isEmpty()) defaultStatement else "$defaultStatement $detail", appliesToFuture)
-                    }
-                ) {
-                    Text(stringResource(R.string.chat_learning_save), fontWeight = FontWeight.SemiBold)
-                }
-            }
-        }
-    }
 }
 
 private fun recordLearningFeedback(
@@ -3758,7 +3953,11 @@ private fun AnswerContextFooter(message: ConversationMessage) {
     )
 
     Column(modifier = Modifier.fillMaxWidth().padding(horizontal = 4.dp, vertical = 4.dp)) {
-        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+        @OptIn(androidx.compose.foundation.layout.ExperimentalLayoutApi::class)
+        androidx.compose.foundation.layout.FlowRow(
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+            verticalArrangement = Arrangement.spacedBy(6.dp)
+        ) {
             if (sourceLabels.isNotEmpty()) {
                 Row(
                     modifier = Modifier
@@ -3880,6 +4079,7 @@ private fun HostToolTimeline(
         Row(
             modifier = Modifier
                 .fillMaxWidth()
+                .clip(RoundedCornerShape(8.dp))
                 .clickable(role = Role.Button) { userExpanded = !userExpanded }
                 .heightIn(min = 48.dp)
                 .padding(horizontal = 2.dp, vertical = 7.dp),

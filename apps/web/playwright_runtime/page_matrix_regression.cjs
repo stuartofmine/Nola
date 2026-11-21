@@ -142,10 +142,10 @@ async function fixture(route){
     if(await card.count()) {
      await card.locator('[role=alert]').waitFor();
      await card.getByRole('button').click();
-     const toggle=card.locator('button[aria-pressed]');await toggle.waitFor();
-     assert.equal(await toggle.getAttribute('aria-pressed'),'false');
+     const toggle=card.locator('input[role="switch"]');await toggle.waitFor();
+     assert.equal(await toggle.isChecked(),false);
      await toggle.click();
-     await page.waitForFunction(()=>document.querySelector('#desktopLoginItemCard button[aria-pressed]')?.getAttribute('aria-pressed')==='true');
+     await page.waitForFunction(()=>document.querySelector('#desktopLoginItemCard input[role="switch"]')?.checked===true);
      assert.equal(await card.locator('[role=alert]').count(),0,'lost write reconciles actual saved value');
     }
     await page.goto(`${base}/settings`,{waitUntil:'networkidle'});

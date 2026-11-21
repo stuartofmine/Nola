@@ -104,10 +104,14 @@ private struct HomeHealthDashboardCard: View {
                         .font(.caption)
                         .foregroundStyle(.tertiary)
                     Spacer()
-                    Button(L10n.settings, action: onTapOpenSettings)
-                        .font(.caption.weight(.semibold))
-                        .buttonStyle(.plain)
-                        .foregroundStyle(DesignTokens.primaryColor)
+                    Button(action: onTapOpenSettings) {
+                        Text(L10n.settings)
+                            .font(.caption.weight(.semibold))
+                            .frame(minWidth: 44, minHeight: 44)
+                            .contentShape(Rectangle())
+                    }
+                    .buttonStyle(.plain)
+                    .foregroundStyle(DesignTokens.primaryColor)
                 }
             } else if store.isLoading {
                 HStack(spacing: DesignTokens.spacing_sm) {

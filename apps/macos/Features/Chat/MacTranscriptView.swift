@@ -54,6 +54,8 @@ struct MacTranscriptView: View {
     let isRunning: Bool
     let liveActivities: [MacAgentActivity]
     let searchText: String
+    var focusedSearchMessageID: UUID? = nil
+    var searchNavigationToken: UUID = UUID()
     let bottomClearance: CGFloat
     var viewportStore: MacTranscriptViewportStore? = nil
     var terminalRevision: UInt64 = 0
@@ -252,6 +254,25 @@ struct MacTranscriptView: View {
             }
             .onChange(of: isRunning) { _, _ in
                 scrollController.contentChanged()
+            }
+            .onChange(of: searchNavigationToken) { _, _ in
+                guard let targetID = focusedSearchMessageID else { return }
+                if let targetIndex = messages.firstIndex(where: { $0.id == targetID }) {
+                    let requiredVisible = messages.count - targetIndex
+                    if requiredVisible > visibleMessageLimit {
+                        visibleMessageLimit = requiredVisible
+                    }
+                }
+                Task { @MainActor in
+                    await Task.yield()
+                    if reduceMotion {
+                        proxy.scrollTo(targetID, anchor: .center)
+                    } else {
+                        withAnimation(.easeOut(duration: 0.18)) {
+                            proxy.scrollTo(targetID, anchor: .center)
+                        }
+                    }
+                }
             }
             .overlay(alignment: .bottomTrailing) {
                 MacTranscriptFollowControl(controller: scrollController, bottomClearance: bottomClearance)

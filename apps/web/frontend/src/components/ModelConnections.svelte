@@ -5,10 +5,13 @@
     import GatewayClients from './GatewayClients.svelte';
     import SourceAccounts from './SourceAccounts.svelte';
     import ModelCapabilityProbe from './ModelCapabilityProbe.svelte';
+    import ConfirmationDialog from './ConfirmationDialog.svelte';
+    import type { ConfirmationHandle } from '../lib/confirmation';
     import { api as unscopedApi } from '../lib/api';
     import { locale, t } from '../lib/i18n';
     import { loadConnections, modelSelectionCommand, type ConnectionInventory, type ConnectionSnapshot, type ImportPlan, type ImportResult } from '../lib/modelConnections';
     let { openConnectionId = '' }: { openConnectionId?: string } = $props();
+    let confirmation: ConfirmationHandle;
     function importCredentialLabel(status: string) {
         switch (status) {
             case 'available': return t($locale, 'connections.importKeyAvailable');
@@ -142,7 +145,17 @@
             if (alive) { results = value; plan = null; await refresh(); }
         });
     }
-    function configureGateway(revoke: boolean) {
+    async function configureGateway(revoke: boolean) {
+        if (busy) return;
+        if (revoke) {
+            const approved = await confirmation.ask({
+                title: t($locale, 'connections.revokeToken'),
+                description: t($locale, 'connections.gatewayHint'),
+                confirmLabel: t($locale, 'connections.revokeToken'),
+                destructive: true,
+            });
+            if (!approved || !alive) return;
+        }
         void operation(async () => {
             const value = await api<{revision: number; token?: string}>('/api/model-gateway/access', {method: 'POST', body: JSON.stringify({expected_revision: gateway.revision, revoke})});
             if (alive) { gatewayToken = value.token ?? ''; tokenCopied = false; gateway = {revision: value.revision, enabled: !revoke}; }
@@ -152,6 +165,7 @@
     onMount(() => { void refresh(); void api<typeof gateway>('/api/model-gateway/access').then(value => { if (alive) gateway = value; }).catch(() => { if (alive) failed = 'connections.loadFailed'; }); return () => { void cancelDiscovery(); alive = false; gatewayToken = ''; controller?.abort(); }; });
 </script>
 
+<ConfirmationDialog bind:this={confirmation} />
 <section class="connections"><div class="row between connections-heading"><h2>{t($locale, 'connections.title')}</h2><button disabled={busy || loading} onclick={refresh}>{t($locale, 'rooms.refresh')}</button></div>
     {#if loading || busy}<p role="status">{t($locale, busy ? 'rooms.saving' : 'rooms.loading')}</p>{/if}
     {#if discovery}<button disabled={cancellingDiscovery} onclick={cancelDiscovery}>{t($locale, 'rooms.cancel')}</button>{/if}
@@ -200,7 +214,7 @@
     <details bind:this={accessPanel}><summary>{t($locale, 'connections.gateway')}</summary>
         <p>{t($locale, 'connections.gatewayHint')}</p><code>{typeof location === 'undefined' ? '' : location.origin}/gateway/v1</code>
         <p><button disabled={busy} onclick={() => configureGateway(false)}>{t($locale, 'connections.issueToken')}</button>
-        {#if gateway.enabled}<button disabled={busy} onclick={() => configureGateway(true)}>{t($locale, 'connections.revokeToken')}</button>{/if}</p>
+        {#if gateway.enabled}<button class="danger" disabled={busy} onclick={() => configureGateway(true)}>{t($locale, 'connections.revokeToken')}</button>{/if}</p>
         {#if gatewayToken}<div class="gateway-token"><label>{t($locale, 'connections.tokenOnce')}<input readonly type="text" class="token-value" value={gatewayToken} onclick={event => event.currentTarget.select()} /></label><button type="button" onclick={copyGatewayToken}>{t($locale, tokenCopied ? 'shell.login.copied' : 'shell.markdown.copy')}</button></div>{/if}
     </details>
     <GatewayClients {gateway} openAccess={openGatewayAccess} />
@@ -236,7 +250,7 @@
     .model > span { min-width: 0; overflow-wrap: anywhere; }
     .model small { display: block; font-size: .75rem; }
     .integrations > h3 { font-size: .9375rem; font-weight: 600; margin: 0 0 8px; }
-    summary { cursor: pointer; min-height: 44px; padding: 10px 0; }
+    summary { cursor: pointer; min-height: 44px; padding: 10px 12px; }
     .gateway-token { display: flex; flex-wrap: wrap; align-items: flex-end; gap: 10px; }
     .gateway-token label { flex: 1 1 240px; min-width: 0; }
     .token-value { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }

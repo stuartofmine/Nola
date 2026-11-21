@@ -63,12 +63,12 @@
             </fieldset>
         {/each}
         <div class="actions">
-            <button type="submit" disabled={locked}>{t($locale, 'chatActivity.answerSend')}</button>
+            <button type="submit" class="primary" disabled={locked}>{t($locale, writing ? 'models.saving' : 'chatActivity.answerSend')}</button>
             <button type="button" disabled={locked} onclick={() => send({ type: 'decline', reason: null })}>{t($locale, 'chatActivity.answerDecline')}</button>
         </div>
     </form>
     {/if}
-    {#if error}<p role="alert">{t($locale, error)}</p>{/if}
+    {#if error}<p role="alert" class="error">{t($locale, error)}</p>{/if}
     {#if pendingBody && !writing && !conflict}<button onclick={() => send()} disabled={stale}>{t($locale, 'chatActivity.retryAnswer')}</button>{/if}
     {#if conflict}<button onclick={onrefresh}>{t($locale, 'chatActivity.refresh')}</button>{/if}
 </article>

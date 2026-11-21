@@ -179,6 +179,7 @@ struct ModelDownloadView: View {
                             .accessibilityLabel(NSLocalizedString("model.action.pause", value: "Pause download", comment: "Local model action"))
                             .font(.title2)
                     }
+                    .buttonStyle(.borderless)
                     
                     Button {
                         downloader.cancelDownload()
@@ -189,6 +190,7 @@ struct ModelDownloadView: View {
                             .font(.title2)
                             .foregroundColor(.red)
                     }
+                    .buttonStyle(.borderless)
                 }
             } else if case .paused = downloader.state {
                 Button {
@@ -200,6 +202,7 @@ struct ModelDownloadView: View {
                         .font(.title2)
                         .foregroundColor(DesignTokens.primaryColor)
                 }
+                .buttonStyle(.borderless)
             }
         }
         .padding()
@@ -242,9 +245,8 @@ struct ModelDownloadView: View {
             } label: {
                 HStack {
                     Image(systemName: "play.circle.fill")
-                            .frame(minWidth: 44, minHeight: 44)
-                            .accessibilityLabel(NSLocalizedString("model.action.resume", value: "Resume download", comment: "Local model action"))
                         .foregroundColor(.green)
+                        .accessibilityHidden(true)
                     VStack(alignment: .leading, spacing: 2) {
                         Text(L10n.modelLocalTestTitle)
                             .fontWeight(.medium)

@@ -8,11 +8,13 @@ import android.os.Build
 import android.provider.Settings
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.size
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.*
+import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
@@ -28,31 +30,36 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import org.json.JSONObject
 
-internal fun softwareUpdateTarget(): String = if (BuildConfig.STORE_MANAGED_UPDATES) "android-store" else when (Build.SUPPORTED_ABIS.firstOrNull()) {
+internal fun softwareUpdateTarget(context: Context? = null): String = if (BuildConfig.STORE_MANAGED_UPDATES) "android-store" else when (Build.SUPPORTED_ABIS.firstOrNull()) {
     "arm64-v8a" -> "android-aarch64"
     "x86_64" -> "android-x86_64"
-    else -> throw IOException("Unsupported update architecture")
+    else -> throw IOException(context?.getString(R.string.software_update_error_unsupported_arch) ?: "Unsupported update architecture")
 }
-private suspend fun updateCall(operation: String, releaseId: String? = null, directory: File? = null): JSONObject = withContext(Dispatchers.IO) {
-    val request = JSONObject().put("operation", operation).put("target", softwareUpdateTarget())
+private suspend fun updateCall(context: Context, operation: String, releaseId: String? = null, directory: File? = null): JSONObject = withContext(Dispatchers.IO) {
+    val request = JSONObject().put("operation", operation).put("target", softwareUpdateTarget(context))
     releaseId?.let { request.put("expected_release_id", it) }
     directory?.let { request.put("directory", it.absolutePath) }
-    val data = AgentCoreNative.nativeSoftwareUpdate(request.toString().toByteArray(Charsets.UTF_8)) ?: throw IOException("Update service unavailable")
+    val data = AgentCoreNative.nativeSoftwareUpdate(request.toString().toByteArray(Charsets.UTF_8))
+        ?: throw IOException(context.getString(R.string.software_update_error_service_unavailable))
     val reply = JSONObject(String(data, Charsets.UTF_8))
-    if (!reply.optBoolean("ok")) throw IOException(reply.optJSONObject("error")?.optString("message") ?: "Update check failed")
+    if (!reply.optBoolean("ok")) {
+        val message = reply.optJSONObject("error")?.optString("message")?.takeIf { it.isNotBlank() }
+            ?: context.getString(R.string.software_update_error_check_failed)
+        throw IOException(message)
+    }
     reply.getJSONObject("value")
 }
 
 /** The signed feed also has to describe this app's actual APK identity. */
 internal fun validateDownloadedAndroidUpdate(context: Context, file: File, version: String, build: Long) {
     val info = context.packageManager.getPackageArchiveInfo(file.absolutePath, 0)
-        ?: throw IOException("The download is not a readable Android package")
+        ?: throw IOException(context.getString(R.string.software_update_error_unreadable_package))
     val code = if (Build.VERSION.SDK_INT >= 28) info.longVersionCode else {
         @Suppress("DEPRECATION")
         info.versionCode.toLong()
     }
     if (info.packageName != context.packageName || info.versionName != version || code != build) {
-        throw IOException("The APK package or version does not match this update")
+        throw IOException(context.getString(R.string.software_update_error_package_mismatch))
     }
 }
 
@@ -92,7 +99,7 @@ internal fun SoftwareUpdateControls() {
                     scope.launch {
                         try {
                             val directory = File(context.cacheDir, "software-updates/${UUID.randomUUID()}")
-                            val result = updateCall("download", release.getString("release_id"), directory)
+                            val result = updateCall(context, "download", release.getString("release_id"), directory)
                             val file = File(result.getString("path"))
                             withContext(Dispatchers.IO) {
                                 validateDownloadedAndroidUpdate(context, file, release.getString("version"), release.getLong("build"))
@@ -120,12 +127,12 @@ internal fun SoftwareUpdateControls() {
             }) { Text(stringResource(R.string.software_update_install)) }
             Text(stringResource(R.string.software_update_install_permission), style = MaterialTheme.typography.bodySmall)
         }
-        if (busy) CircularProgressIndicator()
+        if (busy) CircularProgressIndicator(Modifier.size(20.dp), strokeWidth = 2.dp)
         failure?.let { Text(stringResource(R.string.software_update_failed), color = MaterialTheme.colorScheme.error); Text(it, style = MaterialTheme.typography.bodySmall) }
         TextButton(enabled = !busy, onClick = {
             busy = true; failure = null; packageFile = null
             scope.launch {
-                try { snapshot = updateCall("check") }
+                try { snapshot = updateCall(context, "check") }
                 catch (cancel: kotlinx.coroutines.CancellationException) { throw cancel }
                 catch (error: Exception) { failure = error.localizedMessage; snapshot = null }
                 finally { busy = false }

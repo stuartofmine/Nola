@@ -180,6 +180,7 @@ const preloadHarness = `(() => {
                 if (++reads === 1) throw new Error("Disconnected");
                 return {available:true, enabled, labels:{title:"Start Nola when I sign in",body:"",enabled:"Enabled",disabled:"Disabled",unavailable:"Unavailable"}};
             case "set_login_item": enabled = args.enabled; throw new Error("Lost reply");
+            case "set_theme": return null;
             case "open_diagnostics": return true;
             default: throw new Error("Unexpected IPC " + method);
         }
@@ -322,8 +323,9 @@ test("Windows desktop shell integration against isolated real nola web renders S
         expect(await page.evaluate(() => getComputedStyle(document.body).backgroundColor)).toBe('rgb(27, 28, 26)');
         const composer = page.locator('#chat-composer');
         const settings = page.locator('.settings-overview');
+        const settingsSidebar = page.locator('.settings-sidebar');
         const card = page.locator('[id$="desktopLoginItemCard"]');
-        const toggle = card.locator('button[aria-pressed]');
+        const toggle = card.locator('input[role="switch"]');
         await action('01-create-conversation', () => page.getByRole('button', {name:'New conversation', exact:true}).click(),
             async () => {
                 await expect(composer).toBeEnabled();
@@ -342,7 +344,7 @@ test("Windows desktop shell integration against isolated real nola web renders S
                 await expect(composer).toHaveValue('Windows desktop shell roundtrip');
             });
         await action('03-open-settings', () => page.getByRole('button', {name:'Settings', exact:true}).click(),
-            () => expect(settings).toBeVisible());
+            () => expect(settingsSidebar).toBeVisible());
         const categories = [
             ['general', 'General'], ['agent', 'Agent'], ['connections', 'Connections'],
             ['data', 'Data'], ['diagnostics', 'Diagnostics'], ['providers', 'API Providers'],
@@ -356,17 +358,16 @@ test("Windows desktop shell integration against isolated real nola web renders S
         }
         for (const [id, label] of categories) {
             const tab = page.getByRole('tab', {name:label, exact:true});
-            await action('desktop-' + id, () => id === 'general'
-                ? settings.getByRole('link', {name:label, exact:true}).click() : tab.click(), async () => {
+            await action('desktop-' + id, () => tab.click(), async () => {
                 await expect(tab).toHaveAttribute('aria-selected','true');
                 await categoryReady(id);
             });
             if (id === 'general') {
                 await expect(card.getByRole('alert')).toBeVisible();
                 await action('retry-login-setting', () => card.getByRole('button').click(),
-                    () => expect(toggle).toHaveAttribute('aria-pressed','false'));
+                    () => expect(toggle).not.toBeChecked());
                 await action('enable-login-setting', () => toggle.click(), async () => {
-                    await expect(toggle).toHaveAttribute('aria-pressed','true');
+                    await expect(toggle).toBeChecked();
                     await expect(card.getByRole('alert')).toHaveCount(0);
                 });
             }

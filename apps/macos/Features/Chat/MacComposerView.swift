@@ -119,7 +119,7 @@ final class MacAttachmentPasteTextView: NSTextView {
 /// reenter its enclosing SwiftUI layout while a proposal is being evaluated.
 @MainActor
 enum MacComposerTextMeasurement {
-    static func size(for textView: NSTextView, width: CGFloat) -> CGSize {
+    static func size(for textView: NSTextView, width: CGFloat, maxHeight: CGFloat = 132) -> CGSize {
         let storage = NSTextStorage(attributedString: textView.attributedString())
         let manager = NSLayoutManager()
         let container = NSTextContainer(size: NSSize(width: width, height: .greatestFiniteMagnitude))
@@ -133,7 +133,27 @@ enum MacComposerTextMeasurement {
             manager.defaultLineHeight(for: textView.font ?? NSFont.systemFont(ofSize: 16))
         )
         let height = max(lineHeight, manager.usedRect(for: container).height) + insets
-        return CGSize(width: width, height: min(132, max(30, height)))
+        return CGSize(width: width, height: min(maxHeight, max(30, height)))
+    }
+}
+
+private struct MacComposerEditorPlaceholderKey: EnvironmentKey {
+    static let defaultValue: String? = nil
+}
+
+private struct MacComposerEditorMaxHeightKey: EnvironmentKey {
+    static let defaultValue: CGFloat? = nil
+}
+
+extension EnvironmentValues {
+    var macComposerEditorPlaceholder: String? {
+        get { self[MacComposerEditorPlaceholderKey.self] }
+        set { self[MacComposerEditorPlaceholderKey.self] = newValue }
+    }
+
+    var macComposerEditorMaxHeight: CGFloat? {
+        get { self[MacComposerEditorMaxHeightKey.self] }
+        set { self[MacComposerEditorMaxHeightKey.self] = newValue }
     }
 }
 
@@ -148,6 +168,18 @@ struct MacComposerTextEditor: NSViewRepresentable {
     var mentionCommand: (String) -> Bool = { _ in false }
     var mentionEditor = AppleMentionEditor()
     var editorAccessibilityIdentifier: String?
+    var placeholder: String? = nil
+    var maxHeight: CGFloat? = nil
+    @Environment(\.macComposerEditorPlaceholder) private var environmentPlaceholder
+    @Environment(\.macComposerEditorMaxHeight) private var environmentMaxHeight
+
+    private var resolvedPlaceholder: String {
+        placeholder ?? environmentPlaceholder ?? String(localized: "Message Nola")
+    }
+
+    private var resolvedMaxHeight: CGFloat {
+        maxHeight ?? environmentMaxHeight ?? 132
+    }
 
     func makeCoordinator() -> Coordinator {
         Coordinator(parent: self)
@@ -182,7 +214,7 @@ struct MacComposerTextEditor: NSViewRepresentable {
             height: CGFloat.greatestFiniteMagnitude
         )
         textView.textContainer?.lineFragmentPadding = 0
-        textView.placeholder = String(localized: "Message Nola")
+        textView.placeholder = resolvedPlaceholder
         textView.textContainer?.widthTracksTextView = true
         textView.textContainer?.containerSize = NSSize(
             width: 0,
@@ -219,6 +251,9 @@ struct MacComposerTextEditor: NSViewRepresentable {
             textView.needsDisplay = true
             context.coordinator.isReplacingConversation = false
         }
+        if textView.placeholder != resolvedPlaceholder {
+            textView.placeholder = resolvedPlaceholder
+        }
         if !focused.wrappedValue { context.coordinator.nativeFocusLostAwaitingPublication = false }
         textView.attachmentPasteHandler = onPasteAttachments
         textView.attachmentDropHandler = onDropAttachments
@@ -253,8 +288,9 @@ struct MacComposerTextEditor: NSViewRepresentable {
                 context.coordinator.styledText = textView.string
                 context.coordinator.styledMentions = mentionEditor.mentions
                 layout.removeTemporaryAttribute(.foregroundColor, forCharacterRange: NSRange(location: 0, length: textView.string.utf16.count))
+                let mentionAccent = NSColor(named: "AccentColor") ?? .controlAccentColor
                 for mention in mentionEditor.mentions where NSMaxRange(mention.range) <= textView.string.utf16.count {
-                    layout.addTemporaryAttributes([.foregroundColor: NSColor.controlAccentColor], forCharacterRange: mention.range)
+                    layout.addTemporaryAttributes([.foregroundColor: mentionAccent], forCharacterRange: mention.range)
                 }
             }
         }
@@ -271,7 +307,8 @@ struct MacComposerTextEditor: NSViewRepresentable {
     ) -> CGSize? {
         guard let textView = scrollView.documentView as? NSTextView else { return nil }
         let width = max(120, proposal.width ?? scrollView.bounds.width)
-        return MacComposerTextMeasurement.size(for: textView, width: width)
+        let effectiveMaxHeight = proposal.height.map { min(resolvedMaxHeight, max(30, $0)) } ?? resolvedMaxHeight
+        return MacComposerTextMeasurement.size(for: textView, width: width, maxHeight: effectiveMaxHeight)
     }
 
     @MainActor
@@ -374,6 +411,7 @@ struct MacComposerView: View {
     @State private var dictationDraft = MacDictationDraft()
     @State private var dictationActive = false
     @State private var dictationConversationID: String?
+    @State private var attachmentThumbnails: [MacAttachment.ID: NSImage] = [:]
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     var body: some View {
@@ -384,11 +422,7 @@ struct MacComposerView: View {
                     .accessibilityIdentifier("chat.attachments.import-error")
             }
             if let error = voiceInput.errorMessage {
-                Text(error)
-                    .font(.caption)
-                    .foregroundStyle(.red)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .textSelection(.enabled)
+                MacInlineNotice(message: error, kind: .failure, dismiss: { voiceInput.errorMessage = nil })
                     .accessibilityIdentifier("chat.dictation.error")
             }
             quickBar
@@ -491,12 +525,29 @@ struct MacComposerView: View {
                 .padding(.horizontal, 12)
                 .padding(.top, 10)
             }
+            .task(id: state.attachments.map(\.id)) {
+                let currentIDs = Set(state.attachments.map(\.id))
+                attachmentThumbnails = attachmentThumbnails.filter { currentIDs.contains($0.key) }
+                let pending = state.attachments.filter { attachmentThumbnails[$0.id] == nil }
+                guard !pending.isEmpty else { return }
+                let targets = pending.map { (id: $0.id, url: $0.url) }
+                let loaded: [(MacAttachment.ID, NSImage)] = await Task.detached(priority: .utility) {
+                    targets.compactMap { item in
+                        guard let image = NSImage(contentsOf: item.url) else { return nil }
+                        return (item.id, image)
+                    }
+                }.value
+                guard !Task.isCancelled else { return }
+                for (id, image) in loaded where currentIDs.contains(id) {
+                    attachmentThumbnails[id] = image
+                }
+            }
         }
     }
 
     private func attachmentChip(_ attachment: MacAttachment) -> some View {
         HStack(spacing: 7) {
-            if let image = NSImage(contentsOf: attachment.url) {
+            if let image = attachmentThumbnails[attachment.id] {
                 Image(nsImage: image)
                     .resizable()
                     .scaledToFill()
@@ -655,6 +706,7 @@ struct MacComposerView: View {
                     : String(localized: "Start Dictation")
             )
 
+            let showsStopAction = state.isVisiblyRunning && !state.draft.hasPrefix("/")
             Button {
                 if localCommand() { return }
                 if state.isVisiblyRunning {
@@ -665,7 +717,7 @@ struct MacComposerView: View {
                     actions.perform(.submit(conversationID: state.conversationID))
                 }
             } label: {
-                Image(systemName: (state.isVisiblyRunning && !state.draft.hasPrefix("/")) ? "stop.fill" : "arrow.up")
+                Image(systemName: showsStopAction ? "stop.fill" : "arrow.up")
                     .contentTransition(.opacity)
                     .animation(reduceMotion ? nil : .easeOut(duration: 0.16), value: state.isVisiblyRunning)
                     .font(.system(size: 13, weight: .bold))
@@ -677,7 +729,7 @@ struct MacComposerView: View {
             }
             .buttonStyle(MacPressFeedbackButtonStyle(contentInsets: .init()))
             .disabled(!state.draft.hasPrefix("/") && (state.isPrimaryActionDisabled || (!isModelConfigured && !state.isVisiblyRunning)))
-            .accessibilityIdentifier(state.isVisiblyRunning ? "mac-composer-stop" : "mac-composer-send")
+            .accessibilityIdentifier(showsStopAction ? "mac-composer-stop" : "mac-composer-send")
             .opacity(isSendHovering && ((state.canSend && isModelConfigured) || state.isVisiblyRunning) ? 0.85 : 1)
             .onHover { hovering in
                 guard isSendHovering != hovering else { return }
@@ -690,12 +742,12 @@ struct MacComposerView: View {
                 }
             }
             .help(
-                state.isVisiblyRunning
+                showsStopAction
                     ? String(localized: "Stop")
                     : String(localized: "Send")
             )
             .accessibilityLabel(
-                state.isVisiblyRunning
+                showsStopAction
                     ? String(localized: "Stop")
                     : String(localized: "Send")
             )

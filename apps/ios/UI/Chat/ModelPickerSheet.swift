@@ -117,7 +117,7 @@ struct ModelPickerSheet: View {
                 .frame(maxWidth: .infinity, minHeight: 44, alignment: .leading)
                 .contentShape(Rectangle())
             }
-            .buttonStyle(NolaActionButtonStyle())
+            .buttonStyle(.plain)
             .disabled(!selectable)
             .accessibilityAddTraits(selected ? .isSelected : [])
             if !model.isWebBackend {
@@ -128,7 +128,7 @@ struct ModelPickerSheet: View {
                         .frame(width: 44, height: 44)
                         .contentShape(Rectangle())
                 }
-                .buttonStyle(NolaActionButtonStyle())
+                .buttonStyle(.plain)
                 .accessibilityLabel(String(format: NSLocalizedString("chat.model.parameters.accessibility", value: "%@ parameters", comment: "Model parameters accessibility label"), model.name))
             }
         }

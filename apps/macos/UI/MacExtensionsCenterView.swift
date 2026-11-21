@@ -209,7 +209,7 @@ struct MacExtensionsCenterView: View {
             if item.id.hasPrefix("managed-mcp:") {
                 Text(String(format: macExtensionsText("mac.extensions.remove_mcp.message", "Delete MCP server %1$@ from this Mac?"), item.title))
             } else if item.installedSkillID != nil {
-                Text(item.title)
+                Text(String(format: macExtensionsText("mac.extensions.remove_skill.message", "Remove skill %1$@ from this Mac?"), item.title))
             } else {
                 Text(String(format: macExtensionsText("mac.extensions.remove.message", "Remove %1$@ from this Mac? You can restore built-in Skills later."), item.title))
             }
@@ -1142,7 +1142,7 @@ private struct MacChromeExtensionManagerView: View {
                             }
                             .frame(minWidth: 112)
                         }
-                        .buttonStyle(.borderedProminent)
+                        .buttonStyle(.nolaProminent)
                         .disabled(isPerformingAction)
                     }
                     .padding(17)
@@ -1213,7 +1213,7 @@ private struct MacChromeExtensionManagerView: View {
                         } label: {
                             Label(macExtensionsText("mac.extensions.chrome.open_extensions", "Open Chrome Extensions"), systemImage: "arrow.up.forward.app")
                         }
-                        .buttonStyle(.borderedProminent)
+                        .buttonStyle(.nolaProminent)
 
                         Button {
                             MacChromeMessagingService.shared.revealExtension()
@@ -1901,6 +1901,8 @@ struct MacExpertsAndSkillsCenterView: View {
     @Environment(\.openSettings) private var openSettings
     @State private var openingPlugins = false
     @State private var pluginError: String?
+    @State private var expertsHasUnsavedChanges = false
+    @State private var pendingExpertLeaveTab: Tab?
 
     init(
         roomWorkspace: MacAgentRoomWorkspace,
@@ -1923,8 +1925,21 @@ struct MacExpertsAndSkillsCenterView: View {
         VStack(spacing: 0) {
             HStack(spacing: 12) {
                 Picker(String(localized: "Capability library"), selection: Binding(get: { skillsNavigation.centerTab }, set: { next in
-                    if skillsNavigation.centerTab == .skills { skillsNavigation.requestLeave { skillsNavigation.centerTab = next } }
-                    else { skillsNavigation.centerTab = next }
+                    guard next != skillsNavigation.centerTab else { return }
+                    switch skillsNavigation.centerTab {
+                    case .skills:
+                        skillsNavigation.requestLeave { skillsNavigation.centerTab = next }
+                    case .mcp:
+                        mcpNavigation.requestLeave { skillsNavigation.centerTab = next }
+                    case .experts:
+                        if expertsHasUnsavedChanges {
+                            pendingExpertLeaveTab = next
+                        } else {
+                            skillsNavigation.centerTab = next
+                        }
+                    case .plugins:
+                        skillsNavigation.centerTab = next
+                    }
                 })) {
                     ForEach(Tab.allCases) { tab in
                         Text(tab.title).tag(tab).accessibilityIdentifier("workspace.extensions.tab." + tab.id)
@@ -1957,7 +1972,11 @@ struct MacExpertsAndSkillsCenterView: View {
                     .padding(MacDesignTokens.Layout.pageGutter)
                 }
             case .experts:
-                MacExpertDirectoryManagementView(workspace: roomWorkspace, showsCloseButton: false)
+                MacExpertDirectoryManagementView(
+                    workspace: roomWorkspace,
+                    showsCloseButton: false,
+                    onUnsavedChangesChanged: { expertsHasUnsavedChanges = $0 }
+                )
             case .skills:
                 MacExtensionsCenterView(
                     remoteHost: remoteHost,
@@ -1978,6 +1997,26 @@ struct MacExpertsAndSkillsCenterView: View {
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
         .background(MacPageBackground())
+        .confirmationDialog(
+            String(localized: "Discard unsaved changes?"),
+            isPresented: Binding(
+                get: { pendingExpertLeaveTab != nil },
+                set: { if !$0 { pendingExpertLeaveTab = nil } }
+            ),
+            titleVisibility: .visible
+        ) {
+            Button(String(localized: "Discard Changes"), role: .destructive) {
+                let target = pendingExpertLeaveTab
+                pendingExpertLeaveTab = nil
+                expertsHasUnsavedChanges = false
+                if let target {
+                    skillsNavigation.centerTab = target
+                }
+            }
+            Button(String(localized: "Keep Editing"), role: .cancel) {
+                pendingExpertLeaveTab = nil
+            }
+        }
     }
     private func openPairedPlugins() {
         guard !openingPlugins else { return }
@@ -2112,26 +2151,36 @@ private struct MacMCPServerEditorSheet: View {
                 .toggleStyle(.macSwitch)
             }
             .formStyle(.grouped)
+            .scrollContentBackground(.hidden)
 
             if let errorMessage {
                 Text(errorMessage)
                     .font(.caption)
-                    .foregroundStyle(.red)
+                    .foregroundStyle(MacDesignColor.danger)
             }
 
             HStack {
+                if isSaving {
+                    ProgressView()
+                        .controlSize(.small)
+                }
                 Spacer()
                 Button(macExtensionsText("mac.extensions.action.cancel", "Cancel"), action: onCancel)
                     .keyboardShortcut(.cancelAction)
+                    .disabled(isSaving)
                 Button(macExtensionsText("mac.extensions.detail.save", "Save")) {
                     save()
                 }
+                .buttonStyle(.nolaProminent)
                 .keyboardShortcut(.defaultAction)
                 .disabled(isSaving || draft.displayName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || draft.commandOrURL.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
             }
         }
         .padding(20)
         .frame(width: 460)
+        .frame(minHeight: 340, idealHeight: 420)
+        .background(MacDesignColor.canvas)
+        .interactiveDismissDisabled(isSaving)
     }
 
     private func save() {

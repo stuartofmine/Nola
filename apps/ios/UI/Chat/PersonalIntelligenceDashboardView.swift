@@ -14,7 +14,6 @@ struct PersonalIntelligenceDashboardView: View {
     @State private var selectedFilter: MemoryFilter = .all
     @State private var visibleMemoryCount = 24
     @State private var showClearConfirmation = false
-    @State private var hasAppeared = false
     @State private var loadError: String?
 
     private let accent = DesignTokens.primaryColor
@@ -66,18 +65,11 @@ struct PersonalIntelligenceDashboardView: View {
                 intelligenceHeader
 
                 hero
-                    .opacity(hasAppeared ? 1 : 0)
-                    .offset(y: hasAppeared ? 0 : 10)
 
                 capabilitiesGateway
-                    .opacity(hasAppeared ? 1 : 0)
-                    .offset(y: hasAppeared ? 0 : 12)
-
             }
 
             memorySection
-                .opacity(hasAppeared ? 1 : 0)
-                .offset(y: hasAppeared ? 0 : 14)
 
             if embedded {
                 capabilitiesGateway
@@ -85,12 +77,9 @@ struct PersonalIntelligenceDashboardView: View {
 
             if !strategies.isEmpty {
                 executionSection
-                    .opacity(hasAppeared ? 1 : 0)
-                    .offset(y: hasAppeared ? 0 : 16)
             }
 
             howItWorks
-                .opacity(hasAppeared ? 1 : 0)
 
             clearSection
         }
@@ -99,7 +88,7 @@ struct PersonalIntelligenceDashboardView: View {
         .refreshable { reload() }
         .navigationTitle(embedded ? text("information.memory", "Long-term memory") : (showsCloseButton ? text("personal.intelligence.title", "Personal intelligence") : ""))
         .navigationBarTitleDisplayMode(.inline)
-        .toolbar(showsCloseButton || embedded ? .visible : .hidden, for: .navigationBar)
+        .toolbarBackground(.hidden, for: .navigationBar)
         .toolbar {
             if showsCloseButton {
                 ToolbarItem(placement: .cancellationAction) {
@@ -107,15 +96,8 @@ struct PersonalIntelligenceDashboardView: View {
                 }
             }
         }
-        .task {
+        .onAppear {
             reload()
-            if embedded || reduceMotion {
-                var transaction = Transaction()
-                transaction.disablesAnimations = true
-                withTransaction(transaction) { hasAppeared = true }
-            } else {
-                withAnimation(DesignTokens.revealAnimation) { hasAppeared = true }
-            }
         }
         .confirmationDialog(
             text("personal.intelligence.clear.confirm.title", "Clear all learned data?"),
@@ -234,7 +216,7 @@ struct PersonalIntelligenceDashboardView: View {
                     .stroke(DesignTokens.borderColor, lineWidth: 1)
             }
         }
-        .buttonStyle(NolaActionButtonStyle())
+        .buttonStyle(NolaPressableStyle())
         .accessibilityIdentifier("intelligence.capabilities.open")
     }
 
@@ -352,7 +334,7 @@ struct PersonalIntelligenceDashboardView: View {
                 .background(selected ? DesignTokens.accentSubtleColor : .clear, in: RoundedRectangle(cornerRadius: 12))
                 .overlay(RoundedRectangle(cornerRadius: 12).stroke(DesignTokens.borderColor, lineWidth: 1))
         }
-        .buttonStyle(NolaActionButtonStyle())
+        .buttonStyle(NolaPressableStyle())
         .accessibilityAddTraits(selected ? .isSelected : [])
         .accessibilityIdentifier("intelligence.filter.\(filter.rawValue)")
     }
@@ -849,7 +831,7 @@ struct PersonalCapabilitiesLibraryView: View {
         Button {
             pairPluginHost = true
         } label: {
-            Label(piText(pluginHosts.isEmpty ? "harness.connect" : "harness.pair", "Connect desktop Host"), systemImage: "plus")
+            Label(pluginHosts.isEmpty ? piText("harness.connect", "Connect desktop Host") : piText("harness.pair", "Connect desktop Host"), systemImage: "plus")
                 .frame(maxWidth: .infinity, minHeight: 44, alignment: .leading)
                 .contentShape(Rectangle())
         }
@@ -1230,7 +1212,7 @@ private struct PersonalCapabilityCard: View {
                         .frame(maxWidth: .infinity, alignment: .leading)
                 }
             }
-            .buttonStyle(NolaActionButtonStyle())
+            .buttonStyle(NolaPressableStyle())
 
             HStack {
                 Button(action: onEdit) {
@@ -1241,8 +1223,10 @@ private struct PersonalCapabilityCard: View {
                     }
                     .font(.caption.weight(.semibold))
                     .foregroundStyle(DesignTokens.actionColor)
+                    .frame(minHeight: 44)
+                    .contentShape(Rectangle())
                 }
-                .buttonStyle(NolaActionButtonStyle())
+                .buttonStyle(NolaPressableStyle())
                 .accessibilityIdentifier("\(identifier).edit")
                 Spacer()
                 Menu {

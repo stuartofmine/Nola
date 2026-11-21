@@ -1402,4 +1402,17 @@
     <string name="harness_device_note">Подключите компьютер, на котором работают плагины, чтобы пользоваться ими здесь.</string>
     <string name="harness_connect">Подключить Host</string>
     <string name="harness_changed">Host изменился. Откройте управление заново.</string>
+    <string name="chat_role_user">Вы</string>
+    <string name="chat_ui_entry_unavailable">Интерактивный ввод недоступен.</string>
+    <string name="expert_editor_selected_model_unavailable">Выбранная модель недоступна.</string>
+    <string name="expert_editor_selected_template_unreadable">Выбранный шаблон больше недоступен для чтения.</string>
+    <string name="software_update_error_unsupported_arch">Неподдерживаемая архитектура обновления</string>
+    <string name="software_update_error_service_unavailable">Служба обновлений недоступна</string>
+    <string name="software_update_error_check_failed">Не удалось проверить обновления</string>
+    <string name="software_update_error_unreadable_package">Загруженный файл не является читаемым пакетом Android</string>
+    <string name="software_update_error_package_mismatch">Пакет APK или версия не совпадают с этим обновлением</string>
+    <string name="chat_document_delete_title">Удалить документ</string>
+    <string name="chat_document_delete_message">Удалить «%1$s»? Он будет удалён из контекста.</string>
+    <string name="data_heart_rate_bpm_format">%1$d уд/мин</string>
+    <string name="chat_web_host_images_unsupported">Вложения изображений не поддерживаются в диалогах Nola Web Host. Переключитесь на локальную или облачную модель либо удалите изображения.</string>
 </resources>

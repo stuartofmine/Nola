@@ -11,6 +11,15 @@ use url::Url;
 struct Desktop {
     origin: Mutex<Option<url::Origin>>,
     failure: Mutex<Option<String>>,
+    host: Mutex<Option<host::Host>>,
+}
+
+pub(crate) fn stop_host(app: &AppHandle) {
+    if let Ok(mut guard) = app.state::<Desktop>().host.lock() {
+        if let Some(mut host) = guard.take() {
+            host.stop();
+        }
+    }
 }
 
 fn local_page(url: &Url) -> bool {
@@ -67,7 +76,9 @@ fn retry_startup(window: tauri::WebviewWindow) {
             .lock()
             .is_ok_and(|f| f.is_some())
     {
-        window.app_handle().restart();
+        let app = window.app_handle();
+        stop_host(app);
+        app.restart();
     }
 }
 
@@ -85,12 +96,13 @@ fn start_host(app: &AppHandle, startup: Url) -> Result<(), String> {
         .unwrap_or_else(|| path.document_dir())
         .map_err(|e| e.to_string())?
         .join("Nola Workspace");
-    let (mut child, origin) = host::Host::start(
+    let (child, origin) = host::Host::start(
         &path.resource_dir().map_err(|e| e.to_string())?,
         &data,
         &workspace,
     )?;
     let state = app.state::<Desktop>();
+    *state.host.lock().unwrap() = Some(child);
     app.add_capability(
         tauri::ipc::CapabilityBuilder::new("desktop-settings")
             .window("main")
@@ -98,22 +110,34 @@ fn start_host(app: &AppHandle, startup: Url) -> Result<(), String> {
             .remote(format!("{}*", origin.as_str()))
             .permission("allow-native-runtime")
             .permission("allow-login-item")
-            .permission("allow-set-login-item"),
+            .permission("allow-set-login-item")
+            .permission("allow-set-theme"),
     )
     .map_err(|e| e.to_string())?;
     *state.origin.lock().unwrap() = Some(origin.origin());
     window
         .navigate(origin.join("/chat").map_err(|e| e.to_string())?)
         .map_err(|e| e.to_string())?;
-    while !child.exited() {
+    loop {
         if app.get_webview_window("main").is_none() {
+            stop_host(app);
             return Ok(());
+        }
+        let exited = match state.host.lock().unwrap().as_mut() {
+            Some(host) => host.exited(),
+            None => return Ok(()),
+        };
+        if exited {
+            break;
         }
         thread::sleep(Duration::from_millis(200));
     }
+    let _ = state.host.lock().unwrap().take();
+    let message = "The local Host stopped. Restart to reopen your conversations.".to_string();
+    *state.failure.lock().unwrap() = Some(message.clone());
     *state.origin.lock().unwrap() = None;
     window.navigate(startup).map_err(|e| e.to_string())?;
-    Err("The local Host stopped. Restart to reopen your conversations.".into())
+    Err(message)
 }
 
 fn main() {
@@ -146,7 +170,8 @@ fn main() {
             open_diagnostics,
             native::native_runtime,
             native::login_item,
-            native::set_login_item
+            native::set_login_item,
+            native::set_theme
         ])
         .setup(|app| {
             native::tray(app.handle())?;
@@ -159,17 +184,28 @@ fn main() {
             }
             let window = builder
                 .title("Nola")
+                .background_color(tauri::window::Color(0xfa, 0xf8, 0xf4, 0xff))
                 .visible(!background)
                 .initialization_script(include_str!("desktop-bridge.js"))
                 .inner_size(1160., 780.)
-                .min_inner_size(680., 480.)
+                .min_inner_size(720., 520.)
                 .on_navigation(move |url| {
-                    local_page(url)
+                    if local_page(url)
                         || handle
                             .state::<Desktop>()
                             .origin
                             .lock()
                             .is_ok_and(|origin| origin.as_ref() == Some(&url.origin()))
+                    {
+                        return true;
+                    }
+                    if matches!(url.scheme(), "https" | "http")
+                        && url.username().is_empty()
+                        && url.password().is_none()
+                    {
+                        let _ = open::that_detached(url.as_str());
+                    }
+                    false
                 })
                 .on_new_window(|url, _| {
                     if matches!(url.scheme(), "https" | "http")
@@ -205,6 +241,11 @@ fn main() {
             }
             Ok(())
         })
-        .run(tauri::generate_context!())
-        .expect("Nola desktop startup failed");
+        .build(tauri::generate_context!())
+        .expect("Nola desktop startup failed")
+        .run(|app, event| {
+            if let tauri::RunEvent::Exit = event {
+                stop_host(app);
+            }
+        });
 }

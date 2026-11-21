@@ -16,10 +16,12 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -56,6 +58,7 @@ import androidx.compose.material3.SingleChoiceSegmentedButtonRow
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -179,6 +182,8 @@ fun ChatContextScreen(
     onCompact: suspend () -> Unit,
     onReload: () -> Unit,
     onSearchMemory: suspend (String) -> List<MemorySearchHit>,
+    onDismissGuardStateChange: (saving: Boolean, dirty: Boolean) -> Unit = { _, _ -> },
+    dismissAttemptTick: Int = 0,
     onBack: () -> Unit
 ) {
     val reduceMotion = rememberReduceMotionEnabled()
@@ -198,6 +203,7 @@ fun ChatContextScreen(
     var expandedSkillKey by remember { mutableStateOf<String?>(null) }
     var expandedMcpServerIds by remember { mutableStateOf<Set<String>>(emptySet()) }
     var pendingSkillDeletion by remember { mutableStateOf<UploadedContent?>(null) }
+    var pendingDocumentDeletion by remember { mutableStateOf<UploadedContent?>(null) }
     var showSkillEditor by remember { mutableStateOf(false) }
     var skillEditorOriginal by remember { mutableStateOf<UploadedContent?>(null) }
     var discard by remember(conversationId) { mutableStateOf(false) }
@@ -210,6 +216,15 @@ fun ChatContextScreen(
         onBack()
     }
     val requestBack = { if (!isSaving && !isCompacting) { if (memoryDirty) discard = true else leave() } }
+    LaunchedEffect(isSaving, isCompacting, memoryDirty) {
+        onDismissGuardStateChange(isSaving || isCompacting, memoryDirty)
+    }
+    DisposableEffect(Unit) {
+        onDispose { onDismissGuardStateChange(false, false) }
+    }
+    LaunchedEffect(dismissAttemptTick) {
+        if (dismissAttemptTick > 0) requestBack()
+    }
     BackHandler { requestBack() }
     if (discard) DiscardChangesDialog(onDiscard = leave, onKeepEditing = { discard = false })
     if (showSkillEditor) {
@@ -248,6 +263,36 @@ fun ChatContextScreen(
             },
             dismissButton = {
                 TextButton(onClick = { pendingSkillDeletion = null }) {
+                    Text(stringResource(R.string.common_cancel))
+                }
+            }
+        )
+    }
+    pendingDocumentDeletion?.let { doc ->
+        val displayName = doc.name.ifBlank { stringResource(R.string.chat_imported_document) }
+        AlertDialog(
+            onDismissRequest = { pendingDocumentDeletion = null },
+            title = { Text(stringResource(R.string.chat_document_delete_title)) },
+            text = {
+                Text(
+                    stringResource(
+                        R.string.chat_document_delete_message,
+                        displayName
+                    )
+                )
+            },
+            confirmButton = {
+                TextButton(
+                    onClick = {
+                        onDocumentDelete(doc)
+                        pendingDocumentDeletion = null
+                    }
+                ) {
+                    Text(stringResource(R.string.common_delete), color = NolaColors.danger)
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { pendingDocumentDeletion = null }) {
                     Text(stringResource(R.string.common_cancel))
                 }
             }
@@ -303,6 +348,7 @@ fun ChatContextScreen(
     Scaffold(
         modifier = Modifier.testTag("chat.context.sheet"),
         containerColor = MaterialTheme.colorScheme.background,
+        contentWindowInsets = WindowInsets(0),
         topBar = {
             NolaTopAppBar(
                 title = if (displayMode == ContextDisplayMode.Context) stringResource(R.string.context) else stringResource(R.string.chat_skills_title),
@@ -315,6 +361,7 @@ fun ChatContextScreen(
             modifier = Modifier
                 .fillMaxSize()
                 .padding(padding)
+                .imePadding()
                 .verticalScroll(rememberScrollState())
                 .padding(NolaSpacing.lg)
         ) {
@@ -539,9 +586,15 @@ fun ChatContextScreen(
                                     Column(modifier = Modifier.padding(12.dp)) {
                                         Row(
                                             modifier = Modifier.fillMaxWidth(),
-                                            horizontalArrangement = Arrangement.SpaceBetween
+                                            horizontalArrangement = Arrangement.spacedBy(8.dp),
+                                            verticalAlignment = Alignment.CenterVertically
                                         ) {
-                                            Text(suggestion.title, style = MaterialTheme.typography.labelMedium, fontWeight = FontWeight.SemiBold)
+                                            Text(
+                                                suggestion.title,
+                                                modifier = Modifier.weight(1f),
+                                                style = MaterialTheme.typography.labelMedium,
+                                                fontWeight = FontWeight.SemiBold
+                                            )
                                             if (suggestion.estimatedSavingsTokens > 0) {
                                                 Text(
                                                     stringResource(R.string.chat_tokens_estimate_format, suggestion.estimatedSavingsTokens),
@@ -602,17 +655,12 @@ fun ChatContextScreen(
                                 }
                             },
                             enabled = searchQuery.isNotBlank() && !isSearching,
-                            modifier = Modifier.width(88.dp)
+                            modifier = Modifier.heightIn(min = 48.dp)
                         ) {
-                            Box(
-                                modifier = Modifier.size(width = 64.dp, height = 20.dp),
-                                contentAlignment = Alignment.Center
-                            ) {
-                                if (isSearching) {
-                                    CircularProgressIndicator(Modifier.size(16.dp), strokeWidth = 2.dp, color = MaterialTheme.colorScheme.onPrimary)
-                                } else {
-                                    Text(stringResource(R.string.common_search))
-                                }
+                            if (isSearching) {
+                                CircularProgressIndicator(Modifier.size(16.dp), strokeWidth = 2.dp, color = MaterialTheme.colorScheme.onPrimary)
+                            } else {
+                                Text(stringResource(R.string.common_search))
                             }
                         }
                     }
@@ -627,9 +675,15 @@ fun ChatContextScreen(
                                 Column(modifier = Modifier.padding(NolaSpacing.sm)) {
                                     Row(
                                         modifier = Modifier.fillMaxWidth(),
-                                        horizontalArrangement = Arrangement.SpaceBetween
+                                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                                        verticalAlignment = Alignment.CenterVertically
                                     ) {
-                                        Text(hit.source, style = MaterialTheme.typography.labelSmall, fontWeight = FontWeight.SemiBold)
+                                        Text(
+                                            hit.source,
+                                            modifier = Modifier.weight(1f),
+                                            style = MaterialTheme.typography.labelSmall,
+                                            fontWeight = FontWeight.SemiBold
+                                        )
                                         if (hit.score > 0) {
                                             Text(stringResource(R.string.chat_score_format, hit.score), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                                         }
@@ -872,6 +926,7 @@ fun ChatContextScreen(
                         Column(
                             modifier = Modifier
                                 .fillMaxWidth()
+                                .clip(RoundedCornerShape(8.dp))
                                 .clickable(role = Role.Button) {
                                     expandedMcpServerIds = if (expanded) {
                                         expandedMcpServerIds - identity
@@ -965,7 +1020,7 @@ fun ChatContextScreen(
                                 Text(doc.name, style = MaterialTheme.typography.bodyMedium)
                                 Text(stringResource(R.string.chat_characters_format, doc.content.length), style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                             }
-                            IconButton(onClick = { onDocumentDelete(doc) }) {
+                            IconButton(onClick = { pendingDocumentDeletion = doc }) {
                                 Icon(Icons.Filled.Delete, stringResource(R.string.common_delete), Modifier.size(18.dp), tint = NolaColors.danger)
                             }
                         }
@@ -1197,6 +1252,7 @@ internal fun DataSourceCatalogRow(
         source.connectionState == UnifiedDataSourceConnectionState.Ready)
     val selectionModifier = if (accessPolicy != null) Modifier
         .testTag("chat.data-source.$selectionId")
+        .clip(RoundedCornerShape(8.dp))
         .toggleable(value = toggleChecked, enabled = canToggle, role = Role.Switch) {
             onEnabledChange(selectionId, it)
         }

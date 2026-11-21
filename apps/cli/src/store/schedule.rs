@@ -275,6 +275,18 @@ impl NolaStore {
             occurrence_id: id.into(), reconciled_at_ms: now_ms,
         })
     }
+
+    pub fn list_pending_web_automation_executions(
+        &self,
+        after_occurrence_id: Option<&str>,
+        limit: usize,
+    ) -> Result<Vec<String>, String> {
+        let mut application = self.canonical_automation_application()?;
+        application.execute(ApplicationCommand::ListPendingAutomationExecutions {
+            after_occurrence_id: after_occurrence_id.map(ToOwned::to_owned),
+            limit,
+        })
+    }
 }
 
 fn web_automation_occurrence_id(automation_id: &str, occurrence_key: &str) -> String {
@@ -523,6 +535,8 @@ mod tests {
         // A claimed worker alone cannot publish a successful execution. Only
         // an admitted canonical Run and terminal seal may reconcile it.
         assert!(store.reconcile_web_automation_execution(&first.id, 1002).unwrap().is_none());
+        let pending = store.list_pending_web_automation_executions(None, 32).unwrap();
+        assert_eq!(pending, vec![first.id.clone()]);
         drop(store);
 
         let reopened = NolaStore::open(&database).unwrap();

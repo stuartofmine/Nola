@@ -121,6 +121,7 @@ struct UnknownEffectRecoveryCard: View {
         .padding(16)
         .frame(maxWidth: .infinity, alignment: .leading)
         .background(DesignTokens.elevatedColor, in: RoundedRectangle(cornerRadius: 12))
+        .padding(.horizontal, DesignTokens.spacing_lg)
         .disabled(working || manager.unknownEffectRecoveryChecking)
         .accessibilityElement(children: .contain)
         .accessibilityIdentifier("chat.recovery.unknown_effect")

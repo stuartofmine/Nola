@@ -48,13 +48,13 @@ dialog input, dialog select, dialog textarea, .model-setup-form input, .model-se
 }
 
 /* Ordinary content stays flat; only floating dialogs need elevation. */
-#dialog, #sheet { box-shadow: 0 12px 40px rgb(0 0 0 / .2); }
+#dialog, #sheet { background: var(--elevated, var(--surface)); box-shadow: 0 12px 40px rgb(0 0 0 / .22); }
 .prototype-setting-heading { margin: 24px 20px 10px; font-size: 16px; line-height: 1.5; }
 .prototype-settings-update { padding: 0 20px 24px; }
 .prototype-settings-update > .prototype-setting-heading { margin-inline: 0; }
 .prototype-general > .inline-card { margin-block: 24px; }
 .prototype-general .inline-card h2 { font-size: 16px; }
-.im-send:active { transform: none; }
+.primary:active, .im-primary:active, .send:active, .im-send:active { transform: none; }
 @media (forced-colors: active) { #dialog, #sheet { box-shadow: none; } }
 
 .prototype-toggle-row { display:flex;align-items:center;justify-content:space-between;gap:12px;padding:12px 14px;min-height:64px; }

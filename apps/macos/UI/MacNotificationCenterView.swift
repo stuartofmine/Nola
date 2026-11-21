@@ -314,7 +314,7 @@ struct MacNotificationCenterView: View {
                 Spacer()
                 if store.authorizationStatus == .notDetermined {
                     Button(macNotificationText("mac.notifications.permission.enable", "Enable")) { Task { await store.requestAuthorization() } }
-                        .buttonStyle(.borderedProminent)
+                        .buttonStyle(.nolaProminent)
                         .controlSize(.small)
                 } else if store.authorizationStatus == .denied {
                     Button(macNotificationText("mac.notifications.permission.settings", "Open Settings")) {
@@ -394,7 +394,7 @@ struct MacNotificationCenterView: View {
                     query = ""
                     filter = .all
                 }
-                .buttonStyle(.borderedProminent)
+                .buttonStyle(.nolaProminent)
             }
         } else {
             ContentUnavailableView(macNotificationText("mac.notifications.select", "Select a Notification"), systemImage: "bell")
@@ -445,7 +445,7 @@ struct MacNotificationCenterView: View {
                     systemImage: "arrow.up.forward"
                 )
             }
-            .buttonStyle(.borderedProminent)
+            .buttonStyle(.nolaProminent)
         }
         if !item.isRead, item.deliveryState != .scheduled {
             Button(macNotificationText("mac.notifications.mark_read", "Mark Read")) {

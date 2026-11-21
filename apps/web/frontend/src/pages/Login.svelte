@@ -100,7 +100,7 @@
     .secret button { min-width: 64px; }
     .connect { margin-top: 8px; min-height: max(44px, var(--control-hit-size)); }
     details { border-top: 1px solid var(--border); color: var(--muted); }
-    summary { cursor: pointer; padding-block: 12px; min-height: 44px; color: var(--ink); }
+    summary { cursor: pointer; padding-block: 12px; min-height: 44px; color: var(--content); }
     details p { margin: 0 0 6px; }
     code { user-select: text; overflow-wrap: anywhere; font-size: 12px; }
     @media (max-width: 480px) { .login-shell { padding: 16px; } .login-card { padding: 24px 20px; } }

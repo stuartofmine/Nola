@@ -23,7 +23,7 @@
     const groups = $derived(messagePresentation(parts).filter(isExecutionPresentation));
 </script>
 
-<details use:replyDisclosure class="execution-process" data-reply-disclosure open={expanded}>
+<details use:replyDisclosure class="execution-process" class:live data-reply-disclosure open={expanded}>
     <summary onclick={event => { event.preventDefault(); onprocessexpandedchange(!expanded); }}>
         <svg class="chevron" class:expanded viewBox="0 0 16 16" aria-hidden="true"><path d="m6 3 5 5-5 5" /></svg>
         <span class="process-title">{live ? currentTitle || t($locale, 'chatPage.processing') : t($locale, thinkingOnly ? 'chatPage.thinking' : 'chatPage.executionProcess')}</span>
@@ -55,7 +55,9 @@
     summary::-webkit-details-marker { display: none; }
     summary:hover { background: color-mix(in srgb, currentColor 5%, transparent); color: var(--content); }
     .process-title { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-    .chevron { flex: none; width: 14px; height: 14px; fill: none; stroke: currentColor; stroke-width: 1.5; stroke-linecap: round; stroke-linejoin: round; transition: transform var(--motion-base) var(--motion-disclosure); }
+    .execution-process.live .process-title { background: linear-gradient(90deg, var(--muted) 0%, var(--content) 50%, var(--muted) 100%); background-size: 200% 100%; -webkit-background-clip: text; background-clip: text; color: transparent; animation: process-shimmer 2.4s ease-in-out infinite; }
+    @keyframes process-shimmer { 0% { background-position: 100% 0; } 100% { background-position: -100% 0; } }
+    .chevron { flex: none; width: 14px; height: 14px; fill: none; stroke: currentColor; stroke-width: 1.6; stroke-linecap: round; stroke-linejoin: round; transition: transform var(--motion-base) var(--motion-disclosure); }
     .chevron.expanded { transform: rotate(90deg); }
     .activity-light { width: 6px; height: 6px; flex: none; border-radius: 50%; margin-inline-start: auto; background: var(--accent); animation: quiet-status 2.4s ease-in-out infinite; }
     @keyframes quiet-status { 0%, 100% { opacity: .65; } 50% { opacity: 1; } }
@@ -66,5 +68,6 @@
     small { color: var(--muted); }
     @media (pointer: coarse) { summary { min-height: 44px; } }
     @media (prefers-contrast: more) { .execution-process { border: 1px solid currentColor; } }
-    @media (prefers-reduced-motion: reduce) { summary, .chevron { transition: none; } .activity-light { animation: none; } }
+    @media (forced-colors: active) { .execution-process.live .process-title { background: none; color: inherit; animation: none; } }
+    @media (prefers-reduced-motion: reduce) { summary, .chevron { transition: none; } .activity-light { animation: none; } .execution-process.live .process-title { background: none; color: inherit; animation: none; } }
 </style>

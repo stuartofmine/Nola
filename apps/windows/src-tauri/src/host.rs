@@ -3,11 +3,12 @@ use serde_json::Value;
 use std::{
     fs,
     io::{BufRead, BufReader, Read, Write},
+    net::TcpListener,
     path::{Path, PathBuf},
     process::{Child, Command, Stdio},
     sync::mpsc,
     thread,
-    time::Duration,
+    time::{Duration, Instant},
 };
 use url::Url;
 
@@ -19,8 +20,32 @@ pub struct Host {
 
 impl Drop for Host {
     fn drop(&mut self) {
-        let _ = self.child.kill();
-        let _ = self.child.wait();
+        self.stop();
+    }
+}
+
+fn wait_for_port_available(port: u16, timeout: Duration) -> Result<(), String> {
+    if port == 0 {
+        return Ok(());
+    }
+    let deadline = Instant::now() + timeout;
+    loop {
+        match TcpListener::bind(("127.0.0.1", port)) {
+            Ok(listener) => {
+                drop(listener);
+                return Ok(());
+            }
+            Err(e) if e.kind() == std::io::ErrorKind::AddrInUse => {
+                if Instant::now() >= deadline {
+                    return Err(
+                        "Saved Host port is already in use. See host-startup.log in the desktop data folder."
+                            .into(),
+                    );
+                }
+                thread::sleep(Duration::from_millis(100));
+            }
+            Err(_) => return Ok(()),
+        }
     }
 }
 
@@ -93,12 +118,26 @@ impl Host {
         !matches!(self.child.try_wait(), Ok(None))
     }
 
+    pub fn stop(&mut self) {
+        let _ = self.child.kill();
+        let _ = self.child.wait();
+    }
+
     pub fn start(resources: &Path, data: &Path, workspace: &Path) -> Result<(Self, Url), String> {
         fs::create_dir_all(data)
             .and_then(|_| fs::create_dir_all(workspace))
             .map_err(|e| e.to_string())?;
         let port_file = data.join("host-port");
         let port = read_port(&port_file)?;
+        if port != 0 {
+            if let Err(err) = wait_for_port_available(port, Duration::from_millis(1500)) {
+                let _ = fs::write(
+                    data.join("host-startup.log"),
+                    "Saved Host port is already in use\n",
+                );
+                return Err(err);
+            }
+        }
         let bin = resources.join("bin");
         let mut command = Command::new(bin.join("nola.exe"));
         #[cfg(windows)]
@@ -225,5 +264,18 @@ mod tests {
                 valid
             );
         }
+    }
+
+    #[test]
+    fn waits_for_pinned_port_release_before_failing() {
+        let listener = TcpListener::bind(("127.0.0.1", 0)).unwrap();
+        let port = listener.local_addr().unwrap().port();
+        assert!(wait_for_port_available(port, Duration::from_millis(200)).is_err());
+        let releaser = thread::spawn(move || {
+            thread::sleep(Duration::from_millis(200));
+            drop(listener);
+        });
+        assert!(wait_for_port_available(port, Duration::from_millis(1500)).is_ok());
+        releaser.join().unwrap();
     }
 }

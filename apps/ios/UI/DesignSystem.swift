@@ -237,6 +237,7 @@ struct NolaPage<Content: View>: View {
             .padding(.bottom, DesignTokens.pageBottomInset)
         }
         .scrollContentBackground(.hidden)
+        .clipped()
         .background(NolaPageBackground())
     }
 }
@@ -551,7 +552,8 @@ struct NolaEmptyState: View {
                 if let actionTitle, let action {
                     Button(actionTitle, action: action)
                         .buttonStyle(.borderedProminent)
-                        .tint(DesignTokens.primaryColor)
+                        .foregroundStyle(DesignTokens.onActionColor)
+                        .tint(DesignTokens.actionColor)
                 }
             }
             .frame(maxWidth: .infinity, alignment: .leading)

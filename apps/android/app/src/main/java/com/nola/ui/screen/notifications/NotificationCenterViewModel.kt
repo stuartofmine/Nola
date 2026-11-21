@@ -15,7 +15,7 @@ import javax.inject.Inject
 data class NotificationCenterUiState(
     val notifications: List<NotificationEntity> = emptyList(),
     val unreadCount: Int = 0,
-    val isLoading: Boolean = false,
+    val isLoading: Boolean = true,
     val isMarkingAllRead: Boolean = false,
     val hasLoadError: Boolean = false,
     val hasSyncWarning: Boolean = false
@@ -80,9 +80,11 @@ class NotificationCenterViewModel @Inject constructor(
     private suspend fun refreshNotifications(showLoading: Boolean) {
         if (showLoading) _uiState.update { it.copy(isLoading = true) }
         val syncResult = runCatching { repo.syncFromBackend() }
+        syncResult.exceptionOrNull()?.let { if (it is kotlinx.coroutines.CancellationException) throw it }
         val localResult = runCatching {
             repo.getNotifications(limit = 100) to repo.unreadCount()
         }
+        localResult.exceptionOrNull()?.let { if (it is kotlinx.coroutines.CancellationException) throw it }
         localResult.onSuccess { (notifications, unread) ->
             _uiState.update {
                 it.copy(

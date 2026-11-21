@@ -18,7 +18,7 @@ internal fun GithubSkillSourceLink(skill: UploadedContent?) {
     if (!reference.startsWith(prefix)) return
     val path = reference.removePrefix(prefix)
     val uri = LocalUriHandler.current
-    TextButton(onClick = { uri.openUri("https://github.com/$path") }, modifier = Modifier.testTag("skill.editor.github")) {
+    TextButton(onClick = { runCatching { uri.openUri("https://github.com/$path") } }, modifier = Modifier.testTag("skill.editor.github")) {
         Text("GitHub · " + path.substringBefore("/tree/"))
     }
 }

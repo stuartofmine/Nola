@@ -809,7 +809,7 @@ private struct MacDataSourceCard: View {
                             Text(macDataCenterText("mac.data_center.permission.continue", "Continue"))
                         }
                     }
-                        .buttonStyle(.borderedProminent)
+                        .buttonStyle(.nolaProminent)
                         .controlSize(.small)
                         .disabled(isRequestingPermission)
                 } else if snapshot.authorization == .denied || snapshot.authorization == .restricted {
@@ -1025,7 +1025,7 @@ private struct MacDataSourceContractSummary: View {
                         )
                     }
                 }
-                .buttonStyle(.borderedProminent)
+                .buttonStyle(.nolaProminent)
                 .controlSize(.small)
                 .disabled(isTesting)
                 .help(macDataCenterText("mac.data_center.contract.test", "Test Connection"))

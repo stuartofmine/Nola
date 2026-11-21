@@ -31,7 +31,6 @@ import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.IntrinsicSize
 import androidx.compose.foundation.layout.widthIn
@@ -133,7 +132,6 @@ fun DataWorkspaceScreen(onCreateInChat: () -> Unit = {}, initialPage: Int = 0, o
         modifier = Modifier
             .fillMaxSize()
             .background(MaterialTheme.colorScheme.background)
-            .statusBarsPadding()
             .testTag("data.workspace")
     ) {
         if (onBack != null) TextButton(onClick = onBack, modifier = Modifier.padding(horizontal = 12.dp).heightIn(min = 48.dp)) {
@@ -177,7 +175,7 @@ internal fun InformationOverview(onOpen: (Int) -> Unit) {
     val sections = listOf(4 to R.string.workspace_knowledge, 1 to R.string.workspace_memory,
         0 to R.string.data_sources_screen_title)
     LazyColumn(Modifier.fillMaxSize().background(MaterialTheme.colorScheme.background)
-        .statusBarsPadding().testTag("information.overview"),
+        .testTag("information.overview"),
         contentPadding = androidx.compose.foundation.layout.PaddingValues(start = nolaPageGutter(), end = nolaPageGutter(), bottom = 16.dp),
         verticalArrangement = Arrangement.spacedBy(8.dp)) {
         item {
@@ -349,12 +347,13 @@ internal fun DataSourcesContent(
                     style = MaterialTheme.typography.bodyMedium,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
-                Row(
+                @OptIn(ExperimentalLayoutApi::class)
+                FlowRow(
                     modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.End,
-                    verticalAlignment = Alignment.CenterVertically
+                    horizontalArrangement = Arrangement.spacedBy(8.dp, Alignment.End),
+                    verticalArrangement = Arrangement.spacedBy(8.dp)
                 ) {
-                    TextButton(onClick = onRefresh, enabled = !state.isRefreshing) {
+                    TextButton(onClick = onRefresh, enabled = !state.isRefreshing, modifier = Modifier.heightIn(min = 48.dp)) {
                         if (state.isRefreshing) {
                             CircularProgressIndicator(modifier = Modifier.size(16.dp), strokeWidth = 2.dp)
                         } else {
@@ -976,7 +975,6 @@ private fun DataSourceEditorDialog(
                 }
             }
         )
-        return
     }
 
     if (showDiscardConfirmation) {
@@ -1003,7 +1001,6 @@ private fun DataSourceEditorDialog(
                 }
             }
         )
-        return
     }
 
     AlertDialog(
@@ -1046,11 +1043,14 @@ private fun DataSourceEditorDialog(
                         Row(
                             Modifier
                                 .fillMaxWidth()
+                                .heightIn(min = 48.dp)
+                                .clip(RoundedCornerShape(8.dp))
                                 .selectable(
                                     selected = policy == candidate,
                                     onClick = { policy = candidate },
                                     role = Role.RadioButton
                                 )
+                                .padding(vertical = 4.dp)
                                 .testTag("data.sources.editor.policy.${candidate.name}"),
                             verticalAlignment = Alignment.CenterVertically
                         ) {
@@ -1135,9 +1135,17 @@ private fun DataSourceEditorDialog(
             }
         },
         dismissButton = {
-            Row {
+            @OptIn(ExperimentalLayoutApi::class)
+            FlowRow(
+                horizontalArrangement = Arrangement.spacedBy(4.dp),
+                verticalArrangement = Arrangement.spacedBy(4.dp)
+            ) {
                 onDelete?.let {
-                    TextButton(onClick = { showDeleteConfirmation = true }, enabled = !validating) {
+                    TextButton(
+                        onClick = { showDeleteConfirmation = true },
+                        enabled = !validating,
+                        colors = ButtonDefaults.textButtonColors(contentColor = MaterialTheme.colorScheme.error)
+                    ) {
                         Icon(Icons.Filled.Delete, null, Modifier.size(16.dp))
                         Spacer(Modifier.size(5.dp))
                         Text(stringResource(R.string.common_delete))

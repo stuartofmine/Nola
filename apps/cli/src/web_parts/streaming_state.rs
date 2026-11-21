@@ -813,50 +813,55 @@ fn web_runtime_directory() -> Result<PathBuf, String> {
     Ok(home.join(".nola").join("web"))
 }
 
-fn chat_conversation_route(path: &str) -> Option<(&str, &str)> {
+fn decode_path_segment(raw: &str) -> Option<String> {
+    if raw.is_empty() {
+        return None;
+    }
+    let decoded = percent_decode(raw);
+    if decoded.trim().is_empty() || decoded.bytes().any(|byte| byte.is_ascii_control()) {
+        return None;
+    }
+    Some(decoded)
+}
+
+fn chat_conversation_route(path: &str) -> Option<(String, &str)> {
     let prefix = "/api/chat/conversations/";
     let rest = path.strip_prefix(prefix)?;
     if rest.is_empty() {
         return None;
     }
-    let (id, suffix) = rest.split_once('/').unwrap_or((rest, ""));
-    if id.is_empty() {
-        return None;
-    }
+    let (raw_id, suffix) = rest.split_once('/').unwrap_or((rest, ""));
+    let id = decode_path_segment(raw_id)?;
     Some((id, suffix))
 }
 
-fn data_source_route(path: &str) -> Option<(&str, &str)> {
+fn data_source_route(path: &str) -> Option<(String, &str)> {
     let rest = path.strip_prefix("/api/data-sources/")?;
     if rest.is_empty() || rest == "usage" {
         return None;
     }
-    let (id, suffix) = rest.split_once('/').unwrap_or((rest, ""));
-    if id.is_empty() {
-        return None;
-    }
+    let (raw_id, suffix) = rest.split_once('/').unwrap_or((rest, ""));
+    let id = decode_path_segment(raw_id)?;
     Some((id, suffix))
 }
 
-fn scheduled_action_route(path: &str) -> Option<(&str, &str)> {
+fn scheduled_action_route(path: &str) -> Option<(String, &str)> {
     let prefix = "/api/scheduled-actions/";
     let rest = path.strip_prefix(prefix)?;
     if rest.is_empty() {
         return None;
     }
-    let (id, suffix) = rest.split_once('/').unwrap_or((rest, ""));
-    if id.is_empty() {
-        return None;
-    }
+    let (raw_id, suffix) = rest.split_once('/').unwrap_or((rest, ""));
+    let id = decode_path_segment(raw_id)?;
     Some((id, suffix))
 }
 
-fn result_detail_route(path: &str) -> Option<&str> {
+fn result_detail_route(path: &str) -> Option<String> {
     let rest = path.strip_prefix("/api/results/")?;
     if rest.is_empty() || rest.contains('/') {
         None
     } else {
-        Some(rest)
+        decode_path_segment(rest)
     }
 }
 
@@ -3205,19 +3210,31 @@ mod tests {
     fn parses_chat_conversation_routes() {
         assert_eq!(
             chat_conversation_route("/api/chat/conversations/abc/messages"),
-            Some(("abc", "messages"))
+            Some(("abc".to_string(), "messages"))
         );
         assert_eq!(
             chat_conversation_route("/api/chat/conversations/abc"),
-            Some(("abc", ""))
+            Some(("abc".to_string(), ""))
         );
         assert_eq!(
             chat_conversation_route("/api/chat/conversations/abc/traces"),
-            Some(("abc", "traces"))
+            Some(("abc".to_string(), "traces"))
         );
         assert_eq!(
             chat_conversation_route("/api/chat/conversations/abc/goal"),
-            Some(("abc", "goal"))
+            Some(("abc".to_string(), "goal"))
+        );
+        assert_eq!(
+            chat_conversation_route("/api/chat/conversations/conv%3A123/messages"),
+            Some(("conv:123".to_string(), "messages"))
+        );
+        assert_eq!(
+            chat_conversation_route("/api/chat/conversations/%00bad/messages"),
+            None
+        );
+        assert_eq!(
+            chat_conversation_route("/api/chat/conversations/%20%20/messages"),
+            None
         );
     }
 
@@ -3801,13 +3818,23 @@ mod tests {
     fn parses_scheduled_and_result_routes() {
         assert_eq!(
             scheduled_action_route("/api/scheduled-actions/a1/run-now"),
-            Some(("a1", "run-now"))
+            Some(("a1".to_string(), "run-now"))
         );
         assert_eq!(
             scheduled_action_route("/api/scheduled-actions/a1"),
-            Some(("a1", ""))
+            Some(("a1".to_string(), ""))
         );
-        assert_eq!(result_detail_route("/api/results/r1"), Some("r1"));
+        assert_eq!(
+            scheduled_action_route("/api/scheduled-actions/act%3A1/run-now"),
+            Some(("act:1".to_string(), "run-now"))
+        );
+        assert_eq!(scheduled_action_route("/api/scheduled-actions/bad%0Aid"), None);
+        assert_eq!(result_detail_route("/api/results/r1"), Some("r1".to_string()));
+        assert_eq!(
+            result_detail_route("/api/results/automation-launch-failure%3Arun-42"),
+            Some("automation-launch-failure:run-42".to_string())
+        );
+        assert_eq!(result_detail_route("/api/results/r1%00"), None);
         assert_eq!(result_detail_route("/api/results/r1/extra"), None);
         assert_eq!(
             permission_rule_route("/api/agent/permission_rules/42"),
@@ -4360,17 +4387,40 @@ mod tests {
     fn parses_persisted_data_source_routes_without_confusing_conversation_routes() {
         assert_eq!(
             super::data_source_route("/api/data-sources/source-1"),
-            Some(("source-1", ""))
+            Some(("source-1".to_string(), ""))
         );
         assert_eq!(
             super::data_source_route("/api/data-sources/source-1/test"),
-            Some(("source-1", "test"))
+            Some(("source-1".to_string(), "test"))
         );
+        assert_eq!(
+            super::data_source_route("/api/data-sources/src%3A1/test"),
+            Some(("src:1".to_string(), "test"))
+        );
+        assert_eq!(super::data_source_route("/api/data-sources/bad%7Fid"), None);
         assert_eq!(super::data_source_route("/api/data-sources/usage"), None);
         assert_eq!(
             chat_conversation_route("/api/chat/conversations/conversation-1/data-sources/source-1"),
-            Some(("conversation-1", "data-sources/source-1"))
+            Some(("conversation-1".to_string(), "data-sources/source-1"))
         );
+    }
+
+    #[test]
+    fn in_flight_automation_guard_cleans_up_on_drop_and_panic() {
+        let in_flight = std::sync::Arc::new(Mutex::new(std::collections::HashSet::new()));
+        in_flight.lock().unwrap().insert("act-1".to_string());
+        let handle = std::thread::spawn({
+            let in_flight = std::sync::Arc::clone(&in_flight);
+            move || {
+                let _guard = super::InFlightAutomationGuard {
+                    in_flight,
+                    action_id: "act-1".to_string(),
+                };
+                panic!("simulated worker panic");
+            }
+        });
+        assert!(handle.join().is_err());
+        assert!(!in_flight.lock().unwrap().contains("act-1"));
     }
 
     #[test]

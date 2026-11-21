@@ -1401,4 +1401,17 @@
     <string name="harness_device_note">连接运行插件的电脑，就能在这里使用它的插件。</string>
     <string name="harness_connect">连接桌面 Host</string>
     <string name="harness_changed">Host 配对已更改，请重新打开插件管理。</string>
+    <string name="chat_role_user">你</string>
+    <string name="chat_ui_entry_unavailable">交互入口不可用。</string>
+    <string name="expert_editor_selected_model_unavailable">所选模型不可用。</string>
+    <string name="expert_editor_selected_template_unreadable">所选模板已无法读取。</string>
+    <string name="software_update_error_unsupported_arch">不支持当前设备架构的更新</string>
+    <string name="software_update_error_service_unavailable">更新服务不可用</string>
+    <string name="software_update_error_check_failed">检查更新失败</string>
+    <string name="software_update_error_unreadable_package">下载的文件不是有效的 Android 安装包</string>
+    <string name="software_update_error_package_mismatch">APK 包名或版本与此更新不匹配</string>
+    <string name="chat_document_delete_title">删除文档</string>
+    <string name="chat_document_delete_message">要删除“%1$s”吗？删除后将从上下文中移除。</string>
+    <string name="data_heart_rate_bpm_format">%1$d 次/分</string>
+    <string name="chat_web_host_images_unsupported">Nola Web Host 对话暂不支持图片附件。请切换到本地或云端模型，或移除图片后重试。</string>
 </resources>

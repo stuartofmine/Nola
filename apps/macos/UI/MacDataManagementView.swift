@@ -182,7 +182,7 @@ struct MacDataManagementView: View {
         Button(action: exportBackup) {
             Label(macDataText("mac.data.export", "Export Backup"), systemImage: "square.and.arrow.up")
         }
-        .buttonStyle(.borderedProminent)
+        .buttonStyle(.nolaProminent)
         .disabled(operationInProgress)
         Button {
             showsImporter = true
@@ -294,8 +294,7 @@ struct MacDataManagementView: View {
                 } label: {
                     Label(macDataText("mac.data.restore.action", "Restore"), systemImage: "arrow.counterclockwise")
                 }
-                .buttonStyle(.borderedProminent)
-                .tint(.red)
+                .buttonStyle(.nolaDestructiveProminent)
                 .accessibilityIdentifier("mac.data.confirmRestore")
             }
         }

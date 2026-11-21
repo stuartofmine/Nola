@@ -40,6 +40,7 @@ enum MacInspectorKnowledgePane: String, CaseIterable, Identifiable {
 struct MacInspectorKnowledgeView: View {
     @Bindable var model: MacWorkspaceModel
     @ObservedObject var navigation: MacInspectorNavigationState
+    @State private var showsDiscardConfirmation = false
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     var body: some View {
@@ -245,7 +246,7 @@ struct MacInspectorKnowledgeView: View {
                     }
                     .buttonStyle(MacActionButtonStyle())
                     Button(String(localized: "Discard Unsaved Edits", table: "Chat"), role: .destructive) {
-                        model.discardSelectedKnowledgeEdits()
+                        showsDiscardConfirmation = true
                     }
                     .buttonStyle(.bordered)
                 }
@@ -255,5 +256,15 @@ struct MacInspectorKnowledgeView: View {
         .foregroundStyle(.secondary)
         .frame(minHeight: 16, alignment: .leading)
         .animation(reduceMotion ? nil : .smooth(duration: 0.18), value: model.selectedKnowledgeIsSaving)
+        .confirmationDialog(
+            String(localized: "Discard unsaved changes?"),
+            isPresented: $showsDiscardConfirmation,
+            titleVisibility: .visible
+        ) {
+            Button(String(localized: "Discard Unsaved Edits", table: "Chat"), role: .destructive) {
+                model.discardSelectedKnowledgeEdits()
+            }
+            Button(String(localized: "Keep Editing"), role: .cancel) {}
+        }
     }
 }

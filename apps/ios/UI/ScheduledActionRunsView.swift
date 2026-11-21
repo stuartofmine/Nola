@@ -405,6 +405,8 @@ private struct ScheduledRunsSummary: View {
                                 .foregroundStyle(isSelected ? Color.primary : Color.secondary)
                                 .padding(.horizontal, 11)
                                 .padding(.vertical, 7)
+                                .frame(minHeight: 44)
+                                .contentShape(Capsule())
                                 .background(
                                     isSelected ? DesignTokens.accentSubtleColor : Color.clear,
                                     in: Capsule()

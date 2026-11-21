@@ -166,7 +166,7 @@ private struct MacLocalActivitySummariesView: View {
                     Button("Automations") {
                         openWindow(id: "automation-center")
                     }
-                    .buttonStyle(.borderedProminent)
+                    .buttonStyle(.nolaProminent)
                 }
             } else {
                 GeometryReader { proxy in
@@ -611,20 +611,17 @@ struct MacActivityDetail: View {
                                 .controlSize(.small)
                                 .foregroundStyle(copiedOutput ? Color.green : Color.accentColor)
                             }
-                            ScrollView(.vertical) {
-                                Text(entry.outputPreview)
-                                    .font(.system(size: 11.5, design: .monospaced))
-                                    .textSelection(.enabled)
-                                    .fixedSize(horizontal: false, vertical: true)
-                                    .frame(maxWidth: .infinity, alignment: .leading)
-                                    .padding(14)
-                            }
-                            .frame(minHeight: 96, maxHeight: 360)
-                            .background(Color.primary.opacity(0.035), in: RoundedRectangle(cornerRadius: 11))
-                            .overlay {
-                                RoundedRectangle(cornerRadius: 11, style: .continuous)
-                                    .strokeBorder(Color.primary.opacity(0.065), lineWidth: 0.5)
-                            }
+                            Text(entry.outputPreview)
+                                .font(.system(size: 11.5, design: .monospaced))
+                                .textSelection(.enabled)
+                                .fixedSize(horizontal: false, vertical: true)
+                                .frame(maxWidth: .infinity, alignment: .leading)
+                                .padding(14)
+                                .background(Color.primary.opacity(0.035), in: RoundedRectangle(cornerRadius: 11))
+                                .overlay {
+                                    RoundedRectangle(cornerRadius: 11, style: .continuous)
+                                        .strokeBorder(Color.primary.opacity(0.065), lineWidth: 0.5)
+                                }
                         }
                     }
                 }
@@ -710,7 +707,7 @@ struct MacActivityDetail: View {
             Button(action: openConversation) {
                 Label(String(localized: "Open Conversation"), systemImage: "arrow.up.forward")
             }
-                .buttonStyle(.borderedProminent)
+                .buttonStyle(.nolaProminent)
         }
     }
 

@@ -40,7 +40,8 @@ struct URLDataSourcesView: View {
 
     private var baseView: some View {
         contentScroll
-            .background(DesignTokens.backgroundColor)
+            .clipped()
+            .background(DesignTokens.backgroundColor.ignoresSafeArea())
             .navigationTitle(NSLocalizedString("url_sources.navigation.title", value: "Data sources", comment: "URL sources navigation title"))
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
@@ -664,10 +665,12 @@ private struct URLActionRow: View {
     }
 
     private var actionButtons: some View {
-        HStack(spacing: 16) {
+        HStack(spacing: 4) {
             Button(action: onRefresh) {
                 Image(systemName: "arrow.clockwise")
                     .foregroundColor(.secondary)
+                    .frame(width: 44, height: 44)
+                    .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
             .disabled(!source.enabled)
@@ -676,6 +679,8 @@ private struct URLActionRow: View {
             Button(action: onEdit) {
                 Image(systemName: "pencil")
                     .foregroundColor(.secondary)
+                    .frame(width: 44, height: 44)
+                    .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
             .accessibilityLabel(NSLocalizedString("common.edit", value: "Edit", comment: "Edit action"))
@@ -683,6 +688,8 @@ private struct URLActionRow: View {
             Button(action: onDelete) {
                 Image(systemName: "trash")
                     .foregroundColor(DesignTokens.dangerColor)
+                    .frame(width: 44, height: 44)
+                    .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
             .accessibilityLabel(L10n.urlSourcesDeleteConfirm)
@@ -720,11 +727,11 @@ struct AddURLDataSourceSheet: View {
     
     private enum EditorField { case name, url }
     @FocusState private var focusedField: EditorField?
-    @State private var name = ""
-    @State private var url = ""
+    @State private var name: String
+    @State private var url: String
     @State private var selectedFormat: URLDataFormat? = nil // User-selected format
-    @State private var selectedKind: DataSourceKind = .website
-    @State private var detectedFormat: URLDataFormat? = nil // Auto-detected format
+    @State private var selectedKind: DataSourceKind
+    @State private var detectedFormat: URLDataFormat? // Auto-detected format
     @State private var showFileImporter = false
     @State private var showFolderImporter = false
     @State private var isValidating = false
@@ -733,12 +740,24 @@ struct AddURLDataSourceSheet: View {
     @State private var validationResult: ValidationResult?
     @State private var errorMessage: String?
     @State private var previewEvents: [RawEvent] = []
-    @State private var sourceDescriptionText: String = ""
-    @State private var sourceID = UUID()
-    @State private var accessPolicy: URLDataSourceAccessPolicy = .conversationOptIn
+    @State private var sourceDescriptionText: String
+    @State private var sourceID: UUID
+    @State private var accessPolicy: URLDataSourceAccessPolicy
     @State private var initialEditorSnapshot = ""
     @State private var validationRevision = 0
     @State private var showsDiscardConfirmation = false
+
+    init(existingSource: URLDataSource? = nil, onSaved: ((URLDataSource) -> Void)? = nil) {
+        self.existingSource = existingSource
+        self.onSaved = onSaved
+        _name = State(initialValue: existingSource?.name ?? "")
+        _url = State(initialValue: existingSource?.url ?? "")
+        _detectedFormat = State(initialValue: existingSource?.format)
+        _selectedKind = State(initialValue: existingSource?.kind ?? .website)
+        _sourceDescriptionText = State(initialValue: existingSource?.sourceDescription ?? "")
+        _sourceID = State(initialValue: existingSource?.id ?? UUID())
+        _accessPolicy = State(initialValue: existingSource?.accessPolicy ?? .conversationOptIn)
+    }
 
     // Model selection is shared via container.chatManager
 
@@ -1000,16 +1019,7 @@ struct AddURLDataSourceSheet: View {
                 }
             }
             .onAppear {
-                if let source = existingSource {
-                    name = source.name
-                    url = source.url
-                    detectedFormat = source.format
-                    selectedKind = source.kind
-                    sourceDescriptionText = source.sourceDescription ?? ""
-                    sourceID = source.id
-                    accessPolicy = source.accessPolicy
-                }
-                DispatchQueue.main.async {
+                if initialEditorSnapshot.isEmpty {
                     initialEditorSnapshot = editorSnapshot
                 }
             }

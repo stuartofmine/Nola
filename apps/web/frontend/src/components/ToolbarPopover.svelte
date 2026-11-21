@@ -23,8 +23,10 @@
     if (button && !button.disabled) panel.hidePopover();
 }}>{@render children()}</div>
 <style>
-    .toolbar-more { flex: none; width: var(--control-hit-size); min-height: var(--control-hit-size); border-color: transparent; background: transparent; font-size: 24px; }
-    .toolbar-popover { position: fixed; inset: 56px 12px auto auto; margin: 0; width: min(320px, calc(100vw - 24px)); max-height: calc(100dvh - var(--popover-top) - 12px); overflow: auto; padding: 12px; border: 1px solid var(--border); border-radius: 14px; background: var(--surface); color: var(--content); box-shadow: 0 12px 48px #0003; }
+    .toolbar-more { flex: none; display: inline-flex; align-items: center; justify-content: center; padding: 0; color: var(--muted); width: var(--control-hit-size); min-height: var(--control-hit-size); border-color: transparent; background: transparent; font-size: 24px; }
+    .toolbar-popover { position: fixed; inset: 56px 12px auto auto; margin: 0; width: min(320px, calc(100vw - 24px)); max-height: calc(100dvh - var(--popover-top) - 12px); overflow: auto; padding: 12px; border: 1px solid var(--border); border-radius: 14px; background: var(--surface-elevated, var(--surface)); color: var(--content); box-shadow: 0 12px 48px rgb(0 0 0 / .22); }
     .toolbar-popover:popover-open { display: grid; gap: 8px; }
     .toolbar-popover :global(button) { min-height: 44px; text-align: start; }
+    .toolbar-popover :global(.model-menu) { max-width: 100%; width: 100%; }
+    .toolbar-popover :global(.model-menu .choices) { position: static; width: 100%; max-width: 100%; max-height: min(40dvh, 280px); box-shadow: none; margin-top: 6px; translate: none !important; }
 </style>

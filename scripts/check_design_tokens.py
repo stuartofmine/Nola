@@ -647,6 +647,9 @@ def check_windows_shell(root: Path, light: dict[str, str], dark: dict[str, str],
             )
 
     scan_forbidden_hex_literals(root, sorted(windows_src.rglob("*.ts")), errors)
+    tauri_src = root / "apps/windows/src-tauri/src"
+    if tauri_src.is_dir():
+        scan_forbidden_hex_literals(root, sorted(tauri_src.rglob("*.rs")), errors)
 
 
 def check_apple_fallbacks(root: Path, light: dict[str, str], dark: dict[str, str], errors: list[str]) -> None:
@@ -729,6 +732,10 @@ def check_apple_fallbacks(root: Path, light: dict[str, str], dark: dict[str, str
                         f"{path.relative_to(root)}:{line_number}: uses forbidden UIKit system background {match.group(0)}"
                     )
         scan_forbidden_hex_literals(root, ios_swift_files, errors)
+
+    shared_apple_root = root / "shared/apple"
+    if shared_apple_root.is_dir():
+        scan_forbidden_hex_literals(root, sorted(shared_apple_root.rglob("*.swift")), errors)
 
 
 def check_apple_colorsets(root: Path, light: dict[str, str], dark: dict[str, str], errors: list[str]) -> None:

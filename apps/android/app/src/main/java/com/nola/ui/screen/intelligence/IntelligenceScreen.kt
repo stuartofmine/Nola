@@ -24,9 +24,9 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.LazyColumn
@@ -161,8 +161,7 @@ fun IntelligenceScreen(
 
     Box(
         modifier = Modifier
-            .fillMaxSize()
-            .statusBarsPadding(),
+            .fillMaxSize(),
         contentAlignment = Alignment.TopCenter
     ) {
         LazyColumn(
@@ -401,10 +400,13 @@ fun IntelligenceScreen(
     editor?.let { activeEditor ->
         IntelligenceEditorDialog(
             editor = activeEditor,
-            onDismiss = { editor = null },
+            isSaving = state.isSaving,
+            errorMessage = state.errorMessage,
+            onDismiss = { editor = null; viewModel.clearError() },
             onSave = { value ->
-                viewModel.saveEntry(activeEditor.kind, activeEditor.index, value)
-                editor = null
+                viewModel.saveEntry(activeEditor.kind, activeEditor.index, value) {
+                    if (editor == activeEditor) editor = null
+                }
             }
         )
     }
@@ -464,7 +466,7 @@ fun IntelligenceScreen(
         )
     }
 
-    state.errorMessage?.takeIf { skillEditor == null && mcpEditor == null }?.let { message ->
+    state.errorMessage?.takeIf { editor == null && skillEditor == null && mcpEditor == null }?.let { message ->
         AlertDialog(
             onDismissRequest = viewModel::clearError,
             title = { Text(stringResource(R.string.intelligence_save_error_title)) },
@@ -500,7 +502,14 @@ private fun CapabilityTypeSwitcher(selected: CapabilitySection, onSelect: (Capab
                 contentColor = if (section == selected) MaterialTheme.colorScheme.onSurface else MaterialTheme.colorScheme.onSurfaceVariant
             ) {
                 Box(Modifier.padding(horizontal = 6.dp, vertical = 9.dp), contentAlignment = Alignment.Center) {
-                    Text(label, style = MaterialTheme.typography.labelLarge, fontWeight = FontWeight.SemiBold)
+                    Text(
+                        label,
+                        style = MaterialTheme.typography.labelLarge,
+                        fontWeight = FontWeight.SemiBold,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                        textAlign = androidx.compose.ui.text.style.TextAlign.Center
+                    )
                 }
             }
         }
@@ -1017,6 +1026,7 @@ internal fun SkillEditorDialog(editor: SkillEditor, isSaving: Boolean, errorMess
     if (discard) DiscardChangesDialog(onDiscard = onDismiss, onKeepEditing = { discard = false })
     AlertDialog(
         modifier = Modifier.dismissImeOnBlankTap()
+            .imePadding()
             .fillMaxWidth()
             .widthIn(max = 720.dp)
             .padding(horizontal = 16.dp),
@@ -1035,7 +1045,7 @@ internal fun SkillEditorDialog(editor: SkillEditor, isSaving: Boolean, errorMess
             Column(Modifier.verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(9.dp)) {
                 if (isSaving) androidx.compose.material3.LinearProgressIndicator(modifier = Modifier.fillMaxWidth())
                 if (errorMessage != null) Text(
-                    stringResource(R.string.intelligence_editor_save_failed),
+                    errorMessage.ifBlank { stringResource(R.string.intelligence_editor_save_failed) },
                     color = MaterialTheme.colorScheme.error,
                     style = MaterialTheme.typography.bodySmall,
                 )
@@ -1048,8 +1058,8 @@ internal fun SkillEditorDialog(editor: SkillEditor, isSaving: Boolean, errorMess
                     modifier = Modifier.fillMaxWidth().testTag("skill.editor.content"),
                     label = { Text(stringResource(R.string.chat_skill_content)) },
                     supportingText = { Text(stringResource(R.string.intelligence_skill_characters, content.length)) },
-                    minLines = 10,
-                    maxLines = 18,
+                    minLines = 4,
+                    maxLines = 10,
                     enabled = editor.isEditable && !isSaving,
                 )
             }
@@ -1092,6 +1102,7 @@ internal fun McpEditorDialog(
     }
     AlertDialog(
         modifier = Modifier.dismissImeOnBlankTap()
+            .imePadding()
             .fillMaxWidth()
             .widthIn(max = 620.dp)
             .padding(horizontal = 16.dp),
@@ -1168,36 +1179,53 @@ private fun HowLearningWorksCard() {
 @Composable
 private fun IntelligenceEditorDialog(
     editor: IntelligenceEditor,
+    isSaving: Boolean,
+    errorMessage: String?,
     onDismiss: () -> Unit,
     onSave: (String) -> Unit
 ) {
     var value by remember(editor) { mutableStateOf(editor.initialValue) }
     var discard by remember(editor) { mutableStateOf(false) }
-    val requestDismiss = { if (value != editor.initialValue) discard = true else onDismiss() }
+    val requestDismiss = {
+        if (!isSaving) {
+            if (value != editor.initialValue) discard = true else onDismiss()
+        }
+    }
     if (discard) DiscardChangesDialog(onDiscard = onDismiss, onKeepEditing = { discard = false })
     val title = when (editor.kind) {
         IntelligenceEntryKind.Preference -> if (editor.index == null) stringResource(R.string.intelligence_add_preference) else stringResource(R.string.intelligence_edit_preference)
         IntelligenceEntryKind.Memory -> if (editor.index == null) stringResource(R.string.intelligence_add_memory) else stringResource(R.string.intelligence_edit_memory)
     }
     AlertDialog(
-        modifier = Modifier.dismissImeOnBlankTap(),
+        modifier = Modifier.dismissImeOnBlankTap().imePadding(),
         onDismissRequest = requestDismiss,
         title = { Text(title) },
         text = {
-            TextField(
-                value = value,
-                onValueChange = { value = it },
-                modifier = Modifier.fillMaxWidth(),
-                placeholder = { Text(stringResource(R.string.intelligence_editor_placeholder)) },
-                minLines = 2,
-                maxLines = 5
-            )
+            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                if (isSaving) androidx.compose.material3.LinearProgressIndicator(modifier = Modifier.fillMaxWidth())
+                errorMessage?.let {
+                    Text(
+                        it.ifBlank { stringResource(R.string.intelligence_editor_save_failed) },
+                        color = MaterialTheme.colorScheme.error,
+                        style = MaterialTheme.typography.bodySmall,
+                    )
+                }
+                TextField(
+                    value = value,
+                    onValueChange = { value = it },
+                    modifier = Modifier.fillMaxWidth(),
+                    placeholder = { Text(stringResource(R.string.intelligence_editor_placeholder)) },
+                    minLines = 2,
+                    maxLines = 5,
+                    enabled = !isSaving,
+                )
+            }
         },
         dismissButton = {
-            TextButton(onClick = requestDismiss) { Text(stringResource(R.string.common_cancel)) }
+            TextButton(onClick = requestDismiss, enabled = !isSaving) { Text(stringResource(R.string.common_cancel)) }
         },
         confirmButton = {
-            Button(onClick = { onSave(value) }, enabled = value.isNotBlank()) {
+            Button(onClick = { onSave(value) }, enabled = !isSaving && value.isNotBlank()) {
                 Text(stringResource(R.string.intelligence_save))
             }
         }

@@ -157,6 +157,7 @@
         if (busy) return;
         mode = next; source = 'all'; query = ''; notice = '';
         if (settings) { error = ''; errorDetail = ''; }
+        else void load();
         const url = pageLocation.read(); url.searchParams.set('tab', mode); pageLocation.replace(url);
     }
     function tabKey(event: KeyboardEvent) {
@@ -170,18 +171,20 @@
 
 <svelte:window onbeforeunload={beforeUnload} />
 <svelte:head>{#if pageLocation.active()}<title>{t($locale, plugins ? 'plugin.title' : 'capability.title')} — Nola</title>{/if}</svelte:head>
-{#if plugins}
-<HarnessPlugins />
-{:else}
 <ConfirmationDialog bind:this={confirmation} />
+{#if !plugins}
 <header class="page-header"><div><h1>{t($locale, 'capability.title')}</h1><p class="muted">{t($locale, 'capability.subtitle')}</p></div><div class="actions">{#if mode === 'mcp'}<button disabled={busy || !settings} onclick={addLocalMcp}>{t($locale, 'capability.addLocalMcp')}</button>{/if}<button class="primary" disabled={busy || !settings} onclick={() => edit()}>{t($locale, mode === 'skills' ? 'capability.addSkill' : 'capability.addMcp')}</button></div></header>
+{/if}
 <div class="content management-content">
     <nav class="library-sections" aria-label={t($locale,'capability.title')}>
     <div class="tabs" role="tablist" aria-label={t($locale, 'capability.type')}>
-        {#each ['skills', 'mcp'] as value}<button id="capability-{value}" role="tab" aria-selected={mode === value} aria-controls="capability-panel" tabindex={mode === value ? 0 : -1} onkeydown={tabKey} disabled={busy} onclick={() => switchMode(value as CapabilityMode)}>{t($locale, value === 'skills' ? 'capability.skills' : 'capability.mcp')}</button>{/each}
+        {#each ['skills', 'mcp'] as value}<button id="capability-{value}" role="tab" aria-selected={!plugins && mode === value} aria-controls="capability-panel" tabindex={!plugins && mode === value ? 0 : -1} onkeydown={tabKey} disabled={busy} onclick={() => switchMode(value as CapabilityMode)}>{t($locale, value === 'skills' ? 'capability.skills' : 'capability.mcp')}</button>{/each}
     </div>
-        <a class="plugin-entry" href="/capabilities?tab=plugins">{t($locale,'plugin.title')}</a>
+        <a class="plugin-entry" aria-current={plugins ? 'page' : undefined} href="/capabilities?tab=plugins">{t($locale,'plugin.title')}</a>
     </nav>
+    {#if plugins}
+    <HarnessPlugins />
+    {:else}
     <aside aria-label={t($locale, 'execution.scope.host')}>
         <p class="muted">{t($locale, 'execution.scope.host')}</p><p class="muted">{t($locale, 'execution.scope.child')}</p>
         {#each executionBackends.filter(backend=>!backend.capabilities.supports_permission_bridge) as backend}
@@ -208,8 +211,10 @@
         {:else}<div class="card"><h2>{t($locale, query || source !== 'all' ? 'capability.noMatches' : 'capability.empty')}</h2><p class="muted">{t($locale, query || source !== 'all' ? 'capability.noMatchesHint' : 'capability.emptyHint')}</p></div>{/each}
         {/if}
     </div>
+    {/if}
 </div>
-<dialog use:ownDialog bind:this={dialog} oncancel={close} aria-label={t($locale, mode === 'skills' ? 'capability.skillSettings' : 'capability.mcpSettings')}>
+{#if !plugins}
+<dialog use:ownDialog bind:this={dialog} oncancel={close} onclick={event => { if (event.target === dialog && !busy) void close(); }} aria-label={t($locale, mode === 'skills' ? 'capability.skillSettings' : 'capability.mcpSettings')}>
     {#if original}<form onsubmit={save} aria-busy={busy}>
         <h2>{displayName(original)}</h2>
         {#if error}<p class="error" role="alert">{t($locale, error, { detail: errorDetail })}</p>{/if}
@@ -234,7 +239,7 @@
         </div>
     </form>{/if}
 </dialog>
-<dialog use:ownDialog bind:this={reviewDialog} oncancel={event => { if (busy) event.preventDefault(); }} aria-label={t($locale, 'capability.reviewTitle')}>
+<dialog use:ownDialog bind:this={reviewDialog} oncancel={event => { if (busy) event.preventDefault(); }} onclick={event => { if (event.target === reviewDialog && !busy) reviewDialog.close(); }} aria-label={t($locale, 'capability.reviewTitle')}>
     {#if skillReview}
         <h2>{t($locale, 'capability.reviewTitle')}</h2>
         {#if skillReview.pending}<p>{t($locale, 'capability.reviewHint')}</p>{/if}
@@ -259,7 +264,8 @@
 <style>
     .library-sections { display:flex;align-items:center;gap:.25em;flex-wrap:wrap; }
     .plugin-entry { display:inline-flex;align-items:center;min-height:44px;padding-inline:.85rem;border-radius:.6rem;color:var(--content);text-decoration:none; }
-    .plugin-entry:hover,.plugin-entry:focus-visible { background:var(--accent-subtle); }
+    .plugin-entry:hover,.plugin-entry:focus-visible,.plugin-entry[aria-current="page"] { background:var(--accent-subtle); }
+    .plugin-entry[aria-current="page"] { font-weight:600; }
     .retained-settings:has(button) { margin-bottom: 16px; }
     .notice button[aria-disabled="true"] { color: var(--muted); background: var(--panel); border-color: var(--border); cursor: progress; }
     .category { display: grid; gap: 12px; margin-bottom: 24px; }

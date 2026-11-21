@@ -1402,4 +1402,17 @@
     <string name="harness_device_note">Conecta el equipo donde se ejecutan tus plugins para usarlos aquí.</string>
     <string name="harness_connect">Conectar Host</string>
     <string name="harness_changed">El Host ha cambiado. Abre de nuevo el gestor.</string>
+    <string name="chat_role_user">Tú</string>
+    <string name="chat_ui_entry_unavailable">La entrada interactiva no está disponible.</string>
+    <string name="expert_editor_selected_model_unavailable">El modelo seleccionado no está disponible.</string>
+    <string name="expert_editor_selected_template_unreadable">La plantilla seleccionada ya no se puede leer.</string>
+    <string name="software_update_error_unsupported_arch">Arquitectura de actualización no compatible</string>
+    <string name="software_update_error_service_unavailable">Servicio de actualización no disponible</string>
+    <string name="software_update_error_check_failed">Error al comprobar actualizaciones</string>
+    <string name="software_update_error_unreadable_package">La descarga no es un paquete Android legible</string>
+    <string name="software_update_error_package_mismatch">El paquete APK o la versión no coinciden con esta actualización</string>
+    <string name="chat_document_delete_title">Eliminar documento</string>
+    <string name="chat_document_delete_message">¿Eliminar «%1$s»? Se quitará de tu contexto.</string>
+    <string name="data_heart_rate_bpm_format">%1$d lpm</string>
+    <string name="chat_web_host_images_unsupported">Las imágenes adjuntas no son compatibles con las conversaciones de Nola Web Host. Cambia a un modelo local o en la nube, o quita las imágenes.</string>
 </resources>

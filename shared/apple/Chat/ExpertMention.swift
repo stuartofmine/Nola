@@ -56,6 +56,29 @@ struct ExpertMentionPanel: View {
     var accessibilityTitle: LocalizedStringKey = "chat.mention.experts"
     var identifierPrefix = "chat.mention."
     var showsAvatar = true
+    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
+    @ScaledMetric(relativeTo: .body) private var rowHeight: CGFloat = 56
+
+    private var surfaceFill: Color {
+        #if os(iOS)
+        DesignTokens.surfaceColor
+        #else
+        Color("NolaSurface")
+        #endif
+    }
+
+    private var surfaceBorder: Color {
+        #if os(iOS)
+        DesignTokens.borderColor
+        #else
+        Color("NolaDivider")
+        #endif
+    }
+
+    private var maxPanelHeight: CGFloat {
+        let cap: CGFloat = dynamicTypeSize.isAccessibilitySize ? 168 : 196
+        return min(cap, CGFloat(max(1, candidates.count)) * rowHeight + 12)
+    }
 
     var body: some View {
         ScrollViewReader { proxy in
@@ -88,11 +111,11 @@ struct ExpertMentionPanel: View {
                     }
                 }.padding(6)
             }
-            .frame(maxHeight: min(224, CGFloat(max(1, candidates.count)) * 56 + 12))
+            .frame(maxHeight: maxPanelHeight)
             .onChange(of: highlightedID) { _, id in if let id { proxy.scrollTo(id) } }
         }
-        .background(.background, in: RoundedRectangle(cornerRadius: 14))
-        .overlay(RoundedRectangle(cornerRadius: 14).stroke(.secondary.opacity(0.18)))
+        .background(surfaceFill, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
+        .overlay(RoundedRectangle(cornerRadius: 14, style: .continuous).stroke(surfaceBorder, lineWidth: 1))
         .accessibilityLabel(Text(accessibilityTitle))
     }
 }

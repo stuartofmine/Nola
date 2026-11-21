@@ -32,6 +32,8 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.InlineTextContent
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Check
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
@@ -1163,6 +1165,12 @@ fun MarkdownParagraph(block: MarkdownBlock.Paragraph) {
 fun MarkdownCodeBlock(block: MarkdownBlock.CodeBlock) {
     val clipboard = LocalClipboardManager.current
     var copied by remember { mutableStateOf(false) }
+    LaunchedEffect(copied) {
+        if (copied) {
+            delay(1_800)
+            copied = false
+        }
+    }
 
     Box(
         modifier = Modifier
@@ -1189,7 +1197,16 @@ fun MarkdownCodeBlock(block: MarkdownBlock.CodeBlock) {
                     clipboard.setText(AnnotatedString(block.code))
                     copied = true
                 }, modifier = Modifier.size(48.dp)) {
-                    Icon(painterResource(R.drawable.nola_copy), stringResource(R.string.chat_message_action_copy), Modifier.size(18.dp))
+                    if (copied) {
+                        Icon(
+                            Icons.Filled.Check,
+                            stringResource(R.string.chat_message_action_copy),
+                            Modifier.size(18.dp),
+                            tint = MaterialTheme.colorScheme.primary
+                        )
+                    } else {
+                        Icon(painterResource(R.drawable.nola_copy), stringResource(R.string.chat_message_action_copy), Modifier.size(18.dp))
+                    }
                 }
             }
             // Code content
@@ -1333,7 +1350,7 @@ fun buildInlineAnnotatedString(inlines: List<MarkdownInline>): AnnotatedString =
             is MarkdownInline.Code -> withStyle(SpanStyle(
                 fontFamily = FontFamily.Monospace,
                 fontSize = 13.sp,
-                background = Color(0x20000000)
+                background = MaterialTheme.colorScheme.surfaceContainerHighest
             )) { append(inline.content) }
             is MarkdownInline.Link -> {
                 pushStringAnnotation(tag = "URL", annotation = inline.url)

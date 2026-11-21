@@ -62,8 +62,10 @@ struct MainTabView: View {
                     .safeAreaInset(edge: .bottom, spacing: 0) {
                         if selectedTabBinding.wrappedValue != .chat || !chatDetailPresented {
                             IOSKeyboardAwareBottomBar { bottomNavigation }
+                                .transition(.move(edge: .bottom).combined(with: .opacity))
                         }
                     }
+                    .animation(reduceMotion ? nil : .easeInOut(duration: 0.22), value: chatDetailPresented)
             } else if #available(iOS 18.0, *) {
                 tabs
                     .tabViewStyle(.sidebarAdaptable)
@@ -177,7 +179,10 @@ struct MainTabView: View {
                             .frame(width: 44, height: 28)
                             .background(isSelected ? DesignTokens.accentSubtleColor : Color.clear, in: Capsule())
                             .animation(reduceMotion ? nil : DesignTokens.disclosureAnimation, value: isSelected)
-                        Text(tab.title).font(.caption2.weight(isSelected ? .semibold : .regular))
+                        Text(tab.title)
+                            .font(.caption2.weight(isSelected ? .semibold : .regular))
+                            .lineLimit(1)
+                            .minimumScaleFactor(0.8)
                     }
                     .foregroundStyle(isSelected ? DesignTokens.actionColor : DesignTokens.secondaryContentColor)
                     .frame(maxWidth: .infinity, minHeight: 50)
@@ -302,10 +307,14 @@ struct ChatNavigationView: View {
                 if container.chatManager.currentConversationId != id {
                     container.chatManager.currentConversationId = id
                 }
-                if path.last != id { path.append(id) }
+                if path.last != id {
+                    detailPresented = true
+                    path.append(id)
+                }
             }, onContinueExpert: { request in
                 expertContinuation = request
                 container.chatManager.currentConversationId = request.parentID
+                detailPresented = true
                 path = [request.parentID]
             })
             .navigationDestination(for: UUID.self) { id in
@@ -321,11 +330,13 @@ struct ChatNavigationView: View {
             guard let id else { return }
             expertContinuation = nil
             container.chatManager.currentConversationId = id
+            detailPresented = true
             path = [id]
             requestedConversationID = nil
         }
         .onReceive(NotificationCenter.default.publisher(for: .nolaSearchConversations)) { note in
             search = note.object as? String ?? ""
+            detailPresented = false
             path = []
         }
     }

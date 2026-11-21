@@ -40,7 +40,7 @@ internal fun ChatSkillEditorDialog(
     if (discard) DiscardChangesDialog(onDiscard = onDismiss, onKeepEditing = { discard = false })
     val scope = rememberCoroutineScope()
     AlertDialog(
-        modifier = Modifier.dismissImeOnBlankTap(),
+        modifier = Modifier.dismissImeOnBlankTap().imePadding(),
         onDismissRequest = requestDismiss,
         title = { Text(stringResource(R.string.chat_skill_content)) },
         text = {

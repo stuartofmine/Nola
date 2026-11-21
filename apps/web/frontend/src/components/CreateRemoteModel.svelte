@@ -74,7 +74,7 @@
 
 <svelte:window onbeforeunload={event => { if (!acceptsWorkspaceUnload(event)) return; if (dirty) { event.preventDefault(); event.returnValue = ''; } }} />
 <ConfirmationDialog bind:this={confirmation} />
-<dialog use:ownDialog bind:this={dialog} oncancel={close} aria-label={t($locale, endpointId ? 'remote.add_model' : 'remote.add_endpoint_model')}>
+<dialog use:ownDialog bind:this={dialog} oncancel={close} onclick={event => { if (event.target === dialog) void close(); }} aria-label={t($locale, endpointId ? 'remote.add_model' : 'remote.add_endpoint_model')}>
     <form onsubmit={save}>
         <header><h2>{t($locale, endpointId ? 'remote.add_model' : 'remote.add_endpoint_model')}</h2><button type="button" class="close" aria-label={t($locale, 'shell.cancel')} onclick={() => close()}><PrototypeIcon name="close" /></button></header>
         <div class="fields">

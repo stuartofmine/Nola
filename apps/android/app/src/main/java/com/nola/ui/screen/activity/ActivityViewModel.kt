@@ -34,7 +34,7 @@ internal data class ActivityDetail(val entry: ActivityEntry, val explanation: St
     val source_conversation_id: String?, val review_in_source: Boolean, val result_text: String? = null, val result_has_more: Boolean = false,
     val execution_host_id: String?, val context_scope: String)
 internal data class ActivityState(val entries: List<ActivityEntry> = emptyList(), val cursor: ActivityCursor? = null,
-    val loading: Boolean = false, val failed: Boolean = false)
+    val loading: Boolean = false, val hasLoaded: Boolean = false, val failed: Boolean = false)
 internal data class ActivityDetailState(val entry: ActivityEntry, val detail: ActivityDetail? = null,
     val loading: Boolean = true, val failed: Boolean = false)
 
@@ -99,10 +99,11 @@ internal class ActivityViewModel internal constructor(
                 lastLoadedAt = elapsedRealtime()
                 mutableState.value = ActivityState(
                     entries = if (append) (mutableState.value.entries + page.entries).distinctBy { it.run_id } else page.entries,
-                    cursor = page.next_cursor)
+                    cursor = page.next_cursor,
+                    hasLoaded = true)
             } catch (cancel: CancellationException) { throw cancel }
             catch (_: Exception) {
-                if (generation == listGeneration) mutableState.value = mutableState.value.copy(loading = false, failed = true)
+                if (generation == listGeneration) mutableState.value = mutableState.value.copy(loading = false, hasLoaded = true, failed = true)
             }
         }
     }

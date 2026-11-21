@@ -5,6 +5,7 @@
     import { workspaceElements } from '../lib/workspacePageLocation';
     const pageElements = workspaceElements();
     import DesktopSettings from '../components/DesktopSettings.svelte';
+    import PrototypeIcon from '../components/PrototypeIcon.svelte';
     import SoftwareUpdateSettings from '../components/SoftwareUpdateSettings.svelte';
     import LanguagePreference from '../components/LanguagePreference.svelte';
     import { workspacePageLocation } from '../lib/workspacePageLocation';
@@ -34,6 +35,7 @@
     let selected = $state<Category>('general');
     let narrow = $state(window.innerWidth <= 760);
     let overview = $state(!resolveSettingsCategory(pageLocation.read().searchParams.get('section')));
+    const showMobileOverview = $derived(narrow && overview);
     let visited = $state<Set<Category>>(new Set(['general']));
     function select(category: Category) {
         selected = category; overview = false;
@@ -133,13 +135,13 @@
 <svelte:head>{#if pageLocation.active()}<title>{t($locale, 'shell.settings')} — Nola</title>{/if}</svelte:head>
 <svelte:window onresize={resize} onpopstate={restoreSection} />
 <ConfirmationDialog bind:this={confirmation} />
-{#if !overview}<div class="settings-back"><button type="button" onclick={showOverview}><span aria-hidden="true">‹</span>{t($locale, 'shell.settings')}</button></div>{/if}
-<header class="page-header" class:mobile-overview={narrow && overview}><div><h1 id="settings-mobile-title">{t($locale, !overview ? `settings.category.${selected}` : 'shell.settings')}</h1></div></header>
-<div class="content management-content settings-layout" class:mobile-overview={narrow && overview} class:overview>
-    {#if overview}<nav class="settings-overview" aria-label={t($locale, 'settings.sections')}>
+{#if narrow && !overview}<div class="settings-back"><button type="button" onclick={showOverview}><PrototypeIcon name="back" size={18} />{t($locale, 'shell.settings')}</button></div>{/if}
+<header class="page-header" class:mobile-overview={showMobileOverview}><div><h1 id="settings-mobile-title">{t($locale, narrow && !overview ? `settings.category.${selected}` : 'shell.settings')}</h1></div></header>
+<div class="content management-content settings-layout" class:mobile-overview={showMobileOverview} class:overview={showMobileOverview}>
+    {#if showMobileOverview}<nav class="settings-overview" aria-label={t($locale, 'settings.sections')}>
         {#each categories as category}<a href={`/settings?section=${category}`} onclick={event => openCategory(event, category)}><span><strong>{t($locale, `settings.category.${category}`)}</strong></span></a>{/each}
     </nav>{/if}
-    <aside class="settings-sidebar" hidden={overview}>
+    <aside class="settings-sidebar" hidden={showMobileOverview}>
         <div role="tablist" aria-label={t($locale, 'settings.sections')} aria-orientation={narrow ? 'horizontal' : 'vertical'}>
             {#each categories as category}
                 <button role="tab" id={`settings-tab-${category}`} aria-controls={`settings-panel-${category}`} aria-selected={selected === category} tabindex={selected === category ? 0 : -1} onclick={() => select(category)} onkeydown={event => navigate(event, category)}>{t($locale, `settings.category.${category}`)}</button>
@@ -150,7 +152,7 @@
             <a href="/scheduled-actions">{t($locale, 'shell.nav.automation')}</a>
         </nav>
     </aside>
-    <div class="settings-panels" hidden={overview}>
+    <div class="settings-panels" hidden={showMobileOverview}>
     <div role={narrow ? "region" : "tabpanel"} id="settings-panel-general" aria-labelledby={narrow ? "settings-mobile-title" : "settings-tab-general"} hidden={selected !== 'general'}>
     <section class="card preferences-card"><LanguagePreference />
     <label>{t($locale, 'shell.appearance')}<select bind:value={$appearance}>
@@ -185,7 +187,7 @@
             <dl><dt>{t($locale, 'settings.host')}</dt><dd title={session.hostId}>{session.localTrust ? t($locale, 'chatOverview.localHost') : session.hostId}</dd><dt>{t($locale, 'settings.connection')}</dt><dd>{t($locale, session.sessionAuthenticated ? 'settings.signedIn' : session.localTrust ? 'settings.local' : 'settings.signedOut')}</dd></dl>
             {#if session.transportIngress === "tailcat"}<p class="muted">{t($locale, 'settings.tailcatIngress')}</p>{/if}
             {#if session.localTrust}<p class="muted">{t($locale, 'settings.localHint')}</p>{/if}
-            {#if session.sessionAuthenticated}<div class="actions"><button disabled={busy || loading} onclick={logout}>{t($locale, 'settings.logout')}</button></div>
+            {#if session.sessionAuthenticated}<div class="actions"><button class="danger" disabled={busy || loading} onclick={logout}>{t($locale, 'settings.logout')}</button></div>
             {:else}
                 <p class="muted">{t($locale, 'settings.tokenAuth')}</p>
                 <a class="button" href="/login?next=%2Fsettings%3Fsection%3Dconnections">{t($locale, 'settings.signIn')}</a>
@@ -200,8 +202,8 @@
     </div>
 </div>
 <style>
-    .preferences-card :global(label){display:flex;align-items:center;justify-content:space-between;gap:24px;min-height:56px}
-    .preferences-card :global(select){width:min(260px,55%);min-width:160px}
+    .preferences-card :global(label){display:flex;flex-wrap:wrap;align-items:center;justify-content:space-between;gap:8px 24px;min-height:56px}
+    .preferences-card :global(select){width:min(260px,100%);min-width:min(160px,100%)}
     .settings-layout.overview{display:block}
     .settings-sidebar[hidden]{display:none}
     .settings-layout{display:grid;grid-template-columns:180px minmax(0,1fr);gap:40px;align-items:start}
@@ -220,7 +222,6 @@
     .settings-overview strong { font-size: 17px; line-height: 24px; font-weight: 600; }
     .settings-back { padding: 4px 16px 0; }
     .settings-back button { min-height: 44px; padding: 4px; background: transparent; box-shadow: none; border: 0; display: flex; gap: 8px; align-items: center; }
-    .settings-back span { font-size: 24px; }
     @media(max-width:760px) {
         .settings-sidebar { display: none; }
         .page-header.mobile-overview { padding: 4px 20px 22px; }

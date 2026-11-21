@@ -756,7 +756,7 @@ fn model_catalog_url(base_url: &str) -> Result<reqwest::Url, String> {
         return Err("Invalid model endpoint".into());
     }
     let mut path = url.path().trim_end_matches('/').to_owned();
-    for suffix in ["/chat/completions", "/responses"] {
+    for suffix in ["/chat/completions", "/responses", "/messages"] {
         if let Some(base) = path.strip_suffix(suffix) { path = base.to_owned(); break; }
     }
     url.set_path(&format!("{}/models", path.trim_end_matches('/')));
@@ -776,6 +776,50 @@ fn parse_discovered_model_ids(body: &[u8]) -> Result<Vec<String>, String> {
     Ok(ids.into_iter().collect())
 }
 
+fn is_loopback_discovery_host(host: Option<&str>) -> bool {
+    host.is_some_and(|host| {
+        host.eq_ignore_ascii_case("localhost")
+            || host
+                .trim_start_matches('[')
+                .trim_end_matches(']')
+                .parse::<std::net::IpAddr>()
+                .is_ok_and(|address| address.is_loopback())
+    })
+}
+
+fn discover_remote_model_ids_at(
+    url: &reqwest::Url,
+    wire_protocol: &str,
+    secret: Option<&str>,
+) -> Result<Vec<String>, String> {
+    let mut builder = reqwest::blocking::Client::builder()
+        .redirect(reqwest::redirect::Policy::none())
+        .timeout(std::time::Duration::from_secs(30));
+    if is_loopback_discovery_host(url.host_str()) {
+        builder = builder.no_proxy();
+    }
+    let client = builder
+        .build()
+        .map_err(|_| "Cannot prepare model discovery".to_string())?;
+    let mut request = client
+        .get(url.clone())
+        .header(reqwest::header::ACCEPT, "application/json");
+    if wire_protocol == "anthropic" {
+        request = request.header("anthropic-version", "2023-06-01");
+        if let Some(secret) = secret {
+            request = request.header("x-api-key", secret);
+        }
+    } else if let Some(secret) = secret {
+        request = request.bearer_auth(secret);
+    }
+    let response = request.send().map_err(|_| "Could not reach the model catalog".to_string())?;
+    if !response.status().is_success() { return Err(format!("Model discovery failed (HTTP {})", response.status().as_u16())); }
+    let mut body = Vec::new();
+    response.take(2_097_153).read_to_end(&mut body).map_err(|_| "Could not read the model catalog".to_string())?;
+    if body.len() > 2_097_152 { return Err("Provider model catalog is too large".into()); }
+    parse_discovered_model_ids(&body)
+}
+
 fn discover_remote_model_ids(store: &NolaStore, endpoint_id: &str) -> Result<Vec<String>, String> {
     use crate::host_credentials::{endpoint_binding, identity, HostCredentialVault};
     let endpoint = endpoint_binding(store, endpoint_id)?;
@@ -786,20 +830,8 @@ fn discover_remote_model_ids(store: &NolaStore, endpoint_id: &str) -> Result<Vec
         Some(_) => return Err("Endpoint credential identity changed; reload its credentials".into()),
         None => None,
     };
-    let client = reqwest::blocking::Client::builder()
-        .no_proxy()
-        .redirect(reqwest::redirect::Policy::none())
-        .timeout(std::time::Duration::from_secs(30))
-        .build().map_err(|_| "Cannot prepare model discovery".to_string())?;
-    let mut request = client.get(model_catalog_url(&endpoint.base_url)?)
-        .header(reqwest::header::ACCEPT, "application/json");
-    if let Some(secret) = secret { request = request.bearer_auth(secret); }
-    let response = request.send().map_err(|_| "Could not reach the model catalog".to_string())?;
-    if !response.status().is_success() { return Err(format!("Model discovery failed (HTTP {})", response.status().as_u16())); }
-    let mut body = Vec::new();
-    response.take(2_097_153).read_to_end(&mut body).map_err(|_| "Could not read the model catalog".to_string())?;
-    if body.len() > 2_097_152 { return Err("Provider model catalog is too large".into()); }
-    parse_discovered_model_ids(&body)
+    let url = model_catalog_url(&endpoint.base_url)?;
+    discover_remote_model_ids_at(&url, &endpoint.wire_protocol, secret.as_deref())
 }
 
 fn discover_remote_models_response(id: &str) -> Response<Box<dyn Read + Send>> {
@@ -1895,5 +1927,51 @@ mod model_profile_web_tests {
         assert!(!projection.to_string().contains("never-publish"));
         assert_eq!(projection["endpoint"]["wireProtocol"], "responses");
         assert_eq!(projection["parameters"]["temperature"], 0);
+    }
+
+    #[test]
+    fn remote_model_discovery_uses_anthropic_headers_and_loopback_only_proxy_bypass() {
+        use std::io::Write;
+        for host in ["localhost", "LOCALHOST", "127.0.0.1", "::1", "[::1]"] {
+            assert!(is_loopback_discovery_host(Some(host)), "expected loopback for {host}");
+        }
+        for host in ["api.anthropic.com", "api.openai.com", "192.168.1.10"] {
+            assert!(!is_loopback_discovery_host(Some(host)), "expected non-loopback for {host}");
+        }
+
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let addr = listener.local_addr().unwrap();
+        let server = std::thread::spawn(move || {
+            let mut captured = Vec::new();
+            for _ in 0..2 {
+                let (mut stream, _) = listener.accept().unwrap();
+                stream.set_read_timeout(Some(std::time::Duration::from_secs(5))).unwrap();
+                let mut buf = [0u8; 4096];
+                let n = stream.read(&mut buf).unwrap();
+                captured.push(String::from_utf8_lossy(&buf[..n]).to_ascii_lowercase());
+                let body = r#"{"data":[{"id":"claude-sonnet-4-20250514"}]}"#;
+                write!(
+                    stream,
+                    "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+                    body.len(),
+                    body
+                )
+                .unwrap();
+            }
+            captured
+        });
+
+        let url = model_catalog_url(&format!("http://{addr}/v1")).unwrap();
+        let anthropic_ids = discover_remote_model_ids_at(&url, "anthropic", Some("sk-ant-test")).unwrap();
+        assert_eq!(anthropic_ids, vec!["claude-sonnet-4-20250514"]);
+
+        let openai_ids = discover_remote_model_ids_at(&url, "chat_completions", Some("sk-openai-test")).unwrap();
+        assert_eq!(openai_ids, vec!["claude-sonnet-4-20250514"]);
+
+        let requests = server.join().unwrap();
+        assert!(requests[0].contains("x-api-key: sk-ant-test"), "anthropic request: {}", requests[0]);
+        assert!(requests[0].contains("anthropic-version: 2023-06-01"), "anthropic request: {}", requests[0]);
+        assert!(!requests[0].contains("authorization: bearer"), "anthropic must not send bearer: {}", requests[0]);
+        assert!(requests[1].contains("authorization: bearer sk-openai-test"), "openai request: {}", requests[1]);
     }
 }

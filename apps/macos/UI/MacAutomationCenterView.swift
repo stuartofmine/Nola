@@ -203,7 +203,7 @@ struct MacAutomationCenterView: View {
             } label: {
                 Label(String(localized: "New Automation", table: "AutomationCenter"), systemImage: "plus")
             }
-            .buttonStyle(.borderedProminent)
+            .buttonStyle(.nolaProminent)
         }
     }
 
@@ -232,7 +232,7 @@ struct MacAutomationCenterView: View {
                 Label(String(localized: "New Automation", table: "AutomationCenter"), systemImage: "plus")
             }
         }
-        .buttonStyle(.borderedProminent)
+        .buttonStyle(.nolaProminent)
         .help(String(localized: "New Automation", table: "AutomationCenter"))
     }
 
@@ -482,7 +482,7 @@ struct MacAutomationCenterView: View {
         Button { store.runNow(automation) } label: {
             Label(String(localized: "Run Now", table: "AutomationCenter"), systemImage: "play.fill")
         }
-        .buttonStyle(.borderedProminent)
+        .buttonStyle(.nolaProminent)
         .controlSize(.regular)
         .disabled(isRunning)
     }
@@ -841,7 +841,7 @@ private struct MacAutomationEditor: View {
                     ))
                 }
                 .keyboardShortcut(.defaultAction)
-                .buttonStyle(.borderedProminent)
+                .buttonStyle(.nolaProminent)
                 .disabled(!canSave)
             }
         }
@@ -854,6 +854,7 @@ private struct MacAutomationEditor: View {
             idealHeight: 720,
             maxHeight: 820
         )
+        .background(MacDesignColor.canvas)
         .task {
             if initialEditorValues == nil { initialEditorValues = editorValues }
             do {

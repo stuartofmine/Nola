@@ -23,6 +23,8 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.ExperimentalLayoutApi
+import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -319,6 +321,7 @@ fun ThinkingBlock(
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
+                    .clip(RoundedCornerShape(8.dp))
                     .clickable(enabled = thinking.isNotBlank()) {
                         haptics.selection()
                         userChangedExpansion = true
@@ -620,13 +623,14 @@ fun HostToolCard(
                         }
                         if (!containsSensitiveData && (screenshotUri != null || finalUri != null || downloadUri != null)) {
                             Spacer(modifier = Modifier.height(6.dp))
-                            Row(
+                            @OptIn(ExperimentalLayoutApi::class)
+                            FlowRow(
                                 modifier = Modifier.fillMaxWidth(),
-                                horizontalArrangement = Arrangement.spacedBy(8.dp)
+                                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                                verticalArrangement = Arrangement.spacedBy(4.dp)
                             ) {
                                 if (screenshotUri != null) {
                                     TextButton(
-                                        modifier = Modifier.weight(1f),
                                         onClick = { runCatching { uriHandler.openUri(screenshotUri) } }
                                     ) {
                                         Text(
@@ -638,7 +642,6 @@ fun HostToolCard(
                                 }
                                 if (finalUri != null) {
                                     TextButton(
-                                        modifier = Modifier.weight(1f),
                                         onClick = { runCatching { uriHandler.openUri(finalUri) } }
                                     ) {
                                         Text(
@@ -650,7 +653,6 @@ fun HostToolCard(
                                 }
                                 if (downloadUri != null) {
                                     TextButton(
-                                        modifier = Modifier.weight(1f),
                                         onClick = { runCatching { uriHandler.openUri(downloadUri) } }
                                     ) {
                                         Text(
@@ -956,7 +958,11 @@ fun PermissionDialog(
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                 maxLines = 1, overflow = TextOverflow.Ellipsis,
             )
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            @OptIn(ExperimentalLayoutApi::class)
+            FlowRow(
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                verticalArrangement = Arrangement.spacedBy(4.dp)
+            ) {
                 TextButton(onClick = { showingDetails = true }, modifier = Modifier.testTag("permission.details.$permissionIdentity")) {
                     Text(stringResource(R.string.canonical_details))
                 }
@@ -985,22 +991,39 @@ fun PermissionDialog(
                 }
             }
             Spacer(modifier = Modifier.height(12.dp))
+            val configuration = androidx.compose.ui.platform.LocalConfiguration.current
+            val stackPrimaryButtons = configuration.screenWidthDp < 360 || configuration.fontScale > 1.2f
             Column(
                 modifier = Modifier.fillMaxWidth(),
                 verticalArrangement = Arrangement.spacedBy(8.dp)
             ) {
-                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                if (stackPrimaryButtons) {
                     Button(onClick = {
                         haptics.primaryAction()
                         onAllow()
-                    }, enabled = allowEnabled, modifier = Modifier.weight(1f).heightIn(min = 48.dp).testTag("permission.allow-once.$permissionIdentity")) {
+                    }, enabled = allowEnabled, modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp).testTag("permission.allow-once.$permissionIdentity")) {
                         Text(allowLabel)
                     }
                     OutlinedButton(onClick = {
                         haptics.warning()
                         onDeny()
-                    }, modifier = Modifier.weight(1f).heightIn(min = 48.dp)) {
+                    }, modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp)) {
                         Text(stringResource(R.string.common_deny))
+                    }
+                } else {
+                    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        Button(onClick = {
+                            haptics.primaryAction()
+                            onAllow()
+                        }, enabled = allowEnabled, modifier = Modifier.weight(1f).heightIn(min = 48.dp).testTag("permission.allow-once.$permissionIdentity")) {
+                            Text(allowLabel)
+                        }
+                        OutlinedButton(onClick = {
+                            haptics.warning()
+                            onDeny()
+                        }, modifier = Modifier.weight(1f).heightIn(min = 48.dp)) {
+                            Text(stringResource(R.string.common_deny))
+                        }
                     }
                 }
                 if (conversationAllowLabel != null && onAllowConversation != null) {
@@ -1044,7 +1067,7 @@ fun NolaDisclosureBar(
     Row(
         modifier = modifier
             .fillMaxWidth()
-            .heightIn(min = 44.dp)
+            .heightIn(min = 48.dp)
             .clip(RoundedCornerShape(10.dp))
             .background(MaterialTheme.colorScheme.surfaceContainer)
             .border(0.5.dp, MaterialTheme.colorScheme.outlineVariant, RoundedCornerShape(10.dp))
@@ -1089,7 +1112,7 @@ fun NolaDropdownBar(
     Row(
         modifier = modifier
             .fillMaxWidth()
-            .heightIn(min = 44.dp)
+            .heightIn(min = 48.dp)
             .clip(RoundedCornerShape(10.dp))
             .background(MaterialTheme.colorScheme.surfaceContainer)
             .border(0.5.dp, MaterialTheme.colorScheme.outlineVariant, RoundedCornerShape(10.dp))

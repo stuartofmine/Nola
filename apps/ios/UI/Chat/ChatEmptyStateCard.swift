@@ -15,8 +15,6 @@ struct ChatEmptyStateCard: View {
     let hostConnectionPhase: ChatHostConnectionPhase
     let onSuggestion: (String) -> Void
     let onPrimaryAction: () -> Void
-    @State private var hasAppeared = false
-    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @Environment(\.horizontalSizeClass) private var horizontalSizeClass
 
     private var suggestions: [(String, String)] {
@@ -42,8 +40,6 @@ struct ChatEmptyStateCard: View {
                     .padding(.horizontal, 18)
                     .accessibilityIdentifier("chat.empty.description")
             }
-            .opacity(hasAppeared ? 1 : 0)
-            .offset(y: reduceMotion || hasAppeared ? 0 : 6)
 
             if hasModels && modelIsReady {
                 LazyVGrid(
@@ -65,8 +61,6 @@ struct ChatEmptyStateCard: View {
                         .buttonStyle(NolaPressableStyle())
                     }
                 }
-                .opacity(hasAppeared ? 1 : 0)
-                .offset(y: reduceMotion || hasAppeared ? 0 : 8)
             } else if selectedModel?.isWebBackend == true,
                       hostConnectionPhase == .checking || hostConnectionPhase == .notApplicable {
                 HStack(spacing: 8) {
@@ -78,7 +72,6 @@ struct ChatEmptyStateCard: View {
                 }
                 .accessibilityElement(children: .combine)
                 .accessibilityIdentifier("chat.empty.host_checking")
-                .opacity(hasAppeared ? 1 : 0)
             } else {
                 Button(action: onPrimaryAction) {
                     Text(primaryActionTitle)
@@ -89,23 +82,11 @@ struct ChatEmptyStateCard: View {
                         .background(RoundedRectangle(cornerRadius: DesignTokens.radius_md).fill(DesignTokens.actionColor))
                 }
                 .buttonStyle(NolaPressableStyle())
-                .opacity(hasAppeared ? 1 : 0)
             }
         }
         .padding(.horizontal, 18)
         .padding(.vertical, 32)
         .frame(maxWidth: 600)
-        .task {
-            guard !hasAppeared else { return }
-            guard !reduceMotion else {
-                hasAppeared = true
-                return
-            }
-            await Task.yield()
-            withAnimation(DesignTokens.revealAnimation) {
-                hasAppeared = true
-            }
-        }
     }
 
     private var suggestionColumns: [GridItem] {

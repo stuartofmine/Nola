@@ -86,9 +86,6 @@ struct IOSModelSetupForm: View {
                 .pickerStyle(.menu)
                 .labelsHidden()
                 .frame(maxWidth: .infinity, minHeight: 44, alignment: .leading)
-                .padding(.horizontal, 12)
-                .background(DesignTokens.surfaceColor, in: RoundedRectangle(cornerRadius: 8))
-                .overlay(RoundedRectangle(cornerRadius: 8).stroke(DesignTokens.borderColor, lineWidth: 1))
                 .accessibilityIdentifier("model.setup.protocol")
             }
             Text(NSLocalizedString("model.protocol.guidance", value: "For tools with reasoning, choose Responses if your service supports it. Some Chat Completions models require reasoning to be disabled explicitly.", comment: "API protocol compatibility guidance"))

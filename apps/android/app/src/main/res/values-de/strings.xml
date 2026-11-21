@@ -1402,4 +1402,17 @@
     <string name="harness_device_note">Verbinde den Computer, auf dem deine Plugins laufen, um sie hier zu nutzen.</string>
     <string name="harness_connect">Desktop-Host verbinden</string>
     <string name="harness_changed">Host-Kopplung geändert. Verwaltung erneut öffnen.</string>
+    <string name="chat_role_user">Du</string>
+    <string name="chat_ui_entry_unavailable">Interaktive Eingabe ist nicht verfügbar.</string>
+    <string name="expert_editor_selected_model_unavailable">Das ausgewählte Modell ist nicht verfügbar.</string>
+    <string name="expert_editor_selected_template_unreadable">Die ausgewählte Vorlage ist nicht mehr lesbar.</string>
+    <string name="software_update_error_unsupported_arch">Nicht unterstützte Update-Architektur</string>
+    <string name="software_update_error_service_unavailable">Update-Dienst nicht verfügbar</string>
+    <string name="software_update_error_check_failed">Update-Prüfung fehlgeschlagen</string>
+    <string name="software_update_error_unreadable_package">Der Download ist kein lesbares Android-Paket</string>
+    <string name="software_update_error_package_mismatch">APK-Paket oder Version stimmt nicht mit diesem Update überein</string>
+    <string name="chat_document_delete_title">Dokument löschen</string>
+    <string name="chat_document_delete_message">„%1$s“ löschen? Es wird aus deinem Kontext entfernt.</string>
+    <string name="data_heart_rate_bpm_format">%1$d bpm</string>
+    <string name="chat_web_host_images_unsupported">Bildanhänge werden in Nola-Web-Host-Unterhaltungen nicht unterstützt. Wechsle zu einem lokalen oder Cloud-Modell oder entferne die Bilder.</string>
 </resources>

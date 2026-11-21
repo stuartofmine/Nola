@@ -37,7 +37,7 @@ public final class ModelService: LLMClient {
             installedProviderRevision &+= 1
         }
     }
-    private var activeTasks: [Task<Void, Never>] = []
+    private var activeTasks: [UUID: Task<Void, Never>] = [:]
     private var auxiliaryLedgerOverride: IOSApplicationRuntime?
     private struct AuxiliaryRefreshCursor: Codable, Sendable {
         let source_host_id: String
@@ -346,11 +346,19 @@ public final class ModelService: LLMClient {
         let providerName = String(describing: type(of: provider))
         let start = Date()
         let stream = provider.generateSummaryStream(input: input)
+        let taskID = UUID()
 
         return AsyncThrowingStream { continuation in
-            let task = Task {
+            providerLock.lock()
+            let task = Task { [weak self] in
+                defer {
+                    self?.removeActiveTask(id: taskID)
+                }
                 do {
                     for try await chunk in stream {
+                        if Task.isCancelled {
+                            break
+                        }
                         continuation.yield(chunk)
                     }
                     let duration = Date().timeIntervalSince(start)
@@ -363,8 +371,18 @@ public final class ModelService: LLMClient {
                     continuation.finish(throwing: error)
                 }
             }
-            activeTasks.append(task)
+            activeTasks[taskID] = task
+            providerLock.unlock()
+            continuation.onTermination = { @Sendable _ in
+                task.cancel()
+            }
         }
+    }
+
+    private func removeActiveTask(id: UUID) {
+        providerLock.lock()
+        defer { providerLock.unlock() }
+        activeTasks.removeValue(forKey: id)
     }
 
     public func chat(message: String, systemPrompt: String?, enableThinking: Bool, timeout: TimeInterval?) async throws -> String {
@@ -374,10 +392,13 @@ public final class ModelService: LLMClient {
 
     // Cancel any active streaming/inference tasks
     public func cancelAllRequests() {
-        for t in activeTasks {
+        providerLock.lock()
+        let tasks = Array(activeTasks.values)
+        activeTasks.removeAll()
+        providerLock.unlock()
+        for t in tasks {
             t.cancel()
         }
-        activeTasks.removeAll()
     }
 
     // Helper to serialize ModelOutput to JSON string for token estimation

@@ -132,12 +132,13 @@ nonisolated struct IOSConversationListPreview: Sendable {
 struct ChatConversationsList: View {
     @EnvironmentObject private var container: ServiceContainer
     @Environment(\.colorScheme) private var colorScheme
+    @Environment(\.horizontalSizeClass) private var horizontalSizeClass
     @AppStorage(AppleAppearancePreference.storageKey) private var appearance = "system"
     let onSelect: (UUID) -> Void
     var onContinueExpert: (IOSExpertHistoryContinuation) -> Void = { _ in }
     @State private var expandedParents: Set<UUID> = []
     @State private var conversations: [IOSConversationDirectoryEntry] = []
-    @State private var pageWidth: CGFloat = 390
+    private var pageInset: CGFloat { horizontalSizeClass == .regular ? 24 : 20 }
     @State private var previews: [UUID: IOSConversationListPreview] = [:]
     @State private var directorySnapshot: [IOSCanonicalConversationSummary]?
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
@@ -157,6 +158,7 @@ struct ChatConversationsList: View {
     @State private var loadError: String?
     @State private var previewRefreshRevision = 0
     @State private var needsResponseOnly = false
+    @State private var persistedWaitingIDs: Set<UUID> = []
 
     private struct PreviewLoadIdentity: Hashable {
         let lastActiveAt: Date
@@ -217,10 +219,11 @@ struct ChatConversationsList: View {
         .modifier(IOSWorkspaceTopEdge())
         .scrollContentBackground(.hidden)
         .background(DesignTokens.backgroundColor)
-        .background(IOSWorkspaceWidthObserver(width: $pageWidth))
         .accessibilityIdentifier("chat.conversations.list")
         .navigationTitle("")
-        .toolbar(.hidden, for: .navigationBar)
+        .navigationBarTitleDisplayMode(.inline)
+        .toolbar(horizontalSizeClass == .compact ? .hidden : .visible, for: .navigationBar)
+        .toolbarBackground(.hidden, for: .navigationBar)
         .scrollDismissesKeyboard(.interactively)
         .task { await refresh() }
         .refreshable { await refresh(forcePreviews: true) }
@@ -329,7 +332,7 @@ struct ChatConversationsList: View {
                                     .frame(width: 44, height: 44).contentShape(Rectangle())
                             }.buttonStyle(.plain)
                             .accessibilityLabel(Text("expert.history.title"))
-                            .accessibilityValue(Text(expandedParents.contains(conversation.id) ? "expert.history.expanded" : "expert.history.collapsed"))
+                            .accessibilityValue(expandedParents.contains(conversation.id) ? Text("expert.history.expanded") : Text("expert.history.collapsed"))
                             .accessibilityIdentifier("chat.children.toggle." + conversation.id.uuidString.lowercased())
                             }
                         }
@@ -341,7 +344,7 @@ struct ChatConversationsList: View {
                     }
                     .listRowSeparator(.visible, edges: .bottom)
                     .listRowBackground(DesignTokens.backgroundColor)
-                    .listRowInsets(EdgeInsets(top: 12, leading: pageWidth < 359 ? 16 : 20, bottom: 12, trailing: pageWidth < 359 ? 16 : 20))
+                    .listRowInsets(EdgeInsets(top: 12, leading: pageInset, bottom: 12, trailing: pageInset))
     }
 
     private var listHeader: some View {
@@ -412,14 +415,18 @@ struct ChatConversationsList: View {
             }
         }
         .buttonStyle(.plain)
-        .padding(.horizontal, pageWidth < 359 ? 16 : 20)
+        .padding(.horizontal, pageInset)
         .padding(.top, 4).padding(.bottom, 16)
         .background(DesignTokens.backgroundColor)
     }
 
     private func waiting(_ id: UUID) -> Bool {
+        if persistedWaitingIDs.contains(id) { return true }
         guard let execution = container.chatManager.executionForConversation(id) else { return false }
-        return execution.pendingHostPermissionRequest != nil || execution.localAgentPermissionRequest != nil
+        return execution.pendingHostPermissionRequest != nil
+            || execution.localAgentPermissionRequest != nil
+            || execution.remoteRunNeedsResume
+            || execution.unknownEffectRecovery != nil
     }
     private func filterButton(_ key: String, waitingOnly: Bool) -> some View {
         let selected = needsResponseOnly == waitingOnly
@@ -461,13 +468,19 @@ struct ChatConversationsList: View {
         directoryRequest = request
         do {
             let previous = directorySnapshot
-            let (snapshot, directory) = try await Task.detached {
+            let (snapshot, directory, waitingIDs) = try await Task.detached {
                 let snapshot = try runtime.listRootConversations()
                 let changed = forcePreviews || snapshot != previous
                 let directory = changed ? try IOSWorkspaceReadFacts.conversationDirectory(runtime: runtime, summaries: snapshot) : nil
-                return (snapshot, directory)
+                let waitingIDs: Set<UUID>? = (try? IOSWorkspaceReadFacts.snapshot(runtime: runtime)).map { facts in
+                    Set(facts.conversations.filter(\.needs_response).compactMap { UUID(uuidString: $0.conversation_id) })
+                }
+                return (snapshot, directory, waitingIDs)
             }.value
             guard !Task.isCancelled, directoryRequest == request else { return }
+            if let waitingIDs {
+                persistedWaitingIDs = waitingIDs
+            }
             if let directory {
                 let ids = Set(directory.map(\.id))
                 previews = previews.filter { ids.contains($0.key) }

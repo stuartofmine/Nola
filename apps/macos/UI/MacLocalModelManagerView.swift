@@ -34,6 +34,7 @@ struct MacLocalModelManagerView: View {
         nonmutating set { editing.showsCompactDetail = newValue }
     }
     @State private var showsDownloadSettings = false
+    @State private var showsCancelDownloadConfirmation = false
     @State private var parameterRoute: MacModelParametersRoute?
     let navigationAction: (() -> Void)?
     let showsHeader: Bool
@@ -147,6 +148,17 @@ struct MacLocalModelManagerView: View {
             }
         } message: {
             Text(String(localized: "The downloaded model files will be removed from this Mac.", table: "ModelCenter"))
+        }
+        .alert(
+            String(localized: "Cancel Model Download?", table: "ModelCenter"),
+            isPresented: $showsCancelDownloadConfirmation
+        ) {
+            Button(String(localized: "Keep Downloading", table: "ModelCenter"), role: .cancel) {}
+            Button(String(localized: "Cancel Download", table: "ModelCenter"), role: .destructive) {
+                downloader.cancelDownload()
+            }
+        } message: {
+            Text(String(localized: "Partial download progress will be discarded.", table: "ModelCenter"))
         }
     }
 
@@ -439,7 +451,7 @@ struct MacLocalModelManagerView: View {
                 } label: {
                     Label(String(localized: "Retry", table: "ModelCenter"), systemImage: "arrow.clockwise")
                 }
-                .buttonStyle(.borderedProminent)
+                .buttonStyle(.nolaProminent)
             }
         }
         .padding(15)
@@ -603,7 +615,7 @@ struct MacLocalModelManagerView: View {
                     } label: {
                         Label(String(localized: "Use for Start", table: "ModelCenter"), systemImage: "checkmark.circle")
                     }
-                    .buttonStyle(.borderedProminent)
+                    .buttonStyle(.nolaProminent)
                     .disabled(runningModelProfile != nil || MacMLXOpenAIService.shared.status.isStarting)
                 }
                 Button {
@@ -627,7 +639,7 @@ struct MacLocalModelManagerView: View {
                             Label(String(localized: "Start", table: "ModelCenter"), systemImage: "play.fill")
                         }
                     }
-                    .buttonStyle(.borderedProminent)
+                    .buttonStyle(.nolaProminent)
                     .disabled(runningModelProfile != nil || MacMLXOpenAIService.shared.status.isStarting)
                 }
                 Menu {
@@ -652,7 +664,7 @@ struct MacLocalModelManagerView: View {
                         errorMessage = error.localizedDescription
                     }
                 }
-                .buttonStyle(.borderedProminent)
+                .buttonStyle(.nolaProminent)
                 .disabled(runningModelProfile != nil || MacMLXOpenAIService.shared.status.isStarting)
             }
             Button {
@@ -680,7 +692,7 @@ struct MacLocalModelManagerView: View {
                         Text(String(localized: "Start", table: "ModelCenter"))
                     }
                 }
-                .buttonStyle(.borderedProminent)
+                .buttonStyle(.nolaProminent)
                 .disabled(startingModel != nil || runningModelProfile != nil || MacMLXOpenAIService.shared.status.isStarting)
             }
             Menu {
@@ -703,7 +715,7 @@ struct MacLocalModelManagerView: View {
             } label: {
                 Label(String(localized: "Download", table: "ModelCenter"), systemImage: "arrow.down")
             }
-                .buttonStyle(.borderedProminent)
+                .buttonStyle(.nolaProminent)
                 .disabled(downloader.isDownloading)
         }
     }
@@ -773,15 +785,19 @@ struct MacLocalModelManagerView: View {
             Button(action: downloader.pauseDownload) {
                 Label(String(localized: "Pause", table: "ModelCenter"), systemImage: "pause.fill")
             }
-            Button(role: .destructive, action: downloader.cancelDownload) {
+            Button(role: .destructive) {
+                showsCancelDownloadConfirmation = true
+            } label: {
                 Label(String(localized: "Cancel", table: "ModelCenter"), systemImage: "xmark")
             }
         } else if case .paused = downloader.state {
             Button(action: downloader.resumeDownload) {
                 Label(String(localized: "Resume", table: "ModelCenter"), systemImage: "play.fill")
             }
-                .buttonStyle(.borderedProminent)
-            Button(role: .destructive, action: downloader.cancelDownload) {
+                .buttonStyle(.nolaProminent)
+            Button(role: .destructive) {
+                showsCancelDownloadConfirmation = true
+            } label: {
                 Label(String(localized: "Cancel", table: "ModelCenter"), systemImage: "xmark")
             }
         }

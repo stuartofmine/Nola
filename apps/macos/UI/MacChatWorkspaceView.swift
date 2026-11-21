@@ -937,6 +937,31 @@ struct MacChatWorkspaceView: View {
                             }
                     )
             }
+            .accessibilityLabel(String(localized: "Sidebar width"))
+            .accessibilityValue("\(Int(sidebarWidth(availableWidth: availableWidth)))")
+            .accessibilityAdjustableAction { direction in
+                let delta: CGFloat = direction == .increment ? 10 : -10
+                storedSidebarWidth = Double(min(
+                    MacWorkspaceColumnMetrics.maximumSidebarWidth,
+                    max(MacWorkspaceColumnMetrics.minimumSidebarWidth, sidebarWidth(availableWidth: availableWidth) + delta)
+                ))
+            }
+            .onKeyPress(.rightArrow) {
+                storedSidebarWidth = Double(min(
+                    MacWorkspaceColumnMetrics.maximumSidebarWidth,
+                    sidebarWidth(availableWidth: availableWidth) + 10
+                ))
+                return .handled
+            }
+            .onKeyPress(.leftArrow) {
+                storedSidebarWidth = Double(max(
+                    MacWorkspaceColumnMetrics.minimumSidebarWidth,
+                    sidebarWidth(availableWidth: availableWidth) - 10
+                ))
+                return .handled
+            }
+            .focusable()
+            .help(String(localized: "Drag to resize the sidebar"))
     }
 
     private func inspectorResizeHandle(availableWidth: CGFloat) -> some View {
@@ -1042,6 +1067,11 @@ struct MacChatWorkspaceView: View {
                 }
             }
             .transition(.opacity)
+            .onExitCommand {
+                withAnimation(reduceMotion ? nil : MacDesignTokens.Motion.structure) {
+                    self.activeOverlay = nil
+                }
+            }
         }
     }
 
@@ -1085,10 +1115,16 @@ struct MacChatWorkspaceView: View {
                     .padding(.top, 10)
                     .accessibilityIdentifier("chat.expert-admission-error")
                     if !expertSelection.isEmpty, let owner = model.selectedConversationID {
-                        Button(String(localized: "Keep names as plain text")) {
-                            model.setDraft(model.draft, conversationID: owner)
-                            roomWorkspace.directoryError = nil
+                        HStack {
+                            Button(String(localized: "Keep names as plain text")) {
+                                model.setDraft(model.draft, conversationID: owner)
+                                roomWorkspace.directoryError = nil
+                            }
+                            .buttonStyle(MacActionButtonStyle())
+                            Spacer()
                         }
+                        .padding(.horizontal, 24)
+                        .padding(.top, 6)
                     }
                 }
                 MacConversationCanvas(
@@ -1450,6 +1486,7 @@ struct MacChatWorkspaceView: View {
                         systemImage: "xmark.circle"
                     )
                 }
+                .disabled(model.isSelectedConversationVisiblyRunning)
             }
         } label: {
             Label {
@@ -1524,6 +1561,7 @@ struct MacChatWorkspaceView: View {
             .macComposerPill(isActive: showsAgentRooms)
         }
         .buttonStyle(.plain)
+        .disabled(model.selectedConversationID == nil)
         .accessibilityIdentifier("chat.experts")
     }
 
@@ -1567,7 +1605,7 @@ struct MacChatWorkspaceView: View {
                         Button(action: manageChatModels) {
                             Label(String(localized: "Configure Model", table: "Chat"), systemImage: "square.3.layers.3d")
                         }
-                        .buttonStyle(.borderedProminent)
+                        .buttonStyle(.nolaProminent)
                         .tint(MacDesignColor.primaryAction)
                         .foregroundStyle(MacDesignColor.onPrimaryAction)
                         .controlSize(.large)
@@ -1974,8 +2012,12 @@ struct MacChatWorkspaceView: View {
                     showsInspector = true
                 }
             } else {
-                showsInspector = true
-                activeOverlay = activeOverlay == .inspector ? nil : .inspector
+                let opening = activeOverlay != .inspector
+                activeOverlay = opening ? .inspector : nil
+                showsInspector = opening
+                if !opening {
+                    codeReference = nil
+                }
             }
         }
     }

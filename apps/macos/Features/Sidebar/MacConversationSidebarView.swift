@@ -19,6 +19,7 @@ struct MacConversationSidebar: View {
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var isSearchHovering = false
     @State private var deletionTarget: MacConversation?
+    @State private var isCancellingRename = false
     @FocusState private var focusedRenameID: String?
 
     private var pinned: [MacConversation] {
@@ -76,7 +77,7 @@ struct MacConversationSidebar: View {
                         }
                     }
                 }
-                .frame(height: CGFloat(min(4, pluginPages.count)) * 36)
+                .frame(height: CGFloat(min(4, pluginPages.count)) * 36 + CGFloat(max(0, min(4, pluginPages.count) - 1)) * 2)
                 .padding(.horizontal, 10)
             }
             Spacer().frame(height: 12)
@@ -169,13 +170,17 @@ struct MacConversationSidebar: View {
             .padding(.vertical, 7)
         }
         .onChange(of: model.renamingConversationID) { _, conversationID in
+            if conversationID != nil {
+                isCancellingRename = false
+            }
             Task { @MainActor in
                 await Task.yield()
                 focusedRenameID = conversationID
             }
         }
         .onChange(of: focusedRenameID) { previousID, focusedID in
-            guard previousID != nil,
+            guard !isCancellingRename,
+                  previousID != nil,
                   focusedID == nil,
                   model.renamingConversationID == previousID else { return }
             model.commitRename()
@@ -216,7 +221,7 @@ struct MacConversationSidebar: View {
     }
 
     private func sidebarSectionLabel(_ title: String) -> some View {
-        Text(String(localized: String.LocalizationValue(title)))
+        Text(title)
             .font(.system(size: 12, weight: .semibold))
             .foregroundStyle(.secondary)
     }
@@ -308,6 +313,7 @@ struct MacConversationSidebar: View {
     }
 
     private func cancelRename() {
+        isCancellingRename = true
         model.renamingConversationID = nil
         model.renameDraft = ""
         focusedRenameID = nil

@@ -41,7 +41,7 @@ struct NotificationCenterView: View {
     @Environment(\.dismiss) private var dismiss
     @EnvironmentObject var container: ServiceContainer
     @State private var items: [NotificationEntity] = []
-    @State private var isLoading: Bool = false
+    @State private var isLoading: Bool = true
     @State private var isLoadingMore: Bool = false
     @State private var hasMoreHistory: Bool = false
     @State private var pageSize: Int = 25
@@ -129,16 +129,20 @@ struct NotificationCenterView: View {
                                         Task { await loadHistory(showLoading: false) }
                                     }
                                     .buttonStyle(.borderless)
+                                    .frame(minHeight: 44)
                                 } else {
                                     Button {
                                         operationError = nil
                                     } label: {
                                         Image(systemName: "xmark")
+                                            .frame(width: 44, height: 44)
+                                            .contentShape(Rectangle())
                                     }
                                     .buttonStyle(.borderless)
                                     .accessibilityLabel(NSLocalizedString("common.close", value: "Close", comment: "Close"))
                                 }
                             }
+                            .listRowBackground(DesignTokens.surfaceColor)
                         }
                     }
                     ForEach(groupedByDay(items.sorted(by: { $0.createdAt > $1.createdAt })), id: \.0) { (day, list) in
@@ -179,8 +183,11 @@ struct NotificationCenterView: View {
                                 }
                                 Spacer()
                             }
+                            .frame(minHeight: 44)
+                            .contentShape(Rectangle())
                         }
                         .disabled(isLoadingMore)
+                        .listRowBackground(DesignTokens.backgroundColor)
                     }
                 }
                 .listStyle(.plain)

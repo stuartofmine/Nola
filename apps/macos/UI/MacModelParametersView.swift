@@ -477,7 +477,7 @@ struct MacModelParametersView: View {
         Button(String(localized: "mac.model_parameters.reset")) { reset() }
             .disabled(localRevision == nil && remoteSnapshot == nil)
         Button(String(localized: "mac.model_parameters.save")) { save() }
-            .buttonStyle(.borderedProminent)
+            .buttonStyle(.nolaProminent)
             .keyboardShortcut("s", modifiers: .command)
             .disabled(!hasUnsavedChanges || validationMessage != nil || (localRevision == nil && remoteSnapshot == nil))
         Button(String(localized: "mac.model_parameters.done")) { requestDismiss() }

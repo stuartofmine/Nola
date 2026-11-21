@@ -194,6 +194,7 @@ struct MacSiwcSignInView: View {
             }
         }
         .padding(24).frame(width: 460)
+        .background(MacDesignColor.canvas)
         .tint(MacDesignColor.brand)
         .interactiveDismissDisabled(model.requiresConfirmedDismissal)
         .background(MacEditorWindowCloseGuard(
@@ -269,18 +270,18 @@ struct MacSiwcSignInView: View {
             Button(String(localized: "Sign in with ChatGPT", table: "ModelCenter")) {
                 let label = name.trimmingCharacters(in: .whitespacesAndNewlines)
                 model.begin(application: application, name: label.isEmpty ? "ChatGPT" : label)
-            }.buttonStyle(.borderedProminent).keyboardShortcut(.defaultAction)
+            }.buttonStyle(.nolaProminent).keyboardShortcut(.defaultAction)
                 .accessibilityIdentifier("mac-chatgpt-sign-in")
         } else if model.flow?.phase == "committed", !model.needsReauthorization {
             Button(String(localized: "Choose models", table: "ModelCenter")) { model.chooseModels() }
-                .buttonStyle(.borderedProminent).keyboardShortcut(.defaultAction).disabled(model.running)
+                .buttonStyle(.nolaProminent).keyboardShortcut(.defaultAction).disabled(model.running)
                 .accessibilityIdentifier("mac-chatgpt-choose-models")
         } else if !model.running, (model.flow?.phase == "failed" || model.retrySignInAllowed), model.flow?.private_session_may_be_retained != true {
             Button(String(localized: "Try sign-in again", table: "ModelCenter")) { model.restart(application: application, name: name) }
-                .buttonStyle(.borderedProminent)
+                .buttonStyle(.nolaProminent)
         } else if !model.running, model.error != nil || model.flow?.private_session_may_be_retained == true {
             Button(String(localized: "Check accounts", table: "ModelCenter")) { showAccounts?(); model.close(); dismiss() }
-                .buttonStyle(.borderedProminent)
+                .buttonStyle(.nolaProminent)
         }
     }
 }

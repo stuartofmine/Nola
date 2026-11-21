@@ -39,25 +39,27 @@
         return Math.max(0, Math.min(length, visiblePrefix - snapshot.offsetOf(node)));
     }
     let copyNotice = $state('');
+    let copiedBlock = $state<MarkdownBlock | null>(null);
     let copyGeneration = 0;
     let copyTimer: ReturnType<typeof setTimeout> | undefined;
     $effect.pre(() => {
         source;
-        copyGeneration++; clearTimeout(copyTimer); copyNotice = '';
+        copyGeneration++; clearTimeout(copyTimer); copyNotice = ''; copiedBlock = null;
     });
     onDestroy(() => { copyGeneration++; clearTimeout(copyTimer); });
-    async function copy(text: string) {
+    async function copy(text: string, block: MarkdownBlock) {
         const generation = ++copyGeneration, captured = source;
-        clearTimeout(copyTimer); copyNotice = '';
+        clearTimeout(copyTimer); copyNotice = ''; copiedBlock = null;
         const current = () => generation === copyGeneration && captured === source;
         try {
             await navigator.clipboard.writeText(text);
             if (current()) {
+                copiedBlock = block;
                 copyNotice = 'shell.markdown.copied';
-                copyTimer = setTimeout(() => { if (current()) copyNotice = ''; }, 1800);
+                copyTimer = setTimeout(() => { if (current()) { copyNotice = ''; copiedBlock = null; } }, 1800);
             }
         }
-        catch { if (current()) copyNotice = 'shell.markdown.copy_failed'; }
+        catch { if (current()) { copyNotice = 'shell.markdown.copy_failed'; copiedBlock = null; } }
     }
 </script>
 
@@ -89,7 +91,7 @@
             {#if node.language?.toLowerCase() === 'mermaid' && !streaming}
                 <MermaidDiagram source={node.text} />
             {:else}
-            <div class="code-block"><div class="code-header"><span>{node.language || t($locale, 'shell.markdown.code')}</span><button type="button" onclick={() => copy(node.text)}>{t($locale, 'shell.markdown.copy')}</button></div>
+            <div class="code-block"><div class="code-header"><span>{node.language || t($locale, 'shell.markdown.code')}</span><button type="button" onclick={() => copy(node.text, node)}>{t($locale, copiedBlock === node ? 'shell.markdown.copied' : 'shell.markdown.copy')}</button></div>
                 <!-- svelte-ignore a11y_no_noninteractive_tabindex (Keyboard users need to focus this overflow region to scroll code.) -->
                 <pre tabindex="0" role="region" aria-label={t($locale, 'shell.markdown.code')}><code>{#if streaming || hasStreamed}<StreamingText text={node.text} {streaming} visiblePrefix={prefix(node, node.text.length)} />{:else}{node.text}{/if}</code></pre>
             </div>
@@ -114,7 +116,7 @@
 <div class="markdown" bind:this={container}>{@render renderBlocks(content)}{#if copyNotice}<p class="copy-notice" role="status">{t($locale, copyNotice)}</p>{/if}</div>
 
 <style>
-    .markdown { min-width: 0; line-height: 1.5625; overflow-wrap: anywhere; }
+    .markdown { min-width: 0; line-height: 1.625; overflow-wrap: anywhere; }
     .markdown > :global(:first-child) { margin-top: 0; }
     .markdown > :global(:last-child) { margin-bottom: 0; }
     .markdown :global(p) { margin: 12px 0; }

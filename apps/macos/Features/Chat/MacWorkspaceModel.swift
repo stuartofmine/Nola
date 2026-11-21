@@ -566,7 +566,15 @@ final class MacWorkspaceModel {
         }
     }
     var searchText = ""
-    var transcriptSearchText = ""
+    var transcriptSearchText = "" {
+        didSet {
+            guard transcriptSearchText != oldValue else { return }
+            transcriptSearchMatchIndex = 0
+            transcriptSearchNavigationToken = UUID()
+        }
+    }
+    var transcriptSearchMatchIndex = 0
+    var transcriptSearchNavigationToken = UUID()
     var conversationRecallQuery = "" {
         didSet {
             guard conversationRecallQuery != oldValue else { return }
@@ -801,7 +809,17 @@ final class MacWorkspaceModel {
                     guard let self else { return }
                     defer {
                         self.goalTasks.removeValue(forKey: owner)
-                        if self.activeConversationID == owner, self.activeGenerationID == generation { self.isRunning = false }
+                        if self.activeConversationID == owner, self.activeGenerationID == generation {
+                            self.isRunning = false
+                            self.activeConversationID = nil
+                            self.activeRunExecutionLocation = nil
+                            if self.runCoordinator.identity?.conversationID == owner,
+                               self.runCoordinator.canFinish(generationID: generation),
+                               !self.runCoordinator.isFinalized(generationID: generation) {
+                                _ = self.runCoordinator.claimFinish(generationID: generation)
+                                self.runCoordinator.completeFinish(generationID: generation)
+                            }
+                        }
                     }
                     do {
                         var response = ""
@@ -2992,10 +3010,28 @@ final class MacWorkspaceModel {
         return workspaceURL?.lastPathComponent ?? String(localized: "Workspace")
     }
 
-    var transcriptMatchCount: Int {
+    var transcriptMatchingMessageIDs: [UUID] {
         let query = transcriptSearchText.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !query.isEmpty else { return 0 }
-        return selectedMessages.filter { $0.text.localizedCaseInsensitiveContains(query) }.count
+        guard !query.isEmpty else { return [] }
+        return selectedMessages.filter { $0.text.localizedCaseInsensitiveContains(query) }.map(\.id)
+    }
+
+    var transcriptMatchCount: Int {
+        transcriptMatchingMessageIDs.count
+    }
+
+    var transcriptSearchFocusedMessageID: UUID? {
+        let matches = transcriptMatchingMessageIDs
+        guard !matches.isEmpty else { return nil }
+        let clampedIndex = min(max(0, transcriptSearchMatchIndex), matches.count - 1)
+        return matches[clampedIndex]
+    }
+
+    func stepTranscriptSearchMatch(by delta: Int) {
+        let matches = transcriptMatchingMessageIDs
+        guard !matches.isEmpty else { return }
+        transcriptSearchMatchIndex = (transcriptSearchMatchIndex + delta % matches.count + matches.count) % matches.count
+        transcriptSearchNavigationToken = UUID()
     }
 
     var selectedConversationAttachments: [MacConversationAttachmentReference] {

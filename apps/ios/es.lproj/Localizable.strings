@@ -1644,6 +1644,7 @@
 "common.frequency.weekly" = "Semanal";
 "common.no.zh" = "No";
 "common.retry" = "Reintentar";
+"common.search" = "Buscar";
 "common.unknown" = "Desconocido";
 "common.yes.zh" = "Sí";
 "data.subtitle.local_first" = "Fuentes de datos en el dispositivo, acciones programadas y estado de ejecución reciente.";
@@ -2869,6 +2870,7 @@
 
 "room.pending_expert_message" = "La solicitud a expertos está pendiente de inicio.";
 "room.resume_complete_experts" = "Reanudar el mensaje original a expertos";
+"room.retry_expert_reply" = "Reintentar respuesta del experto";
 
 // Expert directory management
 "experts.manage" = "Gestionar expertos";
@@ -3279,3 +3281,9 @@
 "harness.device_note" = "Conecta el equipo donde se ejecutan tus plugins para usarlos aquí.";
 "harness.connect" = "Conectar un Host de escritorio";
 "harness.pair" = "Conectar otro Host";
+
+"Keep names as plain text" = "Mantener los nombres como texto plano";
+"The expert selection changed. Remove the mention and select the expert again." = "La selección de expertos cambió. Elimina la mención y vuelve a seleccionar al experto.";
+"Write what you want the expert to do." = "Escribe lo que quieres que haga el experto.";
+"View expert history" = "Ver historial del experto";
+"Icon could not be rendered" = "No se pudo renderizar el icono";

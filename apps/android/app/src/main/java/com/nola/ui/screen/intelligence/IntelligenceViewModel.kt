@@ -121,10 +121,10 @@ class IntelligenceViewModel @Inject constructor(
         }
     }
 
-    fun saveEntry(kind: IntelligenceEntryKind, index: Int?, value: String) {
+    fun saveEntry(kind: IntelligenceEntryKind, index: Int?, value: String, onCommitted: () -> Unit = {}) {
         val normalized = value.trim()
         if (normalized.isEmpty()) return
-        mutateMemory { profile ->
+        mutateMemory(onCommitted = onCommitted) { profile ->
             when (kind) {
                 IntelligenceEntryKind.Preference -> profile.copy(
                     userPreferences = upsert(profile.userPreferences, index, normalized)
@@ -258,7 +258,7 @@ class IntelligenceViewModel @Inject constructor(
         _uiState.update { it.copy(errorMessage = null) }
     }
 
-    private fun mutateMemory(transform: (ChatMemoryProfile) -> ChatMemoryProfile) {
+    private fun mutateMemory(onCommitted: () -> Unit = {}, transform: (ChatMemoryProfile) -> ChatMemoryProfile) {
         val state = _uiState.value
         if (state.isSaving || state.isLoadingProfile || state.profileLoadError != null) return
         val draft = transform(state.profile)
@@ -270,6 +270,7 @@ class IntelligenceViewModel @Inject constructor(
                     _uiState.update { state ->
                         state.copy(saveRevision = state.saveRevision + 1)
                     }
+                    onCommitted()
                 } catch (error: Exception) {
                     if (error is kotlinx.coroutines.CancellationException) throw error
                     _uiState.update { it.copy(errorMessage = error.localizedMessage ?: error.javaClass.simpleName) }

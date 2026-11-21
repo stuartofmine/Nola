@@ -17,8 +17,10 @@ import androidx.compose.ui.text.withStyle
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
@@ -188,6 +190,7 @@ fun ConversationListScreen(
 
     Scaffold(
         containerColor = MaterialTheme.colorScheme.background,
+        contentWindowInsets = WindowInsets(0),
         topBar = {
             NolaRootPageTitle(stringResource(R.string.conversations_title), Modifier.padding(horizontal = nolaPageGutter()))
         },
@@ -211,7 +214,7 @@ fun ConversationListScreen(
                 Text(error, Modifier.padding(horizontal = nolaPageGutter(), vertical = 8.dp), color = MaterialTheme.colorScheme.error)
                 TextButton(onClick = onRetry) { Text(stringResource(R.string.common_retry)) }
             }
-            Row(Modifier.fillMaxWidth().padding(horizontal = nolaPageGutter()), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+            Row(Modifier.widthIn(max = 720.dp).fillMaxWidth().padding(horizontal = nolaPageGutter()), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
                 listOf(false to R.string.activity_all, true to R.string.conversations_waiting).forEach { (waiting, label) ->
                     TextButton(onClick = { needsResponseOnly = waiting }) {
                         Text(stringResource(label), fontWeight = if (needsResponseOnly == waiting) FontWeight.SemiBold else FontWeight.Normal,
@@ -223,7 +226,11 @@ fun ConversationListScreen(
                 (!needsResponseOnly || activity[it.id]?.permissionRequest != null) &&
                     (search.isBlank() || it.title.orEmpty().contains(search.trim(), true) || drafts[it.id].orEmpty().contains(search.trim(), true))
             }
-            LazyColumn(state = listState, modifier = Modifier.widthIn(max = 720.dp).fillMaxSize().testTag("chat.conversations.list")) {
+            LazyColumn(
+                state = listState,
+                contentPadding = PaddingValues(bottom = 88.dp),
+                modifier = Modifier.widthIn(max = 720.dp).fillMaxSize().testTag("chat.conversations.list")
+            ) {
                 if (visible.isEmpty()) item {
                     val unfiltered = search.isBlank() && !needsResponseOnly
                     Text(stringResource(if (unfiltered) R.string.conversations_empty_message else R.string.conversations_no_results),
@@ -290,7 +297,12 @@ fun ConversationListScreen(
                                     }
                                 )
                                 DropdownMenuItem(
-                                    text = { Text(stringResource(R.string.common_delete), color = NolaColors.danger) },
+                                    text = {
+                                        Text(
+                                            stringResource(R.string.common_delete),
+                                            color = if (!isBusy) NolaColors.danger else NolaColors.danger.copy(alpha = 0.38f)
+                                        )
+                                    },
                                     enabled = !isBusy,
                                     onClick = {
                                         menuTargetId = null

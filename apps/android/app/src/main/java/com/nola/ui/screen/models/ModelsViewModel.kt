@@ -111,7 +111,7 @@ internal fun modelTestCloudConfiguration(
     topK = parameters.topK,
     sendTopK = false,
     maxCompletionTokens = parameters.maxCompletionTokens,
-).withParameters(parameters)
+).withParameters(parameters).withResolvedRuntime(endpoint.resolvedRuntime)
 
 @HiltViewModel
 class ModelsViewModel @Inject constructor(
@@ -384,7 +384,7 @@ class ModelsViewModel @Inject constructor(
                 val parameters = modelParametersStore.loadParameters(model.parameterProfileId)
                 val client = when (model.source) {
                     ModelInfo.ModelSource.Cloud -> {
-                        val config = modelRepo.getApiModelConfigFor(model)
+                        val config = modelRepo.getApiModelConfigFor(model, parameters)
                             ?: error(context.getString(R.string.models_error_configure_endpoint_before_cloud))
                         openAiProvider.clientForTurn(modelTestCloudConfiguration(config, model, parameters))
                     }
@@ -585,9 +585,16 @@ class ModelsViewModel @Inject constructor(
         }
     }
 
+    private var localDownloadJob: Job? = null
+
+    fun cancelLocalModelDownload() {
+        localDownloadJob?.cancel()
+        localDownloadJob = null
+    }
+
     fun downloadLocalModel(entry: DeviceModelCatalogEntry) {
         if (_uiState.value.downloadingModelId != null) return
-        viewModelScope.launch {
+        localDownloadJob = viewModelScope.launch {
             _uiState.update {
                 it.copy(
                     downloadingModelId = entry.id,
@@ -617,6 +624,7 @@ class ModelsViewModel @Inject constructor(
             } catch (error: Throwable) {
                 publishStatus(context.getString(R.string.models_download_failed_format, error.message.orEmpty()), false)
             } finally {
+                localDownloadJob = null
                 _uiState.update { it.copy(downloadingModelId = null, downloadProgress = null) }
             }
         }
@@ -861,14 +869,30 @@ class ModelsViewModel @Inject constructor(
             if (_uiState.value.parameterSnapshot !== snapshot) return@launch
             _uiState.update { it.copy(parameters = params) }
             closeParameters()
-            if (target.id == modelService.currentModelId && target.profileId == modelService.currentProfileId &&
-                target.source != ModelInfo.ModelSource.WebHost) {
-                openAiProvider.config = openAiProvider.config?.copy(
-                    temperature = params.temperature,
-                    topP = params.topP,
-                    topK = params.topK,
-                    maxCompletionTokens = params.maxCompletionTokens
-                )
+            when (target.source) {
+                ModelInfo.ModelSource.Cloud -> {
+                    if (target.id == modelService.currentModelId && target.profileId == modelService.currentProfileId) {
+                        openAiProvider.config = openAiProvider.config?.withParameters(params)
+                    }
+                }
+                ModelInfo.ModelSource.Local -> {
+                    if (_uiState.value.runningLocalModelId == target.id) {
+                        val record = installedLocalRecords.firstOrNull { it.id == target.id }
+                        if (record != null) {
+                            val clamped = params.copy(
+                                maxContextTokens = params.maxContextTokens.coerceIn(512, record.contextWindow.coerceAtLeast(512))
+                            )
+                            try {
+                                localLlamaProvider.start(record, clamped)
+                            } catch (cancelled: CancellationException) {
+                                throw cancelled
+                            } catch (error: Throwable) {
+                                publishStatus(context.getString(R.string.models_test_failed_format, error.message.orEmpty()), false)
+                            }
+                        }
+                    }
+                }
+                ModelInfo.ModelSource.WebHost -> Unit
             }
         }
     }

@@ -95,7 +95,7 @@
 
 <svelte:window onbeforeunload={beforeUnload} />
 <ConfirmationDialog bind:this={confirmation} />
-<dialog use:ownDialog bind:this={dialog} oncancel={close} aria-labelledby="endpoint-credential-title">
+<dialog use:ownDialog bind:this={dialog} oncancel={close} onclick={event => { if (event.target === dialog && !busy) void close(); }} aria-labelledby="endpoint-credential-title">
     <form onsubmit={event => { event.preventDefault(); void write('replace'); }} aria-busy={busy || loading}>
         <header><h2 id="endpoint-credential-title">{t($locale, 'credential.title', { name: name || t($locale, 'credential.endpoint') })}</h2><p class="muted">{t($locale, 'credential.storage')}</p></header>
         {#if loading}<p role="status">{t($locale, 'credential.loading')}</p>{/if}
@@ -107,7 +107,7 @@
             <p class="muted">{t($locale, 'credential.bindingHint')}</p>
         {/if}
         <div class="actions">
-            {#if snapshot}<button type="button" disabled={busy || loading} onclick={() => write('clear')}>{t($locale, 'credential.clear')}</button>{/if}
+            {#if snapshot}<button type="button" class="danger" disabled={busy || loading} onclick={() => write('clear')}>{t($locale, 'credential.clear')}</button>{/if}
             <button type="button" disabled={busy} onclick={() => close()}>{t($locale, 'credential.close')}</button>
             <button class="primary" disabled={busy || loading || !snapshot || !secret.trim()}>{t($locale, busy ? 'credential.submitting' : 'credential.save')}</button>
         </div>

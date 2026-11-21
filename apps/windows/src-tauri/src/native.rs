@@ -91,6 +91,30 @@ pub fn set_login_item(window: WebviewWindow, enabled: bool) -> Result<Value, Str
     .map_err(|e| e.to_string())?;
     login_item(window)
 }
+#[tauri::command]
+pub fn set_theme(window: WebviewWindow, theme: String) -> Result<(), String> {
+    require_host(&window)?;
+    let target = match theme.as_str() {
+        "light" => Some(tauri::Theme::Light),
+        "dark" => Some(tauri::Theme::Dark),
+        "system" => None,
+        _ => return Err("Unsupported theme".into()),
+    };
+    window.set_theme(target).map_err(|e| e.to_string())?;
+    let effective_dark = match target {
+        Some(tauri::Theme::Dark) => true,
+        Some(tauri::Theme::Light) => false,
+        None => matches!(window.theme(), Ok(tauri::Theme::Dark)),
+        _ => false,
+    };
+    let background = if effective_dark {
+        tauri::window::Color(0x1b, 0x1c, 0x1a, 0xff)
+    } else {
+        tauri::window::Color(0xfa, 0xf8, 0xf4, 0xff)
+    };
+    let _ = window.set_background_color(Some(background));
+    Ok(())
+}
 pub fn show(app: &AppHandle) {
     if let Some(window) = app.get_webview_window("main") {
         let _ = window.unminimize();
@@ -123,8 +147,14 @@ pub fn tray(app: &AppHandle) -> tauri::Result<()> {
                     let _ = open::that_detached(dir.join("Nola Workspace"));
                 }
             }
-            "restart" => app.restart(),
-            "quit" => app.exit(0),
+            "restart" => {
+                super::stop_host(app);
+                app.restart();
+            }
+            "quit" => {
+                super::stop_host(app);
+                app.exit(0);
+            }
             _ => {}
         })
         .on_tray_icon_event(|tray, event| {

@@ -5,7 +5,8 @@ import SwiftUI
 struct IOSPersonalWorkspaceView: View {
     @EnvironmentObject private var container: ServiceContainer
     @Environment(\.scenePhase) private var scenePhase
-    @State private var pageWidth: CGFloat = 390
+    @Environment(\.horizontalSizeClass) private var horizontalSizeClass
+    private var pageInset: CGFloat { horizontalSizeClass == .regular ? 24 : 20 }
     @State private var conversations: [IOSWorkspaceConversationSummary] = []
     @State private var notifications: [NotificationEntity] = []
     @State private var persistedWaitingIDs: Set<UUID> = []
@@ -140,7 +141,7 @@ struct IOSPersonalWorkspaceView: View {
                     }
                 }
                 }
-                .listRowInsets(EdgeInsets(top: 12, leading: pageWidth < 359 ? 16 : 20, bottom: 12, trailing: pageWidth < 359 ? 16 : 20))
+                .listRowInsets(EdgeInsets(top: 12, leading: pageInset, bottom: 12, trailing: pageInset))
                 .listRowBackground(DesignTokens.backgroundColor)
                 .listRowSeparator(.hidden)
             }
@@ -148,9 +149,9 @@ struct IOSPersonalWorkspaceView: View {
             .modifier(IOSWorkspaceTopEdge())
             .scrollContentBackground(.hidden)
             .background(DesignTokens.backgroundColor)
-            .background(IOSWorkspaceWidthObserver(width: $pageWidth))
             .navigationTitle("")
-            .toolbar(.hidden, for: .navigationBar)
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbarBackground(.hidden, for: .navigationBar)
             .refreshable { refresh(); await refreshTask?.value }
             .task(id: scenePhase) {
                 guard scenePhase == .active else { refreshTask?.cancel(); return }
@@ -311,7 +312,6 @@ struct IOSWorkspaceManagementContent: View {
         }
         .navigationTitle(destination.informationTitle)
         .navigationBarTitleDisplayMode(.inline)
-        .toolbar(.visible, for: .navigationBar)
     }
 }
 
@@ -351,11 +351,11 @@ struct IOSInformationNavigationRequest: Identifiable, Equatable {
 
 struct IOSInformationView: View {
     @EnvironmentObject private var container: ServiceContainer
-    @State private var pageWidth: CGFloat = 390
+    @Environment(\.horizontalSizeClass) private var horizontalSizeClass
     @State private var directory: [IOSConversationDirectoryEntry] = []
     @State private var directoryLoadedAt: Date?
     @State private var directoryError: String?
-    private var pageInset: CGFloat { pageWidth < 359 ? 16 : 20 }
+    private var pageInset: CGFloat { horizontalSizeClass == .regular ? 24 : 20 }
     @Binding var path: [IOSWorkspaceDestination]
     @Binding var pendingRequests: [IOSInformationNavigationRequest]
     @State private var activeRequest: IOSInformationNavigationRequest?
@@ -428,9 +428,9 @@ struct IOSInformationView: View {
             .listSectionSpacing(12)
             .scrollContentBackground(.hidden)
             .background(DesignTokens.backgroundColor)
-            .background(IOSWorkspaceWidthObserver(width: $pageWidth))
-            .navigationTitle(NSLocalizedString("navigation.information", value: "Information", comment: "Information tab"))
-            .toolbar(.hidden, for: .navigationBar)
+            .navigationTitle("")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbarBackground(.hidden, for: .navigationBar)
             .navigationDestination(for: IOSWorkspaceDestination.self) { item in
                 IOSWorkspaceManagementContent(destination: item,
                     notificationKey: item == .records ? activeRequest?.notificationKey : nil,
@@ -476,10 +476,12 @@ struct IOSInformationView: View {
 /// A reading surface over existing conversation knowledge, with the conversation
 /// as the editing destination. No synthetic global knowledge store is introduced.
 private struct IOSKnowledgePointsView: View {
-    @State private var pageWidth: CGFloat = 390
+    @Environment(\.horizontalSizeClass) private var horizontalSizeClass
+    private var pageInset: CGFloat { horizontalSizeClass == .regular ? 24 : 20 }
     @EnvironmentObject private var container: ServiceContainer
     @Environment(\.dismiss) private var dismiss
     @State private var conversations: [IOSConversationDirectoryEntry] = []
+    @State private var hasLoaded = false
     @State private var loadError: String?
 
     var body: some View {
@@ -487,6 +489,12 @@ private struct IOSKnowledgePointsView: View {
             if let loadError {
                 Text(loadError).foregroundStyle(.secondary)
                 Button(String(localized: "common.retry")) { Task { await reload() } }.frame(minHeight: 44)
+            } else if !hasLoaded {
+                ProgressView()
+                    .frame(maxWidth: .infinity)
+                    .padding(.vertical, 24)
+                    .listRowSeparator(.hidden)
+                    .listRowBackground(DesignTokens.backgroundColor)
             } else if conversations.isEmpty {
                 Text(NSLocalizedString("information.knowledge.empty", value: "No conversation knowledge points yet.", comment: "Empty knowledge list"))
                     .foregroundStyle(.secondary).padding(.vertical, 20).listRowSeparator(.hidden)
@@ -507,13 +515,12 @@ private struct IOSKnowledgePointsView: View {
                 }
                 .listRowSeparator(.hidden)
                 .listRowBackground(DesignTokens.backgroundColor)
-                .listRowInsets(EdgeInsets(top: 12, leading: pageWidth < 359 ? 16 : 20, bottom: 12, trailing: pageWidth < 359 ? 16 : 20))
+                .listRowInsets(EdgeInsets(top: 12, leading: pageInset, bottom: 12, trailing: pageInset))
             }
         }
         .listStyle(.plain)
         .scrollContentBackground(.hidden)
         .background(DesignTokens.backgroundColor)
-        .background(IOSWorkspaceWidthObserver(width: $pageWidth))
         .task { await reload() }
         .refreshable { await reload() }
         .accessibilityIdentifier("information.knowledge.list")
@@ -525,9 +532,13 @@ private struct IOSKnowledgePointsView: View {
             let loaded = try await Task.detached { try IOSWorkspaceReadFacts.conversationDirectory(runtime: runtime) }.value
             try Task.checkCancellation()
             conversations = loaded.filter { !$0.knowledgePoints.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
+            hasLoaded = true
             loadError = nil
         } catch is CancellationError { }
-        catch { loadError = error.localizedDescription }
+        catch {
+            hasLoaded = true
+            loadError = error.localizedDescription
+        }
     }
 }
 
@@ -574,8 +585,8 @@ struct IOSWorkspacePageHeading: View {
 
 struct IOSConversationActivityView: View {
     var isRootTab = false
-    @State private var pageWidth: CGFloat = 390
-    private var pageInset: CGFloat { pageWidth < 359 ? 16 : 20 }
+    @Environment(\.horizontalSizeClass) private var horizontalSizeClass
+    private var pageInset: CGFloat { horizontalSizeClass == .regular ? 24 : 20 }
     @EnvironmentObject private var container: ServiceContainer
     @State private var nextPlan: AppleTodayQueuedInstance?
     @State private var plansLoadedAt: Date?
@@ -603,13 +614,27 @@ struct IOSConversationActivityView: View {
                 Spacer(minLength: 8)
                 Image("nola-chevron").resizable().renderingMode(.template).scaledToFit()
                     .frame(width: 14, height: 14).foregroundStyle(.secondary)
-            }.frame(maxWidth: .infinity, minHeight: 44, alignment: .leading).padding(14)
+            }.frame(maxWidth: .infinity, minHeight: 64, alignment: .leading).padding(14)
                 .background(DesignTokens.surfaceColor, in: RoundedRectangle(cornerRadius: 14))
                 .overlay(RoundedRectangle(cornerRadius: 14).stroke(DesignTokens.borderColor, lineWidth: 0.75))
                 .contentShape(Rectangle())
         }.buttonStyle(.plain).padding(.horizontal, pageInset).padding(.top, 8)
             .accessibilityIdentifier("activity.plans")
-        if let plansError { Text(plansError).font(.footnote).foregroundStyle(.secondary).padding(.horizontal) }
+        if let plansError {
+            HStack(spacing: 10) {
+                Text(plansError)
+                    .font(.footnote)
+                    .foregroundStyle(.secondary)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                Button(NSLocalizedString("common.retry", value: "Retry", comment: "Retry")) {
+                    Task { await loadNextPlan(force: true) }
+                }
+                .buttonStyle(.bordered)
+                .frame(minHeight: 44)
+            }
+            .padding(.horizontal, pageInset)
+            .padding(.top, 6)
+        }
         AppleActivityView(load: { query in
             try await Task.detached { try IOSWorkspaceReadFacts.activity(runtime: runtime, query: query) }.value
         }, detail: { entry in
@@ -620,19 +645,25 @@ struct IOSConversationActivityView: View {
             }
         }, canOpenSource: { UUID(uuidString: $0) != nil })
         }
-        .background(IOSWorkspaceWidthObserver(width: $pageWidth))
         .background(DesignTokens.backgroundColor)
         .navigationTitle(isRootTab ? "" : String(localized: "information.activity"))
-        .toolbar(isRootTab ? .hidden : .visible, for: .navigationBar)
+        .navigationBarTitleDisplayMode(.inline)
+        .toolbarBackground(.hidden, for: .navigationBar)
         .task {
-            guard plansLoadedAt.map({ Date().timeIntervalSince($0) >= 30 }) ?? true else { return }
-            do {
-                let facts = try await Task.detached { try IOSWorkspaceReadFacts.snapshot(runtime: runtime) }.value
-                try Task.checkCancellation()
-                nextPlan = facts.queued_instances.min { $0.scheduled_for_ms < $1.scheduled_for_ms }
-                plansLoadedAt = Date(); plansError = nil
-            } catch is CancellationError { }
-            catch { plansError = error.localizedDescription }
+            await loadNextPlan(force: false)
         }
+    }
+
+    private func loadNextPlan(force: Bool) async {
+        guard force || plansLoadedAt.map({ Date().timeIntervalSince($0) >= 30 }) ?? true else { return }
+        let runtime = container.applicationRuntime
+        do {
+            let facts = try await Task.detached { try IOSWorkspaceReadFacts.snapshot(runtime: runtime) }.value
+            try Task.checkCancellation()
+            nextPlan = facts.queued_instances.min { $0.scheduled_for_ms < $1.scheduled_for_ms }
+            plansLoadedAt = Date()
+            plansError = nil
+        } catch is CancellationError { }
+        catch { plansError = error.localizedDescription }
     }
 }

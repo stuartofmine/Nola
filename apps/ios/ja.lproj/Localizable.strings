@@ -1644,6 +1644,7 @@
 "common.frequency.weekly" = "毎週";
 "common.no.zh" = "いいえ";
 "common.retry" = "再試行";
+"common.search" = "検索";
 "common.unknown" = "不明";
 "common.yes.zh" = "はい";
 "data.subtitle.local_first" = "デバイス上のデータソース、予定アクション、最近の実行状態。";
@@ -2868,6 +2869,7 @@
 
 "room.pending_expert_message" = "専門家の処理が開始を待っています。";
 "room.resume_complete_experts" = "元の専門家メッセージを再開";
+"room.retry_expert_reply" = "専門家の返信を再試行";
 
 // Expert directory management
 "experts.manage" = "エキスパートを管理";
@@ -3265,3 +3267,9 @@
 "harness.device_note" = "プラグインを実行しているコンピュータに接続すると、ここで利用できます。";
 "harness.connect" = "デスクトップホストに接続";
 "harness.pair" = "別の Host に接続";
+
+"Keep names as plain text" = "名前をプレーンテキストのままにする";
+"The expert selection changed. Remove the mention and select the expert again." = "エキスパートの選択が変更されました。メンションを削除してエキスパートを再度選択してください。";
+"Write what you want the expert to do." = "エキスパートに依頼したい内容を入力してください。";
+"View expert history" = "エキスパートの履歴を表示";
+"Icon could not be rendered" = "アイコンを描画できませんでした";

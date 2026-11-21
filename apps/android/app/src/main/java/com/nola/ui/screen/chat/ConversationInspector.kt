@@ -106,13 +106,15 @@ internal fun ConversationProgressPanel(
     }
     var refresh by remember(owner, host) { mutableIntStateOf(0) }
     LaunchedEffect(owner, host, refresh, state.agentCoreSnapshot?.iteration, state.coreTaskProjection.revision) {
-        value = null; failed = false; loading = owner != null
+        failed = false; loading = owner != null
         if (owner != null) {
             try {
                 value = load(owner)
                 pending = pendingControl(owner)
             } catch (cancelled: kotlinx.coroutines.CancellationException) { throw cancelled }
             catch (_: Exception) { failed = true }
+        } else {
+            value = null
         }
         loading = false
     }
@@ -120,14 +122,14 @@ internal fun ConversationProgressPanel(
         AlertDialog(onDismissRequest = { cancelRequest = null },
             title = { Text(stringResource(R.string.goal_cancel)) },
             text = { Text(stringResource(R.string.goal_cancel_explanation)) },
-            confirmButton = { TextButton(onClick = { cancelRequest = null; submit("cancel", observed) }) { Text(stringResource(R.string.goal_cancel)) } },
+            confirmButton = { TextButton(onClick = { cancelRequest = null; submit("cancel", observed) }) { Text(stringResource(R.string.goal_cancel), color = MaterialTheme.colorScheme.error) } },
             dismissButton = { TextButton(onClick = { cancelRequest = null }) { Text(stringResource(R.string.common_cancel)) } })
     }
-    Column(Modifier.fillMaxSize().navigationBarsPadding()) {
+    Column(Modifier.fillMaxSize()) {
         NolaTopAppBar(title = stringResource(R.string.inspector_progress), onBack = onClose) {
             IconButton(onClick = { refresh++ }, enabled = !loading) { Icon(Icons.Filled.Refresh, stringResource(R.string.common_refresh)) }
         }
-        Column(Modifier.weight(1f).verticalScroll(rememberScrollState()).padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+        Column(Modifier.weight(1f).imePadding().verticalScroll(rememberScrollState()).padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
             if (loading) LinearProgressIndicator(Modifier.fillMaxWidth())
             if (failed) {
                 Text(stringResource(R.string.inspector_progress_unavailable), color = MaterialTheme.colorScheme.error)
@@ -262,7 +264,7 @@ internal fun ConversationResourcesPanel(state: ChatUiState, onClose: () -> Unit)
     val sources = messages.flatMap { com.nola.domain.model.decodeAnswerSourcesFromMeta(it.meta) }.distinctBy { it.id }
     val attachments = messages.flatMap { decodeMessageAttachments(it.meta) }.distinctBy { it.uri }
     val selectedDataSources = state.dataSources.filter { it.id in state.selectedDataSourceIds }
-    Column(Modifier.fillMaxSize().navigationBarsPadding()) {
+    Column(Modifier.fillMaxSize()) {
         NolaTopAppBar(title = stringResource(R.string.inspector_resources), onBack = onClose)
         Column(Modifier.weight(1f).verticalScroll(rememberScrollState()).padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
             if (parts.isEmpty() && sources.isEmpty() && attachments.isEmpty() && selectedDataSources.isEmpty()) {

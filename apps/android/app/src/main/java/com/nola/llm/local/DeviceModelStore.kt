@@ -67,25 +67,43 @@ class DeviceModelStore @Inject constructor(
         directory.mkdirs()
         val target = File(directory, "$id.gguf")
         val partial = File(directory, "$id.gguf.partial")
-        partial.delete()
 
-        try {
+        var existingBytes = if (partial.isFile) partial.length() else 0L
+        var retriedFromStart = false
+
+        while (true) {
             val connection = (URL(sourceUrl).openConnection() as HttpURLConnection).apply {
                 connectTimeout = 15_000
                 readTimeout = 30_000
                 instanceFollowRedirects = true
                 setRequestProperty("User-Agent", "Nola-Android")
+                if (existingBytes > 0L) {
+                    setRequestProperty("Range", "bytes=$existingBytes-")
+                }
             }
             try {
                 connection.connect()
-                require(connection.responseCode in 200..299) {
-                    "Model download failed with HTTP ${connection.responseCode}"
+                val statusCode = connection.responseCode
+                if (statusCode == 416 && existingBytes > 0L && !retriedFromStart) {
+                    partial.delete()
+                    existingBytes = 0L
+                    retriedFromStart = true
+                    continue
                 }
-                val total = connection.contentLengthLong.takeIf { it > 0 }
+                require(statusCode in 200..299) {
+                    "Model download failed with HTTP $statusCode"
+                }
+                val isPartialResume = statusCode == HttpURLConnection.HTTP_PARTIAL && existingBytes > 0L
+                val resumeOffset = if (isPartialResume) existingBytes else 0L
+                val contentLength = connection.contentLengthLong.takeIf { it > 0 }
+                val total = contentLength?.let { if (isPartialResume) resumeOffset + it else it }
+                if (resumeOffset > 0L) {
+                    onProgress(DeviceModelDownloadProgress(resumeOffset, total))
+                }
                 connection.inputStream.use { input ->
-                    partial.outputStream().buffered().use { output ->
+                    java.io.FileOutputStream(partial, isPartialResume).buffered().use { output ->
                         val buffer = ByteArray(DEFAULT_BUFFER_SIZE)
-                        var downloaded = 0L
+                        var downloaded = resumeOffset
                         while (true) {
                             currentCoroutineContext().ensureActive()
                             val count = input.read(buffer)
@@ -96,33 +114,32 @@ class DeviceModelStore @Inject constructor(
                         }
                     }
                 }
+                break
             } finally {
                 connection.disconnect()
             }
-
-            val actualSha256 = sha256(partial)
-            require(actualSha256.equals(expectedSha256, ignoreCase = true)) {
-                "Model checksum verification failed"
-            }
-            check(partial.renameTo(target)) { "Could not atomically install model" }
-
-            val record = DeviceModelRecord(
-                id = id,
-                displayName = displayName,
-                fileName = target.name,
-                sourceUrl = sourceUrl,
-                sha256 = actualSha256,
-                byteSize = target.length(),
-                contextWindow = contextWindow,
-                recommendedRamBytes = recommendedRamBytes,
-                installedAt = Instant.now().toString(),
-            )
-            writeManifest(readManifest().filterNot { it.id == id } + record)
-            record
-        } catch (error: Throwable) {
-            partial.delete()
-            throw error
         }
+
+        val actualSha256 = sha256(partial)
+        if (!actualSha256.equals(expectedSha256, ignoreCase = true)) {
+            partial.delete()
+            throw IllegalArgumentException("Model checksum verification failed")
+        }
+        check(partial.renameTo(target)) { "Could not atomically install model" }
+
+        val record = DeviceModelRecord(
+            id = id,
+            displayName = displayName,
+            fileName = target.name,
+            sourceUrl = sourceUrl,
+            sha256 = actualSha256,
+            byteSize = target.length(),
+            contextWindow = contextWindow,
+            recommendedRamBytes = recommendedRamBytes,
+            installedAt = Instant.now().toString(),
+        )
+        writeManifest(readManifest().filterNot { it.id == id } + record)
+        record
     }
 
     suspend fun delete(id: String, activeModelId: String?) = withContext(Dispatchers.IO) {

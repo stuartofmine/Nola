@@ -67,7 +67,7 @@ struct MacWebSourcesView: View {
                     } label: {
                         Label(macWebSourcesText("mac.web_sources.add", "Add Source"), systemImage: "plus")
                     }
-                    .buttonStyle(.borderedProminent)
+                    .buttonStyle(.nolaProminent)
                 }
             } else {
                 webSourcesSplitView
@@ -168,11 +168,15 @@ struct MacWebSourcesView: View {
             MacWebSourceDetail(
                 source: source,
                 store: store,
-                isRefreshing: store.refreshingIDs.contains(source.id)
-            ) {
-                editingSource = source
-                showsEditor = true
-            }
+                isRefreshing: store.refreshingIDs.contains(source.id),
+                edit: {
+                    editingSource = source
+                    showsEditor = true
+                },
+                delete: {
+                    pendingDeletion = source
+                }
+            )
         } else {
             MacEmptyState(
                 LocalizedStringKey(macWebSourcesText("mac.web_sources.title", "Web Sources")),
@@ -243,7 +247,7 @@ struct MacWebSourcesView: View {
                 Image(systemName: "plus")
             }
         }
-        .buttonStyle(.borderedProminent)
+        .buttonStyle(.nolaProminent)
     }
 
     @ViewBuilder
@@ -298,6 +302,7 @@ private struct MacWebSourceDetail: View {
     @Bindable var store: MacWebSourceStore
     let isRefreshing: Bool
     let edit: () -> Void
+    let delete: () -> Void
 
     var body: some View {
         VStack(spacing: 0) {
@@ -405,6 +410,10 @@ private struct MacWebSourceDetail: View {
 
     private var sourceActions: some View {
         HStack(spacing: 8) {
+            Button(role: .destructive, action: delete) {
+                Label(macWebSourcesText("mac.web_sources.delete", "Delete"), systemImage: "trash")
+            }
+            .disabled(isRefreshing)
             Button(action: edit) {
                 Label(macWebSourcesText("mac.web_sources.edit", "Edit"), systemImage: "square.and.pencil")
             }
@@ -418,7 +427,7 @@ private struct MacWebSourceDetail: View {
                     Label(macWebSourcesText("mac.web_sources.refresh", "Refresh"), systemImage: "arrow.clockwise")
                 }
             }
-            .buttonStyle(.borderedProminent)
+            .buttonStyle(.nolaProminent)
             .disabled(isRefreshing)
         }
     }
@@ -452,6 +461,7 @@ private struct MacWebSourceEditor: View {
     @State private var scheduledWeekday: Int
     @State private var scheduledTime: Date
     @State private var scheduledDate: Date
+    private let initialScheduledDate: Date
     @State private var isSaving = false
     @State private var saveTask: Task<Void, Never>?
     @State private var validationError: String?
@@ -474,7 +484,9 @@ private struct MacWebSourceEditor: View {
         components.hour = source?.scheduledHour ?? 9
         components.minute = source?.scheduledMinute ?? 0
         _scheduledTime = State(initialValue: Calendar.current.date(from: components) ?? .now)
-        _scheduledDate = State(initialValue: source?.scheduledDate ?? Date().addingTimeInterval(3_600))
+        let defaultScheduledDate = source?.scheduledDate ?? Date().addingTimeInterval(3_600)
+        initialScheduledDate = defaultScheduledDate
+        _scheduledDate = State(initialValue: defaultScheduledDate)
     }
 
     var body: some View {
@@ -586,7 +598,7 @@ private struct MacWebSourceEditor: View {
                         }
                     }
                 }
-                .buttonStyle(.borderedProminent).keyboardShortcut(.defaultAction)
+                .buttonStyle(.nolaProminent).keyboardShortcut(.defaultAction)
                 .disabled(
                     isSaving
                         || inputValidationMessage != nil
@@ -596,6 +608,7 @@ private struct MacWebSourceEditor: View {
         .padding(22)
         .frame(minWidth: 480, idealWidth: 560, maxWidth: 680)
         .frame(minHeight: 500, idealHeight: 560, maxHeight: 700)
+        .background(MacDesignColor.canvas)
         .interactiveDismissDisabled(hasUnsavedChanges || isSaving)
         .background(MacEditorWindowCloseGuard(
             shouldPreventClose: { (hasUnsavedChanges || isSaving) && !allowsDiscardClose },
@@ -641,7 +654,7 @@ private struct MacWebSourceEditor: View {
             || isEnabled != (original?.isEnabled ?? true)
             || scheduleFrequency != original?.scheduleFrequency
             || scheduledWeekday != (original?.scheduledWeekday ?? 2)
-            || scheduledDate != (original?.scheduledDate ?? scheduledDate)
+            || scheduledDate != initialScheduledDate
             || Calendar.current.component(.hour, from: scheduledTime) != (original?.scheduledHour ?? 9)
             || Calendar.current.component(.minute, from: scheduledTime) != (original?.scheduledMinute ?? 0)
     }

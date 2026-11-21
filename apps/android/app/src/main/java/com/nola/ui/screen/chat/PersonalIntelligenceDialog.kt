@@ -18,6 +18,7 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.safeDrawingPadding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
@@ -81,7 +82,6 @@ fun PersonalIntelligenceDialog(onDismiss: () -> Unit) {
     var strategyLimit by remember { mutableStateOf(10) }
     var showClearConfirmation by remember { mutableStateOf(false) }
     var clearFailed by remember { mutableStateOf(false) }
-    var entered by remember { mutableStateOf(false) }
     val events = snapshot.array("events")
     val eventObjects = events.mapNotNull { runCatching { it.jsonObject }.getOrNull() }
     val memories = snapshot.array("memories").mapNotNull { runCatching { it.jsonObject }.getOrNull() }
@@ -95,14 +95,13 @@ fun PersonalIntelligenceDialog(onDismiss: () -> Unit) {
         (activeMemories.sumOf { it.number("confidence") } / activeMemories.size * 100).toInt()
     }
 
-    LaunchedEffect(Unit) { entered = true }
-
     Dialog(
         onDismissRequest = onDismiss,
         properties = DialogProperties(usePlatformDefaultWidth = false)
     ) {
         Surface(
             modifier = Modifier
+                .safeDrawingPadding()
                 .widthIn(max = 720.dp)
                 .fillMaxWidth()
                 .fillMaxHeight(0.94f)
@@ -134,27 +133,12 @@ fun PersonalIntelligenceDialog(onDismiss: () -> Unit) {
                         .padding(bottom = 26.dp),
                     verticalArrangement = Arrangement.spacedBy(22.dp)
                 ) {
-                    AnimatedVisibility(
-                        visible = entered,
-                        enter = fadeIn(
-                            tween(
-                                durationMillis = NolaMotion.base,
-                                easing = NolaMotion.emphasizedEasing,
-                            )
-                        ) + slideInVertically(
-                            tween(
-                                durationMillis = NolaMotion.slow,
-                                easing = NolaMotion.emphasizedEasing,
-                            )
-                        ) { it / 16 }
-                    ) {
-                        IntelligenceHero(
-                            observationCount = events.size,
-                            memoryCount = activeMemories.size,
-                            averageConfidence = averageConfidence,
-                            sourceNames = sourceNames
-                        )
-                    }
+                    IntelligenceHero(
+                        observationCount = events.size,
+                        memoryCount = activeMemories.size,
+                        averageConfidence = averageConfidence,
+                        sourceNames = sourceNames
+                    )
 
                     IntelligenceSectionHeader(
                         stringResource(R.string.personal_intelligence_memories_title),
@@ -268,8 +252,14 @@ private fun IntelligenceTopBar(
             .padding(start = 20.dp, end = 10.dp, top = 10.dp, bottom = 8.dp),
         verticalAlignment = Alignment.CenterVertically
     ) {
-        Text(title, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
-        Spacer(Modifier.weight(1f))
+        Text(
+            title,
+            modifier = Modifier.weight(1f),
+            style = MaterialTheme.typography.titleMedium,
+            fontWeight = FontWeight.SemiBold,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis
+        )
         IconButton(onClick = onRefresh) {
             Icon(Icons.Filled.Refresh, contentDescription = refreshLabel)
         }
@@ -365,8 +355,8 @@ private fun IntelligenceHero(
 private fun IntelligenceMetric(label: String, value: String, modifier: Modifier = Modifier) {
     Surface(modifier = modifier, shape = RoundedCornerShape(15.dp), color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.045f)) {
         Column(Modifier.padding(11.dp), verticalArrangement = Arrangement.spacedBy(3.dp)) {
-            Text(value, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
-            Text(label, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1)
+            Text(value, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold, maxLines = 1, overflow = TextOverflow.Ellipsis)
+            Text(label, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1, overflow = TextOverflow.Ellipsis)
         }
     }
 }

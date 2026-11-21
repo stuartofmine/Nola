@@ -92,7 +92,7 @@
     <button onclick={() => load()} disabled={loading}>{t($locale, 'activity.refresh')}</button>
     </div>
     {#if loading}<p role="status">{t($locale, 'shell.pageLoading')}</p>{/if}
-    {#if error}<p role="alert">{t($locale, error)}</p>{/if}
+    {#if error}<p role="alert" class="error">{t($locale, error)}</p>{/if}
     {#each entries as entry (entry.run_id)}
         <button class="activity-row" onclick={() => showDetail(entry)}>
             <strong>{entry.title || t($locale, 'chatConversations.untitled')}</strong>
@@ -104,11 +104,11 @@
     {#if cursor}<button disabled={loading} onclick={() => load(true)}>{t($locale, 'activity.loadMore')}</button>{/if}
     {#if !full}<button onclick={() => onopen('/activity')}>{t($locale, 'chatInspector.list.activity')}</button>{/if}
 </div>
-{#if full}<dialog bind:this={dialog} use:ownDialog oncancel={event => {event.preventDefault(); close();}} onclose={() => { detailController?.abort(); selected = null; }} aria-label={t($locale, 'activity.detail')}>
+{#if full}<dialog bind:this={dialog} use:ownDialog oncancel={event => {event.preventDefault(); close();}} onclick={event => { if (event.target === dialog) close(); }} onclose={() => { detailController?.abort(); selected = null; }} aria-label={t($locale, 'activity.detail')}>
     <div class="detail">
         <div class="detail-heading"><h2>{detail?.entry.title || t($locale, 'activity.detail')}</h2><button onclick={close}>{t($locale, 'activity.close')}</button></div>
         {#if detailLoading}<p role="status">{t($locale, 'activity.loading_detail')}</p>{/if}
-        {#if detailError}<p role="alert">{t($locale, detailError)}</p>{#if selected}<button onclick={() => {if (selected) void showDetail(selected);}}>{t($locale, 'activity.retry')}</button>{/if}{/if}
+        {#if detailError}<p role="alert" class="error">{t($locale, detailError)}</p>{#if selected}<button onclick={() => {if (selected) void showDetail(selected);}}>{t($locale, 'activity.retry')}</button>{/if}{/if}
         {#if detail}
             <section aria-label={t($locale, 'activity.execution')}>
                 <h3>{t($locale, 'activity.execution')}</h3>

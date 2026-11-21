@@ -432,11 +432,6 @@ struct MacMessageView: View {
                                 .padding(.horizontal, 11)
                                 .padding(.vertical, 8)
                                 .frame(width: 280, alignment: .leading)
-                                .background(Color.primary.opacity(0.055), in: RoundedRectangle(cornerRadius: 11, style: .continuous))
-                                .overlay {
-                                    RoundedRectangle(cornerRadius: 11, style: .continuous)
-                                        .stroke(Color.primary.opacity(0.09), lineWidth: 0.5)
-                                }
                             }
                             .buttonStyle(MacActionButtonStyle(contentInsets: .init()))
                             .disabled(index >= message.attachmentURLs.count)
@@ -505,12 +500,8 @@ struct MacMessageView: View {
         .frame(maxWidth: .infinity)
         .padding(.horizontal, 8)
         .padding(.vertical, 6)
-        .background(
-            isSearchMatch
-                ? Color.yellow.opacity(0.10)
-                : Color.clear,
-            in: RoundedRectangle(cornerRadius: 12, style: .continuous)
-        )
+        .background(searchMatchBackground)
+        .overlay(searchMatchBorder)
         .onHover { hovering in
             guard isHovering != hovering else { return }
             if reduceMotion {
@@ -600,6 +591,17 @@ struct MacMessageView: View {
                 if !Task.isCancelled { copyError = error.localizedDescription }
             }
         }
+    }
+
+    private var searchMatchBackground: some View {
+        RoundedRectangle(cornerRadius: 12, style: .continuous)
+            .fill(isSearchMatch ? Color.yellow.opacity(0.18) : Color.clear)
+    }
+
+    private var searchMatchBorder: some View {
+        RoundedRectangle(cornerRadius: 12, style: .continuous)
+            .stroke(isSearchMatch ? Color.yellow.opacity(0.45) : Color.clear, lineWidth: 1)
+            .allowsHitTesting(false)
     }
 
     private func copyText(_ text: String) {
@@ -750,6 +752,7 @@ private struct MacMessageTextSelectionView: View {
             }
         }
         .padding(20)
+        .background(MacDesignColor.canvas)
         .task(id: retry) {
             text = nil
             error = nil
@@ -795,6 +798,7 @@ private struct MacAssistantTaskCard: View {
     @Environment(\.macTranscriptReadOnly) private var readOnly
     @State private var isExpanded = false
     @State private var guidanceDraft = ""
+    @State private var showsCancelConfirmation = false
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     private var model: MacCoreTaskUIModel { .init(task: task) }
@@ -897,7 +901,9 @@ private struct MacAssistantTaskCard: View {
                         .background(Color.primary.opacity(0.045), in: RoundedRectangle(cornerRadius: 8, style: .continuous))
                     }
                     if !readOnly, model.isActive {
-                        Button(role: .destructive, action: onRequestCancellation) {
+                        Button(role: .destructive) {
+                            showsCancelConfirmation = true
+                        } label: {
                             Label(String(localized: "Cancel task", table: "Chat"), systemImage: "stop.circle")
                                 .font(.system(size: 11, weight: .medium))
                         }
@@ -913,6 +919,14 @@ private struct MacAssistantTaskCard: View {
         .overlay {
             RoundedRectangle(cornerRadius: 12, style: .continuous)
                 .stroke(Color.primary.opacity(0.07), lineWidth: 1)
+        }
+        .confirmationDialog(
+            String(localized: "Cancel this task?", table: "Chat"),
+            isPresented: $showsCancelConfirmation,
+            titleVisibility: .visible
+        ) {
+            Button(String(localized: "Cancel task", table: "Chat"), role: .destructive, action: onRequestCancellation)
+            Button(String(localized: "Keep Running", table: "Chat"), role: .cancel) {}
         }
     }
 

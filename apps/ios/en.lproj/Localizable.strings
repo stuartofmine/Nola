@@ -1785,6 +1785,7 @@
 "common.frequency.weekly" = "Weekly";
 "common.no.zh" = "No";
 "common.retry" = "Retry";
+"common.search" = "Search";
 "common.unknown" = "Unknown";
 "common.yes.zh" = "Yes";
 "data.subtitle.local_first" = "On-device data sources, scheduled actions, and recent execution status.";
@@ -3006,6 +3007,7 @@
 
 "room.pending_expert_message" = "Expert delivery is waiting to start.";
 "room.resume_complete_experts" = "Resume original expert message";
+"room.retry_expert_reply" = "Retry expert reply";
 
 // Expert directory management
 "experts.manage" = "Manage experts";
@@ -3440,3 +3442,9 @@
 "harness.device_note" = "Connect the computer that runs your plugins to use them here.";
 "harness.connect" = "Connect a desktop Host";
 "harness.pair" = "Connect another Host";
+
+"Keep names as plain text" = "Keep names as plain text";
+"The expert selection changed. Remove the mention and select the expert again." = "The expert selection changed. Remove the mention and select the expert again.";
+"Write what you want the expert to do." = "Write what you want the expert to do.";
+"View expert history" = "View expert history";
+"Icon could not be rendered" = "Icon could not be rendered";

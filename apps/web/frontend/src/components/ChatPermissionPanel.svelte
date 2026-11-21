@@ -62,7 +62,7 @@
         {#if reviewText.trim()}<pre>{reviewText}</pre>{:else}<p>{t($locale, 'chatPermission.noDetails')}</p>{/if}
         <p class="muted">{t($locale, 'chatPermission.scope')}</p>
         <p role="status" aria-live="polite">{t($locale, !active ? 'chatPermission.inactive' : status !== 'ready' ? `chatPermission.${status}` : expired ? 'chatPermission.expired' : 'chatPermission.ready')}</p>
-        {#if localError}<p role="alert">{t($locale, localError)}</p>{/if}
+        {#if localError}<p role="alert" class="error">{t($locale, localError)}</p>{/if}
         <details class="guidance" bind:open={guidanceOpen}>
         <summary>{t($locale, 'chatPermission.guidance')}</summary>
         <label><span class="sr-only">{t($locale, 'chatPermission.guidance')}</span><textarea bind:value={instruction} disabled={disabled} rows="2" maxlength="4096"></textarea></label>
@@ -71,7 +71,8 @@
         </details>
         </div>
         <div class="actions">
-            <button disabled={disabled} onclick={() => submit('deny')}>{t($locale, 'chatPermission.deny')}</button>
+            {#if status === 'submitting'}<span class="muted" role="status">{t($locale, 'chatPermission.submitting')}</span>{/if}
+            <button class="danger" disabled={disabled} onclick={() => submit('deny')}>{t($locale, 'chatPermission.deny')}</button>
             <button disabled={disabled} onclick={() => submit('return_to_composer')}>{t($locale, 'chatPermission.return')}</button>
             {#if parsed.allow_conversation}<button disabled={disabled || !reviewText.trim()} onclick={() => submit('allow_conversation')}>{t($locale, 'chatPermission.allowConversation')}</button>{/if}
             <button class="primary" disabled={disabled || !reviewText.trim()} onclick={() => submit('allow_once')}>{t($locale, 'chatPermission.allowOnce')}</button>
@@ -79,11 +80,11 @@
 
         {#if status === 'unknown'}<button disabled={!active || expired} onclick={() => submit('deny', true)}>{t($locale, 'chatPermission.retrySame')}</button>{/if}
         {#if onRefresh}<button disabled={status === 'submitting'} onclick={() => onRefresh?.()}>{t($locale, 'chatPermission.refresh')}</button>{/if}
-    {:else}<p role="alert">{t($locale, 'chatPermission.invalid')}</p>{/if}
+    {:else}<p role="alert" class="error">{t($locale, 'chatPermission.invalid')}</p>{/if}
 </section>
 
 <style>
-    .permission-panel { flex-shrink: 0; align-self: center; width: calc(100% - 24px); max-width: 752px; max-height: max(280px, 50dvh); overflow: auto; margin: 8px 12px; background: var(--surface); border: 1px solid var(--border); border-radius: 12px; padding: 16px; display: flex; flex-direction: column; gap: 12px; }
+    .permission-panel { flex-shrink: 0; align-self: center; width: calc(100% - 24px); max-width: 752px; max-height: min(240px, 38dvh); overflow: auto; margin: 8px 12px; background: var(--surface); border: 1px solid var(--border); border-radius: 12px; padding: 16px; display: flex; flex-direction: column; gap: 12px; }
     .permission-content { min-height: 48px; overflow: auto; overscroll-behavior: contain; display: flex; flex-direction: column; gap: 12px; padding: 2px; }
     .permission-content > * { flex-shrink: 0; }
     h3, p { margin: 0; overflow-wrap: anywhere; }

@@ -34,7 +34,7 @@
     <header><h2>{t($locale, 'settings.category.diagnostics')}</h2><button disabled={loading} onclick={refresh}>{t($locale, 'models.reload')}</button></header>
     <p class="muted">{t($locale, 'diagnostics.scope')}</p>
     {#if loading}<p role="status">{t($locale, 'diagnostics.checking')}</p>
-    {:else if failed}<p role="alert">{t($locale, snapshot ? 'diagnostics.stale' : 'diagnostics.failed')}</p>
+    {:else if failed}<p role="alert" class="error">{t($locale, snapshot ? 'diagnostics.stale' : 'diagnostics.failed')}</p>
     {:else if snapshot}<p role="status">{t($locale, 'diagnostics.reachable')}</p>{/if}
     {#if snapshot}
         <p class="muted">{t($locale, 'activity.updated', { time: resultTime(checkedAt, $locale) })}</p>

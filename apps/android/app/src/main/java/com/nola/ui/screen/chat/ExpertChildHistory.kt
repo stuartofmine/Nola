@@ -4,11 +4,14 @@ package com.nola.ui.screen.chat
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
@@ -106,14 +109,26 @@ internal fun ExpertChildHistoryDialog(target: ExpertHistoryTarget,
     LaunchedEffect(target) { read() }
     Dialog(onDismissRequest = { if (!continuing) onClose() }, properties = DialogProperties(usePlatformDefaultWidth = false)) {
         Surface(Modifier.fillMaxSize()) {
-            Scaffold(modifier = Modifier.safeDrawingPadding(), topBar = {
+            Scaffold(
+                modifier = Modifier.safeDrawingPadding(),
+                contentWindowInsets = WindowInsets(0),
+                topBar = {
                 Column {
-                    Row(Modifier.fillMaxWidth().padding(horizontal = 12.dp), verticalAlignment = androidx.compose.ui.Alignment.CenterVertically) {
-                        Text(target.child.title, Modifier.weight(1f), style = MaterialTheme.typography.titleMedium)
-                        TextButton(enabled = !continuing && !loading, onClick = { scope.launch { read(reset = true) } }) { Text(stringResource(R.string.common_refresh)) }
-                        TextButton(enabled = !continuing, onClick = onClose) { Text(stringResource(R.string.expert_child_close)) }
+                    com.nola.ui.components.NolaTopAppBar(
+                        title = target.child.title,
+                        subtitle = stringResource(R.string.expert_child_read_only),
+                        onBack = { if (!continuing) onClose() },
+                    ) {
+                        IconButton(
+                            enabled = !continuing && !loading,
+                            onClick = { scope.launch { read(reset = true) } }
+                        ) {
+                            Icon(
+                                Icons.Filled.Refresh,
+                                contentDescription = stringResource(R.string.common_refresh)
+                            )
+                        }
                     }
-                    Text(stringResource(R.string.expert_child_read_only), Modifier.padding(horizontal = 24.dp), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                     if (target.child.active && target.child.isCurrent && target.child.agentRevision != null) TextButton(enabled = !continuing && !loading && window != null && error == null,
                         onClick = { continuing = true; scope.launch {
                             try { onContinue(); onClose() } catch (cancelled: CancellationException) { throw cancelled }

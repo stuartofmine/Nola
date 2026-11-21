@@ -302,6 +302,7 @@ def apple_placeholders(value: str) -> list[str]:
 
 STABLE_UI_TERMS = {
     "64K",
+    "Chat Completions",
     "Chrome",
     "Hugging Face",
     "JSON",
@@ -313,6 +314,7 @@ STABLE_UI_TERMS = {
     "Nola for Mac",
     "OK",
     "PROMPT",
+    "Responses",
     "RSS / Atom",
     "Top K",
     "Top P",
@@ -679,6 +681,14 @@ def audit_windows(quality: bool = False) -> list[str]:
         for used_key in re.findall(r"\bstrings\.([A-Za-z][A-Za-z0-9_]*)\b", content):
             if used_key not in declared_keys:
                 failures.append(f"windows: {ts_file.name}: unknown DesktopStrings key strings.{used_key}")
+
+    tauri_src = ROOT / "apps/windows/src-tauri/src"
+    if tauri_src.is_dir():
+        for rs_file in sorted(tauri_src.glob("*.rs")):
+            content = rs_file.read_text(encoding="utf-8")
+            for used_key in re.findall(r'\b(?:native::)?label\(\s*"([A-Za-z][A-Za-z0-9_]*)"\s*\)', content):
+                if used_key not in declared_keys:
+                    failures.append(f"windows: src-tauri/src/{rs_file.name}: unknown DesktopStrings key label(\"{used_key}\")")
 
     try:
         snapshot = windows_runtime_snapshot()

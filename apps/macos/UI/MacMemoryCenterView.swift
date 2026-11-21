@@ -79,7 +79,7 @@ struct MacMemoryCenterView: View {
                 } label: {
                     Label(macMemoryText("mac.memory.new", "New Memory"), systemImage: "plus")
                 }
-                .buttonStyle(.borderedProminent)
+                .buttonStyle(.nolaProminent)
                 .controlSize(.small)
             }
 
@@ -437,7 +437,7 @@ private struct MacMemoryEditor: View {
                     ))
                 }
                 .keyboardShortcut(.defaultAction)
-                .buttonStyle(.borderedProminent)
+                .buttonStyle(.nolaProminent)
                 .disabled(isSaving || content.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
             }
         }
@@ -445,6 +445,7 @@ private struct MacMemoryEditor: View {
         .disabled(isSaving)
         .frame(minWidth: 440, idealWidth: 560, maxWidth: 680)
         .frame(minHeight: 500, idealHeight: 580, maxHeight: 720)
+        .background(MacDesignColor.canvas)
         .interactiveDismissDisabled(hasUnsavedChanges || isSaving)
         .background(MacEditorWindowCloseGuard(
             shouldPreventClose: { (hasUnsavedChanges || isSaving) && !allowsDiscardClose },

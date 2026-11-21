@@ -1404,4 +1404,17 @@
     <string name="harness_device_note">プラグインを実行しているコンピュータに接続すると、ここで利用できます。</string>
     <string name="harness_connect">デスクトップ Host に接続</string>
     <string name="harness_changed">Host が変更されました。管理画面を開き直してください。</string>
+    <string name="chat_role_user">あなた</string>
+    <string name="chat_ui_entry_unavailable">インタラクティブ入力は利用できません。</string>
+    <string name="expert_editor_selected_model_unavailable">選択したモデルは利用できません。</string>
+    <string name="expert_editor_selected_template_unreadable">選択したテンプレートを読み込めなくなりました。</string>
+    <string name="software_update_error_unsupported_arch">未対応のアップデートアーキテクチャです</string>
+    <string name="software_update_error_service_unavailable">アップデートサービスを利用できません</string>
+    <string name="software_update_error_check_failed">アップデートの確認に失敗しました</string>
+    <string name="software_update_error_unreadable_package">ダウンロードしたファイルは有効な Android パッケージではありません</string>
+    <string name="software_update_error_package_mismatch">APK パッケージまたはバージョンがこのアップデートと一致しません</string>
+    <string name="chat_document_delete_title">ドキュメントを削除</string>
+    <string name="chat_document_delete_message">「%1$s」を削除しますか？コンテキストから取り除かれます。</string>
+    <string name="data_heart_rate_bpm_format">%1$d bpm</string>
+    <string name="chat_web_host_images_unsupported">Nola Web Host の会話では画像添付に対応していません。ローカルまたはクラウドモデルに切り替えるか、画像を削除してください。</string>
 </resources>

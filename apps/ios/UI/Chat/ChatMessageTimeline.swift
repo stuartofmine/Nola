@@ -322,6 +322,7 @@ struct ChatMessageTimeline: View {
 
     let conversationID: UUID?
     let messages: [ChatMessage]
+    var isHydrating: Bool = false
     let activeAssistantMessageID: UUID?
     let retrievalInProgress: Bool
     let hasModels: Bool
@@ -362,7 +363,7 @@ struct ChatMessageTimeline: View {
                 messageIDs: messages.map(\.id), restore: readingRestore, viewport: readingViewport))
             .clipped()
             .accessibilityIdentifier("chat.timeline.viewport")
-            .scrollDismissesKeyboard(.immediately)
+            .scrollDismissesKeyboard(.interactively)
             .coordinateSpace(name: "chat-timeline-viewport")
             .onChange(of: messages.map(\.id), initial: true) { _, ids in
                 knownMessageIDs = ids
@@ -485,9 +486,12 @@ struct ChatMessageTimeline: View {
                 sourceLookupMessage = nil
                 cancelFollow()
                 userScrolling = false
+                readingRestore = nil
                 restoredReadingPosition = false
                 followsLatest = conversationID.flatMap { readingPositions?.conversations[$0]?.followsLatest } ?? true
-                scheduleSmoothFollow(with: proxy)
+                if followsLatest {
+                    scheduleSmoothFollow(with: proxy)
+                }
             }
             .overlay(alignment: .bottomTrailing) {
                 latestMessageButton(with: proxy)
@@ -531,7 +535,7 @@ struct ChatMessageTimeline: View {
         userScrolling = false
         followsLatest = false
         withAnimation(reduceMotion ? nil : DesignTokens.responsiveAnimation) {
-            proxy.scrollTo(messageID, anchor: .center)
+            proxy.scrollTo(ChatTimelineMessageIdentity(conversationID: conversationID, messageID: messageID), anchor: .center)
         }
     }
 
@@ -545,18 +549,23 @@ struct ChatMessageTimeline: View {
         )
         let enteringIDs = activeAssistantMessageID == nil ? Set<UUID>() : appendedMessageIDs
         if messages.isEmpty {
-            ChatEmptyStateCard(
-                hasModels: hasModels,
-                selectedModel: selectedModel,
-                hybridDeviceToolsEnabled: hybridDeviceToolsEnabled,
-                hostConnectionPhase: hostConnectionPhase,
-                onSuggestion: onSuggestion,
-                onPrimaryAction: onPrimaryAction
-            )
-            .frame(maxWidth: .infinity, maxHeight: .infinity)
-            .padding(.top, 40)
-            .padding(.horizontal, 16)
-            .transition(.opacity.combined(with: .move(edge: .bottom)))
+            if isHydrating {
+                Color.clear
+                    .frame(maxWidth: .infinity, minHeight: 1)
+            } else {
+                ChatEmptyStateCard(
+                    hasModels: hasModels,
+                    selectedModel: selectedModel,
+                    hybridDeviceToolsEnabled: hybridDeviceToolsEnabled,
+                    hostConnectionPhase: hostConnectionPhase,
+                    onSuggestion: onSuggestion,
+                    onPrimaryAction: onPrimaryAction
+                )
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+                .padding(.top, 40)
+                .padding(.horizontal, 16)
+                .transition(.opacity.combined(with: .move(edge: .bottom)))
+            }
         } else {
             LazyVStack(alignment: .leading, spacing: 20) {
                 ForEach(messages) { message in

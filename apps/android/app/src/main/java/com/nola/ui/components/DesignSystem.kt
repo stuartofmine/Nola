@@ -13,6 +13,7 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ColumnScope
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
@@ -237,10 +238,12 @@ fun NolaTopAppBar(
     subtitle: String? = null,
     onBack: (() -> Unit)? = null,
     titleStyle: TextStyle? = null,
+    windowInsets: WindowInsets = WindowInsets(0),
     actions: @Composable RowScope.() -> Unit = {}
 ) {
     TopAppBar(
         modifier = modifier,
+        windowInsets = windowInsets,
         colors = TopAppBarDefaults.topAppBarColors(
             containerColor = MaterialTheme.colorScheme.background,
             titleContentColor = MaterialTheme.colorScheme.onBackground,
@@ -261,7 +264,8 @@ fun NolaTopAppBar(
                         subtitle,
                         style = MaterialTheme.typography.labelSmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        maxLines = 1
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis
                     )
                 }
             }
@@ -299,11 +303,12 @@ fun NolaPage(
     modifier: Modifier = Modifier,
     scrollKey: Any? = null,
     topPadding: Dp = NolaSpacing.xl,
+    savedScrollOffsets: MutableMap<String, Int>? = null,
     content: @Composable ColumnScope.() -> Unit
 ) {
     val background = MaterialTheme.colorScheme.background
     val keyName = scrollKey?.toString() ?: "nola-page-default"
-    val savedOffsets = rememberSaveable(
+    val savedOffsets = savedScrollOffsets ?: rememberSaveable(
         saver = mapSaver(
             save = { map -> map.toMap() },
             restore = { restored -> restored.mapValues { (_, v) -> v as Int }.toMutableMap() },

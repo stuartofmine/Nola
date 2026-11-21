@@ -48,7 +48,8 @@
     <p class="content" role="status">{t($locale,'shell.pageLoading')}</p>
 {/if}
 <style>
-    iframe { display:block; width:100%; height:100%; min-height:16rem; border:0; background:var(--canvas); }
+    iframe { display:block; width:100%; height:100%; flex:1; min-height:calc(100dvh - 49px); border:0; background:var(--canvas); }
+    :global(.content-document-panel) iframe { min-height:100%; }
     @media(max-width:700px) { iframe { min-height:calc(100dvh - 130px - env(safe-area-inset-top) - env(safe-area-inset-bottom)); } }
     section a { display:inline-flex; align-items:center; min-height:44px; }
 </style>

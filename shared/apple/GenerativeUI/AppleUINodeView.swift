@@ -81,19 +81,22 @@ struct AppleUINodeView<JSON: JournalJSONValue>: View {
                     .onTapGesture { textFocused = true }
                 if node.props["variant"]?.journalString == "obscured" {
                     SecureField(label(node), text: binding(node, default: "")).focused($textFocused)
+                        .modifier(AppleUITextFieldSurface())
                         .accessibilityIdentifier("a2ui.field.\(node.component_id)")
                 } else if node.props["variant"]?.journalString == "number" {
                     TextField(label(node), value: binding(node, default: ""), formatter: AppleUINumberFormatter())
                         .modifier(AppleUINumericInput(enabled: true))
+                        .modifier(AppleUITextFieldSurface())
                         .focused($textFocused)
                         .accessibilityIdentifier("a2ui.field.\(node.component_id)")
                 } else {
                     TextField(label(node), text: binding(node, default: ""), axis: node.props["variant"]?.journalString == "longText" ? .vertical : .horizontal)
                         .modifier(AppleUINumericInput(enabled: node.props["variant"]?.journalString == "number"))
+                        .modifier(AppleUITextFieldSurface())
                         .focused($textFocused)
                         .accessibilityIdentifier("a2ui.field.\(node.component_id)")
                 }
-            }.textFieldStyle(.roundedBorder).frame(minHeight: controlHeight)
+            }.frame(minHeight: controlHeight)
                 .disabled(node.bindings["value"] == nil)
         case "CheckBox":
             Toggle(label(node), isOn: binding(node, default: false))
@@ -222,6 +225,24 @@ private struct AppleUIButtonVariant: ViewModifier {
         case "borderless": content.buttonStyle(.borderless)
         default: content.buttonStyle(.bordered)
         }
+    }
+}
+
+private struct AppleUITextFieldSurface: ViewModifier {
+    @ViewBuilder func body(content: Content) -> some View {
+        #if os(iOS)
+        content
+            .textFieldStyle(.plain)
+            .padding(.horizontal, 12)
+            .padding(.vertical, 10)
+            .background(DesignTokens.elevatedColor, in: RoundedRectangle(cornerRadius: 10, style: .continuous))
+            .overlay(
+                RoundedRectangle(cornerRadius: 10, style: .continuous)
+                    .stroke(DesignTokens.borderColor, lineWidth: 1)
+            )
+        #else
+        content.textFieldStyle(.roundedBorder)
+        #endif
     }
 }
 

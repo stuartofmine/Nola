@@ -126,7 +126,7 @@ struct MacRuntimePluginManagerView: View {
     }
 
     private func errorMessage(_ message: String) -> some View {
-        Text(verbatim: message).font(.callout).foregroundStyle(.secondary).textSelection(.enabled)
+        Text(verbatim: message).font(.callout).foregroundStyle(MacDesignColor.danger).textSelection(.enabled)
     }
 
     private func refresh() {
@@ -188,8 +188,12 @@ private struct MacAddPluginSheet: View {
                             selected.runtime == "pi" ? "Pi" : "DeepSeek Harness"))
                     .font(.callout).foregroundStyle(.secondary)
                     .accessibilityIdentifier("workspace.plugins.missingRuntime")
-            } else if let error = selected?.error { Text(verbatim: error).font(.callout).textSelection(.enabled) }
-            if let failure { Text(verbatim: failure).font(.callout).textSelection(.enabled) }
+            } else if let error = selected?.error {
+                Text(verbatim: error).font(.callout).foregroundStyle(MacDesignColor.danger).textSelection(.enabled)
+            }
+            if let failure {
+                Text(verbatim: failure).font(.callout).foregroundStyle(MacDesignColor.danger).textSelection(.enabled)
+            }
             Text("This package can run code on your Mac.").font(.callout).foregroundStyle(.secondary)
             HStack {
                 if updating { ProgressView().controlSize(.small) }
@@ -199,6 +203,7 @@ private struct MacAddPluginSheet: View {
                 Button(String(localized: "Install plugin")) {
                     if let selected { install(selected, installableSource) }
                 }
+                .buttonStyle(.nolaProminent)
                 .keyboardShortcut(.defaultAction)
                 .disabled(installableSource.isEmpty || selected?.available != true || selected?.error != nil)
                 .accessibilityIdentifier("workspace.plugins.confirmInstall")
@@ -206,7 +211,9 @@ private struct MacAddPluginSheet: View {
         }
         .disabled(updating)
         .interactiveDismissDisabled(updating)
-        .frame(width: 410).padding(24)
+        .padding(24)
+        .frame(width: 410)
+        .background(MacDesignColor.canvas)
     }
 
 }

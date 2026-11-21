@@ -131,13 +131,14 @@ internal fun ExpertManagementPanel(viewModel: ChatViewModel, localDirectory: Boo
             }
         }
     }
-    ExpertManagementPanel(state = state, dataSource = dataSource, onBack = onBack)
+    ExpertManagementPanel(state = state, dataSource = dataSource, isFullScreen = localDirectory, onBack = onBack)
 }
 
 @Composable
 internal fun ExpertManagementPanel(
     state: ChatUiState,
     dataSource: ExpertManagementDataSource,
+    isFullScreen: Boolean = false,
     onBack: () -> Unit,
 ) {
     val scope = rememberCoroutineScope()
@@ -174,6 +175,10 @@ internal fun ExpertManagementPanel(
     var roles by remember { mutableStateOf<List<ExpertRoleTemplate>>(emptyList()) }
     var catalogReady by remember { mutableStateOf(false) }
     val catalogUnavailableMessage = stringResource(R.string.expert_role_catalog_unavailable)
+    val saveFailedMessage = stringResource(R.string.chat_save_failed)
+    val sourceChangedMessage = stringResource(R.string.expert_editor_source_changed)
+    val selectedModelUnavailableMessage = stringResource(R.string.expert_editor_selected_model_unavailable)
+    val selectedTemplateUnreadableMessage = stringResource(R.string.expert_editor_selected_template_unreadable)
     val language = LocalConfiguration.current.locales[0].toLanguageTag()
     var effort by rememberSaveable { mutableStateOf("automatic") }
     var effortMenu by remember { mutableStateOf(false) }
@@ -248,8 +253,15 @@ internal fun ExpertManagementPanel(
         ExpertBubbleColorEditor(it.id, it.name, onDismiss = { colorID = null })
     }
     val editorScroll = rememberScrollState()
-    Column(Modifier.fillMaxWidth().navigationBarsPadding().imePadding().padding(horizontal = 20.dp, vertical = 12.dp)
-        .then(if (editing) Modifier.verticalScroll(editorScroll) else Modifier)) {
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .then(if (!isFullScreen) Modifier.navigationBarsPadding() else Modifier)
+            .imePadding()
+            .padding(horizontal = 20.dp, vertical = 12.dp)
+            .then(if (editing) Modifier.verticalScroll(editorScroll) else Modifier),
+        verticalArrangement = if (editing) Arrangement.spacedBy(12.dp) else Arrangement.Top
+    ) {
         TextButton(onClick = ::back, enabled = !busy, modifier = Modifier.heightIn(min = 48.dp)) {
             Text(stringResource(R.string.common_back))
         }
@@ -260,7 +272,9 @@ internal fun ExpertManagementPanel(
             Text(it, color = MaterialTheme.colorScheme.error, modifier = Modifier.padding(vertical = 8.dp))
             TextButton(enabled = !busy, onClick = { perform { loadCatalog() } }) { Text(stringResource(R.string.common_refresh)) }
         }
-        if (busy) LinearProgressIndicator(Modifier.fillMaxWidth())
+        Box(Modifier.fillMaxWidth().height(4.dp)) {
+            if (busy) LinearProgressIndicator(Modifier.fillMaxWidth())
+        }
         if (editing) {
             if (editorOwnerKey != null && editorOwnerKey != sourceKey) Text(stringResource(R.string.expert_editor_source_changed), color = MaterialTheme.colorScheme.error)
             OutlinedTextField(name, { name = it }, enabled = !busy,
@@ -417,10 +431,10 @@ internal fun ExpertManagementPanel(
                     (editingID != null || inheritModel || selectedModel != null),
                     modifier = Modifier.testTag("expert.editor.save"), onClick = { perform {
                         val snapshot = checkNotNull(directory)
-                        check(editorOwnerKey == null || editorOwnerKey == sourceKey) { "The expert editor source changed; the draft is retained" }
+                        check(editorOwnerKey == null || editorOwnerKey == sourceKey) { sourceChangedMessage }
                         val original = editingID?.let { id -> snapshot.agents.single { it.id == id } }
                         check(!modelSelectionTouched || inheritModel || selectedModel != null) {
-                            "The selected model is unavailable"
+                            selectedModelUnavailableMessage
                         }
                         val desiredModel = if (inheritModel) null else selectedModel?.let { com.nola.data.repository.conversationModelIdentity(it) }
                         val changeModel = if (original == null) !inheritModel else modelSelectionTouched && desiredModel != originalModelSelection
@@ -429,7 +443,7 @@ internal fun ExpertManagementPanel(
                             val currentRoles = dataSource.roleTemplates(state.conversationId, editorScope?.storeEpoch).templates
                             if (currentRoles.none { it.id == templateID }) {
                                 val currentCatalog = dataSource.readableExpertTemplates()
-                                check(currentCatalog.templates.any { it.id == templateID }) { "The selected template is no longer readable" }
+                                check(currentCatalog.templates.any { it.id == templateID }) { selectedTemplateUnreadableMessage }
                                 templateCatalog = currentCatalog; templateCatalogFailed = false
                             }
                             roles = currentRoles
@@ -448,7 +462,7 @@ internal fun ExpertManagementPanel(
                             ) else dataSource.updateAgent(
                                 state.conversationId, editorScope?.storeEpoch, original.copy(defaults = defaults), attempted.name, attempted.description, snapshot,
                             )
-                            check(next.agents.any { confirmsExpertDefinition(it, attempted) }) { "Expert save was not confirmed" }
+                            check(next.agents.any { confirmsExpertDefinition(it, attempted) }) { saveFailedMessage }
                             next
                         } catch (cancelled: CancellationException) { throw cancelled }
                         catch (failure: Exception) {
@@ -466,9 +480,15 @@ internal fun ExpertManagementPanel(
                 enabled = !busy && catalogReady && directory != null, modifier = Modifier.testTag("expert.create").heightIn(min = 48.dp)) {
                 Text(stringResource(R.string.room_create_agent))
             }
-            LazyColumn(Modifier.heightIn(max = 420.dp).testTag("expert.directory.list")) {
+            LazyColumn(
+                modifier = (if (isFullScreen) Modifier.weight(1f) else Modifier.heightIn(max = 420.dp))
+                    .fillMaxWidth()
+                    .testTag("expert.directory.list")
+            ) {
                 items(directory?.agents.orEmpty(), key = PersistentAgent::id) { agent ->
-                    ListItem(headlineContent = { Text(agent.name) }, supportingContent = {
+                    ListItem(
+                        colors = ListItemDefaults.colors(containerColor = androidx.compose.ui.graphics.Color.Transparent),
+                        headlineContent = { Text(agent.name) }, supportingContent = {
                         Column {
                             if (agent.availability == "archived") Text(stringResource(R.string.expert_archived),
                                 style = MaterialTheme.typography.labelSmall)

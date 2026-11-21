@@ -114,13 +114,16 @@ struct IOSHistoricalPartDetail: View {
                     case .failed(let message):
                         Text(message).foregroundStyle(.secondary)
                         Button(String(localized: "Retry")) { attempt += 1 }
+                            .frame(minHeight: 44)
                         if let previous = state.previous { content(previous) }
                     case .loaded(let projection):
                         content(projection)
                         Button(String(localized: "Reload")) { attempt += 1 }
+                            .frame(minHeight: 44)
                     }
                 }.frame(maxWidth: .infinity, alignment: .leading).padding()
             }
+            .background(DesignTokens.backgroundColor)
             .navigationTitle(String(localized: "Historical details"))
             .toolbar { ToolbarItem(placement: .confirmationAction) { Button(String(localized: "Done")) { dismiss() } } }
         }
@@ -241,6 +244,7 @@ private struct IOSHistoricalOriginalReader: View {
             if let error = state.error {
                 Text(error).font(.callout).foregroundStyle(.secondary)
                 Button(String(localized: "Retry")) { attempt += 1 }
+                    .frame(minHeight: 44)
             }
             ScrollView {
                 Text(state.page.map { $0.text.isEmpty && $0.endOfContent ? String(localized: "history.original.empty", defaultValue: "The original record is empty.") : $0.text } ?? "")
@@ -254,16 +258,21 @@ private struct IOSHistoricalOriginalReader: View {
                 HStack {
                     Button(String(localized: "history.original.previous", defaultValue: "Previous page")) {
                         if let previous = state.previousOffsets.last { offset = previous; attempt += 1 }
-                    }.disabled(state.loading || state.previousOffsets.isEmpty)
+                    }
+                    .frame(minHeight: 44)
+                    .disabled(state.loading || state.previousOffsets.isEmpty)
                     Spacer()
                     Button(String(localized: "history.original.next", defaultValue: "Next page")) {
                         offset = page.nextOffsetBytes
                         attempt += 1
-                    }.disabled(state.loading || page.endOfContent)
+                    }
+                    .frame(minHeight: 44)
+                    .disabled(state.loading || page.endOfContent)
                 }
             }
         }
         .padding()
+        .background(DesignTokens.backgroundColor)
         .navigationTitle(String(localized: "history.detail.open_original", defaultValue: "Read original record"))
         .navigationBarTitleDisplayMode(.inline)
         .task(id: attempt) {

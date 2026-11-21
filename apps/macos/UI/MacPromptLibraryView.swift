@@ -441,7 +441,7 @@ private struct MacPromptTemplateDetail: View {
             Button(action: useAsDefault) {
                 Label(String(localized: "Use as Default"), systemImage: "checkmark.circle")
             }
-                .buttonStyle(.borderedProminent)
+                .buttonStyle(.nolaProminent)
         }
     }
 
@@ -537,6 +537,7 @@ private struct MacPromptTemplateEditor: View {
                 )
             }
             .formStyle(.grouped)
+            .scrollContentBackground(.hidden)
             HStack {
                 if let validationMessage {
                     Label(validationMessage, systemImage: "exclamationmark.circle.fill")
@@ -559,7 +560,7 @@ private struct MacPromptTemplateEditor: View {
                         updatedAt: .now
                     )) } catch { saveError = error.localizedDescription }
                 }
-                .buttonStyle(.borderedProminent)
+                .buttonStyle(.nolaProminent)
                 .keyboardShortcut(.defaultAction)
                 .disabled(validationMessage != nil)
             }
@@ -567,6 +568,7 @@ private struct MacPromptTemplateEditor: View {
         .padding(22)
         .frame(minWidth: 440, idealWidth: 680, maxWidth: 760)
         .frame(minHeight: 480, idealHeight: 620, maxHeight: 760)
+        .background(MacDesignColor.canvas)
         .interactiveDismissDisabled(hasUnsavedChanges)
         .confirmationDialog(
             String(localized: "Discard unsaved changes?"),

@@ -31,6 +31,10 @@
     function label(profile: Profile) {
         return profile.runtime === 'pi' ? 'Pi' : 'DeepSeek Harness · ' + (profile.profile === 'web' ? 'Web' : t($locale,'plugin.terminal'));
     }
+    function linkHost(url: string) {
+        try { return new URL(url).host; }
+        catch { return url; }
+    }
     function packageInfo(source: string) {
         const registryName = source.replace(/^npm:/,'');
         const npm = /^((?:@[\w.-]+\/)?[\w.-]+)(?:@([^/]+))?$/.exec(registryName);
@@ -119,13 +123,13 @@
                     <li tabindex="-1" data-source={plugin.source} data-profile={profile.profile}>
                         <div class="resource">
                             {#each plugin.pages as page (page.id)}<a class="page-link" href={desktopPluginPath(page.id)}>{page.title}</a>{/each}
-                            {#each plugin.links as link}<a class="site-link" href={link.url} target="_blank" rel="noopener noreferrer">{link.title}<small>{new URL(link.url).host}</small></a>{/each}
+                            {#each plugin.links as link}<a class="site-link" href={link.url} target="_blank" rel="noopener noreferrer">{link.title}<small>{linkHost(link.url)}</small></a>{/each}
                             {#if !plugin.pages.length && !plugin.links.length}<strong>{info.name}</strong>{/if}
                             <small class="metadata">{label(profile)}{#if (plugin.pages.length || plugin.links.length) && ![...plugin.pages,...plugin.links].some(page => page.title === info.name)} · {info.name}{/if}{#if info.version} · {info.version}{/if}{#if !profile.available} · {t($locale,'plugin.runtimeMissing')}{/if}</small>
                         </div>
                         <details class="row-actions" use:dismissibleDisclosure>
                             <summary aria-label={t($locale,'plugin.more',{name:plugin.pages[0]?.title ?? plugin.links[0]?.title ?? info.name})}><PrototypeIcon name="more" size={18}/></summary>
-                            <div class="menu"><button disabled={busy || !profile.available} onclick={event => {
+                            <div class="menu"><button class="danger" disabled={busy || !profile.available} onclick={event => {
                                 const details = event.currentTarget.closest('details');
                                 if (details) { details.open = false; details.querySelector('summary')?.focus(); }
                                 void change('remove',profile,plugin.source);
@@ -146,7 +150,7 @@
     {/if}
 </section>
 <style>
-    .library { max-width:52rem; margin-inline:auto; padding:clamp(1rem,4vw,2.5rem); }
+    .library { max-width: none; padding: 0; }
     header,.form-actions,li,.add { display:flex;align-items:center;gap:.6rem; }
     header { justify-content:space-between;gap:1rem;margin-bottom:1.35rem; }
     h1 { margin:0;font-size:clamp(1.45rem,2.25vw,2rem);line-height:1.25; }
@@ -172,4 +176,5 @@
     .form-actions { justify-content:flex-end; }
     .empty,.feedback { margin:.8rem 0; }
     .feedback p { margin:.5rem 0; }
+    .feedback [role="alert"] { color: var(--danger); }
 </style>

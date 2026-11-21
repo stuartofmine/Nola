@@ -25,8 +25,8 @@ struct ModelsView: View {
     private var hostIsConnecting: Bool { hostVerificationTask != nil }
     @State private var confirmsDiscard = false
     private var hasDraft: Bool { apiDraft.hasChanges || hostHasDraft }
-    @State private var models: [ModelInfo] = []
-    @State private var selectedModel: ModelInfo? = nil
+    @State private var models: [ModelInfo] = ModelSelectionManager.getAvailableModels()
+    @State private var selectedModel: ModelInfo? = ModelSelectionManager.getLastSelectedModel()
     @State private var detailTarget: ModelInfo? = nil
     @State private var parameterTarget: ModelInfo? = nil
     @State private var protocolTarget: ModelInfo? = nil
@@ -1163,6 +1163,7 @@ struct IOSModelInferenceTestView: View {
                         isRunning ? stop() : run()
                     }
                     .buttonStyle(.borderedProminent)
+                    .foregroundStyle(DesignTokens.onActionColor)
                     .disabled(!isRunning && prompt.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
                 }
             }

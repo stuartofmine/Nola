@@ -26,7 +26,10 @@ struct MacDesktopPluginPageView: View {
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in retry += 1 }
+        .background(MacDesignColor.canvas)
+        .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in
+            if failure != nil { retry += 1 }
+        }
         .onReceive(NotificationCenter.default.publisher(for: .macDesktopPluginsChanged)) { _ in retry += 1 }
         .task(id: retry) {
             failure = nil
@@ -58,6 +61,7 @@ struct MacDesktopPluginWebView: NSViewRepresentable {
         let configuration = WKWebViewConfiguration()
         configuration.websiteDataStore = .nonPersistent()
         let view = WKWebView(frame: .zero, configuration: configuration)
+        view.setValue(false, forKey: "drawsBackground")
         view.navigationDelegate = context.coordinator
         return view
     }

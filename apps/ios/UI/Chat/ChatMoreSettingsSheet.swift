@@ -43,12 +43,18 @@ struct ChatMoreSettingsSheet: View {
     var promptTemplates: [PromptTemplate] = []
     var selectedPromptTemplateID: UUID? = nil
     var onSelectPromptTemplate: (UUID?) throws -> Void = { _ in }
+    var embeddedInNavigationStack: Bool = false
+    var contextDestination: (() -> AnyView)? = nil
+    var skillLibraryDestination: (() -> AnyView)? = nil
+    var onDismissSheet: (() -> Void)? = nil
 
     @State private var showForgetPairingConfirmation = false
     @State private var isSaving = false
     @State private var statusMessage: String?
     @State private var errorMessage: String?
     @State private var showPersonalIntelligence = false
+    @State private var showContextDestination = false
+    @State private var showSkillLibraryDestination = false
     @State private var savedGenerationOverride: IOSConversationGenerationOverride?
     @State private var generationEditorPreventsDismiss = false
     @State private var generationEditorActive = false
@@ -102,7 +108,7 @@ struct ChatMoreSettingsSheet: View {
         .navigationTitle(tr("chat.more_settings.title", "Conversation Settings", comment: "Chat more settings sheet title"))
         .navigationBarTitleDisplayMode(.inline)
         .toolbar {
-            if !generationEditorActive {
+            if !generationEditorActive && !embeddedInNavigationStack {
                 ToolbarItem(placement: .cancellationAction) {
                     Button(L10n.close) {
                         guard !isSaving, !generationEditorPreventsDismiss else { return }
@@ -126,6 +132,16 @@ struct ChatMoreSettingsSheet: View {
         }
         .navigationDestination(isPresented: $showPersonalIntelligence) {
             PersonalIntelligenceDashboardView(embedded: true)
+        }
+        .navigationDestination(isPresented: $showContextDestination) {
+            if let contextDestination {
+                contextDestination()
+            }
+        }
+        .navigationDestination(isPresented: $showSkillLibraryDestination) {
+            if let skillLibraryDestination {
+                skillLibraryDestination()
+            }
         }
     }
 
@@ -159,7 +175,7 @@ struct ChatMoreSettingsSheet: View {
                 .foregroundStyle(.secondary)
 
             Button {
-                openAfterDismiss(onOpenContextSettings)
+                openContextDestination()
             } label: {
                 HStack(spacing: 12) {
                     Image(systemName: "circle.hexagongrid")
@@ -196,7 +212,7 @@ struct ChatMoreSettingsSheet: View {
             }
 
             Button {
-                openAfterDismiss(onOpenSkillLibrary)
+                openSkillLibraryDestination()
             } label: {
                 Label(tr("chat.more_settings.scope.skills", "Skills library", comment: "Global Skills library entry"), systemImage: "shippingbox")
             }
@@ -210,9 +226,13 @@ struct ChatMoreSettingsSheet: View {
     private var globalSection: some View {
         Section {
             Button {
-                openAfterDismiss {
-                    NotificationCenter.default.post(name: .nolaOpenSettingsTab, object: nil)
+                guard !isSaving else { return }
+                if let onDismissSheet {
+                    onDismissSheet()
+                } else {
+                    dismiss()
                 }
+                NotificationCenter.default.post(name: .nolaOpenSettingsTab, object: nil)
             } label: {
                 Label(tr("chat.more_settings.scope.global", "Global app settings", comment: "Global app settings entry"), systemImage: "gearshape")
             }
@@ -235,7 +255,8 @@ struct ChatMoreSettingsSheet: View {
                 } label: {
                     Image(systemName: "xmark")
                         .font(.caption.weight(.bold))
-                        .frame(width: 32, height: 32)
+                        .frame(width: 44, height: 44)
+                        .contentShape(Rectangle())
                 }
                 .buttonStyle(.plain)
                 .accessibilityLabel(L10n.close)
@@ -631,13 +652,13 @@ struct ChatMoreSettingsSheet: View {
             }
 
             Button {
-                openAfterDismiss(onOpenSkillLibrary)
+                openSkillLibraryDestination()
             } label: {
                 Label(tr("chat.more_settings.skills.open_library", "Open full Skill Library", comment: "Button title for opening skill library"), systemImage: "square.grid.2x2")
             }
 
             Button {
-                openAfterDismiss(onOpenContextSettings)
+                openContextDestination()
             } label: {
                 Label(tr("chat.more_settings.skills.open_context_settings", "Open context, MCP, and data source settings", comment: "Button title for opening context settings"), systemImage: "text.badge.checkmark")
             }
@@ -689,11 +710,21 @@ struct ChatMoreSettingsSheet: View {
         }
     }
 
-    private func openAfterDismiss(_ action: @escaping () -> Void) {
+    private func openContextDestination() {
         guard !isSaving else { return }
-        dismiss()
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.25) {
-            action()
+        if contextDestination != nil {
+            showContextDestination = true
+        } else {
+            onOpenContextSettings()
+        }
+    }
+
+    private func openSkillLibraryDestination() {
+        guard !isSaving else { return }
+        if skillLibraryDestination != nil {
+            showSkillLibraryDestination = true
+        } else {
+            onOpenSkillLibrary()
         }
     }
 }

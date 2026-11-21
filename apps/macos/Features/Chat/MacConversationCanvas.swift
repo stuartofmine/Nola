@@ -126,6 +126,8 @@ struct MacConversationCanvas: View {
                             isRunning: model.isSelectedConversationVisiblyRunning && !model.isViewingStoredHistory,
                             liveActivities: model.visibleActivity,
                             searchText: model.transcriptSearchText,
+                            focusedSearchMessageID: model.transcriptSearchFocusedMessageID,
+                            searchNavigationToken: model.transcriptSearchNavigationToken,
                             bottomClearance: 24,
                             viewportStore: viewportStore,
                             terminalRevision: model.selectedTerminalTranscriptRevision,
@@ -280,10 +282,10 @@ struct MacConversationCanvas: View {
                     if let pending = model.remotePendingSubmission, pending.identity.conversation_id == model.selectedConversationID {
                         VStack(alignment: .leading, spacing: 6) {
                             Text(String(localized: "Waiting for the host to confirm this submission.", table: "Chat")).font(.caption)
-                            Button(String(localized: "Cancel", table: "Chat")) {
+                            Button(String(localized: "Cancel")) {
                                 Task { await model.cancelPendingRemoteSubmission() }
                             }.accessibilityIdentifier("chat.remote.cancelSubmission")
-                            Button(String(localized: "Retry", table: "Chat")) { model.recheckRemoteRun() }
+                            Button(String(localized: "Retry")) { model.recheckRemoteRun() }
                         }
                     }
                     if let recovery = model.remoteRunRecovery,
@@ -313,7 +315,7 @@ struct MacConversationCanvas: View {
                     if model.remoteRunRecovery == nil, model.remoteObservationNeedsAttention {
                         VStack(alignment: .leading, spacing: 6) {
                             if let error = model.remoteRecoveryError { Text(error).font(.caption).foregroundStyle(.secondary) }
-                            Button(String(localized: "Retry", table: "Chat")) { model.recheckRemoteRun() }
+                            Button(String(localized: "Retry")) { model.recheckRemoteRun() }
                                 .accessibilityIdentifier("chat.remote.recheck")
                         }
                     }
@@ -337,8 +339,7 @@ struct MacConversationCanvas: View {
                             isResolving: model.isResolvingPermission,
                             provideInstruction: { text in
                                 try await model.providePermissionInstruction(text, requestID: request.id, expectedRequest: request)
-                            },
-                            availableHeight: min(320, viewport.size.height * 0.42)
+                            }
                         )
                         .id(request.presentationIdentity)
                         .transition(reduceMotion ? .identity : .move(edge: .bottom).combined(with: .opacity))
@@ -389,22 +390,7 @@ struct MacConversationCanvas: View {
                         .accessibilityIdentifier("chat.draft-storage-error")
                     }
                     if showsComposer {
-                    if let commandError { Text(commandError).foregroundStyle(.red).font(.callout) }
-                    if commandsVisible {
-                        ExpertMentionPanel(candidates: ComposerCommand.candidates(model.draft).map {
-                            ExpertMentionCandidate(id: $0.rawValue, name: "/" + $0.rawValue, detail: $0.title)
-                        }, highlightedID: highlightedCommand ?? ComposerCommand.candidates(model.draft).first?.rawValue,
-                        error: nil, select: completeCommand, accessibilityTitle: "composer.command.help", identifierPrefix: "chat.command.", showsAvatar: false)
-                    }
-                    if expertMentionsVisible, let expertWorkspace {
-                        ExpertMentionPanel(candidates: expertMentionCandidates,
-                            highlightedID: highlightedExpertID ?? expertMentionCandidates.first?.id,
-                            error: expertMentionFailure?.conversationID == model.selectedComposerState.conversationID
-                                ? expertMentionFailure?.message : expertWorkspace.directoryError, select: selectExpertMention)
-                            .disabled(selectingExpertID != nil)
-                            .task(id: expertWorkspace.mainSourceReady) { await expertWorkspace.refreshExpertDirectory() }
-
-                    }
+                    if let commandError { Text(commandError).foregroundStyle(MacDesignColor.danger).font(.callout) }
                     if !modelSetupRequired || !model.selectedMessages.isEmpty { modelControls }
                     conversationControls
                     MacComposerView(
@@ -424,6 +410,25 @@ struct MacConversationCanvas: View {
                         }, restore: { value, spans in model.setDraft(value, conversationID: model.selectedComposerState.conversationID, mentions: spans) },
                         pasted: { dismissedExpertMention = $0 }), localCommand: executeCommand
                     )
+                    .overlay(alignment: .topLeading) {
+                        if commandsVisible {
+                            ExpertMentionPanel(candidates: ComposerCommand.candidates(model.draft).map {
+                                ExpertMentionCandidate(id: $0.rawValue, name: "/" + $0.rawValue, detail: $0.title)
+                            }, highlightedID: highlightedCommand ?? ComposerCommand.candidates(model.draft).first?.rawValue,
+                            error: nil, select: completeCommand, accessibilityTitle: "composer.command.help", identifierPrefix: "chat.command.", showsAvatar: false)
+                            .shadow(color: Color.black.opacity(0.14), radius: 12, y: 4)
+                            .alignmentGuide(.top) { $0[.bottom] + 8 }
+                        } else if expertMentionsVisible, let expertWorkspace {
+                            ExpertMentionPanel(candidates: expertMentionCandidates,
+                                highlightedID: highlightedExpertID ?? expertMentionCandidates.first?.id,
+                                error: expertMentionFailure?.conversationID == model.selectedComposerState.conversationID
+                                    ? expertMentionFailure?.message : expertWorkspace.directoryError, select: selectExpertMention)
+                                .disabled(selectingExpertID != nil)
+                                .shadow(color: Color.black.opacity(0.14), radius: 12, y: 4)
+                                .alignmentGuide(.top) { $0[.bottom] + 8 }
+                                .task(id: expertWorkspace.mainSourceReady) { await expertWorkspace.refreshExpertDirectory() }
+                        }
+                    }
                     .id(model.selectedConversationID)
                     .onChange(of: model.selectedComposerState.draft) { _, _ in highlightedCommand = nil; dismissedCommand = nil; commandError = nil; highlightedExpertID = nil; if dismissedExpertMention != model.draft { dismissedExpertMention = nil } }
                     .sheet(isPresented: $model.isModelSettingsPresented) {
@@ -439,6 +444,7 @@ struct MacConversationCanvas: View {
                 .padding(.top, MacDesignTokens.Spacing.md)
                 .padding(.bottom, MacDesignTokens.Spacing.lg)
                 .background(MacDesignColor.canvas)
+                .zIndex(1)
                 .accessibilityElement(children: .contain)
                 .accessibilityIdentifier("chat.composer-region")
             }
@@ -541,6 +547,13 @@ struct MacConversationCanvas: View {
         guard let parsed = ComposerCommand.parse(model.draft) else { return false }
         guard let command = parsed.command else {
             commandError = ComposerCommand.invalidMessage; return true
+        }
+        if command == .model {
+            guard MacExecutionBackendPolicy.requiresNolaModel(model.executionBackend.id),
+                  model.selectedModelOption != nil else {
+                commandError = String(localized: "Model settings are unavailable for the current backend.")
+                return true
+            }
         }
         if command == .stop {
             guard model.stopComposerRun(conversationID: model.selectedComposerState.conversationID) else {

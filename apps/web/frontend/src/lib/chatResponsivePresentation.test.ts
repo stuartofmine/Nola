@@ -19,7 +19,8 @@ test('compact presentation keeps a single conversation manager and settings owne
 });
 
 test('composer keeps focus indication and grouped work tools share one collapsible inspector', () => {
-    assert.match(chat, /\.composer:focus-within\s*\{[^}]*outline: 2px solid var\(--primary\)/);
+    assert.match(chat, /\.composer:focus-within\s*\{[^}]*border-color: var\(--accent\)/);
+    assert.match(chat, /forced-colors:\s*active\)\s*\{\s*\.composer:focus-within\s*\{[^}]*outline:/);
     for (const tabs of ["['overview', 'progress', 'goal']", "['review', 'artifacts']", "['resources', 'execution', 'participants', 'settings']"]) assert.ok(chat.includes(tabs));
     assert.ok(chat.includes('aria-controls="chat-details"'));
     assert.ok(chat.includes('aria-expanded={selected}'));

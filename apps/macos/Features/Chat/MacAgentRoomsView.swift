@@ -67,7 +67,7 @@ private struct MacRoomOwnerControls: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
             if model.isRunning, let context = model.selectedConversationID {
-                Button("Stop response · " + name, role: .destructive) { _ = model.stopComposerRun(conversationID: context) }
+                Button(String(format: String(localized: "Stop response · %@"), name), role: .destructive) { _ = model.stopComposerRun(conversationID: context) }
             }
             if let request = model.selectedPendingRemotePermission {
                 MacHostPermissionCard(request: request,
@@ -85,7 +85,7 @@ private struct MacRoomOwnerControls: View {
                     .id(request.id).disabled(model.resolvingUserInputWaitIDs.contains(request.id))
             }
             if model.hasDeferredUserInputWaits {
-                Button("Show pending questions") { model.reopenUserInputWaits() }
+                Button(String(localized: "Show pending questions")) { model.reopenUserInputWaits() }
             }
             if let presentation = model.currentUnknownEffectRecovery {
                 MacUnknownEffectRecoveryView(presentation: presentation,
@@ -97,16 +97,16 @@ private struct MacRoomOwnerControls: View {
                     }).id(presentation.id)
             }
             if model.localRunRecovery != nil {
-                if let error = model.localRecoveryError { Text(error).font(.caption).foregroundStyle(.red) }
-                Button("Check execution status · " + name) { Task { await model.checkLocalRunRecovery() } }
+                if let error = model.localRecoveryError { Text(error).font(.caption).foregroundStyle(MacDesignColor.danger) }
+                Button(String(format: String(localized: "Check execution status · %@"), name)) { Task { await model.checkLocalRunRecovery() } }
                     .disabled(!model.canCheckLocalRunRecovery)
                 if model.canResumeLocalRun {
-                    Button("Resume response · " + name) { Task { await model.resumeLocalRun() } }
+                    Button(String(format: String(localized: "Resume response · %@"), name)) { Task { await model.resumeLocalRun() } }
                 }
             }
             if model.remoteRunRecovery != nil {
-                if let error = model.remoteRecoveryError { Text(error).font(.caption).foregroundStyle(.red) }
-                Button("Resume response · " + name) { Task { await model.resumeRemoteRun() } }
+                if let error = model.remoteRecoveryError { Text(error).font(.caption).foregroundStyle(MacDesignColor.danger) }
+                Button(String(format: String(localized: "Resume response · %@"), name)) { Task { await model.resumeRemoteRun() } }
                     .disabled(!model.canRecoverRemoteRun)
             }
         }
@@ -146,31 +146,39 @@ struct MacChatExpertPicker: View {
             Text("chat.experts.description")
                 .font(.callout).foregroundStyle(.secondary)
             TextField("chat.experts.search", text: $query)
-            List(visibleAgents, id: \.id) { agent in
-                Button {
-                    if let selected { selected(agent) }
-                    else if selection.contains(agent.id) { selection.remove(agent.id) }
-                    else { selection.insert(agent.id) }
-                } label: {
-                    HStack(spacing: 10) {
-                        Text(String(agent.name.prefix(2)).uppercased())
-                            .font(.caption.bold()).frame(width: 32, height: 32)
-                            .background(Color.accentColor.opacity(0.12), in: Circle())
-                        VStack(alignment: .leading, spacing: 3) {
-                            Text(agent.name).font(.body.weight(.medium))
-                            if !agent.description.isEmpty {
-                                Text(agent.description).font(.caption).foregroundStyle(.secondary)
+            if visibleAgents.isEmpty {
+                Text("chat.experts.empty")
+                    .foregroundStyle(.secondary)
+                    .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .center)
+            } else {
+                List(visibleAgents, id: \.id) { agent in
+                    Button {
+                        if let selected { selected(agent) }
+                        else if selection.contains(agent.id) { selection.remove(agent.id) }
+                        else { selection.insert(agent.id) }
+                    } label: {
+                        HStack(spacing: 10) {
+                            Text(String(agent.name.prefix(2)).uppercased())
+                                .font(.caption.bold()).frame(width: 32, height: 32)
+                                .background(Color.accentColor.opacity(0.12), in: Circle())
+                            VStack(alignment: .leading, spacing: 3) {
+                                Text(agent.name).font(.body.weight(.medium))
+                                if !agent.description.isEmpty {
+                                    Text(agent.description).font(.caption).foregroundStyle(.secondary)
+                                }
                             }
-                        }
-                        Spacer()
-                        Image(systemName: selection.contains(agent.id) ? "checkmark.circle.fill" : "circle")
-                    }.frame(minHeight: 44).contentShape(Rectangle())
-                }.buttonStyle(.plain)
-                    .accessibilityLabel(agent.name)
-                    .accessibilityValue(selection.contains(agent.id) ? String(localized: "chat.experts.selected") : String(localized: "chat.experts.not_selected"))
+                            Spacer()
+                            Image(systemName: selection.contains(agent.id) ? "checkmark.circle.fill" : "circle")
+                        }.frame(minHeight: 44).contentShape(Rectangle())
+                    }.buttonStyle(.plain)
+                        .accessibilityLabel(agent.name)
+                        .accessibilityValue(selection.contains(agent.id) ? String(localized: "chat.experts.selected") : String(localized: "chat.experts.not_selected"))
+                }
+                .scrollContentBackground(.hidden)
             }
-            if visibleAgents.isEmpty { Text("chat.experts.empty").foregroundStyle(.secondary) }
-        }.padding(16)
+        }
+        .padding(16)
+        .background(MacDesignColor.canvas)
     }
 }
 
@@ -291,6 +299,7 @@ struct MacExpertPermissionDock: View {
 struct MacExpertDirectoryManagementView: View {
     @ObservedObject var workspace: MacAgentRoomWorkspace
     var showsCloseButton: Bool = true
+    var onUnsavedChangesChanged: ((Bool) -> Void)? = nil
     @Environment(\.dismiss) private var dismiss
     @State private var builtinPreview: AppleExpertRoleTemplate?
     @State private var hasChosenEditor = false
@@ -469,7 +478,7 @@ struct MacExpertDirectoryManagementView: View {
                                     edit(workspace.directory.first { $0.id == savedID })
                                 }
                             }
-                        }.buttonStyle(MacActionButtonStyle())
+                        }.buttonStyle(.nolaProminent)
                             .disabled(isSaving || name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
                             .accessibilityIdentifier("mac-expert-save")
                         if let error = workspace.directoryError {
@@ -491,6 +500,9 @@ struct MacExpertDirectoryManagementView: View {
             maxHeight: showsCloseButton ? nil : .infinity
         )
             .interactiveDismissDisabled(showsCloseButton && (isSaving || hasUnsavedChanges))
+            .onChange(of: hasUnsavedChanges, initial: true) { _, dirty in
+                onUnsavedChangesChanged?(dirty)
+            }
             .background {
                 if showsCloseButton {
                     MacEditorWindowCloseGuard(

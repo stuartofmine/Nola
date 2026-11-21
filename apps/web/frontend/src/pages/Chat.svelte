@@ -842,7 +842,7 @@
             queuedDispatch = snapshot.queuedDispatch; queuedCancelling = snapshot.queuedCancelling;
             error = snapshot.error; notice = snapshot.notice; pendingText = snapshot.pendingText;
             pendingAttachmentNames = snapshot.pendingAttachmentNames; historicalRecoveryOwners = snapshot.historicalRecoveryOwners;
-            draft = snapshot.draft; occurrences=sourceWorkspace.mentions.get(conversation.conversationId)?.occurrences??[]; attachments = snapshot.attachments;
+            draft = snapshot.draft; occurrences=sourceWorkspace.mentions.get(conversation.conversationId)?.occurrences??[]; attachments = snapshot.attachments; textAttachments?.sync();
         }, {
             cacheChanged: () => { conversationCacheReader.refresh(); void conversationManager?.refresh(); },
             captureHistory: reason => {
@@ -1083,7 +1083,6 @@
                 if(!disposed){const url=new URL(location.href);for(const key of ['expert_context','expert_participant','expert_agent','expert_revision','expert_source_epoch'])url.searchParams.delete(key);history.replaceState(history.state,'',url);}
             }
             if (requestedContent && !disposed) openManagementTab(requestedContent);
-            else if (!disposed) observedCanSubmit = true;
         } catch (cause) { if (!disposed) {
             error = chatInitializationError(cause); initializationFailed = true;
             if (requestedContent && contentTabs.selected === conversationTabKey) openManagementTab(requestedContent);
@@ -1277,7 +1276,7 @@
     </section>
 {/snippet}
 {#if mentionProfile}
-    <dialog class="mention-profile" use:showMentionProfile onclose={()=>mentionProfile=null}>
+    <dialog class="mention-profile" use:showMentionProfile onclose={()=>mentionProfile=null} onclick={event => { if (event.target === event.currentTarget) mentionProfile = null; }}>
         <strong>{mentionProfile.name}</strong>{#if mentionProfile.member?.description}<p>{mentionProfile.member.description}</p>{/if}
         {#if active?.conversationId===mentionProfile.parent && hostId===mentionProfile.host && mentionProfile.ref.participant_id && mentionProfile.ref.context_conversation_id}
             <ExpertChildHistory parentId={mentionProfile.parent} reference={mentionProfile.ref} expectedEpoch={mentionProfile.epoch} expectedHost={mentionProfile.host}/>
@@ -1290,7 +1289,7 @@
         <div class="global-navigation" class:collapsed={viewportWidth > 700 && !navigationExpanded}><a class="desktop-mark" href="/today" aria-label="Nola">n</a><WorkspaceListNavigation category={listCategory} visible={navigationExpanded} onchange={setListCategory} /><button class="sidebar-toggle panel-toggle" title={t($locale, 'shell.toggleSidebar')} aria-label={t($locale, 'shell.toggleSidebar')} aria-expanded={navigationExpanded} onclick={() => navigationExpanded = !navigationExpanded}><PrototypeIcon name="sidebar" size={18} /></button></div>
         <button class="navigation-toggle" aria-label={t($locale, contentTabs.selected === conversationTabKey ? 'shell.workspace' : 'chatPage.title')} onclick={() => contentTabs.selected === conversationTabKey ? navigateWorkspace('/conversations') : updateContentTabs(selectContentTab(contentTabs, conversationTabKey))}><svg aria-hidden="true" viewBox="0 0 24 24"><path d="m15 5-7 7 7 7" /></svg></button>
         <h1 class="sr-only">{selectedContentTab ? selectedContentTab.kind === 'pdf' ? selectedContentTab.resource.displayName : pluginTitles[selectedContentTab.path] ?? t($locale, selectedContentTab.titleKey) : active?.title || t($locale, 'chatPage.title')}</h1>
-        {#if viewportWidth <= 700}<div class="mobile-chat-heading"><strong>{selectedContentTab ? selectedContentTab.kind === 'pdf' ? selectedContentTab.resource.displayName : pluginTitles[selectedContentTab.path] ?? t($locale, selectedContentTab.titleKey) : active?.title || t($locale, 'chatPage.title')}</strong><small>Nola</small></div>{#if selectedContentTab}<button class="panel-toggle mobile-content-close" aria-label={t($locale, 'chatInspector.closeTab')} onclick={() => closeWorkspaceContentTab(contentTabs.selected)}>×</button>{:else}<button class="panel-toggle" aria-label={t($locale, 'chatInspector.context')} disabled={!active} onclick={() => toggleInspector('resources')}><svg aria-hidden="true" viewBox="0 0 24 24"><path d="M6 3h8l4 4v14H6zM14 3v5h4M9 12h6m-6 4h6"/></svg></button><button class="panel-toggle" aria-label={t($locale, 'rooms.experts')} onclick={() => void openExperts()}><svg aria-hidden="true" viewBox="0 0 24 24"><circle cx="12" cy="7" r="4"/><path d="M5 22v-4a7 7 0 0 1 14 0v4"/></svg></button>{/if}{:else}<ContentTabStrip pageTitles={pluginTitles} ownerKey={contentWorkspaceKey} state={contentTabs} title={active?.title || t($locale, 'chatPage.title')}
+        {#if viewportWidth <= 700}<div class="mobile-chat-heading"><strong>{selectedContentTab ? selectedContentTab.kind === 'pdf' ? selectedContentTab.resource.displayName : pluginTitles[selectedContentTab.path] ?? t($locale, selectedContentTab.titleKey) : active?.title || t($locale, 'chatPage.title')}</strong><small>Nola</small></div>{#if selectedContentTab}<button class="panel-toggle mobile-content-close" aria-label={t($locale, 'chatInspector.closeTab')} onclick={() => closeWorkspaceContentTab(contentTabs.selected)}><PrototypeIcon name="close" size={16} /></button>{:else}<button class="panel-toggle" aria-label={t($locale, 'chatInspector.context')} disabled={!active} onclick={() => toggleInspector('resources')}><svg aria-hidden="true" viewBox="0 0 24 24"><path d="M6 3h8l4 4v14H6zM14 3v5h4M9 12h6m-6 4h6"/></svg></button><button class="panel-toggle" aria-label={t($locale, 'rooms.experts')} onclick={() => void openExperts()}><svg aria-hidden="true" viewBox="0 0 24 24"><circle cx="12" cy="7" r="4"/><path d="M5 22v-4a7 7 0 0 1 14 0v4"/></svg></button>{/if}{:else}<ContentTabStrip pageTitles={pluginTitles} ownerKey={contentWorkspaceKey} state={contentTabs} title={active?.title || t($locale, 'chatPage.title')}
             conversationId={active?.conversationId ?? null}
             canRename={!!active?.conversationId && canInteract && !conversationWriting && !busy && contentTabs.selected === conversationTabKey}
             onselect={key => updateContentTabs(selectContentTab(contentTabs, key))}
@@ -1298,7 +1297,7 @@
             onrename={(id, nextTitle) => conversationManager?.renameConversationById(id, nextTitle)} />{/if}
         {#if active}{@render inspectorControls()}{/if}
         {#if active}<ToolbarPopover label={t($locale, 'chatInspector.more')}>
-            {#if canInteract}<ChatModelMenu selection={modelState} onopen={() => sessionSettings?.refreshModelCatalog()} onselect={choice => sessionSettings?.selectModel(choice)} onsettings={() => { inspectorTab = 'settings'; }} onreload={() => sessionSettings?.reloadSettings()} />{/if}
+            {#if canInteract && viewportWidth <= 700}<ChatModelMenu selection={modelState} onopen={() => sessionSettings?.refreshModelCatalog()} onselect={choice => sessionSettings?.selectModel(choice)} onsettings={() => { inspectorTab = 'settings'; }} onreload={() => sessionSettings?.reloadSettings()} />{/if}
             <details class="attachment-help"><summary>{t($locale, 'chatTextAttachment.helpTitle')}</summary><p>{t($locale, 'chatTextAttachment.help')}</p><p>{t($locale, 'chatTextAttachment.dropPaste')}</p></details>
             <button type="button" onclick={openSearch}>{t($locale, 'chatPage.find')}</button>
             <button type="button" onclick={() => loadHistory('replace')} disabled={historyLoading || (busy && turn?.phase !== 'recovering' && turn?.phase !== 'cancel_requested')}>{t($locale, 'chatPage.refresh')}</button>
@@ -1339,7 +1338,7 @@
         <section id="page-main" tabindex="-1" role="main" class="chat-main" aria-label={selectedContentTab ? selectedContentTab.kind === 'pdf' ? selectedContentTab.resource.displayName : pluginTitles[selectedContentTab.path] ?? t($locale, selectedContentTab.titleKey) : active?.title || t($locale, 'chatPage.title')}>
             <div class="conversation-panel" role="tabpanel" id={contentTabDomId('panel', contentWorkspaceKey, conversationTabKey)} aria-labelledby={contentTabDomId('tab', contentWorkspaceKey, conversationTabKey)} hidden={contentTabs.selected !== conversationTabKey}>
             {#if returnToActivity}<a class="activity-source-return" href={returnToActivity}><PrototypeIcon name="back" size={16} />{t($locale, 'activity.backToActivity')}</a>{/if}
-            {#if searchVisible}<div class="chat-search"><label for="chat-search-input">{t($locale, 'chatPage.find')}</label><input id="chat-search-input" bind:this={searchInput} type="search" bind:value={searchQuery} autocomplete="off" /><span role="status">{searchQuery.trim() ? t($locale, 'chatPage.found', { count: matchingMessageIds.size }) : ''}</span><button type="button" onclick={closeSearch} aria-label={t($locale, 'chatPage.closeSearch')}>×</button></div>{/if}
+            {#if searchVisible}<div class="chat-search"><label for="chat-search-input">{t($locale, 'chatPage.find')}</label><input id="chat-search-input" bind:this={searchInput} type="search" bind:value={searchQuery} autocomplete="off" /><span role="status">{searchQuery.trim() ? t($locale, 'chatPage.found', { count: matchingMessageIds.size }) : ''}</span><button type="button" onclick={closeSearch} aria-label={t($locale, 'chatPage.closeSearch')}><PrototypeIcon name="close" size={16} /></button></div>{/if}
             {#if queuedDispatch}
                 <section class="notice queued-action" aria-live="polite">
                     <p>{t($locale, ['rejected', 'cancelled'].includes(queuedDispatch.phase) ? 'recovery.queuedNotExecuted' : 'recovery.queuedChecking')}</p>
@@ -1353,7 +1352,7 @@
             {#if notice}<p class="notice" role="status">{t($locale, notice)}</p>{/if}
             {#if error === 'chatPage.controlUnconfirmed'}
                 <p class="notice" role="status">{t($locale, error)}</p>
-                <button type="button" onclick={rereadSelected}>{t($locale, 'chatPage.retryInitialization')}</button>
+                <button class="initialization-retry" type="button" disabled={historyLoading} onclick={rereadSelected}>{t($locale, 'chatPage.retryInitialization')}</button>
             {:else if error}
                 <p class="notice error" class:initialization-error={initializationFailed} role="alert">{t($locale, error)}</p>
             {/if}
@@ -1363,7 +1362,7 @@
             <!-- svelte-ignore a11y_no_noninteractive_tabindex (The named scrollable log needs a keyboard reading target.) -->
             <div class="transcript" bind:this={transcript} onwheel={userScrollStarted} ontouchstart={transcriptPointerStarted} ontouchmove={userScrollStarted} onpointerdown={transcriptPointerStarted} onscroll={observedScroll} tabindex="0" aria-label={t($locale, 'chatPage.title')} role="log" aria-live="polite" aria-relevant="additions text">
                 {#if timeline?.window?.hasMore}<button class="older" onclick={() => loadHistory('prepend')} disabled={historyLoading || busy}>{t($locale, 'chatPage.history')}</button>{/if}
-                {#if !messages.length && (initializing || historyLoading)}<p class="placeholder">{t($locale, 'chatPage.loading')}</p>{:else if !active && !initializationFailed}<div class="empty-conversation"><h2>{t($locale, 'chatPage.choose')}</h2><button class="empty-navigation" onclick={() => navigationPanel.openPanel()}>{t($locale, 'shell.workspace')}</button></div>{:else if active && !messages.length && !busy && !error}<div class="empty-conversation"><h2>{t($locale, 'chatPage.welcome')}</h2><p>{t($locale, 'chatPage.welcomeHint')}</p><button onclick={() => composer?.focus()}>{t($locale, 'chatPage.placeholder')}</button></div>{/if}
+                {#if !messages.length && (initializing || historyLoading)}<p class="placeholder">{t($locale, 'chatPage.loading')}</p>{:else if !active && !initializationFailed}<div class="empty-conversation"><div class="empty-mark" aria-hidden="true">n</div><h2>{t($locale, 'chatPage.choose')}</h2><button class="empty-navigation" onclick={() => navigationPanel.openPanel()}>{t($locale, 'shell.workspace')}</button></div>{:else if active && !messages.length && !busy && !error}<div class="empty-conversation"><div class="empty-mark" aria-hidden="true">n</div><h2>{t($locale, 'chatPage.welcome')}</h2><p>{t($locale, 'chatPage.welcomeHint')}</p><button onclick={() => composer?.focus()}>{t($locale, 'chatPage.placeholder')}</button></div>{/if}
                 {#each messages as message (JSON.stringify([hostId, active?.conversationId, message.id]))}
                     {@const attachmentDisplay = message.role === 'user' ? displayTextAttachmentMessage(timelineMessageText(message)) : null}
                     {@const visibleUserText=attachmentDisplay?.displayText??timelineMessageText(message)}
@@ -1377,7 +1376,7 @@
                         <div class="message-column"><div class="message-content">
                             {#if message.role === 'assistant' && turn && busy && message.id === turn.identity.assistantMessageId}
                                 {#if runStatusKey !== 'chatPage.working' || !message.parts.some(isExecutionPart) && !timelineMessageText(message)}
-                                    <p class="run-status" role="status">{t($locale, runStatusKey)}</p>
+                                    <p class="run-status live" role="status">{t($locale, runStatusKey)}</p>
                                 {/if}
                             {:else if message.role === 'assistant' && message.state === 'cancelled'}
                                 <p class="run-status" role="status">{t($locale, 'activity.status.cancelled')}</p>
@@ -1420,7 +1419,7 @@
                                             executionId={item.submission.execution_id} running={item.submission.state === 'executing'} />
                                     {:else}
                                         <ExpertReplyFrame {hostId} agentId={item.participant.agent_id} name={item.participant.display_name}>
-                                            <p class="run-status" role="status">{t($locale, item.submission.state === 'selected' || item.submission.state === 'accepted' ? 'rooms.expertStarting' : `rooms.${item.submission.state}`)}</p>
+                                            <p class="run-status" class:live={item.submission.state === 'selected' || item.submission.state === 'accepted' || item.submission.state === 'executing'} role="status">{t($locale, item.submission.state === 'selected' || item.submission.state === 'accepted' ? 'rooms.expertStarting' : `rooms.${item.submission.state}`)}</p>
                                         </ExpertReplyFrame>
                                     {/if}
                                 </article>
@@ -1438,7 +1437,7 @@
                     <article class="reply-notice" data-reply-submission={reply.submissionId}><div class="message-content"><ChatReplyError kind={reply.kind} oncontinue={continueConversation} continuing={conversationWriting} /></div></article>
                 {/each}
                 {#if (pendingText || pendingAttachmentNames.length) && busy && !messages.some(message => message.id === turn?.identity.userMessageId || message.id === turn?.identity.assistantMessageId)}<article class="user pending"><div class="message-content">{#if pendingText}<Markdown source={pendingText} />{/if}{#if pendingAttachmentNames.length}<ul class="attached-files">{#each pendingAttachmentNames as name}<li>{name}</li>{/each}</ul>{/if}<small>{t($locale, 'chatPage.pendingUser')}</small></div></article>{/if}
-                {#if turn && busy && !messages.some(message => message.id === turn?.identity.assistantMessageId)}<p class="run-status" role="status">{t($locale, runStatusKey)}</p>{/if}
+                {#if turn && busy && !messages.some(message => message.id === turn?.identity.assistantMessageId)}<p class="run-status live" role="status">{t($locale, runStatusKey)}</p>{/if}
                 {#if active && canInteract}{#key `${generation}:${active.conversationId}`}
                     <ChatUserQuestions conversationId={active.conversationId} {busy} onresolved={observeSelected} />
                 {/key}{/if}
@@ -1488,8 +1487,8 @@
                 <ChatModelMenu selection={modelState} onopen={() => sessionSettings?.refreshModelCatalog()} onselect={choice => sessionSettings?.selectModel(choice)} onsettings={() => { inspectorTab = 'settings'; }} onreload={() => sessionSettings?.reloadSettings()} />
                 <ChatReasoningMenu state={reasoningState} {busy} onselect={value => sessionSettings?.selectReasoningPreference(value)} />
                 <div class="composer-actions">
-                    {#if busy && turn && !draft.startsWith('/')}<button type="button" in:fade={{ duration: reducedMotion ? 0 : 120 }} out:fade={{ duration: reducedMotion ? 0 : 90 }} onclick={stop} disabled={turn.phase === 'cancel_requested'}>{t($locale, turn.phase === 'cancel_requested' ? 'chatPage.cancelPending' : 'chatPage.stop')}</button>{:else}
-                    <button class="primary" in:fade={{ duration: reducedMotion ? 0 : 120 }} out:fade={{ duration: reducedMotion ? 0 : 90 }} aria-label={t($locale, 'chatPage.send')} type="submit" disabled={composerUnavailable || (!draft.startsWith('/') && (busy || expertAdmissionPending || attachmentsReading || knowledgeSavePending || (!draft.trim() && !attachments.length)))}><svg aria-hidden="true" viewBox="0 0 24 24"><path d="M12 19V5m-6 6 6-6 6 6"/></svg></button>{/if}
+                    {#if busy && turn && !draft.startsWith('/')}<button type="button" in:fade={{ duration: reducedMotion ? 0 : 120 }} onclick={stop} disabled={turn.phase === 'cancel_requested'}>{t($locale, turn.phase === 'cancel_requested' ? 'chatPage.cancelPending' : 'chatPage.stop')}</button>{:else}
+                    <button class="primary" in:fade={{ duration: reducedMotion ? 0 : 120 }} aria-label={t($locale, 'chatPage.send')} type="submit" disabled={composerUnavailable || (!draft.startsWith('/') && (busy || expertAdmissionPending || attachmentsReading || knowledgeSavePending || (!draft.trim() && !attachments.length)))}><svg aria-hidden="true" viewBox="0 0 24 24"><path d="M12 19V5m-6 6 6-6 6 6"/></svg></button>{/if}
                 </div>
                 </div>
                 {#if expertIntentStorageError}<p role="alert">{expertIntentStorageError}</p>{/if}
@@ -1527,7 +1526,7 @@
         {#if active}<ChatResponsivePanel bind:this={inspectorPanel} breakpoint={1250} toolbar={inspectorTitle} expanded={!managementContentSelected && inspectorTab !== null} onclose={() => inspectorTab = null} label={inspectorLabel} closeLabel={t($locale, 'chatInspector.close')}>
         <div class="panel-column">
         <div bind:this={inspectorRoot} class="chat-side" id="chat-details">
-            <div class="inspector-heading">{@render inspectorTitle()}<button title={t($locale, 'chatInspector.close')} onclick={() => inspectorPanel?.closePanel()} aria-label={t($locale, 'chatInspector.close')}>×</button></div>
+            <div class="inspector-heading">{@render inspectorTitle()}<button title={t($locale, 'chatInspector.close')} onclick={() => inspectorPanel?.closePanel()} aria-label={t($locale, 'chatInspector.close')}><PrototypeIcon name="close" size={16} /></button></div>
             <details class="inspector-section" data-inspector-section="overview" hidden={!activeInspectorGroup?.tabs.includes('overview')} open={expandedInspectorSections.includes('overview')} ontoggle={event => setInspectorExpanded('overview', event.currentTarget.open)}>
                 <summary>{t($locale, 'chatInspector.overview')}</summary><div class="inspector-content">
                 <ChatDecisionOverview working={busy || expertAdmissionPending || expertSubmissions.some(item => item.state === 'executing')} needsResponse={turn?.phase === 'awaiting_permission'}
@@ -1605,7 +1604,7 @@
     .mention-copy small { color: var(--muted); }
 
     .chat-page { display: grid; grid-template-columns: minmax(0, 1fr); grid-template-rows: auto minmax(0, 1fr); gap: 0; height: 100dvh; padding: 0; overflow: hidden; }
-    .chat-header { position: relative; height: 48px; min-height: 48px; padding: 0 12px 0 0; min-width: 0; display: flex; justify-content: space-between; align-items: center; gap: 8px; isolation: isolate; z-index: 1; background: var(--panel); border-bottom: 1px solid var(--border); }
+    .chat-header { position: relative; height: 48px; min-height: 48px; padding: 0 12px 0 0; min-width: 0; display: flex; justify-content: space-between; align-items: center; gap: 8px; isolation: isolate; z-index: 1; background: var(--rail); border-bottom: 1px solid var(--border); }
     .sidebar-toggle { margin-inline-start: auto; flex: none; }
     .global-navigation { display: flex; align-items: center; gap: 10px; flex: none; width: var(--sidebar-width); height: 100%; padding-inline: 12px; box-sizing: border-box; background: var(--rail); border-inline-end: 1px solid var(--border); min-width: 0; }
     .global-navigation.collapsed { width: auto; background: transparent; border-inline-end-color: transparent; padding-inline: 12px 4px; }
@@ -1622,13 +1621,16 @@
     .panel-toggle { display: inline-flex; align-items: center; justify-content: center; width: max(36px, var(--control-hit-size)); height: max(36px, var(--control-hit-size)); padding: 0; border: 1px solid transparent; background: transparent; box-shadow: none; color: var(--muted); }
     .panel-toggle[aria-pressed="true"] { background: var(--accent-subtle); border-color: transparent; color: var(--content); }
     .inspector-heading { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
-    .inspector-heading button { width: max(32px, var(--control-hit-size)); height: max(32px, var(--control-hit-size)); padding: 0; }
-    .chat-header svg, .panel-toggle svg { width: 20px; height: 20px; fill: none; stroke: currentColor; stroke-width: 1.7; stroke-linecap: round; stroke-linejoin: round; }
+    .inspector-heading button { width: max(32px, var(--control-hit-size)); height: max(32px, var(--control-hit-size)); padding: 0; display: inline-flex; align-items: center; justify-content: center; }
+    .chat-header svg, .panel-toggle svg { width: 20px; height: 20px; fill: none; stroke: currentColor; stroke-width: 1.6; stroke-linecap: round; stroke-linejoin: round; }
     .transcript article.user :global(.message-actions) { justify-content:flex-end; }
     @media(min-width:1251px) { .chat-side { height:100%; } }
     .inspector-heading button { border:0; background:transparent;box-shadow:none; }
-    .composer-footer { display: flex; align-items: flex-start; gap: 8px; }
-    .composer-attachments { flex: 0 1 auto; min-width: 0; }
+    .composer-footer { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+    .composer-attachments { display: contents; }
+    .composer-footer :global(.text-attachments) { display: contents; }
+    .composer-footer :global(.text-attachments > :not(.attachment-toolbar)) { order: -1; flex: 1 0 100%; margin-bottom: 4px; }
+    .composer-footer :global(.text-attachments > .attachment-toolbar) { flex: 0 0 auto; }
     .composer-actions { flex-shrink: 0; margin-inline-start: auto; }
     .composer-options { flex-shrink: 0; }
     .chat-columns { isolation: isolate; z-index: 0; min-width: 0; display: grid; grid-template-columns: var(--sidebar-width) minmax(0, 1fr) var(--inspector-width); min-height: 0; gap: 0; }
@@ -1637,7 +1639,8 @@
     .chat-columns.without-navigation.without-conversation { grid-template-columns: minmax(0, 1fr); }
     .empty-navigation { display: none; }
     .empty-conversation { display: grid; justify-items: center; align-content: center; gap: 12px; min-height: 45dvh; padding: 24px; text-align: center; }
-    .empty-conversation h2 { color: var(--content); font-size: 1.375rem; font-weight: 600; }
+    .empty-mark { font: italic 600 44px/1 Georgia, serif; color: var(--accent); margin-bottom: 4px; }
+    .empty-conversation h2 { font-family: var(--font-display); color: var(--content); font-size: 1.75rem; line-height: 1.3; font-weight: 600; }
     .empty-conversation p { color: var(--muted); font-size: .875rem; margin: 0; }
     .panel-column { position: relative; min-width: 0; min-height: 0; }
     .chat-navigation { display: flex; flex-direction: column; gap: 12px; min-width: 0; height: calc(100dvh - 48px); max-height: calc(100dvh - 48px); overflow: hidden; padding: 12px; border: 0; background: var(--canvas); border-right:1px solid var(--border); }
@@ -1653,7 +1656,7 @@
     .chat-search span { color: var(--muted); white-space: nowrap; }
     .chat-search button { margin-inline-start: auto; }
     .transcript:focus-visible { outline-offset: -3px; }
-    .transcript { flex: 1 1 0; min-height: 80px; overflow: auto; padding: 24px max(32px, calc((100% - 752px)/2)); scrollbar-gutter: stable; font-size: 1rem; line-height: 1.75; }
+    .transcript { flex: 1 1 0; min-height: 80px; overflow: auto; padding: 24px max(32px, calc((100% - 752px)/2)); scrollbar-gutter: stable; font-size: 1rem; line-height: 1.625; }
     .transcript article { display: flex; align-items: flex-start; gap: 8px; margin: 24px 0; padding: 12px 0; border: 1px solid transparent; position: relative; border-radius: 12px; }
     .transcript article.user { max-width: 85%; margin-inline-start: auto; padding: 0; }
     .message-column { min-width: 0; flex: 1; }
@@ -1678,8 +1681,13 @@
     .expert-choice { width:100%; display: flex; align-items: center; gap: 4px; }
     .expert-choice label { min-height: 44px; }
     .run-status { margin: 0; padding: 8px 0; color: var(--muted); font-size: 12px; }
-    .composer { flex-shrink: 0; width: calc(100% - 64px); max-width: 720px; align-self: center; margin: 10px 12px 16px; padding: 12px 16px; border: 1px solid var(--outline); border-radius: 16px; background: var(--surface-gradient); box-shadow: inset 0 1px 0 var(--surface-highlight), var(--surface-shadow); transition: border-color var(--motion-fast) ease, background-color var(--motion-base) var(--motion-disclosure); }
-    .composer:focus-within { outline: 2px solid var(--primary); outline-offset: 2px; border-color: var(--primary); }
+    .run-status.live { width: fit-content; background: linear-gradient(90deg, var(--muted) 0%, var(--content) 50%, var(--muted) 100%); background-size: 200% 100%; -webkit-background-clip: text; background-clip: text; color: transparent; animation: nola-shimmer 2.4s ease-in-out infinite; }
+    @keyframes nola-shimmer { 0% { background-position: 100% 0; } 100% { background-position: -100% 0; } }
+    @media (prefers-reduced-motion: reduce) { .run-status.live { background: none; color: var(--muted); animation: none; } }
+    @media (forced-colors: active) { .run-status.live { background: none; color: inherit; animation: none; } }
+    .composer { flex-shrink: 0; width: calc(100% - 64px); max-width: 720px; align-self: center; margin: 10px 12px 16px; padding: 12px 16px; border: 1px solid var(--border); border-radius: 16px; background: var(--surface-gradient); box-shadow: inset 0 1px 0 var(--surface-highlight), var(--surface-shadow); transition: border-color var(--motion-fast) ease, box-shadow var(--motion-fast) ease, background-color var(--motion-base) var(--motion-disclosure); }
+    .composer:focus-within { outline: none; border-color: var(--accent); box-shadow: 0 0 0 1px var(--accent); }
+    @media (forced-colors: active) { .composer:focus-within { outline: 2px solid Highlight; outline-offset: 2px; box-shadow: none; } }
     .composer-actions { display: flex; justify-content: flex-end; gap: 8px; }
     .composer-quick-bar { display: flex; flex-shrink: 0; flex-wrap: wrap; align-items: center; gap: 16px; padding: 0 0 16px; width: 100%; margin: 0; }
     .chat-side { position:relative; display: grid; align-content: start; gap: 8px; min-width: 0; min-height:0; overflow:auto; overscroll-behavior:contain; padding: 12px; border-left: 1px solid var(--border); background: var(--canvas); }
@@ -1722,7 +1730,7 @@
         .inspector-controls { gap: 0; }
         .chat-navigation { height: auto; max-height: none; }
         .chat-main { border: 0; border-radius: 0; }
-        .transcript { min-height: min(180px, 35dvh); padding: 12px 16px; scrollbar-gutter: auto; overscroll-behavior-y: contain; font-size: 1.0625rem; line-height: 28px; }
+        .transcript { min-height: 80px; padding: 12px 16px; scrollbar-gutter: auto; overscroll-behavior-y: contain; font-size: 1.0625rem; line-height: 28px; }
         .transcript article { padding: 10px 0; margin: 12px 0; gap: 4px; }
         .transcript article.user { padding: 0; margin-inline-start: auto; }
         .transcript article.user .message-content { padding: 10px 12px; }
@@ -1732,7 +1740,7 @@
         .composer-footer :global(.model-menu) { flex: 1; min-width: 0; max-width: none; }
         .composer-footer :global(.model-menu > summary) { min-height: 44px; justify-content: flex-start; font-size: 12px; padding-inline: 8px; }
         .composer-footer :global(.model-menu summary span:first-child) { max-width: none; min-width: 0; }
-        .composer-footer :global(.model-menu .choices) { position: absolute; inset: auto auto calc(100% + 8px) 50%; translate: -50% 0; width: min(340px, calc(100vw - 32px)); max-height: min(52dvh, 400px); }
+        .composer-footer :global(.model-menu .choices) { position: absolute; inset: auto auto calc(100% + 8px) 0; translate: none; width: min(340px, calc(100vw - 32px)); max-height: min(52dvh, 400px); }
         .composer-actions button { min-height: 44px; border-radius: 14px; padding: 8px 12px; }
         .composer-options { margin: 0 12px; max-height: 35dvh; overflow: auto; }
         .composer-quick-bar { width: 100%; padding: 0 4px 12px; }
@@ -1740,9 +1748,14 @@
         .chat-search label { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); }
     }
     .composer-actions button.primary { width:36px; height:36px; min-width:36px; min-height:36px; padding:7px; border-radius:50%; }
-    .composer-actions svg { width:20px; height:20px; fill:none; stroke:currentColor; stroke-width:1.7; }
+    .composer-actions svg { width:20px; height:20px; fill:none; stroke:currentColor; stroke-width:1.6; }
     .composer-footer :global(.model-menu) { align-self:center; }
-    @media(min-width:761px) { .composer-footer :global(.model-menu .choices) { top:auto; bottom:100%; } }
+    @media(min-width:701px) {
+        .composer-footer :global(.model-menu .choices) { top:auto; bottom:calc(100% + 8px); left:0; right:auto; }
+        .composer-footer :global(.model-menu[open] .choices) { animation: composer-reveal-up var(--motion-base) ease-out; }
+    }
+    @keyframes composer-reveal-up { from { opacity: 0; transform: translateY(4px); } to { opacity: 1; transform: translateY(0); } }
+    @media (prefers-reduced-motion: reduce) { .composer-footer :global(.model-menu[open] .choices) { animation: none; } }
     @media(max-width:700px) { .composer-actions button.primary { width:44px; height:44px; min-height:44px; min-width:44px; padding:11px; } }
     @media(max-width:359px) { .composer { width:calc(100% - 32px); margin-inline:16px; } .chat-header { padding-inline:4px; } }
     @media(max-width:359px) {
@@ -1757,6 +1770,6 @@
     .workspace-footer .workspace-identity { display:flex; gap:8px; align-items:center; flex:1; min-width:0; text-align:start; font-size:12px; }
     .workspace-identity > span:first-child { font:bold 24px Georgia,serif; }
     .workspace-identity small { display:block; font-size:10px; }
-    .workspace-footer svg { width:16px; height:16px; fill:none; stroke:currentColor; stroke-width:1.5; }
+    .workspace-footer svg { width:16px; height:16px; fill:none; stroke:currentColor; stroke-width:1.6; }
     @media(max-width:700px) { .workspace-footer { display:none; } }
 </style>

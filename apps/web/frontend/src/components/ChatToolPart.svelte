@@ -60,7 +60,7 @@
             <details use:replyDisclosure class="tool-technical" data-reply-disclosure open={technicalExpanded}>
                 <summary onclick={event=>{event.preventDefault();chooseField('technical',!technicalExpanded);}}>{t($locale, 'chatPage.toolTechnicalDetails')}</summary>
             {#if tool.origin}<p class="tool-origin">{tool.origin}</p>{/if}
-            {#if input !== null}<details use:replyDisclosure class="tool-input" open={inputExpanded}><summary onclick={event=>{event.preventDefault();chooseField('input',!inputExpanded);}}>{t($locale, 'chatPage.toolInput')}</summary>
+            {#if input !== null}<details use:replyDisclosure class="tool-input" data-reply-disclosure open={inputExpanded}><summary onclick={event=>{event.preventDefault();chooseField('input',!inputExpanded);}}>{t($locale, 'chatPage.toolInput')}</summary>
                 {#if input.length > 2000}{#key owner}<ChatTextReader {part} field="input" text={input} title={title + ' · ' + t($locale, 'chatPage.toolInput')} />{/key}{/if}
                 <pre>{preview(input)}</pre>
             </details>{/if}

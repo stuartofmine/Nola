@@ -33,7 +33,7 @@
 <main id="page-main" tabindex="-1" class="today-page">
     <header><div><h1>{t($locale, 'chatInspector.today')}</h1></div><button type="button" aria-label={t($locale, 'chatPage.refresh')} title={t($locale, 'chatPage.refresh')} onclick={refresh} disabled={loading}><svg aria-hidden="true" viewBox="0 0 24 24"><path d="M20 7v5h-5M4 17v-5h5M5 8a8 8 0 0 1 14-2l1 6M4 12l1 6a8 8 0 0 0 14-2"/></svg></button></header>
     {#if loading}<p role="status" class="muted">{t($locale, 'chatPage.loading')}</p>{/if}
-    {#if failed}<p role="alert">{t($locale, 'shell.pageLoadFailed')}</p>{/if}
+    {#if failed}<div class="notice error" role="alert">{t($locale, 'shell.pageLoadFailed')} <button type="button" onclick={refresh} disabled={loading}>{t($locale, 'shell.retry')}</button></div>{/if}
     {#if facts}
         {#if facts.needs_attention}<aside role="status"><p>{t($locale, 'chatInspector.expertAttention')}</p><ul>{#each facts.unrepresented_expert_contexts as context (context.context_conversation_id)}<li>{context.display_name}</li>{/each}</ul></aside>{/if}
         <section><h2>{t($locale, 'chatInspector.needsResponse')}</h2>
@@ -77,5 +77,5 @@
     .matter-source svg { width:16px; height:16px; flex-shrink:0; fill:none; stroke:currentColor; stroke-width:1.5; }
     .matter-source span { overflow-wrap:anywhere; }
     .matter-action { display:inline-flex; align-items:center; gap:12px; min-height:44px; margin-top:14px; padding:8px 14px; border-radius:8px; background:var(--primary); color:var(--on-primary); font-size:14px; }
-    .matter-action:hover { color:var(--on-primary); background:var(--primary); }
+    .matter-action:hover { color:var(--on-primary); background:color-mix(in srgb, var(--primary) 88%, var(--canvas)); }
 </style>

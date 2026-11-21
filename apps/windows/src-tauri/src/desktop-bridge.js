@@ -5,6 +5,7 @@ if (window.top === window && location.protocol === "http:" && location.hostname 
         nativeRuntime: () => invoke("native_runtime"),
         loginItem: () => invoke("login_item"),
         setLoginItem: enabled => invoke("set_login_item", {enabled}),
+        setTheme: theme => invoke("set_theme", {theme}),
     })});
     window.addEventListener("DOMContentLoaded", () => {
         document.documentElement.dataset.nolaDesktop = "windows";

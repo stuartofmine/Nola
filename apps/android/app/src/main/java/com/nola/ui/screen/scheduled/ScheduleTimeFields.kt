@@ -159,11 +159,11 @@ private fun ScheduleZoneDialog(zone: String, onDismiss: () -> Unit, onConfirm: (
     val zones = remember { (ZoneId.getAvailableZoneIds() + "UTC").sorted() }
     val visible = remember(query) { zones.filter { it.contains(query.trim(), ignoreCase = true) } }
     AlertDialog(
-        modifier = Modifier.dismissImeOnBlankTap(),
+        modifier = Modifier.dismissImeOnBlankTap().imePadding(),
         onDismissRequest = onDismiss, title = { Text(stringResource(R.string.scheduled_timezone)) }, text = {
         Column {
             OutlinedTextField(query, onValueChange = { query = it }, singleLine = true,
-                label = { Text(stringResource(R.string.scheduled_zone_search)) }, modifier = Modifier.testTag("schedule-zone-search"))
+                label = { Text(stringResource(R.string.scheduled_zone_search)) }, modifier = Modifier.fillMaxWidth().testTag("schedule-zone-search"))
             TextButton(onClick = { selected = ZoneId.systemDefault().id }) { Text(stringResource(R.string.scheduled_zone_device, ZoneId.systemDefault().id)) }
             Text(stringResource(R.string.scheduled_zone_selected, selected), style = MaterialTheme.typography.bodySmall)
             LazyColumn(Modifier.heightIn(max = 280.dp)) {

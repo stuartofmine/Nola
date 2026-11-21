@@ -532,11 +532,56 @@ fn execute_claimed_web_automation_occurrence(
     error
 }
 
+const MAX_CONCURRENT_SCHEDULED_AUTOMATIONS: usize = 8;
+
 struct WebAutomationSchedulerGuard(Arc<std::sync::atomic::AtomicBool>);
 
 impl Drop for WebAutomationSchedulerGuard {
     fn drop(&mut self) {
         self.0.store(true, std::sync::atomic::Ordering::SeqCst);
+    }
+}
+
+struct InFlightAutomationGuard {
+    in_flight: Arc<Mutex<HashSet<String>>>,
+    action_id: String,
+}
+
+impl Drop for InFlightAutomationGuard {
+    fn drop(&mut self) {
+        if let Ok(mut guard) = self.in_flight.lock() {
+            guard.remove(&self.action_id);
+        }
+    }
+}
+
+fn reconcile_completed_web_automation_execution(store: &NolaStore, run_id: &str) {
+    if let Err(error) = store.reconcile_web_automation_execution(run_id, Utc::now().timestamp_millis()) {
+        eprintln!("web automation scheduler: reconcile {run_id} failed: {error}");
+    }
+}
+
+fn reconcile_pending_web_automation_executions(store: &NolaStore) {
+    let mut after: Option<String> = None;
+    for _ in 0..16 {
+        let pending = match store.list_pending_web_automation_executions(after.as_deref(), 256) {
+            Ok(ids) => ids,
+            Err(error) => {
+                eprintln!("web automation scheduler: list pending executions failed: {error}");
+                return;
+            }
+        };
+        if pending.is_empty() {
+            return;
+        }
+        let page_len = pending.len();
+        after = pending.last().cloned();
+        for occurrence_id in pending {
+            reconcile_completed_web_automation_execution(store, &occurrence_id);
+        }
+        if page_len < 256 {
+            return;
+        }
     }
 }
 
@@ -548,7 +593,10 @@ fn start_web_automation_scheduler(config: &Config) -> Option<WebAutomationSchedu
         .name("web-automation-scheduler".into())
         .stack_size(16 * 1024 * 1024)
         .spawn(move || {
-            let mut in_flight: std::collections::HashSet<String> = std::collections::HashSet::new();
+            let in_flight: Arc<Mutex<HashSet<String>>> = Arc::new(Mutex::new(HashSet::new()));
+            if let Ok(store) = NolaStore::open_default() {
+                reconcile_pending_web_automation_executions(&store);
+            }
             while !worker_stopped.load(std::sync::atomic::Ordering::SeqCst) {
                 for _ in 0..30 {
                     if worker_stopped.load(std::sync::atomic::Ordering::SeqCst) {
@@ -557,6 +605,7 @@ fn start_web_automation_scheduler(config: &Config) -> Option<WebAutomationSchedu
                     std::thread::sleep(StdDuration::from_secs(1));
                 }
                 let Ok(store) = NolaStore::open_default() else { continue };
+                reconcile_pending_web_automation_executions(&store);
                 let Ok(raw_actions) = store.load_web_scheduled_actions() else { continue };
                 let now_ms = Utc::now().timestamp_millis();
                 let lookback_ms = now_ms.saturating_sub(15 * 60 * 1_000);
@@ -568,8 +617,11 @@ fn start_web_automation_scheduler(config: &Config) -> Option<WebAutomationSchedu
                     if !action.enabled || (action.format == "script" && action.script_approved != Some(true)) {
                         continue;
                     }
-                    if in_flight.contains(&action.id) {
-                        continue;
+                    {
+                        let Ok(guard) = in_flight.lock() else { continue };
+                        if guard.contains(&action.id) || guard.len() >= MAX_CONCURRENT_SCHEDULED_AUTOMATIONS {
+                            continue;
+                        }
                     }
                     let Ok(spec) = web_automation_spec(&action.execution_spec).cloned() else { continue };
                     let tz = if action.timezone.trim().is_empty() || action.timezone.eq_ignore_ascii_case("local") {
@@ -632,18 +684,44 @@ fn start_web_automation_scheduler(config: &Config) -> Option<WebAutomationSchedu
                         worker_id,
                         lease_token,
                     };
-                    in_flight.insert(action.id.clone());
-                    let _ = execute_claimed_web_automation_occurrence(
-                        &store,
-                        &config,
-                        &run.id,
-                        action.revision,
-                        lease,
-                        &spec,
-                        &skills,
-                        artifacts,
-                    );
-                    in_flight.remove(&action.id);
+                    let in_flight_guard = {
+                        let Ok(mut guard) = in_flight.lock() else { continue };
+                        if guard.contains(&action.id) || guard.len() >= MAX_CONCURRENT_SCHEDULED_AUTOMATIONS {
+                            continue;
+                        }
+                        guard.insert(action.id.clone());
+                        InFlightAutomationGuard {
+                            in_flight: Arc::clone(&in_flight),
+                            action_id: action.id.clone(),
+                        }
+                    };
+                    let worker_config = config.clone();
+                    let run_id = run.id.clone();
+                    let revision = action.revision;
+                    if let Err(error) = std::thread::Builder::new()
+                        .name(format!("web-automation-run-{}", action.id))
+                        .stack_size(16 * 1024 * 1024)
+                        .spawn(move || {
+                            let _guard = in_flight_guard;
+                            let Ok(worker_store) = NolaStore::open_default() else {
+                                eprintln!("web automation scheduler: failed to open store for {run_id}");
+                                return;
+                            };
+                            let _ = execute_claimed_web_automation_occurrence(
+                                &worker_store,
+                                &worker_config,
+                                &run_id,
+                                revision,
+                                lease,
+                                &spec,
+                                &skills,
+                                artifacts,
+                            );
+                            reconcile_completed_web_automation_execution(&worker_store, &run_id);
+                        })
+                    {
+                        eprintln!("web automation scheduler: failed to spawn worker for {}: {error}", run.id);
+                    }
                 }
             }
         })
@@ -773,6 +851,9 @@ fn list_results_response() -> Response<Box<dyn Read + Send>> {
 }
 
 fn result_detail_response(result_id: &str) -> Response<Box<dyn Read + Send>> {
+    if result_id.trim().is_empty() || result_id.bytes().any(|byte| byte.is_ascii_control()) {
+        return json_response(StatusCode(400), json!({"error": "无效执行记录标识"}));
+    }
     let results = match NolaStore::open_default().and_then(|store| store.load_web_execution_results()) {
         Ok(values) => values,
         Err(error) => return json_response(StatusCode(500), json!({"error":error})),

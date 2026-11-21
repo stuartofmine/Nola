@@ -13,12 +13,11 @@ import UIKit
 
 struct SettingsView: View {
     var ownsNavigationStack = true
-    @State private var showsAgentManagement = false
     @EnvironmentObject var container: ServiceContainer
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @Environment(\.scenePhase) private var scenePhase
+    @Environment(\.horizontalSizeClass) private var horizontalSizeClass
     @State private var showingClearDataAlert = false
-    @State private var pageWidth: CGFloat = 390
     @State private var showingExportSheet = false
     @State private var exportedFileURL: URL?
     @State private var isExporting = false
@@ -83,13 +82,7 @@ struct SettingsView: View {
                         .padding(.bottom, 8)
                     NolaSettingsCard {
                         ForEach(categoryGroups[group], id: \.rawValue) { category in
-                            Group {
-                                if category == .agents {
-                                    Button { showsAgentManagement = true } label: { categoryLabel(category) }
-                                } else {
-                                    NavigationLink { destination(category).toolbar(.visible, for: .navigationBar) } label: { categoryLabel(category) }
-                                }
-                            }
+                            NavigationLink { destination(category) } label: { categoryLabel(category) }
                             .buttonStyle(NolaPressableButtonStyle())
                             .padding(.horizontal, 14)
                             .padding(.vertical, 4)
@@ -102,9 +95,10 @@ struct SettingsView: View {
                 }
             }
         }
-        .sheet(isPresented: $showsAgentManagement) { IOSAgentRoomsView().environmentObject(container) }
-        .navigationTitle(L10n.settings)
-        .toolbar(ownsNavigationStack ? .hidden : .visible, for: .navigationBar)
+        .navigationTitle(ownsNavigationStack ? "" : L10n.settings)
+        .navigationBarTitleDisplayMode(.inline)
+        .toolbarBackground(DesignTokens.backgroundColor, for: .navigationBar)
+        .toolbarBackground(.hidden, for: .navigationBar)
     }
 
     private func categoryLabel(_ category: Category) -> some View {
@@ -145,7 +139,7 @@ struct SettingsView: View {
         case .providers:
             ModelsView(ownsNavigationStack: false).environmentObject(container)
         case .agents:
-            IOSAgentRoomsView().environmentObject(container)
+            IOSAgentRoomsView(embeddedInNavigationStack: true).environmentObject(container)
         case .agent:
             PersonalCapabilitiesLibraryView().environmentObject(container)
         case .privacy:
@@ -174,20 +168,13 @@ struct SettingsView: View {
                 if showsHeading { IOSWorkspacePageHeading(title: title) }
                 content()
             }
-            .padding(.horizontal, pageWidth < 359 ? 16 : 20)
+            .padding(.horizontal, horizontalSizeClass == .regular ? 24 : 20)
             .padding(.top, topInset)
             .padding(.bottom, DesignTokens.pageBottomInset)
             .frame(maxWidth: DesignTokens.pageMaxWidth)
             .frame(maxWidth: .infinity)
         }
         .background(NolaPageBackground())
-        .background {
-            GeometryReader { geometry in
-                Color.clear.onChange(of: geometry.size.width, initial: true) { _, width in
-                    if width > 0 { pageWidth = width }
-                }
-            }
-        }
     }
 
     private var notificationControls: some View {
@@ -284,7 +271,6 @@ struct SettingsView: View {
             NolaSettingsCard {
                 NavigationLink {
                     PrivacyDisclosureView()
-                        .toolbar(.visible, for: .navigationBar)
                 } label: {
                     NolaSettingsLinkLabel(
                         icon: "hand.raised.fill",
@@ -751,7 +737,7 @@ struct NolaSettingsToggleRow: View {
             } else if dynamicTypeSize.isAccessibilitySize {
                 VStack(alignment: .leading, spacing: 12) {
                     Button { isOn.toggle() } label: { rowLabel }
-                        .buttonStyle(NolaActionButtonStyle())
+                        .buttonStyle(NolaPressableButtonStyle())
                         // The native switch below supplies the single VoiceOver
                         // toggle; this label also accepts direct touch input.
                         .accessibilityHidden(true)

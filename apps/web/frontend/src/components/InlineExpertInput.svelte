@@ -37,6 +37,16 @@
         available=Math.max(0,Math.min(220,menuBelow?below:above));
         inset=window.innerWidth<=700?0:Math.max(0,Math.min(caret.left-box.left,box.width-menu.offsetWidth));
     }
+    const supportsFieldSizing = typeof CSS !== 'undefined' && typeof CSS.supports === 'function' && CSS.supports('field-sizing', 'content');
+    $effect(() => {
+        value; rows;
+        if (!field || rows > 1 || supportsFieldSizing) return;
+        void tick().then(() => {
+            if (!field) return;
+            field.style.height = 'auto';
+            field.style.height = `${field.scrollHeight}px`;
+        });
+    });
     $effect(()=>{
         if(!query||!menu||!root)return;
         query;options;marker;scrollY;
@@ -149,13 +159,13 @@
 .inline-editor{position:relative;min-width:0}
 .stack{position:relative;color:var(--content);font:inherit}
 textarea,.highlight{box-sizing:border-box;margin:0;width:100%;font:inherit;font-size:max(16px,1rem);line-height:1.5;letter-spacing:normal;padding:8px 12px;border:0;white-space:pre-wrap;overflow-wrap:break-word;tab-size:8}
-textarea{display:block;position:relative;min-height:40px;max-height:min(30dvh,150px);resize:none;field-sizing:content;background:transparent;color:inherit;box-shadow:none}
+textarea{display:block;position:relative;min-height:40px;max-height:min(30dvh,150px);resize:none;field-sizing:content;scrollbar-gutter:stable;background:transparent;color:inherit;box-shadow:none}
 textarea:focus{outline:none}textarea::placeholder{color:var(--muted);opacity:1}
 .highlight{pointer-events:none;position:absolute;inset:0;overflow:hidden;color:var(--content);scrollbar-gutter:stable}.highlight strong{font-weight:inherit;color:var(--primary);text-decoration:underline;text-decoration-color:var(--accent-subtle);text-underline-offset:.14em}
 .measure{visibility:hidden}
-.marked textarea{color:transparent;caret-color:var(--content);scrollbar-gutter:stable}
+.marked textarea{color:transparent;caret-color:var(--content)}
 .editing .stack{border:1px solid var(--border);border-radius:10px;background:var(--canvas)}.editing textarea{min-height:150px;max-height:45dvh}
-.options{position:absolute;z-index:4;bottom:100%;inset-inline-start:var(--inset,0);width:min(100%,340px);box-sizing:border-box;max-height:var(--available,220px);overflow:auto;padding:4px;background:var(--surface,var(--canvas));border:1px solid var(--border);border-radius:12px;box-shadow:0 6px 20px #0002}
+.options{position:absolute;z-index:60;bottom:calc(100% + 6px);inset-inline-start:var(--inset,0);width:min(100%,340px);box-sizing:border-box;max-height:var(--available,220px);overflow:auto;padding:4px;background:var(--surface-elevated,var(--surface,var(--canvas)));border:1px solid var(--border);border-radius:12px;box-shadow:0 8px 28px rgb(0 0 0 / .18)}
 .options.below{bottom:auto;top:100%}.editing .options{position:static;max-height:180px}.options button{display:block;width:100%;text-align:start;border:0;background:transparent;color:inherit;padding:7px 10px;border-radius:7px;min-height:44px;box-shadow:none}.options strong,.options small{display:block}.options small{color:var(--muted)}.options button:hover,.options button[aria-selected=true]{background:var(--accent-subtle)}
 @media(max-width:700px){.options{width:100%}textarea,.highlight{padding:10px 14px}textarea{min-height:44px}}
 @media(forced-colors:active){.marked textarea{color:CanvasText;caret-color:CanvasText}.highlight{visibility:hidden}}

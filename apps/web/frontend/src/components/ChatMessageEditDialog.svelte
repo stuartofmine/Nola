@@ -53,7 +53,7 @@
     onDestroy(()=>{alive=false;});
 </script>
 <svelte:window onbeforeunload={event=>{if(acceptsWorkspaceUnload(event)&&(sending||draft.input.edited_text!==draft.source.originalText)){event.preventDefault();event.returnValue='';}}} />
-<dialog bind:this={dialog} use:portal aria-labelledby="message-edit-title" oncancel={cancel}>
+<dialog bind:this={dialog} use:portal aria-labelledby="message-edit-title" oncancel={cancel} onclick={event => { if (event.target === dialog && !sending) onclose(); }}>
     <form onsubmit={event=>{event.preventDefault();void save();}}>
         <h2 id="message-edit-title">{label($locale,'edit')}</h2>
         <p class="muted">{label($locale,'detail')}</p>

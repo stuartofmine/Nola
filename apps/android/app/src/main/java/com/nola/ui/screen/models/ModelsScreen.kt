@@ -32,6 +32,8 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.ExperimentalLayoutApi
+import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxHeight
@@ -155,7 +157,7 @@ fun ModelsScreen(
     val context = LocalContext.current
     val manageHostModels = {
         viewModel.openHostMessagingManagement("/models?tab=api") { target ->
-            context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(target)))
+            runCatching { context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(target))) }
         }
     }
     val reduceMotion = rememberReduceMotionEnabled()
@@ -426,6 +428,7 @@ fun ModelsScreen(
                         progress = state.downloadProgress,
                         downloadsBlocked = state.downloadingModelId != null,
                         onDownload = { viewModel.downloadLocalModel(entry) },
+                        onCancelDownload = { viewModel.cancelLocalModelDownload() },
                     )
                 }
             }
@@ -540,7 +543,7 @@ private fun ModelExecutionCapabilitiesSheet(
                 Triple(R.string.models_execution_images, imageInput, { value: Boolean -> imageInput = value }),
                 Triple(R.string.models_execution_sampling, samplingParameters, { value: Boolean -> samplingParameters = value }),
             ).forEach { (label, checked, update) ->
-                Row(Modifier.fillMaxWidth().toggleable(value = checked, enabled = !saving, role = Role.Switch, onValueChange = update).heightIn(min = 48.dp), verticalAlignment = Alignment.CenterVertically) {
+                Row(Modifier.fillMaxWidth().clip(RoundedCornerShape(8.dp)).toggleable(value = checked, enabled = !saving, role = Role.Switch, onValueChange = update).heightIn(min = 48.dp), verticalAlignment = Alignment.CenterVertically) {
                     Text(stringResource(label), modifier = Modifier.weight(1f))
                     NolaSwitch(checked = checked, onCheckedChange = null, enabled = !saving)
                 }
@@ -578,6 +581,7 @@ private fun DeviceModelCatalogRow(
     progress: Float?,
     downloadsBlocked: Boolean,
     onDownload: () -> Unit,
+    onCancelDownload: () -> Unit,
 ) {
     Row(
         modifier = Modifier.fillMaxWidth().padding(vertical = 8.dp),
@@ -606,7 +610,9 @@ private fun DeviceModelCatalogRow(
         }
         when {
             installed -> NolaBadge(stringResource(R.string.models_installed), icon = Icons.Filled.Check)
-            downloading -> Text(stringResource(R.string.models_downloading), style = MaterialTheme.typography.labelMedium)
+            downloading -> TextButton(onClick = onCancelDownload) {
+                Text(stringResource(R.string.common_cancel))
+            }
             else -> TextButton(onClick = onDownload, enabled = !downloadsBlocked) {
                 Text(stringResource(R.string.models_download))
             }
@@ -803,6 +809,7 @@ fun ModelRow(
     }
 }
 
+@OptIn(ExperimentalLayoutApi::class)
 @Composable
 private fun ModelRowActions(
     model: ModelInfo,
@@ -817,12 +824,12 @@ private fun ModelRowActions(
     onParams: () -> Unit
 ) {
     val haptics = rememberNolaHaptics()
-    Row(
+    FlowRow(
         modifier = Modifier
             .testTag(MODEL_ROW_ACTIONS_TEST_TAG_PREFIX + model.id)
             .widthIn(min = 142.dp),
-        horizontalArrangement = Arrangement.End,
-        verticalAlignment = Alignment.CenterVertically
+        horizontalArrangement = Arrangement.spacedBy(4.dp, Alignment.End),
+        verticalArrangement = Arrangement.spacedBy(4.dp)
     ) {
         if (model.source == ModelInfo.ModelSource.Local && onStartLocal != null) {
             TextButton(onClick = {
@@ -860,17 +867,19 @@ private fun ModelRowActions(
         ) { state ->
             when (state) {
             0 -> {
-                CircularProgressIndicator(
-                    modifier = Modifier.size(15.dp),
-                    strokeWidth = 2.dp,
-                    color = MaterialTheme.colorScheme.primary
-                )
-                Spacer(Modifier.size(6.dp))
-                Text(
-                    stringResource(R.string.models_activating),
-                    style = MaterialTheme.typography.labelMedium,
-                    color = MaterialTheme.colorScheme.primary
-                )
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    CircularProgressIndicator(
+                        modifier = Modifier.size(15.dp),
+                        strokeWidth = 2.dp,
+                        color = MaterialTheme.colorScheme.primary
+                    )
+                    Spacer(Modifier.size(6.dp))
+                    Text(
+                        stringResource(R.string.models_activating),
+                        style = MaterialTheme.typography.labelMedium,
+                        color = MaterialTheme.colorScheme.primary
+                    )
+                }
             }
             1 -> {
                 NolaBadge(
@@ -958,7 +967,11 @@ internal fun ModelInferenceTestSheet(
             )
             Button(onClick = if (running) onStop else onRun, enabled = running || prompt.isNotBlank()) {
                 if (running) {
-                    CircularProgressIndicator(modifier = Modifier.size(16.dp), strokeWidth = 2.dp)
+                    CircularProgressIndicator(
+                        modifier = Modifier.size(16.dp),
+                        strokeWidth = 2.dp,
+                        color = MaterialTheme.colorScheme.onPrimary,
+                    )
                     Spacer(Modifier.size(8.dp))
                 }
                 Text(stringResource(if (running) R.string.models_stop else R.string.models_inference_test_run))
@@ -1409,36 +1422,62 @@ fun WebHostConfigSheet(
                 }
             }
 
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.spacedBy(10.dp),
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                TextButton(
-                    onClick = {
-                        if (isConnecting) {
-                            connectionGeneration++
-                            onCancelConnection()
-                            isConnecting = false
-                        } else requestDismiss()
-                    },
-                    modifier = Modifier.weight(1f)
-                ) { Text(stringResource(R.string.common_cancel)) }
-                Button(
-                    onClick = ::submit,
-                    enabled = canSubmit,
-                    modifier = Modifier.weight(1f)
-                ) {
-                    if (isConnecting) {
-                        CircularProgressIndicator(modifier = Modifier.size(16.dp), strokeWidth = 2.dp)
-                        Spacer(Modifier.width(6.dp))
+            val actionRes = when {
+                isConnecting -> R.string.models_web_host_checking
+                !dirty && canUseSavedToken -> R.string.models_verify_again
+                else -> R.string.models_save_and_verify
+            }
+            val onCancelClick: () -> Unit = {
+                if (isConnecting) {
+                    connectionGeneration++
+                    onCancelConnection()
+                    isConnecting = false
+                } else requestDismiss()
+            }
+            BoxWithConstraints(modifier = Modifier.fillMaxWidth()) {
+                if (maxWidth < 340.dp) {
+                    Column(
+                        modifier = Modifier.fillMaxWidth(),
+                        verticalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        Button(
+                            onClick = ::submit,
+                            enabled = canSubmit,
+                            modifier = Modifier.fillMaxWidth()
+                        ) {
+                            if (isConnecting) {
+                                CircularProgressIndicator(modifier = Modifier.size(16.dp), strokeWidth = 2.dp)
+                                Spacer(Modifier.width(6.dp))
+                            }
+                            Text(stringResource(actionRes), maxLines = 1, overflow = TextOverflow.Ellipsis)
+                        }
+                        TextButton(
+                            onClick = onCancelClick,
+                            modifier = Modifier.fillMaxWidth()
+                        ) { Text(stringResource(R.string.common_cancel), maxLines = 1, overflow = TextOverflow.Ellipsis) }
                     }
-                    val action = when {
-                        isConnecting -> R.string.models_web_host_checking
-                        !dirty && canUseSavedToken -> R.string.models_verify_again
-                        else -> R.string.models_save_and_verify
+                } else {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(10.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        TextButton(
+                            onClick = onCancelClick,
+                            modifier = Modifier.weight(1f)
+                        ) { Text(stringResource(R.string.common_cancel), maxLines = 1, overflow = TextOverflow.Ellipsis) }
+                        Button(
+                            onClick = ::submit,
+                            enabled = canSubmit,
+                            modifier = Modifier.weight(1f)
+                        ) {
+                            if (isConnecting) {
+                                CircularProgressIndicator(modifier = Modifier.size(16.dp), strokeWidth = 2.dp)
+                                Spacer(Modifier.width(6.dp))
+                            }
+                            Text(stringResource(actionRes), maxLines = 1, overflow = TextOverflow.Ellipsis)
+                        }
                     }
-                    Text(stringResource(action))
                 }
             }
             Spacer(Modifier.height(12.dp))

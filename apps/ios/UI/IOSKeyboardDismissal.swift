@@ -46,12 +46,50 @@ struct IOSKeyboardDismissal: UIViewRepresentable {
                   !editor.bounds.contains(touch.location(in: editor)) else { return false }
             var current = touch.view
             while let view = current {
-                if view is UIControl || view is UITextInput || view === editor || view.accessibilityTraits.contains(.button)
-                    || view.accessibilityTraits.contains(.link) { return false }
+                if view is UIControl || view is UITextInput || view === editor
+                    || view is UINavigationBar || view is UITabBar || view is UIToolbar
+                    || view.accessibilityTraits.contains(.button)
+                    || view.accessibilityTraits.contains(.link)
+                    || view.accessibilityTraits.contains(.adjustable)
+                    || view.accessibilityTraits.contains(.searchField)
+                    || view.accessibilityTraits.contains(.keyboardKey) {
+                    return false
+                }
                 current = view.superview
+            }
+            if let window = observedWindow, let hitView = touch.view {
+                let pointInWindow = touch.location(in: window)
+                let screenPoint = window.convert(pointInWindow, to: nil)
+                if containsInteractiveAccessibilityElement(in: hitView, at: screenPoint, depth: 0) {
+                    return false
+                }
             }
             touchedEditor = editor
             return true
+        }
+
+        private func containsInteractiveAccessibilityElement(in container: Any, at screenPoint: CGPoint, depth: Int) -> Bool {
+            guard depth < 12 else { return false }
+            let interactiveTraits: UIAccessibilityTraits = [
+                .button, .link, .adjustable, .searchField, .keyboardKey, .allowsDirectInteraction
+            ]
+            if let element = container as? NSObject {
+                if element.isAccessibilityElement {
+                    let frame = element.accessibilityFrame
+                    if !frame.isEmpty, frame.contains(screenPoint),
+                       !element.accessibilityTraits.intersection(interactiveTraits).isEmpty {
+                        return true
+                    }
+                }
+                if let children = element.accessibilityElements {
+                    for child in children {
+                        if containsInteractiveAccessibilityElement(in: child, at: screenPoint, depth: depth + 1) {
+                            return true
+                        }
+                    }
+                }
+            }
+            return false
         }
 
         func gestureRecognizer(_ gestureRecognizer: UIGestureRecognizer,

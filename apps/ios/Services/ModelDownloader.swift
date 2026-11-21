@@ -455,7 +455,7 @@ public final class ModelDownloader: ObservableObject {
                         }
                         
                         } catch {
-                        if isCancelled || (error as NSError).code == NSURLErrorCancelled {
+                        if (error as? ControlError) == .paused || isCancelled || (error as NSError).code == NSURLErrorCancelled {
                             throw error
                         }
                         
@@ -504,13 +504,28 @@ public final class ModelDownloader: ObservableObject {
                 return
             }
 
-            logger.log(.error, "ModelDownloader", "Download failed", metadata: ["error": error.localizedDescription])
-            
-            let isCancellationError = (error as NSError).code == NSURLErrorCancelled
+            let isCancellationError = isCancelled || (error as NSError).code == NSURLErrorCancelled || error is CancellationError
             // Pause returns above. A failure or explicit cancellation must not
             // leave an invalid model directory behind as apparent local
             // storage or contaminate the next clean retry.
             try? FileManager.default.removeItem(at: getModelPath(for: model))
+
+            if isCancellationError {
+                logger.log(.info, "ModelDownloader", "Download cancelled")
+                await MainActor.run {
+                    state = .notDownloaded
+                    downloadedBytes = 0
+                    totalBytes = 0
+                    downloadSpeed = 0
+                    lastDownloadedBytes = 0
+                    currentDownloadingFile = nil
+                    currentModel = nil
+                    scheduleDiskUsageUpdate(reason: "downloadCancelled")
+                }
+                return
+            }
+
+            logger.log(.error, "ModelDownloader", "Download failed", metadata: ["error": error.localizedDescription])
             
             await MainActor.run {
                 state = .failed(error: error.localizedDescription)
@@ -518,7 +533,7 @@ public final class ModelDownloader: ObservableObject {
                 totalBytes = 0
                 downloadSpeed = 0
                 lastDownloadedBytes = 0
-                scheduleDiskUsageUpdate(reason: isCancellationError ? "downloadCancelled" : "downloadFailed")
+                scheduleDiskUsageUpdate(reason: "downloadFailed")
             }
             throw error
         }
@@ -581,19 +596,21 @@ public final class ModelDownloader: ObservableObject {
         isPaused = true
 
         let resumeHandler: (Data?) -> Void = { data in
-            if let d = data, let model = self.currentModel, let fileName = self.currentDownloadingFile {
-                do {
-                    try self.saveResumeDataToDisk(d, for: model, fileName: fileName)
-                    self.logger.log(.info, "ModelDownloader", "Saved resumeData to disk", metadata: ["model": model.rawValue, "file": fileName])
-                } catch {
-                    self.logger.log(.warn, "ModelDownloader", "Failed to save resumeData", metadata: ["error": error.localizedDescription])
+            Task { @MainActor in
+                if let d = data, let model = self.currentModel, let fileName = self.currentDownloadingFile {
+                    do {
+                        try self.saveResumeDataToDisk(d, for: model, fileName: fileName)
+                        self.logger.log(.info, "ModelDownloader", "Saved resumeData to disk", metadata: ["model": model.rawValue, "file": fileName])
+                    } catch {
+                        self.logger.log(.warn, "ModelDownloader", "Failed to save resumeData", metadata: ["error": error.localizedDescription])
+                    }
+                } else {
+                    self.logger.log(.warn, "ModelDownloader", "No resumeData produced when pausing or missing context")
                 }
-            } else {
-                self.logger.log(.warn, "ModelDownloader", "No resumeData produced when pausing or missing context")
+                self.progressObservation?.invalidate()
+                self.progressObservation = nil
+                self.activeDownloadTask = nil
             }
-            self.progressObservation?.invalidate()
-            self.progressObservation = nil
-            self.activeDownloadTask = nil
         }
 
         task.cancel(byProducingResumeData: resumeHandler)

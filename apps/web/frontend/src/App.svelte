@@ -134,7 +134,7 @@
             if (path === '/data-sources' && new URL(window.location.href).searchParams.has('tab')) window.dispatchEvent(new CustomEvent(workspaceNavigationEvent, {detail: '/data-sources', cancelable: true}));
             else if ((history.state?.nolaWorkspaceIndex ?? 0) > 0) history.back();
             else window.dispatchEvent(new CustomEvent(workspaceNavigationEvent, {detail: '/today', cancelable: true}));
-        }}>‹</button>
+        }}><PrototypeIcon name="back" size={18} /></button>
         <a href="/conversations">{t($locale, 'chatInspector.list.conversations')}</a>
     </header>{/if}
     <main id="page-main" tabindex="-1">{@render pageContent()}</main>
@@ -174,8 +174,10 @@
     @media (max-width: 359px) { .mobile-primary-navigation { padding-inline: 8px; } }
     .mobile-primary-navigation span { max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
     .workspace-content:focus, #page-main:focus { outline: none; }
+    .management-shell { display: flex; flex-direction: column; min-height: 100dvh; }
+    .management-shell > main { flex: 1; display: flex; flex-direction: column; min-height: 0; }
     .management-navigation { min-height: 48px; display: flex; align-items: center; justify-content: space-between; gap: 16px; padding: env(safe-area-inset-top, 0px) 16px 0; border-bottom: 1px solid var(--border); }
     .management-navigation button, .management-navigation a { min-height: 44px; display: flex; align-items: center; color: var(--muted); }
-    .management-navigation button { min-width: 44px; border: 0; background: transparent; font-size: 28px; }
+    .management-navigation button { min-width: 44px; justify-content: center; border: 0; background: transparent; }
     .management-navigation a { text-decoration: none; font-size: .875rem; }
 </style>

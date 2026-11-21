@@ -54,7 +54,9 @@ struct MacSelectableResponseText: NSViewRepresentable {
     func makeNSView(context: Context) -> NSScrollView {
         let scroll = NSScrollView()
         scroll.hasVerticalScroller = true
+        scroll.drawsBackground = false
         let view = MacResponseSelectionTextView(frame: scroll.contentView.bounds)
+        view.drawsBackground = false
         view.isVerticallyResizable = true
         view.isHorizontallyResizable = false
         view.autoresizingMask = [.width]
@@ -963,7 +965,7 @@ struct MacMermaidBlockView: View {
             } else if source.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
                 MacCodeBlockView(language: "mermaid", source: source)
             } else if parseError == nil || measuredSource != source {
-                ScrollView([.horizontal, .vertical], showsIndicators: true) {
+                ScrollView(diagramSize.height + 28 > 560 ? [.horizontal, .vertical] : .horizontal, showsIndicators: true) {
                     MacStableMermaidDiagram(
                         source: source,
                         theme: mermaidTheme,

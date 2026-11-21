@@ -47,7 +47,7 @@ import com.nola.ui.theme.nolaSurface
     Box {
         Row(
             modifier = Modifier
-                .heightIn(min = 36.dp)
+                .heightIn(min = 48.dp)
                 .nolaSurface(
                     radius = NolaRadius.pill,
                     fill = MaterialTheme.colorScheme.surfaceContainer,

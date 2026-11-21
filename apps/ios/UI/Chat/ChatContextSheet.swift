@@ -167,6 +167,7 @@ struct ChatContextSheet: View {
     let onUseSkill: (String) -> Void
     let onSearchMemory: (String) async throws -> [ContextMemorySearchHit]
     var initialContextPane: ContextPane = .overview
+    var embeddedInNavigationStack: Bool = false
 
     @State private var errorMessage: String? = nil
     @State private var noticeMessage: String? = nil
@@ -180,13 +181,86 @@ struct ChatContextSheet: View {
     @State private var documentImportOwner: ContextFileImportOwner?
     @State private var memorySearchQuery = ""
     @State private var memorySearchResults: [ContextMemorySearchHit] = []
-    @State private var selectedContextPane: ContextPane = .overview
+    @State private var selectedContextPane: ContextPane
     @State private var selectedSkillID: UUID?
     @State private var selectedMCPServerID: UUID?
     @State private var pendingSkillDeletionID: UUID?
     @State private var pendingMCPDeletionID: UUID?
     @State private var initialDocuments: [UserUploadedContextItem]?
     @State private var initialMemoryText: [String]?
+
+    init(
+        displayMode: DisplayMode,
+        conversationID: UUID?,
+        conversationTitle: String,
+        contextUsage: ConversationContextUsage?,
+        sessionMemory: Binding<String>,
+        knowledgePoints: Binding<String>,
+        conversationWiki: Binding<String>,
+        longTermMemory: Binding<String>,
+        userPreferences: Binding<String>,
+        mcpServers: Binding<[UserMCPServer]>,
+        uploadedSkills: Binding<[UserUploadedContextItem]>,
+        hostUploadedSkills: [UserUploadedContextItem],
+        hostUploadedDocuments: [UserUploadedContextItem],
+        hostMCPServers: [UserMCPServer],
+        uploadedDocuments: Binding<[UserUploadedContextItem]>,
+        documentsReadable: Bool = true,
+        dataSources: [URLDataSource],
+        selectedDataSourceIDs: Binding<Set<UUID>>,
+        selectedSystemDataSourceTypes: Binding<Set<DataSourceType>>,
+        onSave: @escaping () throws -> Void,
+        onSaveMemoryProfile: @escaping () async throws -> Void,
+        onSaveUploadedDocuments: (([UserUploadedContextItem]) throws -> [UserUploadedContextItem])? = nil,
+        onSaveConversationKnowledge: @escaping (ConversationKnowledgeSaveSnapshot) async throws -> Void,
+        onCompact: @escaping () async throws -> String,
+        onReload: @escaping () async throws -> String?,
+        onDiscard: @escaping () -> Void,
+        onUseSkill: @escaping (String) -> Void,
+        onSearchMemory: @escaping (String) async throws -> [ContextMemorySearchHit],
+        initialContextPane: ContextPane = .overview,
+        embeddedInNavigationStack: Bool = false
+    ) {
+        self.displayMode = displayMode
+        self.conversationID = conversationID
+        self.conversationTitle = conversationTitle
+        self.contextUsage = contextUsage
+        _sessionMemory = sessionMemory
+        _knowledgePoints = knowledgePoints
+        _conversationWiki = conversationWiki
+        _longTermMemory = longTermMemory
+        _userPreferences = userPreferences
+        _mcpServers = mcpServers
+        _uploadedSkills = uploadedSkills
+        self.hostUploadedSkills = hostUploadedSkills
+        self.hostUploadedDocuments = hostUploadedDocuments
+        self.hostMCPServers = hostMCPServers
+        _uploadedDocuments = uploadedDocuments
+        self.documentsReadable = documentsReadable
+        self.dataSources = dataSources
+        _selectedDataSourceIDs = selectedDataSourceIDs
+        _selectedSystemDataSourceTypes = selectedSystemDataSourceTypes
+        self.onSave = onSave
+        self.onSaveMemoryProfile = onSaveMemoryProfile
+        self.onSaveUploadedDocuments = onSaveUploadedDocuments
+        self.onSaveConversationKnowledge = onSaveConversationKnowledge
+        self.onCompact = onCompact
+        self.onReload = onReload
+        self.onDiscard = onDiscard
+        self.onUseSkill = onUseSkill
+        self.onSearchMemory = onSearchMemory
+        self.initialContextPane = initialContextPane
+        self.embeddedInNavigationStack = embeddedInNavigationStack
+        _selectedContextPane = State(initialValue: initialContextPane)
+        _initialDocuments = State(initialValue: uploadedDocuments.wrappedValue)
+        _initialMemoryText = State(initialValue: [sessionMemory.wrappedValue, longTermMemory.wrappedValue, userPreferences.wrappedValue])
+    }
+
+    private var hasUnsavedChanges: Bool {
+        let memoryChanged = initialMemoryText.map { $0 != [sessionMemory, longTermMemory, userPreferences] } ?? false
+        let documentsChanged = initialDocuments.map { $0 != uploadedDocuments } ?? false
+        return memoryChanged || documentsChanged
+    }
 
     var body: some View {
         Form {
@@ -495,6 +569,7 @@ struct ChatContextSheet: View {
                             .frame(maxWidth: .infinity)
                         }
                         .buttonStyle(.borderedProminent)
+                        .foregroundStyle(DesignTokens.onActionColor)
                         .disabled(isSavingMemoryProfile || isCompacting)
                     }
                 }
@@ -806,13 +881,15 @@ struct ChatContextSheet: View {
             importUploadedFiles(result, into: $uploadedDocuments)
         }
         .toolbar {
-            ToolbarItem(placement: .cancellationAction) {
-                Button(L10n.cancel) {
-                    onDiscard()
-                    dismiss()
+            if !embeddedInNavigationStack {
+                ToolbarItem(placement: .cancellationAction) {
+                    Button(L10n.cancel) {
+                        onDiscard()
+                        dismiss()
+                    }
+                    .disabled(isSavingMemoryProfile || isCompacting)
+                    .accessibilityIdentifier("chat.context.cancel")
                 }
-                .disabled(isSavingMemoryProfile || isCompacting)
-                .accessibilityIdentifier("chat.context.cancel")
             }
             ToolbarItem(placement: .confirmationAction) {
                 Button(L10n.commonSave) {
@@ -822,14 +899,7 @@ struct ChatContextSheet: View {
             }
         }
         .disabled(isSavingMemoryProfile || isCompacting)
-        .interactiveDismissDisabled(true)
-        .onAppear {
-            if initialMemoryText == nil {
-                initialDocuments = uploadedDocuments
-                initialMemoryText = [sessionMemory, longTermMemory, userPreferences]
-                selectedContextPane = initialContextPane
-            }
-        }
+        .interactiveDismissDisabled(isSavingMemoryProfile || isCompacting || hasUnsavedChanges)
         .onChange(of: conversationID) { _, _ in
             skillImportOwner = nil
             documentImportOwner = nil

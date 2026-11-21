@@ -297,17 +297,12 @@ fn mobile_login_response(request: &mut Request) -> Response<Box<dyn Read + Send>
     let token = nola_core::mobile_crypto::generate_mobile_access_token();
     {
         let mut tokens = mobile_tokens().lock().unwrap();
-        mobile_cleanup_locked(&mut tokens);
-        if tokens.len() >= 32 {
-            if let Some(oldest) = tokens
-                .iter()
-                .min_by_key(|(_, seen)| *seen)
-                .map(|(token, _)| token.clone())
-            {
-                tokens.remove(&oldest);
-            }
-        }
-        tokens.insert(token.clone(), Instant::now());
+        insert_mobile_token_locked(
+            &mut tokens,
+            token.clone(),
+            WEB_HOST_ACCESS_TOKEN.get().map(String::as_str),
+            Instant::now(),
+        );
     }
     json_response(
         StatusCode(200),
@@ -322,6 +317,26 @@ fn mobile_login_response(request: &mut Request) -> Response<Box<dyn Read + Send>
             "backend": "cli-rust",
         }),
     )
+}
+
+fn insert_mobile_token_locked(
+    tokens: &mut HashMap<String, Instant>,
+    token: String,
+    host_token: Option<&str>,
+    now: Instant,
+) {
+    mobile_cleanup_locked(tokens);
+    if tokens.len() >= 32 {
+        if let Some(oldest) = tokens
+            .iter()
+            .filter(|(candidate, _)| host_token != Some(candidate.as_str()))
+            .min_by_key(|(_, seen)| *seen)
+            .map(|(candidate, _)| candidate.clone())
+        {
+            tokens.remove(&oldest);
+        }
+    }
+    tokens.insert(token, now);
 }
 
 fn mobile_login_is_rate_limited(key: &str) -> bool {

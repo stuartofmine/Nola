@@ -2,6 +2,7 @@
 import SwiftUI
 
 struct IOSAgentRoomsView: View {
+    var embeddedInNavigationStack: Bool = false
     @EnvironmentObject private var container: ServiceContainer
     @Environment(\.dismiss) private var dismiss
     @Environment(\.locale) private var locale
@@ -32,52 +33,66 @@ struct IOSAgentRoomsView: View {
     }
 
     var body: some View {
-        NavigationStack {
-            List {
-                Group {
-                    if let error { Text(error).foregroundStyle(.red) }
-                    if !agents.isEmpty { expertDirectorySection }
-                    expertEditorSection
-                }
-                .listRowBackground(DesignTokens.surfaceColor)
-                .listRowSeparatorTint(DesignTokens.borderColor)
-            }
-            .nolaGroupedSurface()
-            .scrollDismissesKeyboard(.immediately)
-            .navigationTitle("experts.manage")
-            .sheet(isPresented: $showingTemplateLibrary, onDismiss: {
-                perform { try container.promptTemplates?.reloadFromPersistence() }
-            }) {
+        Group {
+            if embeddedInNavigationStack {
+                roomsListContent
+            } else {
                 NavigationStack {
-                    PromptTemplatesView()
-                        .toolbar { ToolbarItem(placement: .cancellationAction) {
-                            Button(L10n.done) { showingTemplateLibrary = false }
-                                .accessibilityIdentifier("experts.templates.done")
-                        } }
-                }.environmentObject(container)
-            }
-            .toolbar { ToolbarItem(placement: .confirmationAction) {
-                Button("room.done") { requestEditorAction(.close) }.accessibilityIdentifier("experts.management.done")
-            }
-                ToolbarItemGroup(placement: .keyboard) {
-                    Spacer()
-                    Button(L10n.done) { editorFocused = false }
-                        .accessibilityIdentifier("experts.keyboard.done")
+                    roomsListContent
                 }
             }
-            .onAppear(perform: reloadEditorData)
-            .onChange(of: configuration.modelID) { _, _ in
-                refreshReasoningEfforts()
+        }
+    }
+
+    private var roomsListContent: some View {
+        List {
+            Group {
+                if let error { Text(error).foregroundStyle(.red) }
+                if !agents.isEmpty { expertDirectorySection }
+                expertEditorSection
             }
-            .interactiveDismissDisabled(editorIsDirty)
-            .alert(NSLocalizedString("common.discard_changes", value: "Discard Changes?", comment: "Discard expert edit"),
-                isPresented: $showDiscardConfirmation) {
-                Button(NSLocalizedString("common.discard", value: "Discard", comment: "Discard expert edit"), role: .destructive) {
-                    if let action = pendingEditorAction { performEditorAction(action) }
-                    pendingEditorAction = nil
-                }.accessibilityIdentifier("experts.discard")
-                Button(L10n.cancel, role: .cancel) { pendingEditorAction = nil }.accessibilityIdentifier("experts.keepEditing")
+            .listRowBackground(DesignTokens.surfaceColor)
+            .listRowSeparatorTint(DesignTokens.borderColor)
+        }
+        .nolaGroupedSurface()
+        .scrollDismissesKeyboard(.immediately)
+        .navigationTitle("experts.manage")
+        .navigationBarTitleDisplayMode(.inline)
+        .sheet(isPresented: $showingTemplateLibrary, onDismiss: {
+            perform { try container.promptTemplates?.reloadFromPersistence() }
+        }) {
+            NavigationStack {
+                PromptTemplatesView()
+                    .toolbar { ToolbarItem(placement: .cancellationAction) {
+                        Button(L10n.done) { showingTemplateLibrary = false }
+                            .accessibilityIdentifier("experts.templates.done")
+                    } }
+            }.environmentObject(container)
+        }
+        .toolbar {
+            if !embeddedInNavigationStack {
+                ToolbarItem(placement: .confirmationAction) {
+                    Button("room.done") { requestEditorAction(.close) }.accessibilityIdentifier("experts.management.done")
+                }
             }
+            ToolbarItemGroup(placement: .keyboard) {
+                Spacer()
+                Button(L10n.done) { editorFocused = false }
+                    .accessibilityIdentifier("experts.keyboard.done")
+            }
+        }
+        .onAppear(perform: reloadEditorData)
+        .onChange(of: configuration.modelID) { _, _ in
+            refreshReasoningEfforts()
+        }
+        .interactiveDismissDisabled(editorIsDirty)
+        .alert(NSLocalizedString("common.discard_changes", value: "Discard Changes?", comment: "Discard expert edit"),
+            isPresented: $showDiscardConfirmation) {
+            Button(NSLocalizedString("common.discard", value: "Discard", comment: "Discard expert edit"), role: .destructive) {
+                if let action = pendingEditorAction { performEditorAction(action) }
+                pendingEditorAction = nil
+            }.accessibilityIdentifier("experts.discard")
+            Button(L10n.cancel, role: .cancel) { pendingEditorAction = nil }.accessibilityIdentifier("experts.keepEditing")
         }
     }
 
@@ -748,6 +763,7 @@ struct IOSChatExpertPicker: View {
     var onManagementClosed: () -> Void = {}
     @Binding var selection: Set<String>
     var onMention: ((IOSPersistentAgent) -> Void)? = nil
+    var embeddedInNavigationStack: Bool = false
     @Environment(\.dismiss) private var dismiss
     @State private var query = ""
     @State private var showingManagement = false
@@ -760,10 +776,13 @@ struct IOSChatExpertPicker: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
-            HStack {
-                Text("chat.experts.title").font(.headline)
-                Spacer()
-                Button("Done") { dismiss() }
+            if !embeddedInNavigationStack {
+                HStack {
+                    Text("chat.experts.title").font(.headline)
+                    Spacer()
+                    Button(L10n.done) { dismiss() }
+                        .frame(minHeight: 44)
+                }
             }
             Text("chat.experts.description")
                 .font(.callout).foregroundStyle(.secondary)
@@ -778,45 +797,66 @@ struct IOSChatExpertPicker: View {
                         cornerRadius: 12
                     )
                 )
-            List(visibleAgents, id: \.id) { agent in
-                Button {
-                    if let onMention { onMention(agent) }
-                        else if selection.contains(agent.id) { selection.remove(agent.id) }
-                    else { selection.insert(agent.id) }
-                } label: {
-                    HStack(spacing: 10) {
-                        Text(String(agent.name.prefix(2)).uppercased())
-                            .font(.caption.bold()).frame(width: 32, height: 32)
-                            .background(DesignTokens.accentSubtleColor, in: Circle())
-                        VStack(alignment: .leading, spacing: 3) {
-                            Text(agent.name).font(.body.weight(.medium))
-                            if !agent.description.isEmpty {
-                                Text(agent.description).font(.caption).foregroundStyle(.secondary)
+            if visibleAgents.isEmpty {
+                Text("chat.experts.empty")
+                    .foregroundStyle(.secondary)
+                    .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+                    .padding(.top, 8)
+            } else {
+                List(visibleAgents, id: \.id) { agent in
+                    Button {
+                        if let onMention { onMention(agent) }
+                            else if selection.contains(agent.id) { selection.remove(agent.id) }
+                        else { selection.insert(agent.id) }
+                    } label: {
+                        HStack(spacing: 10) {
+                            Text(String(agent.name.prefix(2)).uppercased())
+                                .font(.caption.bold()).frame(width: 32, height: 32)
+                                .background(DesignTokens.accentSubtleColor, in: Circle())
+                            VStack(alignment: .leading, spacing: 3) {
+                                Text(agent.name).font(.body.weight(.medium))
+                                if !agent.description.isEmpty {
+                                    Text(agent.description).font(.caption).foregroundStyle(.secondary)
+                                }
                             }
-                        }
-                        Spacer()
-                        Image(systemName: selection.contains(agent.id) ? "checkmark.circle.fill" : "circle")
-                    }.frame(minHeight: 44).contentShape(Rectangle())
-                }.buttonStyle(.plain)
-                    .listRowBackground(DesignTokens.surfaceColor)
-                    .accessibilityIdentifier("experts.select." + agent.id)
-                    .accessibilityLabel(agent.name)
-                    .accessibilityValue(selection.contains(agent.id) ? String(localized: "chat.experts.selected") : String(localized: "chat.experts.not_selected"))
+                            Spacer()
+                            Image(systemName: selection.contains(agent.id) ? "checkmark.circle.fill" : "circle")
+                        }.frame(minHeight: 44).contentShape(Rectangle())
+                    }.buttonStyle(.plain)
+                        .listRowBackground(DesignTokens.surfaceColor)
+                        .accessibilityIdentifier("experts.select." + agent.id)
+                        .accessibilityLabel(agent.name)
+                        .accessibilityValue(selection.contains(agent.id) ? String(localized: "chat.experts.selected") : String(localized: "chat.experts.not_selected"))
+                }
+                .listStyle(.plain)
+                .scrollContentBackground(.hidden)
             }
-            .listStyle(.plain)
-            .scrollContentBackground(.hidden)
-            if visibleAgents.isEmpty { Text("chat.experts.empty").foregroundStyle(.secondary) }
             if allowsManagement {
-            Button { showingManagement = true } label: {
-                Label("experts.manage", systemImage: "person.crop.circle.badge.gearshape")
-                    .font(.callout).frame(maxWidth: .infinity, minHeight: 44, alignment: .leading)
-                    .contentShape(Rectangle())
-            }.buttonStyle(.plain).accessibilityIdentifier("experts.manage")
+                if embeddedInNavigationStack && remoteSource == nil {
+                    NavigationLink {
+                        IOSAgentRoomsView(embeddedInNavigationStack: true)
+                            .onDisappear { onManagementClosed() }
+                    } label: {
+                        Label("experts.manage", systemImage: "person.crop.circle.badge.gearshape")
+                            .font(.callout).frame(maxWidth: .infinity, minHeight: 44, alignment: .leading)
+                            .contentShape(Rectangle())
+                    }
+                    .buttonStyle(.plain)
+                    .accessibilityIdentifier("experts.manage")
+                } else {
+                    Button { showingManagement = true } label: {
+                        Label("experts.manage", systemImage: "person.crop.circle.badge.gearshape")
+                            .font(.callout).frame(maxWidth: .infinity, minHeight: 44, alignment: .leading)
+                            .contentShape(Rectangle())
+                    }.buttonStyle(.plain).accessibilityIdentifier("experts.manage")
+                }
             }
         }.padding(16)
             .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
             .background(DesignTokens.backgroundColor.ignoresSafeArea())
             .presentationBackground(DesignTokens.backgroundColor)
+            .navigationTitle("chat.experts.title")
+            .navigationBarTitleDisplayMode(.inline)
             .sheet(isPresented: $showingManagement, onDismiss: onManagementClosed) {
                 if let remoteSource { IOSHostExpertEditor(source: remoteSource) }
                 else { IOSAgentRoomsView() }
@@ -842,45 +882,58 @@ private struct IOSHostExpertEditor: View {
     @State private var error: String?
 
     private var dirty: Bool {
-        guard let saved = try? AppleExpertConfigurationDraft(defaults: original?.defaults ?? .object([:])) else { return true }
+        guard directory != nil else { return false }
+        guard let saved = try? AppleExpertConfigurationDraft(defaults: original?.defaults ?? .object([:])) else { return false }
         return draft != saved || name != (original?.name ?? "") || responsibilities != (original?.description ?? "")
     }
 
     var body: some View {
         NavigationStack {
             Form {
-                if let error { Text(error).foregroundStyle(.red).accessibilityAddTraits(.isStaticText) }
-                if let directory {
-                    Picker("chat.experts.title", selection: Binding(get: { selectedID }, set: { id in
-                        do { try select(directory.agents.first { $0.id == id }) } catch { self.error = error.localizedDescription }
-                    })) {
-                        Text("room.create_agent").tag("")
-                        ForEach(directory.agents) { agent in Text(agent.name).tag(agent.id) }
-                    }.disabled(dirty)
-                    TextField("room.agent_name", text: $name)
-                    TextField("room.agent_description", text: $responsibilities, axis: .vertical)
-                    Picker("experts.template", selection: $draft.templateID) {
-                        Text("experts.conversationTemplate").tag("")
-                        ForEach(roles) { role in Text(role.localizedName(locale: locale)).tag(role.id) }
-                        if !draft.templateID.isEmpty, !roles.contains(where: { $0.id == draft.templateID }) {
-                            Text(verbatim: draft.templateID).tag(draft.templateID).disabled(true)
+                Group {
+                    if let error { Text(error).foregroundStyle(.red).accessibilityAddTraits(.isStaticText) }
+                    if let directory {
+                        Picker("chat.experts.title", selection: Binding(get: { selectedID }, set: { id in
+                            do { try select(directory.agents.first { $0.id == id }) } catch { self.error = error.localizedDescription }
+                        })) {
+                            Text("room.create_agent").tag("")
+                            ForEach(directory.agents) { agent in Text(agent.name).tag(agent.id) }
+                        }.disabled(dirty)
+                        TextField("room.agent_name", text: $name)
+                        TextField("room.agent_description", text: $responsibilities, axis: .vertical)
+                        Picker("experts.template", selection: $draft.templateID) {
+                            Text("experts.conversationTemplate").tag("")
+                            ForEach(roles) { role in Text(role.localizedName(locale: locale)).tag(role.id) }
+                            if !draft.templateID.isEmpty, !roles.contains(where: { $0.id == draft.templateID }) {
+                                Text(verbatim: draft.templateID).tag(draft.templateID).disabled(true)
+                            }
                         }
-                    }
-                    AppleExpertExecutorControls(selected: $draft.executor, catalog: catalog,
-                        executorLabel: "chat.execution_unit.choose", modelLabel: "room.model", defaultLabel: "model.parameters.reasoning_tier.automatic")
-                    Button("experts.save") { Task { await save(using: directory) } }
-                        .disabled(!dirty || name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
-                        .accessibilityIdentifier("experts.save")
-                    if dirty { Button(L10n.cancel) { try? select(directory.agents.first { $0.id == selectedID }) } }
-                } else if error != nil {
-                    Button("scheduled_actions.run_detail.section.retry") { Task { await load() } }
-                } else { ProgressView() }
-            }.disabled(busy)
+                        AppleExpertExecutorControls(selected: $draft.executor, catalog: catalog,
+                            executorLabel: "chat.execution_unit.choose", modelLabel: "room.model", defaultLabel: "model.parameters.reasoning_tier.automatic")
+                        Button("experts.save") { Task { await save(using: directory) } }
+                            .disabled(!dirty || name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                            .accessibilityIdentifier("experts.save")
+                        if dirty { Button(L10n.cancel) { try? select(directory.agents.first { $0.id == selectedID }) } }
+                    } else if error != nil {
+                        Button("scheduled_actions.run_detail.section.retry") { Task { await load() } }
+                    } else { ProgressView() }
+                }
+                .listRowBackground(DesignTokens.cardBackgroundColor)
+                .listRowSeparatorTint(DesignTokens.borderColor)
+            }
+            .nolaGroupedSurface()
+            .disabled(busy)
             .navigationTitle("experts.manage")
+            .navigationBarTitleDisplayMode(.inline)
             .interactiveDismissDisabled(busy || dirty)
-            .toolbar { ToolbarItem(placement: .confirmationAction) {
-                Button("room.done") { dismiss() }.disabled(busy || dirty)
-            } }
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) {
+                    Button(L10n.cancel) { dismiss() }.disabled(busy)
+                }
+                ToolbarItem(placement: .confirmationAction) {
+                    Button("room.done") { dismiss() }.disabled(busy || dirty)
+                }
+            }
         }.task { await load() }
     }
 
@@ -999,7 +1052,10 @@ struct IOSUnifiedExpertConversation: View {
                 ForEach(submission.pending[association.roomID] ?? []) { item in
                     if let failure = item.failure {
                         Text(failure).foregroundStyle(.red)
-                        Button("Retry expert reply") { submission.retry(item) }
+                        Button(NSLocalizedString("room.retry_expert_reply", value: "Retry expert reply", comment: "Retry failed expert reply")) {
+                            submission.retry(item)
+                        }
+                        .frame(minHeight: 44)
                     }
                 }
             }

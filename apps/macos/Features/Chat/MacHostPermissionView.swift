@@ -140,20 +140,19 @@ struct MacHostPermissionCard: View {
                 }
             }
             if showsDetails, !request.arguments.isEmpty {
-                VStack(alignment: .leading, spacing: 6) {
-                    ScrollView {
-                        Text(MacPermissionArgumentPresentation.readable(request.arguments))
-                            .font(.system(size: 12, design: .monospaced))
-                            .foregroundStyle(.primary)
-                            .textSelection(.enabled)
-                            .frame(maxWidth: .infinity, alignment: .leading)
-                            .fixedSize(horizontal: false, vertical: true)
+                Text(MacPermissionArgumentPresentation.readable(request.arguments))
+                    .font(.system(size: 12, design: .monospaced))
+                    .foregroundStyle(.primary)
+                    .textSelection(.enabled)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .padding(10)
+                    .background(MacDesignColor.subtleFill, in: RoundedRectangle(cornerRadius: 8, style: .continuous))
+                    .overlay {
+                        RoundedRectangle(cornerRadius: 8, style: .continuous)
+                            .strokeBorder(MacDesignColor.borderSubtle, lineWidth: 0.75)
                     }
-                    .frame(maxHeight: 120)
-                    .padding(8)
-                    .background(MacDesignColor.panel, in: RoundedRectangle(cornerRadius: 8, style: .continuous))
-                }
-                .macDisclosureTransition(reduceMotion: reduceMotion)
+                    .macDisclosureTransition(reduceMotion: reduceMotion)
             }
 
             if showsInstruction {
@@ -196,14 +195,14 @@ struct MacHostPermissionCard: View {
             }
             Button(String(localized: "Allow Once"), action: allowOnce)
                 .accessibilityIdentifier("chat.permission.allow-once")
-                .buttonStyle(.borderedProminent)
+                .buttonStyle(.nolaProminent)
         } else if request.allowConversation {
             Button(String(localized: "Allow for Conversation"), action: allowConversation)
-                .buttonStyle(.borderedProminent)
+                .buttonStyle(.nolaProminent)
         } else {
             Button(String(localized: "Allow Once"), action: allowOnce)
                 .accessibilityIdentifier("chat.permission.allow-once")
-                .buttonStyle(.borderedProminent)
+                .buttonStyle(.nolaProminent)
         }
     }
 }

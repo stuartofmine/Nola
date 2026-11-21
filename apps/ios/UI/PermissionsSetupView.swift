@@ -119,7 +119,7 @@ struct PermissionsSetupView: View {
                             if isRequestingPermissions {
                                 ProgressView()
                                     .progressViewStyle(.circular)
-                                    .tint(.white)
+                                    .tint(DesignTokens.onActionColor)
                             } else {
                                 Image(systemName: "hand.raised.fill")
                                 Text(permissionResults[steps[currentStep].type] == true ? L10n.permissionGranted : L10n.permissionGrant)
@@ -129,8 +129,9 @@ struct PermissionsSetupView: View {
                         .frame(minHeight: 46)
                     }
                     .buttonStyle(.borderedProminent)
+                    .foregroundStyle(DesignTokens.onActionColor)
                     .controlSize(.large)
-                    .tint(permissionResults[steps[currentStep].type] == true ? .green : .accentColor)
+                    .tint(permissionResults[steps[currentStep].type] == true ? .green : DesignTokens.actionColor)
                     .disabled(isRequestingPermissions || permissionResults[steps[currentStep].type] == true)
                     
                     // Comment in English.
@@ -159,6 +160,7 @@ struct PermissionsSetupView: View {
                         .frame(minHeight: 46)
                     }
                     .buttonStyle(.borderedProminent)
+                    .foregroundStyle(DesignTokens.onActionColor)
                     .controlSize(.large)
                 }
             }

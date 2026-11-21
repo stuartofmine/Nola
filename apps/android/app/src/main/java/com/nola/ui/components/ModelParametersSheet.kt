@@ -17,6 +17,8 @@ import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.rememberLazyListState
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.ui.draw.clip
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.ExperimentalMaterial3Api
@@ -44,6 +46,199 @@ import androidx.compose.ui.semantics.liveRegion
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.unit.dp
 import com.nola.R
+
+@Composable
+fun ModelParametersContent(
+    modelName: String,
+    supportsTopK: Boolean,
+    parameters: com.nola.domain.model.ModelParameters,
+    onUpdate: (com.nola.domain.model.ModelParameters) -> Unit,
+    onDismiss: () -> Unit,
+    saving: Boolean = false,
+    error: String? = null,
+    dismissOnSubmit: Boolean = true,
+    draftVersion: Long = 0,
+    onReload: (() -> Unit)? = null,
+    supportsStreamOutput: Boolean = true,
+    reasoningEfforts: List<String> = emptyList(),
+    showBackTopBar: Boolean = false,
+    modifier: Modifier = Modifier,
+) {
+    val baseline = remember(draftVersion) { parameters }
+    var tempText by remember(draftVersion) { mutableStateOf(parameters.temperature.toString()) }
+    var topPText by remember(draftVersion) { mutableStateOf(parameters.topP.toString()) }
+    var topKText by remember(draftVersion) { mutableStateOf((parameters.topK ?: 40).toString()) }
+    var maxTokensText by remember(draftVersion) { mutableStateOf(parameters.maxCompletionTokens.toString()) }
+    var maxContextText by remember(draftVersion) { mutableStateOf(parameters.maxContextTokens.toString()) }
+    var reasoningPreference by remember(draftVersion) { mutableStateOf(parameters.reasoningPreference ?: "automatic") }
+    var enableThinking by remember(draftVersion) { mutableStateOf(parameters.enableThinking) }
+    var streamOutput by remember(draftVersion) { mutableStateOf(parameters.streamOutput) }
+    var customPrompt by remember(draftVersion) { mutableStateOf(parameters.customSystemPrompt) }
+    var showDiscardDialog by remember { mutableStateOf(false) }
+    var reloadAfterDiscard by remember { mutableStateOf(false) }
+    val initialTemp = baseline.temperature.toString()
+    val initialTopP = baseline.topP.toString()
+    val initialTopK = (baseline.topK ?: 40).toString()
+    val initialMaxTokens = baseline.maxCompletionTokens.toString()
+    val initialMaxContext = baseline.maxContextTokens.toString()
+    val dirty = tempText != initialTemp || topPText != initialTopP || topKText != initialTopK
+        || maxTokensText != initialMaxTokens || maxContextText != initialMaxContext
+        || reasoningPreference != (baseline.reasoningPreference ?: "automatic") || enableThinking != baseline.enableThinking || streamOutput != baseline.streamOutput || customPrompt != baseline.customSystemPrompt
+    val tempValue = tempText.toFloatOrNull()
+    val topPValue = topPText.toFloatOrNull()
+    val topKValue = topKText.toIntOrNull()
+    val maxTokensValue = maxTokensText.toIntOrNull()
+    val maxContextValue = maxContextText.toIntOrNull()
+    val valid = tempValue != null && tempValue in 0f..2f
+        && topPValue != null && topPValue in 0f..1f
+        && (!supportsTopK || (topKValue != null && topKValue in 1..200))
+        && maxTokensValue != null && maxTokensValue in com.nola.domain.model.ModelParameterLimits.outputTokens
+        && maxContextValue != null && maxContextValue in com.nola.domain.model.ModelParameterLimits.remoteContextTokens
+    val requestDismiss = { if (!saving) { reloadAfterDiscard = false; if (dirty) showDiscardDialog = true else onDismiss() } }
+    val listState = rememberLazyListState()
+    LaunchedEffect(error, saving) {
+        if (error != null && !saving) listState.animateScrollToItem(0)
+    }
+    if (showBackTopBar) {
+        androidx.activity.compose.BackHandler(onBack = requestDismiss)
+    }
+    Column(modifier) {
+        if (showBackTopBar) {
+            NolaTopAppBar(
+                title = stringResource(R.string.models_parameters_title, modelName),
+                onBack = requestDismiss,
+            )
+        }
+        LazyColumn(
+            state = listState,
+            modifier = Modifier
+                .testTag("model-parameters-list")
+                .weight(1f)
+                .padding(horizontal = 24.dp, vertical = if (showBackTopBar) 12.dp else 20.dp)
+        ) {
+            item {
+                if (!showBackTopBar) {
+                    Text(stringResource(R.string.models_parameters_title, modelName), style = MaterialTheme.typography.titleLarge)
+                }
+                if (error != null) {
+                    Text(error, color = MaterialTheme.colorScheme.error,
+                        modifier = Modifier.testTag("model-parameters-error")
+                            .semantics { liveRegion = LiveRegionMode.Polite })
+                    if (onReload != null) {
+                        TextButton(enabled = !saving, onClick = {
+                            if (dirty) { reloadAfterDiscard = true; showDiscardDialog = true }
+                            else onReload()
+                        }) { Text(stringResource(R.string.common_refresh)) }
+                    }
+                }
+                if (!showBackTopBar) Spacer(Modifier.height(16.dp))
+            }
+
+            item {
+                Text(stringResource(R.string.models_sampling), style = MaterialTheme.typography.titleSmall, color = MaterialTheme.colorScheme.primary)
+                Spacer(Modifier.height(8.dp))
+                NumericParameterField(stringResource(R.string.models_temperature), tempText, "0.00 ... 2.00", true, enabled = !saving, isError = tempValue == null || tempValue !in 0f..2f) { tempText = it }
+                NumericParameterField(stringResource(R.string.models_top_p), topPText, "0.00 ... 1.00", true, enabled = !saving, isError = topPValue == null || topPValue !in 0f..1f) { topPText = it }
+                if (supportsTopK) {
+                    NumericParameterField(stringResource(R.string.models_top_k), topKText, "1 ... 200", false, enabled = !saving, isError = topKValue == null || topKValue !in 1..200) { topKText = it }
+                }
+            }
+
+            item { Spacer(Modifier.height(16.dp)) }
+            item {
+                Text(stringResource(R.string.models_limits), style = MaterialTheme.typography.titleSmall, color = MaterialTheme.colorScheme.primary)
+                Spacer(Modifier.height(8.dp))
+                NumericParameterField(stringResource(R.string.models_max_output), maxTokensText, "${com.nola.domain.model.ModelParameterLimits.outputTokens.first} ... ${com.nola.domain.model.ModelParameterLimits.outputTokens.last}", false, enabled = !saving, isError = maxTokensValue == null || maxTokensValue !in com.nola.domain.model.ModelParameterLimits.outputTokens) { maxTokensText = it }
+                NumericParameterField(stringResource(R.string.models_max_context), maxContextText, "${com.nola.domain.model.ModelParameterLimits.remoteContextTokens.first} ... ${com.nola.domain.model.ModelParameterLimits.remoteContextTokens.last}", false, enabled = !saving, isError = maxContextValue == null || maxContextValue !in com.nola.domain.model.ModelParameterLimits.remoteContextTokens) { maxContextText = it }
+            }
+
+            if (reasoningEfforts.isNotEmpty()) {
+                item {
+                    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                        Text(stringResource(R.string.models_reasoning_effort), style = MaterialTheme.typography.titleSmall)
+                        for (effort in (listOf("automatic") + reasoningEfforts).distinct()) {
+                            NolaRadioOption(com.nola.ui.screen.chat.reasoningEffortLabel(effort), reasoningPreference == effort,
+                                enabled = !saving, modifier = Modifier.testTag("model-reasoning-$effort")) { reasoningPreference = effort }
+                        }
+                    }
+                }
+            }
+            item { Spacer(Modifier.height(16.dp)) }
+            item {
+                Row(
+                    modifier = Modifier.fillMaxWidth().clip(RoundedCornerShape(8.dp)).toggleable(value = enableThinking, enabled = !saving, role = Role.Switch, onValueChange = { enableThinking = it }).heightIn(min = 48.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Column(modifier = Modifier.weight(1f)) {
+                        Text(stringResource(R.string.models_show_thinking), style = MaterialTheme.typography.bodyMedium)
+                        Text(
+                            stringResource(R.string.models_show_thinking_desc),
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+                    NolaSwitch(checked = enableThinking, onCheckedChange = null, enabled = !saving)
+                }
+            }
+            item { Spacer(Modifier.height(16.dp)) }
+            item {
+                OutlinedTextField(
+                    value = customPrompt,
+                    enabled = !saving,
+                    onValueChange = { customPrompt = it },
+                    label = { Text(stringResource(R.string.models_custom_system_prompt)) },
+                    modifier = Modifier.fillMaxWidth(),
+                    minLines = 3,
+                    maxLines = 6
+                )
+            }
+            if (supportsStreamOutput) {
+                item {
+                    Row(modifier = Modifier.fillMaxWidth().testTag("model-parameters-stream").clip(RoundedCornerShape(8.dp)).toggleable(value = streamOutput, enabled = !saving, role = Role.Switch, onValueChange = { streamOutput = it }).heightIn(min = 48.dp), verticalAlignment = Alignment.CenterVertically) {
+                        Text(stringResource(R.string.chat_stream_output), modifier = Modifier.weight(1f))
+                        NolaSwitch(checked = streamOutput, onCheckedChange = null, enabled = !saving)
+                    }
+                }
+            }
+            item { Spacer(Modifier.height(16.dp)) }
+        }
+        Button(
+            onClick = {
+                onUpdate(
+                    baseline.copy(
+                        temperature = tempValue ?: baseline.temperature,
+                        topP = topPValue ?: baseline.topP,
+                        topK = if (supportsTopK) topKValue ?: baseline.topK else baseline.topK,
+                        maxCompletionTokens = maxTokensValue ?: baseline.maxCompletionTokens,
+                        maxContextTokens = maxContextValue ?: baseline.maxContextTokens,
+                        reasoningTier = if (reasoningPreference == (baseline.reasoningPreference ?: "automatic")) baseline.reasoningTier else null,
+                        reasoningPreference = if (reasoningPreference == (baseline.reasoningPreference ?: "automatic")) baseline.reasoningPreference else reasoningPreference,
+                        enableThinking = enableThinking,
+                        streamOutput = streamOutput,
+                        customSystemPrompt = customPrompt.trim()
+                    )
+                )
+                if (dismissOnSubmit) onDismiss()
+            },
+            modifier = Modifier.fillMaxWidth().padding(horizontal = 24.dp, vertical = 12.dp).testTag("model-parameters-save"),
+            enabled = dirty && valid && !saving
+        ) {
+            Text(stringResource(R.string.models_save_parameters))
+        }
+    }
+    if (showDiscardDialog) {
+        DiscardChangesDialog(
+            onDiscard = {
+                if (!saving) {
+                    showDiscardDialog = false
+                    if (reloadAfterDiscard) onReload?.invoke() else onDismiss()
+                    reloadAfterDiscard = false
+                }
+            },
+            onKeepEditing = { showDiscardDialog = false; reloadAfterDiscard = false }
+        )
+    }
+}
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -171,7 +366,7 @@ fun ModelParametersSheet(
                 item { Spacer(Modifier.height(16.dp)) }
                 item {
                     Row(
-                        modifier = Modifier.fillMaxWidth().toggleable(value = enableThinking, enabled = !saving, role = Role.Switch, onValueChange = { enableThinking = it }).heightIn(min = 48.dp),
+                        modifier = Modifier.fillMaxWidth().clip(RoundedCornerShape(8.dp)).toggleable(value = enableThinking, enabled = !saving, role = Role.Switch, onValueChange = { enableThinking = it }).heightIn(min = 48.dp),
                         verticalAlignment = Alignment.CenterVertically
                     ) {
                         Column(modifier = Modifier.weight(1f)) {
@@ -199,7 +394,7 @@ fun ModelParametersSheet(
                 }
                 if (supportsStreamOutput) {
                     item {
-                        Row(modifier = Modifier.fillMaxWidth().testTag("model-parameters-stream").toggleable(value = streamOutput, enabled = !saving, role = Role.Switch, onValueChange = { streamOutput = it }).heightIn(min = 48.dp), verticalAlignment = Alignment.CenterVertically) {
+                        Row(modifier = Modifier.fillMaxWidth().testTag("model-parameters-stream").clip(RoundedCornerShape(8.dp)).toggleable(value = streamOutput, enabled = !saving, role = Role.Switch, onValueChange = { streamOutput = it }).heightIn(min = 48.dp), verticalAlignment = Alignment.CenterVertically) {
                             Text(stringResource(R.string.chat_stream_output), modifier = Modifier.weight(1f))
                             NolaSwitch(checked = streamOutput, onCheckedChange = null, enabled = !saving)
                         }

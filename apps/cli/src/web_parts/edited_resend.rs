@@ -429,13 +429,19 @@ fn expert_resend_load_response(url:&str,target:&str)->Response<Box<dyn Read+Send
     expert_http_result(result)
 }
 fn expert_source_response(url:&str,conversation:&str,message:&str)->Response<Box<dyn Read+Send>> {
+    let Some(conversation_id) = decode_path_segment(conversation) else {
+        return json_response(StatusCode(400), json!({"code":"invalid_conversation_id","error":"invalid conversation id"}));
+    };
+    let Some(message_id) = decode_path_segment(message) else {
+        return json_response(StatusCode(400), json!({"code":"invalid_message_id","error":"invalid message id"}));
+    };
     let result=(||->Result<Value,ExpertHostFailure>{
         let (host,client)=expert_web_query_owner(url)?;
         validate_edited_resend_web_owner(&host,&client)?;
         let mut app=crate::application_port::CliApplicationPort::persistent_default()?;
         let manifest:Option<nola_domain::expert_message::ExpertMessageManifest>=app.execute_expert_host_operation(
             &uuid::Uuid::new_v4().to_string(), HostExpertTemplateOperation::LoadManifest {
-                conversation_id:conversation.into(),message_id:percent_decode(message),authority:expert_host_authority()})?;
+                conversation_id,message_id,authority:expert_host_authority()})?;
         Ok(json!({"host_id":host_identity(),"client_id":client,"manifest":manifest}))
     })();
     expert_http_result(result)

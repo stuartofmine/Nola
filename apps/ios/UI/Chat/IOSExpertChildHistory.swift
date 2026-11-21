@@ -107,7 +107,7 @@ struct IOSExpertChildrenBranch: View {
                         Image(systemName: "bubble.left").font(.caption).foregroundStyle(.secondary)
                         VStack(alignment: .leading, spacing: 3) {
                             Text(child.title).font(.subheadline).foregroundStyle(.primary)
-                            Text(String(localized: child.isCurrent && child.active ? "expert.history.current" : "expert.history.previous"))
+                            (child.isCurrent && child.active ? Text("expert.history.current") : Text("expert.history.previous"))
                                 .font(.caption).foregroundStyle(.secondary)
                         }
                         Spacer(minLength: 4)

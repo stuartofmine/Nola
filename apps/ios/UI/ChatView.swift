@@ -265,8 +265,6 @@ struct ChatView: View {
         let owner: UUID?
     }
     @State private var workToolsPresentation: WorkToolsPresentation?
-    @State private var queuedWorkDestination: (owner: UUID, destination: IOSConversationWorkDestination)?
-    @State private var queuedRenameOwner: (id: UUID, baseline: String)?
     @State private var renameTarget: (id: UUID, baseline: String)?
     @State private var renameDraft = ""
     private struct ParameterEditorOwner {
@@ -579,7 +577,12 @@ struct ChatView: View {
 
     private var conversationSettingsSheet: some View {
         NavigationStack {
-            ChatMoreSettingsSheet(
+            conversationSettingsContent(embeddedInNavigationStack: false)
+        }
+    }
+
+    private func conversationSettingsContent(embeddedInNavigationStack: Bool) -> some View {
+        ChatMoreSettingsSheet(
                 selectedModel: parameterEditorOwner?.model ?? selectedModel ?? container.chatManager.getCurrentModel(),
                 contextUsage: currentContextUsage,
                 hostUploadedSkills: mergedSkillDisplayList(local: [], host: currentHostUploadedSkills),
@@ -712,10 +715,29 @@ struct ChatView: View {
                         promptTemplateID: id, dataSourceOverrides: currentDataSourceOverrides,
                         for: container.chatManager.currentConversationId)
                     currentPromptTemplateID = id
-                }
+                },
+                embeddedInNavigationStack: embeddedInNavigationStack,
+                contextDestination: {
+                    AnyView(contextSheetContent(embeddedInNavigationStack: true))
+                },
+                skillLibraryDestination: {
+                    AnyView(
+                        PersonalCapabilitiesLibraryView(hostSkills: currentHostUploadedSkills) { invocation in
+                            inputText = inputText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+                                ? invocation
+                                : "\(inputText.trimmingCharacters(in: .whitespacesAndNewlines))\n\(invocation)"
+                            showMoreSettingsSheet = false
+                            workToolsPresentation = nil
+                            composerFocused = true
+                        }
+                        .environmentObject(container)
+                    )
+                },
+                onDismissSheet: embeddedInNavigationStack ? {
+                    workToolsPresentation = nil
+                } : nil
             )
             .environmentObject(container)
-        }
     }
 
     private func prepareChatPresentation() {
@@ -1025,9 +1047,11 @@ struct ChatView: View {
                 selectChatModel(model)
             }
             .background { ChatNavigationGestureBridge().frame(width: 0, height: 0) }
-            .navigationTitle(horizontalSizeClass == .compact ? "" : currentConversationSubtitle)
+            .navigationTitle("")
             .navigationBarTitleDisplayMode(.inline)
-            .toolbar(.hidden, for: .navigationBar)
+            .navigationBarBackButtonHidden(true)
+            .toolbar(horizontalSizeClass == .compact ? .hidden : .visible, for: .navigationBar)
+            .toolbarBackground(.hidden, for: .navigationBar)
             .safeAreaInset(edge: .top, spacing: 0) {
                 if horizontalSizeClass == .compact {
                     compactConversationHeader
@@ -1075,7 +1099,7 @@ struct ChatView: View {
                 }
                 expertJoinOperations = [:]
                 pendingExpertRejoin = nil
-                queuedWorkDestination = nil; workToolsPresentation = nil
+                workToolsPresentation = nil
                 showExpertPicker = false
                 refreshExpertSourceOwner()
             }
@@ -1138,19 +1162,20 @@ struct ChatView: View {
             .onReceive(NotificationCenter.default.publisher(for: .nolaOpenChatTab)) { _ in }
             .onReceive(NotificationCenter.default.publisher(for: .nolaConversationRenamed), perform: receiveConversationRenamed)
             .onReceive(NotificationCenter.default.publisher(for: .nolaConversationRewound), perform: receiveConversationRewound)
-            .sheet(item: $workToolsPresentation, onDismiss: openQueuedWorkDestination) { presentation in
-                IOSConversationWorkTools(conversationTitle: currentConversationTitle,
-                    modelLabel: currentModelConnectionLabel, hasOwner: presentation.owner != nil,
-                    onRename: presentation.owner.map { owner in {
-                        let baseline = currentConversationSubtitle
-                        queuedRenameOwner = (owner, baseline)
-                        workToolsPresentation = nil
-                    } }) { destination in
-                    if let owner = presentation.owner ?? container.chatManager.ensureCurrentConversation() {
-                        queuedWorkDestination = (owner, destination)
+            .sheet(item: $workToolsPresentation, onDismiss: {
+                loadConversationState(for: container.chatManager.currentConversationId)
+            }) { presentation in
+                IOSConversationWorkTools(
+                    conversationTitle: currentConversationTitle,
+                    modelLabel: currentModelConnectionLabel,
+                    hasOwner: presentation.owner != nil,
+                    onConfirmRename: presentation.owner.map { owner in { draft in
+                        confirmRenameConversation((id: owner, baseline: currentConversationSubtitle), draft: draft)
+                    } },
+                    destination: { destination in
+                        workToolsDestinationView(destination, owner: presentation.owner)
                     }
-                    workToolsPresentation = nil
-                }
+                )
                 .toggleStyle(NolaSwitchToggleStyle())
             }
             .modifier(IOSRenameConversationAlert(target: $renameTarget, draft: $renameDraft, confirm: confirmRenameConversation))
@@ -1176,102 +1201,7 @@ struct ChatView: View {
             }
             .sheet(isPresented: $showContextSheet, onDismiss: { loadConversationState(for: container.chatManager.currentConversationId) }) {
                 NavigationStack {
-                    ChatContextSheet(
-                        displayMode: .context,
-                        conversationID: container.chatManager.currentConversationId,
-                        conversationTitle: currentConversationTitle,
-                        contextUsage: currentContextUsage,
-                        sessionMemory: $currentSessionMemory,
-                        knowledgePoints: $currentKnowledgePoints,
-                        conversationWiki: $currentConversationWiki,
-                        longTermMemory: $currentLongTermMemory,
-                        userPreferences: $currentUserPreferences,
-                        mcpServers: $currentMCPServers,
-                        uploadedSkills: $currentUploadedSkills,
-                        hostUploadedSkills: mergedSkillDisplayList(local: [], host: currentHostUploadedSkills),
-                        hostUploadedDocuments: currentHostUploadedDocuments,
-                        hostMCPServers: currentHostMCPServers,
-                        uploadedDocuments: $currentUploadedDocuments,
-                        documentsReadable: memoryEditorBaseline?.uploadedDocumentsReadable == true,
-                        dataSources: availableContextDataSources,
-                        selectedDataSourceIDs: $currentDataSourceIDs,
-                        selectedSystemDataSourceTypes: $currentSystemDataSourceTypes
-                    ) {
-                        _ = try container.chatManager.updateConversationContext(
-                            promptTemplateID: currentPromptTemplateID,
-                            dataSourceOverrides: currentDataSourceOverrides,
-                            for: container.chatManager.currentConversationId
-                        )
-                    } onSaveMemoryProfile: {
-                        guard let expected = memoryEditorBaseline else {
-                            throw IOSApplicationRuntimeError.rejected("Reload the memory profile before saving")
-                        }
-                        let saved = try await container.chatManager.updateContextMemoryText(
-                            sessionMemory: currentSessionMemory,
-                            longTermMemory: currentLongTermMemory,
-                            userPreferences: currentUserPreferences,
-                            expected: expected
-                        )
-                        memoryEditorBaseline = saved
-                        currentLongTermMemory = saved.longTermMemory
-                        currentUserPreferences = saved.userPreferences
-                    } onSaveUploadedDocuments: { items in
-                        guard let baseline = memoryEditorBaseline else {
-                            throw IOSApplicationRuntimeError.rejected(String(localized: "chat.context.documents.read_error"))
-                        }
-                        let saved = try container.chatManager.updateUploadedDocuments(items, expected: baseline)
-                        memoryEditorBaseline = saved
-                        return saved.uploadedDocuments
-                    } onSaveConversationKnowledge: { snapshot in
-                        let conversationId = try container.chatManager.updateConversationKnowledge(
-                            knowledgePoints: snapshot.knowledgePoints,
-                            wiki: snapshot.wiki,
-                            for: snapshot.conversationID
-                        )
-                        if conversationId == container.chatManager.currentConversationId {
-                            loadConversationState(for: conversationId)
-                        }
-                    } onCompact: {
-                        let result = try await container.chatManager.compactConversationContext()
-                        guard container.chatManager.currentConversationId == result.conversationID else { return result.notice }
-                        loadMessages(for: result.conversationID)
-                        loadConversationState(for: result.conversationID)
-                        return result.notice
-                    } onReload: {
-                        guard let conversationID = container.chatManager.currentConversationId else {
-                            loadConversationState(for: nil)
-                            return nil
-                        }
-                        guard let service = container.llmClient as? ModelService else {
-                            loadConversationState(for: conversationID)
-                            return tr("chat.context.auxiliary.refresh_unavailable", "已加载本地状态；当前模型适配器不能刷新原辅助来源。", comment: "Local state loaded; the current model adapter cannot refresh original auxiliary sources.")
-                        }
-                        do {
-                            let report = try await service.refreshConversationAuxiliarySources(conversationID: conversationID)
-                            guard container.chatManager.currentConversationId == conversationID else { return nil }
-                            loadConversationState(for: conversationID)
-                            let format = tr("chat.context.auxiliary.refresh_report", "辅助来源：已刷新 %d，仍未确认 %d，其他 Host 跳过 %d，刷新失败 %d。", comment: "Auxiliary sources: refreshed %d, still unconfirmed %d, other hosts skipped %d, failed %d.")
-                            let result = String(format: format, report.refreshed, report.pending, report.skipped, report.failed)
-                            return report.hasMore
-                                ? result + " " + tr("chat.context.auxiliary.refresh_more", "还有其他来源；再次重载继续下一批。", comment: "More sources remain; reload again for the next batch.")
-                                : result
-                        } catch {
-                            guard container.chatManager.currentConversationId == conversationID else { return nil }
-                            loadConversationState(for: conversationID)
-                            throw error
-                        }
-                    } onDiscard: {
-                        loadConversationState(for: container.chatManager.currentConversationId)
-                    } onUseSkill: { invocation in
-                        inputText = inputText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-                            ? invocation
-                            : "\(inputText.trimmingCharacters(in: .whitespacesAndNewlines))\n\(invocation)"
-                        showContextSheet = false
-                        composerFocused = true
-                    } onSearchMemory: { query in
-                        try await container.chatManager.searchConversationRawMemory(query, limit: 12)
-                    }
-                    .environmentObject(container)
+                    contextSheetContent(embeddedInNavigationStack: false)
                 }
                 .toggleStyle(NolaSwitchToggleStyle())
             }
@@ -1344,6 +1274,9 @@ struct ChatView: View {
             ChatMessageTimeline(
                 conversationID: container.chatManager.currentConversationId,
                 messages: messages,
+                isHydrating: container.chatManager.currentConversationId != nil
+                    && conversationLoadRecovery.confirmedConversationID != container.chatManager.currentConversationId
+                    && messages.isEmpty,
                 activeAssistantMessageID: activeAssistantMessageID,
                 retrievalInProgress: container.chatManager.retrievalInProgress,
                 hasModels: !availableModels.isEmpty,
@@ -1408,30 +1341,51 @@ struct ChatView: View {
                     .accessibilityIdentifier("chat.permission.submission_error")
             }
 
-            if remoteSubmissionPending {
-                Button(NSLocalizedString("chat.host.cancel_submission", value: "Cancel pending submission", comment: "Cancel without sending a new request")) {
-                    container.chatManager.cancelPendingRemoteSubmission()
-                }
-            }
-            if remoteRunNeedsResume {
-                Button(NSLocalizedString("chat.host.resume_existing_run", value: "Resume existing task", comment: "Resume the exact interrupted Host Run")) {
-                    container.chatManager.resumeObservedRemoteRun()
-                }
-                .accessibilityIdentifier("chat.host.resume_existing_run")
-            } else if let message = remoteRunObservationError {
-                VStack(alignment: .leading, spacing: 4) {
-                    Text(message).font(.caption).foregroundStyle(.secondary)
-                    if container.chatManager.canCancelRejectedUIQueue {
-                        Button(NSLocalizedString("a2ui.queue.cancel_rejected", value: "Remove unexecuted form action", comment: "Cancel rejected UI queue action")) {
-                            container.chatManager.cancelRejectedUIQueue()
+            if remoteSubmissionPending || remoteRunNeedsResume || remoteRunObservationError != nil {
+                VStack(alignment: .leading, spacing: 8) {
+                    if remoteSubmissionPending {
+                        Button(NSLocalizedString("chat.host.cancel_submission", value: "Cancel pending submission", comment: "Cancel without sending a new request")) {
+                            container.chatManager.cancelPendingRemoteSubmission()
                         }
-                            .accessibilityIdentifier("chat.ui.cancelRejectedQueue")
+                        .buttonStyle(.bordered)
+                        .frame(minHeight: 44)
                     }
-                    Button(NSLocalizedString("chat.host.retry_observation", value: "Reconnect to task", comment: "Read the existing Host Run without new input")) {
-                        container.chatManager.retryRemoteRunObservation()
+                    if remoteRunNeedsResume {
+                        Button(NSLocalizedString("chat.host.resume_existing_run", value: "Resume existing task", comment: "Resume the exact interrupted Host Run")) {
+                            container.chatManager.resumeObservedRemoteRun()
+                        }
+                        .buttonStyle(.bordered)
+                        .frame(minHeight: 44)
+                        .accessibilityIdentifier("chat.host.resume_existing_run")
+                    } else if let message = remoteRunObservationError {
+                        VStack(alignment: .leading, spacing: 8) {
+                            Text(message).font(.caption).foregroundStyle(.secondary)
+                            if container.chatManager.canCancelRejectedUIQueue {
+                                Button(NSLocalizedString("a2ui.queue.cancel_rejected", value: "Remove unexecuted form action", comment: "Cancel rejected UI queue action")) {
+                                    container.chatManager.cancelRejectedUIQueue()
+                                }
+                                .buttonStyle(.bordered)
+                                .frame(minHeight: 44)
+                                .accessibilityIdentifier("chat.ui.cancelRejectedQueue")
+                            }
+                            Button(NSLocalizedString("chat.host.retry_observation", value: "Reconnect to task", comment: "Read the existing Host Run without new input")) {
+                                container.chatManager.retryRemoteRunObservation()
+                            }
+                            .buttonStyle(.bordered)
+                            .frame(minHeight: 44)
+                        }
+                        .accessibilityIdentifier("chat.host.retry_observation")
                     }
                 }
-                .accessibilityIdentifier("chat.host.retry_observation")
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(12)
+                .background(DesignTokens.surfaceColor, in: RoundedRectangle(cornerRadius: DesignTokens.radius_md, style: .continuous))
+                .overlay(
+                    RoundedRectangle(cornerRadius: DesignTokens.radius_md, style: .continuous)
+                        .stroke(DesignTokens.borderColor, lineWidth: 1)
+                )
+                .padding(.horizontal, DesignTokens.spacing_lg)
+                .padding(.top, DesignTokens.spacing_xs)
             }
 
             if let message = errorPresentation.message,
@@ -1516,28 +1470,176 @@ struct ChatView: View {
 
     private func openWorkTools() {
         composerFocused = false
-        queuedWorkDestination = nil
+        prepareParameterEditorOwnerIfPossible()
         workToolsPresentation = .init(owner: container.chatManager.currentConversationId)
     }
 
-    private func openQueuedWorkDestination() {
-        if let pendingRename = queuedRenameOwner {
-            queuedRenameOwner = nil
-            renameDraft = pendingRename.baseline
-            renameTarget = pendingRename
-            return
+    private func prepareParameterEditorOwnerIfPossible() {
+        if let owner = container.chatManager.currentConversationId,
+           let model = selectedModel ?? container.chatManager.getCurrentModel(),
+           let store = container.conversationStore as? any ConversationGenerationOverrideStore,
+           let baseline = try? store.generationOverride(conversationId: owner, modelKey: IOSConversationGenerationOverride.modelKey(for: model)) {
+            parameterEditorOwner = .init(conversationID: owner, model: model, baseline: baseline)
         }
-        let request = queuedWorkDestination
-        queuedWorkDestination = nil
-        guard let request, request.owner == container.chatManager.currentConversationId else { return }
-        switch request.destination {
-        case .progress: conversationInspectorPane = .progress
-        case .goals: conversationInspectorPane = .goals
-        case .resources: conversationInspectorPane = .resources
-        case .context: showContextSheet = true
-        case .experts: openExpertPicker()
-        case .execution: openConversationSettings()
+    }
+
+    private func workToolsDestinationView(_ destination: IOSConversationWorkDestination, owner: UUID?) -> AnyView {
+        let resolvedOwner = owner ?? container.chatManager.currentConversationId ?? container.chatManager.ensureCurrentConversation()
+        switch destination {
+        case .progress:
+            return AnyView(IOSConversationInspector(
+                pane: .progress,
+                conversationID: resolvedOwner?.uuidString,
+                loadProgress: { try await container.chatManager.loadConversationProgress(conversationID: $0) },
+                submitGoalControl: { try await container.chatManager.controlConversationGoal(conversationID: $0, control: $1) },
+                discardGoalControl: { try await container.chatManager.discardConversationGoalControl(conversationID: $0) },
+                documents: currentUploadedDocuments + currentHostUploadedDocuments,
+                processingState: container.chatManager.processingState,
+                initialObjective: initialGoalObjective,
+                embeddedInNavigationStack: true
+            ))
+        case .goals:
+            return AnyView(IOSConversationInspector(
+                pane: .goals,
+                conversationID: resolvedOwner?.uuidString,
+                loadProgress: { try await container.chatManager.loadConversationProgress(conversationID: $0) },
+                submitGoalControl: { try await container.chatManager.controlConversationGoal(conversationID: $0, control: $1) },
+                discardGoalControl: { try await container.chatManager.discardConversationGoalControl(conversationID: $0) },
+                documents: currentUploadedDocuments + currentHostUploadedDocuments,
+                processingState: container.chatManager.processingState,
+                initialObjective: initialGoalObjective,
+                embeddedInNavigationStack: true
+            ))
+        case .resources:
+            return AnyView(IOSConversationInspector(
+                pane: .resources,
+                conversationID: resolvedOwner?.uuidString,
+                loadProgress: { try await container.chatManager.loadConversationProgress(conversationID: $0) },
+                submitGoalControl: { try await container.chatManager.controlConversationGoal(conversationID: $0, control: $1) },
+                discardGoalControl: { try await container.chatManager.discardConversationGoalControl(conversationID: $0) },
+                documents: currentUploadedDocuments + currentHostUploadedDocuments,
+                processingState: container.chatManager.processingState,
+                initialObjective: initialGoalObjective,
+                embeddedInNavigationStack: true
+            ))
+        case .context:
+            return AnyView(contextSheetContent(embeddedInNavigationStack: true))
+        case .experts:
+            return AnyView(expertPickerContent(embeddedInNavigationStack: true))
+        case .execution:
+            return AnyView(conversationSettingsContent(embeddedInNavigationStack: true))
         }
+    }
+
+    private func contextSheetContent(embeddedInNavigationStack: Bool) -> some View {
+        ChatContextSheet(
+            displayMode: .context,
+            conversationID: container.chatManager.currentConversationId,
+            conversationTitle: currentConversationTitle,
+            contextUsage: currentContextUsage,
+            sessionMemory: $currentSessionMemory,
+            knowledgePoints: $currentKnowledgePoints,
+            conversationWiki: $currentConversationWiki,
+            longTermMemory: $currentLongTermMemory,
+            userPreferences: $currentUserPreferences,
+            mcpServers: $currentMCPServers,
+            uploadedSkills: $currentUploadedSkills,
+            hostUploadedSkills: mergedSkillDisplayList(local: [], host: currentHostUploadedSkills),
+            hostUploadedDocuments: currentHostUploadedDocuments,
+            hostMCPServers: currentHostMCPServers,
+            uploadedDocuments: $currentUploadedDocuments,
+            documentsReadable: memoryEditorBaseline?.uploadedDocumentsReadable == true,
+            dataSources: availableContextDataSources,
+            selectedDataSourceIDs: $currentDataSourceIDs,
+            selectedSystemDataSourceTypes: $currentSystemDataSourceTypes,
+            onSave: {
+                _ = try container.chatManager.updateConversationContext(
+                    promptTemplateID: currentPromptTemplateID,
+                    dataSourceOverrides: currentDataSourceOverrides,
+                    for: container.chatManager.currentConversationId
+                )
+            },
+            onSaveMemoryProfile: {
+                guard let expected = memoryEditorBaseline else {
+                    throw IOSApplicationRuntimeError.rejected("Reload the memory profile before saving")
+                }
+                let saved = try await container.chatManager.updateContextMemoryText(
+                    sessionMemory: currentSessionMemory,
+                    longTermMemory: currentLongTermMemory,
+                    userPreferences: currentUserPreferences,
+                    expected: expected
+                )
+                memoryEditorBaseline = saved
+                currentLongTermMemory = saved.longTermMemory
+                currentUserPreferences = saved.userPreferences
+            },
+            onSaveUploadedDocuments: { items in
+                guard let baseline = memoryEditorBaseline else {
+                    throw IOSApplicationRuntimeError.rejected(String(localized: "chat.context.documents.read_error"))
+                }
+                let saved = try container.chatManager.updateUploadedDocuments(items, expected: baseline)
+                memoryEditorBaseline = saved
+                return saved.uploadedDocuments
+            },
+            onSaveConversationKnowledge: { snapshot in
+                let conversationId = try container.chatManager.updateConversationKnowledge(
+                    knowledgePoints: snapshot.knowledgePoints,
+                    wiki: snapshot.wiki,
+                    for: snapshot.conversationID
+                )
+                if conversationId == container.chatManager.currentConversationId {
+                    loadConversationState(for: conversationId)
+                }
+            },
+            onCompact: {
+                let result = try await container.chatManager.compactConversationContext()
+                guard container.chatManager.currentConversationId == result.conversationID else { return result.notice }
+                loadMessages(for: result.conversationID)
+                loadConversationState(for: result.conversationID)
+                return result.notice
+            },
+            onReload: {
+                guard let conversationID = container.chatManager.currentConversationId else {
+                    loadConversationState(for: nil)
+                    return nil
+                }
+                guard let service = container.llmClient as? ModelService else {
+                    loadConversationState(for: conversationID)
+                    return tr("chat.context.auxiliary.refresh_unavailable", "已加载本地状态；当前模型适配器不能刷新原辅助来源。", comment: "Local state loaded; the current model adapter cannot refresh original auxiliary sources.")
+                }
+                do {
+                    let report = try await service.refreshConversationAuxiliarySources(conversationID: conversationID)
+                    guard container.chatManager.currentConversationId == conversationID else { return nil }
+                    loadConversationState(for: conversationID)
+                    let format = tr("chat.context.auxiliary.refresh_report", "辅助来源：已刷新 %d，仍未确认 %d，其他 Host 跳过 %d，刷新失败 %d。", comment: "Auxiliary sources: refreshed %d, still unconfirmed %d, other hosts skipped %d, failed %d.")
+                    let result = String(format: format, report.refreshed, report.pending, report.skipped, report.failed)
+                    return report.hasMore
+                        ? result + " " + tr("chat.context.auxiliary.refresh_more", "还有其他来源；再次重载继续下一批。", comment: "More sources remain; reload again for the next batch.")
+                        : result
+                } catch {
+                    guard container.chatManager.currentConversationId == conversationID else { return nil }
+                    loadConversationState(for: conversationID)
+                    throw error
+                }
+            },
+            onDiscard: {
+                loadConversationState(for: container.chatManager.currentConversationId)
+            },
+            onUseSkill: { invocation in
+                inputText = inputText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+                    ? invocation
+                    : "\(inputText.trimmingCharacters(in: .whitespacesAndNewlines))\n\(invocation)"
+                showContextSheet = false
+                workToolsPresentation = nil
+                showMoreSettingsSheet = false
+                composerFocused = true
+            },
+            onSearchMemory: { query in
+                try await container.chatManager.searchConversationRawMemory(query, limit: 12)
+            },
+            embeddedInNavigationStack: embeddedInNavigationStack
+        )
+        .environmentObject(container)
     }
 
     private func modelConfigurationBanner(_ message: String) -> some View {
@@ -1555,9 +1657,9 @@ struct ChatView: View {
             } label: {
                 Text(tr("chat.model.configuration.action", "配置", comment: "Open model configuration action"))
                     .font(.caption.weight(.semibold))
+                    .frame(minHeight: 44)
             }
             .buttonStyle(.bordered)
-            .controlSize(.small)
             .accessibilityIdentifier("chat.model.configuration.action")
         }
         .padding(.horizontal, 12)
@@ -1672,6 +1774,7 @@ struct ChatView: View {
                     expandedErrorIdentity = expanded ? nil : identity
                 } label: {
                     Label(tr("history.detail.diagnostics", "Technical details", comment: "Technical details"), systemImage: expanded ? "chevron.up" : "chevron.down")
+                        .frame(minHeight: 44)
                 }
                 Button {
                     UIPasteboard.general.string = message
@@ -1681,6 +1784,7 @@ struct ChatView: View {
                         ? tr("chat.message.copied", "Copied", comment: "Copied")
                         : tr("common.copy", "Copy", comment: "Copy"),
                         systemImage: copiedErrorIdentity == identity ? "checkmark" : "doc.on.doc")
+                        .frame(minHeight: 44)
                 }
             }
             .font(.footnote)
@@ -1690,13 +1794,16 @@ struct ChatView: View {
                     restoreLastPromptForEditing(occurrenceID)
                 } label: {
                     Label(tr("chat.error.edit_retry", "Edit and try again", comment: "Edit failed prompt action"), systemImage: "pencil")
+                        .frame(minHeight: 44)
                 }
                 .buttonStyle(.borderedProminent)
+                .foregroundStyle(DesignTokens.onActionColor)
                 Button {
                     guard dismissChatError(occurrenceID) else { return }
                     openModelTab()
                 } label: {
                     Label(tr("chat.error.switch_model", "Switch model", comment: "Switch model after error action"), systemImage: "arrow.triangle.2.circlepath")
+                        .frame(minHeight: 44)
                 }
                 .buttonStyle(.bordered)
             }
@@ -1751,16 +1858,21 @@ struct ChatView: View {
                     ExpertMentionCandidate(id: $0.rawValue, name: "/" + $0.rawValue, detail: $0.title)
                 }, highlightedID: highlightedCommandID ?? ComposerCommand.candidates(inputText).first?.rawValue,
                 error: nil, select: completeCommand, accessibilityTitle: "composer.command.help", identifierPrefix: "chat.command.", showsAvatar: false)
+                .padding(.horizontal, DesignTokens.spacing_md)
+                .padding(.bottom, 6)
             }
             if expertMentionsVisible {
                 ExpertMentionPanel(candidates: expertMentionCandidates, highlightedID: highlightedExpertID ?? expertMentionCandidates.first?.id,
                                    error: canBrowseExpertDirectory ? expertDirectoryError : String(localized: "chat.experts.sourceUnavailable.detail"), select: selectExpertMention)
+                    .padding(.horizontal, DesignTokens.spacing_md)
+                    .padding(.bottom, 6)
                     .task {
                         guard requireLocalExpertOwner() else { return }
                         await reloadExpertDirectory()
                     }
                 if !joiningExpertIDs.isEmpty {
                     ProgressView("experts.mention.joining").font(.footnote).frame(maxWidth: .infinity, alignment: .leading)
+                        .padding(.horizontal, DesignTokens.spacing_md)
                 }
             }
             ChatComposer(
@@ -1915,6 +2027,10 @@ struct ChatView: View {
     }
 
     private var expertPickerSheet: some View {
+        expertPickerContent(embeddedInNavigationStack: false)
+    }
+
+    private func expertPickerContent(embeddedInNavigationStack: Bool) -> some View {
         VStack {
             IOSChatExpertPicker(agents: expertDirectory, allowsManagement: container.chatManager.getCurrentModel()?.isWebBackend != true || expertRemoteSource != nil, remoteSource: expertRemoteSource, onManagementClosed: {
                 Task { await reloadExpertDirectory() }
@@ -1922,7 +2038,8 @@ struct ChatView: View {
                 guard requireLocalExpertOwner() else { return }
                 selectCandidate(agent, range: insertionRange, choosingDirectoryVersion: true)
                 showExpertPicker = false
-            })
+                workToolsPresentation = nil
+            }, embeddedInNavigationStack: embeddedInNavigationStack)
             if let expertDirectoryError { Text(expertDirectoryError).foregroundStyle(.red).padding() }
         }.task { await reloadExpertDirectory() }
     }

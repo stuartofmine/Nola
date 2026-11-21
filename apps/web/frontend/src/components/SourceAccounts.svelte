@@ -43,7 +43,7 @@
 {#if management === 'remote'}
     <p class="muted" role="status">{t($locale, 'sourceAccounts.manageOnHost')}</p>
 {:else if management === 'unavailable'}
-    <p role="alert">{t($locale, 'settings.sessionError')}</p>
+    <p role="alert" class="error">{t($locale, 'settings.sessionError')}</p>
     <button type="button" onclick={checkManagement}>{t($locale, 'models.reload')}</button>
 {:else if management === 'local'}
     <CodexSourceLogin />
@@ -59,10 +59,10 @@
             <button disabled={busy || !consent || !path.trim() || !name.trim()}>{t($locale, 'connections.readAccount')}</button>
         </form>
         {#if busy}<p role="status">{t($locale, 'rooms.loading')}</p>{/if}
-        {#if failed}<p role="alert">{t($locale, 'connections.failed')}</p>{/if}
+        {#if failed}<p role="alert" class="error">{t($locale, 'connections.failed')}</p>{/if}
         {#if status}<p role="status">{status.account.account.display_name} · {t($locale, sourceAccountStateKey(status.login_state))}</p><p>{t($locale, sourceAccountActionKey(status.user_action))}</p>
             <button disabled={busy} onclick={() => inspect(true)}>{t($locale, 'connections.readAccount')}</button>{/if}
     </details>
 {/if}
 
-<style>form { display: grid; gap: 12px; padding: 12px 0; } summary { cursor: pointer; min-height: 44px; padding: 10px 0; } input[type=checkbox] { width: auto; } p { overflow-wrap: anywhere; }</style>
+<style>form { display: grid; gap: 12px; padding: 12px 0; } summary { cursor: pointer; min-height: 44px; padding: 10px 12px; } input[type=checkbox] { width: auto; } p { overflow-wrap: anywhere; }</style>

@@ -11,7 +11,8 @@ use std::io::{Read, Write};
 use std::net::{TcpListener, TcpStream};
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
-use std::sync::{Mutex, OnceLock};
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Arc, Mutex, OnceLock};
 use std::thread;
 use std::time::{Duration, Instant};
 use uuid::Uuid;
@@ -219,10 +220,15 @@ struct InstalledModelRecord {
 }
 
 static DOWNLOADS: OnceLock<Mutex<HashMap<String, DownloadState>>> = OnceLock::new();
+static DOWNLOAD_CANCELS: OnceLock<Mutex<HashMap<String, Arc<AtomicBool>>>> = OnceLock::new();
 static RUNTIME: OnceLock<Mutex<Option<RuntimeState>>> = OnceLock::new();
 
 fn downloads() -> &'static Mutex<HashMap<String, DownloadState>> {
     DOWNLOADS.get_or_init(|| Mutex::new(HashMap::new()))
+}
+
+fn download_cancels() -> &'static Mutex<HashMap<String, Arc<AtomicBool>>> {
+    DOWNLOAD_CANCELS.get_or_init(|| Mutex::new(HashMap::new()))
 }
 
 fn runtime() -> &'static Mutex<Option<RuntimeState>> {
@@ -756,11 +762,18 @@ pub fn catalog_json() -> Value {
     })
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum DownloadOutcome {
+    Completed,
+    Cancelled,
+}
+
 pub fn start_download(model_id: &str) -> Result<(), String> {
     let model = *profile(model_id).ok_or_else(|| format!("Unknown local model: {model_id}"))?;
     if is_installed(&model) {
         return Ok(());
     }
+    let cancel_flag = Arc::new(AtomicBool::new(false));
     {
         let mut states = downloads()
             .lock()
@@ -782,11 +795,21 @@ pub fn start_download(model_id: &str) -> Result<(), String> {
             },
         );
     }
-    thread::Builder::new()
+    if let Ok(mut cancels) = download_cancels().lock() {
+        cancels.insert(model.id.to_string(), Arc::clone(&cancel_flag));
+    }
+    let worker_cancel = Arc::clone(&cancel_flag);
+    if let Err(error) = thread::Builder::new()
         .name(format!("nola-model-download-{}", model.id))
         .spawn(move || {
-            let result = download_model_inner(&model, |downloaded, total| {
+            let result = download_model_inner_with_cancel(&model, Some(&worker_cancel), |downloaded, total| {
+                if worker_cancel.load(Ordering::Acquire) {
+                    return;
+                }
                 if let Ok(mut states) = downloads().lock() {
+                    if worker_cancel.load(Ordering::Acquire) {
+                        return;
+                    }
                     states.insert(
                         model.id.to_string(),
                         DownloadState {
@@ -798,9 +821,24 @@ pub fn start_download(model_id: &str) -> Result<(), String> {
                     );
                 }
             });
+            if let Ok(mut cancels) = download_cancels().lock() {
+                if cancels
+                    .get(model.id)
+                    .is_some_and(|existing| Arc::ptr_eq(existing, &worker_cancel))
+                {
+                    cancels.remove(model.id);
+                }
+            }
+            if worker_cancel.load(Ordering::Acquire) || matches!(result, Ok(DownloadOutcome::Cancelled)) {
+                if let Ok(mut states) = downloads().lock() {
+                    states.remove(model.id);
+                }
+                return;
+            }
             if let Ok(mut states) = downloads().lock() {
                 let (status, downloaded_bytes, error) = match result {
-                    Ok(()) => ("installed", model.download_bytes, None),
+                    Ok(DownloadOutcome::Completed) => ("installed", model.download_bytes, None),
+                    Ok(DownloadOutcome::Cancelled) => return,
                     Err(error) => ("failed", partial_download_size(&model), Some(error)),
                 };
                 states.insert(
@@ -814,7 +852,20 @@ pub fn start_download(model_id: &str) -> Result<(), String> {
                 );
             }
         })
-        .map_err(|error| format!("Failed to start model download: {error}"))?;
+    {
+        if let Ok(mut cancels) = download_cancels().lock() {
+            if cancels
+                .get(model.id)
+                .is_some_and(|existing| Arc::ptr_eq(existing, &cancel_flag))
+            {
+                cancels.remove(model.id);
+            }
+        }
+        if let Ok(mut states) = downloads().lock() {
+            states.remove(model.id);
+        }
+        return Err(format!("Failed to start model download: {error}"));
+    }
     Ok(())
 }
 
@@ -823,17 +874,44 @@ where
     F: FnMut(u64, u64),
 {
     let model = profile(model_id).ok_or_else(|| format!("Unknown local model: {model_id}"))?;
-    download_model_inner(model, progress)
+    download_model_inner_with_cancel(model, None, progress).map(|_| ())
 }
 
-fn download_model_inner<F>(model: &LocalModelProfile, mut progress: F) -> Result<(), String>
+fn download_model_inner_with_cancel<F>(
+    model: &LocalModelProfile,
+    cancel: Option<&AtomicBool>,
+    mut progress: F,
+) -> Result<DownloadOutcome, String>
 where
     F: FnMut(u64, u64),
 {
     let destination = model_path(model)?;
     if is_installed(model) {
         progress(model.download_bytes, model.download_bytes);
-        return Ok(());
+        return Ok(DownloadOutcome::Completed);
+    }
+    download_model_from_url_with_cancel(
+        model.download_url,
+        &destination,
+        model.download_bytes,
+        cancel,
+        progress,
+    )
+}
+
+fn download_model_from_url_with_cancel<F>(
+    download_url: &str,
+    destination: &Path,
+    expected_bytes: u64,
+    cancel: Option<&AtomicBool>,
+    mut progress: F,
+) -> Result<DownloadOutcome, String>
+where
+    F: FnMut(u64, u64),
+{
+    let is_cancelled = || cancel.is_some_and(|flag| flag.load(Ordering::Acquire));
+    if is_cancelled() {
+        return Ok(DownloadOutcome::Cancelled);
     }
     let parent = destination
         .parent()
@@ -841,37 +919,52 @@ where
     fs::create_dir_all(parent)
         .map_err(|error| format!("Failed to create model directory: {error}"))?;
     let partial = destination.with_extension("gguf.part");
-    let existing = fs::metadata(&partial).map(|value| value.len()).unwrap_or(0);
+    let mut existing = fs::metadata(&partial).map(|value| value.len()).unwrap_or(0);
     let client = Client::builder()
         .connect_timeout(Duration::from_secs(15))
         .timeout(Duration::from_secs(60 * 60 * 8))
         .build()
         .map_err(|error| format!("Failed to initialize model downloader: {error}"))?;
-    let mut request = client.get(model.download_url);
+    let mut request = client.get(download_url);
     if existing > 0 {
         request = request.header(RANGE, format!("bytes={existing}-"));
     }
     let mut response = request
         .send()
         .map_err(|error| format!("Model download failed: {error}"))?;
+    if existing > 0 && response.status() == reqwest::StatusCode::RANGE_NOT_SATISFIABLE {
+        let _ = fs::remove_file(&partial);
+        existing = 0;
+        if is_cancelled() {
+            return Ok(DownloadOutcome::Cancelled);
+        }
+        response = client
+            .get(download_url)
+            .send()
+            .map_err(|error| format!("Model download failed: {error}"))?;
+    }
+    if is_cancelled() {
+        let _ = fs::remove_file(&partial);
+        return Ok(DownloadOutcome::Cancelled);
+    }
     if !response.status().is_success() {
         return Err(format!(
             "Model download failed with HTTP {}",
             response.status()
         ));
     }
-    let resumed = response.status().as_u16() == 206;
+    let resumed = existing > 0 && response.status().as_u16() == 206;
     let mut downloaded = if resumed { existing } else { 0 };
     let response_length = response
         .headers()
         .get(CONTENT_LENGTH)
         .and_then(|value| value.to_str().ok())
         .and_then(|value| value.parse::<u64>().ok())
-        .unwrap_or_else(|| model.download_bytes.saturating_sub(downloaded));
+        .unwrap_or_else(|| expected_bytes.saturating_sub(downloaded));
     let total = if resumed {
         downloaded.saturating_add(response_length)
     } else {
-        response_length.max(model.download_bytes)
+        response_length.max(expected_bytes)
     };
     let mut file = OpenOptions::new()
         .create(true)
@@ -883,28 +976,63 @@ where
     let mut buffer = vec![0_u8; 1024 * 1024];
     progress(downloaded, total);
     loop {
-        let count = response
-            .read(&mut buffer)
-            .map_err(|error| format!("Failed while downloading model: {error}"))?;
+        if is_cancelled() {
+            drop(file);
+            let _ = fs::remove_file(&partial);
+            return Ok(DownloadOutcome::Cancelled);
+        }
+        let count = match response.read(&mut buffer) {
+            Ok(count) => count,
+            Err(_) if is_cancelled() => {
+                drop(file);
+                let _ = fs::remove_file(&partial);
+                return Ok(DownloadOutcome::Cancelled);
+            }
+            Err(error) => return Err(format!("Failed while downloading model: {error}")),
+        };
         if count == 0 {
             break;
         }
-        file.write_all(&buffer[..count])
-            .map_err(|error| format!("Failed to save model: {error}"))?;
+        if is_cancelled() {
+            drop(file);
+            let _ = fs::remove_file(&partial);
+            return Ok(DownloadOutcome::Cancelled);
+        }
+        if let Err(error) = file.write_all(&buffer[..count]) {
+            if is_cancelled() {
+                drop(file);
+                let _ = fs::remove_file(&partial);
+                return Ok(DownloadOutcome::Cancelled);
+            }
+            return Err(format!("Failed to save model: {error}"));
+        }
         downloaded = downloaded.saturating_add(count as u64);
         progress(downloaded, total);
     }
+    if is_cancelled() {
+        drop(file);
+        let _ = fs::remove_file(&partial);
+        return Ok(DownloadOutcome::Cancelled);
+    }
     file.flush()
         .map_err(|error| format!("Failed to finish model download: {error}"))?;
-    if downloaded < model.download_bytes {
+    drop(file);
+    if is_cancelled() {
+        let _ = fs::remove_file(&partial);
+        return Ok(DownloadOutcome::Cancelled);
+    }
+    if downloaded < expected_bytes {
         return Err(format!(
-            "Model download is incomplete: {downloaded} of {} bytes",
-            model.download_bytes
+            "Model download is incomplete: {downloaded} of {expected_bytes} bytes"
         ));
     }
-    fs::rename(&partial, &destination)
+    if is_cancelled() {
+        let _ = fs::remove_file(&partial);
+        return Ok(DownloadOutcome::Cancelled);
+    }
+    fs::rename(&partial, destination)
         .map_err(|error| format!("Failed to install downloaded model: {error}"))?;
-    Ok(())
+    Ok(DownloadOutcome::Completed)
 }
 
 fn partial_download_size(model: &LocalModelProfile) -> u64 {
@@ -1127,6 +1255,20 @@ pub fn remove_model(model_id: &str) -> Result<(), String> {
     let model = profile(model_id).ok_or_else(|| format!("Unknown local model: {model_id}"))?;
     if running_model_id().as_deref() == Some(model.id) {
         shutdown();
+    }
+    if let Some(cancel_flag) = download_cancels()
+        .lock()
+        .ok()
+        .and_then(|mut cancels| cancels.remove(model.id))
+    {
+        cancel_flag.store(true, Ordering::Release);
+        let deadline = Instant::now() + Duration::from_millis(500);
+        while Arc::strong_count(&cancel_flag) > 1 && Instant::now() < deadline {
+            thread::sleep(Duration::from_millis(10));
+        }
+    }
+    if let Ok(mut states) = downloads().lock() {
+        states.remove(model.id);
     }
     let directory = model_path(model)?
         .parent()
@@ -1505,5 +1647,111 @@ mod tests {
             .unwrap();
         assert!(save_parameters(built_in_id, LocalModelParameters::default()).is_err());
         assert!(store.model_profile(built_in_id).unwrap().is_none());
+    }
+
+    #[test]
+    fn download_recovers_from_http_416_by_removing_stale_part_and_retrying() {
+        let root = tempfile::tempdir().unwrap();
+        let destination = root.path().join("model.gguf");
+        let partial = destination.with_extension("gguf.part");
+        // Write a stale partial file larger than the remote payload to trigger HTTP 416.
+        fs::write(&partial, b"stale-oversized-partial-file-contents").unwrap();
+
+        let payload = b"fresh-gguf-payload";
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let addr = listener.local_addr().unwrap();
+        let server = thread::spawn(move || {
+            let mut requests = Vec::new();
+            // Request 1: has Range header -> respond 416
+            {
+                let (mut stream, _) = listener.accept().unwrap();
+                stream.set_read_timeout(Some(Duration::from_secs(5))).unwrap();
+                let mut buf = [0u8; 4096];
+                let n = stream.read(&mut buf).unwrap();
+                requests.push(String::from_utf8_lossy(&buf[..n]).to_ascii_lowercase());
+                write!(
+                    stream,
+                    "HTTP/1.1 416 Range Not Satisfiable\r\nContent-Length: 0\r\nConnection: close\r\n\r\n"
+                )
+                .unwrap();
+            }
+            // Request 2: retry without Range -> respond 200 with full payload
+            {
+                let (mut stream, _) = listener.accept().unwrap();
+                stream.set_read_timeout(Some(Duration::from_secs(5))).unwrap();
+                let mut buf = [0u8; 4096];
+                let n = stream.read(&mut buf).unwrap();
+                requests.push(String::from_utf8_lossy(&buf[..n]).to_ascii_lowercase());
+                write!(
+                    stream,
+                    "HTTP/1.1 200 OK\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+                    payload.len()
+                )
+                .unwrap();
+                stream.write_all(payload).unwrap();
+            }
+            requests
+        });
+
+        let url = format!("http://{addr}/model.gguf");
+        let outcome = download_model_from_url_with_cancel(
+            &url,
+            &destination,
+            payload.len() as u64,
+            None,
+            |_, _| {},
+        )
+        .unwrap();
+        assert_eq!(outcome, DownloadOutcome::Completed);
+        assert_eq!(fs::read(&destination).unwrap(), payload);
+        assert!(!partial.exists());
+
+        let requests = server.join().unwrap();
+        assert!(requests[0].contains("range: bytes="), "first request should send Range: {}", requests[0]);
+        assert!(!requests[1].contains("range:"), "retry request must not send Range: {}", requests[1]);
+    }
+
+    #[test]
+    fn download_cancellation_exits_cleanly_and_cleans_up_partial_file() {
+        let root = tempfile::tempdir().unwrap();
+        let destination = root.path().join("model.gguf");
+        let partial = destination.with_extension("gguf.part");
+        let cancel = Arc::new(AtomicBool::new(false));
+        let cancel_for_progress = Arc::clone(&cancel);
+
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let addr = listener.local_addr().unwrap();
+        let server = thread::spawn(move || {
+            let (mut stream, _) = listener.accept().unwrap();
+            stream.set_read_timeout(Some(Duration::from_secs(5))).unwrap();
+            let mut buf = [0u8; 4096];
+            let _ = stream.read(&mut buf);
+            let _ = write!(
+                stream,
+                "HTTP/1.1 200 OK\r\nContent-Length: 32\r\nConnection: close\r\n\r\n"
+            );
+            let _ = stream.write_all(b"0123456789abcdef");
+            let _ = stream.flush();
+            thread::sleep(Duration::from_millis(50));
+            let _ = stream.write_all(b"0123456789abcdef");
+        });
+
+        let url = format!("http://{addr}/model.gguf");
+        let outcome = download_model_from_url_with_cancel(
+            &url,
+            &destination,
+            32,
+            Some(&cancel),
+            move |downloaded, _| {
+                if downloaded > 0 {
+                    cancel_for_progress.store(true, Ordering::Release);
+                }
+            },
+        )
+        .unwrap();
+        let _ = server.join();
+        assert_eq!(outcome, DownloadOutcome::Cancelled);
+        assert!(!destination.exists(), "cancelled download must not install destination");
+        assert!(!partial.exists(), "cancelled download must remove partial file");
     }
 }

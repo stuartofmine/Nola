@@ -40,7 +40,7 @@
     onDestroy(() => gate.settle(false));
 </script>
 
-<dialog use:ownDialog use:portal bind:this={dialog} aria-label={request?.title ?? t($locale, 'shell.confirm')} oncancel={cancel}>
+<dialog use:ownDialog use:portal bind:this={dialog} aria-label={request?.title ?? t($locale, 'shell.confirm')} oncancel={cancel} onclick={event => { if (event.target === dialog) finish(false); }}>
     {#if request}
         <div class="confirmation">
             <h2>{request.title}</h2>

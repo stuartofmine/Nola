@@ -10,6 +10,7 @@ import SwiftUI
 
 struct ScheduledActionBasicEditorView: View {
     let existingSource: URLDataSource?
+    @Environment(\.dismiss) private var dismiss
 
     var body: some View {
         NavigationStack {
@@ -40,9 +41,16 @@ struct ScheduledActionBasicEditorView: View {
 
                 Spacer()
             }
+            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
             .padding()
+            .background(DesignTokens.backgroundColor)
             .navigationTitle(NSLocalizedString("scheduled.actions.redesigned.title", value: "Automation & Scheduling", comment: "Scheduled actions redesigned page title"))
             .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .confirmationAction) {
+                    Button(L10n.close) { dismiss() }
+                }
+            }
         }
     }
 }

@@ -24,8 +24,9 @@ nonisolated struct MacModelImportResult: Decodable, Identifiable, Sendable {
     var id: String { candidate_id }
 }
 
-nonisolated struct MacModelProbeConfirmation: Codable, Sendable {
+nonisolated struct MacModelProbeConfirmation: Codable, Sendable, Identifiable {
     let request_id: String
+    var id: String { request_id }
     let connection_id: String
     let expected_revision: Int64
     let account_id: String?

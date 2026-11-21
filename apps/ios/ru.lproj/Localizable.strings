@@ -1644,6 +1644,7 @@
 "common.frequency.weekly" = "Еженедельно";
 "common.no.zh" = "Нет";
 "common.retry" = "Повторить";
+"common.search" = "Поиск";
 "common.unknown" = "Неизвестно";
 "common.yes.zh" = "Да";
 "data.subtitle.local_first" = "Источники данных на устройстве, запланированные действия и недавний статус выполнения.";
@@ -2870,6 +2871,7 @@
 
 "room.pending_expert_message" = "Запрос экспертам ожидает запуска.";
 "room.resume_complete_experts" = "Возобновить исходный запрос экспертам";
+"room.retry_expert_reply" = "Повторить ответ эксперта";
 
 // Expert directory management
 "experts.manage" = "Управление экспертами";
@@ -3280,3 +3282,9 @@
 "harness.device_note" = "Подключите компьютер, на котором работают плагины, чтобы пользоваться ими здесь.";
 "harness.connect" = "Подключить настольный хост";
 "harness.pair" = "Подключить другой Host";
+
+"Keep names as plain text" = "Оставить имена обычным текстом";
+"The expert selection changed. Remove the mention and select the expert again." = "Выбор эксперта изменился. Удалите упоминание и выберите эксперта снова.";
+"Write what you want the expert to do." = "Напишите, что должен сделать эксперт.";
+"View expert history" = "Посмотреть историю эксперта";
+"Icon could not be rendered" = "Не удалось отобразить значок";

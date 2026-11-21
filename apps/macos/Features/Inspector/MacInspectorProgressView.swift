@@ -291,7 +291,7 @@ struct MacInspectorProgressView: View {
                     submit(.init(action: .start, objective: objective,
                         constraints: constraints.split(separator: "\n").map(String.init)))
                 }
-                .buttonStyle(.borderedProminent)
+                .buttonStyle(.nolaProminent)
                 .tint(MacDesignColor.primaryAction)
                 .disabled(controlBusy || model.selectedConversationID == nil || objective.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
                 .accessibilityIdentifier("mac-goal-start")

@@ -3,6 +3,7 @@
     const acceptsWorkspaceUnload = workspaceUnloadScope();
     import { onDestroy, tick, untrack } from 'svelte';
     import { locale, t } from '../lib/i18n';
+    import PrototypeIcon from './PrototypeIcon.svelte';
     import { MAX_TEXT_ATTACHMENTS, TEXT_ATTACHMENT_ACCEPT, createTextAttachmentDraftStore, readTextAttachment } from '../lib/chatTextAttachments';
     import type { ChatTextAttachment } from '../lib/chatTextAttachments';
 
@@ -53,7 +54,7 @@
                 if (conversationId !== id || generation !== epoch || request !== sequence) return;
             }
             if (conversationId === id && generation === epoch && request === sequence) {
-                attachments = [...attachments, ...imported];
+                attachments = [...drafts.read(id), ...imported];
                 drafts.write(id, attachments);
                 if (rejected) error = encodingError ? 'chatTextAttachment.invalidEncoding' : 'chatTextAttachment.invalidFile';
             }
@@ -83,12 +84,19 @@
         const remaining = drafts.clearSubmitted(ownerConversationId, ids);
         if (conversationId === ownerConversationId) { attachments = remaining; if (preview && ids.includes(preview)) preview = null; publish(); }
     }
+    /** Sync local state from the shared draft store when submission retires sent files. */
+    export function sync(): void {
+        const current = drafts.read(conversationId);
+        if (current.length === attachments.length && current.every((item, index) => item.id === attachments[index]?.id)) return;
+        attachments = current;
+        if (preview && !attachments.some(item => item.id === preview)) preview = null;
+    }
 </script>
 
 <svelte:window onbeforeunload={event => { if (!acceptsWorkspaceUnload(event)) return; if (reading) { event.preventDefault(); event.returnValue = ''; } }} />
 <section class="text-attachments" aria-label={t($locale, 'chatTextAttachment.title')}>
     <div class="attachment-toolbar">
-    <label class="picker" class:disabled={busy || reading || attachments.length >= MAX_TEXT_ATTACHMENTS}><span class="mobile-symbol" aria-hidden="true">＋</span><span class="toolbar-label">{t($locale, 'chatTextAttachment.select')}</span><input bind:this={picker} type="file" multiple accept={TEXT_ATTACHMENT_ACCEPT} onchange={select} disabled={busy || reading || attachments.length >= MAX_TEXT_ATTACHMENTS} /></label>
+    <label class="picker" class:disabled={busy || reading || attachments.length >= MAX_TEXT_ATTACHMENTS}><span class="mobile-symbol" aria-hidden="true"><PrototypeIcon name="plus" size={18} /></span><span class="toolbar-label">{t($locale, 'chatTextAttachment.select')}</span><input bind:this={picker} type="file" multiple accept={TEXT_ATTACHMENT_ACCEPT} onchange={select} disabled={busy || reading || attachments.length >= MAX_TEXT_ATTACHMENTS} /></label>
     {#if showHelp}<details class="help"><summary><span class="mobile-symbol" aria-hidden="true">ⓘ</span><span class="toolbar-label">{t($locale, 'chatTextAttachment.helpTitle')}</span></summary><p>{t($locale, 'chatTextAttachment.help')}</p><p>{t($locale, 'chatTextAttachment.dropPaste')}</p></details>{/if}
     </div>
     {#if reading}<p role="status">{t($locale, 'chatTextAttachment.reading')}</p>{/if}
@@ -96,7 +104,7 @@
     {#if attachments.length}<ul bind:this={list}>{#each attachments as item (item.id)}<li>
         <button type="button" title={item.name} onclick={() => preview = preview === item.id ? null : item.id} aria-expanded={preview === item.id}>{item.name}</button>
         <small>{Math.ceil(item.byteCount / 1024).toLocaleString($locale)} KiB{item.clipped ? ` · ${t($locale, 'chatTextAttachment.clipped')}` : ''}</small>
-        <button type="button" onclick={event => remove(item.id, event.currentTarget)} disabled={busy || reading} aria-label={t($locale, 'chatTextAttachment.remove', { name: item.name })}>×</button>
+        <button type="button" class="remove-attachment" onclick={event => remove(item.id, event.currentTarget)} disabled={busy || reading} aria-label={t($locale, 'chatTextAttachment.remove', { name: item.name })}><PrototypeIcon name="close" size={14} /></button>
         {#if preview === item.id}
             <!-- svelte-ignore a11y_no_noninteractive_tabindex (Scrollable preview must support keyboard reading.) -->
             <pre role="region" tabindex="0" aria-label={t($locale, 'chatTextAttachment.preview', { name: item.name })}>{item.text}</pre>
@@ -124,7 +132,8 @@
     pre { flex: 1 0 100%; max-height: 180px; overflow: auto; margin: 0; padding: 8px; border: 1px solid var(--border); border-radius: 8px; font-size: 11px; white-space: pre-wrap; overflow-wrap: anywhere; }
     @media (min-width: 0px) {
         .toolbar-label { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
-        .mobile-symbol { display: inline; font-size: 22px; font-weight: 400; }
+        .mobile-symbol { display: inline-flex; align-items: center; justify-content: center; }
+        .remove-attachment { display: inline-flex; align-items: center; justify-content: center; padding: 6px; }
         .picker { width: 44px; height: 44px; padding: 0; justify-content: center; border: 0; border-radius: 12px; }
         .help { flex: 0 1 auto; }
         .help summary { display: flex; align-items: center; justify-content: center; width: 44px; height: 44px; padding: 0; }

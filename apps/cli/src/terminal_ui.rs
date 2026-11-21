@@ -1394,12 +1394,14 @@ fn local_command_hint() -> &'static str {
     use crate::i18n::Language;
     match crate::i18n::current_language() {
         Language::ZhHans => "Enter 执行本地指令 · 不进入消息队列",
+        Language::ZhHant => "Enter 執行本地指令 · 不進入訊息佇列",
         Language::De => "Enter: lokaler Befehl · keine Nachrichtenwarteschlange",
         Language::Es => "Enter: comando local · no se encola como mensaje",
         Language::Fr => "Entrée : commande locale · aucun message en attente",
         Language::Ja => "Enter: ローカルコマンド · メッセージとして予約しません",
+        Language::Ko => "Enter: 로컬 명령 · 메시지 대기열에 추가되지 않음",
         Language::Ru => "Enter: локальная команда · не сообщение в очереди",
-        Language::En | _ => "Enter: local command · never queued as a message",
+        Language::En => "Enter: local command · never queued as a message",
     }
 }
 
@@ -1407,12 +1409,14 @@ fn history_reading_hint() -> &'static str {
     use crate::i18n::Language;
     match crate::i18n::current_language() {
         Language::ZhHans => "Ctrl+End 返回最新 · 浏览历史 · PgUp/PgDn",
+        Language::ZhHant => "Ctrl+End 返回最新 · 瀏覽歷史 · PgUp/PgDn",
         Language::De => "Strg+Ende: neueste · Verlauf · Bild↑/Bild↓",
         Language::Es => "Ctrl+Fin: reciente · Historial · RePág/AvPág",
         Language::Fr => "Ctrl+Fin : récent · Historique · PgUp/PgDn",
         Language::Ja => "Ctrl+End: 最新へ · 履歴表示 · PgUp/PgDn",
+        Language::Ko => "Ctrl+End: 최신 · 기록 보기 · PgUp/PgDn",
         Language::Ru => "Ctrl+End: к последнему · История · PgUp/PgDn",
-        Language::En | _ => "Ctrl+End: latest · Reading history · PgUp/PgDn",
+        Language::En => "Ctrl+End: latest · Reading history · PgUp/PgDn",
     }
 }
 
