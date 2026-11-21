@@ -1393,7 +1393,7 @@ fn route_request(
     {
         return match method {
             &Method::Get | &Method::Post => {
-                model_endpoint_credential_response(request, &percent_decode(id))
+                model_endpoint_credential_response(request, &percent_decode_path(id))
             }
             _ => method_not_allowed(),
         };
@@ -1403,7 +1403,7 @@ fn route_request(
         .and_then(|value| value.strip_suffix("/discover"))
     {
         return match method {
-            &Method::Post => discover_remote_models_response(&percent_decode(id)),
+            &Method::Post => discover_remote_models_response(&percent_decode_path(id)),
             _ => method_not_allowed(),
         };
     }
@@ -1412,7 +1412,7 @@ fn route_request(
         .and_then(|value| value.strip_suffix("/configuration"))
     {
         return match method {
-            &Method::Post => update_model_endpoint_response(request, &percent_decode(id)),
+            &Method::Post => update_model_endpoint_response(request, &percent_decode_path(id)),
             _ => method_not_allowed(),
         };
     }
@@ -1421,7 +1421,7 @@ fn route_request(
         .and_then(|value| value.strip_suffix("/select"))
     {
         return match method {
-            &Method::Post => select_model_profile_response(request, &percent_decode(id)),
+            &Method::Post => select_model_profile_response(request, &percent_decode_path(id)),
             _ => method_not_allowed(),
         };
     }
@@ -1430,7 +1430,7 @@ fn route_request(
         .and_then(|value| value.strip_suffix("/parameters"))
     {
         return match method {
-            &Method::Post => update_model_parameters_response(request, &percent_decode(id)),
+            &Method::Post => update_model_parameters_response(request, &percent_decode_path(id)),
             _ => method_not_allowed(),
         };
     }
@@ -1456,8 +1456,6 @@ fn route_request(
         | (&Method::Head, "/settings")
         | (&Method::Get, "/scheduled-actions")
         | (&Method::Head, "/scheduled-actions")
-        | (&Method::Get, "/rooms")
-        | (&Method::Head, "/rooms")
         | (&Method::Get, "/workspace-review")
         | (&Method::Head, "/workspace-review")
         | (&Method::Get, "/today")
@@ -1483,14 +1481,16 @@ fn route_request(
             let rel = path.trim_start_matches("/ui/");
             file_response(&config.web_root, &format!("app/static/ui/{rel}"))
         }
+        (&Method::Get, "/rooms") | (&Method::Head, "/rooms") => redirect_response("/chat"),
         (&Method::Get, "/register") | (&Method::Head, "/register") => redirect_response("/login"),
         (&Method::Post, "/login") => web_form_login_response(request),
         (&Method::Post, "/register") => redirect_response("/login?error=registration_unavailable"),
         (&Method::Post, "/logout") => web_logout_response(request, true),
         (&Method::Post, "/settings/password") => redirect_response("/settings"),
-        (&Method::Get, _) | (&Method::Head, _) if path.starts_with("/auth/mobile-handoff/") => {
+        (&Method::Get, _) if path.starts_with("/auth/mobile-handoff/") => {
             web_mobile_handoff_response(request, path)
         }
+        (_, _) if path.starts_with("/auth/mobile-handoff/") => method_not_allowed(),
         (&Method::Get, _) | (&Method::Head, _) if path.starts_with("/auth/") => {
             redirect_response("/login")
         }
@@ -1637,10 +1637,7 @@ fn web_session_is_authenticated(request: &Request) -> bool {
     sessions.contains_key(&digest)
 }
 
-fn web_csrf_is_valid(request: &Request) -> bool {
-    if !web_request_is_same_origin(request) {
-        return false;
-    }
+fn web_csrf_token_matches_session(request: &Request) -> bool {
     let Some(raw_session) = request_cookie(request, WEB_SESSION_COOKIE) else {
         return false;
     };
@@ -1663,6 +1660,13 @@ fn web_csrf_is_valid(request: &Request) -> bool {
     sessions.get(&session_digest).is_some_and(|session| {
         nola_core::mobile_crypto::constant_time_secret_eq(&session.csrf_digest, &csrf_digest)
     })
+}
+
+fn web_csrf_is_valid(request: &Request) -> bool {
+    if !web_request_is_same_origin(request) {
+        return false;
+    }
+    web_csrf_token_matches_session(request)
 }
 
 fn web_request_is_same_origin(request: &Request) -> bool {
@@ -1688,7 +1692,6 @@ fn web_method_requires_csrf(method: &Method) -> bool {
 
 fn web_csrf_exempt_path(path: &str) -> bool {
     path == "/login"
-        || path == "/logout"
         || path == "/api/web/login"
         || path.starts_with("/api/mobile/")
 }
@@ -1997,12 +2000,17 @@ fn web_json_login_response(request: &mut Request) -> Response<Box<dyn Read + Sen
     )
 }
 
-fn read_urlencoded_form(request: &mut Request) -> Result<HashMap<String, String>, String> {
-    let mut body = String::new();
-    request
-        .as_reader()
-        .read_to_string(&mut body)
-        .map_err(|error| format!("failed to read login form: {error}"))?;
+fn read_urlencoded_form(
+    request: &mut Request,
+) -> Result<HashMap<String, String>, (StatusCode, String)> {
+    let body = read_bounded_utf8(request.as_reader(), MAX_URLENCODED_FORM_BODY_BYTES).map_err(
+        |error| match error {
+            BoundedBodyError::TooLarge => (StatusCode(413), "login form is too large".to_string()),
+            BoundedBodyError::Read(message) => {
+                (StatusCode(400), format!("failed to read login form: {message}"))
+            }
+        },
+    )?;
     Ok(body
         .split('&')
         .filter_map(|pair| pair.split_once('='))
@@ -2013,8 +2021,8 @@ fn read_urlencoded_form(request: &mut Request) -> Result<HashMap<String, String>
 fn web_form_login_response(request: &mut Request) -> Response<Box<dyn Read + Send>> {
     let form = match read_urlencoded_form(request) {
         Ok(value) => value,
-        Err(message) => {
-            return html_response(StatusCode(400), error_html(400, &message));
+        Err((status, message)) => {
+            return html_response(status, error_html(status.0, &message));
         }
     };
     let next = safe_web_next(form.get("next").map(String::as_str).unwrap_or("/dashboard"));
@@ -3023,10 +3031,20 @@ fn branch_conversation_response(
             )
         }
     };
+    let saved_branch = match store.get_web_conversation(&branch.conversation_id) {
+        Ok(Some(saved)) => saved,
+        Ok(None) => {
+            return json_response(
+                StatusCode(500),
+                json!({"error": "Branched conversation disappeared"}),
+            )
+        }
+        Err(error) => return json_response(StatusCode(500), json!({"error": error})),
+    };
     json_response(
         StatusCode(200),
         json!({
-            "conversation": branch,
+            "conversation": saved_branch,
             "messageCount": result.message_count,
             "localFirst": true,
             "backend": "cli-rust",
@@ -3957,11 +3975,11 @@ fn home_response() -> Response<Box<dyn Read + Send>> {
         .collect::<Vec<_>>();
     let success_count = results
         .iter()
-        .filter(|item| item.status == "success")
+        .filter(|item| matches!(item.status.as_str(), "answered" | "action_completed"))
         .count();
     let failed_count = results
         .iter()
-        .filter(|item| item.status == "failed")
+        .filter(|item| matches!(item.status.as_str(), "failed" | "incomplete" | "blocked"))
         .count();
     json_response(
         StatusCode(200),
@@ -4295,20 +4313,22 @@ fn update_agent_settings_response(request: &mut Request) -> Response<Box<dyn Rea
             }
         };
     }
-    let mcp_catalog_revision =
-        crate::agent_host_driver::configured_mcp_capability_catalog_revision(&settings.mcp_servers);
-    if let Err(error) = crate::agent_host_driver::configured_mcp_capability_catalog(
-        &settings.mcp_servers,
-        mcp_catalog_revision,
-    ) {
-        return json_response(
-            StatusCode(422),
-            json!({
-                "error": error,
-                "code": "mcp_handshake_required",
-                "message": "An MCP endpoint must complete capability discovery before it can be enabled."
-            }),
-        );
+    if mcp_settings_changed {
+        let mcp_catalog_revision =
+            crate::agent_host_driver::configured_mcp_capability_catalog_revision(&settings.mcp_servers);
+        if let Err(error) = crate::agent_host_driver::configured_mcp_capability_catalog(
+            &settings.mcp_servers,
+            mcp_catalog_revision,
+        ) {
+            return json_response(
+                StatusCode(422),
+                json!({
+                    "error": error,
+                    "code": "mcp_handshake_required",
+                    "message": "An MCP endpoint must complete capability discovery before it can be enabled."
+                }),
+            );
+        }
     }
     if mcp_settings_changed {
         if let Err(err) =
@@ -4392,3 +4412,16 @@ fn update_agent_settings_response(request: &mut Request) -> Response<Box<dyn Rea
 #[cfg(test)]
 #[path = "routes_tests.rs"]
 mod routes_tests;
+
+#[cfg(test)]
+mod p2_route_security_tests {
+    use super::web_csrf_exempt_path;
+
+    #[test]
+    fn logout_is_not_csrf_exempt() {
+        assert!(!web_csrf_exempt_path("/logout"));
+        assert!(web_csrf_exempt_path("/login"));
+        assert!(web_csrf_exempt_path("/api/web/login"));
+        assert!(web_csrf_exempt_path("/api/mobile/ping"));
+    }
+}

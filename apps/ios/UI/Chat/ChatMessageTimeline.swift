@@ -473,7 +473,13 @@ struct ChatMessageTimeline: View {
                     }
                 }
             }
-            .onChange(of: conversationID) { _, _ in
+            .onChange(of: conversationID) { oldID, _ in
+                if let oldID, restoredReadingPosition {
+                    let previousFirstLoadedID = knownMessageConversationID == oldID ? knownMessageIDs?.first : messages.first?.id
+                    readingPositions?.conversations[oldID] = .init(
+                        firstLoadedID: previousFirstLoadedID, visibleID: readingViewport.visibleID,
+                        offset: readingViewport.offset, followsLatest: followsLatest)
+                }
                 // Do not treat the first hydrated history for a newly selected
                 // conversation as a live append from the previous transcript.
                 knownMessageIDs = nil

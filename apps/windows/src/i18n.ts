@@ -33,6 +33,14 @@ export type DesktopStrings = {
     enabled: string;
     disabled: string;
     packagedOnly: string;
+    hostStopped: string;
+    hostStartFailed: string;
+    hostLaunchFailed: string;
+    hostPortInUse: string;
+    hostRuntimeMissing: string;
+    hostSupervisionFailed: string;
+    diagnosticsUnavailable: string;
+    retryUnavailable: string;
 };
 
 const english: DesktopStrings = {
@@ -70,6 +78,14 @@ const english: DesktopStrings = {
     enabled: "Enabled",
     disabled: "Disabled",
     packagedOnly: "Available after Nola is installed",
+    hostStopped: "The local Host stopped unexpectedly. Restart to reopen your conversations.",
+    hostStartFailed: "The local Host did not start. See host-startup.log in the desktop data folder.",
+    hostLaunchFailed: "Cannot launch the packaged Host. See host-startup.log in the desktop data folder.",
+    hostPortInUse: "The saved Host port is already in use. See host-startup.log in the desktop data folder.",
+    hostRuntimeMissing: "The packaged local runtime is missing or invalid.",
+    hostSupervisionFailed: "Cannot supervise the local Host process.",
+    diagnosticsUnavailable: "Diagnostics folder is unavailable from this view.",
+    retryUnavailable: "Startup retry is unavailable right now.",
 };
 
 const simplifiedChinese: DesktopStrings = {
@@ -107,6 +123,14 @@ const simplifiedChinese: DesktopStrings = {
     enabled: "已启用",
     disabled: "未启用",
     packagedOnly: "安装 Nola 后可用",
+    hostStopped: "本地 Host 意外停止。请重启以重新打开对话。",
+    hostStartFailed: "本地 Host 未能启动。请查看桌面数据目录中的 host-startup.log。",
+    hostLaunchFailed: "无法启动内置 Host。请查看桌面数据目录中的 host-startup.log。",
+    hostPortInUse: "保存的 Host 端口已被占用。请查看桌面数据目录中的 host-startup.log。",
+    hostRuntimeMissing: "内置本地运行时缺失或无效。",
+    hostSupervisionFailed: "无法监管本地 Host 进程。",
+    diagnosticsUnavailable: "当前视图无法打开诊断目录。",
+    retryUnavailable: "当前无法重试启动。",
 };
 
 const traditionalChinese: DesktopStrings = {
@@ -144,6 +168,14 @@ const traditionalChinese: DesktopStrings = {
     enabled: "已啟用",
     disabled: "未啟用",
     packagedOnly: "安裝 Nola 後可用",
+    hostStopped: "本機 Host 意外停止。請重新啟動以重新開啟對話。",
+    hostStartFailed: "本機 Host 未能啟動。請檢視桌面資料夾中的 host-startup.log。",
+    hostLaunchFailed: "無法啟動封裝的 Host。請檢視桌面資料夾中的 host-startup.log。",
+    hostPortInUse: "已儲存的 Host 連接埠已被佔用。請檢視桌面資料夾中的 host-startup.log。",
+    hostRuntimeMissing: "缺少或無效的封裝本機執行階段。",
+    hostSupervisionFailed: "無法監管本機 Host 處理程序。",
+    diagnosticsUnavailable: "此檢視無法開啟診斷資料夾。",
+    retryUnavailable: "目前無法重試啟動。",
 };
 
 const japanese: DesktopStrings = {
@@ -181,6 +213,14 @@ const japanese: DesktopStrings = {
     enabled: "有効",
     disabled: "無効",
     packagedOnly: "Nola のインストール後に利用できます",
+    hostStopped: "ローカル Host が予期せず停止しました。再起動して会話を再び開いてください。",
+    hostStartFailed: "ローカル Host を起動できませんでした。デスクトップデータフォルダーの host-startup.log を確認してください。",
+    hostLaunchFailed: "同梱の Host を起動できません。デスクトップデータフォルダーの host-startup.log を確認してください。",
+    hostPortInUse: "保存された Host ポートは既に使用されています。デスクトップデータフォルダーの host-startup.log を確認してください。",
+    hostRuntimeMissing: "同梱のローカルランタイムが見つからないか無効です。",
+    hostSupervisionFailed: "ローカル Host プロセスを監視できません。",
+    diagnosticsUnavailable: "この画面からは診断フォルダーを開けません。",
+    retryUnavailable: "現在は起動の再試行を利用できません。",
 };
 
 const korean: DesktopStrings = {
@@ -218,6 +258,14 @@ const korean: DesktopStrings = {
     enabled: "사용",
     disabled: "사용 안 함",
     packagedOnly: "Nola 설치 후 사용할 수 있습니다",
+    hostStopped: "로컬 Host가 예기치 않게 중지되었습니다. 대화를 다시 열려면 다시 시작하세요.",
+    hostStartFailed: "로컬 Host가 시작되지 않았습니다. 데스크톱 데이터 폴더의 host-startup.log를 확인하세요.",
+    hostLaunchFailed: "패키지된 Host를 실행할 수 없습니다. 데스크톱 데이터 폴더의 host-startup.log를 확인하세요.",
+    hostPortInUse: "저장된 Host 포트가 이미 사용 중입니다. 데스크톱 데이터 폴더의 host-startup.log를 확인하세요.",
+    hostRuntimeMissing: "패키지된 로컬 런타임이 없거나 올바르지 않습니다.",
+    hostSupervisionFailed: "로컬 Host 프로세스를 관리할 수 없습니다.",
+    diagnosticsUnavailable: "이 화면에서는 진단 폴더를 열 수 없습니다.",
+    retryUnavailable: "지금은 시작을 다시 시도할 수 없습니다.",
 };
 
 const german: DesktopStrings = {
@@ -255,6 +303,14 @@ const german: DesktopStrings = {
     enabled: "Aktiviert",
     disabled: "Deaktiviert",
     packagedOnly: "Nach der Installation von Nola verfügbar",
+    hostStopped: "Der lokale Host wurde unerwartet beendet. Starten Sie neu, um Ihre Gespräche wieder zu öffnen.",
+    hostStartFailed: "Der lokale Host konnte nicht gestartet werden. Siehe host-startup.log im Desktop-Datenordner.",
+    hostLaunchFailed: "Der gebündelte Host kann nicht gestartet werden. Siehe host-startup.log im Desktop-Datenordner.",
+    hostPortInUse: "Der gespeicherte Host-Port wird bereits verwendet. Siehe host-startup.log im Desktop-Datenordner.",
+    hostRuntimeMissing: "Die gebündelte lokale Laufzeitumgebung fehlt oder ist ungültig.",
+    hostSupervisionFailed: "Der lokale Host-Prozess kann nicht überwacht werden.",
+    diagnosticsUnavailable: "Der Diagnoseordner ist in dieser Ansicht nicht verfügbar.",
+    retryUnavailable: "Ein erneuter Startversuch ist derzeit nicht verfügbar.",
 };
 
 const spanish: DesktopStrings = {
@@ -292,6 +348,14 @@ const spanish: DesktopStrings = {
     enabled: "Activado",
     disabled: "Desactivado",
     packagedOnly: "Disponible después de instalar Nola",
+    hostStopped: "El Host local se detuvo inesperadamente. Reinicia para volver a abrir tus conversaciones.",
+    hostStartFailed: "El Host local no se inició. Consulta host-startup.log en la carpeta de datos de escritorio.",
+    hostLaunchFailed: "No se puede iniciar el Host incluido. Consulta host-startup.log en la carpeta de datos de escritorio.",
+    hostPortInUse: "El puerto guardado del Host ya está en uso. Consulta host-startup.log en la carpeta de datos de escritorio.",
+    hostRuntimeMissing: "Falta el entorno de ejecución local incluido o no es válido.",
+    hostSupervisionFailed: "No se puede supervisar el proceso del Host local.",
+    diagnosticsUnavailable: "La carpeta de diagnósticos no está disponible desde esta vista.",
+    retryUnavailable: "No se puede reintentar el inicio en este momento.",
 };
 
 const french: DesktopStrings = {
@@ -329,6 +393,14 @@ const french: DesktopStrings = {
     enabled: "Activé",
     disabled: "Désactivé",
     packagedOnly: "Disponible après l’installation de Nola",
+    hostStopped: "L’hôte local s’est arrêté de façon inattendue. Redémarrez pour rouvrir vos conversations.",
+    hostStartFailed: "L’hôte local n’a pas démarré. Consultez host-startup.log dans le dossier de données du bureau.",
+    hostLaunchFailed: "Impossible de lancer l’hôte intégré. Consultez host-startup.log dans le dossier de données du bureau.",
+    hostPortInUse: "Le port enregistré de l’hôte est déjà utilisé. Consultez host-startup.log dans le dossier de données du bureau.",
+    hostRuntimeMissing: "L’environnement d’exécution local intégré est manquant ou invalide.",
+    hostSupervisionFailed: "Impossible de superviser le processus de l’hôte local.",
+    diagnosticsUnavailable: "Le dossier de diagnostics n’est pas disponible depuis cette vue.",
+    retryUnavailable: "La nouvelle tentative de démarrage est indisponible pour le moment.",
 };
 
 const russian: DesktopStrings = {
@@ -366,6 +438,14 @@ const russian: DesktopStrings = {
     enabled: "Включено",
     disabled: "Отключено",
     packagedOnly: "Доступно после установки Nola",
+    hostStopped: "Локальный Host неожиданно остановился. Перезапустите, чтобы снова открыть диалоги.",
+    hostStartFailed: "Не удалось запустить локальный Host. См. host-startup.log в папке данных приложения.",
+    hostLaunchFailed: "Не удаётся запустить встроенный Host. См. host-startup.log в папке данных приложения.",
+    hostPortInUse: "Сохранённый порт Host уже используется. См. host-startup.log в папке данных приложения.",
+    hostRuntimeMissing: "Встроенная локальная среда выполнения отсутствует или повреждена.",
+    hostSupervisionFailed: "Не удаётся контролировать процесс локального Host.",
+    diagnosticsUnavailable: "Папка диагностики недоступна из этого представления.",
+    retryUnavailable: "Повторная попытка запуска сейчас недоступна.",
 };
 
 export function stringsFor(locale: string): DesktopStrings {

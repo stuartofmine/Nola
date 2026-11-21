@@ -447,6 +447,13 @@ public final class ModelSelectionManager {
         return updated
     }
 
+    public static func clearSessionCredentials() {
+        sessionCredentialLock.lock()
+        sessionWebHostTokens.removeAll()
+        sessionWebHostIdentities.removeAll()
+        sessionCredentialLock.unlock()
+    }
+
     public static func removeModel(_ model: ModelInfo) {
         guard let store = IOSApplicationRuntime.shared else { return }
         _ = try? store.deleteModelProfile(id: model.id)

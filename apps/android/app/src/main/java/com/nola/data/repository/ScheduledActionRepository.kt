@@ -5,8 +5,10 @@ import com.nola.data.local.db.dao.ScheduledActionDao
 import com.nola.data.local.db.entity.ExecutionResultEntity
 import com.nola.data.local.db.entity.ScheduledActionEntity
 import com.nola.data.remote.api.BackendApiService
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.sync.withLock
+import kotlinx.coroutines.withContext
 import javax.inject.Inject
 import javax.inject.Singleton
 import com.nola.data.local.AndroidApplicationRuntime
@@ -50,7 +52,7 @@ class ScheduledActionRepositoryImpl @Inject constructor(
 
     override suspend fun create(action: ScheduledActionEntity) = definitionWrites.withLock { save(action) }
 
-    private suspend fun save(action: ScheduledActionEntity, expectedRevision: Long? = null) {
+    private suspend fun save(action: ScheduledActionEntity, expectedRevision: Long? = null) = withContext(Dispatchers.IO) {
         val host = com.nola.core.AndroidAgentPermissionBroker(context).runtimeIdentity("automation-definition").hostId
             ?: error("Automation needs an identified local Host")
         applicationRuntime.saveAutomationDefinition(action.id, action.name, action.enabled, buildJsonObject {
@@ -62,19 +64,23 @@ class ScheduledActionRepositoryImpl @Inject constructor(
         actionDao.upsert(action)
     }
     override suspend fun delete(id: String) = definitionWrites.withLock {
-        applicationRuntime.deleteAutomationDefinition(id)
-        actionDao.deleteById(id)
+        withContext(Dispatchers.IO) {
+            applicationRuntime.deleteAutomationDefinition(id)
+            actionDao.deleteById(id)
+        }
     }
     override suspend fun setEnabled(id: String, enabled: Boolean) = definitionWrites.withLock {
-        val current = actionDao.getById(id) ?: error("Automation is missing")
+        val current = withContext(Dispatchers.IO) { actionDao.getById(id) } ?: error("Automation is missing")
         save(current.copy(enabled = enabled))
     }
     override suspend fun disableCompletedOccurrence(action: ScheduledActionEntity, definitionRevision: Long) {
         definitionWrites.withLock {
-            if (actionDao.getById(action.id) != action) return
-            val definition = applicationRuntime.loadAutomationDefinition(action.id) ?: return
-            if (definition.revision == definitionRevision) save(action.copy(enabled = false), definitionRevision)
-            else if (!definition.enabled) actionDao.setEnabled(action.id, false)
+            withContext(Dispatchers.IO) {
+                if (actionDao.getById(action.id) != action) return@withContext
+                val definition = applicationRuntime.loadAutomationDefinition(action.id) ?: return@withContext
+                if (definition.revision == definitionRevision) save(action.copy(enabled = false), definitionRevision)
+                else if (!definition.enabled) actionDao.setEnabled(action.id, false)
+            }
         }
     }
     override suspend fun getResult(id: String) = resultDao.getById(id)

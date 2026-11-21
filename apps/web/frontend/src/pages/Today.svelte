@@ -1,39 +1,49 @@
 <script lang="ts">
-    import { onMount } from 'svelte';
-    import { api } from '../lib/api';
+    import { onMount, untrack } from 'svelte';
+    import { api as unscopedApi } from '../lib/api';
+    import { workspacePageApi, workspacePageLocation } from '../lib/workspacePageLocation';
     import { parseInitializationSession } from '../lib/chatInitialization';
     import { parseTodayFacts, type TodayFacts } from '../lib/todayFacts';
     import { locale, t } from '../lib/i18n';
-    const pageOffset = Number(new URL(window.location.href).searchParams.get('offset') ?? 0);
-    const offset = Number.isSafeInteger(pageOffset) && pageOffset >= 0 && pageOffset <= 1_000_000 ? pageOffset : 0;
+    const api = workspacePageApi(unscopedApi);
+    const pageLocation = workspacePageLocation();
+    const offset = $derived.by(() => {
+        const pageOffset = Number(pageLocation.read().searchParams.get('offset') ?? 0);
+        return Number.isSafeInteger(pageOffset) && pageOffset >= 0 && pageOffset <= 1_000_000 ? pageOffset : 0;
+    });
     let facts = $state<TodayFacts | null>(null);
     let host = $state('');
     let loading = $state(true);
     let failed = $state(false);
     let request: AbortController | null = null;
     let disposed = false;
+    let mounted = false;
     const pending = $derived(facts?.conversations.filter(row => row.needs_response) ?? []);
     const recent = $derived(facts?.recent_conversations ?? []);
     const conversationHref = (id: string) => `/chat?conversation=${encodeURIComponent(id)}&sourceHost=${encodeURIComponent(host)}`;
     const time = (ms: number) => new Intl.DateTimeFormat($locale, {dateStyle: 'medium', timeStyle: 'short'}).format(ms);
-    async function refresh() {
+    async function refresh(currentOffset = offset) {
         request?.abort(); const controller = new AbortController(); request = controller;
         loading = true; failed = false;
         try {
             const session = parseInitializationSession(await api('/api/web/session', {signal: controller.signal}));
-            const snapshot = parseTodayFacts(await api(`/api/workspace/today?offset=${offset}`, {signal: controller.signal}), session.hostId, offset);
+            const snapshot = parseTodayFacts(await api(`/api/workspace/today?offset=${currentOffset}`, {signal: controller.signal}), session.hostId, currentOffset);
             if (controller.signal.aborted || disposed) return;
             host = session.hostId; facts = snapshot;
         } catch { if (!controller.signal.aborted && !disposed) { failed = true; facts = null; } }
         finally { if (!controller.signal.aborted && !disposed) loading = false; }
     }
-    onMount(() => { void refresh(); return () => { disposed = true; request?.abort(); }; });
+    $effect(() => {
+        const currentOffset = offset;
+        if (mounted) untrack(() => { void refresh(currentOffset); });
+    });
+    onMount(() => { mounted = true; void refresh(offset); return () => { disposed = true; request?.abort(); }; });
 </script>
-<svelte:head><title>{t($locale, 'chatInspector.today')} — Nola</title></svelte:head>
+<svelte:head>{#if pageLocation.active()}<title>{t($locale, 'chatInspector.today')} — Nola</title>{/if}</svelte:head>
 <main id="page-main" tabindex="-1" class="today-page">
-    <header><div><h1>{t($locale, 'chatInspector.today')}</h1></div><button type="button" aria-label={t($locale, 'chatPage.refresh')} title={t($locale, 'chatPage.refresh')} onclick={refresh} disabled={loading}><svg aria-hidden="true" viewBox="0 0 24 24"><path d="M20 7v5h-5M4 17v-5h5M5 8a8 8 0 0 1 14-2l1 6M4 12l1 6a8 8 0 0 0 14-2"/></svg></button></header>
+    <header><div><h1>{t($locale, 'chatInspector.today')}</h1></div><button type="button" aria-label={t($locale, 'chatPage.refresh')} title={t($locale, 'chatPage.refresh')} onclick={() => void refresh()} disabled={loading}><svg aria-hidden="true" viewBox="0 0 24 24"><path d="M20 7v5h-5M4 17v-5h5M5 8a8 8 0 0 1 14-2l1 6M4 12l1 6a8 8 0 0 0 14-2"/></svg></button></header>
     {#if loading}<p role="status" class="muted">{t($locale, 'chatPage.loading')}</p>{/if}
-    {#if failed}<div class="notice error" role="alert">{t($locale, 'shell.pageLoadFailed')} <button type="button" onclick={refresh} disabled={loading}>{t($locale, 'shell.retry')}</button></div>{/if}
+    {#if failed}<div class="notice error" role="alert">{t($locale, 'shell.pageLoadFailed')} <button type="button" onclick={() => void refresh()} disabled={loading}>{t($locale, 'shell.retry')}</button></div>{/if}
     {#if facts}
         {#if facts.needs_attention}<aside role="status"><p>{t($locale, 'chatInspector.expertAttention')}</p><ul>{#each facts.unrepresented_expert_contexts as context (context.context_conversation_id)}<li>{context.display_name}</li>{/each}</ul></aside>{/if}
         <section><h2>{t($locale, 'chatInspector.needsResponse')}</h2>

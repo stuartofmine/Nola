@@ -487,7 +487,9 @@ internal fun ChatScreen(
         if (command == ComposerCommand.stop && !state.processingState.isGenerating) {
             commandError = context.getString(R.string.composer_command_no_run); return true
         }
-        if (command == ComposerCommand.permissions && !viewModel.beginParameterEditing()) return true
+        if (command == ComposerCommand.permissions) {
+            viewModel.beginParameterEditing()
+        }
         inputText = ""; commandError = null
         when (command) {
             ComposerCommand.model -> showModelMenu = true
@@ -786,142 +788,146 @@ internal fun ChatScreen(
             sheetState = inspectorSheetState,
         ) {
         Box(Modifier.fillMaxWidth().fillMaxHeight(0.92f).imePadding().navigationBarsPadding()) {
-        if (inspector == ConversationInspector.Progress) {
-            ConversationProgressPanel(
-                state = state,
-                load = viewModel::loadConversationProgress,
-                pendingControl = viewModel::pendingGoalControl,
-                submitControl = viewModel::submitGoalControl,
-                onClose = { inspector = null },
-                discardControl = viewModel::discardPendingGoalControl,
-                expertChildren = { convId ->
-                    androidx.compose.runtime.key(convId, state.executionHostBinding) {
-                        ExpertChildTree(
-                            convId,
-                            load = { viewModel.loadExpertChildren(convId, it) },
-                            onOpen = {
-                                expertHistoryTarget = it
-                            }
-                        )
-                    }
+        when {
+            showContextSheetOpen -> {
+                LaunchedEffect(showContextSheetOpen, showContextSheet) {
+                    viewModel.refreshDataSourceCatalog()
                 }
-            )
+                val conversation = state.conversations.find { it.id == state.conversationId }
+                val convTitle = ConversationTitlePresentationPolicy.displayTitle(
+                    conversation?.title,
+                    conversation?.id ?: state.conversationId,
+                    stringResource(R.string.chat_new_chat),
+                )
+                ChatContextScreen(
+                    displayMode = showContextSheet,
+                    conversationId = state.conversationId.orEmpty(),
+                    conversationTitle = convTitle,
+                    contextUsage = state.contextUsageDetail,
+                    sessionMemory = state.sessionMemory,
+                    knowledgePoints = state.knowledgePoints,
+                    conversationWiki = state.conversationWiki,
+                    longTermMemory = state.longTermMemory,
+                    userPreferences = state.userPreferences,
+                    mcpServers = state.mcpServers,
+                    uploadedSkills = state.uploadedSkills,
+                    hostUploadedSkills = state.hostUploadedSkills,
+                    hostUploadedDocuments = state.hostUploadedDocuments,
+                    hostMcpServers = state.hostMcpServers,
+                    uploadedDocuments = state.uploadedDocuments,
+                    dataSources = state.dataSources,
+                    selectedDataSourceIds = state.selectedDataSourceIds,
+                    onDataSourceEnabledChange = viewModel::setConversationDataSourceEnabled,
+                    onDataSourceRestoreDefault = viewModel::restoreConversationDataSourceDefault,
+                    onSessionMemoryChange = { viewModel.updateSessionMemory(it) },
+                    onConversationKnowledgeChange = { knowledgePoints, wiki ->
+                        viewModel.updateConversationKnowledge(knowledgePoints, wiki)
+                    },
+                    onLongTermMemoryChange = { viewModel.updateLongTermMemory(it) },
+                    onUserPreferencesChange = { viewModel.updateUserPreferences(it) },
+                    onSkillToggle = { skill, enabled -> viewModel.toggleSkill(skill, enabled) },
+                    onSaveSkill = { original, name, description, content -> viewModel.saveSkill(original, name, description, content) },
+                    onSkillDelete = { viewModel.deleteSkill(it) },
+                    onDocumentAdd = { viewModel.addDocument(it) },
+                    onDocumentDelete = { viewModel.deleteDocument(it) },
+                    onSaveMemoryProfile = { viewModel.saveMemoryProfile() },
+                    onCompact = { viewModel.compactNow() },
+                    onReload = { viewModel.reloadContextState() },
+                    onSearchMemory = { query -> viewModel.searchMemoryForContext(query) },
+                    onDismissGuardStateChange = { saving, dirty ->
+                        sheetSaving = saving
+                        sheetDirty = dirty
+                    },
+                    dismissAttemptTick = sheetDismissTick,
+                    onBack = { showContextSheetOpen = false }
+                )
+            }
+            inspector == ConversationInspector.Progress -> {
+                ConversationProgressPanel(
+                    state = state,
+                    load = viewModel::loadConversationProgress,
+                    pendingControl = viewModel::pendingGoalControl,
+                    submitControl = viewModel::submitGoalControl,
+                    onClose = { inspector = null },
+                    discardControl = viewModel::discardPendingGoalControl,
+                    expertChildren = { convId ->
+                        androidx.compose.runtime.key(convId, state.executionHostBinding) {
+                            ExpertChildTree(
+                                convId,
+                                load = { viewModel.loadExpertChildren(convId, it) },
+                                onOpen = {
+                                    expertHistoryTarget = it
+                                }
+                            )
+                        }
+                    }
+                )
+            }
+            inspector == ConversationInspector.Resources -> {
+                ConversationResourcesPanel(state, onClose = { inspector = null })
+            }
+            showMoreSettings -> {
+                ChatMoreSettingsScreen(
+                    selectedModel = state.currentModel,
+                    contextUsage = state.contextUsageDetail,
+                    agentModeEnabled = state.agentMode,
+                    permissionMode = state.permissionMode,
+                    hybridDeviceToolsEnabled = state.hybridDeviceToolsEnabled,
+                    hybridDeviceCapabilities = state.hybridDeviceCapabilities,
+                    pairedHostIdentity = state.pairedHostIdentity,
+                    autoCompactTriggerPercent = state.autoCompactTriggerPercent,
+                    responseStyleOverride = state.responseStyleOverride,
+                    sessionMemory = state.sessionMemory,
+                    longTermMemory = state.longTermMemory,
+                    userPreferences = state.userPreferences,
+                    uploadedSkills = state.uploadedSkills,
+                    hostUploadedSkills = state.hostUploadedSkills,
+                    hostUploadedDocuments = state.hostUploadedDocuments,
+                    hostMcpServers = state.hostMcpServers,
+                    hostComputerUseStatus = state.hostComputerUseStatus,
+                    hostNativeBrowserStatus = state.hostNativeBrowserStatus,
+                    draftParameters = state.currentParameters,
+                    reasoningEfforts = remember(state.currentModel) { state.currentModel?.let(viewModel::reasoningEfforts).orEmpty() },
+                    conversationId = state.conversationId,
+                    generationOverride = state.generationOverride,
+                    onAgentModeChange = { viewModel.setAgentMode(it) },
+                    onPermissionModeChange = { viewModel.savePermissionMode(it) },
+                    onHybridDeviceToolsChange = { viewModel.setHybridDeviceToolsEnabled(it) },
+                    onHybridDeviceCapabilityChange = { capability, enabled ->
+                        viewModel.setHybridDeviceCapability(capability, enabled)
+                    },
+                    onForgetHostPairing = { viewModel.forgetHostPairing() },
+                    onAutoCompactPercentChange = { viewModel.setAutoCompactPercent(it) },
+                    onResponseStyleChange = { viewModel.saveResponseStyle(it) },
+                    onSessionMemoryChange = { viewModel.updateSessionMemory(it) },
+                    onLongTermMemoryChange = { viewModel.updateLongTermMemory(it) },
+                    onUserPreferencesChange = { viewModel.updateUserPreferences(it) },
+                    onSkillToggle = { skill, enabled -> viewModel.toggleSkill(skill, enabled) },
+                    onSaveParameters = { viewModel.saveModelParameters(it) },
+                    onSaveGenerationOverride = { viewModel.saveGenerationOverride(it) },
+                    onReloadParameters = viewModel::beginParameterEditing,
+                    onSaveMemoryProfile = { viewModel.saveMemoryProfile() },
+                    onOpenContextSettings = {
+                        viewModel.refreshDataSourceCatalog()
+                        showContextSheet = ContextDisplayMode.Context
+                        showContextSheetOpen = true
+                    },
+                    onOpenSkillLibrary = {
+                        showContextSheet = ContextDisplayMode.Skills
+                        showContextSheetOpen = true
+                    },
+                    onDismissGuardStateChange = { saving, dirty ->
+                        sheetSaving = saving
+                        sheetDirty = dirty
+                    },
+                    dismissAttemptTick = sheetDismissTick,
+                    onBack = {
+                        viewModel.clearPermissionSaveFailed()
+                        inspector = null
+                    }
+                )
+            }
         }
-        if (inspector == ConversationInspector.Resources) {
-            ConversationResourcesPanel(state, onClose = { inspector = null })
-        }
-    if (showMoreSettings && !showContextSheetOpen) {
-        ChatMoreSettingsScreen(
-            selectedModel = state.currentModel,
-            contextUsage = state.contextUsageDetail,
-            agentModeEnabled = state.agentMode,
-            permissionMode = state.permissionMode,
-            hybridDeviceToolsEnabled = state.hybridDeviceToolsEnabled,
-            hybridDeviceCapabilities = state.hybridDeviceCapabilities,
-            pairedHostIdentity = state.pairedHostIdentity,
-            autoCompactTriggerPercent = state.autoCompactTriggerPercent,
-            responseStyleOverride = state.responseStyleOverride,
-            sessionMemory = state.sessionMemory,
-            longTermMemory = state.longTermMemory,
-            userPreferences = state.userPreferences,
-            uploadedSkills = state.uploadedSkills,
-            hostUploadedSkills = state.hostUploadedSkills,
-            hostUploadedDocuments = state.hostUploadedDocuments,
-            hostMcpServers = state.hostMcpServers,
-            hostComputerUseStatus = state.hostComputerUseStatus,
-            hostNativeBrowserStatus = state.hostNativeBrowserStatus,
-            draftParameters = state.currentParameters,
-            reasoningEfforts = remember(state.currentModel) { state.currentModel?.let(viewModel::reasoningEfforts).orEmpty() },
-            conversationId = state.conversationId,
-            generationOverride = state.generationOverride,
-            onAgentModeChange = { viewModel.setAgentMode(it) },
-            onPermissionModeChange = { viewModel.savePermissionMode(it) },
-            onHybridDeviceToolsChange = { viewModel.setHybridDeviceToolsEnabled(it) },
-            onHybridDeviceCapabilityChange = { capability, enabled ->
-                viewModel.setHybridDeviceCapability(capability, enabled)
-            },
-            onForgetHostPairing = { viewModel.forgetHostPairing() },
-            onAutoCompactPercentChange = { viewModel.setAutoCompactPercent(it) },
-            onResponseStyleChange = { viewModel.saveResponseStyle(it) },
-            onSessionMemoryChange = { viewModel.updateSessionMemory(it) },
-            onLongTermMemoryChange = { viewModel.updateLongTermMemory(it) },
-            onUserPreferencesChange = { viewModel.updateUserPreferences(it) },
-            onSkillToggle = { skill, enabled -> viewModel.toggleSkill(skill, enabled) },
-            onSaveParameters = { viewModel.saveModelParameters(it) },
-            onSaveGenerationOverride = { viewModel.saveGenerationOverride(it) },
-            onReloadParameters = viewModel::beginParameterEditing,
-            onSaveMemoryProfile = { viewModel.saveMemoryProfile() },
-            onOpenContextSettings = {
-                viewModel.refreshDataSourceCatalog()
-                showContextSheet = ContextDisplayMode.Context
-                showContextSheetOpen = true
-            },
-            onOpenSkillLibrary = {
-                showContextSheet = ContextDisplayMode.Skills
-                showContextSheetOpen = true
-            },
-            onDismissGuardStateChange = { saving, dirty ->
-                sheetSaving = saving
-                sheetDirty = dirty
-            },
-            dismissAttemptTick = sheetDismissTick,
-            onBack = { inspector = null }
-        )
-    }
-
-    if (showContextSheetOpen) {
-        LaunchedEffect(showContextSheetOpen, showContextSheet) {
-            viewModel.refreshDataSourceCatalog()
-        }
-        val conversation = state.conversations.find { it.id == state.conversationId }
-        val convTitle = ConversationTitlePresentationPolicy.displayTitle(
-            conversation?.title,
-            conversation?.id ?: state.conversationId,
-            stringResource(R.string.chat_new_chat),
-        )
-        ChatContextScreen(
-            displayMode = showContextSheet,
-            conversationId = state.conversationId.orEmpty(),
-            conversationTitle = convTitle,
-            contextUsage = state.contextUsageDetail,
-            sessionMemory = state.sessionMemory,
-            knowledgePoints = state.knowledgePoints,
-            conversationWiki = state.conversationWiki,
-            longTermMemory = state.longTermMemory,
-            userPreferences = state.userPreferences,
-            mcpServers = state.mcpServers,
-            uploadedSkills = state.uploadedSkills,
-            hostUploadedSkills = state.hostUploadedSkills,
-            hostUploadedDocuments = state.hostUploadedDocuments,
-            hostMcpServers = state.hostMcpServers,
-            uploadedDocuments = state.uploadedDocuments,
-            dataSources = state.dataSources,
-            selectedDataSourceIds = state.selectedDataSourceIds,
-            onDataSourceEnabledChange = viewModel::setConversationDataSourceEnabled,
-            onDataSourceRestoreDefault = viewModel::restoreConversationDataSourceDefault,
-            onSessionMemoryChange = { viewModel.updateSessionMemory(it) },
-            onConversationKnowledgeChange = { knowledgePoints, wiki ->
-                viewModel.updateConversationKnowledge(knowledgePoints, wiki)
-            },
-            onLongTermMemoryChange = { viewModel.updateLongTermMemory(it) },
-            onUserPreferencesChange = { viewModel.updateUserPreferences(it) },
-            onSkillToggle = { skill, enabled -> viewModel.toggleSkill(skill, enabled) },
-            onSaveSkill = { original, name, description, content -> viewModel.saveSkill(original, name, description, content) },
-            onSkillDelete = { viewModel.deleteSkill(it) },
-            onDocumentAdd = { viewModel.addDocument(it) },
-            onDocumentDelete = { viewModel.deleteDocument(it) },
-            onSaveMemoryProfile = { viewModel.saveMemoryProfile() },
-            onCompact = { viewModel.compactNow() },
-            onReload = { viewModel.reloadContextState() },
-            onSearchMemory = { query -> viewModel.searchMemoryForContext(query) },
-            onDismissGuardStateChange = { saving, dirty ->
-                sheetSaving = saving
-                sheetDirty = dirty
-            },
-            dismissAttemptTick = sheetDismissTick,
-            onBack = { showContextSheetOpen = false }
-        )
-    }
         }
         }
     }
@@ -1159,11 +1165,12 @@ internal fun ChatScreen(
                         ConversationInspector.entries.forEach { target ->
                             DropdownMenuItem(text = { Text(stringResource(target.label)) }, onClick = {
                                 showActions = false
-                                if (target != ConversationInspector.Settings || inspector == target || viewModel.beginParameterEditing()) {
-                                    if (target == ConversationInspector.Resources) showContextSheet = ContextDisplayMode.Context
-                                    showContextSheetOpen = false
-                                    inspector = toggleInspector(inspector, target)
+                                if (target == ConversationInspector.Settings && inspector != target) {
+                                    viewModel.beginParameterEditing()
                                 }
+                                if (target == ConversationInspector.Resources) showContextSheet = ContextDisplayMode.Context
+                                showContextSheetOpen = false
+                                inspector = toggleInspector(inspector, target)
                             })
                         }
                     }
@@ -1602,10 +1609,12 @@ internal fun ChatScreen(
                     }
                 }
             ) }
-            if (state.permissionApplicationStatus in setOf("saving", "pending", "failed")) {
-            if (state.permissionApplicationStatus !in setOf("saved", "active")) {
+            if (state.permissionApplicationStatus in setOf("saving", "checking", "pending", "failed")) {
             TextButton(
-                onClick = { if (viewModel.beginParameterEditing()) inspector = ConversationInspector.Settings },
+                onClick = {
+                    viewModel.beginParameterEditing()
+                    inspector = ConversationInspector.Settings
+                },
                 modifier = Modifier
                     .padding(horizontal = NolaSpacing.lg)
                     .heightIn(min = 48.dp)
@@ -1629,7 +1638,6 @@ internal fun ChatScreen(
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                 modifier = Modifier.padding(horizontal = NolaSpacing.lg).testTag("chat.controls.permission.status"))
             }
-            }
         }
     }
 
@@ -1650,7 +1658,12 @@ internal fun ChatScreen(
             },
             onSaveLearning = if (message.role == ChatRole.assistant && !state.processingState.isGenerating) {
                 { statement, appliesToFuture ->
-                    recordLearningFeedback(PersonalIntelligenceCore.from(context), message, statement, appliesToFuture)
+                    val appContext = context.applicationContext
+                    scope.launch(kotlinx.coroutines.Dispatchers.IO) {
+                        runCatching {
+                            recordLearningFeedback(PersonalIntelligenceCore.from(appContext), message, statement, appliesToFuture)
+                        }
+                    }
                     if (appliesToFuture) {
                         intelligenceViewModel.saveEntry(
                             kind = IntelligenceEntryKind.Preference,
@@ -1754,6 +1767,11 @@ internal fun ChatTranscript(
         }
     }
 
+    val transcriptHeaderCount =
+        (if (state.compactionSourceStatus != CompactionSourceStatus.Idle) 1 else 0) +
+        (if (state.rejectedQueuedUiAction?.takeIf { it.identity.conversationId == state.conversationId } != null) 1 else 0) +
+        (if (uiSurfaceFailure != null) 1 else 0)
+
     // Drag events cannot be conflated with a layout snapshot. Stop following
     // as soon as the pointer takes ownership, before its first scroll delta.
     LaunchedEffect(scrollToMessageId) {
@@ -1762,12 +1780,8 @@ internal fun ChatTranscript(
         else expertReplies.entries.firstOrNull { (_, replies) -> replies.any { it.message?.id == targetId } }?.key
         val msgIndex = resolvedId?.let { id -> timelineMessages.indexOfFirst { it.id == id } } ?: -1
         if (msgIndex >= 0) {
-            val headerCount =
-                (if (state.compactionSourceStatus != CompactionSourceStatus.Idle) 1 else 0) +
-                (if (state.rejectedQueuedUiAction?.takeIf { it.identity.conversationId == state.conversationId } != null) 1 else 0) +
-                (if (uiSurfaceFailure != null) 1 else 0)
             followsLatest = false
-            val targetIndex = headerCount + msgIndex
+            val targetIndex = transcriptHeaderCount + msgIndex
             if (currentReduceMotion) listState.scrollToItem(targetIndex) else listState.animateScrollToItem(targetIndex)
         }
         onScrollToMessageConsumed()
@@ -1825,7 +1839,8 @@ internal fun ChatTranscript(
         val index = timelineMessages.indexOfFirst { it.id == target }
         if (index < 0) return@LaunchedEffect
         followsLatest = false
-        if (reduceMotion) listState.scrollToItem(index) else listState.animateScrollToItem(index)
+        val targetIndex = transcriptHeaderCount + index
+        if (reduceMotion) listState.scrollToItem(targetIndex) else listState.animateScrollToItem(targetIndex)
         onCompactionSourceConsumed(state.compactionSourceRequest)
     }
 

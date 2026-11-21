@@ -77,7 +77,7 @@ class MemoryProfileDataStore @Inject constructor(
         )
     }.flowOn(Dispatchers.IO)
 
-    val agentLlmEndpoint: Flow<String> = revision.map { modelConfiguration.load()?.endpoint.orEmpty() }
+    val agentLlmEndpoint: Flow<String> = revision.map { modelConfiguration.load()?.endpoint.orEmpty() }.flowOn(Dispatchers.IO)
 
     val agentLlmApiKey: Flow<String> = revision.map {
         runCatching {
@@ -86,9 +86,9 @@ class MemoryProfileDataStore @Inject constructor(
                 ?.let(::readConfiguredProfileApiKey)
                 .orEmpty()
         }.getOrDefault("")
-    }
+    }.flowOn(Dispatchers.IO)
 
-    val agentLlmModel: Flow<String> = revision.map { modelConfiguration.load()?.model.orEmpty() }
+    val agentLlmModel: Flow<String> = revision.map { modelConfiguration.load()?.model.orEmpty() }.flowOn(Dispatchers.IO)
 
     fun agentLlmConfiguration(): AndroidModelConfiguration.Snapshot? = modelConfiguration.load()
 
@@ -126,9 +126,9 @@ class MemoryProfileDataStore @Inject constructor(
         return secureTokenStore.readModelAccountSecret(reference).orEmpty()
     }
 
-    val responseStyle: Flow<String> = revision.map { productSetting(RESPONSE_STYLE_SETTING_KEY, "casual") }
+    val responseStyle: Flow<String> = revision.map { productSetting(RESPONSE_STYLE_SETTING_KEY, "casual") }.flowOn(Dispatchers.IO)
 
-    val memoryEnabled: Flow<Boolean> = revision.map { productSetting(MEMORY_ENABLED_SETTING_KEY, true) }
+    val memoryEnabled: Flow<Boolean> = revision.map { productSetting(MEMORY_ENABLED_SETTING_KEY, true) }.flowOn(Dispatchers.IO)
 
     val autoCompactTriggerPercent: Flow<Int> = revision.map {
         val setting = applicationRuntime.productSetting(CHAT_PREFERENCES_SETTING_KEY) ?: return@map 80
@@ -140,7 +140,7 @@ class MemoryProfileDataStore @Inject constructor(
             "Invalid auto-compact trigger percentage: ${preferences.autoCompactTriggerPercent}"
         }
         preferences.autoCompactTriggerPercent
-    }
+    }.flowOn(Dispatchers.IO)
 
     suspend fun skillEditor(id: String): AndroidApplicationRuntime.SkillEditorSnapshot = withContext(Dispatchers.IO) {
         requireNotNull(applicationRuntime.skillEditor(id)) { "Skill no longer exists" }
@@ -255,41 +255,76 @@ class MemoryProfileDataStore @Inject constructor(
             records.forEach(applicationRuntime::appendDataSourceUsage)
         } finally {
             // Earlier records may have committed even if a later command fails.
-            revision.value += 1
+            revision.update { it + 1 }
         }
     }
 
     fun saveDataSource(source: CustomDataSourceConfig) {
-        try { applicationRuntime.saveDataSource(source) } finally { revision.value += 1 }
+        try { applicationRuntime.saveDataSource(source) } finally { revision.update { it + 1 } }
     }
 
     suspend fun refreshDataSource(source: CustomDataSourceConfig, read: suspend () -> CustomDataSourceConfig): CustomDataSourceConfig {
-        return try { applicationRuntime.refreshDataSource(source, read) } finally { revision.value += 1 }
+        return try { applicationRuntime.refreshDataSource(source, read) } finally { revision.update { it + 1 } }
     }
 
     fun deleteDataSource(id: String) {
         applicationRuntime.deleteDataSource(id)
-        revision.value += 1
+        revision.update { it + 1 }
     }
 
     fun setDataSourceEnabled(id: String, enabled: Boolean) {
         applicationRuntime.setDataSourceEnabled(id, enabled)
-        revision.value += 1
+        revision.update { it + 1 }
+    }
+
+    fun pruneOrphanedModelSecrets() {
+        val referenced = applicationRuntime.listModelProfiles()
+            .filter { it.deletedAtMs == null }
+            .mapNotNull { profile ->
+                runCatching {
+                    json.parseToJsonElement(profile.sourceJson).jsonObject["credentialRef"]?.jsonPrimitive?.contentOrNull
+                }.getOrNull()
+            }
+            .filter { it.startsWith("android-model:") }
+            .toSet()
+        secureTokenStore.pruneModelAccountSecrets(referenced)
+    }
+
+    suspend fun addAgentLlmConfig(endpoint: String, apiKey: String, model: String, wireProtocol: String = "chat_completions") {
+        modelConfiguration.validateInput(endpoint, model)
+        val reference = apiKey.trim().takeIf { it.isNotEmpty() }?.let { "android-model:" + java.util.UUID.randomUUID() }
+        if (reference != null) check(secureTokenStore.saveModelAccountSecret(reference, apiKey.trim())) {
+            "Unable to store model account credential"
+        }
+        try {
+            modelConfiguration.add(endpoint, model, wireProtocol, reference)
+        } catch (error: Throwable) {
+            if (reference != null) secureTokenStore.deleteModelAccountSecret(reference)
+            throw error
+        }
+        pruneOrphanedModelSecrets()
+        revision.update { it + 1 }
     }
 
     suspend fun saveAgentLlmConfig(endpoint: String, apiKey: String, model: String, wireProtocol: String = "chat_completions") {
         modelConfiguration.validateInput(endpoint, model)
-        val reference=apiKey.trim().takeIf {it.isNotEmpty()}?.let {"android-model:"+java.util.UUID.randomUUID()}
-        if (reference != null) check(secureTokenStore.saveModelAccountSecret(reference,apiKey.trim())) {
+        val reference = apiKey.trim().takeIf { it.isNotEmpty() }?.let { "android-model:" + java.util.UUID.randomUUID() }
+        if (reference != null) check(secureTokenStore.saveModelAccountSecret(reference, apiKey.trim())) {
             "Unable to store model account credential"
         }
-        modelConfiguration.save(endpoint,model,wireProtocol,reference)
-        revision.value += 1
+        try {
+            modelConfiguration.save(endpoint, model, wireProtocol, reference)
+        } catch (error: Throwable) {
+            if (reference != null) secureTokenStore.deleteModelAccountSecret(reference)
+            throw error
+        }
+        pruneOrphanedModelSecrets()
+        revision.update { it + 1 }
     }
 
     suspend fun saveResponseStyle(style: String) {
         putProductSetting(RESPONSE_STYLE_SETTING_KEY, style)
-        revision.value += 1
+        revision.update { it + 1 }
     }
 
     suspend fun saveMemoryEnabled(enabled: Boolean) {
@@ -298,7 +333,7 @@ class MemoryProfileDataStore @Inject constructor(
             json.encodeToString(Setting(schemaVersion = 1, value = enabled)),
             System.currentTimeMillis(),
         )
-        revision.value += 1
+        revision.update { it + 1 }
     }
 
     suspend fun saveAutoCompactTriggerPercent(percent: Int) {
@@ -308,18 +343,19 @@ class MemoryProfileDataStore @Inject constructor(
             json.encodeToString(ChatPreferences(autoCompactTriggerPercent = percent)),
             System.currentTimeMillis(),
         )
-        revision.value += 1
+        revision.update { it + 1 }
     }
 
     suspend fun clearAll() {
         modelConfiguration.clearAll()
+        secureTokenStore.clearModelAccountSecrets()
         secureTokenStore.deleteLocalModelApiKey()
         listOf(
             MEMORY_ENABLED_SETTING_KEY, UPLOADED_DOCUMENTS_SETTING_KEY,
             RESOURCE_PRINCIPAL_SETTING_KEY, RESPONSE_STYLE_SETTING_KEY,
             CHAT_PREFERENCES_SETTING_KEY,
         ).forEach { applicationRuntime.deleteProductSetting(it) }
-        revision.value += 1
+        revision.update { it + 1 }
     }
 
     suspend fun getSnapshot(): ChatMemoryProfile = profile.first()
@@ -365,7 +401,7 @@ class MemoryProfileDataStore @Inject constructor(
         if (existing.isNotBlank()) return existing
         val principalId = UUID.randomUUID().toString().lowercase()
         putProductSetting(RESOURCE_PRINCIPAL_SETTING_KEY, principalId)
-        revision.value += 1
+        revision.update { it + 1 }
         return principalId
     }
 

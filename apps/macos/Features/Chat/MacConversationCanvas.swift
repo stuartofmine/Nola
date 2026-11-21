@@ -137,6 +137,9 @@ struct MacConversationCanvas: View {
                             onRequestTaskCancellation: { taskID, parentRunID in
                                 model.requestTaskCancellation(conversationID: conversationID, parentRunID: parentRunID, taskID: taskID)
                             },
+                            resolveTaskRunID: { message in
+                                model.taskParentRunID(for: conversationID, message: message)
+                            },
                             hasEarlierStoredMessages: model.hasEarlierStoredMessages,
                             isViewingHistory: model.isViewingStoredHistory,
                             isLoadingHistoryPage: model.isLoadingHistoryPage,
@@ -429,7 +432,6 @@ struct MacConversationCanvas: View {
                                 .task(id: expertWorkspace.mainSourceReady) { await expertWorkspace.refreshExpertDirectory() }
                         }
                     }
-                    .id(model.selectedConversationID)
                     .onChange(of: model.selectedComposerState.draft) { _, _ in highlightedCommand = nil; dismissedCommand = nil; commandError = nil; highlightedExpertID = nil; if dismissedExpertMention != model.draft { dismissedExpertMention = nil } }
                     .sheet(isPresented: $model.isModelSettingsPresented) {
                         MacConversationModelSettingsView(model: model)
@@ -455,6 +457,14 @@ struct MacConversationCanvas: View {
         .onChange(of: model.selectedComposerState.conversationID) { _, _ in
             pendingExpertReintroduction = nil
             expertMentionFailure = nil
+            commandError = nil
+            selectionRange = nil
+            composing = false
+            caretRequest = nil
+            highlightedCommand = nil
+            dismissedCommand = nil
+            highlightedExpertID = nil
+            dismissedExpertMention = nil
         }
         .confirmationDialog(String(localized: "Use the expert’s latest configuration?"), isPresented: expertReintroductionPresented) {
             Button(String(localized: "Reintroduce expert")) {
@@ -503,7 +513,7 @@ struct MacConversationCanvas: View {
             defer { selectingExpertID = nil }
             do {
                 try await workspace.prepareExpertMention(agentID: intent.agent.id, expectedRevision: intent.agent.revision,
-                    conversationID: intent.owner, isPersisted: intent.persisted, allowReintroduction: allowReintroduction, useMemberSnapshot: !allowReintroduction)
+                    conversationID: intent.owner, isPersisted: intent.persisted, allowReintroduction: allowReintroduction, useMemberSnapshot: false)
                 guard model.selectedComposerState.conversationID == intent.owner else { return }
                 guard model.draft == intent.draft, currentQuery == intent.query else { return }
                 let member = workspace.conversationAssociation.flatMap { $0.conversationID == intent.owner ? $0.room.room.participants.first { $0.active && $0.agentID == intent.agent.id } : nil }

@@ -9,7 +9,7 @@
     import { locale } from '../lib/i18n.ts';
     import { editedResendLabel as label } from '../lib/editedResendLocale.ts';
     import { confirmEditedExpertResendCompletion } from '../lib/expertMessage.ts';
-    import { editResendText, confirmEditedResendAdmission } from '../lib/editedResend.ts';
+    import { editResendDraft, clearEditedResendMentions, confirmEditedResendAdmission } from '../lib/editedResend.ts';
     import type { EditedExpertResendCompletion } from '../lib/expertMessage.ts';
     import type { EditedResendDraft, EditedResendCompletion } from '../lib/editedResend.ts';
     let { mentionDirectory=[], mentionMembers=[], loadMentions, mentionEpoch, initial, busy=false, ownerChanged=false, onsubmit, onclose }: {
@@ -60,9 +60,9 @@
         <InlineExpertInput id="edit-expert-message" bind:field={editor} value={draft.input.edited_text} mentions={draft.mentions??[]}
             directory={mentionDirectory} members={mentionMembers} onload={loadMentions??(async()=>{})} disabled={sending}
             label={label($locale,'edit')} rows={8} onedit={(value,mentions)=>{
-                draft={...editResendText(draft,value),mentions,expertEpoch:draft.expertEpoch??mentionEpoch?.()??undefined};error='';copied=null;
+                draft=editResendDraft(draft,value,mentions,draft.expertEpoch??mentionEpoch?.()??undefined);error='';copied=null;
             }}/>
-        {#if error && draft.mentions?.length}<button type="button" disabled={sending} onclick={()=>{draft={...draft,mentions:[],expertEpoch:undefined};error='';}}>{t($locale,'rooms.plainMentions')}</button>{/if}
+        {#if error && draft.mentions?.length}<button type="button" disabled={sending} onclick={()=>{draft=clearEditedResendMentions(draft);error='';}}>{t($locale,'rooms.plainMentions')}</button>{/if}
         {#if ownerChanged}<p role="status">{label($locale,'changed')}</p><button type="button" onclick={copyDraft}>{label($locale,'copyDraft')}</button>{:else if busy}<p role="status">{label($locale,'wait')}</p>{/if}
         {#if copied}<p role="status">{label($locale,copied)}</p>{/if}
         {#if error}<p class="error" role="alert">{error}</p>{/if}

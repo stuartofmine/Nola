@@ -4,8 +4,18 @@ import AppKit
 
 struct MacModelConnectionsView: View {
     let service: MacModelConnectionService
+    let focusedRemoteProfileID: String?
+    let focusRevision: Int
     private var refreshOnAppear = true
-    init(service: MacModelConnectionService) { self.service = service }
+    init(
+        service: MacModelConnectionService,
+        focusedRemoteProfileID: String? = nil,
+        focusRevision: Int = 0
+    ) {
+        self.service = service
+        self.focusedRemoteProfileID = focusedRemoteProfileID
+        self.focusRevision = focusRevision
+    }
     @State private var connections: [MacModelConnectionSnapshot] = []
     @State private var accounts: [MacModelAccountSnapshot] = []
     @State private var enabled: [String: Set<String>] = [:]
@@ -44,6 +54,7 @@ struct MacModelConnectionsView: View {
     @State private var expandedModelID: String?
     @State private var selectedConnectionID: String?
     @State private var workspace: Workspace?
+    @State private var handledFocusRevision: Int?
     private enum Workspace: Hashable, Identifiable {
         case connections, api, imports, accounts, host
         var id: Self { self }
@@ -117,7 +128,17 @@ struct MacModelConnectionsView: View {
         }
         .background(MacDesignColor.canvas)
         .tint(MacDesignColor.brand)
-        .task { if refreshOnAppear { reload(); managementHost = MacRemoteHostConfigurationStore.shared.load() } }
+        .task {
+            if refreshOnAppear {
+                reload()
+                managementHost = MacRemoteHostConfigurationStore.shared.load()
+            }
+            focusRemoteProfileIfNeeded()
+        }
+        .onChange(of: focusRevision) { _, _ in
+            if refreshOnAppear && connections.isEmpty { reload() }
+            focusRemoteProfileIfNeeded()
+        }
         .sheet(item: $workspace) { target in
             VStack(spacing: 0) {
                 HStack {
@@ -339,7 +360,17 @@ struct MacModelConnectionsView: View {
                         }
                         } else {
                             if let account = accounts.first(where: { $0.id == connection.document.connection.account_id }) {
-                                MacSiwcAccountManagementView(application: service.application, account: account, changed: reload)
+                                MacSiwcAccountManagementView(
+                                    application: service.application,
+                                    account: account,
+                                    changed: reload,
+                                    modelsDiscovered: { id in selectedConnectionID = id; workspace = .connections },
+                                    reauthorize: { siwcAccount = account; showingSiwc = true },
+                                    activityChanged: { active in
+                                        if active { busyAccountIDs.insert(account.id) }
+                                        else { busyAccountIDs.remove(account.id) }
+                                    }
+                                )
                             }
                         }
                         if let catalog = connection.document.catalog, !catalog.models.isEmpty {
@@ -457,7 +488,12 @@ struct MacModelConnectionsView: View {
                 }.padding().background(.regularMaterial)
             }
         }
-        .task { if refreshOnAppear { reload(); managementHost = MacRemoteHostConfigurationStore.shared.load() } }
+        .task {
+            if refreshOnAppear {
+                reload()
+                managementHost = MacRemoteHostConfigurationStore.shared.load()
+            }
+        }
         .navigationTitle(String(localized: "Connections and accounts", table: "ModelCenter"))
         .sheet(item: $probeConfirmation, onDismiss: { if !probeRunning { cancelProbe() } }) { confirmation in
             probeSheet(confirmation)
@@ -759,6 +795,26 @@ struct MacModelConnectionsView: View {
             savedEnabled = fresh
             error = nil
         } catch { self.error = error.localizedDescription }
+    }
+
+    private func focusRemoteProfileIfNeeded() {
+        guard let profileID = focusedRemoteProfileID, !profileID.isEmpty,
+              handledFocusRevision != focusRevision else { return }
+        guard let profile = (try? service.application.listModelProfiles())?.first(where: {
+            $0.id == profileID && $0.deletedAtMs == nil
+        }),
+              let source = (try? JSONSerialization.jsonObject(with: Data(profile.sourceJSON.utf8))) as? [String: Any],
+              let connectionID = source["connectionID"] as? String,
+              let connection = connections.first(where: { $0.id == connectionID }) else {
+            return
+        }
+        handledFocusRevision = focusRevision
+        selectedConnectionID = connection.id
+        workspace = .connections
+        if let catalogKey = source["catalogKey"] as? String,
+           connection.document.catalog?.models.contains(where: { $0.id == catalogKey }) == true {
+            expandedModelID = catalogKey
+        }
     }
     nonisolated static func refreshedSelection(draft: [String: Set<String>], saved: [String: Set<String>],
         fresh: [String: Set<String>]) -> [String: Set<String>] {

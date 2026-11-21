@@ -45,7 +45,7 @@ internal fun ExpertChildTree(parentId: String, load: suspend (Int) -> ExpertChil
             try {
                 val incoming = load(offset).validated(parentId, offset)
                 check(reset || incoming.children.none { child -> children.any { it.conversationId == child.conversationId } })
-                check(page == null || incoming.roomId == page?.roomId && incoming.sourceIdentity == page?.sourceIdentity)
+                check(reset || page == null || (incoming.roomId == page?.roomId && incoming.sourceIdentity == page?.sourceIdentity))
                 children = if (reset) incoming.children else children + incoming.children; page = incoming
             } catch (cancelled: CancellationException) { throw cancelled }
             catch (_: Exception) { failed = true }

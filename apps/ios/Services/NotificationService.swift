@@ -231,6 +231,9 @@ public final class NotificationService {
     
     /// Send a notification for a candidate event
 public func sendNotification(for candidate: NotificationCandidate, priority: Priority = .medium, notificationManager: NotificationManager? = nil) async throws {
+        guard UserDefaults.standard.object(forKey: "enableNotifications") as? Bool ?? true else {
+            return
+        }
         // Check deduplication
         if shouldSkipDueToDuplication(candidate.dedupeKey) {
             logger.log(.debug, "NotificationService", NSLocalizedString("autogen.NotificationService.f93b1b1c", comment: "AUTOGEN"), metadata: ["key": candidate.dedupeKey])
@@ -294,6 +297,9 @@ public func sendNotification(for candidate: NotificationCandidate, priority: Pri
         priority: Priority = .medium,
         notificationManager: NotificationManager? = nil
     ) async throws {
+        guard UserDefaults.standard.object(forKey: "enableNotifications") as? Bool ?? true else {
+            return
+        }
         // Check deduplication
         if shouldSkipDueToDuplication(candidate.dedupeKey) {
             logger.log(.debug, "NotificationService", NSLocalizedString("autogen.NotificationService.337bdb4b", comment: "AUTOGEN"), metadata: ["key": candidate.dedupeKey])

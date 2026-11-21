@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { dashboardFocus, dashboardSnapshot, scheduleLabel, activeTask } from './dashboard.ts';
+import { dashboardFocus, dashboardSnapshot, scheduleLabel, activeTask, attentionTask } from './dashboard.ts';
 import type { DashboardTask } from './dashboard.ts';
 import { supportedLocales, t } from './i18n.ts';
 
@@ -21,12 +21,21 @@ test('schedule labels localize known frequencies and dates without rewriting cus
     }
 });
 
-test('overview focuses failed/partial outcomes before active tasks without mutating server order', () => {
-    const tasks = [task('running', { latestResult: { resultId: 'r', status: 'running', createdAt: '2026-09-22' } }), task('partial', { latestResult: { resultId: 'p', status: 'partial', createdAt: '2026-09-22' } })];
-    assert.equal(dashboardFocus(tasks).task?.sourceId, 'partial');
+test('overview focuses incomplete/blocked/failed outcomes before active tasks including waiting_input without mutating server order', () => {
+    const tasks = [
+        task('waiting', { latestResult: { resultId: 'w', status: 'waiting_input', createdAt: '2026-09-22' } }),
+        task('running', { latestResult: { resultId: 'r', status: 'running', createdAt: '2026-09-22' } }),
+        task('incomplete', { latestResult: { resultId: 'i', status: 'incomplete', createdAt: '2026-09-22' } }),
+        task('blocked', { latestResult: { resultId: 'b', status: 'blocked', createdAt: '2026-09-22' } }),
+    ];
+    assert.equal(dashboardFocus(tasks).task?.sourceId, 'incomplete');
+    assert.equal(dashboardFocus([tasks[0], tasks[3]]).task?.sourceId, 'blocked');
     assert.equal(dashboardFocus(tasks.slice(0, 1)).kind, 'active');
     assert.equal(activeTask(tasks[0]), true);
-    assert.deepEqual(tasks.map(task => task.sourceId), ['running', 'partial']);
+    assert.equal(activeTask(tasks[1]), true);
+    assert.equal(attentionTask(tasks[2]), true);
+    assert.equal(attentionTask(tasks[3]), true);
+    assert.deepEqual(tasks.map(task => task.sourceId), ['waiting', 'running', 'incomplete', 'blocked']);
 });
 
 test('next schedule ignores disabled, invalid and past dates rather than inventing a healthy task', () => {

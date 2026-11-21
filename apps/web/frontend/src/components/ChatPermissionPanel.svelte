@@ -47,10 +47,15 @@
             const pending = retry ? current.retry() : current.submit(choice, instruction);
             status = current.state;
             await pending;
-            if (controller !== current || !active) return;
+            if (controller !== current) return;
             status = current.state;
             if (status === 'accepted') { instruction = ''; onAccepted?.(permissionIdentity(current.challenge)); }
-        } catch { if (controller === current) localError = 'chatPermission.instructionLimit'; }
+        } catch (cause) {
+            if (controller === current) {
+                status = current.state;
+                localError = cause instanceof Error && cause.message.startsWith('chatPermission.') ? cause.message : 'chatPermission.invalid';
+            }
+        }
     }
 </script>
 

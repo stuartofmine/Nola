@@ -437,7 +437,7 @@ fn mobile_agent_settings_response(request: &Request) -> Response<Box<dyn Read + 
         .unwrap_or_else(|error| json!({"enabled": false, "error": error}));
     let messaging_channels = crate::messaging_channel_worker::list_connections()
         .unwrap_or_else(|error| json!({"channels": [], "error": error}));
-    let settings = match NolaStore::open_default().and_then(|store| load_agent_settings(&store)) {
+    let settings = match NolaStore::open_default().and_then(|store| load_agent_settings_from_store(&store)) {
         Ok(settings) => settings,
         Err(error) => return json_response(StatusCode(500), json!({"error":error})),
     };
@@ -459,6 +459,16 @@ fn mobile_agent_settings_response(request: &Request) -> Response<Box<dyn Read + 
                 .map(ToOwned::to_owned)
         })
         .collect::<Vec<_>>();
+        let uploaded_skills = settings
+            .uploaded_skills
+            .iter()
+            .filter_map(|skill| {
+                crate::resource_access::api_projection(
+                    skill,
+                    nola_core::agent::resource_access::AgentResourceKind::Skill,
+                )
+            })
+            .collect::<Vec<_>>();
         mobile_encrypted_json_response(
             StatusCode(200),
             json!({
@@ -466,8 +476,8 @@ fn mobile_agent_settings_response(request: &Request) -> Response<Box<dyn Read + 
                 "skills": builtin_skills::merged_catalog(
                     &settings.builtin_skill_overrides,
                     &settings.uploaded_skills,
-                ).unwrap_or_else(|_| settings.uploaded_skills.clone()),
-                "uploaded_skills": settings.uploaded_skills,
+                ).unwrap_or_else(|_| uploaded_skills.clone()),
+                "uploaded_skills": uploaded_skills,
                 "uploaded_documents": crate::resource_access::data_source_api_projections(&settings.uploaded_documents),
                 "mcp_servers": settings.mcp_servers.iter()
                     .filter_map(crate::resource_access::mcp_api_projection)

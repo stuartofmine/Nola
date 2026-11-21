@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { newAutomationDraft, automationCreateRequest, parseAutomations, automationScript, automationApprovalRequest, sameAutomationRevision, automationCanRun, automationHistoryLink, automationWeekday, automationCapabilities, automationRunIntent, automationRunResponse } from './automations.ts';
+import { newAutomationDraft, automationCreateRequest, isAbsoluteWorkspaceRoot, parseStoredAutomationRunIntent, parseAutomations, automationScript, automationApprovalRequest, sameAutomationRevision, automationCanRun, automationHistoryLink, automationWeekday, automationCapabilities, automationRunIntent, automationRunResponse } from './automations.ts';
 import type { Automation } from './automations.ts';
 import { automationRunConversationLink } from './automations.ts';
 import { automationEditDraft, automationEditRequest, automationCanEdit, parseAutomationSkills } from './automations.ts';
@@ -118,4 +118,25 @@ test('unknown states fail closed and history uses exact encoded source identity'
     assert.throws(() => parseAutomations({ actions: [action, action] }));
     assert.throws(() => parseAutomations({ actions: [{ ...action, enabled: 'true' }] }));
     assert.throws(() => parseAutomations({}));
+});
+
+test('workspaceRoot validation accepts POSIX, Windows drive, and UNC paths while rejecting relative paths', () => {
+    const draft = { ...newAutomationDraft(), name: 'WinTask', prompt: 'Inspect', permissionProfile: 'cautious' };
+    for (const root of ['/tmp/work', 'C:\\workspace\\project', 'D:/work/repo', '\\\\server\\share\\dir']) {
+        assert.equal(isAbsoluteWorkspaceRoot(root), true);
+        assert.doesNotThrow(() => automationCreateRequest({ ...draft, workspaceRoot: root }));
+    }
+    for (const bad of ['', '   ', 'relative/path', 'C:relative\\path', '.\\local']) {
+        assert.equal(isAbsoluteWorkspaceRoot(bad), false);
+        assert.throws(() => automationCreateRequest({ ...draft, workspaceRoot: bad }));
+    }
+});
+
+test('parseStoredAutomationRunIntent clears corrupt or stale-revision intents and preserves matching ones', () => {
+    const current = automationRunIntent(action);
+    assert.deepEqual(parseStoredAutomationRunIntent(JSON.stringify(current), action), { previous: current, clear: false });
+    assert.deepEqual(parseStoredAutomationRunIntent(JSON.stringify(current), { ...action, revision: 5 }), { clear: true });
+    assert.deepEqual(parseStoredAutomationRunIntent('{not-json', action), { clear: true });
+    assert.deepEqual(parseStoredAutomationRunIntent(JSON.stringify({ ...current, definitionId: 'other' }), action), { clear: true });
+    assert.deepEqual(parseStoredAutomationRunIntent(null, action), { clear: false });
 });

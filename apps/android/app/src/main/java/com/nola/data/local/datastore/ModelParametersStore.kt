@@ -59,7 +59,7 @@ class ModelParametersStore @Inject constructor(
 
     suspend fun saveParameters(snapshot: ParameterSnapshot, params: ModelParameters): ParameterSnapshot {
         val input = snapshot.profile.copy(parametersJson = json.encodeToString(params),
-            selected = false, enabled = true, deletedAtMs = null, updatedAtMs = System.currentTimeMillis())
+            selected = snapshot.profile.selected, enabled = true, deletedAtMs = null, updatedAtMs = System.currentTimeMillis())
         val committed = applicationRuntime.configureModelParameters(input, snapshot.profile.revision)
         revision.value += 1
         return snapshot.copy(parameters = params, profile = snapshot.profile.copy(parametersJson = input.parametersJson,

@@ -178,7 +178,7 @@
 <div class="content management-content">
     <nav class="library-sections" aria-label={t($locale,'capability.title')}>
     <div class="tabs" role="tablist" aria-label={t($locale, 'capability.type')}>
-        {#each ['skills', 'mcp'] as value}<button id="capability-{value}" role="tab" aria-selected={!plugins && mode === value} aria-controls="capability-panel" tabindex={!plugins && mode === value ? 0 : -1} onkeydown={tabKey} disabled={busy} onclick={() => switchMode(value as CapabilityMode)}>{t($locale, value === 'skills' ? 'capability.skills' : 'capability.mcp')}</button>{/each}
+        {#each ['skills', 'mcp'] as value}<button id="capability-{value}" role="tab" aria-selected={!plugins && mode === value} aria-controls="capability-panel" tabindex={mode === value ? 0 : -1} onkeydown={tabKey} disabled={busy} onclick={() => switchMode(value as CapabilityMode)}>{t($locale, value === 'skills' ? 'capability.skills' : 'capability.mcp')}</button>{/each}
     </div>
         <a class="plugin-entry" aria-current={plugins ? 'page' : undefined} href="/capabilities?tab=plugins">{t($locale,'plugin.title')}</a>
     </nav>

@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { parseUserInputWaits, freezeWaitResponse, waitIdentity } from './userInputWait.ts';
+import { parseUserInputWaits, freezeWaitResponse, validateWaitAnswers, waitIdentity } from './userInputWait.ts';
 const record = (conversation_id = 'parent', run_id = 'run') => ({ conversation_id, run_id, wait: {
     wait_id: 'question', revision: 1, response_schema_digest: 'schema', state: { type: 'open' },
     question_set: { questions: [{ id: 'q', prompt: 'Choose', required: true, allow_freeform: true,
@@ -33,4 +33,13 @@ test('withdrawn and duplicate waits cannot render as actionable questions', () =
     const withdrawn = record(); withdrawn.wait.state.type = 'withdrawn';
     assert.throws(() => parseUserInputWaits({ conversation_id: 'parent', waits: [withdrawn], task_waits: [] }, 'parent'));
     assert.throws(() => parseUserInputWaits({ conversation_id: 'parent', waits: [record(), record()], task_waits: [] }, 'parent'));
+});
+test('validateWaitAnswers rejects missing required, whitespace-only, and over-length freeform answers', () => {
+    const value = parseUserInputWaits({ conversation_id: 'parent', waits: [record()], task_waits: [] }, 'parent')[0];
+    assert.equal(validateWaitAnswers(value, []), false);
+    assert.equal(validateWaitAnswers(value, [{ question_id: 'q', value: { type: 'text', text: '   ' } }]), false);
+    assert.equal(validateWaitAnswers(value, [{ question_id: 'q', value: { type: 'text', text: 'a'.repeat(101) } }]), false);
+    assert.equal(validateWaitAnswers(value, [{ question_id: 'q', value: { type: 'text', text: 'a'.repeat(100) } }]), true);
+    assert.equal(validateWaitAnswers(value, [{ question_id: 'q', value: { type: 'option', option_id: 'one' } }]), true);
+    assert.equal(validateWaitAnswers(value, [{ question_id: 'q', value: { type: 'option', option_id: 'unknown' } }]), false);
 });

@@ -407,8 +407,14 @@ struct DataSourcesView: View {
     @State private var refreshSourcesError: String? = nil
     @State private var showRefreshSourcesError = false
     @State private var lastAutomaticRefresh = Date.distantPast
+    @State private var policyRefreshNonce = 0
     @StateObject private var sourceStatusStore = DataSourceStatusStore.shared
     @StateObject private var healthDashboard = HealthDashboardStore.shared
+
+    private func systemPolicy(for type: DataSourceType) -> URLDataSourceAccessPolicy {
+        _ = policyRefreshNonce
+        return SystemDataSourceAccessPolicyStore.shared.policy(for: type)
+    }
     
     var body: some View {
         ScrollView {
@@ -431,7 +437,7 @@ struct DataSourcesView: View {
                                     subtitle: L10n.dataSourceContactsSubtitle,
                                     color: .blue,
                                     state: sourceStatusStore.state(for: .contacts),
-                                    policy: SystemDataSourceAccessPolicyStore.shared.policy(for: .contacts)
+                                    policy: systemPolicy(for: .contacts)
                                 )
                                 .contentShape(Rectangle())
                             }
@@ -450,7 +456,7 @@ struct DataSourcesView: View {
                                     subtitle: L10n.dataSourceCalendarsSubtitle,
                                     color: .orange,
                                     state: sourceStatusStore.state(for: .calendars),
-                                    policy: SystemDataSourceAccessPolicyStore.shared.policy(for: .calendars)
+                                    policy: systemPolicy(for: .calendars)
                                 )
                                 .contentShape(Rectangle())
                             }
@@ -469,7 +475,7 @@ struct DataSourcesView: View {
                                     subtitle: L10n.dataSourceRemindersSubtitle,
                                     color: .green,
                                     state: sourceStatusStore.state(for: .reminders),
-                                    policy: SystemDataSourceAccessPolicyStore.shared.policy(for: .reminders)
+                                    policy: systemPolicy(for: .reminders)
                                 )
                                 .contentShape(Rectangle())
                             }
@@ -485,7 +491,7 @@ struct DataSourcesView: View {
                                 HealthDataSourceRow(
                                     dashboard: healthDashboard,
                                     runtimeState: sourceStatusStore.state(for: .health),
-                                    policy: SystemDataSourceAccessPolicyStore.shared.policy(for: .health)
+                                    policy: systemPolicy(for: .health)
                                 )
                                     .contentShape(Rectangle())
                             }
@@ -494,8 +500,17 @@ struct DataSourcesView: View {
                         }
                     }
                     DataSourcesCardSection(title: NSLocalizedString("data_sources.readable_sources.title", value: "Readable sources", comment: "Readable sources section title")) {
-                        InlineURLSourcesList()
-                            .environmentObject(container)
+                        if let fetcher = container.urlFetcher {
+                            InlineURLSourcesList(fetcher: fetcher)
+                                .environmentObject(container)
+                        } else {
+                            NolaInlineEmptyState(
+                                icon: "tray.full",
+                                title: NSLocalizedString("data_sources.inline.unavailable.title", value: "Data source service unavailable", comment: "Inline data source unavailable title"),
+                                message: NSLocalizedString("data_sources.inline.unavailable.message", value: "Cannot load custom data source configuration right now.", comment: "Inline data source unavailable message"),
+                                tint: DesignTokens.primaryColor
+                            )
+                        }
                     }
 
                     DataSourceAccessGuide()
@@ -543,8 +558,14 @@ struct DataSourcesView: View {
                     .accessibilityIdentifier("data.center.refresh")
                 }
             }
+            .onAppear {
+                policyRefreshNonce += 1
+            }
             .task {
                 await refreshDataSources(force: false, showErrors: false)
+            }
+            .onReceive(NotificationCenter.default.publisher(for: .nolaSystemDataSourcePolicyUpdated)) { _ in
+                policyRefreshNonce += 1
             }
             .onChange(of: scenePhase) { _, newPhase in
                 guard newPhase == .active else { return }
@@ -1099,12 +1120,37 @@ private struct DataSourceAccessGuide: View {
 
 private struct InlineURLSourcesList: View {
     @EnvironmentObject var container: ServiceContainer
+    @ObservedObject var fetcher: URLFetcherService
     @State private var editingSource: URLDataSource? = nil
     @State private var showingAdd: Bool = false
     @State private var saveConfirmation: String? = nil
+    @State private var sourcePendingDeletion: URLDataSource? = nil
+    @State private var deleteErrorMessage: String? = nil
 
     var body: some View {
         VStack(spacing: 0) {
+            if let deleteErrorMessage {
+                Button {
+                    self.deleteErrorMessage = nil
+                } label: {
+                    HStack(spacing: 9) {
+                        Image(systemName: "exclamationmark.triangle.fill")
+                            .foregroundStyle(.red)
+                        Text(deleteErrorMessage)
+                            .font(.subheadline.weight(.semibold))
+                            .foregroundStyle(.primary)
+                        Spacer()
+                        Image(systemName: "xmark")
+                            .font(.caption.weight(.bold))
+                            .foregroundStyle(.secondary)
+                    }
+                    .padding(.horizontal, 12)
+                    .padding(.vertical, 11)
+                    .background(Color.red.opacity(0.09), in: RoundedRectangle(cornerRadius: 13, style: .continuous))
+                }
+                .buttonStyle(.plain)
+                .padding(.bottom, 10)
+            }
             if let saveConfirmation {
                 Button {
                     self.saveConfirmation = nil
@@ -1128,9 +1174,8 @@ private struct InlineURLSourcesList: View {
                 .padding(.bottom, 10)
             }
 
-            if let fetcher = container.urlFetcher {
-                let sources = fetcher.sources
-                if sources.isEmpty {
+            let sources = fetcher.sources
+            if sources.isEmpty {
                     NolaInlineEmptyState(
                         icon: "tray.full",
                         title: NSLocalizedString("data_sources.inline.empty.title", value: "No readable sources yet", comment: "Inline data source empty title"),
@@ -1142,52 +1187,87 @@ private struct InlineURLSourcesList: View {
                     }
                     .accessibilityIdentifier("data.center.empty")
                     .padding(.vertical, 4)
-                } else {
+            } else {
                     VStack(spacing: 0) {
                         ForEach(Array(sources.enumerated()), id: \.element.id) { idx, source in
-                            Button {
-                                editingSource = source
-                            } label: {
-                                HStack(spacing: 12) {
-                                    Image(systemName: source.kind.iconSystemName)
-                                        .font(.system(size: 17, weight: .semibold))
-                                        .foregroundStyle(DesignTokens.primaryColor)
-                                        .frame(width: 24)
-                                    VStack(alignment: .leading, spacing: 6) {
-                                        Text(source.name)
-                                            .font(.headline)
-                                        Text(source.contextDisplaySubtitle)
-                                            .font(.caption)
+                            HStack(spacing: 8) {
+                                Button {
+                                    editingSource = source
+                                } label: {
+                                    HStack(spacing: 12) {
+                                        Image(systemName: source.kind.iconSystemName)
+                                            .font(.system(size: 17, weight: .semibold))
+                                            .foregroundStyle(DesignTokens.primaryColor)
+                                            .frame(width: 24)
+                                        VStack(alignment: .leading, spacing: 6) {
+                                            Text(source.name)
+                                                .font(.headline)
+                                            Text(source.contextDisplaySubtitle)
+                                                .font(.caption)
+                                                .foregroundColor(.secondary)
+                                                .lineLimit(1)
+                                            HStack(spacing: 7) {
+                                                Text(source.kind.displayName)
+                                                Text("·")
+                                                Text(source.accessPolicy.displayName)
+                                                Text("·")
+                                                Label(
+                                                    source.validationContract?.isUsable == true
+                                                        ? NSLocalizedString("data_source.contract.verified", value: "Verified", comment: "Verified source contract")
+                                                        : NSLocalizedString("data_source.contract.needs_validation", value: "Needs validation", comment: "Unverified source contract"),
+                                                    systemImage: source.validationContract?.isUsable == true ? "checkmark.seal.fill" : "exclamationmark.triangle.fill"
+                                                )
+                                                .foregroundColor(source.validationContract?.isUsable == true ? .green : .orange)
+                                            }
+                                            .font(.caption2.weight(.medium))
                                             .foregroundColor(.secondary)
                                             .lineLimit(1)
-                                        HStack(spacing: 7) {
-                                            Text(source.kind.displayName)
-                                            Text("·")
-                                            Text(source.accessPolicy.displayName)
-                                            Text("·")
-                                            Label(
-                                                source.validationContract?.isUsable == true
-                                                    ? NSLocalizedString("data_source.contract.verified", value: "Verified", comment: "Verified source contract")
-                                                    : NSLocalizedString("data_source.contract.needs_validation", value: "Needs validation", comment: "Unverified source contract"),
-                                                systemImage: source.validationContract?.isUsable == true ? "checkmark.seal.fill" : "exclamationmark.triangle.fill"
-                                            )
-                                            .foregroundColor(source.validationContract?.isUsable == true ? .green : .orange)
+                                            if source.validationContract?.isUsable == true {
+                                                InlineDataSourceContractSummary(source: source)
+                                            }
                                         }
-                                        .font(.caption2.weight(.medium))
-                                        .foregroundColor(.secondary)
-                                        .lineLimit(1)
-                                        if source.validationContract?.isUsable == true {
-                                            InlineDataSourceContractSummary(source: source)
-                                        }
+                                        Spacer()
                                     }
-                                    Spacer()
+                                    .padding(.vertical, 10)
+                                    .contentShape(Rectangle())
                                 }
-                                .padding(.vertical, 10)
-                                .contentShape(Rectangle())
+                                .buttonStyle(.plain)
+                                .accessibilityElement(children: .combine)
+                                .accessibilityIdentifier("data.center.source.\(source.id.uuidString)")
+
+                                Menu {
+                                    Button {
+                                        editingSource = source
+                                    } label: {
+                                        Label(L10n.edit, systemImage: "pencil")
+                                    }
+                                    Button(role: .destructive) {
+                                        sourcePendingDeletion = source
+                                    } label: {
+                                        Label(L10n.commonDelete, systemImage: "trash")
+                                    }
+                                } label: {
+                                    Image(systemName: "ellipsis.circle")
+                                        .font(.body)
+                                        .foregroundStyle(.secondary)
+                                        .frame(width: 36, height: 36)
+                                        .contentShape(Rectangle())
+                                }
+                                .accessibilityLabel(L10n.commonDelete)
+                                .accessibilityIdentifier("data.center.source.menu.\(source.id.uuidString)")
                             }
-                            .buttonStyle(.plain)
-                            .accessibilityElement(children: .combine)
-                            .accessibilityIdentifier("data.center.source.\(source.id.uuidString)")
+                            .contextMenu {
+                                Button {
+                                    editingSource = source
+                                } label: {
+                                    Label(L10n.edit, systemImage: "pencil")
+                                }
+                                Button(role: .destructive) {
+                                    sourcePendingDeletion = source
+                                } label: {
+                                    Label(L10n.commonDelete, systemImage: "trash")
+                                }
+                            }
 
                             if idx != sources.count - 1 {
                                 NolaDivider(leading: 12)
@@ -1211,14 +1291,6 @@ private struct InlineURLSourcesList: View {
                         .foregroundStyle(DesignTokens.primaryColor)
                         .accessibilityIdentifier("data.center.add")
                     }
-                }
-            } else {
-                NolaInlineEmptyState(
-                    icon: "tray.full",
-                    title: NSLocalizedString("data_sources.inline.unavailable.title", value: "Data source service unavailable", comment: "Inline data source unavailable title"),
-                    message: NSLocalizedString("data_sources.inline.unavailable.message", value: "Cannot load custom data source configuration right now.", comment: "Inline data source unavailable message"),
-                    tint: DesignTokens.primaryColor
-                )
             }
 
         }
@@ -1239,6 +1311,37 @@ private struct InlineURLSourcesList: View {
                 )
             }
                 .environmentObject(container)
+        }
+        .alert(
+            L10n.urlSourcesDeleteTitle,
+            isPresented: Binding(
+                get: { sourcePendingDeletion != nil },
+                set: { if !$0 { sourcePendingDeletion = nil } }
+            ),
+            presenting: sourcePendingDeletion
+        ) { source in
+            Button(L10n.urlSourcesDeleteCancel, role: .cancel) {
+                sourcePendingDeletion = nil
+            }
+            Button(L10n.urlSourcesDeleteConfirm, role: .destructive) {
+                deleteSource(source)
+            }
+        } message: { source in
+            Text(source.name)
+        }
+    }
+
+    private func deleteSource(_ source: URLDataSource) {
+        guard let fetcher = container.urlFetcher else { return }
+        deleteErrorMessage = nil
+        sourcePendingDeletion = nil
+        Task { @MainActor in
+            do {
+                try await fetcher.removeSourceConfirmed(id: source.id, expectedRevision: source.canonicalRevision)
+                container.scheduler.scheduleNextRefresh()
+            } catch {
+                deleteErrorMessage = error.localizedDescription
+            }
         }
     }
 }

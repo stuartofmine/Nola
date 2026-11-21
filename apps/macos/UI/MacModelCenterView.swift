@@ -137,7 +137,6 @@ final class MacModelCenterNavigationState: ObservableObject {
 struct MacModelCenterView: View {
     @State private var visitedSources: Set<MacModelCenterNavigationState.Tab>
     @StateObject private var navigation: MacModelCenterNavigationState
-    @StateObject private var remoteDraft: MacRemoteModelEditingState
     @StateObject private var localEditing: MacLocalModelEditingState
     @StateObject private var preference: MacDefaultChatModelPresentation
     @StateObject private var downloader = ModelDownloader(logger: Logger.shared)
@@ -154,10 +153,10 @@ struct MacModelCenterView: View {
     ) {
         _preference = StateObject(wrappedValue: preference ?? MacDefaultChatModelPresentation())
         _ = remoteHost
+        _ = remoteDraft
         self.navigationAction = navigationAction
         _navigation = StateObject(wrappedValue: navigation)
         _visitedSources = State(initialValue: [navigation.selectedTab])
-        _remoteDraft = StateObject(wrappedValue: remoteDraft ?? MacRemoteModelEditingState())
         _localEditing = StateObject(wrappedValue: localEditing ?? MacLocalModelEditingState())
     }
 
@@ -216,7 +215,11 @@ struct MacModelCenterView: View {
                         .disabled(navigation.selectedTab != .local)
                 }
                 if visitedSources.contains(.api) {
-                    MacModelConnectionsView(service: MacModelConnectionService(application: preference.store.application))
+                    MacModelConnectionsView(
+                        service: MacModelConnectionService(application: preference.store.application),
+                        focusedRemoteProfileID: navigation.focusedRemoteProfileID,
+                        focusRevision: navigation.focusRevision
+                    )
                         .opacity(navigation.selectedTab == .api ? 1 : 0)
                         .allowsHitTesting(navigation.selectedTab == .api)
                         .accessibilityHidden(navigation.selectedTab != .api)

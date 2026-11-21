@@ -290,8 +290,10 @@ public final class LocalProvider: LLMClient, LLMAgentCapabilityProviding {
         let promptResult: Result<String, Error>
         do {
             corePreparedPrompt = try decodePreparedCorePrompt(input: input)
-            if isChat {
-                promptResult = .success(corePreparedPrompt?.prompt ?? input.userPrefs["message"] ?? "")
+            if let corePreparedPrompt {
+                promptResult = .success(corePreparedPrompt.prompt)
+            } else if isChat {
+                promptResult = .success(input.userPrefs["message"] ?? "")
             } else {
                 // Summarization mode: structured JSON
                 let p = try buildPrompt(input: input)
@@ -315,23 +317,22 @@ public final class LocalProvider: LLMClient, LLMAgentCapabilityProviding {
                     do {
                         try Task.checkCancellation()
                         let systemPrompt: String
-                        if !isChat {
-                            systemPrompt = PromptTemplates.summarizationSystem
-                        } else if let corePreparedPrompt {
+                        if let corePreparedPrompt {
                             systemPrompt = corePreparedPrompt.system
-                        } else {
+                        } else if isChat {
                             systemPrompt = try PromptTemplates.chatSystem(
                                 responseStyle: style,
                                 customSystemPrompt: customSystemPrompt
                             )
+                        } else {
+                            systemPrompt = PromptTemplates.summarizationSystem
                         }
                         let stream = try await self.generationStream(prompt: prompt, systemPrompt: systemPrompt, enableThinking: self.enableThinking)
                         for try await chunk in stream {
-                            if Task.isCancelled {
-                                break
-                            }
+                            try Task.checkCancellation()
                             continuation.yield(chunk)
                         }
+                        try Task.checkCancellation()
                         continuation.finish()
                     } catch {
                         continuation.finish(throwing: error)

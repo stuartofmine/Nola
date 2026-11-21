@@ -421,6 +421,17 @@ public final class OpenAIProvider: LLMClient, AgentPromptCacheIdentityClient, LL
         enableThinking: Bool,
         stablePrefixSHA256: String
     ) async throws -> String {
+        if config.wireProtocol == .responses {
+            var content = ""
+            for try await event in generateResponsesEventStream(input: try responsesChatInput(
+                message: message, systemPrompt: systemPrompt
+            )) {
+                if case .textDelta(let delta) = event { content += delta }
+            }
+            return enableThinking
+                ? content
+                : Self.strippingContentThinking(from: content).trimmingCharacters(in: .whitespacesAndNewlines)
+        }
         let requestId = Self.makeRequestId(prefix: "agent")
         let responseObject = try await sendNonStreamingRequest(
             system: systemPrompt,
@@ -618,7 +629,7 @@ public final class OpenAIProvider: LLMClient, AgentPromptCacheIdentityClient, LL
         let data: Data
         let response: URLResponse
         do {
-            (data, response) = try await URLSession.shared.data(for: request)
+            (data, response) = try await streamSession.data(for: request)
         } catch {
             throw mapError(error)
         }
@@ -663,7 +674,7 @@ public final class OpenAIProvider: LLMClient, AgentPromptCacheIdentityClient, LL
         let bytes: URLSession.AsyncBytes
         let response: URLResponse
         do {
-            (bytes, response) = try await URLSession.shared.bytes(for: request)
+            (bytes, response) = try await streamSession.bytes(for: request)
         } catch {
             throw mapError(error)
         }
@@ -2032,13 +2043,23 @@ extension OpenAIProvider {
     }
 
     func generateResponsesEventStream(input: ModelInput, producer: LLMStreamProducerControl? = nil) -> AsyncThrowingStream<LLMStreamEvent, Error> {
-        AsyncThrowingStream { continuation in
+        let requestId = Self.makeRequestId(prefix: "responses")
+        return AsyncThrowingStream { continuation in
             let task = Task {
                 do {
                     let request = try responsesRequest(input: input)
                     let (bytes, response) = try await streamSession.bytes(for: request)
                     if let http = response as? HTTPURLResponse, !(200...299).contains(http.statusCode) {
-                        throw NolaError.llm(.invalidResponse(reason: "Responses provider returned HTTP \(http.statusCode)"))
+                        var body = Data()
+                        let maxErrorBytes = 64 * 1024
+                        for try await byte in bytes {
+                            if body.count < maxErrorBytes {
+                                body.append(byte)
+                            } else {
+                                break
+                            }
+                        }
+                        try validateHTTP(response: http, data: body, requestId: requestId)
                     }
                     var completed = false
                     var streamedText = false
@@ -2062,6 +2083,16 @@ extension OpenAIProvider {
                                 continuation.yield(.reasoningDelta(delta))
                             }
                         case "response.failed", "error":
+                            let errorSource: [String: Any]
+                            if let responseObject = event["response"] as? [String: Any],
+                               responseObject["error"] != nil {
+                                errorSource = responseObject
+                            } else {
+                                errorSource = event
+                            }
+                            if let errorEnvelope = Self.providerErrorEnvelope(from: errorSource) {
+                                throw makeEnvelopeError(from: errorEnvelope, statusCode: nil, requestId: requestId)
+                            }
                             throw NolaError.llm(.invalidResponse(reason: "Responses provider reported failure"))
                         case "response.completed", "response.incomplete":
                             guard !completed, let result = event["response"] as? [String: Any] else {
@@ -2128,7 +2159,7 @@ extension OpenAIProvider {
                     }
                     continuation.finish()
                 } catch {
-                    continuation.finish(throwing: error)
+                    continuation.finish(throwing: self.mapError(error))
                 }
             }
             producer?.install(task)

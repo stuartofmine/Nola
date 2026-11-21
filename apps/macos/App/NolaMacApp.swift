@@ -158,6 +158,7 @@ final class NolaMacApplicationDelegate: NSObject, NSApplicationDelegate {
 
     func applicationWillTerminate(_ notification: Notification) {
         // stopAll also owns the managed sharing server during application exit.
+        MacMLXOpenAIService.shared.stop()
         MacApplicationServiceSupervisor.shared.stopOwnedProcesses()
         MacOwnedChildProcessRegistry.shared.stopAll()
         if ProcessInfo.processInfo.environment["NOLA_CAPTURE_UI"] == nil {
@@ -1430,6 +1431,7 @@ struct MacSettingsView: View {
                 .disabled(isOpeningHostManagement)
                 .task(id: isOpeningHostManagement) {
                     guard isOpeningHostManagement else { return }
+                    defer { isOpeningHostManagement = false }
                     let revision = hostVerificationRevision
                     let target = url.path
                         + (url.query.map { "?\($0)" } ?? "")
@@ -1443,7 +1445,6 @@ struct MacSettingsView: View {
                         guard !Task.isCancelled, revision == hostVerificationRevision else { return }
                         settingsError = macRemoteHostUserFacingError(error)
                     }
-                    isOpeningHostManagement = false
                 }
                 .onDisappear { isOpeningHostManagement = false }
             }
@@ -1472,7 +1473,12 @@ struct MacSettingsView: View {
     private func leaveHostVerification() {
         hostVerificationTask?.cancel()
         hostVerificationTask = nil
-        if checkingHost { markHostConfigurationEdited() }
+        if checkingHost {
+            hostVerificationRevision = 0
+            let hasValues = !hostURL.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+                || !hostToken.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            hostConnectionState = hasValues ? .unverified : .notConfigured
+        }
     }
 
     private func markHostConfigurationEdited() {
@@ -1629,10 +1635,12 @@ struct MacSettingsView: View {
                 ))
                     .font(.callout)
                     .foregroundStyle(.secondary)
-                let endpoints = MacAppleChatConfigurationStore.shared.endpoints()
+                let legacyEndpoints = MacAppleChatConfigurationStore.shared.endpoints()
+                let managedConnections = (try? MacModelConnectionService(application: .shared).connections()) ?? []
+                let endpointCount = legacyEndpoints.count + managedConnections.count
                 let models = MacAppleChatConfigurationStore.shared.configuredModels()
                 LabeledContent(macSettingsText("mac.settings.provider.endpoints", "Endpoints")) {
-                    Text(endpoints.count, format: .number)
+                    Text(endpointCount, format: .number)
                 }
                 LabeledContent(macSettingsText("mac.settings.provider.chat_models", "Chat models")) {
                     Text(models.count, format: .number)

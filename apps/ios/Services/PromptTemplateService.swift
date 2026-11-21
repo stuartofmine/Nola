@@ -231,6 +231,7 @@ public final class PromptTemplateService: ObservableObject {
         self.logger = logger
         self.persistence = persistence
         templates = Self.builtIns
+        selectBuiltInLanguage(preferredLanguages: Locale.preferredLanguages)
         do { try reloadFromPersistence() }
         catch { logger.log(.error, "PromptTemplate", "Canonical template catalog could not be loaded") }
     }

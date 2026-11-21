@@ -21,11 +21,15 @@ export type DashboardSnapshot = {
 };
 
 export function activeTask(task: DashboardTask) {
-    return ['running', 'queued'].includes(task.latestResult?.status ?? '');
+    return ['running', 'waiting_input', 'queued'].includes(task.latestResult?.status ?? '');
+}
+
+export function attentionTask(task: DashboardTask) {
+    return ['incomplete', 'blocked', 'failed'].includes(task.latestResult?.status ?? '');
 }
 
 export function dashboardFocus(tasks: DashboardTask[], now = Date.now()): { kind: 'attention' | 'active' | 'next' | 'idle'; task?: DashboardTask } {
-    const failed = tasks.find(task => ['failed', 'partial'].includes(task.latestResult?.status ?? ''));
+    const failed = tasks.find(attentionTask);
     if (failed) return { kind: 'attention', task: failed };
     const active = tasks.find(activeTask);
     if (active) return { kind: 'active', task: active };

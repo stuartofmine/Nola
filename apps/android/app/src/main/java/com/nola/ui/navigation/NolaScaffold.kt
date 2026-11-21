@@ -487,7 +487,7 @@ private fun NolaNavigationHost(
                     onDetailVisibilityChanged = onChatDetailChanged,
                     onOpenPlans = { workspacePage = 2; navController.navigate(WORKSPACE_ROUTE) { launchSingleTop = true } },
                     onOpenModels = {
-                        navController.navigate("$MODELS_ROUTE/add/${System.currentTimeMillis()}") {
+                        navController.navigate(NolaTab.Models.route) {
                             launchSingleTop = true
                         }
                     }
@@ -544,8 +544,6 @@ private fun NolaNavigationHost(
                 val hasPrevious = navController.previousBackStackEntry != null
                 ModelsScreen(onBack = if (hasPrevious) ({ navController.popBackStack() }) else null)
             }
-            composable("$MODELS_ROUTE/add") { ModelsScreen(onBack = { navController.popBackStack() }) }
-            composable("$MODELS_ROUTE/add/{requestKey}") { ModelsScreen(onBack = { navController.popBackStack() }) }
             composable(SETTINGS_EXPERTS_ROUTE) { entry ->
                 val chatEntry = androidx.compose.runtime.remember(entry) { navController.getBackStackEntry(NolaTab.Chat.route) }
                 Box(Modifier.fillMaxSize(), contentAlignment = Alignment.TopCenter) {

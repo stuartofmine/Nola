@@ -68,7 +68,7 @@
     const thinkingError = $derived(reasoningExecutionValidationError(thinking, metadata.executionCapabilities)
         ?? reasoningValidationError(thinking, editing?.endpoint.wireProtocol ?? '', Number(draft.maxOutputTokens ?? 16384)));
     const parameterError = $derived(editing ? executionParameterValidationError({ ...editing,
-        parameters: { ...editing.parameters, ...draft }, executionCapabilities: metadata.executionCapabilities }) : null);
+        parameters: { ...editing.parameters, ...draft }, executionCapabilities: metadata.executionCapabilities, reasoning: thinking }) : null);
     const legacyThinkingDefault = $derived(editing?.endpoint.wireProtocol === 'chat_completions' && thinking.control === 'effort'
         && ['concise', 'balanced', 'detailed'].includes(thinking.defaultPreference ?? ''));
     const invalidThinkingDefault = $derived(!legacyThinkingDefault && thinking.defaultPreference != null && thinking.defaultPreference !== 'automatic' && !thinkingOptions.includes(thinking.defaultPreference));
@@ -313,9 +313,9 @@
             <div class="efforts execution-capabilities">
                 <label><input type="checkbox" bind:checked={metadata.executionCapabilities.toolCalls} />{t($locale, 'remote.execution.tool_calls')}</label>
                 <label><input type="checkbox" bind:checked={metadata.executionCapabilities.imageInput} />{t($locale, 'remote.execution.image_input')}</label>
-                <label><input type="checkbox" bind:checked={metadata.executionCapabilities.reasoning} />{t($locale, 'remote.execution.reasoning')}</label>
-                <label><input type="checkbox" bind:checked={metadata.executionCapabilities.samplingParameters} />{t($locale, 'remote.execution.sampling')}</label>
-                <label><input type="checkbox" bind:checked={metadata.executionCapabilities.samplingRequiresNoReasoning} disabled={!metadata.executionCapabilities.samplingParameters} />{t($locale, 'remote.execution.sampling_none_only')}</label>
+                <label><input type="checkbox" bind:checked={metadata.executionCapabilities.reasoning} onchange={() => { if (!metadata.executionCapabilities.reasoning) metadata.executionCapabilities.samplingRequiresNoReasoning = false; }} />{t($locale, 'remote.execution.reasoning')}</label>
+                <label><input type="checkbox" bind:checked={metadata.executionCapabilities.samplingParameters} onchange={() => { if (!metadata.executionCapabilities.samplingParameters) metadata.executionCapabilities.samplingRequiresNoReasoning = false; }} />{t($locale, 'remote.execution.sampling')}</label>
+                <label><input type="checkbox" bind:checked={metadata.executionCapabilities.samplingRequiresNoReasoning} disabled={!metadata.executionCapabilities.samplingParameters || !metadata.executionCapabilities.reasoning} />{t($locale, 'remote.execution.sampling_none_only')}</label>
             </div>
             {#if editing.endpoint.wireProtocol === 'chat_completions'}
                 <label>{t($locale, 'remote.execution.output_field')}

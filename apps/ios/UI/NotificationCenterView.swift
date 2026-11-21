@@ -359,13 +359,16 @@ struct NotificationCenterView: View {
 
     @MainActor
     private func markRead(_ item: NotificationEntity, refreshList: Bool = true) async {
-        suppressNextNotificationRefresh = true
         operationError = nil
-        do {
-            try container.notificationManager?.markAsRead(id: item.id)
-        } catch {
-            operationError = error.localizedDescription
-            container.logger.log(.error, "NotificationCenter", "Failed to mark local notification read", metadata: ["error": error.localizedDescription])
+        if let manager = container.notificationManager {
+            suppressNextNotificationRefresh = true
+            do {
+                try manager.markAsRead(id: item.id)
+            } catch {
+                suppressNextNotificationRefresh = false
+                operationError = error.localizedDescription
+                container.logger.log(.error, "NotificationCenter", "Failed to mark local notification read", metadata: ["error": error.localizedDescription])
+            }
         }
         if refreshList {
             await loadHistory(showLoading: false)
@@ -374,13 +377,16 @@ struct NotificationCenterView: View {
 
     @MainActor
     private func markAllRead() async {
-        suppressNextNotificationRefresh = true
         operationError = nil
-        do {
-            try container.notificationManager?.markAllRead()
-        } catch {
-            operationError = error.localizedDescription
-            container.logger.log(.error, "NotificationCenter", "Failed to mark local notifications read", metadata: ["error": error.localizedDescription])
+        if let manager = container.notificationManager {
+            suppressNextNotificationRefresh = true
+            do {
+                try manager.markAllRead()
+            } catch {
+                suppressNextNotificationRefresh = false
+                operationError = error.localizedDescription
+                container.logger.log(.error, "NotificationCenter", "Failed to mark local notifications read", metadata: ["error": error.localizedDescription])
+            }
         }
         await loadHistory(showLoading: false)
     }

@@ -213,7 +213,6 @@ struct IOSModelProtocolEditor: View {
                 Picker(NSLocalizedString("model.connections.protocol", comment: "Protocol"), selection: $wire) {
                     Text(verbatim: "Responses").tag(ModelWireProtocol.responses)
                     Text(verbatim: "Chat Completions").tag(ModelWireProtocol.chatCompletions)
-                    Text(verbatim: "Anthropic Messages").tag(ModelWireProtocol.anthropic)
                 }
                 .pickerStyle(.menu)
                 .accessibilityIdentifier("model.protocol.selection")

@@ -27,6 +27,7 @@
     let controller: AbortController | undefined;
     let detailController: AbortController | undefined;
     let timer: ReturnType<typeof setTimeout> | undefined;
+    let inFlightLoad: Promise<void> | null = null;
     let disposed = false;
     const sourceId = pageLocation.read().searchParams.get('sourceId');
     const scopedResults = $derived(sourceResults(results, sourceId));
@@ -34,18 +35,25 @@
     const history = $derived(filterResults(scopedResults.filter(result => !activeResult(result)), query, filter, $locale));
     const successCount = $derived(scopedResults.filter(successfulResult).length);
     const attentionCount = $derived(scopedResults.filter(attentionResult).length);
-    async function load() {
-        if (loading || disposed || document.hidden || !pageLocation.active()) return;
+    function load(): Promise<void> {
+        if (inFlightLoad) return inFlightLoad;
+        if (loading || disposed || document.hidden || !pageLocation.active()) return Promise.resolve();
         clearTimeout(timer); loading = true; controller = new AbortController();
-        try {
-            const response = await api<{ results: ResultSummary[] }>('/api/results', { signal: controller.signal });
-            if (disposed) return;
-            results = response.results; loaded = true; error = '';
-        } catch (cause) { if (!disposed) error = activityErrorKey(cause); }
-        finally {
-            loading = false;
-            if (!disposed && pageLocation.active() && !document.hidden && results.some(activeResult)) timer = setTimeout(load, 2500);
-        }
+        let run: Promise<void> | null = null;
+        run = (async () => {
+            try {
+                const response = await api<{ results: ResultSummary[] }>('/api/results', { signal: controller!.signal });
+                if (disposed) return;
+                results = response.results; loaded = true; error = '';
+            } catch (cause) { if (!disposed) error = activityErrorKey(cause); }
+            finally {
+                if (inFlightLoad === run) inFlightLoad = null;
+                loading = false;
+                if (!disposed && pageLocation.active() && !document.hidden && results.some(activeResult)) timer = setTimeout(load, 2500);
+            }
+        })();
+        inFlightLoad = run;
+        return run;
     }
     function visibility() { clearTimeout(timer); if (!document.hidden) void load(); }
     onMount(() => {

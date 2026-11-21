@@ -176,7 +176,7 @@ fun ChatContextScreen(
     onSkillToggle: (UploadedContent, Boolean) -> Unit,
     onSaveSkill: suspend (UploadedContent?, String, String, String) -> Unit,
     onSkillDelete: (UploadedContent) -> Unit,
-    onDocumentAdd: (UploadedContent) -> Unit,
+    onDocumentAdd: suspend (UploadedContent) -> Unit,
     onDocumentDelete: (UploadedContent) -> Unit,
     onSaveMemoryProfile: suspend () -> Unit,
     onCompact: suspend () -> Unit,
@@ -193,6 +193,7 @@ fun ChatContextScreen(
     var localLongTermMemory by remember(longTermMemory) { mutableStateOf(longTermMemory) }
     var localUserPreferences by remember(userPreferences) { mutableStateOf(userPreferences) }
     var searchQuery by remember(conversationId) { mutableStateOf("") }
+    var lastSearchedQuery by remember(conversationId) { mutableStateOf<String?>(null) }
     var searchResults by remember(conversationId) { mutableStateOf<List<MemorySearchHit>>(emptyList()) }
     var isSearching by remember { mutableStateOf(false) }
     var isSaving by remember { mutableStateOf(false) }
@@ -323,14 +324,18 @@ fun ChatContextScreen(
         scope.launch {
             errorMessage = null
             try {
-                val bytes = context.contentResolver.openInputStream(uri)?.use { input ->
-                    input.readBytes()
-                } ?: ByteArray(0)
-                val content = bytes.toString(Charsets.UTF_8).take(MAX_DOCUMENT_CHARS)
-                val name = context.contentResolver.query(uri, null, null, null, null)?.use { cursor ->
-                    val index = cursor.getColumnIndex(OpenableColumns.DISPLAY_NAME)
-                    if (index >= 0 && cursor.moveToFirst()) cursor.getString(index) else null
-                } ?: uri.lastPathSegment ?: context.getString(R.string.chat_imported_document)
+                val (name, content) = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+                    val maxBytes = MAX_DOCUMENT_CHARS * 4
+                    val bytes = context.contentResolver.openInputStream(uri)?.use { input ->
+                        readBoundedBytes(input, maxBytes)
+                    } ?: ByteArray(0)
+                    val text = bytes.toString(Charsets.UTF_8).take(MAX_DOCUMENT_CHARS)
+                    val displayName = context.contentResolver.query(uri, null, null, null, null)?.use { cursor ->
+                        val index = cursor.getColumnIndex(OpenableColumns.DISPLAY_NAME)
+                        if (index >= 0 && cursor.moveToFirst()) cursor.getString(index) else null
+                    } ?: uri.lastPathSegment ?: context.getString(R.string.chat_imported_document)
+                    displayName to text
+                }
                 onDocumentAdd(
                     UploadedContent(
                         name = name,
@@ -339,6 +344,8 @@ fun ChatContextScreen(
                     )
                 )
                 noticeMessage = context.getString(R.string.chat_document_imported)
+            } catch (cancelled: kotlinx.coroutines.CancellationException) {
+                throw cancelled
             } catch (e: Exception) {
                 errorMessage = e.message ?: context.getString(R.string.chat_document_import_failed)
             }
@@ -645,7 +652,9 @@ fun ChatContextScreen(
                                     isSearching = true
                                     errorMessage = null
                                     try {
-                                        searchResults = onSearchMemory(searchQuery)
+                                        val submittedQuery = searchQuery
+                                        searchResults = onSearchMemory(submittedQuery)
+                                        lastSearchedQuery = submittedQuery
                                     } catch (e: kotlinx.coroutines.CancellationException) {
                                         throw e
                                     } catch (e: Exception) {
@@ -693,7 +702,7 @@ fun ChatContextScreen(
                                 }
                             }
                         }
-                    } else if (searchQuery.isNotEmpty() && !isSearching) {
+                    } else if (lastSearchedQuery == searchQuery && searchQuery.isNotEmpty() && !isSearching) {
                         Spacer(Modifier.height(NolaSpacing.sm))
                         Text(stringResource(R.string.chat_no_search_results), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                     }
@@ -1367,3 +1376,17 @@ private fun dataSourcePolicyLabel(policy: DataSourceAccessPolicy): String = when
 }
 
 private const val MAX_DOCUMENT_CHARS = 200_000
+
+internal fun readBoundedBytes(input: java.io.InputStream, maxBytes: Int): ByteArray {
+    if (maxBytes <= 0) return ByteArray(0)
+    val out = java.io.ByteArrayOutputStream()
+    val buffer = ByteArray(minOf(8_192, maxBytes))
+    var remaining = maxBytes
+    while (remaining > 0) {
+        val read = input.read(buffer, 0, minOf(buffer.size, remaining))
+        if (read <= 0) break
+        out.write(buffer, 0, read)
+        remaining -= read
+    }
+    return out.toByteArray()
+}

@@ -505,7 +505,7 @@ struct ModelSelectionCanonicalEndToEndTests {
         var styleWrites: [PromptResponseStyle] = []
         let settings = ChatMoreSettingsSheet(
             selectedModel: ModelInfo(id: "scope-fixture", name: "Fixture", source: "local", isLocal: true),
-            contextUsage: nil, hostUploadedSkills: [], hostUploadedDocuments: [], hostMCPServers: [],
+            contextUsage: nil,
             hostComputerUseStatus: nil, hostNativeBrowserStatus: nil, pairedHostIdentity: nil,
             conversationGenerationOverride: .init(), onSaveGenerationOverride: { _ in },
             hybridDeviceToolsEnabled: .constant(false), hybridFilesEnabled: .constant(false),
@@ -513,8 +513,6 @@ struct ModelSelectionCanonicalEndToEndTests {
             hybridCalendarEnabled: .constant(false), enableRetrieval: .constant(false),
             permissionMode: .constant(.cautious), autoCompactTriggerPercent: .constant(80),
             responseStyle: Binding(get: { .playful }, set: { if let style = $0 { styleWrites.append(style) } }),
-            sessionMemory: .constant(""), longTermMemory: .constant(""), userPreferences: .constant(""),
-            uploadedSkills: .constant([]), onSaveMemoryProfile: {}, onSetSkillEnabled: { _, _ in },
             onOpenContextSettings: {}, onOpenSkillLibrary: {}, onForgetHostPairing: {}
         )
         let controller = UIHostingController(rootView: NavigationStack { settings })

@@ -195,8 +195,13 @@ public final class LocalJSONStorage: @unchecked Sendable {
     
     private func atomicWrite(_ data: Data, to url: URL) throws {
         let tmp = url.appendingPathExtension("tmp")
-        try data.write(to: tmp, options: [.atomic, .completeFileProtection])
-        _ = try? FileManager.default.replaceItemAt(url, withItemAt: tmp)
+        try data.write(to: tmp, options: [.atomic, .completeFileProtectionUntilFirstUserAuthentication])
+        do {
+            _ = try FileManager.default.replaceItemAt(url, withItemAt: tmp)
+        } catch {
+            try? FileManager.default.removeItem(at: tmp)
+            throw error
+        }
     }
     
     public func clearAll() throws {
@@ -222,6 +227,15 @@ public final class LocalJSONStorage: @unchecked Sendable {
             case actionCompleted = "action_completed"
             case delegationAccepted = "delegation_accepted"
             case incomplete, blocked, cancelled
+
+            public var isSuccessful: Bool {
+                switch self {
+                case .success, .answered, .actionCompleted:
+                    return true
+                case .partial, .skipped, .failed, .delegationAccepted, .incomplete, .blocked, .cancelled:
+                    return false
+                }
+            }
         }
 
         public let id: String
@@ -333,12 +347,69 @@ public final class LocalJSONStorage: @unchecked Sendable {
             self.executionPath = executionPath
             self.fetchedContentBytes = fetchedContentBytes
         }
+
+        public var displayResultText: String? {
+            if let fields = runResult?.value.payload.journalObject {
+                for key in ["summary", "text", "output", "message"] {
+                    if let text = fields[key]?.journalString?.trimmingCharacters(in: .whitespacesAndNewlines),
+                       !text.isEmpty {
+                        return text
+                    }
+                }
+                if let detail = fields["reason"]?.journalObject?["detail"]?.journalString?
+                    .trimmingCharacters(in: .whitespacesAndNewlines),
+                   !detail.isEmpty {
+                    return detail
+                }
+            }
+            return nil
+        }
+    }
+
+    /// Persists supplementary display metadata (action name/URL, linked journal ID, diagnostics)
+    /// keyed by canonical automation run ID. Canonical execution status and receipts remain
+    /// owned by IOSApplicationRuntime.
+    public func saveScheduledActionRunMetadata(_ record: ScheduledActionRunRecord) throws {
+        var result: Result<Void, Error>?
+        queue.sync {
+            do {
+                var metadata = (try? loadScheduledActionRunMetadata()) ?? [:]
+                metadata[record.id] = record
+                if metadata.count > 500 {
+                    let keptKeys = Set(
+                        metadata.values
+                            .sorted { $0.startedAt > $1.startedAt }
+                            .prefix(500)
+                            .map(\.id)
+                    )
+                    metadata = metadata.filter { keptKeys.contains($0.key) }
+                }
+                let data = try encoder.encode(metadata)
+                try atomicWrite(data, to: scheduledActionRunsPath)
+                result = .success(())
+            } catch {
+                result = .failure(error)
+            }
+        }
+        if let result, case .failure(let error) = result {
+            throw error
+        }
+    }
+
+    private func loadScheduledActionRunMetadata() throws -> [String: ScheduledActionRunRecord] {
+        guard FileManager.default.fileExists(atPath: scheduledActionRunsPath.path) else { return [:] }
+        let data = try Data(contentsOf: scheduledActionRunsPath)
+        return try decoder.decode([String: ScheduledActionRunRecord].self, from: data)
     }
 
     /// Fetch run records (optionally filtered), newest-first.
     public func getScheduledActionRuns(limit: Int? = nil, actionId: String? = nil) throws -> [ScheduledActionRunRecord] {
         return try queue.sync {
             let requestedLimit = max(1, limit ?? 500)
+            let metadataByRunID = (try? loadScheduledActionRunMetadata()) ?? [:]
+            let definitionsByID = Dictionary(
+                uniqueKeysWithValues: ((try? applicationRuntime.listAutomationDefinitions()) ?? []).map { ($0.id, $0) }
+            )
             let all: [ScheduledActionRunRecord] = try applicationRuntime.listAutomationRuns(
                 automationID: actionId?.isEmpty == false ? actionId : nil,
                 limit: requestedLimit
@@ -355,12 +426,41 @@ public final class LocalJSONStorage: @unchecked Sendable {
                 case .cancelled: status = .cancelled
                 case .failed: status = .failed
                 }
-                var projection = ScheduledActionRunRecord(id: run.id,
+                let meta = metadataByRunID[run.id]
+                let actionName = meta?.actionName ?? definitionsByID[run.automationID]?.name
+                let retryCount = meta?.retryCount ?? max(0, Int(run.attempt) - 1)
+                var projection = ScheduledActionRunRecord(
+                    id: run.id,
+                    createdAt: Date(timeIntervalSince1970: Double(run.createdAtMs) / 1_000),
                     startedAt: Date(timeIntervalSince1970: Double(run.startedAtMs ?? run.createdAtMs) / 1_000),
                     finishedAt: Date(timeIntervalSince1970: Double(receipt.terminal.completed_at_ms) / 1_000),
-                    isBackground: run.trigger == "background", actionType: "scheduled_url_report", actionId: run.automationID,
-                    dedupeKey: run.occurrenceKey, status: status, notificationSent: observation.notificationDelivered,
-                    trigger: run.trigger, executionPath: "local")
+                    isBackground: run.trigger == "background",
+                    actionType: meta?.actionType ?? "scheduled_url_report",
+                    actionId: run.automationID,
+                    actionName: actionName,
+                    actionUrl: meta?.actionUrl,
+                    dedupeKey: run.occurrenceKey,
+                    status: status,
+                    reason: meta?.reason,
+                    failureReason: meta?.failureReason,
+                    resultEventId: meta?.resultEventId,
+                    notificationSent: observation.notificationDelivered ? true : meta?.notificationSent,
+                    notificationError: meta?.notificationError,
+                    modelUsed: meta?.modelUsed,
+                    tokensUsed: meta?.tokensUsed,
+                    processingDurationSec: meta?.processingDurationSec,
+                    details: meta?.details,
+                    errorMessage: meta?.errorMessage,
+                    eventsCount: meta?.eventsCount,
+                    resultJournalId: meta?.resultJournalId,
+                    nextEligibleAt: meta?.nextEligibleAt,
+                    shouldRetry: meta?.shouldRetry,
+                    retryCount: retryCount,
+                    serverResultId: meta?.serverResultId,
+                    trigger: run.trigger,
+                    executionPath: meta?.executionPath ?? "local",
+                    fetchedContentBytes: meta?.fetchedContentBytes
+                )
                 projection.runResult = receipt.terminal.result
                 projection.resultDigest = receipt.terminal.result_digest
                 return projection

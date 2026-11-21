@@ -304,6 +304,7 @@ struct URLDataSourcesView: View {
 
     private func toggleSource(_ source: URLDataSource) {
         container.urlFetcher?.toggleSource(id: source.id)
+        container.scheduler.scheduleNextRefresh()
         refreshNonce += 1
         NotificationCenter.default.post(name: .nolaCustomSourcesUpdated, object: nil)
     }
@@ -734,6 +735,8 @@ struct AddURLDataSourceSheet: View {
     @State private var detectedFormat: URLDataFormat? // Auto-detected format
     @State private var showFileImporter = false
     @State private var showFolderImporter = false
+    @State private var pickedLocalURL: URL? = nil
+    @State private var pickedSecurityBookmarkData: Data? = nil
     @State private var isValidating = false
     @State private var validationTask: Task<Void, Never>?
     @State private var isSaving = false
@@ -1023,12 +1026,18 @@ struct AddURLDataSourceSheet: View {
                     initialEditorSnapshot = editorSnapshot
                 }
             }
-            .onChange(of: url) { _, _ in
-                guard url != existingSource?.url else { return }
+            .onChange(of: url) { _, newValue in
+                if newValue != pickedLocalURL?.absoluteString {
+                    pickedLocalURL = nil
+                    pickedSecurityBookmarkData = nil
+                }
+                guard !isValidating else { return }
+                guard newValue != existingSource?.url else { return }
                 validationResult = nil
                 previewEvents = []
             }
             .onChange(of: selectedFormat) { _, _ in
+                guard !isValidating else { return }
                 validationResult = nil
                 previewEvents = []
             }
@@ -1143,9 +1152,15 @@ struct AddURLDataSourceSheet: View {
                     return
                 }
 
+                let bookmarkData = makeSecurityScopedBookmarkIfNeeded()
+
                 // Detect format and preview first
                 // Pass the user-selected format.
-                let (fmt, preview, desc) = try await fetcher.detectFormatAndPreview(urlString: url, preferredFormat: selectedFormat)
+                let (fmt, preview, desc) = try await fetcher.detectFormatAndPreview(
+                    urlString: url,
+                    preferredFormat: selectedFormat,
+                    securityBookmarkData: bookmarkData
+                )
                 guard !Task.isCancelled else { return }
                 await MainActor.run {
                     detectedFormat = fmt
@@ -1159,6 +1174,7 @@ struct AddURLDataSourceSheet: View {
                 // Validate using detected format
                 var source = URLDataSource(id: sourceID, url: url, format: fmt, kind: selectedKind, name: name)
                 source.accessPolicy = accessPolicy
+                source.securityBookmarkData = bookmarkData
                 let result = await fetcher.validateSource(source)
                 guard !Task.isCancelled else { return }
                 await MainActor.run {
@@ -1179,6 +1195,17 @@ struct AddURLDataSourceSheet: View {
     private func importLocalSource(_ result: Result<[URL], Error>, kind: DataSourceKind) {
         do {
             guard let selectedURL = try result.get().first else { return }
+            let didAccess = selectedURL.startAccessingSecurityScopedResource()
+            let bookmark = try? selectedURL.bookmarkData(
+                options: [],
+                includingResourceValuesForKeys: nil,
+                relativeTo: nil
+            )
+            if didAccess {
+                selectedURL.stopAccessingSecurityScopedResource()
+            }
+            pickedLocalURL = selectedURL
+            pickedSecurityBookmarkData = bookmark
             selectedKind = kind
             selectedFormat = .html
             detectedFormat = .html
@@ -1262,9 +1289,32 @@ struct AddURLDataSourceSheet: View {
     // were removed as part of the data-sources -> scheduled-actions split.
 
     private func makeSecurityScopedBookmarkIfNeeded() -> Data? {
-        guard selectedKind == .file || selectedKind == .folder,
-              let localURL = URL(string: url),
-              localURL.isFileURL else {
+        guard selectedKind == .file || selectedKind == .folder else {
+            return nil
+        }
+
+        if let pickedLocalURL, pickedLocalURL.absoluteString == url {
+            if let pickedSecurityBookmarkData {
+                return pickedSecurityBookmarkData
+            }
+            let didAccess = pickedLocalURL.startAccessingSecurityScopedResource()
+            defer {
+                if didAccess {
+                    pickedLocalURL.stopAccessingSecurityScopedResource()
+                }
+            }
+            return try? pickedLocalURL.bookmarkData(
+                options: [],
+                includingResourceValuesForKeys: nil,
+                relativeTo: nil
+            )
+        }
+
+        if existingSource?.url == url, let existingBookmark = existingSource?.securityBookmarkData {
+            return existingBookmark
+        }
+
+        guard let localURL = URL(string: url), localURL.isFileURL else {
             return nil
         }
 

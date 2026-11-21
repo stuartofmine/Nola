@@ -28,26 +28,92 @@ import java.util.UUID
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
-import org.json.JSONObject
+import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.JsonPrimitive
+import kotlinx.serialization.json.booleanOrNull
+import kotlinx.serialization.json.buildJsonObject
+import kotlinx.serialization.json.contentOrNull
+import kotlinx.serialization.json.jsonObject
+import kotlinx.serialization.json.longOrNull
+import kotlinx.serialization.json.put
+
+internal data class SoftwareUpdateArtifact(
+    val kind: String,
+    val url: String?,
+)
+
+internal data class SoftwareUpdateRelease(
+    val releaseId: String,
+    val version: String,
+    val build: Long,
+    val notes: String?,
+    val artifact: SoftwareUpdateArtifact,
+)
+
+internal data class SoftwareUpdateSnapshot(
+    val status: String?,
+    val release: SoftwareUpdateRelease?,
+)
+
+private fun JsonObject.nonBlankString(key: String): String? =
+    (this[key] as? JsonPrimitive)?.takeIf { it.isString }?.contentOrNull?.takeIf { it.isNotBlank() }
+
+internal fun parseSoftwareUpdateSnapshot(value: JsonObject): SoftwareUpdateSnapshot {
+    val status = value.nonBlankString("status")
+    val releaseObj = value["release"] as? JsonObject
+    val release = releaseObj?.let { obj ->
+        val version = obj.nonBlankString("version")
+            ?: throw IOException("Update metadata is missing release version")
+        val build = (obj["build"] as? JsonPrimitive)?.longOrNull?.takeIf { it >= 0L }
+            ?: throw IOException("Update metadata is missing release build")
+        val artifactObj = obj["artifact"] as? JsonObject
+            ?: throw IOException("Update metadata is missing release artifact")
+        val kind = artifactObj.nonBlankString("kind")
+            ?: throw IOException("Update metadata is missing artifact kind")
+        val url = artifactObj.nonBlankString("url")
+        if (kind == "store" && url == null) {
+            throw IOException("Update metadata is missing store URL")
+        }
+        val releaseId = obj.nonBlankString("release_id")
+        if (kind != "store" && releaseId == null) {
+            throw IOException("Update metadata is missing release ID")
+        }
+        val notes = obj.nonBlankString("notes")
+        SoftwareUpdateRelease(
+            releaseId = releaseId.orEmpty(),
+            version = version,
+            build = build,
+            notes = notes,
+            artifact = SoftwareUpdateArtifact(kind = kind, url = url),
+        )
+    }
+    return SoftwareUpdateSnapshot(status = status, release = release)
+}
 
 internal fun softwareUpdateTarget(context: Context? = null): String = if (BuildConfig.STORE_MANAGED_UPDATES) "android-store" else when (Build.SUPPORTED_ABIS.firstOrNull()) {
     "arm64-v8a" -> "android-aarch64"
     "x86_64" -> "android-x86_64"
     else -> throw IOException(context?.getString(R.string.software_update_error_unsupported_arch) ?: "Unsupported update architecture")
 }
-private suspend fun updateCall(context: Context, operation: String, releaseId: String? = null, directory: File? = null): JSONObject = withContext(Dispatchers.IO) {
-    val request = JSONObject().put("operation", operation).put("target", softwareUpdateTarget(context))
-    releaseId?.let { request.put("expected_release_id", it) }
-    directory?.let { request.put("directory", it.absolutePath) }
+private suspend fun updateCall(context: Context, operation: String, releaseId: String? = null, directory: File? = null): JsonObject = withContext(Dispatchers.IO) {
+    val request = buildJsonObject {
+        put("operation", operation)
+        put("target", softwareUpdateTarget(context))
+        releaseId?.let { put("expected_release_id", it) }
+        directory?.let { put("directory", it.absolutePath) }
+    }
     val data = AgentCoreNative.nativeSoftwareUpdate(request.toString().toByteArray(Charsets.UTF_8))
         ?: throw IOException(context.getString(R.string.software_update_error_service_unavailable))
-    val reply = JSONObject(String(data, Charsets.UTF_8))
-    if (!reply.optBoolean("ok")) {
-        val message = reply.optJSONObject("error")?.optString("message")?.takeIf { it.isNotBlank() }
+    val reply = runCatching { Json.parseToJsonElement(String(data, Charsets.UTF_8)).jsonObject }
+        .getOrElse { throw IOException(context.getString(R.string.software_update_error_check_failed), it) }
+    if ((reply["ok"] as? JsonPrimitive)?.booleanOrNull != true) {
+        val message = (reply["error"] as? JsonObject)?.nonBlankString("message")
             ?: context.getString(R.string.software_update_error_check_failed)
         throw IOException(message)
     }
-    reply.getJSONObject("value")
+    reply["value"] as? JsonObject
+        ?: throw IOException(context.getString(R.string.software_update_error_check_failed))
 }
 
 /** The signed feed also has to describe this app's actual APK identity. */
@@ -68,10 +134,10 @@ internal fun SoftwareUpdateControls() {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
     var busy by remember { mutableStateOf(false) }
-    var snapshot by remember { mutableStateOf<JSONObject?>(null) }
+    var snapshot by remember { mutableStateOf<SoftwareUpdateSnapshot?>(null) }
     var failure by remember { mutableStateOf<String?>(null) }
     var packageFile by remember { mutableStateOf<File?>(null) }
-    val statusText = when (snapshot?.optString("status")) {
+    val statusText = when (snapshot?.status) {
         "disabled" -> R.string.software_update_status_disabled
         "up_to_date" -> R.string.software_update_status_up_to_date
         "ahead" -> R.string.software_update_status_ahead
@@ -87,22 +153,26 @@ internal fun SoftwareUpdateControls() {
     Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
         Text(stringResource(R.string.software_update_title), style = MaterialTheme.typography.titleSmall)
         Text(stringResource(statusText), color = MaterialTheme.colorScheme.onSurfaceVariant)
-        snapshot?.optJSONObject("release")?.let { release ->
-            Text("${release.getString("version")} (${release.getLong("build")})")
-            release.optString("notes").takeIf { it.isNotBlank() }?.let { Text(it) }
-            val artifact = release.getJSONObject("artifact")
-            if (artifact.getString("kind") == "store") {
-                TextButton(enabled = !busy, onClick = { open(artifact.getString("url")) }) { Text(stringResource(R.string.software_update_store)) }
+        snapshot?.release?.let { release ->
+            Text("${release.version} (${release.build})")
+            release.notes?.let { Text(it) }
+            val artifact = release.artifact
+            if (artifact.kind == "store") {
+                artifact.url?.let { storeUrl ->
+                    TextButton(enabled = !busy, onClick = { open(storeUrl) }) { Text(stringResource(R.string.software_update_store)) }
+                }
             } else if (!BuildConfig.STORE_MANAGED_UPDATES) {
                 TextButton(enabled = !busy && packageFile == null, onClick = {
                     busy = true; failure = null
                     scope.launch {
                         try {
                             val directory = File(context.cacheDir, "software-updates/${UUID.randomUUID()}")
-                            val result = updateCall(context, "download", release.getString("release_id"), directory)
-                            val file = File(result.getString("path"))
+                            val result = updateCall(context, "download", release.releaseId, directory)
+                            val path = result.nonBlankString("path")
+                                ?: throw IOException(context.getString(R.string.software_update_error_check_failed))
+                            val file = File(path)
                             withContext(Dispatchers.IO) {
-                                validateDownloadedAndroidUpdate(context, file, release.getString("version"), release.getLong("build"))
+                                validateDownloadedAndroidUpdate(context, file, release.version, release.build)
                             }
                             packageFile = file
                         } catch (cancel: kotlinx.coroutines.CancellationException) { throw cancel }
@@ -132,7 +202,7 @@ internal fun SoftwareUpdateControls() {
         TextButton(enabled = !busy, onClick = {
             busy = true; failure = null; packageFile = null
             scope.launch {
-                try { snapshot = updateCall(context, "check") }
+                try { snapshot = parseSoftwareUpdateSnapshot(updateCall(context, "check")) }
                 catch (cancel: kotlinx.coroutines.CancellationException) { throw cancel }
                 catch (error: Exception) { failure = error.localizedMessage; snapshot = null }
                 finally { busy = false }

@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import Foundation
+import os
 
 nonisolated struct AgentNativeToolCallAccumulator {
     struct StreamDelta: Equatable {
@@ -107,20 +108,28 @@ public final class TextAgentModelClient: AgentModelCancellationClient, AgentInde
     private let admittedCapabilities: LLMAgentCapabilities
     private let frozenCapabilityProfile: AgentCoreJSONValue?
     public nonisolated let coreModelCapabilityProfile: AgentCoreJSONValue?
-    private var controlledRequest: (session: String, turn: String, iteration: Int, producer: LLMStreamProducerControl)?
+    private let controlledRequest = OSAllocatedUnfairLock<(session: String, turn: String, iteration: Int, producer: LLMStreamProducerControl)?>(initialState: nil)
 
     public func makeIndependentAgentModelClient() -> any AgentModelClient {
         TextAgentModelClient(client: client, enableThinking: enableThinking, frozen: frozenCapabilityProfile.map { (admittedCapabilities, $0) })
     }
 
     public func cancelAgentTurn(request: AgentModelRequest) async throws {
-        guard let active = controlledRequest,
-              active.session == request.sessionId, active.turn == request.turnId,
-              active.iteration == request.iteration else {
+        let active = controlledRequest.withLock { current -> (session: String, turn: String, iteration: Int, producer: LLMStreamProducerControl)? in
+            guard let current,
+                  current.session == request.sessionId, current.turn == request.turnId,
+                  current.iteration == request.iteration else {
+                return nil
+            }
+            return current
+        }
+        guard let active else {
             throw DeviceAgentCoordinatorError.cancellationOutcomeUnconfirmed
         }
         await active.producer.cancelAndWait()
-        if controlledRequest?.producer === active.producer { controlledRequest = nil }
+        controlledRequest.withLock { current in
+            if current?.producer === active.producer { current = nil }
+        }
     }
 
     public convenience init(client: LLMClient, enableThinking: Bool = true) {
@@ -323,13 +332,23 @@ public final class TextAgentModelClient: AgentModelCancellationClient, AgentInde
                         }
                     }
                     let events: AsyncThrowingStream<LLMStreamEvent, Error>
+                    let registeredProducer: LLMStreamProducerControl?
                     if let controlled = eventClient as? LLMControlledEventStreamingClient {
                         let operation = controlled.generateControlledEventStream(input: input)
-                        controlledRequest = (request.sessionId, request.turnId, request.iteration, operation.producer)
+                        registeredProducer = operation.producer
+                        controlledRequest.withLock { $0 = (request.sessionId, request.turnId, request.iteration, operation.producer) }
                         events = operation.events
                     } else {
-                        controlledRequest = nil
+                        registeredProducer = nil
+                        controlledRequest.withLock { $0 = nil }
                         events = eventClient.generateEventStream(input: input)
+                    }
+                    defer {
+                        if let registeredProducer {
+                            controlledRequest.withLock { current in
+                                if current?.producer === registeredProducer { current = nil }
+                            }
+                        }
                     }
                     for try await event in events {
                         try Task.checkCancellation()

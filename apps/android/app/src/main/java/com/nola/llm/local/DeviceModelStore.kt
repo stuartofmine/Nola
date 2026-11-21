@@ -125,6 +125,7 @@ class DeviceModelStore @Inject constructor(
             partial.delete()
             throw IllegalArgumentException("Model checksum verification failed")
         }
+        currentCoroutineContext().ensureActive()
         check(partial.renameTo(target)) { "Could not atomically install model" }
 
         val record = DeviceModelRecord(
@@ -166,11 +167,12 @@ class DeviceModelStore @Inject constructor(
         check(temporary.renameTo(manifest)) { "Could not atomically update model manifest" }
     }
 
-    private fun sha256(file: File): String {
+    private suspend fun sha256(file: File): String {
         val digest = MessageDigest.getInstance("SHA-256")
         file.inputStream().buffered().use { input ->
             val buffer = ByteArray(DEFAULT_BUFFER_SIZE)
             while (true) {
+                currentCoroutineContext().ensureActive()
                 val count = input.read(buffer)
                 if (count < 0) break
                 digest.update(buffer, 0, count)

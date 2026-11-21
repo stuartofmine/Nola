@@ -3318,3 +3318,5 @@
 "Write what you want the expert to do." = "Écrivez ce que vous voulez que l’expert fasse.";
 "View expert history" = "Voir l’historique de l’expert";
 "Icon could not be rendered" = "Impossible d’afficher l’icône";
+
+"model.center.selection_error.title" = "Impossible de sélectionner le modèle";

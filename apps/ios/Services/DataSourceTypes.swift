@@ -72,6 +72,10 @@ public enum DataSourceType: String, CaseIterable, Codable, Hashable, Sendable {
     }
 }
 
+public extension Notification.Name {
+    static let nolaSystemDataSourcePolicyUpdated = Notification.Name("nola.systemDataSourcePolicyUpdated")
+}
+
 public struct SystemDataSourceAccessPolicyStore {
     public static let shared = SystemDataSourceAccessPolicyStore(
         applicationRuntime: IOSApplicationRuntime.shared
@@ -114,6 +118,7 @@ public struct SystemDataSourceAccessPolicyStore {
             valueJSON: String(decoding: data, as: UTF8.self),
             updatedAtMs: Int64(Date().timeIntervalSince1970 * 1_000)
         )
+        NotificationCenter.default.post(name: .nolaSystemDataSourcePolicyUpdated, object: type)
     }
 
     public func conversationOverrideKey(for type: DataSourceType) -> String {

@@ -3,6 +3,7 @@
 
 use super::stream_state::merge_usage_from_envelope;
 use std::collections::BTreeMap;
+#[cfg(test)]
 use std::io::{BufRead, BufReader};
 use std::net::SocketAddr;
 use std::sync::mpsc;
@@ -33,11 +34,13 @@ use super::stream_state::{
     append_choice_text, capture_openai_response_identity, stream_has_progress, stream_progress_size,
 };
 use super::transport::{
-    build_stream_client, classify_network_error_hint, llm_cancelled_message, recv_stream_line,
-    resolve_dns_fallbacks_for_host, response_retry_after_ms, send_request_with_cancellation,
+    build_async_native_stream_client, build_async_stream_client, llm_cancelled_message,
+    llm_http_timeout, resolve_dns_fallbacks_for_host, send_async_request_with_cancellation,
     stream_first_event_timeout, stream_idle_timeout, stream_tail_idle_timeout,
-    SendRequestResult, StreamLineRecv,
+    AsyncSendResult, StreamLineRecv,
 };
+#[cfg(test)]
+use super::transport::{send_request_with_cancellation, SendRequestResult};
 
 #[cfg(test)]
 #[path = "streaming_contract_tests.rs"]
@@ -3571,6 +3574,17 @@ pub(super) fn openai_request_body(
     Ok(body)
 }
 
+fn prepare_openai_non_stream_fallback_body(body: &Value) -> Value {
+    let mut fallback_body = body.clone();
+    if let Some(object) = fallback_body.as_object_mut() {
+        if let Some(stream) = object.get_mut("stream") {
+            *stream = Value::Bool(false);
+        }
+        object.remove("stream_options");
+    }
+    fallback_body
+}
+
 pub(super) fn stream_openai_body<F>(
     cfg: &LlmConfig, body: &Value, allow_transport_fallback: bool, mut on_event: F,
 ) -> Result<StreamedChoice, ProviderAttemptError>
@@ -3620,9 +3634,11 @@ where F: FnMut(LlmEvent) -> Result<(), String> {
     }
 
     for (attempt_index, resolved_addr) in attempts.into_iter().enumerate() {
-        let client = if cfg.native_model_route.is_some() {
-            super::transport::build_native_stream_client()?
-        } else { build_stream_client(parsed_endpoint.host_str(), resolved_addr)? };
+        let (runtime, client) = if cfg.native_model_route.is_some() {
+            build_async_native_stream_client()?
+        } else {
+            build_async_stream_client(parsed_endpoint.host_str(), resolved_addr)?
+        };
         let mut request = client
             .post(&endpoint)
             .header(CONTENT_TYPE, "application/json")
@@ -3636,13 +3652,19 @@ where F: FnMut(LlmEvent) -> Result<(), String> {
             crate::desktop_host_control::validate_native_model_channel(
                 route, &cfg.endpoint, &cfg.model, &cfg.api_key).map_err(ProviderAttemptError::Admission)?;
         }
-        super::diagnostics::record_prepared_request(&request, &[cfg.api_key.as_str()]);
-        let response = match send_request_with_cancellation(request, &cfg.cancellation) {
-            SendRequestResult::Response(response) => response,
-            SendRequestResult::Error(err) => {
-                let err_text = classify_network_error_hint(&err);
+        super::diagnostics::record_prepared_async_request(&request, &[cfg.api_key.as_str()]);
+        let http_timeout = llm_http_timeout();
+        let mut response = match send_async_request_with_cancellation(
+            runtime,
+            request,
+            http_timeout,
+            http_timeout,
+            &cfg.cancellation,
+        ) {
+            AsyncSendResult::Response(response) => response,
+            AsyncSendResult::Error(err_text) => {
                 last_err = Some(err_text.clone());
-                let lower_error = err.to_string().to_ascii_lowercase();
+                let lower_error = err_text.to_ascii_lowercase();
                 log_llm_debug_event(
                     cfg,
                     "request_send_error",
@@ -3657,10 +3679,7 @@ where F: FnMut(LlmEvent) -> Result<(), String> {
                 );
                 if allow_transport_fallback && should_fallback_non_stream_error_message(&lower_error) && resolved_addr.is_none()
                 {
-                    let mut fallback_body = body.clone();
-                    if let Some(stream) = fallback_body.get_mut("stream") {
-                        *stream = Value::Bool(false);
-                    }
+                    let fallback_body = prepare_openai_non_stream_fallback_body(body);
                     log_llm_debug_event(
                         cfg,
                         "request_fallback",
@@ -3687,14 +3706,13 @@ where F: FnMut(LlmEvent) -> Result<(), String> {
                     format!("{}: {}", tr(Message::LlmRequestFailedPrefix), err_text).into(),
                 );
             }
-            SendRequestResult::WorkerDisconnected => return Err(ProviderAttemptError::WorkerDisconnected),
-            SendRequestResult::Cancelled => return Err(llm_cancelled_message().into()),
+            AsyncSendResult::Cancelled => return Err(llm_cancelled_message().into()),
         };
 
         let status = response.status();
         if !status.is_success() {
-            let retry_after_ms = response_retry_after_ms(&response);
-            let detail = response.text().unwrap_or_default();
+            let retry_after_ms = response.retry_after_ms();
+            let detail = response.text(&cfg.cancellation).unwrap_or_default();
             log_llm_debug_event(
                 cfg,
                 "request_http_error",
@@ -3718,32 +3736,6 @@ where F: FnMut(LlmEvent) -> Result<(), String> {
         let stream_first_event_timeout = stream_first_event_timeout(stream_idle_timeout);
         let stream_tail_idle_timeout = stream_tail_idle_timeout();
         let read_failed_prefix = tr(Message::LlmStreamReadFailedPrefix).to_string();
-        // Bound read-ahead so a fast provider cannot enqueue an entire answer
-        // before the terminal cancellation listener gets scheduled.
-        let (line_tx, line_rx) = mpsc::sync_channel::<Result<String, String>>(32);
-        let reader_cancellation = cfg.cancellation.clone();
-        thread::spawn(move || {
-            let reader = BufReader::new(response);
-            for line in reader.lines() {
-                if reader_cancellation.is_requested() {
-                    break;
-                }
-                match line {
-                    Ok(line) => {
-                        if !line.starts_with("data: ") {
-                            continue;
-                        }
-                        if line_tx.send(Ok(line)).is_err() {
-                            break;
-                        }
-                    }
-                    Err(err) => {
-                        let _ = line_tx.send(Err(format!("{read_failed_prefix} {err}")));
-                        break;
-                    }
-                }
-            }
-        });
         let mut choice = StreamedChoice::default();
         let mut slots: BTreeMap<usize, ToolSlot> = BTreeMap::new();
         let mut text_tool_protocol = TextToolProtocolBuffer::default();
@@ -3778,7 +3770,11 @@ where F: FnMut(LlmEvent) -> Result<(), String> {
                 .into());
             }
             let recv_timeout = active_idle_limit.saturating_sub(idle_elapsed);
-            let line = match recv_stream_line(&line_rx, recv_timeout, &cfg.cancellation) {
+            let line = match response.next_data_line(
+                recv_timeout,
+                &cfg.cancellation,
+                &read_failed_prefix,
+            ) {
                 StreamLineRecv::Line(line) => line,
                 StreamLineRecv::Error(err) => {
                     log_llm_debug_event(
@@ -3806,10 +3802,7 @@ where F: FnMut(LlmEvent) -> Result<(), String> {
                         if allow_transport_fallback && should_fallback_non_stream_error_message(&err.to_ascii_lowercase())
                             && resolved_addr.is_none()
                         {
-                            let mut fallback_body = body.clone();
-                            if let Some(stream) = fallback_body.get_mut("stream") {
-                                *stream = Value::Bool(false);
-                            }
+                            let fallback_body = prepare_openai_non_stream_fallback_body(body);
                             log_llm_debug_event(
                                 cfg,
                                 "request_fallback",
@@ -4161,7 +4154,7 @@ impl TextToolProtocolBuffer {
     where
         F: FnMut(LlmEvent) -> Result<(), String>,
     {
-        if self.mode == TextToolProtocolMode::Undecided && !self.pending.is_empty() {
+        if self.mode != TextToolProtocolMode::Protocol && !self.pending.is_empty() {
             self.mode = TextToolProtocolMode::Text;
             let pending = std::mem::take(&mut self.pending);
             append_choice_text(choice, &pending, on_event)?;
@@ -4362,9 +4355,11 @@ where
     }
 
     for resolved_addr in attempts {
-        let client = if cfg.native_model_route.is_some() {
-            super::transport::build_native_stream_client()?
-        } else { build_stream_client(parsed_endpoint.host_str(), resolved_addr)? };
+        let (runtime, client) = if cfg.native_model_route.is_some() {
+            build_async_native_stream_client()?
+        } else {
+            build_async_stream_client(parsed_endpoint.host_str(), resolved_addr)?
+        };
         let mut request = client
             .post(endpoint)
             .header(CONTENT_TYPE, "application/json")
@@ -4377,11 +4372,17 @@ where
             crate::desktop_host_control::validate_native_model_channel(
                 route, &cfg.endpoint, &cfg.model, &cfg.api_key).map_err(ProviderAttemptError::Admission)?;
         }
-        super::diagnostics::record_prepared_request(&request, &[cfg.api_key.as_str()]);
-        let response = match send_request_with_cancellation(request, &cfg.cancellation) {
-            SendRequestResult::Response(response) => response,
-            SendRequestResult::Error(err) => {
-                let err_text = classify_network_error_hint(&err);
+        super::diagnostics::record_prepared_async_request(&request, &[cfg.api_key.as_str()]);
+        let http_timeout = llm_http_timeout();
+        let response = match send_async_request_with_cancellation(
+            runtime,
+            request,
+            http_timeout,
+            http_timeout,
+            &cfg.cancellation,
+        ) {
+            AsyncSendResult::Response(response) => response,
+            AsyncSendResult::Error(err_text) => {
                 last_err = Some(err_text.clone());
                 log_llm_debug_event(
                     cfg,
@@ -4399,14 +4400,13 @@ where
                     format!("{}: {}", tr(Message::LlmRequestFailedPrefix), err_text).into(),
                 );
             }
-            SendRequestResult::WorkerDisconnected => return Err(ProviderAttemptError::WorkerDisconnected),
-            SendRequestResult::Cancelled => return Err(llm_cancelled_message().into()),
+            AsyncSendResult::Cancelled => return Err(llm_cancelled_message().into()),
         };
 
         let status = response.status();
         if !status.is_success() {
-            let retry_after_ms = response_retry_after_ms(&response);
-            let detail = response.text().unwrap_or_default();
+            let retry_after_ms = response.retry_after_ms();
+            let detail = response.text(&cfg.cancellation).unwrap_or_default();
             log_llm_debug_event(
                 cfg,
                 "request_http_error",
@@ -4426,8 +4426,16 @@ where
         if cfg.cancellation.is_requested() {
             return Err(llm_cancelled_message().into());
         }
-        let parsed: Value = response
-            .json()
+        let body_text = response
+            .text(&cfg.cancellation)
+            .map_err(|err| {
+                if cfg.cancellation.is_requested() {
+                    llm_cancelled_message()
+                } else {
+                    format!("{} {err}", tr(Message::LlmStreamReadFailedPrefix))
+                }
+            })?;
+        let parsed: Value = serde_json::from_str(&body_text)
             .map_err(|err| format!("{} {err}", tr(Message::LlmStreamReadFailedPrefix)))?;
         if cfg.cancellation.is_requested() {
             return Err(llm_cancelled_message().into());
@@ -4589,9 +4597,11 @@ where F: FnMut(LlmEvent) -> Result<(), String> {
     }
 
     for (attempt_index, resolved_addr) in attempts.into_iter().enumerate() {
-        let client = if cfg.native_model_route.is_some() {
-            super::transport::build_native_stream_client()?
-        } else { build_stream_client(parsed_endpoint.host_str(), resolved_addr)? };
+        let (runtime, client) = if cfg.native_model_route.is_some() {
+            build_async_native_stream_client()?
+        } else {
+            build_async_stream_client(parsed_endpoint.host_str(), resolved_addr)?
+        };
         let mut request = client
             .post(&endpoint)
             .header(CONTENT_TYPE, "application/json")
@@ -4606,11 +4616,17 @@ where F: FnMut(LlmEvent) -> Result<(), String> {
             crate::desktop_host_control::validate_native_model_channel(
                 route, &cfg.endpoint, &cfg.model, &cfg.api_key).map_err(ProviderAttemptError::Admission)?;
         }
-        super::diagnostics::record_prepared_request(&request, &[cfg.api_key.as_str()]);
-        let response = match send_request_with_cancellation(request, &cfg.cancellation) {
-            SendRequestResult::Response(response) => response,
-            SendRequestResult::Error(err) => {
-                let err_text = classify_network_error_hint(&err);
+        super::diagnostics::record_prepared_async_request(&request, &[cfg.api_key.as_str()]);
+        let http_timeout = llm_http_timeout();
+        let mut response = match send_async_request_with_cancellation(
+            runtime,
+            request,
+            http_timeout,
+            http_timeout,
+            &cfg.cancellation,
+        ) {
+            AsyncSendResult::Response(response) => response,
+            AsyncSendResult::Error(err_text) => {
                 last_err = Some(err_text.clone());
                 let should_retry = resolved_addr.is_none() && has_fallback_addresses;
                 log_llm_debug_event(
@@ -4629,14 +4645,13 @@ where F: FnMut(LlmEvent) -> Result<(), String> {
                     format!("{}: {}", tr(Message::LlmRequestFailedPrefix), err_text).into(),
                 );
             }
-            SendRequestResult::WorkerDisconnected => return Err(ProviderAttemptError::WorkerDisconnected),
-            SendRequestResult::Cancelled => return Err(llm_cancelled_message().into()),
+            AsyncSendResult::Cancelled => return Err(llm_cancelled_message().into()),
         };
 
         let status = response.status();
         if !status.is_success() {
-            let retry_after_ms = response_retry_after_ms(&response);
-            let detail = response.text().unwrap_or_default();
+            let retry_after_ms = response.retry_after_ms();
+            let detail = response.text(&cfg.cancellation).unwrap_or_default();
             log_llm_debug_event(
                 cfg,
                 "request_http_error",
@@ -4660,30 +4675,6 @@ where F: FnMut(LlmEvent) -> Result<(), String> {
         let stream_first_event_timeout = stream_first_event_timeout(stream_idle_timeout);
         let stream_tail_idle_timeout = stream_tail_idle_timeout();
         let read_failed_prefix = tr(Message::LlmStreamReadFailedPrefix).to_string();
-        let (line_tx, line_rx) = mpsc::sync_channel::<Result<String, String>>(32);
-        let reader_cancellation = cfg.cancellation.clone();
-        thread::spawn(move || {
-            let reader = BufReader::new(response);
-            for line in reader.lines() {
-                if reader_cancellation.is_requested() {
-                    break;
-                }
-                match line {
-                    Ok(line) => {
-                        if !line.starts_with("data: ") {
-                            continue;
-                        }
-                        if line_tx.send(Ok(line)).is_err() {
-                            break;
-                        }
-                    }
-                    Err(err) => {
-                        let _ = line_tx.send(Err(format!("{read_failed_prefix} {err}")));
-                        break;
-                    }
-                }
-            }
-        });
 
         let mut choice = StreamedChoice::default();
         let mut slots: BTreeMap<usize, ToolSlot> = BTreeMap::new();
@@ -4717,7 +4708,11 @@ where F: FnMut(LlmEvent) -> Result<(), String> {
                 .into());
             }
             let recv_timeout = active_idle_limit.saturating_sub(idle_elapsed);
-            let line = match recv_stream_line(&line_rx, recv_timeout, &cfg.cancellation) {
+            let line = match response.next_data_line(
+                recv_timeout,
+                &cfg.cancellation,
+                &read_failed_prefix,
+            ) {
                 StreamLineRecv::Line(line) => line,
                 StreamLineRecv::Error(err) => {
                     log_llm_debug_event(
@@ -4844,4 +4839,104 @@ where F: FnMut(LlmEvent) -> Result<(), String> {
         last_err.unwrap_or_else(|| "unknown stream error".to_string())
     )
     .into())
+}
+
+#[cfg(test)]
+mod p1_streaming_tests {
+    use super::*;
+    use std::io::Write;
+    use std::net::TcpListener;
+
+    #[test]
+    fn non_stream_fallback_removes_stream_options_and_disables_stream() {
+        let body = json!({
+            "model": "gpt-4o",
+            "stream": true,
+            "stream_options": { "include_usage": true },
+            "messages": [{"role": "user", "content": "hi"}]
+        });
+        let fallback = prepare_openai_non_stream_fallback_body(&body);
+        assert_eq!(fallback["stream"], json!(false));
+        assert!(fallback.get("stream_options").is_none());
+        assert_eq!(fallback["model"], "gpt-4o");
+    }
+
+    #[test]
+    fn openai_and_anthropic_sse_readers_accept_data_without_space() {
+        for anthropic in [false, true] {
+            let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+            let addr = listener.local_addr().unwrap();
+            let server = thread::spawn(move || {
+                let (mut stream, _) = listener.accept().unwrap();
+                let mut reader = BufReader::new(stream.try_clone().unwrap());
+                let mut line = String::new();
+                let mut length = 0usize;
+                loop {
+                    line.clear();
+                    if reader.read_line(&mut line).unwrap() == 0 || line == "\r\n" {
+                        break;
+                    }
+                    if let Some(value) = line.to_lowercase().strip_prefix("content-length:") {
+                        length = value.trim().parse().unwrap_or(0);
+                    }
+                }
+                let mut body_buf = vec![0u8; length];
+                if length > 0 {
+                    let _ = std::io::Read::read_exact(&mut reader, &mut body_buf);
+                }
+                let sse = if anthropic {
+                    "data:{\"type\":\"content_block_delta\",\"index\":0,\"delta\":{\"type\":\"text_delta\",\"text\":\"hello\"}}\n\ndata:{\"type\":\"message_delta\",\"delta\":{\"stop_reason\":\"end_turn\"}}\n\ndata:{\"type\":\"message_stop\"}\n\n"
+                } else {
+                    "data:{\"choices\":[{\"delta\":{\"content\":\"hello\"},\"finish_reason\":\"stop\"}]}\n\ndata:[DONE]\n\n"
+                };
+                write!(
+                    stream,
+                    "HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+                    sse.len(),
+                    sse
+                )
+                .unwrap();
+            });
+            let cfg = LlmConfig {
+                siwc: None,
+                native_model_route: None,
+                provider: Some(if anthropic { "anthropic" } else { "openai" }.into()),
+                fallbacks: vec![],
+                endpoint: if anthropic {
+                    format!("http://{addr}/v1/messages")
+                } else {
+                    format!("http://{addr}/v1/chat/completions")
+                },
+                api_key: "test-key".into(),
+                model: if anthropic { "claude-3-5-sonnet" } else { "gpt-4o" }.into(),
+                temperature: 0.7,
+                top_p: 0.9,
+                max_output_tokens: 1024,
+                compaction_output_budget: None,
+                chat_output_token_field: Default::default(),
+                max_retries: 0,
+                parallel_tool_calls: None,
+                thinking_enabled: false,
+                reasoning_summary_supported: None,
+                reasoning_selection: None,
+                sampling_override: false,
+                generation_options: Default::default(),
+                cancellation: Default::default(),
+                openai_prompt_cache: false,
+                openai_prompt_cache_key: None,
+                openai_prompt_cache_key_prefix: None,
+                openai_prompt_cache_retention: None,
+                openai_prompt_cache_history_breakpoint: false,
+                openai_prompt_cache_history_breakpoint_endpoints: None,
+            };
+            let messages = [json!({"role": "user", "content": "hi"})];
+            let choice = if anthropic {
+                stream_anthropic_chat(&cfg, &messages, &[], "auto", |_| Ok(())).unwrap()
+            } else {
+                stream_openai_compatible_chat(&cfg, &messages, &[], "auto", |_| Ok(())).unwrap()
+            };
+            assert_eq!(choice.content, "hello");
+            server.join().unwrap();
+        }
+    }
 }

@@ -40,6 +40,22 @@ import javax.crypto.spec.SecretKeySpec
 import javax.inject.Inject
 import javax.inject.Singleton
 
+internal val GENERATIVE_UI_OPERATIONS: Set<String> = setOf(
+    "surfaces",
+    "interactions",
+    "queued-input",
+    "queued-input/cancel",
+    "revision",
+    "changes",
+    "preview",
+)
+
+internal fun generativeUiMaxResponseBytes(operation: String): Int = when (operation) {
+    "surfaces" -> 16 * 1024 * 1024
+    "interactions", "revision", "changes", "preview" -> 2 * 1024 * 1024
+    else -> 64 * 1024
+}
+
 @Singleton
 class WebHostApiServiceImpl @Inject constructor(
     private val httpClient: HttpClient,
@@ -98,14 +114,10 @@ class WebHostApiServiceImpl @Inject constructor(
 
     override suspend fun generativeUi(hostBaseUrl: String, token: String, operation: String, request: JsonObject,
         pinnedCertificateSha256: String): JsonObject {
-        require(operation in setOf("surfaces", "interactions", "queued-input", "queued-input/cancel", "revision", "changes"))
+        require(operation in GENERATIVE_UI_OPERATIONS)
         return postEncryptedWebHostRequest(httpClientFactory.controlClientFor(hostBaseUrl, pinnedCertificateSha256),
             webHostMobileUrl(hostBaseUrl, "chat/agent/v2/ui/$operation"), token, request, 128 * 1024,
-            maximumResponseBytes = when (operation) {
-                "surfaces" -> 16 * 1024 * 1024
-                "interactions", "revision", "changes" -> 2 * 1024 * 1024
-                else -> 64 * 1024
-            })
+            maximumResponseBytes = generativeUiMaxResponseBytes(operation))
     }
 
     override suspend fun readAssistantJournal(hostBaseUrl: String, token: String, request: JsonObject,

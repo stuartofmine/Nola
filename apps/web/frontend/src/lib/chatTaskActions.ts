@@ -1,4 +1,5 @@
 import type { TimelinePart } from './chatTimeline.ts';
+import { randomId } from './randomId.ts';
 
 export interface TaskOwner { conversationId: string; runId: string; hostId: string }
 export interface TaskControl { taskId: string; identity: string; guidance: boolean; cancellation: boolean; cancellationObserved: boolean; terminal: boolean }
@@ -187,7 +188,7 @@ export class TaskActionSubmission {
         try {
             if (action === 'guidance') {
                 this.intent = {hostId:this.owner.hostId, conversationId:this.owner.conversationId, parentRunId:this.owner.runId,
-                    taskId:this.control.taskId, messageId:crypto.randomUUID(), submittedAtMs:Date.now(), message:text};
+                    taskId:this.control.taskId, messageId:randomId(), submittedAtMs:Date.now(), message:text};
                 this.persistIntent(this.intent);
             } else {
                 this.cancellationPending = true;

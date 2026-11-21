@@ -284,6 +284,8 @@ struct MacChatWorkspaceView: View {
     @State private var showsExpertManagement = false
     @State private var opensLibraryAfterPicker = false
     @State private var showsAgentRooms = false
+    @State private var selectingPickerExpertID: String?
+    @State private var pendingPickerReintroduction: (agent: MacPersistentAgent, owner: String)?
     @State private var messageEditSession: MacMessageEditSession?
     @State private var messageEditError: String?
     private var expertSelection: Set<String> { Set((model.selectedConversationID.map(model.draftMentions) ?? []).map { $0.expert.agentID }) }
@@ -292,6 +294,47 @@ struct MacChatWorkspaceView: View {
             name: name, expert: expert, mentions: model.draftMentions(owner),
             sourceID: model.mainExpertDraftSource(owner), epoch: roomWorkspace.mainSourceEpoch?(owner))
         model.setDraft(insertion.text, conversationID: owner, mentions: insertion.mentions)
+    }
+
+    private func selectExpertFromPicker(_ agent: MacPersistentAgent, owner: String, allowReintroduction: Bool) {
+        guard selectingPickerExpertID == nil else { return }
+        selectingPickerExpertID = agent.id
+        roomWorkspace.directoryError = nil
+        let persisted = model.selectedConversation?.isPersisted == true
+        Task { @MainActor in
+            defer { selectingPickerExpertID = nil }
+            do {
+                try await roomWorkspace.prepareExpertMention(
+                    agentID: agent.id,
+                    expectedRevision: agent.revision,
+                    conversationID: owner,
+                    isPersisted: persisted,
+                    allowReintroduction: allowReintroduction,
+                    useMemberSnapshot: false
+                )
+                guard model.selectedConversationID == owner else { return }
+                let member = roomWorkspace.conversationAssociation.flatMap {
+                    $0.conversationID == owner ? $0.room.room.participants.first { $0.active && $0.agentID == agent.id } : nil
+                }
+                appendMention(
+                    .init(
+                        agentID: agent.id,
+                        agentRevision: member?.agentRevision ?? agent.revision,
+                        participantID: member?.id,
+                        contextConversationID: member?.contextConversationID
+                    ),
+                    name: member?.displayName ?? agent.name,
+                    owner: owner
+                )
+                showsAgentRooms = false
+            } catch MacExpertMentionPreparationError.reintroductionRequired {
+                guard model.selectedConversationID == owner else { return }
+                pendingPickerReintroduction = (agent, owner)
+            } catch {
+                roomWorkspace.directoryError = error.localizedDescription
+                await roomWorkspace.refreshExpertDirectory()
+            }
+        }
     }
     private var model: MacWorkspaceModel { modelOwner.model }
     @Environment(\.desktopPluginClient) private var pluginClient
@@ -783,18 +826,17 @@ struct MacChatWorkspaceView: View {
             MacExpertDirectoryManagementView(workspace: roomWorkspace)
         }
         .sheet(isPresented: $showsAgentRooms, onDismiss: {
+            pendingPickerReintroduction = nil
             if opensLibraryAfterPicker { opensLibraryAfterPicker = false; showsExpertManagement = true }
         }) {
             VStack {
                 MacChatExpertPicker(agents: roomWorkspace.directory, selection: .constant(expertSelection),
                     manage: model.executionHost == .remote ? nil : { opensLibraryAfterPicker = true; showsAgentRooms = false }, selected: { agent in
                         if let owner = model.selectedConversationID {
-                            let member = roomWorkspace.conversationAssociation.flatMap { $0.conversationID == owner ? $0.room.room.participants.first { $0.active && $0.agentID == agent.id } : nil }
-                            appendMention(.init(agentID: agent.id, agentRevision: member?.agentRevision ?? agent.revision,
-                                participantID: member?.id, contextConversationID: member?.contextConversationID), name: member?.displayName ?? agent.name, owner: owner)
-                            showsAgentRooms = false
+                            selectExpertFromPicker(agent, owner: owner, allowReintroduction: false)
                         }
                     })
+                    .disabled(selectingPickerExpertID != nil)
                 if let error = roomWorkspace.directoryError {
                     MacInlineNotice(message: error, kind: .failure, dismiss: { roomWorkspace.directoryError = nil })
                         .padding(.horizontal, 16)
@@ -802,6 +844,22 @@ struct MacChatWorkspaceView: View {
                 }
             }.frame(minWidth: 420, minHeight: 400)
                 .task(id: roomWorkspace.mainSourceReady) { await roomWorkspace.refreshExpertDirectory() }
+                .confirmationDialog(
+                    String(localized: "Use the expert’s latest configuration?"),
+                    isPresented: Binding(
+                        get: { pendingPickerReintroduction != nil },
+                        set: { if !$0 { pendingPickerReintroduction = nil } }
+                    )
+                ) {
+                    Button(String(localized: "Reintroduce expert")) {
+                        guard let pending = pendingPickerReintroduction else { return }
+                        pendingPickerReintroduction = nil
+                        selectExpertFromPicker(pending.agent, owner: pending.owner, allowReintroduction: true)
+                    }
+                    Button(String(localized: "Cancel"), role: .cancel) { pendingPickerReintroduction = nil }
+                } message: {
+                    Text(String(localized: "This adds a new expert context with the latest model and template. Previous replies stay in this conversation."))
+                }
         }
         .sheet(isPresented: $showsCommandPalette, onDismiss: {
             let action = pendingPaletteNavigation

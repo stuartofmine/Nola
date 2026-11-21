@@ -3288,3 +3288,5 @@
 "Write what you want the expert to do." = "Напишите, что должен сделать эксперт.";
 "View expert history" = "Посмотреть историю эксперта";
 "Icon could not be rendered" = "Не удалось отобразить значок";
+
+"model.center.selection_error.title" = "Не удалось выбрать модель";

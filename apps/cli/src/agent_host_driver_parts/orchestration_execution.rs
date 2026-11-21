@@ -6,6 +6,16 @@ pub(crate) fn expert_leaf_driver_control(id:&str)->bool {
     nola_domain::expert_task_target::expert_leaf_control(id) || matches!(id,"list_tasks"|"stop_task")
 }
 
+#[cfg(any(feature = "terminal-ui", test))]
+fn terminal_ui_owns_terminal() -> bool {
+    crate::terminal_ui::owns_terminal()
+}
+
+#[cfg(not(any(feature = "terminal-ui", test)))]
+fn terminal_ui_owns_terminal() -> bool {
+    false
+}
+
 #[cfg(all(test, unix))]
 mod plugin_driver_tests {
     use super::*;
@@ -2334,13 +2344,33 @@ impl CliAgentHostDriver {
         // usable and must not turn a successful model result into a failed turn.
         if let Some(witness) = &self.compaction_request_witness {
             if witness.persist(self.tool_context.output_store.root()).is_err() {
-                eprintln!("nola_compaction_snapshot_persist_failed: request remains available only in memory");
+                if terminal_ui_owns_terminal() {
+                    crate::llm::log_local_debug_payload(
+                        "compaction_snapshot",
+                        &json!({
+                            "event": "nola_compaction_snapshot_persist_failed",
+                            "detail": "request remains available only in memory",
+                        }),
+                    );
+                } else {
+                    eprintln!("nola_compaction_snapshot_persist_failed: request remains available only in memory");
+                }
             }
         } else if CompactionRequestWitness::invalidate(
             self.tool_context.output_store.root(), request.session_id.as_str(),
             &crate::llm::request_configuration_identity(&self.llm),
         ).is_err() {
-            eprintln!("nola_compaction_snapshot_invalidation_failed: latest response has no physical witness");
+            if terminal_ui_owns_terminal() {
+                crate::llm::log_local_debug_payload(
+                    "compaction_snapshot",
+                    &json!({
+                        "event": "nola_compaction_snapshot_invalidation_failed",
+                        "detail": "latest response has no physical witness",
+                    }),
+                );
+            } else {
+                eprintln!("nola_compaction_snapshot_invalidation_failed: latest response has no physical witness");
+            }
         }
         Ok(())
     }

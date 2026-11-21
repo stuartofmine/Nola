@@ -835,18 +835,35 @@ actor MacExtensionsService {
         store: MacApplicationPort = .shared
     ) throws -> [MacExtensionItem] {
         let skills = try store.listSkills()
+        let mcpServers = (try? store.listMCPServers()) ?? []
+        var skillEnabledByID: [String: Bool] = [:]
+        for skill in skills {
+            skillEnabledByID[skill.id] = skill.enabled
+            let normalized = macExtensionStrippingLegacyDigest(skill.id)
+            if skillEnabledByID[normalized] == nil {
+                skillEnabledByID[normalized] = skill.enabled
+            }
+        }
+        var mcpEnabledByNormalizedID: [String: Bool] = [:]
+        for server in mcpServers where server.deletedAtMs == nil {
+            let normalized = macExtensionStrippingLegacyDigest(server.id)
+            if mcpEnabledByNormalizedID[normalized] == nil {
+                mcpEnabledByNormalizedID[normalized] = server.enabled
+            }
+        }
         var items = try MacBuiltInSkillRegistry.extensionItems(store: store, skills: skills)
         if let workspaceURL {
-            items.append(contentsOf: scanSkills(root: workspaceURL, source: .workspace, limit: 120))
-            items.append(contentsOf: scanKnownExtensions(root: workspaceURL, source: .workspace))
+            items.append(contentsOf: scanSkills(root: workspaceURL, source: .workspace, limit: 120, skillEnabledByID: skillEnabledByID))
+            items.append(contentsOf: scanKnownExtensions(root: workspaceURL, source: .workspace, mcpEnabledByNormalizedID: mcpEnabledByNormalizedID))
         }
         let globalSkills = MacAppEnvironment.shared.skillsDirectory
         if fileManager.fileExists(atPath: globalSkills.path) {
-            items.append(contentsOf: scanSkills(root: globalSkills, source: .global, limit: 80))
+            items.append(contentsOf: scanSkills(root: globalSkills, source: .global, limit: 80, skillEnabledByID: skillEnabledByID))
         }
         items.append(contentsOf: scanKnownExtensions(
             root: fileManager.homeDirectoryForCurrentUser,
-            source: .global
+            source: .global,
+            mcpEnabledByNormalizedID: mcpEnabledByNormalizedID
         ))
         items.append(contentsOf: skills.compactMap { skill in
             guard let source = skill.gitHubSourceURL else { return nil }
@@ -1028,10 +1045,67 @@ actor MacExtensionsService {
             guard let server = try managedMCPServer(forItemID: item.id, store: store) else {
                 throw MacExtensionsServiceError.contentUnavailable
             }
+            let displayName: String
+            if let rawName = object["name"] {
+                guard let nameString = rawName as? String else {
+                    throw MacExtensionsServiceError.invalidDraftConfiguration(
+                        String(localized: "MCP server name cannot be empty.")
+                    )
+                }
+                let trimmedName = nameString.trimmingCharacters(in: .whitespacesAndNewlines)
+                guard !trimmedName.isEmpty else {
+                    throw MacExtensionsServiceError.invalidDraftConfiguration(
+                        String(localized: "MCP server name cannot be empty.")
+                    )
+                }
+                displayName = trimmedName
+            } else {
+                displayName = server.displayName
+            }
+            if let rawTimeout = object["timeout_ms"] ?? object["timeoutMs"] {
+                guard let number = rawTimeout as? NSNumber,
+                      CFGetTypeID(number) != CFBooleanGetTypeID(),
+                      number.doubleValue == floor(number.doubleValue),
+                      number.intValue >= 1_000,
+                      number.intValue <= 21_600_000 else {
+                    throw MacExtensionsServiceError.invalidDraftConfiguration(
+                        String(localized: "Timeout must be an integer between 1000 and 21600000 ms.")
+                    )
+                }
+            }
+            let rawCommand = (object["command"] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines)
+            let rawEndpoint = ((object["url"] as? String) ?? (object["endpoint"] as? String))?
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+            let hasValidStdio = rawCommand?.isEmpty == false
+            let hasValidHTTP: Bool = {
+                guard let rawEndpoint, !rawEndpoint.isEmpty,
+                      let url = URL(string: rawEndpoint),
+                      let scheme = url.scheme?.lowercased(),
+                      (scheme == "http" || scheme == "https"),
+                      !(url.host ?? "").isEmpty else {
+                    return false
+                }
+                return true
+            }()
+            if object["command"] != nil, !hasValidStdio {
+                throw MacExtensionsServiceError.invalidDraftConfiguration(
+                    String(localized: "Stdio command cannot be empty.")
+                )
+            }
+            if (object["url"] != nil || object["endpoint"] != nil), !hasValidHTTP {
+                throw MacExtensionsServiceError.invalidDraftConfiguration(
+                    String(localized: "Endpoint URL must be a valid HTTP or HTTPS URL.")
+                )
+            }
+            guard hasValidStdio || hasValidHTTP else {
+                throw MacExtensionsServiceError.invalidDraftConfiguration(
+                    String(localized: "Endpoint URL must be a valid HTTP or HTTPS URL.")
+                )
+            }
             let now = Int64(Date().timeIntervalSince1970 * 1_000)
             let updated = try store.configureMCPServer(
                 server,
-                displayName: server.displayName,
+                displayName: displayName,
                 enabled: server.enabled,
                 configurationJSON: trimmed,
                 updatedAtMs: now
@@ -1147,13 +1221,22 @@ actor MacExtensionsService {
         }
     }
 
-    private func scanSkills(root: URL, source: MacExtensionItem.Source, limit: Int) -> [MacExtensionItem] {
+    private func scanSkills(
+        root: URL,
+        source: MacExtensionItem.Source,
+        limit: Int,
+        skillEnabledByID: [String: Bool]
+    ) -> [MacExtensionItem] {
         var items: [MacExtensionItem] = []
         for url in MacLocalSkillActivationStore.instructionURLs(root: root, limit: limit) {
             let text = readPrefix(url, maximumBytes: 96_000)
             let title = skillTitle(url: url, text: text)
             let detail = skillDescription(text)
             let id = MacLocalSkillActivationStore.itemID(source: source, instructionURL: url)
+            let normalized = macExtensionStrippingLegacyDigest(id)
+            let isEnabled = macExtensionTrustedItemID(id)
+                ? (skillEnabledByID[normalized] ?? skillEnabledByID[id] ?? false)
+                : false
             items.append(MacExtensionItem(
                 id: id,
                 kind: .skill,
@@ -1161,13 +1244,17 @@ actor MacExtensionsService {
                 title: title,
                 detail: detail,
                 path: url.path,
-                isEnabled: MacLocalSkillActivationStore.isEnabled(itemID: id)
+                isEnabled: isEnabled
             ))
         }
         return items
     }
 
-    private func scanKnownExtensions(root: URL, source: MacExtensionItem.Source) -> [MacExtensionItem] {
+    private func scanKnownExtensions(
+        root: URL,
+        source: MacExtensionItem.Source,
+        mcpEnabledByNormalizedID: [String: Bool]
+    ) -> [MacExtensionItem] {
         var items: [MacExtensionItem] = []
         for relativePath in MacLocalMCPActivationStore.configurationPaths {
             let url = root.appendingPathComponent(relativePath)
@@ -1175,24 +1262,23 @@ actor MacExtensionsService {
             let mcpNames = MacLocalMCPActivationStore.serverNames(in: url)
             if !mcpNames.isEmpty {
                 for name in mcpNames {
+                    let itemID = MacLocalMCPActivationStore.itemID(
+                        source: source,
+                        configurationURL: url,
+                        serverName: name
+                    )
+                    let normalized = macExtensionStrippingLegacyDigest(itemID)
+                    let isEnabled = macExtensionTrustedItemID(itemID)
+                        ? (mcpEnabledByNormalizedID[normalized] ?? false)
+                        : false
                     items.append(MacExtensionItem(
-                        id: MacLocalMCPActivationStore.itemID(
-                            source: source,
-                            configurationURL: url,
-                            serverName: name
-                        ),
+                        id: itemID,
                         kind: .mcp,
                         source: source,
                         title: name,
                         detail: String(localized: "mac.extensions.state.discovered_configuration") + " · " + relativePath,
                         path: url.path,
-                        isEnabled: MacLocalMCPActivationStore.isEnabled(itemID:
-                            MacLocalMCPActivationStore.itemID(
-                                source: source,
-                                configurationURL: url,
-                                serverName: name
-                            )
-                        ),
+                        isEnabled: isEnabled,
                         mcpSummary: .configured
                     ))
                 }

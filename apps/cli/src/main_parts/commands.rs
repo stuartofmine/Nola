@@ -402,6 +402,10 @@ fn start_interactive_local_model(config: &mut Config, model_id: &str) -> Result<
     config.runtime.api_key = Some(endpoint.api_key);
     config.runtime.model = Some(endpoint.model_id.clone());
     config.runtime.provider = Some("llamacpp".to_string());
+    config.runtime.siwc = None;
+    config.runtime.selected_profile = None;
+    config.runtime.model_binding = None;
+    config.runtime.native_model_route = None;
     config.runtime.compaction.context_window_tokens = Some(endpoint.context_window_tokens);
     let runtime = local_models::profile(&endpoint.model_id)
         .map(|profile| {
@@ -434,6 +438,10 @@ fn remember_interactive_provider(config: &Config) {
                 runtime_model: config.runtime.model.clone(),
                 runtime_provider: config.runtime.provider.clone(),
                 context_window_tokens: config.runtime.compaction.context_window_tokens,
+                siwc: config.runtime.siwc.clone(),
+                selected_profile: config.runtime.selected_profile.clone(),
+                model_binding: config.runtime.model_binding.clone(),
+                native_model_route: config.runtime.native_model_route.clone(),
             });
         }
     }
@@ -457,6 +465,10 @@ fn restore_interactive_provider(config: &mut Config) {
     config.runtime.model = previous.runtime_model;
     config.runtime.provider = previous.runtime_provider;
     config.runtime.compaction.context_window_tokens = previous.context_window_tokens;
+    config.runtime.siwc = previous.siwc;
+    config.runtime.selected_profile = previous.selected_profile;
+    config.runtime.model_binding = previous.model_binding;
+    config.runtime.native_model_route = previous.native_model_route;
 }
 
 fn configure_interactive_local_model(model_id: &str, assignments: &[&str]) -> Result<(), String> {

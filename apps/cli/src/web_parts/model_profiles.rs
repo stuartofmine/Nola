@@ -166,6 +166,12 @@ fn model_profiles_response() -> Response<Box<dyn Read + Send>> {
     }
 }
 
+fn is_connection_managed_profile(profile: &nola_application::ModelProfile) -> bool {
+    serde_json::from_str::<Value>(&profile.source_json)
+        .ok()
+        .is_some_and(|source| !source["connectionID"].is_null())
+}
+
 fn create_remote_model_profile(store: &NolaStore, body: &Value) -> Result<Value, String> {
     let input = body.as_object().ok_or("model request must be an object")?;
     let expected = input.get("expectedRevisions").and_then(Value::as_object)
@@ -190,7 +196,8 @@ fn create_remote_model_profile(store: &NolaStore, body: &Value) -> Result<Value,
 
     let all = store.model_profiles()?;
     let mut scoped = all.into_iter().filter(|profile| profile.provider == "openai-compatible"
-        && profile.runtime == "remote" && profile.deleted_at_ms.is_none()).collect::<Vec<_>>();
+        && profile.runtime == "remote" && profile.deleted_at_ms.is_none()
+        && !is_connection_managed_profile(profile)).collect::<Vec<_>>();
     let actual = scoped.iter().map(|profile| (profile.id.clone(), profile.revision))
         .collect::<std::collections::BTreeMap<_, _>>();
     if actual != expected { return Err("revision_conflict: model catalog membership or profile revision changed".into()); }
@@ -265,7 +272,8 @@ fn mutate_remote_model_catalog(store: &NolaStore, body: &Value) -> Result<Value,
     let action = body["action"].as_str().ok_or("action is required")?;
     let target = body["targetId"].as_str().filter(|id| !id.is_empty()).ok_or("targetId is required")?;
     let mut entries = store.model_profiles()?.into_iter().filter(|profile| profile.provider == "openai-compatible"
-        && profile.runtime == "remote" && profile.deleted_at_ms.is_none())
+        && profile.runtime == "remote" && profile.deleted_at_ms.is_none()
+        && !is_connection_managed_profile(profile))
         .map(|profile| {
             let source: Value = serde_json::from_str(&profile.source_json).map_err(|_| "invalid model source")?;
             let endpoint = source["endpointID"].as_str().filter(|id| !id.is_empty()).ok_or("invalid endpoint identity")?;
@@ -599,7 +607,8 @@ fn configure_remote_profile_settings(store: &NolaStore, id: &str, revision: u64,
 fn configure_remote_profile_full(store: &NolaStore, id: &str, revision: u64, patch: Value, reasoning_patch: Option<Value>, metadata: Option<&Value>) -> Result<Value, String> {
     validate_remote_parameter_patch(&patch)?;
     let mut profiles = store.model_profiles()?.into_iter().filter(|profile| profile.provider == "openai-compatible"
-        && profile.runtime == "remote" && profile.deleted_at_ms.is_none()).collect::<Vec<_>>();
+        && profile.runtime == "remote" && profile.deleted_at_ms.is_none()
+        && !is_connection_managed_profile(profile)).collect::<Vec<_>>();
     let expected = profiles.iter().map(|profile| (profile.id.clone(), profile.revision))
         .collect::<std::collections::BTreeMap<_, _>>();
     let index = profiles.iter().position(|profile| profile.id == id).ok_or("remote model profile is unavailable")?;

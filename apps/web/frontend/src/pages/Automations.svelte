@@ -15,7 +15,7 @@
     import ConfirmationDialog from '../components/ConfirmationDialog.svelte';
     import type { ConfirmationHandle } from '../lib/confirmation';
     import { automationFormats, parseAutomations, newAutomationDraft, automationCreateRequest, automationScript, automationApprovalRequest, sameAutomationRevision, automationKnown, automationCanRun, automationHistoryLink, automationWeekday, automationCapabilities, automationCanApprove } from '../lib/automations';
-    import { automationRunIntent, automationRunResponse, automationExecutionSpec, automationRunConversationLink } from '../lib/automations';
+    import { automationRunIntent, parseStoredAutomationRunIntent, automationRunResponse, automationExecutionSpec, automationRunConversationLink } from '../lib/automations';
     import type { Automation, AutomationRunIntent } from '../lib/automations';
     let confirmation: ConfirmationHandle;
     let actions = $state<Automation[]>([]);
@@ -82,6 +82,7 @@
             if (result.success !== true) throw new Error();
             const [saved] = parseAutomations({ actions: [result.action] });
             if (editing && (saved.id !== editing.id || !Number.isSafeInteger(saved.revision) || saved.revision! <= editing.revision!)) throw new Error();
+            if (editing) sessionStorage.removeItem(`nola.automation.pending.${editing.id}`);
             if (!disposed) { creating = false; draft = newAutomationDraft(); notice = editing ? 'automation.updated' : 'automation.created'; editing = undefined; }
         } catch (cause) { if (!disposed) error = cause instanceof ApiError && cause.code === 'automation_revision_conflict' ? 'automation.approvalChanged' : editing ? 'automation.requestFailed' : 'automation.createFailed'; }
         finally { if (!disposed) busy = false; }
@@ -109,8 +110,9 @@
             const storageKey = `nola.automation.pending.${captured.id}`;
             let intent: AutomationRunIntent | undefined;
             if (operation === 'run') {
-                const saved = sessionStorage.getItem(storageKey);
-                intent = automationRunIntent(captured, saved ? JSON.parse(saved) : undefined);
+                const stored = parseStoredAutomationRunIntent(sessionStorage.getItem(storageKey), captured);
+                if (stored.clear) sessionStorage.removeItem(storageKey);
+                intent = automationRunIntent(captured, stored.previous);
                 // Persist before dispatch. A lost response or page reload must
                 // retry the same occurrence, never manufacture another run.
                 sessionStorage.setItem(storageKey, JSON.stringify(intent));
@@ -124,7 +126,10 @@
                     runConversationHref = automationRunConversationLink(result, intent!.expectedRevision);
                     if (outcome.terminal) sessionStorage.removeItem(storageKey);
                 } else if (result.success !== true) error = 'automation.requestFailed';
-                else notice = operation === 'delete' ? 'automation.deleted' : 'automation.updated';
+                else {
+                    sessionStorage.removeItem(storageKey);
+                    notice = operation === 'delete' ? 'automation.deleted' : 'automation.updated';
+                }
                 actions = parseAutomations(await api('/api/scheduled-actions'));
             }
         } catch (cause) { if (!disposed) error = cause instanceof ApiError && cause.code === 'automation_revision_conflict' ? 'automation.approvalChanged' : 'automation.requestFailed'; }

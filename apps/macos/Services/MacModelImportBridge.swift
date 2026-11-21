@@ -72,6 +72,7 @@ nonisolated final class MacModelImportBridge: @unchecked Sendable {
         // Child errors are mapped to fixed service errors, never forwarded.
         process.standardError = FileHandle.nullDevice
         try process.run()
+        MacOwnedChildProcessRegistry.shared.register(process)
     }
 
     #if DEBUG
@@ -88,7 +89,11 @@ nonisolated final class MacModelImportBridge: @unchecked Sendable {
     deinit { cancel() }
     func cancel() {
         try? input.close()
-        if process.isRunning { process.terminate() }
+        if process.isRunning {
+            MacOwnedChildProcessRegistry.shared.stop(process)
+        } else {
+            MacOwnedChildProcessRegistry.shared.unregister(process)
+        }
     }
 
     func preview(source: String, path: String, credentialPath: String?, includeCredentials: Bool, allowEnvironment: Bool) async throws -> MacModelImportPlan {

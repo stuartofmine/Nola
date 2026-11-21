@@ -3273,3 +3273,5 @@
 "Write what you want the expert to do." = "エキスパートに依頼したい内容を入力してください。";
 "View expert history" = "エキスパートの履歴を表示";
 "Icon could not be rendered" = "アイコンを描画できませんでした";
+
+"model.center.selection_error.title" = "モデルを選択できませんでした";

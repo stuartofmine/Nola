@@ -82,6 +82,7 @@ private struct IOSCompactExpertReplyKey: EnvironmentKey {
 }
 extension EnvironmentValues {
     @Entry var iosSourceAllowsMessageEditing = true
+    @Entry var iosHostScreenshotPinnedSHA256: String? = nil
     var iosExpertReplyAvailableWidth: CGFloat? {
         get { self[IOSExpertReplyWidthKey.self] }
         set { self[IOSExpertReplyWidthKey.self] = newValue }
@@ -231,6 +232,13 @@ struct ChatBubble: View {
                   references != liveSourceReferences else { return }
             liveSourceReferences = references
         }
+        .environment(\.iosHostScreenshotPinnedSHA256, conversationHostPinnedSHA256)
+    }
+
+    private var conversationHostPinnedSHA256: String? {
+        let bound = conversationID.flatMap { container.chatManager.conversation(for: $0)?.selectedModelInfo }
+            ?? container.chatManager.getCurrentModel()
+        return bound?.isWebBackend == true ? bound?.tlsCertificateSHA256 : nil
     }
 
     private var historicalDetailIsValid: Bool {
@@ -2830,6 +2838,7 @@ private struct HostToolEventsView: View {
 }
 
 private struct HostToolScreenshotView: View {
+    @Environment(\.iosHostScreenshotPinnedSHA256) private var boundPinnedSHA256
     let screenshotURL: URL
     @State private var imageData: Data?
     @State private var loadFailed = false
@@ -2867,8 +2876,15 @@ private struct HostToolScreenshotView: View {
     private func loadImageIfNeeded() async {
         guard imageData == nil else { return }
         do {
-            let selected = ModelSelectionManager.getLastSelectedModel()
-            let pin = selected?.isWebBackend == true ? selected?.tlsCertificateSHA256 : nil
+            let pin: String? = {
+                if let boundPinnedSHA256 { return boundPinnedSHA256 }
+                guard let host = screenshotURL.host?.lowercased() else { return nil }
+                return ModelSelectionManager.getAvailableModels().first(where: { model in
+                    guard model.isWebBackend,
+                          let base = model.baseURL.flatMap(URL.init(string:)) else { return false }
+                    return base.host?.lowercased() == host && base.port == screenshotURL.port
+                })?.tlsCertificateSHA256
+            }()
             imageData = try await WebAgentProvider.fetchHostResource(
                 from: screenshotURL,
                 pinnedCertificateSHA256: pin

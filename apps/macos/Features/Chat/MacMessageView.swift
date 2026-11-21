@@ -63,6 +63,7 @@ struct MacMessageView: View {
     let isSearchMatch: Bool
     let onSendTaskGuidance: (String, String) -> Void
     let onRequestTaskCancellation: (String) -> Void
+    var canControlTasks = true
     var userDisplayName: String? = nil
     var showsAnimatedStatusLight = true
     var showsRoleAvatar = true
@@ -181,8 +182,9 @@ struct MacMessageView: View {
                     historicalDetails: message.historicalDetails ?? [],
                     isStreaming: isStreaming,
                     guidance: message.presentation?.renderedTaskGuidance ?? [:],
+                    canControlTasks: canControlTasks,
                     onSendGuidance: onSendTaskGuidance, onRequestCancellation: onRequestTaskCancellation,
-                    onOpenAttachment: { openAttachments([$0]) })
+                    onOpenAttachment: { openAttachmentURI($0) })
                     .id(MacCanonicalReadingOwner(conversationID: conversationID, messageID: canonical.message.messageID, source: canonical.source))
             } else if assistantOutputIsComplete,
                !message.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
@@ -292,6 +294,7 @@ struct MacMessageView: View {
                             MacAssistantTaskList(
                                 tasks: tasks,
                                 guidance: message.presentation?.renderedTaskGuidance ?? [:],
+                                canControlTasks: canControlTasks,
                                 onSendGuidance: onSendTaskGuidance,
                                 onRequestCancellation: onRequestTaskCancellation
                             )
@@ -631,6 +634,33 @@ struct MacMessageView: View {
         }
     }
 
+    private func openAttachmentURI(_ uri: String) {
+        let trimmed = uri.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else {
+            attachmentOpenError = MacRemoteHostError.invalidResponse.localizedDescription
+            return
+        }
+        if let url = URL(string: trimmed), url.scheme != nil {
+            openAttachments([url])
+        } else if trimmed.hasPrefix("file://") {
+            var path = String(trimmed.dropFirst("file://".count))
+            if path.hasPrefix("localhost/") {
+                path = String(path.dropFirst("localhost".count))
+            }
+            let decoded = path.removingPercentEncoding ?? path
+            guard !decoded.isEmpty else {
+                attachmentOpenError = MacRemoteHostError.invalidResponse.localizedDescription
+                return
+            }
+            openAttachments([URL(fileURLWithPath: decoded)])
+        } else if trimmed.hasPrefix("/") || trimmed.hasPrefix("~") {
+            let expanded = (trimmed as NSString).expandingTildeInPath
+            openAttachments([URL(fileURLWithPath: expanded)])
+        } else {
+            attachmentOpenError = MacRemoteHostError.invalidResponse.localizedDescription
+        }
+    }
+
     private func openAttachments(_ urls: [URL], reveal: Bool = false) {
         guard !urls.isEmpty else { return }
         let reference = message.journalReference
@@ -773,6 +803,7 @@ private struct MacMessageTextSelectionView: View {
 private struct MacAssistantTaskList: View {
     let tasks: [MacCoreTaskHandle]
     let guidance: [String: MacCoreTaskGuidanceQueue]
+    var canControlTasks = true
     let onSendGuidance: (String, String) -> Void
     let onRequestCancellation: (String) -> Void
 
@@ -782,6 +813,7 @@ private struct MacAssistantTaskList: View {
                 MacAssistantTaskCard(
                     task: task,
                     guidance: guidance[task.id],
+                    canControlTasks: canControlTasks,
                     onSendGuidance: { onSendGuidance(task.id, $0) },
                     onRequestCancellation: { onRequestCancellation(task.id) }
                 )
@@ -793,6 +825,7 @@ private struct MacAssistantTaskList: View {
 private struct MacAssistantTaskCard: View {
     let task: MacCoreTaskHandle
     let guidance: MacCoreTaskGuidanceQueue?
+    var canControlTasks = true
     let onSendGuidance: (String) -> Void
     let onRequestCancellation: () -> Void
     @Environment(\.macTranscriptReadOnly) private var readOnly
@@ -877,7 +910,7 @@ private struct MacAssistantTaskCard: View {
                                 .textSelection(.enabled)
                         }
                     }
-                    if !readOnly, model.isActive, task.kind == .agent {
+                    if !readOnly, canControlTasks, model.isActive, task.kind == .agent {
                         HStack(spacing: 7) {
                             TextField(
                                 String(localized: "Guide this task", table: "Chat"),
@@ -900,7 +933,7 @@ private struct MacAssistantTaskCard: View {
                         .frame(height: 30)
                         .background(Color.primary.opacity(0.045), in: RoundedRectangle(cornerRadius: 8, style: .continuous))
                     }
-                    if !readOnly, model.isActive {
+                    if !readOnly, canControlTasks, model.isActive {
                         Button(role: .destructive) {
                             showsCancelConfirmation = true
                         } label: {
@@ -998,10 +1031,11 @@ private struct MacAssistantTaskCard: View {
     }
 
     private var canSendGuidance: Bool {
-        !guidanceDraft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        canControlTasks && !guidanceDraft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
     }
 
     private func sendGuidance() {
+        guard canControlTasks else { return }
         let message = guidanceDraft.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !message.isEmpty else { return }
         guidanceDraft = ""
@@ -1246,9 +1280,10 @@ private struct MacCanonicalPartFlowView: View {
     let historicalDetails: [MacHistoricalPartSelection]
     let isStreaming: Bool
     let guidance: [String: MacCoreTaskGuidanceQueue]
+    var canControlTasks = true
     let onSendGuidance: (String, String) -> Void
     let onRequestCancellation: (String) -> Void
-    let onOpenAttachment: (URL) -> Void
+    let onOpenAttachment: (String) -> Void
     @Environment(\.uiSurfaceContext) private var uiContext
     @State private var presentationOwner = MacJournalPresentationOwner()
 
@@ -1325,7 +1360,7 @@ private struct MacCanonicalPartFlowView: View {
             }
         case .attachment(let value):
             Button {
-                if let url = URL(string: value.uri) { onOpenAttachment(url) }
+                onOpenAttachment(value.uri)
             } label: {
                 Label(value.name, systemImage: "doc")
                     .font(.body).frame(maxWidth: .infinity, alignment: .leading)
@@ -1334,7 +1369,7 @@ private struct MacCanonicalPartFlowView: View {
         default:
             if let projected = presentation(part) {
                 if let tasks = projected.presentation?.renderedTaskHandles, !tasks.isEmpty {
-                    MacAssistantTaskList(tasks: tasks, guidance: guidance,
+                    MacAssistantTaskList(tasks: tasks, guidance: guidance, canControlTasks: canControlTasks,
                         onSendGuidance: onSendGuidance, onRequestCancellation: onRequestCancellation)
                 }
                 if let sources = projected.presentation?.renderedSourceReferences, !sources.isEmpty {

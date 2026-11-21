@@ -8,6 +8,7 @@ import type { QueuedUiHead } from './queuedUiDispatch.ts';
 import { get } from 'svelte/store';
 import { api as requestAPI, ApiError } from './api.ts';
 import { locale, t } from './i18n.ts';
+import { randomId } from './randomId.ts';
 import { browserNotifications } from './browserNotifications.ts';
 import { createChatTimeline, parseCanonicalProjection, reduceChatTimeline, timelineRequest } from './chatTimeline.ts';
 import type { ChatTimeline, TimelineOwner } from './chatTimeline.ts';
@@ -320,7 +321,12 @@ export function createConversationSubmissionController(options: {
         await acceptSubmission(response.result);
         return !state.pendingSubmission || state.pendingSubmission.receipt?.phase === 'admitted';
     }
+    function stopPermissionRefresh() {
+        permissionRefresh?.stop();
+        permissionRefresh = null;
+    }
     function stopObservation() {
+        stopPermissionRefresh();
         if (observer) {
             observer.stop(); observer = null;
             // The observer also owns its in-flight journal reads.
@@ -381,12 +387,18 @@ export function createConversationSubmissionController(options: {
                 const declarations = await journals().admit(value.admission.identity, value.admission);
                 if (!current() || !state.timeline) return false;
                 state.timeline = reduceChatTimeline(state.timeline, { type: 'admissions', owner: identity, messages: declarations }).state;
+                const allowedPermissionClientIds = value.goal_execution
+                    ? (value.submission_receipt !== null ? [identity.clientId, 'web-goal'] : ['web-goal'])
+                    : [identity.clientId];
                 if (!state.turn || state.turn.runId !== value.run_id) {
                     stopWitnessRead(); terminalWitness = null;
                     const user = declarations.find(message => message.input.role === 'user');
                     if (!user) throw new Error('Observed Run lacks admitted user');
                     state.turn = createChatTurn(identity, { submissionId: value.run_id, userMessageId: user.input.id, assistantMessageId: value.assistant_message_id });
-                    state.turn = reduceChatTurn(state.turn, { type: 'run_bound', owner: identity, runId: value.run_id, permissionClientId: value.goal_execution ? 'web-goal' : identity.clientId }).state;
+                    state.turn = reduceChatTurn(state.turn, { type: 'run_bound', owner: identity, runId: value.run_id, permissionClientIds: allowedPermissionClientIds }).state;
+                } else if (allowedPermissionClientIds.some(id => !state.turn!.allowedPermissionClientIds.includes(id))
+                    || state.turn.allowedPermissionClientIds.length !== allowedPermissionClientIds.length) {
+                    state.turn = reduceChatTurn(state.turn, { type: 'run_bound', owner: identity, runId: value.run_id, permissionClientIds: allowedPermissionClientIds }).state;
                 }
                 if (!value.terminal_seal && !observedTaskReadOnly) void workspaceHost?.completions.watch(state.turn);
                 // Current permission authority is independent of historical body hydration.
@@ -622,7 +634,7 @@ export function createConversationSubmissionController(options: {
             if (terminalWitness) void readTerminalWitness(terminalWitness);
         }
     }
-    async function applyEvent(value: Record<string, unknown>, identity: ChatTurnOwner) {
+    async function applyEvent(value: Record<string, unknown>, identity: ChatTurnOwner, streamSignal?: AbortSignal) {
         if (!sameActive(identity) || !state.timeline || !state.turn || state.turn.owner.conversationId !== identity.conversationId || state.turn.owner.generation !== identity.generation) return;
         if (value.type === 'error' || value.type === 'submission_rejected') {
             const guidance = mainExpertSelectionError(value.type === 'submission_rejected' ? value.reason_code : value.code);
@@ -671,17 +683,17 @@ export function createConversationSubmissionController(options: {
             const decision = reduceChatTurn(state.turn, { type: 'permission_pending', owner: identity, challenge: value, nowSeconds: Math.floor(Date.now() / 1000) });
             if (!decision.ignored) { state.turn = decision.state; state.challenge = value; state.reviewText = typeof value.safe_review_text === 'string' ? value.safe_review_text : ''; }
             else if (decision.ignored === 'permission') {
-                permissionRefresh?.stop();
-                const stream = streamController;
-                permissionRefresh = refreshStreamPermissions(state.turn,
-                    (body, signal) => api('/api/chat/agent/v2/observe', {method: 'POST', body: JSON.stringify(body), signal}),
-                    () => !disposed && foreground && streamController === stream && !stream?.signal.aborted ? state.turn : null,
+                stopPermissionRefresh();
+                const signal = streamSignal ?? streamController?.signal ?? null;
+                const refresh = refreshStreamPermissions(state.turn,
+                    (body, obsSignal) => api('/api/chat/agent/v2/observe', {method: 'POST', body: JSON.stringify(body), signal: obsSignal}),
+                    () => !disposed && foreground && (!signal || !signal.aborted) ? state.turn : null,
                     (turn, challenge) => {
                         state.turn = turn; state.challenge = challenge;
                         state.reviewText = typeof challenge?.safe_review_text === 'string' ? challenge.safe_review_text : '';
                     }, () => { state.error = 'chatPage.uncertain'; });
-                const refresh = permissionRefresh;
-                stream?.signal.addEventListener('abort', () => refresh?.stop(), {once: true});
+                permissionRefresh = refresh;
+                signal?.addEventListener('abort', () => { if (permissionRefresh === refresh) stopPermissionRefresh(); else refresh?.stop(); }, {once: true});
             }
         }
         const accepted = reduceChatTurn(state.turn, { type: 'event', owner: identity, payload: value });
@@ -700,7 +712,7 @@ export function createConversationSubmissionController(options: {
         state.turn = reduceChatTurn(state.turn, { type: 'stream_opened', owner: identity }).state;
         // Body hydration is ordered, but must never hold up subsequent permission/control frames.
         const journalQueue = journalEventQueue(async event => {
-            if (streamController === controller && sameActive(identity)) await applyEvent(event, identity);
+            if (streamController === controller && sameActive(identity)) await applyEvent(event, identity, controller.signal);
         });
         try {
             for await (const event of chatEventStream(path, { method: 'POST', body: JSON.stringify(body), signal: controller.signal })) {
@@ -720,6 +732,7 @@ export function createConversationSubmissionController(options: {
                 replyNotice(state.turn, 'uncertain');
             }
         } finally {
+            stopPermissionRefresh();
             if (streamController === controller) { streamController = null; if (sameActive(identity)) observeSelected(); }
         }
     }
@@ -741,7 +754,7 @@ export function createConversationSubmissionController(options: {
         let modelContent: string;
         try { modelContent = attachmentModelContent(text, captured, identity.conversationId); }
         catch (cause) { state.error = 'chatPage.sendFailed'; if (detached) throw cause; return; }
-        const submissionId = queuedCommandId ?? input.submissionId ?? crypto.randomUUID();
+        const submissionId = queuedCommandId ?? input.submissionId ?? randomId();
         stopWitnessRead(); terminalWitness = null;
         if (!queuedCommandId && !detached) workspaceHost?.submissions.set(identity.conversationId, {submissionId, text, attachmentIds: captured.map(item => item.id)});
         stopObservation();
@@ -761,7 +774,7 @@ export function createConversationSubmissionController(options: {
             messages: [{ role: 'user', content: modelContent }], current_user_display_text: text,
             timezone: Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC', language,
             execution_backend: active.executionBackend,
-            expected_configuration_revision: edited ? edited.target.configuration_revision : active.configurationRevision,
+            expected_configuration_revision: (edited ?? inPlace)?.target.configuration_revision ?? active.configurationRevision,
             expected_parent_message_id: edited ? null : state.timeline.submissionParentMessageId,
             ...(edited ? {edited_resend_operation_id:edited.prepared.input.operation_id} : {}),
             ...(inPlace ? {in_place_resend_operation_id:inPlace.prepared.input.operation_id} : {}),
@@ -787,7 +800,7 @@ export function createConversationSubmissionController(options: {
             transports.add(transport);
             dispatchControllers.add(transport);
             const submittedJournal = journalEventQueue(async event => {
-                if (sameActive(identity) && state.turn?.identity.submissionId === captured.identity.submission_id) await applyEvent(event, identity);
+                if (sameActive(identity) && state.turn?.identity.submissionId === captured.identity.submission_id) await applyEvent(event, identity, transport.signal);
             });
             void dispatchSourceSubmission(captured, {
                 storage: submissionStorage(), signal: transport.signal,
@@ -829,6 +842,7 @@ export function createConversationSubmissionController(options: {
                 }
             })
                 .finally(() => {
+                    stopPermissionRefresh();
                     transports.delete(transport);
                     dispatchControllers.delete(transport);
                     if (sameActive(identity) && state.turn?.identity.submissionId === captured.identity.submission_id) observeSelected();
@@ -915,7 +929,7 @@ export function createConversationSubmissionController(options: {
         const goal = observedGoal;
         if (!goal || goal.run_id !== state.turn?.runId) throw new Error('Goal execution owner changed');
         await dispatchGoalControlIntent(identity.conversationId, {
-            operationId: crypto.randomUUID(), action, expectedGoalId: goal.goal_id, expectedControlToken: goal.control_token,
+            operationId: randomId(), action, expectedGoalId: goal.goal_id, expectedControlToken: goal.control_token,
         }, api, options.goalStorage ?? new GoalControlIntentStore(localStorage, hostId));
         // Command admission is not a stop confirmation. Continue reading Core.
         observeSelected();
@@ -1012,7 +1026,7 @@ export function createConversationSubmissionController(options: {
         owner: identity,
         attach(value, hooks = {}) {
             listener = value; presentation = hooks; publish();
-            if (initialized) void loadHistory('replace').then(observeSelected);
+            if (initialized) void loadHistory('replace');
         },
         detach() { stopWitnessRead(); listener = null; presentation = null; stopObservation(); stopQueuedWake(); },
         dispose() { stopWitnessRead(); for (const [run] of editedAdmissions) failEdited(run, new Error('Edited resend controller disposed')); disposed = true; stopQueuedWake(); listener = null; presentation = null; stopObservation(); streamController?.abort(); historyController?.abort(); for (const transport of dispatchControllers) transport.abort(); dispatchControllers.clear(); },

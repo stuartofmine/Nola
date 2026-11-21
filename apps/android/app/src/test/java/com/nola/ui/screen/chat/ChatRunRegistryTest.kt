@@ -356,4 +356,21 @@ class ChatRunRegistryTest {
         assertSame(successor, registry.find(successor.ownerKey))
         registry.clear()
     }
+
+    @Test fun removingOrClearingUnstartedSessionReleasesLocalExecutionLease() = runTest {
+        val registry = ChatRunRegistry(backgroundScope, traces()) { _, _ -> }
+        val first = registry.beginExecution("conversation:a", ChatUiState(conversationId = "a"))
+        assertTrue(registry.acquireLocal(first))
+        assertFalse(registry.localAvailable("conversation:b"))
+
+        registry.remove(first.ownerKey)
+        assertTrue(registry.localAvailable("conversation:b"))
+
+        val second = registry.beginExecution("conversation:b", ChatUiState(conversationId = "b"))
+        assertTrue(registry.acquireLocal(second))
+        assertFalse(registry.localAvailable("conversation:a"))
+
+        registry.clear()
+        assertTrue(registry.localAvailable("conversation:a"))
+    }
 }

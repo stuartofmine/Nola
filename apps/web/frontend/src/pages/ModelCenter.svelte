@@ -109,13 +109,15 @@
     async function action(model: Model, name: string) {
         if (busy) return;
         if (name === 'installation' && !await confirmation.ask({ title: t($locale, 'models.deleteTitle'), description: t($locale, 'models.deleteBody', { name: model.displayName || model.name || model.id }), confirmLabel: t($locale, 'models.deleteConfirm'), destructive: true })) return;
+        if (disposed) return;
         busy = model.id; error = '';
         catalogReads.cancel(); clearTimeout(timer);
         try {
             await api(`/api/local-models/${encodeURIComponent(model.id)}/${name}`, { method: name === 'installation' ? 'DELETE' : 'POST' });
+            if (disposed) return;
             await refresh();
-        } catch (cause) { error = errorMessage(cause); }
-        finally { busy = ''; }
+        } catch (cause) { if (!disposed) error = errorMessage(cause); }
+        finally { if (!disposed) busy = ''; }
     }
     async function configure(model: Model) {
         editing = model; draft = { ...model.parameters }; editorError = '';
@@ -126,21 +128,24 @@
     async function reloadEditor() {
         if (busy || !editing) return;
         if (dirty && !await confirmation.ask({ title: t($locale, 'models.reloadTitle'), description: t($locale, 'models.reloadBody'), confirmLabel: t($locale, 'models.reloadConfirm'), cancelLabel: t($locale, 'models.continueEditing'), destructive: true })) return;
+        if (disposed || !editing) return;
         const id = editing.id;
         busy = id; editorError = '';
         try {
             const snapshot = await refresh();
+            if (disposed) return;
             if (!snapshot) { editorError = error || t($locale, 'models.reloadFailed'); return; }
             const current = localModelEditorSnapshot(snapshot.models, id);
             editing = current.model;
             draft = current.parameters;
-        } catch (cause) { editorError = cause instanceof ModelValidationError ? cause.issue : errorMessage(cause); }
-        finally { busy = ''; }
+        } catch (cause) { if (!disposed) editorError = cause instanceof ModelValidationError ? cause.issue : errorMessage(cause); }
+        finally { if (!disposed) busy = ''; }
     }
     async function closeEditor(event?: Event) {
         event?.preventDefault();
         if (busy) return;
         if (dirty && !await confirmation.ask({ title: t($locale, 'models.discardTitle'), description: t($locale, 'models.discardBody'), confirmLabel: t($locale, 'models.discard'), cancelLabel: t($locale, 'models.continueEditing'), destructive: true })) return;
+        if (disposed) return;
         dialog.close(); editing = undefined; draft = undefined;
     }
     async function save(event: SubmitEvent) {
@@ -152,9 +157,10 @@
             await api(`/api/local-models/${encodeURIComponent(editing.id)}/configuration`, {
                 method: 'POST', body: JSON.stringify({ expectedRevision: editing.configurationRevision, parameters: draft }),
             });
+            if (disposed) return;
             dialog.close(); editing = undefined; draft = undefined; await refresh();
-        } catch (cause) { editorError = cause instanceof ModelValidationError ? cause.issue : errorMessage(cause); }
-        finally { busy = ''; }
+        } catch (cause) { if (!disposed) editorError = cause instanceof ModelValidationError ? cause.issue : errorMessage(cause); }
+        finally { if (!disposed) busy = ''; }
     }
     function tabKey(event: KeyboardEvent) {
         if (!['ArrowLeft', 'ArrowRight', 'Home', 'End'].includes(event.key)) return;

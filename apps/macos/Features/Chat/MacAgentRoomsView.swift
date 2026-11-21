@@ -15,6 +15,7 @@ struct MacRoomCanonicalMessage: View {
     @Environment(\.colorScheme) private var scheme
     @ScaledMetric(relativeTo: .caption) private var identityColumnWidth: CGFloat = 48
     var isExpert = true
+    var isSearchMatch = false
     private var usesExpertIdentity: Bool { message.role != .user && isExpert }
     var body: some View {
         HStack(alignment: .top, spacing: 12) {
@@ -39,17 +40,19 @@ struct MacRoomCanonicalMessage: View {
                         submit: model.submitUIInteraction, permitsFollowupActions: !isExpert,
                         readLocalSource: { try model.isLocalConversationSource(context) }),
                     isCurrent: { isCurrentOwner() && model.selectedConversationID == context }) {
+                let resolvedTaskRunID = model.taskParentRunID(for: context, message: message)
                 MacMessageView(conversationID: context, message: message,
                     transcriptWidth: MacChatBubbleLayout.transcriptWidth(availableWidth: width - (usesExpertIdentity ? identityColumnWidth + 12 : 0)),
-                    isStreaming: streaming, liveActivities: streaming ? model.visibleActivity : [], isSearchMatch: false,
+                    isStreaming: streaming, liveActivities: streaming ? model.visibleActivity : [], isSearchMatch: isSearchMatch,
                     onSendTaskGuidance: { taskID, text in
-                        guard let runID = message.journalReference?.cursor.identity.run_id else { return }
+                        guard let runID = resolvedTaskRunID else { return }
                         model.sendTaskGuidance(conversationID: context, parentRunID: runID, taskID: taskID, message: text)
                     },
                     onRequestTaskCancellation: { taskID in
-                        guard let runID = message.journalReference?.cursor.identity.run_id else { return }
+                        guard let runID = resolvedTaskRunID else { return }
                         model.requestTaskCancellation(conversationID: context, parentRunID: runID, taskID: taskID)
                     },
+                    canControlTasks: resolvedTaskRunID != nil,
                     showsRoleAvatar: !isExpert,
                     assistantBubbleFill: isExpert ? AppleExpertAppearance.selected(appearance, agentID: senderIdentity).fill(scheme) : nil,
                     journalPresentationOwner: message.journalReference.map { journalResidency.owner(for: $0) })
@@ -188,6 +191,9 @@ struct MacUnifiedExpertTranscript: View {
     let width: CGFloat
     var viewportStore: MacTranscriptViewportStore? = nil
     @State private var scrollController = MacTranscriptScrollController()
+    @State private var compactionSourceNotice: String?
+    @State private var compactionNavigationID: UUID?
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     private var rows: [MacRoomTranscriptRow] {
         MacExpertTranscriptProjector.rows(conversationID: model.selectedConversationID ?? "",
@@ -202,64 +208,208 @@ struct MacUnifiedExpertTranscript: View {
     }
     var body: some View {
         let transcriptRows = rows
-        ScrollView {
-            VStack(alignment: .leading, spacing: 18) {
-                ForEach(Array(transcriptRows.enumerated()), id: \.element.id) { index, row in
-                    let message = row.message
-                    let owner = row.name == nil ? model : workspace.executionService?.owners[row.context]
-                    if let owner {
-                        let parentID = model.selectedConversationID
-                        MacRoomCanonicalMessage(model: owner, message: message, contextID: row.context,
-                            isCurrentOwner: {
-                                model.selectedConversationID == parentID && owner.selectedConversationID == row.context
-                                    && (row.name == nil || workspace.executionService?.owners[row.context] === owner)
-                            },
-                            participantName: row.name ?? "Nola", senderIdentity: row.agentID ?? "nola",
-                            showsSender: index == 0 || transcriptRows[index - 1].context != row.context || transcriptRows[index - 1].message.role != message.role,
-                            width: min(720, width), isExpert: row.name != nil)
-                            .background { MacTranscriptMessageAnchor(messageID: message.id, controller: scrollController) }
-                    }
-                }
-                if let association = workspace.conversationAssociation {
-                    if let error = workspace.errors[association.roomID] {
-                        Text(error).foregroundStyle(.red).textSelection(.enabled)
-                            .accessibilityIdentifier("chat.expert-execution-error")
-                    }
-                    ForEach(workspace.pending[association.roomID] ?? []) { item in
-                        if let failure = item.failure {
-                            Text(failure).foregroundStyle(.red)
-                            Button("Retry expert reply") { workspace.retry(item) }
-                        }
-                    }
-                }
-                ForEach(workspace.resumableExpertMessages.keys.sorted(), id: \.self) { messageID in
-                    if let manifest = workspace.resumableExpertMessages[messageID], manifest.input.conversation_id == model.selectedConversationID,
-                       !workspace.isDeliveringExpertMessage(manifest) {
-                        VStack(alignment: .leading, spacing: 8) {
-                            Text("room.pending_expert_message").font(.caption).foregroundStyle(.secondary)
-                            Text(manifest.input.text).lineLimit(3)
-                            Button("room.resume_complete_experts") { Task { await workspace.resumeCompleteExpertMessage(messageID) } }
-                                .disabled(workspace.isAdmitting || workspace.resumingExpertMessage != nil)
-                                .accessibilityIdentifier("mac-experts-resume-" + messageID)
-                        }
-                    }
-                }
-                if let error = workspace.expertResumeError { Text(error).font(.caption).foregroundStyle(.red) }
-                Color.clear.frame(height: 1).background { MacTranscriptLatestAnchor(controller: scrollController) }
-            }.padding(24).frame(maxWidth: 720, alignment: .leading)
-                .frame(maxWidth: .infinity, alignment: .center)
-                .onGeometryChange(for: CGSize.self) { $0.size } action: { _ in scrollController.contentChanged() }
-                .background { MacTranscriptScrollObserver(controller: scrollController).frame(width: 0, height: 0) }
-        }.background(MacDesignColor.canvas)
-            .overlay(alignment: .bottomTrailing) { MacTranscriptFollowControl(controller: scrollController, bottomClearance: 0) }
-            .task(id: model.selectedConversationID) {
-                scrollController.reset(conversationID: model.selectedConversationID ?? "", viewportStore: viewportStore)
+        let conversationID = model.selectedConversationID ?? ""
+        VStack(spacing: 0) {
+            if let compactionSourceNotice {
+                MacInlineNotice(
+                    title: String(localized: "Original context", table: "Chat"),
+                    message: compactionSourceNotice,
+                    kind: .failure,
+                    dismiss: { self.compactionSourceNotice = nil }
+                )
+                .padding(.horizontal, MacDesignTokens.Layout.chatTranscriptHorizontalPadding)
+                .padding(.top, MacDesignTokens.Spacing.sm)
+                .transition(.opacity.combined(with: .move(edge: .top)))
             }
-            .task(id: [model.selectedConversationID ?? "", workspace.conversationAssociation?.roomID ?? ""] + visibleParentIDs) {
-                guard let owner = model.selectedConversationID else { return }
-                await workspace.refreshResumableExpertMessages(conversationID: owner, messageIDs: visibleParentIDs)
+            ScrollViewReader { proxy in
+                ScrollView {
+                    transcriptListContent(transcriptRows: transcriptRows)
+                }.background(MacDesignColor.canvas)
+                    .overlay(alignment: .bottomTrailing) { MacTranscriptFollowControl(controller: scrollController, bottomClearance: 0) }
+                    .onChange(of: model.transcriptSearchNavigationToken) { _, _ in
+                        handleSearchNavigation(proxy: proxy)
+                    }
+                    .onReceive(NotificationCenter.default.publisher(for: .macCompactionSourceRequested)) { notification in
+                        handleCompactionSource(notification, conversationID: conversationID, proxy: proxy)
+                    }
+                    .task(id: model.selectedConversationID) {
+                        compactionNavigationID = nil
+                        compactionSourceNotice = nil
+                        scrollController.reset(conversationID: model.selectedConversationID ?? "", viewportStore: viewportStore)
+                    }
+                    .task(id: [model.selectedConversationID ?? "", workspace.conversationAssociation?.roomID ?? ""] + visibleParentIDs) {
+                        guard let owner = model.selectedConversationID else { return }
+                        await workspace.refreshResumableExpertMessages(conversationID: owner, messageIDs: visibleParentIDs)
+                    }
+                    .onDisappear {
+                        scrollController.saveViewport()
+                        compactionNavigationID = nil
+                    }
             }
-            .onDisappear { scrollController.saveViewport() }
+        }
+        .animation(reduceMotion ? nil : .easeOut(duration: 0.18), value: compactionSourceNotice)
+    }
+
+    private func handleSearchNavigation(proxy: ScrollViewProxy) {
+        guard let targetID = model.transcriptSearchFocusedMessageID else { return }
+        _ = scrollController.beginNavigation()
+        Task { @MainActor in
+            await Task.yield()
+            if reduceMotion {
+                proxy.scrollTo(targetID, anchor: .center)
+            } else {
+                withAnimation(.easeOut(duration: 0.18)) {
+                    proxy.scrollTo(targetID, anchor: .center)
+                }
+            }
+        }
+    }
+
+    private func handleCompactionSource(
+        _ notification: Notification,
+        conversationID: String,
+        proxy: ScrollViewProxy
+    ) {
+        guard let request = notification.object as? MacCompactionSourceRequest,
+              !request.sourceItemIDs.isEmpty,
+              request.matches(conversationID: conversationID, messages: model.selectedMessages) else { return }
+        guard compactionNavigationID == nil else { return }
+        let requestID = UUID()
+        compactionNavigationID = requestID
+        let navigationGeneration = scrollController.beginNavigation()
+        Task { @MainActor in
+            let outcome = await model.locateCompactionSource(request: request)
+            guard compactionNavigationID == requestID else { return }
+            compactionNavigationID = nil
+            guard scrollController.acceptsNavigation(navigationGeneration) else { return }
+            switch outcome {
+            case .found(let target, _):
+                await Task.yield()
+                guard scrollController.acceptsNavigation(navigationGeneration) else { return }
+                proxy.scrollTo(target, anchor: .center)
+            case .end:
+                compactionSourceNotice = String(localized: "mac.chat.compaction_source.not_found")
+            case .stalled:
+                compactionSourceNotice = String(localized: "mac.chat.compaction_source.cursor_stalled")
+            case .snapshotChanged:
+                compactionSourceNotice = String(localized: "mac.chat.compaction_source.snapshot_changed")
+            case .readError:
+                compactionSourceNotice = String(localized: "mac.chat.compaction_source.read_failed")
+            case .cancelled:
+                break
+            }
+        }
+    }
+
+    private func transcriptListContent(transcriptRows: [MacRoomTranscriptRow]) -> some View {
+        VStack(alignment: .leading, spacing: 18) {
+            historyNavigationControls
+            ForEach(Array(transcriptRows.enumerated()), id: \.element.id) { index, row in
+                transcriptRowView(index: index, row: row, transcriptRows: transcriptRows)
+            }
+            roomErrorSection
+            resumableExpertSection
+            if let error = workspace.expertResumeError {
+                Text(error).font(.caption).foregroundStyle(.red)
+            }
+            Color.clear.frame(height: 1).background { MacTranscriptLatestAnchor(controller: scrollController) }
+        }
+        .padding(24)
+        .frame(maxWidth: 720, alignment: .leading)
+        .frame(maxWidth: .infinity, alignment: .center)
+        .onGeometryChange(for: CGSize.self) { $0.size } action: { _ in scrollController.contentChanged() }
+        .background { MacTranscriptScrollObserver(controller: scrollController).frame(width: 0, height: 0) }
+    }
+
+    @ViewBuilder
+    private var historyNavigationControls: some View {
+        if model.isViewingStoredHistory {
+            Button {
+                Task { await model.returnToLatestStoredMessages() }
+            } label: {
+                Label(String(localized: "Go to Latest Message"), systemImage: "arrow.down.circle")
+            }
+            .buttonStyle(.plain)
+            .font(.system(size: 12, weight: .medium))
+            .disabled(model.isLoadingHistoryPage)
+            .frame(maxWidth: .infinity)
+            .accessibilityIdentifier("chat.history.returnToLatest")
+        }
+        if model.hasEarlierStoredMessages {
+            Button {
+                Task { await model.loadEarlierStoredMessages() }
+            } label: {
+                Label(String(localized: "Load earlier messages"), systemImage: "arrow.up.circle")
+            }
+            .buttonStyle(.plain)
+            .font(.system(size: 12, weight: .medium))
+            .foregroundStyle(.secondary)
+            .padding(.vertical, 6)
+            .disabled(model.isLoadingHistoryPage)
+            .frame(maxWidth: .infinity)
+            .accessibilityIdentifier("chat.history.loadEarlier")
+        }
+    }
+
+    @ViewBuilder
+    private func transcriptRowView(index: Int, row: MacRoomTranscriptRow, transcriptRows: [MacRoomTranscriptRow]) -> some View {
+        let message = row.message
+        let owner = row.name == nil ? model : workspace.executionService?.owners[row.context]
+        if let owner {
+            let parentID = model.selectedConversationID
+            let isMatch = !model.transcriptSearchText.isEmpty
+                && message.text.localizedCaseInsensitiveContains(model.transcriptSearchText)
+            MacRoomCanonicalMessage(
+                model: owner,
+                message: message,
+                contextID: row.context,
+                isCurrentOwner: {
+                    model.selectedConversationID == parentID && owner.selectedConversationID == row.context
+                        && (row.name == nil || workspace.executionService?.owners[row.context] === owner)
+                },
+                participantName: row.name ?? "Nola",
+                senderIdentity: row.agentID ?? "nola",
+                showsSender: index == 0 || transcriptRows[index - 1].context != row.context || transcriptRows[index - 1].message.role != message.role,
+                width: min(720, width),
+                isExpert: row.name != nil,
+                isSearchMatch: isMatch
+            )
+            .id(message.id)
+            .background { MacTranscriptMessageAnchor(messageID: message.id, controller: scrollController) }
+        }
+    }
+
+    @ViewBuilder
+    private var roomErrorSection: some View {
+        if let association = workspace.conversationAssociation {
+            if let error = workspace.errors[association.roomID] {
+                Text(error).foregroundStyle(.red).textSelection(.enabled)
+                    .accessibilityIdentifier("chat.expert-execution-error")
+            }
+            ForEach(workspace.pending[association.roomID] ?? []) { item in
+                if let failure = item.failure {
+                    Text(failure).foregroundStyle(.red)
+                    Button("Retry expert reply") { workspace.retry(item) }
+                }
+            }
+        }
+    }
+
+    @ViewBuilder
+    private var resumableExpertSection: some View {
+        ForEach(workspace.resumableExpertMessages.keys.sorted(), id: \.self) { messageID in
+            if let manifest = workspace.resumableExpertMessages[messageID],
+               manifest.input.conversation_id == model.selectedConversationID,
+               !workspace.isDeliveringExpertMessage(manifest) {
+                VStack(alignment: .leading, spacing: 8) {
+                    Text("room.pending_expert_message").font(.caption).foregroundStyle(.secondary)
+                    Text(manifest.input.text).lineLimit(3)
+                    Button("room.resume_complete_experts") { Task { await workspace.resumeCompleteExpertMessage(messageID) } }
+                        .disabled(workspace.isAdmitting || workspace.resumingExpertMessage != nil)
+                        .accessibilityIdentifier("mac-experts-resume-" + messageID)
+                }
+            }
+        }
     }
 }
 

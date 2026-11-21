@@ -304,4 +304,11 @@ class WebHostApiServiceImplTest {
         assertFalse(body.containsKey("expected_host_id"))
         assertFalse(body.containsKey("client_id"))
     }
+
+    @Test
+    fun generativeUiOperationsIncludePreviewWithDedicatedResponseLimit() {
+        assertTrue("preview" in GENERATIVE_UI_OPERATIONS)
+        assertEquals(2 * 1024 * 1024, generativeUiMaxResponseBytes("preview"))
+        assertEquals(16 * 1024 * 1024, generativeUiMaxResponseBytes("surfaces"))
+    }
 }

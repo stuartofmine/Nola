@@ -429,9 +429,10 @@ fn expert_resend_load_response(url:&str,target:&str)->Response<Box<dyn Read+Send
     expert_http_result(result)
 }
 fn expert_source_response(url:&str,conversation:&str,message:&str)->Response<Box<dyn Read+Send>> {
-    let Some(conversation_id) = decode_path_segment(conversation) else {
+    if conversation.is_empty() {
         return json_response(StatusCode(400), json!({"code":"invalid_conversation_id","error":"invalid conversation id"}));
-    };
+    }
+    let conversation_id = conversation.to_string();
     let Some(message_id) = decode_path_segment(message) else {
         return json_response(StatusCode(400), json!({"code":"invalid_message_id","error":"invalid message id"}));
     };

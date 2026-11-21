@@ -3,6 +3,7 @@
     import { locale, t } from '../lib/i18n';
     import { sourceAccountStateKey } from '../lib/locales/sourceAccounts';
     import { api } from '../lib/api';
+    import { randomId } from '../lib/randomId';
     import { kimiCanStartLogin } from '../lib/kimiLoginState';
     type Status = {account: {revision: number; account: {id: string}}; origin: string; server_id: string; state: string;
         flow_id: string | null; verification_url: string | null; user_code: string | null;
@@ -14,7 +15,7 @@
     type Owner = {account_id: string; revision: number; display_name: string; origin: string; server_id: string};
     let owners = $state<Owner[]>([]), ownerID = $state('');
     // Preserve the account identity if a successful save loses its HTTP receipt.
-    let newOwnerID = crypto.randomUUID();
+    let newOwnerID = randomId();
     let alive = true, generation = 0;
     let timer: ReturnType<typeof setTimeout> | undefined;
     let controller: AbortController | undefined;
@@ -24,7 +25,7 @@
     }
     function operationBody(value: Status) {
         return {account_id: value.account.account.id, expected_revision: value.account.revision,
-            server_id: value.server_id, request_id: crypto.randomUUID(), flow_id: value.flow_id,
+            server_id: value.server_id, request_id: randomId(), flow_id: value.flow_id,
             region: region || null, acknowledge_provider_login_changes: false};
     }
     async function connect() {
@@ -42,7 +43,7 @@
     function selectOwner() {
         stopObserving(); consent = false; loginConsent = false; cancelConsent = false; bearer = '';
         failed = false;
-        if (!ownerID && snapshot) newOwnerID = crypto.randomUUID();
+        if (!ownerID && snapshot) newOwnerID = randomId();
         const selected = owners.find(value => value.account_id === ownerID);
         snapshot = selected ? {account: {revision: selected.revision, account: {id: selected.account_id}}, origin: selected.origin, server_id: selected.server_id,
             state: 'unknown', flow_id: null, verification_url: null, user_code: null, poll_interval_seconds: null,

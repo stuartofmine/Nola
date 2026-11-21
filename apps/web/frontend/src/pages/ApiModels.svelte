@@ -52,5 +52,5 @@
     {#if loaded}<RemoteProfiles {profiles} {openProfileId} reload={load} onSelectionSaved={applySelectionSnapshot} />{/if}
 </section>
 {/if}
-<ModelConnections openConnectionId={profiles.find(profile => profile.id === openProfileId)?.connectionId ?? ''} />
+<ModelConnections {profiles} onChanged={load} openConnectionId={profiles.find(profile => profile.id === openProfileId)?.connectionId ?? ''} />
 <style>.profile-settings { margin-block: 24px 36px; }</style>

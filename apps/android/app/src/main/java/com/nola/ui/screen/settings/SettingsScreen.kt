@@ -160,6 +160,8 @@ fun SettingsMain(
         onRefresh = viewModel::refresh,
         onClearAllData = viewModel::clearAllData,
         onCreateExportArchive = viewModel::createExportArchive,
+        onStartExportArchive = viewModel::startExportArchive,
+        onConsumeExportResult = viewModel::consumeExportResult,
         onNotifications = onNotifications,
         onScheduledActions = onScheduledActions,
         onOpenDataSources = onOpenDataSources,
@@ -179,6 +181,8 @@ internal fun SettingsContent(
     onRefresh: () -> Unit,
     onClearAllData: () -> Boolean = { false },
     onCreateExportArchive: suspend () -> java.io.File = { error("Export unavailable") },
+    onStartExportArchive: (() -> Unit)? = null,
+    onConsumeExportResult: () -> Unit = {},
     onNotifications: () -> Unit = {},
     onScheduledActions: () -> Unit = {},
     onOpenDataSources: () -> Unit = {},
@@ -195,9 +199,42 @@ internal fun SettingsContent(
     BackHandler(enabled = detailSection != null) { detailSection = null }
     var isClearingData by remember { mutableStateOf(false) }
     var clearError by remember { mutableStateOf(false) }
-    var isExportingData by remember { mutableStateOf(false) }
+    var localExportingData by remember { mutableStateOf(false) }
+    val isExportingData = state.isExportingData || localExportingData
     var operationMessage by rememberSaveable { mutableStateOf<String?>(null) }
     var operationFailed by rememberSaveable { mutableStateOf(false) }
+
+    fun shareExportArchive(exportFile: java.io.File) {
+        val uri = androidx.core.content.FileProvider.getUriForFile(
+            context, "${context.packageName}.fileprovider", exportFile
+        )
+        val shareIntent = Intent(Intent.ACTION_SEND).apply {
+            type = "application/zip"
+            putExtra(Intent.EXTRA_STREAM, uri)
+            addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+        }
+        operationFailed = false
+        operationMessage = context.getString(R.string.settings_export_ready)
+        runCatching {
+            context.startActivity(Intent.createChooser(shareIntent, context.getString(R.string.settings_export_data)))
+        }.onFailure { error ->
+            operationFailed = true
+            operationMessage = context.getString(R.string.settings_export_failed, error.message ?: "")
+        }
+    }
+
+    androidx.compose.runtime.LaunchedEffect(state.exportedArchiveFile, state.exportErrorMessage) {
+        val exportFile = state.exportedArchiveFile
+        val exportError = state.exportErrorMessage
+        if (exportFile != null) {
+            onConsumeExportResult()
+            shareExportArchive(exportFile)
+        } else if (exportError != null) {
+            onConsumeExportResult()
+            operationFailed = true
+            operationMessage = context.getString(R.string.settings_export_failed, exportError)
+        }
+    }
     var notificationsAllowed by remember { mutableStateOf(NotificationManagerCompat.from(context).areNotificationsEnabled()) }
     val lifecycleOwner = LocalLifecycleOwner.current
 
@@ -270,26 +307,22 @@ internal fun SettingsContent(
                 Button(
                     onClick = {
                         showExportDialog = false
-                        isExportingData = true
-                        scope.launch {
-                            try {
-                                val exportFile = onCreateExportArchive()
-                                val uri = androidx.core.content.FileProvider.getUriForFile(
-                                    context, "${context.packageName}.fileprovider", exportFile
-                                )
-                                val shareIntent = Intent(Intent.ACTION_SEND).apply {
-                                    type = "application/zip"
-                                    putExtra(Intent.EXTRA_STREAM, uri)
-                                    addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                        if (onStartExportArchive != null) {
+                            onStartExportArchive()
+                        } else {
+                            localExportingData = true
+                            scope.launch {
+                                try {
+                                    val exportFile = onCreateExportArchive()
+                                    shareExportArchive(exportFile)
+                                } catch (cancelled: kotlinx.coroutines.CancellationException) {
+                                    throw cancelled
+                                } catch (e: Exception) {
+                                    operationFailed = true
+                                    operationMessage = context.getString(R.string.settings_export_failed, e.message ?: "")
+                                } finally {
+                                    localExportingData = false
                                 }
-                                operationFailed = false
-                                operationMessage = context.getString(R.string.settings_export_ready)
-                                context.startActivity(Intent.createChooser(shareIntent, context.getString(R.string.settings_export_data)))
-                            } catch (e: Exception) {
-                                operationFailed = true
-                                operationMessage = context.getString(R.string.settings_export_failed, e.message ?: "")
-                            } finally {
-                                isExportingData = false
                             }
                         }
                     }
@@ -411,8 +444,10 @@ internal fun SettingsContent(
             ) {
                 if (state.clientUuid.isNotBlank()) {
                     val clipboard = context.getSystemService(ClipboardManager::class.java)
-                    clipboard.setPrimaryClip(ClipData.newPlainText(context.getString(R.string.settings_client_uuid), state.clientUuid))
-                    Toast.makeText(context, context.getString(R.string.settings_client_uuid_copied), Toast.LENGTH_SHORT).show()
+                    if (clipboard != null) {
+                        clipboard.setPrimaryClip(ClipData.newPlainText(context.getString(R.string.settings_client_uuid), state.clientUuid))
+                        Toast.makeText(context, context.getString(R.string.settings_client_uuid_copied), Toast.LENGTH_SHORT).show()
+                    }
                 }
             }
         }
@@ -601,12 +636,14 @@ internal fun openNotificationSettings(context: Context) {
     }
     runCatching { context.startActivity(notificationIntent) }
         .onFailure {
-            context.startActivity(
-                Intent(
-                    Settings.ACTION_APPLICATION_DETAILS_SETTINGS,
-                    Uri.parse("package:${context.packageName}")
+            runCatching {
+                context.startActivity(
+                    Intent(
+                        Settings.ACTION_APPLICATION_DETAILS_SETTINGS,
+                        Uri.parse("package:${context.packageName}")
+                    )
                 )
-            )
+            }
         }
 }
 

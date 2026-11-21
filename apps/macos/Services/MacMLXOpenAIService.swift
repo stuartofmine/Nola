@@ -297,6 +297,7 @@ nonisolated final class MacMLXOpenAIService: @unchecked Sendable {
         }
         do {
             try child.run()
+            MacOwnedChildProcessRegistry.shared.register(child)
             lock.withLock { process = child }
             try standardInput.fileHandleForWriting.write(contentsOf: JSONEncoder().encode(configuration))
             try standardInput.fileHandleForWriting.close()
@@ -408,6 +409,7 @@ nonisolated final class MacMLXOpenAIService: @unchecked Sendable {
     }
 
     private func handleUnexpectedTermination(_ child: Process, status: Int32) {
+        MacOwnedChildProcessRegistry.shared.unregister(child)
         let prior: MacLocalModelRuntimeStatus? = lock.withLock {
             guard process === child else { return nil }
             process = nil
@@ -430,13 +432,17 @@ nonisolated final class MacMLXOpenAIService: @unchecked Sendable {
     }
 
     private func terminate(_ child: Process) {
-        guard child.isRunning else { return }
+        guard child.isRunning else {
+            MacOwnedChildProcessRegistry.shared.unregister(child)
+            return
+        }
         child.terminate()
         let pid = child.processIdentifier
         DispatchQueue.global(qos: .utility).async {
             let deadline = Date().addingTimeInterval(2)
             while child.isRunning, Date() < deadline { Thread.sleep(forTimeInterval: 0.02) }
             if child.isRunning { Darwin.kill(pid, SIGKILL) }
+            MacOwnedChildProcessRegistry.shared.unregister(child)
         }
     }
 

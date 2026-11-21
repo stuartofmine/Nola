@@ -31,8 +31,9 @@ struct MacDesktopPluginPageView: View {
             if failure != nil { retry += 1 }
         }
         .onReceive(NotificationCenter.default.publisher(for: .macDesktopPluginsChanged)) { _ in retry += 1 }
-        .task(id: retry) {
+        .task(id: "\(page.id):\(retry)") {
             failure = nil
+            if document?.id != page.id { document = nil }
             do {
                 let current = try await pluginClient.document(page.id)
                 if !Task.isCancelled { document = current }

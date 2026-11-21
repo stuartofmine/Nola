@@ -96,6 +96,10 @@ struct MacPromptLibraryView: View {
             Button(String(localized: "Delete"), role: .destructive) {
                 guard let template = pendingDeletion else { return }
                 do {
+                    if template.id == defaultTemplateID || (try? MacPromptLibrary.defaultTemplateID()) == template.id {
+                        try MacPromptLibrary.setDefaultTemplateID(nil)
+                        defaultTemplateID = nil
+                    }
                     try service.deleteTemplate(id: template.id)
                     pendingDeletion = nil
                     selectedID = filteredTemplates.first?.id

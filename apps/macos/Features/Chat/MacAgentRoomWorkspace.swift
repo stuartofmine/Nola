@@ -197,17 +197,23 @@ nonisolated enum MacExpertMentionPreparationError: Error { case reintroductionRe
         for contextID in observable { executionService?.observe(contextID: contextID) }
     }
 
+    private var pendingRestoreConversationID: String?
+
     func restoreConversation(_ conversationID: String) async {
         mainConversationID = conversationID
         restoreEpoch &+= 1
         let epoch = restoreEpoch
-        guard !isAdmitting else { return }
         conversationAssociation = nil
         peerExchanges = []
         remotePeerContexts = []
         resumableExpertMessages = [:]
         resumingExpertMessage = nil
         expertResumeError = nil
+        if isAdmitting {
+            pendingRestoreConversationID = conversationID
+            return
+        }
+        pendingRestoreConversationID = nil
         if mainIsRemote?() == true {
             do {
                 let association = try await mainAssociation(for: conversationID)
@@ -241,13 +247,15 @@ nonisolated enum MacExpertMentionPreparationError: Error { case reintroductionRe
             pendingExpertRevisions = restored.1?.0.expertRevisions ?? [:]
             admissionError = pendingAdmission == nil ? nil : "An expert message is pending. Retry sends the original message."
             await refreshPeerExchanges(for: conversationID)
-        } catch { admissionError = error.localizedDescription }
+        } catch {
+            if epoch == restoreEpoch, !Task.isCancelled { admissionError = error.localizedDescription }
+        }
     }
 
 
     /// Freeze the entire user message before any suspension; retry never substitutes edited text.
-    func recordMainExpertSelection(_ agent: MacPersistentAgent, conversationID: String) {
-        mentionedExpertRevisions[conversationID, default: [:]][agent.id] = agent.revision
+    func recordMainExpertSelection(_ agent: MacPersistentAgent, conversationID: String, observedRevision: Int64? = nil) {
+        mentionedExpertRevisions[conversationID, default: [:]][agent.id] = observedRevision ?? agent.revision
         if let epoch = mainSourceEpoch?(conversationID), let identity = mainSourceIdentity?(conversationID) {
             selectedSourceEpochs[conversationID, default: [:]][agent.id] = epoch
             selectedSourceIDs[conversationID, default: [:]][agent.id] = identity
@@ -309,7 +317,17 @@ nonisolated enum MacExpertMentionPreparationError: Error { case reintroductionRe
             }
         }
         isAdmitting = true
-        defer { isAdmitting = false }
+        defer {
+            isAdmitting = false
+            if let pending = pendingRestoreConversationID {
+                pendingRestoreConversationID = nil
+                if mainConversationID == pending {
+                    Task { @MainActor [weak self] in
+                        await self?.restoreConversation(pending)
+                    }
+                }
+            }
+        }
         do {
             let service = service
             let frozen = MacAgentRoomService.ExpertAdmissionDraft(conversationID: conversationID,
@@ -355,7 +373,9 @@ nonisolated enum MacExpertMentionPreparationError: Error { case reintroductionRe
             let completeRevision = admissionStorageRevision
             admissionStorageRevision = try await Task.detached { try service.saveExpertAdmission(saved, expectedRevision: completeRevision) }.value
             let manifest = try await admitCompleteExpertIntent(complete)
-            conversationAssociation = association
+            if mainConversationID == conversationID {
+                conversationAssociation = association
+            }
             for entry in manifest.entries {
                 let exact = try await Task.detached { try service.submission(roomID: frozenAssociation.roomID, submissionID: entry.child_submission_id) }.value
                 guard let receipt = exact,
@@ -378,7 +398,10 @@ nonisolated enum MacExpertMentionPreparationError: Error { case reintroductionRe
             pendingExpertRevisions = [:]
             admissionError = nil
             return input.text
-        } catch { admissionError = error.localizedDescription; return nil }
+        } catch {
+            if mainConversationID == conversationID { admissionError = error.localizedDescription }
+            return nil
+        }
     }
 
     func deliverPreparedExpertResend(_ plan: ApplePreparedExpertResend<MacCanonicalJSONValue>) async throws {
@@ -461,7 +484,11 @@ nonisolated enum MacExpertMentionPreparationError: Error { case reintroductionRe
         let epoch = restoreEpoch, service = service
         func current() -> Bool { !Task.isCancelled && epoch == restoreEpoch && conversationAssociation?.conversationID == original.input.conversation_id }
         resumingExpertMessage = messageID; expertResumeError = nil
-        defer { if current() { resumingExpertMessage = nil } }
+        defer {
+            if epoch == restoreEpoch && resumingExpertMessage == messageID {
+                resumingExpertMessage = nil
+            }
+        }
         do {
             if let prepared = try await Task.detached(operation: { try service.loadPreparedExpertResend(original.input.conversation_id) }).value {
                 guard current() else { return }
@@ -685,7 +712,10 @@ nonisolated enum MacExpertMentionPreparationError: Error { case reintroductionRe
                     "at_ms": .signedInteger(Int64(Date().timeIntervalSince1970 * 1000))])], owner: conversationID)
                 association = try await mainAssociation(for: conversationID)
             }
-            recordMainExpertSelection(agent, conversationID: conversationID)
+            let snapshotRevision = useMemberSnapshot
+                ? association?.room.room.participants.first(where: { $0.agentID == agentID && $0.active })?.agentRevision
+                : nil
+            recordMainExpertSelection(agent, conversationID: conversationID, observedRevision: snapshotRevision)
             if mainConversationID == conversationID { conversationAssociation = association }
             return
         }
@@ -706,7 +736,10 @@ nonisolated enum MacExpertMentionPreparationError: Error { case reintroductionRe
             _ = try await Task.detached { try service.rejoin(agent: agent, room: room) }.value
             association = try await Task.detached { try service.forConversation(conversationID) }.value
         }
-        recordMainExpertSelection(agent, conversationID: conversationID)
+        let snapshotRevision = useMemberSnapshot
+            ? association?.room.room.participants.first(where: { $0.active && $0.agentID == agentID })?.agentRevision
+            : nil
+        recordMainExpertSelection(agent, conversationID: conversationID, observedRevision: snapshotRevision)
         if mainConversationID == conversationID { conversationAssociation = association }
     }
 

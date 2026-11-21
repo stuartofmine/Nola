@@ -3,7 +3,8 @@
     import { api, ApiError } from '../lib/api';
     import { conversationUrl } from '../lib/chatConversations';
     import { locale, t } from '../lib/i18n';
-    import { freezeWaitResponse, type PresentedWait, type WaitAnswer, type WaitResponse } from '../lib/userInputWait';
+    import { randomId } from '../lib/randomId';
+    import { freezeWaitResponse, validateWaitAnswers, type PresentedWait, type WaitAnswer, type WaitResponse } from '../lib/userInputWait';
     let { record, stale = false, onresolved, onrefresh }: { record: PresentedWait; stale?: boolean; onresolved: () => void; onrefresh: () => void } = $props();
     let choices = $state<Record<string, string>>({});
     let texts = $state<Record<string, string>>({});
@@ -15,7 +16,7 @@
     const locked = $derived(writing || pendingBody !== null || stale || conflict || resolved);
     async function send(response?: WaitResponse) {
         if (writing || stale || conflict || resolved) return;
-        if (!pendingBody && response) pendingBody = freezeWaitResponse(record, response, crypto.randomUUID());
+        if (!pendingBody && response) pendingBody = freezeWaitResponse(record, response, randomId());
         if (!pendingBody) return;
         writing = true; error = '';
         try {
@@ -31,6 +32,7 @@
             onresolved();
         } catch (e) {
             if (e instanceof ApiError && e.status === 409) { conflict = true; error = 'chatActivity.answerConflict'; }
+            else if (e instanceof ApiError && (e.status === 400 || e.status === 422)) { pendingBody = null; error = 'chatActivity.answerInvalid'; }
             else error = 'chatActivity.answerRetry';
         } finally { writing = false; }
     }
@@ -42,6 +44,7 @@
             if (choice && choice !== 'freeform') answers.push({ question_id: q.id, value: { type: 'option', option_id: choice.slice(7) } });
             else if (q.allow_freeform && texts[q.id]?.trim()) answers.push({ question_id: q.id, value: { type: 'text', text: texts[q.id] } });
         }
+        if (!validateWaitAnswers(record, answers)) { error = 'chatActivity.answerInvalid'; return; }
         void send({ type: 'answers', answers });
     }
 </script>
@@ -58,7 +61,7 @@
                 {/each}
                 {#if q.allow_freeform}
                     {#if q.options.length}<label class="option"><input type="radio" name={`${record.wait.wait_id}:${q.id}`} value="freeform" bind:group={choices[q.id]} /><span>{t($locale, 'chatActivity.freeformAnswer')}</span></label>{/if}
-                    <textarea aria-label={q.prompt} bind:value={texts[q.id]} oninput={() => choices[q.id] = 'freeform'} required={q.required && (!choices[q.id] || choices[q.id] === 'freeform')} rows="2"></textarea>
+                    <textarea aria-label={q.prompt} bind:value={texts[q.id]} oninput={() => choices[q.id] = 'freeform'} required={q.required && (!choices[q.id] || choices[q.id] === 'freeform')} maxlength={q.max_text_chars} rows="2"></textarea>
                 {/if}
             </fieldset>
         {/each}

@@ -165,7 +165,8 @@ struct MacExtensionsCenterView: View {
                     externalErrorMessage: $catalog.errorMessage,
                     onClose: { selectedID = nil },
                     onEnabledChange: { setEnabled($0, for: selectedItem) },
-                    onRemove: { pendingRemoval = selectedItem }
+                    onRemove: { pendingRemoval = selectedItem },
+                    onSaved: { refresh() }
                 )
                 .id(selectedItem.id)
             } else {
@@ -1436,6 +1437,7 @@ private struct MacExtensionDetail: View {
     let onClose: () -> Void
     let onEnabledChange: (Bool) -> Void
     let onRemove: () -> Void
+    var onSaved: () -> Void = {}
 
     @State private var document: MacExtensionDocument?
     @State private var draft = ""
@@ -1825,6 +1827,7 @@ private struct MacExtensionDetail: View {
             if item.source == .builtIn {
                 hasBuiltInOverride = true
             }
+            onSaved()
             showsSavedConfirmation = true
             feedbackID = UUID()
             let feedback = feedbackID
@@ -1857,6 +1860,7 @@ private struct MacExtensionDetail: View {
             try MacBuiltInSkillRegistry.synchronizeCatalog(store: store)
             try MacBuiltInSkillRegistry.installTrustedRouter()
             hasBuiltInOverride = false
+            onSaved()
             await loadDocument()
         } catch {
             errorMessage = error.localizedDescription

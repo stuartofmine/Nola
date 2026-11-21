@@ -39,6 +39,20 @@ class SecureTokenStore @Inject constructor(
         require(reference.startsWith("android-model:")) { "This account credential is not available on this device" }
         return readSecret(reference)
     }
+    fun deleteModelAccountSecret(reference: String) {
+        require(reference.startsWith("android-model:"))
+        deleteSecret(reference)
+    }
+    fun pruneModelAccountSecrets(referenced: Set<String>) {
+        val orphans = preferences.all.keys.filter { it.startsWith("android-model:") && it !in referenced }
+        if (orphans.isEmpty()) return
+        val editor = preferences.edit()
+        orphans.forEach { editor.remove(it) }
+        editor.apply()
+    }
+    fun clearModelAccountSecrets() {
+        pruneModelAccountSecrets(emptySet())
+    }
 
     fun saveLocalModelApiKey(apiKey: String): Boolean = saveSecret(LOCAL_MODEL_API_KEY, apiKey)
 

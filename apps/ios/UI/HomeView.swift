@@ -599,12 +599,18 @@ struct HomeView: View {
 
             var textSnippets: [String: String] = [:]
             for (aid, run) in chosen {
-                guard let jid = run.resultJournalId, !jid.isEmpty else { continue }
-                if let journal = try? storage.getJournal(id: jid) {
+                if let jid = run.resultJournalId, !jid.isEmpty,
+                   let journal = try? storage.getJournal(id: jid) {
                     let raw = journal.content
                         .replacingOccurrences(of: "\n\n\n", with: "\n\n")
                         .trimmingCharacters(in: .whitespacesAndNewlines)
-                    if !raw.isEmpty { textSnippets[aid] = String(raw.prefix(200)) }
+                    if !raw.isEmpty {
+                        textSnippets[aid] = String(raw.prefix(200))
+                        continue
+                    }
+                }
+                if let fallback = run.displayResultText {
+                    textSnippets[aid] = String(fallback.prefix(200))
                 }
             }
 

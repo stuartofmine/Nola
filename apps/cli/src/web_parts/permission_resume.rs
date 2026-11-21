@@ -135,8 +135,10 @@ fn host_run_resume_response_body(
         let canonical_run_id = input.expected_run_id.clone();
         let mut journal_notifications = None;
         let mut emitter = crate::native_runtime_output::NativeRuntimeOutput::with_event_sink(move |mut event| {
-            observe_journal_for_stream(&mut journal_notifications, &journal_owner, &event,
-                &event_tx, &event_token, &host_id);
+            if observe_journal_for_stream(&mut journal_notifications, &journal_owner, &event,
+                &event_tx, &event_token, &host_id) {
+                return;
+            }
             if !mobile_event_is_canonical(&event) {
                 return;
             }

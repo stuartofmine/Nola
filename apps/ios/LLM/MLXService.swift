@@ -237,7 +237,8 @@ class MLXService {
                 let task = Task {
                     for await generation in stream {
                         if Task.isCancelled {
-                            break
+                            continuation.finish(throwing: CancellationError())
+                            return
                         }
                         switch generation {
                         case .chunk(let chunk):
@@ -251,7 +252,11 @@ class MLXService {
                             break
                         }
                     }
-                    continuation.finish()
+                    if Task.isCancelled {
+                        continuation.finish(throwing: CancellationError())
+                    } else {
+                        continuation.finish()
+                    }
                 }
                 continuation.onTermination = { @Sendable _ in
                     task.cancel()

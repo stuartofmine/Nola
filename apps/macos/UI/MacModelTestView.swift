@@ -367,8 +367,14 @@ struct MacModelTestView: View {
                         parameters: store.parameters(for: profile)
                     )
                 case .provider:
-                    guard let configuration = MacAppleChatConfigurationStore.shared.load() else {
-                        throw MacRemoteModelRoutingError.allConfiguredModelsCoolingDown
+                    guard let configuration = try MacAppleChatConfigurationStore.shared.loadThrowing() else {
+                        throw NSError(
+                            domain: "MacModelTestView",
+                            code: 1,
+                            userInfo: [
+                                NSLocalizedDescriptionKey: "\(String(localized: "Model")): \(String(localized: "Not configured"))"
+                            ]
+                        )
                     }
                     request = try MacModelTestRunRequestFactory.remote(
                         prompt: runPrompt,

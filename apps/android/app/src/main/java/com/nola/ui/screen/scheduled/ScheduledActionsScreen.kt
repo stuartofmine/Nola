@@ -616,7 +616,10 @@ fun ScheduledActionCard(
     val dateFormat = remember { SimpleDateFormat("MMM dd, HH:mm", Locale.getDefault()) }
     var showMenu by remember(action.id) { mutableStateOf(false) }
     val needsAttention = latestResult?.let { scheduledResultNeedsAttention(it.status) } == true
-    val isRunning = latestResult?.status?.lowercase(Locale.ROOT) in setOf("pending", "running")
+    val isRunning = latestResult?.let { result ->
+        result.status.lowercase(Locale.ROOT) in setOf("pending", "running") &&
+            (System.currentTimeMillis() - result.createdAt) < 5 * 60_000L
+    } == true
     Box(modifier = Modifier.testTag("scheduled.card.${action.id}")) {
     NolaCard {
         Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
@@ -1179,12 +1182,15 @@ internal fun nextScheduledAt(
     if (!action.enabled) return null
     val rawTime = action.scheduledTimeIso?.trim().orEmpty()
     if (action.scheduleFrequency == "once") {
-        val patterns = listOf("yyyy-MM-dd'T'HH:mm:ssXXX", "yyyy-MM-dd'T'HH:mm", "yyyy-MM-dd HH:mm")
-        return patterns.firstNotNullOfOrNull { pattern ->
-            runCatching {
-                SimpleDateFormat(pattern, Locale.US).parse(rawTime)?.time
-            }.getOrNull()?.takeIf { it > now }
-        }
+        if (rawTime.isBlank()) return null
+        val zone = runCatching {
+            java.time.ZoneId.of(action.timezone.ifBlank { java.time.ZoneId.systemDefault().id })
+        }.getOrElse { java.time.ZoneId.systemDefault() }
+        val normalized = rawTime.replace(' ', 'T')
+        val targetMillis = runCatching { java.time.ZonedDateTime.parse(normalized).toInstant().toEpochMilli() }.getOrNull()
+            ?: runCatching { java.time.OffsetDateTime.parse(normalized).toInstant().toEpochMilli() }.getOrNull()
+            ?: runCatching { java.time.LocalDateTime.parse(normalized).atZone(zone).toInstant().toEpochMilli() }.getOrNull()
+        return targetMillis?.takeIf { it > now }
     }
     if (action.scheduleFrequency != "daily" && action.scheduleFrequency != "weekly") return null
     val match = Regex("""(\d{1,2}):(\d{2})""").findAll(rawTime).lastOrNull() ?: return null

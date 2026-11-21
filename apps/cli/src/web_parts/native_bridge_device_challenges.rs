@@ -501,6 +501,10 @@ fn resolve_llm_settings_inner(
                     secret.as_deref().unwrap_or(""),
                 )],
             )
+            .and_then(|mut settings| {
+                crate::model_profile_resolution::bind_siwc_profile(&mut settings, &profile, &store)?;
+                Ok(settings)
+            })
             .map_err(|error| {
                 json_response(
                     StatusCode(422),

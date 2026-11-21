@@ -3,6 +3,7 @@
     const acceptsWorkspaceUnload = workspaceUnloadScope();
     import { onDestroy, tick, untrack } from 'svelte';
     import { locale, t } from '../lib/i18n';
+    import { randomId } from '../lib/randomId';
     import PrototypeIcon from './PrototypeIcon.svelte';
     import { MAX_TEXT_ATTACHMENTS, TEXT_ATTACHMENT_ACCEPT, createTextAttachmentDraftStore, readTextAttachment } from '../lib/chatTextAttachments';
     import type { ChatTextAttachment } from '../lib/chatTextAttachments';
@@ -49,7 +50,7 @@
         try {
             for (const file of files) {
                 if (attachments.length + imported.length >= MAX_TEXT_ATTACHMENTS) { rejected = true; break; }
-                try { imported.push(await readTextAttachment(file, id, crypto.randomUUID())); }
+                try { imported.push(await readTextAttachment(file, id, randomId())); }
                 catch (cause) { rejected = true; if (cause instanceof Error && cause.message === 'chatTextAttachment.invalidEncoding') encodingError = true; }
                 if (conversationId !== id || generation !== epoch || request !== sequence) return;
             }

@@ -467,7 +467,7 @@ struct MacAutomationCenterView: View {
 
     @ViewBuilder
     private func nextRun(_ automation: MacAutomation, isRunning: Bool) -> some View {
-        if let nextRun = automation.nextRun, automation.isEnabled, !isRunning {
+        if let nextRun = store.nextRun(for: automation), automation.isEnabled, !isRunning {
             Label {
                 Text(nextRun, style: .relative)
             } icon: {

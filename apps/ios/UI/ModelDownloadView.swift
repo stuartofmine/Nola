@@ -19,12 +19,14 @@ import Combine
 
 struct ModelDownloadView: View {
     var embedded = false
+    var onSelectModel: ((ModelInfo) -> Void)? = nil
     @Environment(\.dismiss) private var dismiss
     @EnvironmentObject private var container: ServiceContainer
     @State private var showingDeleteAlert = false
     @State private var modelToDelete: ModelDownloader.ModelType?
     @State private var refreshTrigger = false
     @State private var operationError: String?
+    @State private var selectedModelID: String? = nil
     
     private var downloader: ModelDownloader {
         container.modelDownloader
@@ -59,6 +61,10 @@ struct ModelDownloadView: View {
                     ModelRow(
                         model: model,
                         downloader: downloader,
+                        isSelected: selectedModelID == model.rawValue,
+                        onSelect: {
+                            selectLocalModel(model)
+                        },
                         onDelete: {
                             modelToDelete = model
                             showingDeleteAlert = true
@@ -87,6 +93,13 @@ struct ModelDownloadView: View {
                     Button(L10n.close) { dismiss() }
                 }
             }
+        }
+        .onAppear {
+            let current = container.chatManager.getCurrentModel() ?? ModelSelectionManager.getLastSelectedModel()
+            selectedModelID = current?.isLocal == true ? current?.id : nil
+        }
+        .onReceive(container.chatManager.$selectedModelInfo) { info in
+            selectedModelID = info?.isLocal == true ? info?.id : nil
         }
         .onReceive(container.modelDownloader.objectWillChange) { _ in
             refreshTrigger.toggle()
@@ -210,6 +223,24 @@ struct ModelDownloadView: View {
         .cornerRadius(10)
     }
     
+    private func selectLocalModel(_ model: ModelDownloader.ModelType) {
+        operationError = nil
+        let info = model.canonicalModelInfo
+        ModelSelectionManager.addModel(info)
+        if let onSelectModel {
+            onSelectModel(info)
+            selectedModelID = info.id
+            return
+        }
+        do {
+            try ModelSelectionManager.commitSelectedModel(info, using: container.applicationRuntime)
+            container.chatManager.selectModel(info, persistAsDefault: false)
+            selectedModelID = info.id
+        } catch {
+            operationError = error.localizedDescription
+        }
+    }
+
     private func deleteModel(_ model: ModelDownloader.ModelType) {
         operationError = nil
         do {
@@ -341,6 +372,8 @@ struct ModelDownloadView: View {
 struct ModelRow: View {
     let model: ModelDownloader.ModelType
     @ObservedObject var downloader: ModelDownloader
+    let isSelected: Bool
+    let onSelect: () -> Void
     let onDelete: () -> Void
     
     // Comment in English.
@@ -400,16 +433,35 @@ struct ModelRow: View {
                     }
                     .buttonStyle(.borderless)
                 } else if downloader.isModelDownloaded(model) {
-                    // Comment in English.
-                    Button(role: .destructive) {
-                        onDelete()
-                    } label: {
-                        Image(systemName: "trash")
-                            .frame(minWidth: 44, minHeight: 44)
-                            .accessibilityLabel(NSLocalizedString("model.delete.confirm", value: "Delete model", comment: "Local model action"))
-                            .foregroundColor(.red)
+                    HStack(spacing: 8) {
+                        if isSelected {
+                            Label(
+                                NSLocalizedString("model.center.selected", value: "Selected", comment: "Selected model badge"),
+                                systemImage: "checkmark.circle.fill"
+                            )
+                            .font(.caption.weight(.medium))
+                            .foregroundStyle(DesignTokens.successColor)
+                        } else {
+                            Button {
+                                onSelect()
+                            } label: {
+                                Text(L10n.modelActionUse)
+                            }
+                            .buttonStyle(.borderedProminent)
+                            .controlSize(.small)
+                            .accessibilityIdentifier("model.download.use.\(model.rawValue)")
+                        }
+
+                        Button(role: .destructive) {
+                            onDelete()
+                        } label: {
+                            Image(systemName: "trash")
+                                .frame(minWidth: 44, minHeight: 44)
+                                .accessibilityLabel(NSLocalizedString("model.delete.confirm", value: "Delete model", comment: "Local model action"))
+                                .foregroundColor(.red)
+                        }
+                        .buttonStyle(.borderless)
                     }
-                    .buttonStyle(.borderless)
                 } else if modelDirectoryExists {
                     // Comment in English.
                     HStack(spacing: 8) {

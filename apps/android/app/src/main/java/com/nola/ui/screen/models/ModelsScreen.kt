@@ -158,6 +158,7 @@ fun ModelsScreen(
     val manageHostModels = {
         viewModel.openHostMessagingManagement("/models?tab=api") { target ->
             runCatching { context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(target))) }
+                .onFailure { viewModel.reportHostManagementLaunchFailure(it) }
         }
     }
     val reduceMotion = rememberReduceMotionEnabled()
@@ -489,11 +490,13 @@ fun ModelListCard(
 ) {
     NolaCard {
         NolaSectionTitle(icon = Icons.AutoMirrored.Filled.List, title = title)
+        val anyActivating = activatingModelId != null
         models.forEachIndexed { index, model ->
             ModelRow(
                 model = model,
                 isSelected = model.selectionId == selectedModelId && model.source == selectedModelSource,
                 isActivating = model.selectionId == activatingModelId && model.source == activatingModelSource,
+                isAnyActivating = anyActivating,
                 isRunning = model.id == runningLocalModelId,
                 onClick = { onSelect(model) },
                 onStartLocal = onStartLocal?.let { action -> { action(model) } },
@@ -683,6 +686,7 @@ fun ModelRow(
     model: ModelInfo,
     isSelected: Boolean,
     isActivating: Boolean,
+    isAnyActivating: Boolean = isActivating,
     isRunning: Boolean = false,
     onClick: () -> Unit,
     onStartLocal: (() -> Unit)? = null,
@@ -746,7 +750,7 @@ fun ModelRow(
                     modifier = Modifier
                         .weight(1f)
                         .clip(RoundedCornerShape(NolaRadius.md))
-                        .clickable(enabled = !isActivating) { onClick() }
+                        .clickable(enabled = !isAnyActivating) { onClick() }
                         .padding(horizontal = 4.dp, vertical = 2.dp)
                         .testTag(MODEL_ROW_COPY_TEST_TAG_PREFIX + model.id)
                 ) {
@@ -775,6 +779,7 @@ fun ModelRow(
                         model = model,
                         isSelected = isSelected,
                         isActivating = isActivating,
+                        isAnyActivating = isAnyActivating,
                         isRunning = isRunning,
                         onClick = onClick,
                         onStartLocal = onStartLocal,
@@ -795,6 +800,7 @@ fun ModelRow(
                         model = model,
                         isSelected = isSelected,
                         isActivating = isActivating,
+                        isAnyActivating = isAnyActivating,
                         isRunning = isRunning,
                         onClick = onClick,
                         onStartLocal = onStartLocal,
@@ -815,6 +821,7 @@ private fun ModelRowActions(
     model: ModelInfo,
     isSelected: Boolean,
     isActivating: Boolean,
+    isAnyActivating: Boolean,
     isRunning: Boolean,
     onClick: () -> Unit,
     onStartLocal: (() -> Unit)?,
@@ -835,7 +842,7 @@ private fun ModelRowActions(
             TextButton(onClick = {
                 if (isRunning) haptics.warning() else haptics.primaryAction()
                 onStartLocal()
-            }, enabled = !isActivating) {
+            }, enabled = !isAnyActivating) {
                 Text(stringResource(if (isRunning) R.string.models_stop else R.string.models_start))
             }
         }
@@ -845,7 +852,7 @@ private fun ModelRowActions(
                     haptics.warning()
                     onDeleteLocal()
                 },
-                enabled = !isActivating && !isRunning,
+                enabled = !isAnyActivating && !isRunning,
                 modifier = Modifier.alpha(if (isRunning) 0.38f else 1f)
             ) {
                 Icon(Icons.Filled.Delete, contentDescription = stringResource(R.string.common_delete))
@@ -889,7 +896,7 @@ private fun ModelRowActions(
                 )
             }
             else -> {
-                TextButton(onClick = onClick) {
+                TextButton(onClick = onClick, enabled = !isAnyActivating) {
                     Icon(Icons.Filled.Check, contentDescription = null, modifier = Modifier.size(16.dp))
                     Spacer(Modifier.size(4.dp))
                     Text(stringResource(R.string.models_use))
@@ -899,18 +906,18 @@ private fun ModelRowActions(
         }
         if (model.source != ModelInfo.ModelSource.WebHost) {
             if (onCapabilities != null) {
-                IconButton(onClick = onCapabilities, enabled = !isActivating) {
+                IconButton(onClick = onCapabilities, enabled = !isAnyActivating) {
                     Icon(Icons.Filled.Security, contentDescription = stringResource(R.string.models_execution_capabilities))
                 }
             }
-            NolaIconButton(label = stringResource(R.string.models_inference_test), onClick = { onTest?.invoke() }, enabled = !isActivating && onTest != null) {
+            NolaIconButton(label = stringResource(R.string.models_inference_test), onClick = { onTest?.invoke() }, enabled = !isAnyActivating && onTest != null) {
                 Icon(
                     painterResource(R.drawable.nola_execution),
                     contentDescription = stringResource(R.string.models_inference_test),
                     tint = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
             }
-            NolaIconButton(label = stringResource(R.string.common_parameters), onClick = onParams, enabled = !isActivating) {
+            NolaIconButton(label = stringResource(R.string.common_parameters), onClick = onParams, enabled = !isAnyActivating) {
                 Icon(
                     painterResource(R.drawable.nola_settings),
                     contentDescription = stringResource(R.string.common_parameters),

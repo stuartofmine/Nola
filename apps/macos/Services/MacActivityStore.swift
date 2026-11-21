@@ -250,9 +250,33 @@ final class MacActivityStore {
         persist()
     }
 
+    enum StorageError: LocalizedError {
+        case rejectedStorageFormat
+
+        var errorDescription: String? {
+            switch self {
+            case .rejectedStorageFormat:
+                return String(
+                    localized: "Activity history could not be restored because the existing history file has an unrecognized format and was preserved. Clear activity history first before restoring."
+                )
+            }
+        }
+    }
+
     func restore(_ restoredEntries: [MacActivityEntry]) {
-        entries = Array(restoredEntries.sorted { $0.finishedAt > $1.finishedAt }.prefix(maximumEntries))
-        persist()
+        try? restoreThrowing(restoredEntries)
+    }
+
+    func restoreThrowing(_ restoredEntries: [MacActivityEntry]) throws {
+        guard !rejectedStorageFormat else {
+            let error = StorageError.rejectedStorageFormat
+            lastError = error.localizedDescription
+            throw error
+        }
+        let candidate = Array(restoredEntries.sorted { $0.finishedAt > $1.finishedAt }.prefix(maximumEntries))
+        try persistThrowing(candidate)
+        entries = candidate
+        lastError = nil
     }
 
     private func insert(_ entry: MacActivityEntry) {
@@ -283,13 +307,17 @@ final class MacActivityStore {
     private func persist() {
         guard !rejectedStorageFormat else { return }
         do {
-            try fileManager.createDirectory(at: supportDirectory, withIntermediateDirectories: true)
-            let encoder = JSONEncoder()
-            encoder.dateEncodingStrategy = .iso8601
-            try encoder.encode(entries).write(to: storeURL, options: .atomic)
+            try persistThrowing(entries)
         } catch {
             lastError = error.localizedDescription
         }
+    }
+
+    private func persistThrowing(_ candidate: [MacActivityEntry]) throws {
+        try fileManager.createDirectory(at: supportDirectory, withIntermediateDirectories: true)
+        let encoder = JSONEncoder()
+        encoder.dateEncodingStrategy = .iso8601
+        try encoder.encode(candidate).write(to: storeURL, options: .atomic)
     }
 
     private func tailText(at url: URL?) -> String {

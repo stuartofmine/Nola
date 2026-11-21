@@ -77,7 +77,7 @@ class ModelRepositoryImpl @Inject constructor(
     }
 
     override suspend fun saveApiModelConfig(config: ApiModelConfig) {
-        memoryProfileDataStore.saveAgentLlmConfig(config.endpoint, config.apiKey, config.model, config.wireProtocol.wireValue)
+        memoryProfileDataStore.addAgentLlmConfig(config.endpoint, config.apiKey, config.model, config.wireProtocol.wireValue)
     }
 
     override suspend fun updateModelExecutionCapabilities(model: ModelInfo, capabilities: ModelExecutionCapabilities) {

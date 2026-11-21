@@ -742,6 +742,14 @@ struct ChatComposer<ModelControl: View>: View {
             maxSelectionCount: 10,
             matching: .images
         )
+        .onChange(of: showPhotosPicker) { _, isPresented in
+            guard !isPresented else { return }
+            DispatchQueue.main.async {
+                if !showPhotosPicker && selectedPhotoItems.isEmpty {
+                    cancelAttachmentPicker()
+                }
+            }
+        }
         .onChange(of: selectedPhotoItems) { _, items in
             guard !items.isEmpty else { return }
             let picked = items
@@ -760,11 +768,17 @@ struct ChatComposer<ModelControl: View>: View {
                         }
                     }
                 }
+                guard let completion else {
+                    for url in urls {
+                        try? FileManager.default.removeItem(at: url)
+                    }
+                    return
+                }
                 await MainActor.run {
                     if urls.isEmpty {
-                        completion?(.failure(CocoaError(.fileReadUnknown)))
+                        completion(.failure(CocoaError(.fileReadUnknown)))
                     } else {
-                        completion?(.success(urls))
+                        completion(.success(urls))
                     }
                 }
             }

@@ -327,8 +327,62 @@ fn mcp_usage() -> &'static str {
     "Usage:\n  nola mcp [list] [--json]\n  nola mcp add <name> <command-or-url> [args...] [--json]\n  nola mcp remove <id-or-name> [--json]\n  nola mcp enable <id-or-name> [--json]\n  nola mcp disable <id-or-name> [--json]"
 }
 
+fn strip_mcp_admin_flags(
+    args: &[String],
+    mut json_output: bool,
+) -> Result<(Vec<String>, bool, bool), String> {
+    let mut positional = Vec::new();
+    let mut show_help = false;
+    let mut index = 0;
+    while index < args.len() {
+        let in_stdio_server_args = positional.first().map(String::as_str) == Some("add")
+            && positional.len() >= 3
+            && positional.get(2).is_some_and(|target| {
+                let lower = target.trim().to_ascii_lowercase();
+                !lower.starts_with("http://") && !lower.starts_with("https://")
+            });
+        if in_stdio_server_args {
+            if args[index] == "--" {
+                positional.extend(args[index + 1..].iter().cloned());
+            } else {
+                positional.extend(args[index..].iter().cloned());
+            }
+            break;
+        }
+        let arg = &args[index];
+        if arg == "--" {
+            positional.extend(args[index + 1..].iter().cloned());
+            break;
+        }
+        if arg == "-h" || arg == "--help" {
+            show_help = true;
+            index += 1;
+        } else if arg == "--json" {
+            json_output = true;
+            index += 1;
+        } else if arg == "--lang" {
+            let value = args
+                .get(index + 1)
+                .ok_or_else(|| "--lang requires a language tag".to_string())?;
+            let language = parse_language_tag(value)
+                .ok_or_else(|| format!("--lang unsupported language: {value}"))?;
+            set_language(language);
+            index += 2;
+        } else if let Some(value) = arg.strip_prefix("--lang=") {
+            let language = parse_language_tag(value)
+                .ok_or_else(|| format!("--lang unsupported language: {value}"))?;
+            set_language(language);
+            index += 1;
+        } else {
+            positional.push(arg.clone());
+            index += 1;
+        }
+    }
+    Ok((positional, json_output, show_help))
+}
+
 fn run_mcp_command(args: &[String], leading_json: bool) -> Result<(), String> {
-    let (positional, json_output, show_help) = strip_admin_flags(args, leading_json)?;
+    let (positional, json_output, show_help) = strip_mcp_admin_flags(args, leading_json)?;
     if show_help {
         println!("{}", mcp_usage());
         return Ok(());
@@ -701,5 +755,45 @@ mod tests {
         assert_eq!(listed.len(), 1);
         let summary = mcp_server_summary(&listed[0]);
         assert_eq!(summary["transport"], "streamable_http");
+    }
+
+    #[test]
+    fn strip_mcp_admin_flags_preserves_stdio_server_flags() {
+        let args: Vec<String> = [
+            "add", "my-server", "npx", "-y", "some-mcp", "--json", "--lang", "fr", "--help", "-h",
+        ]
+        .into_iter()
+        .map(String::from)
+        .collect();
+        let (positional, json_output, show_help) = strip_mcp_admin_flags(&args, false).unwrap();
+        assert!(!json_output);
+        assert!(!show_help);
+        assert_eq!(
+            positional,
+            vec!["add", "my-server", "npx", "-y", "some-mcp", "--json", "--lang", "fr", "--help", "-h"]
+        );
+
+        let args_with_cli_json: Vec<String> = [
+            "add", "--json", "my-server", "npx", "--json",
+        ]
+        .into_iter()
+        .map(String::from)
+        .collect();
+        let (positional, json_output, show_help) =
+            strip_mcp_admin_flags(&args_with_cli_json, false).unwrap();
+        assert!(json_output);
+        assert!(!show_help);
+        assert_eq!(positional, vec!["add", "my-server", "npx", "--json"]);
+
+        let http_args: Vec<String> = [
+            "add", "remote", "https://example.com/mcp", "--json",
+        ]
+        .into_iter()
+        .map(String::from)
+        .collect();
+        let (positional, json_output, show_help) = strip_mcp_admin_flags(&http_args, false).unwrap();
+        assert!(json_output);
+        assert!(!show_help);
+        assert_eq!(positional, vec!["add", "remote", "https://example.com/mcp"]);
     }
 }

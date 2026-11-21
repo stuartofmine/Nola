@@ -132,4 +132,10 @@ public final class FileBasedNotificationStore: NotificationStore {
             db.removeValue(forKey: id)
         }
     }
+
+    public func clearAll() throws {
+        try withLockedWrite {
+            db.removeAll()
+        }
+    }
 }

@@ -607,7 +607,10 @@ fn run_interactive_session(config: &Config, resume_pending: bool) -> Result<Inte
                 edit_target = None;
                 offer_user_questions = true;
                 if !result.run_outcome.is_terminal() {
-                    eprintln!("Run remains pending ({:?}); no completion or permission decision was recorded.", result.run_outcome.turn_status);
+                    terminal_notice!(
+                        "Run remains pending ({:?}); no completion or permission decision was recorded.",
+                        result.run_outcome.turn_status
+                    );
                 }
                 if interactive_config.session_id.is_none() {
                     interactive_config.session_id = result.session_id.clone();
@@ -3236,6 +3239,28 @@ fn interactive_init_usage() -> String {
     "usage: /init [--dry-run] [--force] [--output PATH]".to_string()
 }
 
+fn apply_workspace_runtime(config: &mut Config, mut new_runtime: runtime_config::RuntimeConfig) {
+    new_runtime.endpoint = config.runtime.endpoint.clone();
+    new_runtime.api_key = config.runtime.api_key.clone();
+    new_runtime.model = config.runtime.model.clone();
+    new_runtime.provider = config.runtime.provider.clone();
+    new_runtime.siwc = config.runtime.siwc.clone();
+    new_runtime.selected_profile = config.runtime.selected_profile.clone();
+    new_runtime.model_binding = config.runtime.model_binding.clone();
+    new_runtime.native_model_route = config.runtime.native_model_route.clone();
+    new_runtime.model_capabilities = config.runtime.model_capabilities.clone();
+    new_runtime.llm_fallbacks = config.runtime.llm_fallbacks.clone();
+    new_runtime.reasoning_selection = config.runtime.reasoning_selection.clone();
+    new_runtime.reasoning_tier = config.runtime.reasoning_tier.clone();
+    new_runtime.chat_output_token_field = config.runtime.chat_output_token_field.clone();
+    new_runtime.generation_options = config.runtime.generation_options.clone();
+    new_runtime.temperature = config.runtime.temperature;
+    new_runtime.top_p = config.runtime.top_p;
+    new_runtime.max_output_tokens = config.runtime.max_output_tokens;
+    new_runtime.compaction.context_window_tokens = config.runtime.compaction.context_window_tokens;
+    config.runtime = new_runtime;
+}
+
 fn resolve_interactive_workspace_path(
     raw: &str,
     current: &Path,
@@ -3846,8 +3871,23 @@ fn handle_interactive_slash_command(
             Ok(SlashCommandResult::Handled)
         }
         "/allow" => {
-            if let Err(e) = interactive_permission_panel(config) {
-                terminal_notice!("  {} {e}", tr(Message::InteractiveAllowPanelErrorPrefix));
+            let previous_profile = config.permission_profile;
+            let previous_auto_approve = config.auto_approve;
+            match interactive_permission_panel(config) {
+                Ok(()) => {
+                    if (config.permission_profile != previous_profile
+                        || config.auto_approve != previous_auto_approve)
+                        && config.save_session
+                        && config.session_id.is_some()
+                    {
+                        if let Err(e) = crate::conversation_invocation::persist(config) {
+                            terminal_notice!("  {} {e}", tr(Message::InteractiveAllowPanelErrorPrefix));
+                        }
+                    }
+                }
+                Err(e) => {
+                    terminal_notice!("  {} {e}", tr(Message::InteractiveAllowPanelErrorPrefix));
+                }
             }
             return Ok(SlashCommandResult::Handled);
         }
@@ -4058,7 +4098,7 @@ fn handle_interactive_slash_command(
             config.project_root = target.clone();
             config.allowed_dirs = allowed_dirs;
             config.bash_prefixes = bash_prefixes;
-            config.runtime = runtime;
+            apply_workspace_runtime(config, runtime);
             config.session_id = None;
             config.continue_last = false;
             config.resume_session = false;
@@ -4313,31 +4353,27 @@ fn handle_interactive_slash_command(
                         )));
                         return Ok(SlashCommandResult::Handled);
                     };
-                    if control == "rerun" && item.is_sop() {
-                        let rerun = work::rerun_sop(config, work_id)?;
-                        format!(
-                            "  {} · `{}`",
-                            ui_text(UiText::WorkRerunStarted),
-                            rerun.record.run_id
-                        )
+                    if control == "rerun" {
+                        if item.is_sop() {
+                            let rerun = work::rerun_sop(config, work_id)?;
+                            format!(
+                                "  {} · `{}`",
+                                ui_text(UiText::WorkRerunStarted),
+                                rerun.record.run_id
+                            )
+                        } else {
+                            format!("  {}", ui_text(UiText::WorkControlUnsupported))
+                        }
                     } else if item.is_goal() {
                         let session_id = config
                             .session_id
                             .as_deref()
                             .ok_or_else(|| "Goal control requires an active session".to_string())?;
-                        let command = match control {
-                            "pause" => GoalRuntimeCommand::Pause {
-                                status: GoalStatus::Paused,
-                                wake_at_epoch_ms: None,
-                                now_epoch_ms: goal_now_epoch_ms(),
-                            },
-                            "resume" => GoalRuntimeCommand::Resume {
-                                now_epoch_ms: goal_now_epoch_ms(),
-                            },
-                            "stop" | "cancel" => GoalRuntimeCommand::Cancel {
-                                now_epoch_ms: goal_now_epoch_ms(),
-                            },
-                            _ => unreachable!(),
+                        let Some(command) =
+                            goal_work_control_command(control, goal_now_epoch_ms())
+                        else {
+                            emit_work(format!("  {}", ui_text(UiText::WorkControlUnsupported)));
+                            return Ok(SlashCommandResult::Handled);
                         };
                         if control == "resume"
                             && session::load_session_goal_projection(session_id)?
@@ -4741,7 +4777,7 @@ fn resume_selected_session_before_composer(config: &Config, emitter: &mut Emitte
         Some(outcome) if outcome.turn_status == nola_core::agent::AgentTurnStatus::AwaitingInput => Ok(true),
         Some(outcome) if !outcome.is_terminal() => {
             if !config.json_output {
-                eprintln!("{}", match current_language() {
+                terminal_notice!("{}", match current_language() {
                     Language::ZhHans => "操作仍在等待恢复。可再次运行 --resume；原请求已保留。",
                     _ => "The run is still waiting. Use --resume to retry; the original request is preserved.",
                 });
@@ -4758,5 +4794,46 @@ fn resume_selected_session_before_composer(config: &Config, emitter: &mut Emitte
             }
         }
         Some(_) => Ok(true),
+    }
+}
+
+fn goal_work_control_command(control: &str, now_epoch_ms: i64) -> Option<GoalRuntimeCommand> {
+    match control {
+        "pause" => Some(GoalRuntimeCommand::Pause {
+            status: GoalStatus::Paused,
+            wake_at_epoch_ms: None,
+            now_epoch_ms,
+        }),
+        "resume" => Some(GoalRuntimeCommand::Resume { now_epoch_ms }),
+        "stop" | "cancel" => Some(GoalRuntimeCommand::Cancel { now_epoch_ms }),
+        _ => None,
+    }
+}
+
+#[cfg(test)]
+mod goal_work_control_tests {
+    use super::goal_work_control_command;
+    use nola_core::agent::GoalRuntimeCommand;
+
+    #[test]
+    fn goal_work_control_rejects_rerun_without_panicking() {
+        assert!(goal_work_control_command("rerun", 42).is_none());
+        assert!(goal_work_control_command("unknown", 42).is_none());
+        assert!(matches!(
+            goal_work_control_command("pause", 42),
+            Some(GoalRuntimeCommand::Pause { now_epoch_ms: 42, .. })
+        ));
+        assert!(matches!(
+            goal_work_control_command("resume", 42),
+            Some(GoalRuntimeCommand::Resume { now_epoch_ms: 42 })
+        ));
+        assert!(matches!(
+            goal_work_control_command("stop", 42),
+            Some(GoalRuntimeCommand::Cancel { now_epoch_ms: 42 })
+        ));
+        assert!(matches!(
+            goal_work_control_command("cancel", 42),
+            Some(GoalRuntimeCommand::Cancel { now_epoch_ms: 42 })
+        ));
     }
 }

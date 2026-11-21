@@ -10,31 +10,41 @@
     import type { ConfirmationHandle } from '../lib/confirmation';
     type Plan = {plan_id: string; source: string; path: string; owned_fields: string[]; expires_at_ms: number};
     type Receipt = {receipt_id: string; source: string; path: string; owned_fields: string[]};
-    let { gateway, openAccess }: { gateway: { enabled: boolean; revision: number }; openAccess: () => void } = $props();
+    let { gateway, profiles: externalProfiles, openAccess }: { gateway: { enabled: boolean; revision: number }; profiles?: RemoteProfile[]; openAccess: () => void } = $props();
     let confirmation: ConfirmationHandle;
     let source = $state('open_code'), path = $state(''), model = $state('');
-    let profiles = $state<RemoteProfile[]>([]), receipts = $state<Receipt[]>([]);
+    let loadedProfiles = $state<RemoteProfile[]>([]), receipts = $state<Receipt[]>([]);
+    const profiles = $derived((externalProfiles ?? loadedProfiles).filter(item => item.enabled && item.endpoint.enabled));
     let plan = $state<Plan | null>(null), planIdentity = $state('');
-    let busy = $state(false), failed = $state(false), alive = true;
+    let busy = $state(false), failed = $state(false), expiredPlan = $state(false), now = $state(Date.now()), alive = true;
     const identity = $derived(JSON.stringify([source, path, model, gateway.enabled, gateway.revision]));
-    $effect(() => { if (plan && planIdentity !== identity) plan = null; });
+    $effect(() => { if (plan && planIdentity !== identity) { plan = null; expiredPlan = false; } });
+    $effect(() => {
+        const current = plan;
+        if (!current) return;
+        const remaining = current.expires_at_ms - Date.now();
+        if (remaining <= 0) { now = Date.now(); return; }
+        const timer = setTimeout(() => { now = Date.now(); }, remaining);
+        return () => clearTimeout(timer);
+    });
     async function perform(action: () => Promise<void>) {
         if (busy) return; busy = true; failed = false;
         try { await action(); } catch { if (alive) failed = true; } finally { if (alive) busy = false; }
     }
     function preview() {
         if (!gateway.enabled) return;
-        const current = identity;
+        const current = identity; expiredPlan = false;
         void perform(async () => {
             const value = await api<Plan>('/api/model-gateway/clients/plan', {method: 'POST', body: JSON.stringify({source, path: path.trim(), model_id: model})});
-            if (alive && current === identity) { planIdentity = current; plan = value; }
+            if (alive && current === identity) { planIdentity = current; plan = value; now = Date.now(); }
         });
     }
     function commit() {
         const current = plan; if (!current) return;
+        if (Date.now() >= current.expires_at_ms) { plan = null; expiredPlan = true; return; }
         void perform(async () => {
             const receipt = await api<Receipt>('/api/model-gateway/clients/commit', {method: 'POST', body: JSON.stringify({plan_id: current.plan_id})});
-            if (alive) { receipts = [...receipts, receipt]; plan = null; }
+            if (alive) { receipts = [...receipts, receipt]; plan = null; expiredPlan = false; }
         });
     }
     async function disconnect(receipt: Receipt) {
@@ -53,7 +63,9 @@
     }
     onMount(() => {
         void api<Receipt[]>('/api/model-gateway/clients').then(value => { if (alive) receipts = value; }).catch(() => { if (alive) failed = true; });
-        void loadModelCatalog(api).then(value => { if (alive) profiles = value.profiles.filter(item => item.enabled && item.endpoint.enabled); }).catch(() => { if (alive) failed = true; });
+        if (externalProfiles === undefined) {
+            void loadModelCatalog(api).then(value => { if (alive) loadedProfiles = value.profiles; }).catch(() => { if (alive) failed = true; });
+        }
         return () => { alive = false; };
     });
 </script>
@@ -70,8 +82,9 @@
     </form>
     {#if busy}<p role="status">{t($locale, 'rooms.saving')}</p>{/if}
     {#if failed}<p role="alert" class="error">{t($locale, 'connections.failed')}</p>{/if}
+    {#if expiredPlan}<p role="status">{t($locale, 'activity.importExpired')}</p>{/if}
     {#if plan}<p>{plan.source} · {plan.path}</p><ul>{#each plan.owned_fields as field}<li><code>{field}</code></li>{/each}</ul>
-        <button disabled={busy || Date.now() >= plan.expires_at_ms} onclick={commit}>{t($locale, 'connections.confirmClient')}</button>{/if}
+        <button disabled={busy || now >= plan.expires_at_ms} onclick={commit}>{t($locale, 'connections.confirmClient')}</button>{/if}
     {#each receipts as receipt (receipt.receipt_id)}<p>{receipt.source} · {receipt.path}</p><button class="danger" disabled={busy} onclick={() => disconnect(receipt)}>{t($locale, 'connections.disconnectClient')}</button>{/each}
 </details>
 

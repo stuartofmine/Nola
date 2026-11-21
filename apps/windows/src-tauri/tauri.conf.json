@@ -4,7 +4,13 @@
   "version": "../package.json",
   "identifier": "com.nola.assistant.windows",
   "build": { "frontendDist": "startup" },
-  "app": { "windows": [], "security": { "capabilities": ["startup"] } },
+  "app": {
+    "windows": [],
+    "security": {
+      "csp": "default-src 'none'; script-src 'self'; style-src 'unsafe-inline'; img-src data:",
+      "capabilities": ["startup"]
+    }
+  },
   "bundle": {
     "active": true,
     "targets": ["nsis"],

@@ -26,6 +26,7 @@
     import { ensureBrowserClientId } from '../lib/browserClientIdentity';
     import { chatInitializationError, parseInitializationSession } from '../lib/chatInitialization';
     import { locale, t } from '../lib/i18n';
+    import { randomId } from '../lib/randomId';
     import PanelResizeHandle from '../components/PanelResizeHandle.svelte';
     import { workspaceWidths, setWorkspaceWidth, visiblePanelWidths, layoutDefaults } from '../lib/workspaceLayout';
     let viewportWidth = $state(1280);
@@ -273,7 +274,9 @@
     let initializationFailed = $state(false);
     let initializationInFlight = false;
     let historyLoading = $state(false);
-    let error = $state('');
+    let controllerError = $state('');
+    let localError = $state('');
+    const error = $derived(localError || controllerError);
     let notice = $state('');
     let pendingText = $state('');
     let pendingAttachmentNames = $state<string[]>([]);
@@ -540,17 +543,6 @@
         observer.observe(transcript);
         return () => observer.disconnect();
     });
-    $effect(() => {
-        draft; viewportWidth;
-        if (composer) void tick().then(() => {
-            if (!composer || disposed) return;
-            if (viewportWidth > 700) { composer.style.removeProperty('height'); return; }
-            // Measure without replacing the input, preserving focus and IME composition.
-            composer.style.height = '0px';
-            composer.style.height = `${composer.scrollHeight}px`;
-        });
-    });
-
     let draftSelection = 0;
     let submissionController: ConversationSubmissionController | null = null;
     let expertRoom = $state<RoomSnapshot | null>(null);
@@ -612,6 +604,7 @@
         if (active) drafts.write(active.conversationId, draft);
         composer?.focus();
     }
+    let goalDraftRevision = $state(0);
     function executeCommand(): boolean {
         const parsed = parseComposerCommand(draft);
         if (!parsed) return false;
@@ -626,7 +619,10 @@
             case 'goal':
                 inspectorTab = 'goal';
                 inspectorVisited.progress = true;
-                if (parsed.argument && active) workspaceHost?.objectives.write(active.conversationId, parsed.argument);
+                if (parsed.argument && active) {
+                    workspaceHost?.objectives.write(active.conversationId, parsed.argument);
+                    goalDraftRevision += 1;
+                }
                 break;
             case 'search': searchQuery = parsed.argument; void openSearch(); break;
             case 'plan': navigateWorkspace('/data-sources?tab=plans' + (parsed.argument ? `&draft=${encodeURIComponent(parsed.argument)}` : '')); break;
@@ -636,6 +632,8 @@
         return true;
     }
     const expertManifestCache = new Map<string,ExpertMessageManifest | null>();
+    const expertTerminalSubmissionCache = new Map<string, RoomSubmission>();
+    const isTerminalExpertSubmission = (state: RoomSubmission['state']) => !['accepted', 'selected', 'executing'].includes(state);
     function expertScope(conversationId = active?.conversationId) {
         const sourceHost=hostId,sourceClient=clientId,workspace=workspaceHost,selection=draftSelection,sourceGeneration=generation;
         return () => !disposed && !!conversationId && hostId===sourceHost && clientId===sourceClient && workspaceHost===workspace
@@ -711,11 +709,15 @@
                     const receipts:RoomSubmission[]=[];
                     for(const entry of manifest.entries){
                         if(!current())return [];
+                        const subKey = JSON.stringify([sourceHost, sourceClient, conversationId, snapshot.room.id, entry.child_submission_id]);
+                        const cached = expertTerminalSubmissionCache.get(subKey);
+                        if (cached) { receipts.push(cached); continue; }
                         const receipt=await roomCommand<RoomSubmission|null>({type:'submission',room_id:manifest.input.room_id,submission_id:entry.child_submission_id});
                         if(!receipt||receipt.input.submission_id!==entry.child_submission_id||receipt.input.conversation_id!==conversationId
                             ||receipt.input.parent_message_id!==manifest.input.user_message_id||receipt.input.room_id!==snapshot.room.id
                             ||receipt.context_conversation_id!==entry.participant.context_conversation_id
                             ||receipt.selected_participant_id!==entry.participant.participant_id)throw new Error('Exact expert reply is unavailable');
+                        if (isTerminalExpertSubmission(receipt.state)) expertTerminalSubmissionCache.set(subKey, receipt);
                         receipts.push(receipt);
                     }
                     return receipts;
@@ -792,7 +794,8 @@
         captureConversationReading();
         await sourceWorkspace.load(conversation.conversationId);
         if (disposed || selection !== draftSelection || sourceWorkspace !== workspaceHost || hostId !== sourceHost || active?.conversationId !== sourceConversation || workspaceHost.isDeleted(conversation.conversationId)) return;
-        if (!workspaceHost.isLoaded(conversation.conversationId)) { error = 'chatPage.draftStorageFailed'; return; }
+        if (!workspaceHost.isLoaded(conversation.conversationId)) { localError = 'chatPage.draftStorageFailed'; return; }
+        localError = ''; controllerError = '';
         if (userScrollTimer) clearTimeout(userScrollTimer);
         renderedMessageIds = [];
         timelineHydrated = false;
@@ -840,7 +843,7 @@
             observedCanSubmit = snapshot.observedCanSubmit; observedRecovery = snapshot.observedRecovery;
             contextUsage = snapshot.contextUsage; historyLoading = snapshot.historyLoading;
             queuedDispatch = snapshot.queuedDispatch; queuedCancelling = snapshot.queuedCancelling;
-            error = snapshot.error; notice = snapshot.notice; pendingText = snapshot.pendingText;
+            controllerError = snapshot.error; notice = snapshot.notice; pendingText = snapshot.pendingText;
             pendingAttachmentNames = snapshot.pendingAttachmentNames; historicalRecoveryOwners = snapshot.historicalRecoveryOwners;
             draft = snapshot.draft; occurrences=sourceWorkspace.mentions.get(conversation.conversationId)?.occurrences??[]; attachments = snapshot.attachments; textAttachments?.sync();
         }, {
@@ -901,6 +904,7 @@
     function loadHistory(mode: 'replace' | 'prepend') { return submissionController?.loadHistory(mode) ?? Promise.resolve(); }
     function observeSelected() { submissionController?.observe(); }
     async function rereadSelected() {
+        localError = '';
         // A different browser may only observe the Run. Refresh its canonical
         // history too, so retrying control observation cannot leave a stale reply.
         await loadHistory('replace');
@@ -929,13 +933,14 @@
             finally{if(current())expertAdmissionPending=false;}
             if(!current()||draft!==original||JSON.stringify(occurrences)!==originalMentions||attachments.map(f=>f.id).join(',')!==attachmentIds)return;
         }
+        localError = '';
         if ((!active.executionBackend || active.executionBackend === 'nola') && !active.selectedModelId) {
-            error = 'chatSession.invalidModel';
+            localError = 'chatSession.invalidModel';
             inspectorTab = 'settings';
             void sessionSettings?.refreshModelCatalog();
             return;
         }
-        const submissionId = crypto.randomUUID();
+        const submissionId = randomId();
         const text = draft;
         void submissionController?.submit({text: draft, attachments, language: $locale, submissionId, selectedExperts:selectedReferences,expertSourceEpoch:selectedExpertEpoch()??undefined,expertMentions:inline});
     }
@@ -956,7 +961,7 @@
                 const room = expertRoom, selected = new Set(participantIds);
                 if (!text.trim() || !room || !selected.size || !timeline?.projection) throw new Error('Expert selection is unavailable');
                 const members = selectedExpertMembers(room,[...selected]);
-                const submissionId = crypto.randomUUID();
+                const submissionId = randomId();
                 input = {conversation_id:conversationId,expected_revision:timeline.projection.revision,
                     room_id:room.room.id,expected_room_revision:room.revision,submission_id:submissionId,user_message_id:`${submissionId}:user`,
                     text,selected_participants:members.map(member=>({participant_id:member.id,agent_id:member.agent_id,
@@ -1033,9 +1038,25 @@
     }
     function resume() { if (canInteract) return submissionController?.resume(); }
     function stop() { if (canInteract) return submissionController?.stop(); }
+    function clearActiveConversationState() {
+        submissionController?.detach(); submissionController = null;
+        active = null; timeline = null; turn = null; contentTabs = emptyContentTabs();
+        draft = ''; attachments = []; permissionState = null; reasoningState = null;
+        modelState = null; selectedModelName = '';
+        queuedDispatch = null; queuedCancelling = false;
+        ++expertRequest; ++expertHistoryRequest;
+        expertRoom = null; expertSourceEpoch = null; expertDirectory = null; expertRejoin = null;
+        occurrences = []; expertSubmissions = []; expertRetryIntent = null; expertIntentStorageError = '';
+        expertAdmissionPending = false; expertError = ''; expertResumeMessage = null;
+        expertsLoading = false; managingExperts = false;
+        historicalRecoveryOwners = []; uiSurfaces = []; uiSurfaceFailure = '';
+        challenge = null; reviewText = ''; pendingText = ''; pendingAttachmentNames = [];
+        selectedMessageId = null; contextUsage = null; conversationCacheReader.select(null);
+        inspectorTab = null; controllerError = ''; localError = ''; notice = '';
+    }
     async function initialize() {
         if (disposed || initializationInFlight) return;
-        initializationInFlight = true; initializing = true; initializationFailed = false; error = '';
+        initializationInFlight = true; initializing = true; initializationFailed = false; localError = '';
         const requestedContent = new URL(location.href).searchParams.get('content');
         try {
             const session = parseInitializationSession(await api('/api/web/session'));
@@ -1045,14 +1066,8 @@
             if (sourceHost !== null && sourceHost !== session.hostId) throw new Error('notification_host_changed');
             if (disposed) return;
             if (hostId && hostId !== session.hostId) {
-                captureConversationReading(); submissionController?.detach(); submissionController = null;
-                active = null; timeline = null; turn = null; contentTabs = emptyContentTabs();
-                draft = ''; attachments = []; permissionState = null; reasoningState = null;
-                ++expertRequest;
-                expertRoom = null; expertSourceEpoch=null; expertDirectory = null; expertRejoin = null; occurrences = []; expertSubmissions = []; expertRetryIntent = null; expertIntentStorageError = ''; expertAdmissionPending = false;
-                ++expertRequest; expertsLoading = false; managingExperts = false; historicalRecoveryOwners = []; uiSurfaces = [];
-                challenge = null; reviewText = ''; pendingText = ''; pendingAttachmentNames = []; selectedMessageId = null;
-                contextUsage = null; conversationCacheReader.select(null); error = ''; notice = '';
+                captureConversationReading();
+                clearActiveConversationState();
             }
             hostId = session.hostId; clientId = await ensureBrowserClientId(hostId);
             workspaceHost = workspaceDrafts.forHost(hostId);
@@ -1084,7 +1099,7 @@
             }
             if (requestedContent && !disposed) openManagementTab(requestedContent);
         } catch (cause) { if (!disposed) {
-            error = chatInitializationError(cause); initializationFailed = true;
+            localError = chatInitializationError(cause); initializationFailed = true;
             if (requestedContent && contentTabs.selected === conversationTabKey) openManagementTab(requestedContent);
         } }
         finally { initializationInFlight = false; if (!disposed) initializing = false; }
@@ -1114,7 +1129,7 @@
         };
         document.addEventListener('visibilitychange', visibility);
         void initialize();
-        expertPoll = setInterval(() => { if (document.visibilityState !== 'hidden' && expertRoom) void refreshExpertSubmissions(); }, 2500);
+        expertPoll = setInterval(() => { if (document.visibilityState !== 'hidden' && expertRoom && (expertExecutionPending || busy)) void refreshExpertSubmissions(); }, 2500);
         return () => {
             captureConversationReading();
             disposed = true; draftSelection++; submissionController?.detach(); conversationCacheReader.dispose();
@@ -1134,7 +1149,7 @@
             workspaceHost?.submissions.delete(event.conversationId);
             if (workspaceHost?.lastConversationId === event.conversationId) workspaceHost.lastConversationId = null;
         }
-        if (event.type === 'deleted' && active?.conversationId === event.conversationId) { submissionController?.detach(); submissionController = null; active = null; contentTabs = emptyContentTabs(); timeline = null; draft = ''; turn = null; permissionState = null; reasoningState = null; history.replaceState(history.state, '', '/chat'); }
+        if (event.type === 'deleted' && active?.conversationId === event.conversationId) { clearActiveConversationState(); history.replaceState(history.state, '', '/chat'); }
         else if (event.type === 'truncated' && active?.conversationId === event.conversationId) void loadHistory('replace');
         else if ((event.type === 'renamed' || event.type === 'refreshed') && event.conversation && active?.conversationId === event.conversationId) active = event.conversation;
     }
@@ -1345,7 +1360,7 @@
                     {#if ['rejected', 'cancelled'].includes(queuedDispatch.phase)}
                         <button disabled={queuedCancelling} onclick={() => submissionController?.cancelQueued()}>{t($locale, 'recovery.cancelQueued')}</button>
                     {:else}
-                        <button onclick={() => submissionController?.checkQueued().catch(() => { error = 'chatPage.uncertain'; })}>{t($locale, 'recovery.title')}</button>
+                        <button onclick={() => { localError = ''; void submissionController?.checkQueued().catch(() => { localError = 'chatPage.uncertain'; }); }}>{t($locale, 'recovery.title')}</button>
                     {/if}
                 </section>
             {/if}
@@ -1537,7 +1552,7 @@
             <details class="inspector-section" data-inspector-section={section} hidden={!activeInspectorGroup?.tabs.includes(section)} open={expandedInspectorSections.includes(section)} ontoggle={event => setInspectorExpanded(section, event.currentTarget.open)}>
                 <summary>{t($locale, `chatInspector.${section}`)}</summary><div class="inspector-content">
                 {#if mountedInspectorSections.includes(section)}
-                    <ChatActivityGoal readOnly={!canInteract} section={section} {hostId} conversationId={active.conversationId} draftStore={workspaceHost?.objectives} {generation} {busy} oncontrol={observeSelected} refreshKey={turn?.committedRevision ?? 0} />
+                    <ChatActivityGoal readOnly={!canInteract} section={section} {hostId} conversationId={active.conversationId} draftStore={workspaceHost?.objectives} objectiveRevision={goalDraftRevision} {generation} {busy} oncontrol={observeSelected} refreshKey={turn?.committedRevision ?? 0} />
                 {/if}
 </div>
             </details>

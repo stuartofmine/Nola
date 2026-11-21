@@ -1,5 +1,6 @@
 import {partMentions,type InlineExpertMention} from './inlineExpertMentions.ts';
 import { api as requestAPI } from './api.ts';
+import { randomId } from './randomId.ts';
 import { parseSourceReceipt } from './sourceSubmission.ts';
 import type { SourceSubmissionReceipt } from './sourceSubmission.ts';
 import {timelineMessageText,type TimelineMessage} from './chatTimeline.ts';
@@ -56,7 +57,7 @@ export function editedResendSourceForMessage(message: TimelineMessage, owner: {
     return Object.freeze({...owner,...(mentions.length?{originalMentions:mentions}:{}),conversationRevision:snapshot.revision,messageId:canonical.message_id,messageRevision:canonical.revision,originalText:text});
 }
 export function createEditedResendDraft(source: EditedResendSourceSnapshot, text = source.originalText,
-    identity = {operationId: crypto.randomUUID(), targetId: crypto.randomUUID(), createdAtMs: Date.now()}): EditedResendDraft {
+    identity = {operationId: randomId(), targetId: randomId(), createdAtMs: Date.now()}): EditedResendDraft {
     if (![source.hostId, source.clientId, source.conversationId, source.messageId].every(id)
         || !positive(source.conversationRevision) || !durableRevision(source.messageRevision)
         || !uuid(identity.operationId) || !uuid(identity.targetId) || !Number.isSafeInteger(identity.createdAtMs) || identity.createdAtMs < 0
@@ -70,6 +71,19 @@ export function createEditedResendDraft(source: EditedResendSourceSnapshot, text
 /** Input changes deliberately create a new intent; retries of unchanged text retain all IDs/time. */
 export function editResendText(draft: EditedResendDraft, text: string): EditedResendDraft {
     return text === draft.input.edited_text ? draft : createEditedResendDraft(draft.source, text);
+}
+function sameEditedMentions(a?: InlineExpertMention[], b?: InlineExpertMention[]): boolean {
+    const left = a ?? [], right = b ?? [];
+    return left.length === right.length && JSON.stringify(left) === JSON.stringify(right);
+}
+export function editResendDraft(draft: EditedResendDraft, text: string, mentions: InlineExpertMention[], expertEpoch?: string): EditedResendDraft {
+    const unchanged = text === draft.input.edited_text && sameEditedMentions(draft.mentions, mentions);
+    const base = unchanged ? draft : createEditedResendDraft(draft.source, text);
+    return { ...base, mentions, expertEpoch: mentions.length ? (expertEpoch ?? draft.expertEpoch) : undefined };
+}
+export function clearEditedResendMentions(draft: EditedResendDraft): EditedResendDraft {
+    if (!draft.mentions?.length && draft.expertEpoch === undefined) return draft;
+    return { ...createEditedResendDraft(draft.source, draft.input.edited_text), mentions: [], expertEpoch: undefined };
 }
 export function sameEditedResendInput(a: EditedResendInput, b: EditedResendInput): boolean {
     return Object.keys(a).length === Object.keys(b).length

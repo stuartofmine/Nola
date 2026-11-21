@@ -1124,9 +1124,6 @@ final class IOSUIInteractionPolicyTests: XCTestCase {
                 ChatMoreSettingsSheet(
                     selectedModel: sampleModel,
                     contextUsage: nil,
-                    hostUploadedSkills: [],
-                    hostUploadedDocuments: [],
-                    hostMCPServers: [],
                     hostComputerUseStatus: nil,
                     hostNativeBrowserStatus: nil,
                     pairedHostIdentity: nil,
@@ -1144,12 +1141,6 @@ final class IOSUIInteractionPolicyTests: XCTestCase {
                     permissionMode: .constant(.cautious),
                     autoCompactTriggerPercent: .constant(85),
                     responseStyle: .constant(nil),
-                    sessionMemory: .constant("Session memory"),
-                    longTermMemory: .constant("Long-term memory"),
-                    userPreferences: .constant("Warm Ink"),
-                    uploadedSkills: .constant([sampleSkill]),
-                    onSaveMemoryProfile: {},
-                    onSetSkillEnabled: { _, _ in },
                     onOpenContextSettings: {},
                     onOpenSkillLibrary: {},
                     onForgetHostPairing: {}

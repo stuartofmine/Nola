@@ -36,7 +36,9 @@ struct ModelsView: View {
     @State private var showsConfiguredModels = true
     @State private var localRuntime = MLXService.shared
     @State private var runtimeError: String?
+    @State private var runtimeErrorTitle: String?
     @State private var statusMessage: String?
+    @State private var statusIsError = false
     @State private var hostAgentSettings: WebAgentProvider.HostAgentSettings?
     @State private var isOpeningHostManagement = false
 
@@ -78,7 +80,10 @@ struct ModelsView: View {
             .padding(.horizontal, 20).padding(.vertical, 8)
             TabView(selection: $sourceTab) {
                 apiContent.tag(0)
-                ModelDownloadView(embedded: true).environmentObject(container).tag(1)
+                ModelDownloadView(embedded: true) { model in
+                    select(model)
+                    reloadModels()
+                }.environmentObject(container).tag(1)
                 WebHostConfigurationView(
                     existingModel: hostModels.first, embedded: true,
                     onDraftChanged: { hostHasDraft = $0 },
@@ -162,12 +167,17 @@ struct ModelsView: View {
     private var apiContent: some View {
             NolaPage {
                 IOSModelSetupForm(service: IOSModelConnectionService(application: container.applicationRuntime), draft: $apiDraft) { model in
+                    container.chatManager.selectModel(model, persistAsDefault: false)
                     reloadModels()
                     showsConfiguredModels = true
+                    statusIsError = false
                     statusMessage = NSLocalizedString("model.setup.saved", value: "Saved and set as default · not tested", comment: "Configured model saved")
                     onConfigured?(model)
                 }
-                if let statusMessage, !statusMessage.isEmpty { statusBanner(statusMessage) }
+                if let statusMessage, !statusMessage.isEmpty { statusBanner(statusMessage, isError: statusIsError) }
+                if let messaging = hostAgentSettings?.messaging {
+                    hostMessagingCard(messaging)
+                }
                 if !models.isEmpty {
                     DisclosureGroup(isExpanded: $showsConfiguredModels) {
                 modelListSection(title: NSLocalizedString("model.center.local_models", value: "本地模型", comment: "Local models section"), items: localModels)
@@ -188,6 +198,9 @@ struct ModelsView: View {
             }
             .onReceive(container.chatManager.$selectedModelInfo) { info in
                 selectedModel = info
+            }
+            .onReceive(container.modelDownloader.$downloadedModels) { _ in
+                reloadModels()
             }
             .sheet(item: $parameterTarget) { model in
                 NavigationStack {
@@ -222,13 +235,21 @@ struct ModelsView: View {
                 }
             }
             .alert(
-                NSLocalizedString("model.center.runtime_error.title", value: "Local model could not start", comment: "Local model runtime error title"),
+                runtimeErrorTitle ?? NSLocalizedString("model.center.runtime_error.title", value: "Local model could not start", comment: "Local model runtime error title"),
                 isPresented: Binding(
                     get: { runtimeError != nil },
-                    set: { if !$0 { runtimeError = nil } }
+                    set: {
+                        if !$0 {
+                            runtimeError = nil
+                            runtimeErrorTitle = nil
+                        }
+                    }
                 )
             ) {
-                Button(L10n.ok, role: .cancel) { runtimeError = nil }
+                Button(L10n.ok, role: .cancel) {
+                    runtimeError = nil
+                    runtimeErrorTitle = nil
+                }
             } message: {
                 Text(runtimeError ?? "")
             }
@@ -319,6 +340,7 @@ struct ModelsView: View {
             )
             openURL(url)
         } catch {
+            statusIsError = true
             statusMessage = error.localizedDescription
         }
     }
@@ -338,6 +360,7 @@ struct ModelsView: View {
             )
             guard settings.host_identity?.id == connection.hostID else {
                 hostAgentSettings = nil
+                statusIsError = true
                 statusMessage = NSLocalizedString(
                     "model.host.identity_changed",
                     value: "The connected host identity changed. Forget the existing pairing before reconnecting.",
@@ -566,10 +589,11 @@ struct ModelsView: View {
         return [GridItem(.flexible(), alignment: .leading), GridItem(.flexible(), alignment: .leading)]
     }
 
-    private func statusBanner(_ message: String) -> some View {
-        HStack(alignment: .top, spacing: DesignTokens.spacing_sm) {
-            Image(systemName: "checkmark.circle.fill")
-                .foregroundStyle(DesignTokens.successColor)
+    private func statusBanner(_ message: String, isError: Bool = false) -> some View {
+        let tint: Color = isError ? .red : DesignTokens.successColor
+        return HStack(alignment: .top, spacing: DesignTokens.spacing_sm) {
+            Image(systemName: isError ? "exclamationmark.triangle.fill" : "checkmark.circle.fill")
+                .foregroundStyle(tint)
             Text(message)
                 .font(.footnote)
                 .foregroundStyle(.primary)
@@ -577,6 +601,7 @@ struct ModelsView: View {
             Spacer(minLength: 0)
             Button {
                 statusMessage = nil
+                statusIsError = false
             } label: {
                 Image(systemName: "xmark")
                     .frame(width: 44, height: 44)
@@ -588,11 +613,11 @@ struct ModelsView: View {
         .padding(DesignTokens.spacing_md)
         .background(
             RoundedRectangle(cornerRadius: DesignTokens.radius_lg, style: .continuous)
-                .fill(DesignTokens.successColor.opacity(DesignTokens.overlaySoftOpacity))
+                .fill(tint.opacity(DesignTokens.overlaySoftOpacity))
         )
         .overlay(
             RoundedRectangle(cornerRadius: DesignTokens.radius_lg, style: .continuous)
-                .stroke(DesignTokens.successColor.opacity(0.20), lineWidth: 1)
+                .stroke(tint.opacity(0.20), lineWidth: 1)
         )
     }
 
@@ -631,6 +656,7 @@ struct ModelsView: View {
             do {
                 try await localRuntime.start(model: model)
             } catch {
+                runtimeErrorTitle = NSLocalizedString("model.center.runtime_error.title", value: "Local model could not start", comment: "Local model runtime error title")
                 runtimeError = error.localizedDescription
             }
         }
@@ -647,12 +673,14 @@ struct ModelsView: View {
             try ModelSelectionManager.commitSelectedModel(model, using: container.applicationRuntime)
         } catch {
             sourceTab = 0
+            runtimeErrorTitle = NSLocalizedString("model.center.selection_error.title", value: "Could not select model", comment: "Model selection error title")
             runtimeError = error.localizedDescription
             return
         }
         container.chatManager.selectModel(model, persistAsDefault: false)
         selectedModel = model
         onConfigured?(model)
+        statusIsError = false
         statusMessage = model.isLocal
             ? String(
                 format: NSLocalizedString(

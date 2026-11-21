@@ -141,6 +141,9 @@ struct AppleUISurfaceView<JSON: JournalJSONValue>: View {
     @StateObject private var editing: AppleUIEditingState<JSON>
     @State private var presentationID = UUID()
     @ObservedObject private var composition = AppleUICompositionMonitor.shared
+    @State private var focusedTextFieldIDs: Set<String> = []
+    @State private var wasSurfaceComposing = false
+    @State private var surfaceCompositionGeneration: UInt64 = 0
 
     init(snapshot: AppleUISnapshot<JSON>,
          preview: ((AppleUIPreviewInput<JSON>) async throws -> AppleUIPreviewResult<JSON>)? = nil,
@@ -169,8 +172,10 @@ struct AppleUISurfaceView<JSON: JournalJSONValue>: View {
         let pending: Bool
         let unresolvedID: String?
     }
+    private var isSurfaceTextFocused: Bool { !focusedTextFieldIDs.isEmpty }
+    private var surfaceIsComposing: Bool { isSurfaceTextFocused && composition.isComposing }
     private var previewKey: PreviewKey { .init(identity: snapshot.identity, revision: snapshot.revision,
-        generation: editing.draftGeneration, compositionGeneration: composition.generation, phase: snapshot.phase.rawValue,
+        generation: editing.draftGeneration, compositionGeneration: surfaceCompositionGeneration, phase: snapshot.phase.rawValue,
         pending: editing.pending, unresolvedID: editing.unresolved?.submission_id) }
     private var previewReady: Bool {
         guard snapshot.phase == .ready, let value = editing.preview else { return false }
@@ -178,7 +183,7 @@ struct AppleUISurfaceView<JSON: JournalJSONValue>: View {
             && value.snapshot.catalog_id == snapshot.catalog_id && value.snapshot.catalog_digest == snapshot.catalog_digest
     }
     private var displaySnapshot: AppleUISnapshot<JSON> { previewReady ? editing.preview!.snapshot : snapshot }
-    private var actionsDisabled: Bool { composition.isComposing || (!editing.drafts.isEmpty && !previewReady) }
+    private var actionsDisabled: Bool { surfaceIsComposing || (!editing.drafts.isEmpty && !previewReady) }
     private var draftEdits: [AppleUIEdit<JSON>] {
         snapshot.nodes.values.flatMap { node in node.bindings.keys.compactMap { binding in
             editing.drafts[key(node.instance_id, binding)].map { .set(instanceID: node.instance_id, binding: binding, value: $0) }
@@ -198,7 +203,7 @@ struct AppleUISurfaceView<JSON: JournalJSONValue>: View {
             if snapshot.phase == .ready && !editing.pending && editing.unresolved == nil && !editing.drafts.isEmpty && (editing.failure != nil || editing.draftRevision != snapshot.revision) {
                 Button(String(localized: "a2ui.revalidate", defaultValue: "Validate again")) {
                     editing.revalidate(against: snapshot)
-                }.disabled(composition.isComposing)
+                }.disabled(surfaceIsComposing)
                 Button(String(localized: "a2ui.discardEdits", defaultValue: "Discard edits and use current values")) {
                     editing.drafts = [:]
                     editing.draftRevision = nil
@@ -219,6 +224,9 @@ struct AppleUISurfaceView<JSON: JournalJSONValue>: View {
         }
         .onAppear { composition.acquire() }
         .onChange(of: composition.generation) { _, _ in
+            guard isSurfaceTextFocused || wasSurfaceComposing else { return }
+            wasSurfaceComposing = isSurfaceTextFocused && composition.isComposing
+            surfaceCompositionGeneration &+= 1
             guard !editing.drafts.isEmpty, !editing.pending else { return }
             editing.preview = nil
             editing.draftGeneration &+= 1
@@ -228,7 +236,7 @@ struct AppleUISurfaceView<JSON: JournalJSONValue>: View {
             guard snapshot.phase == .ready, !editing.drafts.isEmpty, editing.unresolved == nil, !editing.pending else { return }
             do {
                 try await Task.sleep(for: .milliseconds(180))
-                while appleUIHasMarkedText() { try await Task.sleep(for: .milliseconds(80)) }
+                while isSurfaceTextFocused && appleUIHasMarkedText() { try await Task.sleep(for: .milliseconds(80)) }
                 try Task.checkCancellation()
                 guard editing.draftRevision == snapshot.revision, let preview else {
                     editing.failure = String(localized: "a2ui.previewUnavailable", defaultValue: "Reload this form before editing.")
@@ -238,7 +246,7 @@ struct AppleUISurfaceView<JSON: JournalJSONValue>: View {
                     expected_surface_revision: captured.revision, edits: draftEdits, draft_generation: captured.generation))
                 try Task.checkCancellation()
                 guard captured == previewKey else { return }
-                guard !appleUIHasMarkedText() else {
+                guard !(isSurfaceTextFocused && appleUIHasMarkedText()) else {
                     editing.preview = nil
                     editing.draftGeneration &+= 1
                     return
@@ -259,7 +267,7 @@ struct AppleUISurfaceView<JSON: JournalJSONValue>: View {
                 editing.failure = error.localizedDescription
             }
         }
-        .onDisappear { modal = nil; AppleUIModalCoordinator.shared.release(presentationID); composition.release() }
+        .onDisappear { modal = nil; focusedTextFieldIDs.removeAll(); wasSurfaceComposing = false; AppleUIModalCoordinator.shared.release(presentationID); composition.release() }
         .sheet(item: $modal, onDismiss: { AppleUIModalCoordinator.shared.release(presentationID) }) { selection in
             VStack(alignment: .leading, spacing: 16) {
                 HStack {
@@ -268,7 +276,7 @@ struct AppleUISurfaceView<JSON: JournalJSONValue>: View {
                 }
                 ScrollView {
                     VStack(alignment: .leading, spacing: 12) {
-                        ForEach(snapshot.nodes[selection.id]?.slots["content"] ?? [], id: \.self) { child in
+                        ForEach(displaySnapshot.nodes[selection.id]?.slots["content"] ?? [], id: \.self) { child in
                             node(child).disabled(disabled)
                         }
                     }
@@ -288,7 +296,7 @@ struct AppleUISurfaceView<JSON: JournalJSONValue>: View {
                 editing.preview = nil
             }, dispatch: { action in
                 guard !disabled, !actionsDisabled else { return }
-                guard !appleUIHasMarkedText() else {
+                guard !(isSurfaceTextFocused && appleUIHasMarkedText()) else {
                     editing.failure = String(localized: "a2ui.finishComposition", defaultValue: "Finish composing your text before submitting.")
                     return
                 }
@@ -313,7 +321,14 @@ struct AppleUISurfaceView<JSON: JournalJSONValue>: View {
                 Task { await deliver(submission) }
             }, present: { id in
                 if modal == nil, AppleUIModalCoordinator.shared.claim(presentationID) { modal = ModalIdentity(id: id) }
-            }, actionsDisabled: actionsDisabled)
+            }, actionsDisabled: actionsDisabled, onTextFocusChanged: { nodeID, focused in
+                if focused {
+                    focusedTextFieldIDs.insert(nodeID)
+                    if composition.isComposing { wasSurfaceComposing = true }
+                } else {
+                    focusedTextFieldIDs.remove(nodeID)
+                }
+            })
     }
 
     private func key(_ node: String, _ binding: String) -> String { AppleUIEditingState<JSON>.key(node, binding) }
@@ -429,14 +444,27 @@ struct AppleUIReferencedSurfaceView<JSON: JournalJSONValue>: View {
                     Task {
                         defer { reconciling = false }
                         let result = await submit(pending)
+                        let state: AppleUIEditingState<JSON> = AppleUIEditingRegistry.shared.state(for: reference.identity)
                         if case .committed(let receipt) = result {
                             if receipt.snapshot.identity == reference.identity {
-                                snapshot = receipt.snapshot; self.pending = nil
+                                snapshot = receipt.snapshot
+                                self.pending = nil
+                                state.unresolved = nil
+                                state.drafts = [:]
+                                state.draftRevision = nil
+                                state.preview = nil
+                                state.failure = nil
+                                failure = nil
                             } else {
                                 failure = String(localized: "a2ui.receiptMismatch", defaultValue: "The result belongs to another form. Check again.")
                             }
                         }
-                        else if case .rejected(let message) = result { self.pending = nil; failure = message }
+                        else if case .rejected(let message) = result {
+                            self.pending = nil
+                            state.unresolved = nil
+                            state.failure = message
+                            failure = message
+                        }
                         else if case .unknown(let message) = result { failure = message }
                     }
                 }.disabled(reconciling)
@@ -461,6 +489,9 @@ struct AppleUIReferencedSurfaceView<JSON: JournalJSONValue>: View {
                         }
                     }
                     state.failure = String(localized: "a2ui.submission.pending", defaultValue: "The previous submission is unconfirmed. Check the original result.")
+                } else if state.unresolved != nil {
+                    state.unresolved = nil
+                    state.failure = nil
                 }
                 intentReady = true
                 let base = snapshot

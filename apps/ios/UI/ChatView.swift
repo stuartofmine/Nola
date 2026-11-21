@@ -176,7 +176,34 @@ struct ChatView: View {
     @State private var composerDrafts = ConversationComposerDraftStore(repository: FileConversationDraftRepository.application())
     private var inputText: String {
         get { composerDrafts.current.text }
-        nonmutating set { var draft = composerDrafts.current; draft.text = newValue; draft.mentions = []; composerDrafts.current = draft }
+        nonmutating set {
+            var draft = composerDrafts.current
+            if newValue != draft.text {
+                if !(newValue.utf16.count >= draft.text.utf16.count && newValue.hasPrefix(draft.text)) {
+                    draft.mentions = []
+                }
+                draft.text = newValue
+                composerDrafts.current = draft
+            }
+        }
+    }
+
+    private func appendSkillInvocation(_ invocation: String) {
+        var draft = composerDrafts.current
+        if draft.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            draft.text = invocation
+            draft.mentions = []
+        } else {
+            let minLength = draft.mentions.map { $0.range.location + $0.range.length }.max() ?? 0
+            var base = draft.text
+            while base.utf16.count > minLength, let last = base.last, last.isWhitespace || last.isNewline {
+                let nextLen = base.utf16.count - last.utf16.count
+                if nextLen < minLength { break }
+                base.removeLast()
+            }
+            draft.text = "\(base)\n\(invocation)"
+        }
+        composerDrafts.current = draft
     }
     @State private var selectedModel: ModelInfo?
     @State private var highlightedCommandID: String?
@@ -585,9 +612,6 @@ struct ChatView: View {
         ChatMoreSettingsSheet(
                 selectedModel: parameterEditorOwner?.model ?? selectedModel ?? container.chatManager.getCurrentModel(),
                 contextUsage: currentContextUsage,
-                hostUploadedSkills: mergedSkillDisplayList(local: [], host: currentHostUploadedSkills),
-                hostUploadedDocuments: currentHostUploadedDocuments,
-                hostMCPServers: currentHostMCPServers,
                 hostComputerUseStatus: currentHostComputerUseStatus,
                 hostNativeBrowserStatus: currentHostNativeBrowserStatus,
                 pairedHostIdentity: selectedModel
@@ -656,35 +680,6 @@ struct ChatView: View {
                     get: { conversationResponseStyle },
                     set: { setConversationResponseStyle($0) }
                 ),
-                sessionMemory: $currentSessionMemory,
-                longTermMemory: $currentLongTermMemory,
-                userPreferences: $currentUserPreferences,
-                uploadedSkills: $currentUploadedSkills,
-                onSaveMemoryProfile: {
-                    guard let expected = memoryEditorBaseline else {
-                        throw IOSApplicationRuntimeError.rejected("Reload the memory profile before saving")
-                    }
-                    let saved = try await container.chatManager.updateContextMemoryText(
-                        sessionMemory: currentSessionMemory,
-                        longTermMemory: currentLongTermMemory,
-                        userPreferences: currentUserPreferences,
-                        expected: expected
-                    )
-                    memoryEditorBaseline = saved
-                    currentLongTermMemory = saved.longTermMemory
-                    currentUserPreferences = saved.userPreferences
-                },
-                onSetSkillEnabled: { id, enabled in
-                    guard let store = container.chatMemoryProfileStore as? any ChatSkillEditingStore else {
-                        throw IOSApplicationRuntimeError.rejected("Skill editor unavailable")
-                    }
-                    let expected = try store.loadSkillEditor(id: id)
-                    let saved = try store.setSkillEnabled(enabled, expected: expected)
-                    if let index = currentUploadedSkills.firstIndex(where: { $0.id == id }),
-                       let item = saved.record.uploadedContextItem {
-                        currentUploadedSkills[index] = item
-                    }
-                },
                 onOpenContextSettings: {
                     showContextSheet = true
                 },
@@ -723,9 +718,7 @@ struct ChatView: View {
                 skillLibraryDestination: {
                     AnyView(
                         PersonalCapabilitiesLibraryView(hostSkills: currentHostUploadedSkills) { invocation in
-                            inputText = inputText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-                                ? invocation
-                                : "\(inputText.trimmingCharacters(in: .whitespacesAndNewlines))\n\(invocation)"
+                            appendSkillInvocation(invocation)
                             showMoreSettingsSheet = false
                             workToolsPresentation = nil
                             composerFocused = true
@@ -1059,6 +1052,12 @@ struct ChatView: View {
                     chatTopBar(showsHistoryToggle: false)
                 }
             }
+            .task(id: "\(selectedModel?.id ?? ""):\(container.chatManager.currentConversationId?.uuidString ?? String(describing: composerDrafts.selected))") {
+                refreshComposerReasoning()
+            }
+            .onReceive(ModelParametersStore.shared.$lastUpdated) { _ in
+                refreshComposerReasoning()
+            }
             .task(id: "\(container.chatManager.currentConversationId?.uuidString ?? "")/\(!expertSelection.isEmpty)/\(selectedModel?.id ?? "")") {
                 guard !expertSelection.isEmpty, container.chatManager.getCurrentModel()?.isWebBackend == true,
                       expertRemoteSource?.owner != container.chatManager.currentConversationId || expertRemoteSource == nil else { return }
@@ -1099,7 +1098,9 @@ struct ChatView: View {
                 }
                 expertJoinOperations = [:]
                 pendingExpertRejoin = nil
-                workToolsPresentation = nil
+                if workToolsPresentation?.owner != newOwner {
+                    workToolsPresentation = nil
+                }
                 showExpertPicker = false
                 refreshExpertSourceOwner()
             }
@@ -1210,9 +1211,7 @@ struct ChatView: View {
             }) {
                 NavigationStack {
                     PersonalCapabilitiesLibraryView(hostSkills: currentHostUploadedSkills) { invocation in
-                        inputText = inputText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-                            ? invocation
-                            : "\(inputText.trimmingCharacters(in: .whitespacesAndNewlines))\n\(invocation)"
+                        appendSkillInvocation(invocation)
                         showSkillsSheet = false
                         composerFocused = true
                     }
@@ -1470,8 +1469,9 @@ struct ChatView: View {
 
     private func openWorkTools() {
         composerFocused = false
+        let owner = container.chatManager.currentConversationId ?? container.chatManager.ensureCurrentConversation()
         prepareParameterEditorOwnerIfPossible()
-        workToolsPresentation = .init(owner: container.chatManager.currentConversationId)
+        workToolsPresentation = .init(owner: owner)
     }
 
     private func prepareParameterEditorOwnerIfPossible() {
@@ -1484,7 +1484,7 @@ struct ChatView: View {
     }
 
     private func workToolsDestinationView(_ destination: IOSConversationWorkDestination, owner: UUID?) -> AnyView {
-        let resolvedOwner = owner ?? container.chatManager.currentConversationId ?? container.chatManager.ensureCurrentConversation()
+        let resolvedOwner = owner ?? container.chatManager.currentConversationId
         switch destination {
         case .progress:
             return AnyView(IOSConversationInspector(
@@ -1626,9 +1626,7 @@ struct ChatView: View {
                 loadConversationState(for: container.chatManager.currentConversationId)
             },
             onUseSkill: { invocation in
-                inputText = inputText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-                    ? invocation
-                    : "\(inputText.trimmingCharacters(in: .whitespacesAndNewlines))\n\(invocation)"
+                appendSkillInvocation(invocation)
                 showContextSheet = false
                 workToolsPresentation = nil
                 showMoreSettingsSheet = false
@@ -1919,8 +1917,6 @@ struct ChatView: View {
     @ViewBuilder private var composerModelControl: some View {
         if horizontalSizeClass == .compact {
             chatTopBar(showsHistoryToggle: false, presentation: .composer)
-                .task(id: "\(selectedModel?.id ?? ""):\(container.chatManager.currentConversationId?.uuidString ?? String(describing: composerDrafts.selected))") { refreshComposerReasoning() }
-                .onReceive(ModelParametersStore.shared.$lastUpdated) { _ in refreshComposerReasoning() }
         }
     }
 
@@ -2533,13 +2529,33 @@ struct ChatView: View {
         container.chatManager.submissionUseCase.cancel(conversationID: conversationID)
     }
 
+    private static func cleanupComposerStagingFiles(from result: Result<[URL], Error>) {
+        guard case .success(let urls) = result else { return }
+        let tempRoot = FileManager.default.temporaryDirectory.standardizedFileURL
+        for url in urls {
+            let standardized = url.standardizedFileURL
+            let name = standardized.lastPathComponent
+            guard standardized.deletingLastPathComponent() == tempRoot,
+                  name.hasPrefix("nola-pasted-image-") || name.hasPrefix("photo-") else { continue }
+            try? FileManager.default.removeItem(at: standardized)
+        }
+    }
+
     private func beginAttachmentImport() -> (Result<[URL], Error>) -> Void {
-        guard let operation = composerDrafts.beginImport() else { return { _ in } }
+        guard let operation = composerDrafts.beginImport() else {
+            return { result in Self.cleanupComposerStagingFiles(from: result) }
+        }
         let parserHost = currentAttachmentParserHost()
         return { result in
-            guard composerDrafts.accepts(operation), attachmentImportTasks[operation.id] == nil else { return }
+            guard composerDrafts.accepts(operation), attachmentImportTasks[operation.id] == nil else {
+                Self.cleanupComposerStagingFiles(from: result)
+                return
+            }
             attachmentImportTasks[operation.id] = Task { @MainActor in
-                defer { attachmentImportTasks[operation.id] = nil }
+                defer {
+                    attachmentImportTasks[operation.id] = nil
+                    Self.cleanupComposerStagingFiles(from: result)
+                }
                 do {
                     let importResult = try await ChatAttachmentDraft.importFiles(from: result, parserHost: parserHost, runtime: container.applicationRuntime)
                     guard !Task.isCancelled, composerDrafts.accepts(operation),
@@ -2978,7 +2994,7 @@ struct ChatView: View {
         permissionChangeID = nil
         permissionApplicationStatus = container.chatManager.permissionConfigurationStatus(conversationID: convId)
         let profile = container.chatManager.chatMemoryProfile()
-        if !showMoreSettingsSheet && !showContextSheet {
+        if !showContextSheet {
             memoryEditorBaseline = profile
             currentLongTermMemory = profile.longTermMemory
             currentUserPreferences = profile.userPreferences

@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { createEditedResendDraft,editResendText,parseEditedResendEnvelope,confirmEditedResendAdmission,prepareEditedResend,editedResendSourceForMessage } from './editedResend.ts';
+import { createEditedResendDraft,editResendText,editResendDraft,clearEditedResendMentions,parseEditedResendEnvelope,confirmEditedResendAdmission,prepareEditedResend,editedResendSourceForMessage } from './editedResend.ts';
 import { inPlaceInput } from './inPlaceResend.ts';
 import { editedFixture } from './editedResend.fixture.ts';
 import type { EditedResendEnvelope } from './editedResend.ts';
@@ -127,4 +127,17 @@ test('plain user text with opaque metadata stays editable only with its complete
     assert.equal(editedResendSourceForMessage(row,owner),null,'A truncated preview is not an edit witness');
     part.projection.canonical_text.total_utf8_bytes=20;part.projection.owner.message_id='foreign';
     assert.equal(editedResendSourceForMessage(row,owner),null);
+});
+
+test('clearing or changing mentions mints a new operation_id even when text is unchanged',()=>{
+    const {draft}=editedFixture();
+    const mention={start:0,text:'@Expert',selection:{agent_id:'a1',agent_revision:1,participant_id:'p1',context_conversation_id:'ctx-1'}};
+    const withMention=editResendDraft(draft,draft.input.edited_text,[mention],'epoch-1');
+    assert.notEqual(withMention.input.operation_id,draft.input.operation_id);
+    assert.equal(withMention.expertEpoch,'epoch-1');
+    assert.equal(editResendDraft(withMention,withMention.input.edited_text,[mention],'epoch-1').input.operation_id,withMention.input.operation_id);
+    const plain=clearEditedResendMentions(withMention);
+    assert.notEqual(plain.input.operation_id,withMention.input.operation_id);
+    assert.deepEqual(plain.mentions,[]);
+    assert.equal(plain.expertEpoch,undefined);
 });

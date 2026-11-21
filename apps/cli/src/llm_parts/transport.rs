@@ -64,6 +64,290 @@ pub(super) enum SendRequestResult {
     Cancelled,
 }
 
+pub(super) enum AsyncSendResult {
+    Response(CancellableHttpResponse),
+    Error(String),
+    Cancelled,
+}
+
+/// Async HTTP response driven synchronously on a per-request single-threaded
+/// Tokio runtime. Dropping this value or hitting cancellation immediately
+/// aborts the in-flight hyper future and closes the underlying TCP socket
+/// without leaking detached OS threads.
+pub(super) struct CancellableHttpResponse {
+    runtime: tokio::runtime::Runtime,
+    response: reqwest::Response,
+    per_read_timeout: Option<Duration>,
+    buf: Vec<u8>,
+    eof: bool,
+}
+
+impl CancellableHttpResponse {
+    pub(super) fn status(&self) -> reqwest::StatusCode {
+        self.response.status()
+    }
+
+    pub(super) fn retry_after_ms(&self) -> Option<u64> {
+        headers_retry_after_ms(self.response.headers())
+    }
+
+    pub(super) fn text(self, cancellation: &ExecutionContext) -> Result<String, String> {
+        if cancellation.is_requested() {
+            return Err(llm_cancelled_message());
+        }
+        let Self {
+            runtime,
+            response,
+            per_read_timeout,
+            ..
+        } = self;
+        runtime.block_on(async move {
+            let fut = response.text();
+            let outcome = tokio::select! {
+                biased;
+                _ = wait_for_cancellation(cancellation) => return Err(llm_cancelled_message()),
+                res = async move {
+                    if let Some(timeout) = per_read_timeout {
+                        tokio::time::timeout(timeout, fut)
+                            .await
+                            .map_err(|_| "request timed out".to_string())?
+                            .map_err(|err| err.without_url().to_string())
+                    } else {
+                        fut.await.map_err(|err| err.without_url().to_string())
+                    }
+                } => res,
+            };
+            outcome
+        })
+    }
+
+    fn take_buffered_line(&mut self) -> Option<Result<String, String>> {
+        let pos = self.buf.iter().position(|&b| b == b'\n')?;
+        let mut line: Vec<u8> = self.buf.drain(..=pos).collect();
+        if line.ends_with(b"\n") {
+            line.pop();
+        }
+        if line.ends_with(b"\r") {
+            line.pop();
+        }
+        Some(String::from_utf8(line).map_err(|_| "stream did not contain valid UTF-8".to_string()))
+    }
+
+    fn take_remaining_eof_line(&mut self) -> Option<Result<String, String>> {
+        if self.buf.is_empty() {
+            return None;
+        }
+        let mut line = std::mem::take(&mut self.buf);
+        if line.ends_with(b"\r") {
+            line.pop();
+        }
+        Some(String::from_utf8(line).map_err(|_| "stream did not contain valid UTF-8".to_string()))
+    }
+
+    pub(super) fn next_line(
+        &mut self,
+        timeout: Duration,
+        cancellation: &ExecutionContext,
+        read_failed_prefix: Option<&str>,
+    ) -> StreamLineRecv {
+        let format_err = |detail: String| match read_failed_prefix {
+            Some(prefix) => format!("{prefix} {detail}"),
+            None => detail,
+        };
+        let started = Instant::now();
+        loop {
+            if cancellation.is_requested() {
+                return StreamLineRecv::Cancelled;
+            }
+            if let Some(line) = self.take_buffered_line() {
+                return match line {
+                    Ok(text) => StreamLineRecv::Line(text),
+                    Err(err) => StreamLineRecv::Error(format_err(err)),
+                };
+            }
+            if self.eof {
+                return match self.take_remaining_eof_line() {
+                    Some(Ok(text)) => StreamLineRecv::Line(text),
+                    Some(Err(err)) => StreamLineRecv::Error(format_err(err)),
+                    None => StreamLineRecv::Disconnected,
+                };
+            }
+            let elapsed = started.elapsed();
+            if elapsed >= timeout {
+                return StreamLineRecv::Timeout;
+            }
+            let remaining = timeout.saturating_sub(elapsed);
+            let wait = self
+                .per_read_timeout
+                .map_or(remaining, |limit| remaining.min(limit));
+            let chunk_result = self.runtime.block_on(async {
+                tokio::select! {
+                    biased;
+                    _ = wait_for_cancellation(cancellation) => None,
+                    res = tokio::time::timeout(wait, self.response.chunk()) => Some(res),
+                }
+            });
+            match chunk_result {
+                None => return StreamLineRecv::Cancelled,
+                Some(Err(_elapsed)) => {
+                    if started.elapsed() >= timeout {
+                        return StreamLineRecv::Timeout;
+                    }
+                    return StreamLineRecv::Error(format_err("operation timed out".to_string()));
+                }
+                Some(Ok(Err(err))) => {
+                    return StreamLineRecv::Error(format_err(err.without_url().to_string()));
+                }
+                Some(Ok(Ok(None))) => {
+                    self.eof = true;
+                }
+                Some(Ok(Ok(Some(bytes)))) => {
+                    if !bytes.is_empty() {
+                        self.buf.extend_from_slice(&bytes);
+                    }
+                }
+            }
+        }
+    }
+
+    pub(super) fn next_data_line(
+        &mut self,
+        timeout: Duration,
+        cancellation: &ExecutionContext,
+        read_failed_prefix: &str,
+    ) -> StreamLineRecv {
+        let started = Instant::now();
+        loop {
+            let elapsed = started.elapsed();
+            if elapsed >= timeout {
+                return StreamLineRecv::Timeout;
+            }
+            let remaining = timeout.saturating_sub(elapsed);
+            match self.next_line(remaining, cancellation, Some(read_failed_prefix)) {
+                StreamLineRecv::Line(line) if !line.starts_with("data:") => continue,
+                other => return other,
+            }
+        }
+    }
+}
+
+async fn wait_for_cancellation(cancellation: &ExecutionContext) {
+    loop {
+        if cancellation.is_requested() {
+            return;
+        }
+        tokio::time::sleep(Duration::from_millis(20)).await;
+    }
+}
+
+pub(super) fn build_async_stream_client(
+    endpoint_host: Option<&str>,
+    resolved_addr: Option<SocketAddr>,
+) -> Result<(tokio::runtime::Runtime, reqwest::Client), String> {
+    let runtime = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .map_err(|err| format!("{} {err}", tr(Message::FailedCreateHttpClientPrefix)))?;
+    let mut builder = async_stream_client_builder()?;
+    if is_explicit_loopback_host(endpoint_host) {
+        builder = builder.no_proxy();
+    }
+    if let (Some(host), Some(addr)) = (endpoint_host, resolved_addr) {
+        builder = builder.resolve(host, addr);
+    }
+    let client = runtime
+        .block_on(async { builder.build() })
+        .map_err(|err| format!("{} {err}", tr(Message::FailedCreateHttpClientPrefix)))?;
+    Ok((runtime, client))
+}
+
+pub(super) fn build_async_native_stream_client() -> Result<(tokio::runtime::Runtime, reqwest::Client), String> {
+    let runtime = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .map_err(|error| format!("native model HTTP client unavailable: {error}"))?;
+    let builder = async_stream_client_builder()?.redirect(reqwest::redirect::Policy::none());
+    let client = runtime
+        .block_on(async { builder.build() })
+        .map_err(|error| format!("native model HTTP client unavailable: {error}"))?;
+    Ok((runtime, client))
+}
+
+fn async_stream_client_builder() -> Result<reqwest::ClientBuilder, String> {
+    let mut builder = reqwest::Client::builder().connect_timeout(Duration::from_secs(30));
+    if let Some(path) = env::var_os("SSL_CERT_FILE").filter(|path| !path.is_empty()) {
+        let pem = std::fs::read(path)
+            .map_err(|_| "cannot read configured SSL_CERT_FILE".to_string())?;
+        let certificates = reqwest::Certificate::from_pem_bundle(&pem)
+            .map_err(|_| "invalid configured SSL_CERT_FILE".to_string())?;
+        if certificates.is_empty() {
+            return Err("configured SSL_CERT_FILE contains no certificates".into());
+        }
+        for certificate in certificates {
+            builder = builder.add_root_certificate(certificate);
+        }
+    }
+    Ok(builder)
+}
+
+pub(super) fn send_async_request_with_cancellation(
+    runtime: tokio::runtime::Runtime,
+    request: reqwest::RequestBuilder,
+    header_timeout: Option<Duration>,
+    per_read_timeout: Option<Duration>,
+    cancellation: &ExecutionContext,
+) -> AsyncSendResult {
+    let measurement = nola_measurement::Span::physical_send();
+    if cancellation.is_requested() {
+        measurement.finish(nola_measurement::Outcome::Cancelled);
+        return AsyncSendResult::Cancelled;
+    }
+    let result = runtime.block_on(async {
+        let send_fut = request.send();
+        tokio::select! {
+            biased;
+            _ = wait_for_cancellation(cancellation) => None,
+            res = async move {
+                if let Some(timeout) = header_timeout {
+                    match tokio::time::timeout(timeout, send_fut).await {
+                        Ok(Ok(response)) => Ok(response),
+                        Ok(Err(error)) => Err(classify_network_error_hint(&error.without_url())),
+                        Err(_) => Err("operation timed out (request timeout; check endpoint reachability)".to_string()),
+                    }
+                } else {
+                    send_fut
+                        .await
+                        .map_err(|error| classify_network_error_hint(&error.without_url()))
+                }
+            } => Some(res),
+        }
+    });
+    match result {
+        None => {
+            measurement.finish(nola_measurement::Outcome::Cancelled);
+            AsyncSendResult::Cancelled
+        }
+        Some(Ok(response)) => {
+            measurement.finish(if response.status().is_success() {
+                nola_measurement::Outcome::Succeeded
+            } else {
+                nola_measurement::Outcome::Rejected
+            });
+            AsyncSendResult::Response(CancellableHttpResponse {
+                runtime,
+                response,
+                per_read_timeout,
+                buf: Vec::new(),
+                eof: false,
+            })
+        }
+        Some(Err(err)) => {
+            measurement.finish(nola_measurement::Outcome::Failed);
+            AsyncSendResult::Error(err)
+        }
+    }
+}
+
 pub(super) fn send_request_with_cancellation(
     request: reqwest::blocking::RequestBuilder,
     cancellation: &ExecutionContext,
@@ -133,11 +417,76 @@ mod request_worker_tests {
             nola_measurement::Span::start(nola_measurement::Stage::HttpHeaders));
         assert!(matches!(result, SendRequestResult::Cancelled));
     }
+
+    #[test]
+    fn async_send_and_stream_cancel_closes_socket_immediately_without_timeout() {
+        use std::io::{Read, Write};
+        use std::net::TcpListener;
+
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let addr = listener.local_addr().unwrap();
+        let cancellation = ExecutionContext::default();
+        let cancel_on_accept = cancellation.clone();
+        let (closed_tx, closed_rx) = mpsc::channel();
+        let server = thread::spawn(move || {
+            let (mut stream, _) = listener.accept().unwrap();
+            stream.set_read_timeout(Some(Duration::from_secs(2))).unwrap();
+            let mut req_buf = [0u8; 1024];
+            let _ = stream.read(&mut req_buf);
+            // Send SSE headers + one event, then stall indefinitely until client closes socket.
+            write!(
+                stream,
+                "HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\nTransfer-Encoding: chunked\r\nConnection: close\r\n\r\n"
+            )
+            .unwrap();
+            let first = "data: {\"ok\":true}\n\n";
+            write!(stream, "{:x}\r\n{}\r\n", first.len(), first).unwrap();
+            stream.flush().unwrap();
+            // Wait until client cancels and drops the response, closing the socket.
+            let mut probe = [0u8; 16];
+            let _ = stream.read(&mut probe);
+            let _ = closed_tx.send(());
+        });
+
+        let (runtime, client) = build_async_stream_client(Some("127.0.0.1"), None).unwrap();
+        let request = client.get(format!("http://{addr}/stream"));
+        let mut response = match send_async_request_with_cancellation(
+            runtime,
+            request,
+            None,
+            None,
+            &cancellation,
+        ) {
+            AsyncSendResult::Response(resp) => resp,
+            _ => panic!("expected response"),
+        };
+        let first_line = response.next_data_line(Duration::from_secs(2), &cancellation, "err");
+        assert!(matches!(first_line, StreamLineRecv::Line(ref l) if l == "data: {\"ok\":true}"));
+
+        // Trigger cancellation in the background while blocked on the stalled stream with no HTTP timeout.
+        thread::spawn(move || {
+            thread::sleep(Duration::from_millis(50));
+            cancel_on_accept.request();
+        });
+        let started = Instant::now();
+        let cancelled = response.next_data_line(Duration::from_secs(10), &cancellation, "err");
+        assert!(matches!(cancelled, StreamLineRecv::Cancelled));
+        assert!(started.elapsed() < Duration::from_secs(1));
+        drop(response);
+        // Server must observe socket close promptly without waiting for any HTTP timeout.
+        closed_rx
+            .recv_timeout(Duration::from_secs(2))
+            .expect("client socket should close promptly on drop after cancellation");
+        server.join().unwrap();
+    }
 }
 
 pub(super) fn response_retry_after_ms(response: &reqwest::blocking::Response) -> Option<u64> {
-    if let Some(value) = response
-        .headers()
+    headers_retry_after_ms(response.headers())
+}
+
+fn headers_retry_after_ms(headers: &reqwest::header::HeaderMap) -> Option<u64> {
+    if let Some(value) = headers
         .get("retry-after-ms")
         .and_then(|value| value.to_str().ok())
         .and_then(|value| value.trim().parse::<f64>().ok())
@@ -146,8 +495,7 @@ pub(super) fn response_retry_after_ms(response: &reqwest::blocking::Response) ->
             return Some(value.ceil().min(u64::MAX as f64) as u64);
         }
     }
-    response
-        .headers()
+    headers
         .get("retry-after")
         .and_then(|value| value.to_str().ok())
         .and_then(|value| value.trim().parse::<f64>().ok())
@@ -467,7 +815,7 @@ mod stream_lifetime_tests {
     }
 }
 
-fn llm_http_timeout() -> Option<Duration> {
+pub(super) fn llm_http_timeout() -> Option<Duration> {
     let raw = env::var("NOLA_LLM_HTTP_TIMEOUT_SEC").unwrap_or_else(|_| "180".to_string());
     parse_llm_http_timeout(&raw)
 }

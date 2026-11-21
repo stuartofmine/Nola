@@ -41,11 +41,14 @@
     $effect(() => {
         value; rows;
         if (!field || rows > 1 || supportsFieldSizing) return;
-        void tick().then(() => {
+        const syncHeight = () => {
             if (!field) return;
             field.style.height = 'auto';
             field.style.height = `${field.scrollHeight}px`;
-        });
+        };
+        void tick().then(syncHeight);
+        window.addEventListener('resize', syncHeight);
+        return () => window.removeEventListener('resize', syncHeight);
     });
     $effect(()=>{
         if(!query||!menu||!root)return;

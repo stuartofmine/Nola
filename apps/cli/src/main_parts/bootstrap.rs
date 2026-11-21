@@ -167,6 +167,10 @@ struct InteractiveProviderSnapshot {
     runtime_model: Option<String>,
     runtime_provider: Option<String>,
     context_window_tokens: Option<usize>,
+    siwc: Option<crate::model_siwc::SiwcExecutionContext>,
+    selected_profile: Option<nola_host_protocol::HostModelProfileReference>,
+    model_binding: Option<crate::model_connection_host::file_config::ModelRef>,
+    native_model_route: Option<nola_host_protocol::HostNativeModelRouteBinding>,
 }
 
 static INTERACTIVE_PROVIDER_BEFORE_LOCAL: OnceLock<Mutex<Option<InteractiveProviderSnapshot>>> =

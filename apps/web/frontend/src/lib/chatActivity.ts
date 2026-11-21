@@ -1,4 +1,5 @@
 import { conversationUrl } from './chatConversations.ts';
+import { randomId } from './randomId.ts';
 
 export interface ChatTraceSummary {
     traceId: string;
@@ -108,7 +109,7 @@ export function validateGoalOperationId(operationId: string): void {
     if (typeof operationId !== 'string' || !operationId || operationId.trim() !== operationId || operationId.length > 256 || /[\u0000-\u001f\u007f]/.test(operationId))
         throw new Error('chatActivity.invalidResponse');
 }
-export function goalActionRequest(action: ChatGoalAction, objective = '', goal?: ChatGoalSummary | null, operationId: string = crypto.randomUUID()): ChatGoalRequest {
+export function goalActionRequest(action: ChatGoalAction, objective = '', goal?: ChatGoalSummary | null, operationId: string = randomId()): ChatGoalRequest {
     validateGoalOperationId(operationId);
     if (action === 'start') {
         const text = objective.trim();

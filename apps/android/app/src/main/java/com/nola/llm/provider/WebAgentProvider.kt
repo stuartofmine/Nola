@@ -553,9 +553,12 @@ class WebAgentProvider @Inject constructor(
     }
 
     override suspend fun generateSummary(input: ModelInput, timeout: Duration?): ModelOutput {
-        val builder = StringBuilder()
-        generateSummaryStream(input).collect { builder.append(it) }
-        return ModelOutput(builder.toString().trim())
+        val collectSummary: suspend () -> ModelOutput = {
+            val builder = StringBuilder()
+            generateSummaryStream(input).collect { builder.append(it) }
+            ModelOutput(builder.toString().trim())
+        }
+        return if (timeout != null) kotlinx.coroutines.withTimeout(timeout) { collectSummary() } else collectSummary()
     }
 
     override fun generateSummaryStream(input: ModelInput): Flow<String> = flow {

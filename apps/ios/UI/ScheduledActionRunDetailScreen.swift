@@ -243,7 +243,7 @@ struct ScheduledActionRunDetailScreen: View {
 
     @ViewBuilder
     private var resultSection: some View {
-        let hasContent = (run.eventsCount ?? 0) > 0 || run.resultJournalId != nil
+        let hasContent = (run.eventsCount ?? 0) > 0 || run.resultJournalId != nil || run.displayResultText != nil
         if hasContent {
             Section(L10n.scheduledActionRunDetailSectionResult) {
                 if let count = run.eventsCount, count >= 0 {
@@ -298,6 +298,12 @@ struct ScheduledActionRunDetailScreen: View {
             } else {
                 ProgressView()
             }
+        } else if let fallbackText = run.displayResultText {
+            Text(fallbackText.nolaSanitizedSummary())
+                .font(.callout)
+                .foregroundColor(.primary)
+                .textSelection(.enabled)
+                .lineLimit(8)
         }
     }
 

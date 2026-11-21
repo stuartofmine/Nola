@@ -49,11 +49,8 @@ private struct PromptTemplateLibraryContent: View {
             let current = (try? resolution.get()).flatMap { matchesSearch($0) ? $0 : nil }
             if case .failure(let error) = resolution { Text(error.localizedDescription).foregroundStyle(.red) }
             if let templateError { Text(templateError).foregroundStyle(.red) }
-            let currentLang = Locale.current.language.languageCode?.identifier ?? "en"
-            let builtIn = service.templates.filter { template in
-                guard template.isBuiltIn && template.id != current?.id && service.canReadTemplate(template) else { return false }
-                let language = template.language ?? ""
-                return (language.isEmpty || language.hasPrefix(currentLang)) && matchesSearch(template)
+            let builtIn = service.displayedTemplates.filter { template in
+                template.isBuiltIn && template.id != current?.id && service.canReadTemplate(template) && matchesSearch(template)
             }
             let custom = service.templates.filter {
                 !$0.isBuiltIn && $0.id != current?.id && service.canReadTemplate($0) && matchesSearch($0)

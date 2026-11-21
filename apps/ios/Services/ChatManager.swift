@@ -16,6 +16,7 @@
 
 import Foundation
 import Combine
+import os
 import SwiftUI
 import UIKit
 
@@ -122,13 +123,18 @@ import UIKit
 
     func cancel(conversationID: UUID) {
         let submission = runs[conversationID]?.task
+        let editedResend = workspace.editedResendTask(for: conversationID)
         guard let execution = workspace.executionForConversation(conversationID) else {
             submission?.cancel()
+            editedResend?.cancel()
             return
         }
         // Cancelling the consumer first detaches its native stream and retires
         // the execution permit before Core can persist the user interrupt.
-        execution.cancelCurrentGeneration(retireSubmission: { submission?.cancel() })
+        execution.cancelCurrentGeneration(retireSubmission: {
+            submission?.cancel()
+            editedResend?.cancel()
+        })
     }
 }
 
@@ -534,7 +540,7 @@ public final class ChatManager: ObservableObject {
                 await self?.finishBackgroundGraceTeardown()
             }
         }
-        backgroundTaskIdentifier = taskID
+        backgroundTaskLock.withLock { $0 = taskID }
         backgroundGraceTask = Task { @MainActor [weak self] in
             do {
                 try await Task.sleep(for: .seconds(20))
@@ -549,9 +555,13 @@ public final class ChatManager: ObservableObject {
     private func cancelBackgroundGraceWindow() {
         backgroundGraceTask?.cancel()
         backgroundGraceTask = nil
-        if backgroundTaskIdentifier != .invalid {
-            UIApplication.shared.endBackgroundTask(backgroundTaskIdentifier)
-            backgroundTaskIdentifier = .invalid
+        let taskID = backgroundTaskLock.withLock { current -> UIBackgroundTaskIdentifier in
+            let previous = current
+            current = .invalid
+            return previous
+        }
+        if taskID != .invalid {
+            UIApplication.shared.endBackgroundTask(taskID)
         }
     }
 
@@ -564,10 +574,28 @@ public final class ChatManager: ObservableObject {
         remoteTaskObservation.cancel()
         remoteResumeTask?.cancel()
         remoteRecoveryGeneration &+= 1
-        if backgroundTaskIdentifier != .invalid {
-            UIApplication.shared.endBackgroundTask(backgroundTaskIdentifier)
-            backgroundTaskIdentifier = .invalid
+        let taskID = backgroundTaskLock.withLock { current -> UIBackgroundTaskIdentifier in
+            let previous = current
+            current = .invalid
+            return previous
         }
+        if taskID != .invalid {
+            UIApplication.shared.endBackgroundTask(taskID)
+        }
+    }
+
+    private func retireObserversAndTasks() {
+        cancelBackgroundGraceWindow()
+        localGoalDriver?.cancel()
+        localGoalDriver = nil
+        remoteRunObserver.cancel()
+        remoteTaskObservation.cancel()
+        remoteResumeTask?.cancel()
+        remoteResumeTask = nil
+        remoteUIWakeTask?.cancel()
+        remoteUIWakeTask = nil
+        remoteLifecycleSubscriptions.removeAll()
+        remoteRecoveryGeneration &+= 1
     }
 
     private func pauseLocalGoalForLifecycle() async {
@@ -944,6 +972,9 @@ public final class ChatManager: ObservableObject {
     
     private var inPlaceExpertWorkspaces: [UUID: IOSRoomSubmissionWorkspace] = [:]
     private var editedResendJobs: [UUID: Task<Void, Never>] = [:]
+    fileprivate func editedResendTask(for conversationID: UUID) -> Task<Void, Never>? {
+        editedResendJobs[conversationID]
+    }
     private let container: ServiceContainer
     fileprivate var submissionCommitted: (@Sendable () -> Void)?
     private let isConversationExecution: Bool
@@ -1401,7 +1432,20 @@ public final class ChatManager: ObservableObject {
     private var remoteObservationForeground = true
     private var remoteLifecycleSubscriptions = Set<AnyCancellable>()
     private var backgroundGraceTask: Task<Void, Never>?
-    private var backgroundTaskIdentifier: UIBackgroundTaskIdentifier = .invalid
+    private let backgroundTaskLock = OSAllocatedUnfairLock<UIBackgroundTaskIdentifier>(initialState: .invalid)
+
+    deinit {
+        let taskID = backgroundTaskLock.withLock { current -> UIBackgroundTaskIdentifier in
+            let previous = current
+            current = .invalid
+            return previous
+        }
+        if taskID != .invalid {
+            Task { @MainActor in
+                UIApplication.shared.endBackgroundTask(taskID)
+            }
+        }
+    }
     @Published public private(set) var remoteRunNeedsResume = false
     @Published public private(set) var remoteRunObservationError: String?
     @Published public private(set) var remoteSubmissionPending = false
@@ -5912,7 +5956,11 @@ public final class ChatManager: ObservableObject {
             try store.deleteConversation(conversationId: convId)
             // Only retire the session after canonical deletion succeeds. An
             // active Run rejected by Store keeps its execution and observers.
-            conversationExecutions.removeValue(forKey: convId)
+            submissionUseCase.cancel(conversationID: convId)
+            editedResendJobs.removeValue(forKey: convId)?.cancel()
+            if let execution = conversationExecutions.removeValue(forKey: convId) {
+                execution.retireObserversAndTasks()
+            }
             Task.detached { [weak self] in
                 await self?.deleteRemoteConversationIfNeeded(conversationId: convId)
             }
@@ -6417,7 +6465,11 @@ extension ChatManager {
                     inputOrigin: .interactiveUser, expectedConfigurationRevision: configuredTarget.configurationRevision,
                     expectedParentMessageID: nil, contextComponents: contextComponents,
                     freshResendTarget: prepared.input.target_conversation_id)
-                execution.processingState = .idle
+                if case .error = execution.processingState {
+                    // Preserve blocked-run error feedback set by runDeviceAgentTurn.
+                } else {
+                    execution.processingState = .idle
+                }
                 execution.thinkingFinished = true
                 admission.continuation.finish(throwing: DeviceAgentCoordinatorError.missingTransition)
             } catch {

@@ -597,6 +597,10 @@ final class MacDataSourceRegistry {
     }
 
     func replaceWebSources(_ sources: [MacWebSource]) {
+        try? replaceWebSourcesThrowing(sources)
+    }
+
+    func replaceWebSourcesThrowing(_ sources: [MacWebSource]) throws {
         do {
             let existing = try dataSourceClient?.listDataSources() ?? []
             let desiredIDs = Set(sources.map(\.dataSourceID))
@@ -611,6 +615,7 @@ final class MacDataSourceRegistry {
             persistenceError = nil
         } catch {
             persistenceError = error.localizedDescription
+            throw error
         }
     }
 

@@ -235,7 +235,7 @@ fun ChatMoreSettingsScreen(
     var localUserPreferences by remember(userPreferences) { mutableStateOf(userPreferences) }
 
     var isSaving by remember { mutableStateOf(false) }
-    var showDiscardDialog by remember { mutableStateOf(false) }
+    var pendingDiscardAction by remember { mutableStateOf<(() -> Unit)?>(null) }
     var statusMessage by remember { mutableStateOf<String?>(null) }
     var errorMessage by remember { mutableStateOf<String?>(null) }
     var showForgetPairingConfirmation by remember { mutableStateOf(false) }
@@ -246,11 +246,12 @@ fun ChatMoreSettingsScreen(
         localSessionMemory != sessionMemory ||
         localLongTermMemory != longTermMemory ||
         localUserPreferences != userPreferences
-    val requestBack = {
+    val requestLeave: (() -> Unit) -> Unit = { action ->
         if (!isSaving && !parameterSaving && !conversationLimitsSaving && !permissionSaving) {
-            if (hasUnsavedChanges) showDiscardDialog = true else onBack()
+            if (hasUnsavedChanges) pendingDiscardAction = action else action()
         }
     }
+    val requestBack = { requestLeave(onBack) }
     LaunchedEffect(isSaving, parameterSaving, conversationLimitsSaving, permissionSaving, hasUnsavedChanges) {
         onDismissGuardStateChange(
             isSaving || parameterSaving || conversationLimitsSaving || permissionSaving,
@@ -367,8 +368,14 @@ fun ChatMoreSettingsScreen(
     }
 
     BackHandler(enabled = !(showModelParameters && selectedModel != null)) { requestBack() }
-    if (showDiscardDialog) {
-        DiscardChangesDialog(onDiscard = onBack, onKeepEditing = { showDiscardDialog = false })
+    pendingDiscardAction?.let { action ->
+        DiscardChangesDialog(
+            onDiscard = {
+                pendingDiscardAction = null
+                action()
+            },
+            onKeepEditing = { pendingDiscardAction = null }
+        )
     }
 
     val reduceMotion = com.nola.ui.components.rememberReduceMotionEnabled()
@@ -543,7 +550,7 @@ fun ChatMoreSettingsScreen(
             }
 
             OutlinedButton(
-                onClick = onOpenContextSettings,
+                onClick = { requestLeave(onOpenContextSettings) },
                 modifier = Modifier.fillMaxWidth()
             ) {
                 Icon(Icons.Filled.Storage, null, Modifier.size(18.dp))
@@ -768,7 +775,7 @@ fun ChatMoreSettingsScreen(
                         enabledMcpCount,
                         enabledDocumentCount
                     ),
-                    onClick = onOpenSkillLibrary
+                    onClick = { requestLeave(onOpenSkillLibrary) }
                 )
                 NolaDivider()
                 SettingsNavigationRow(

@@ -198,14 +198,26 @@ final class MacWebSourceStore {
     }
 
     func replaceAll(_ restored: [MacWebSource]) {
+        try? replaceAllThrowing(restored)
+    }
+
+    func replaceAllThrowing(_ restored: [MacWebSource]) throws {
         guard sources.allSatisfy({ registry.canAccess(sourceID(for: $0), permission: .delete) }) else {
-            errorMessage = macWebSourceText("mac.web_sources.replace.denied", "You do not have permission to replace these sources.")
-            return
+            let message = macWebSourceText("mac.web_sources.replace.denied", "You do not have permission to replace these sources.")
+            errorMessage = message
+            throw NSError(domain: "MacWebSourceStore", code: 5, userInfo: [NSLocalizedDescriptionKey: message])
+        }
+        let sorted = restored.sorted { $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending }
+        for source in sorted { registry.ensureOwnedResource(sourceID(for: source)) }
+        do {
+            try registry.replaceWebSourcesThrowing(sorted)
+        } catch {
+            errorMessage = error.localizedDescription
+            throw error
         }
         if synchronizesLaunchAgents { synchronizeLaunchAgents() }
-        sources = restored.sorted { $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending }
-        for source in sources { registry.ensureOwnedResource(sourceID(for: source)) }
-        persist()
+        sources = sorted
+        errorMessage = nil
         if synchronizesLaunchAgents { synchronizeLaunchAgents() }
     }
 
@@ -252,7 +264,18 @@ final class MacWebSourceStore {
 
     func validateAndUpsert(_ source: MacWebSource) async throws {
         try Task.checkCancellation()
-        guard !refreshingIDs.contains(source.id) else { return }
+        guard !refreshingIDs.contains(source.id) else {
+            let message = macWebSourceText(
+                "mac.web_sources.save.refreshing",
+                "Wait for the current refresh to finish before saving changes."
+            )
+            errorMessage = message
+            throw NSError(
+                domain: "MacWebSourceStore",
+                code: 4,
+                userInfo: [NSLocalizedDescriptionKey: message]
+            )
+        }
         refreshingIDs.insert(source.id)
         defer { refreshingIDs.remove(source.id) }
         do {
@@ -540,23 +563,31 @@ final class MacWebSourceStore {
         if registry.persistenceError == nil { try? fileManager.removeItem(at: storeURL) }
     }
 
+    private static let launchctlQueue = DispatchQueue(label: "com.gaojc.Nola.web-source.launchctl", qos: .utility)
+
     private func synchronizeLaunchAgents() {
-        for source in sources {
-            unload(source)
-            try? fileManager.removeItem(at: plistURL(for: source))
-        }
+        let targets = sources.map { (label: launchAgentLabel(for: $0), plistURL: plistURL(for: $0)) }
+        Self.cleanupLegacyLaunchAgents(targets)
     }
 
     private func synchronize(_ source: MacWebSource) {
-        unload(source)
-        try? fileManager.removeItem(at: plistURL(for: source))
+        Self.cleanupLegacyLaunchAgents([(label: launchAgentLabel(for: source), plistURL: plistURL(for: source))])
     }
 
-    private func unload(_ source: MacWebSource) {
-        try? launchctl(["bootout", "gui/\(getuid())/\(launchAgentLabel(for: source))"])
+    private nonisolated static func cleanupLegacyLaunchAgents(_ targets: [(label: String, plistURL: URL)]) {
+        guard !targets.isEmpty else { return }
+        launchctlQueue.async {
+            let fileManager = FileManager.default
+            let uid = getuid()
+            for target in targets {
+                guard fileManager.fileExists(atPath: target.plistURL.path) else { continue }
+                try? runLaunchctl(["bootout", "gui/\(uid)/\(target.label)"])
+                try? fileManager.removeItem(at: target.plistURL)
+            }
+        }
     }
 
-    private func launchctl(_ arguments: [String]) throws {
+    private nonisolated static func runLaunchctl(_ arguments: [String]) throws {
         let process = Process()
         process.executableURL = URL(fileURLWithPath: "/bin/launchctl")
         process.arguments = arguments

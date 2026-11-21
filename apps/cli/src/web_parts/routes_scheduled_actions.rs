@@ -328,6 +328,12 @@ fn approve_script_action_response(
     };
     let meta = load_script_metadata(&action.user_prompt);
     action.enabled = true;
+    action.next_scheduled_at = estimate_next_scheduled_at(
+        &action.frequency,
+        &action.time,
+        action.weekday,
+        action.enabled,
+    );
     action.script_approved = Some(true);
     action.script_preview = Some(script_preview(&meta));
     action.updated_at = now_string();

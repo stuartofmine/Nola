@@ -652,6 +652,19 @@ pub fn physical_memory_bytes() -> Option<u64> {
             });
         }
     }
+    #[cfg(windows)]
+    unsafe {
+        let mut status: windows_sys::Win32::System::SystemInformation::MEMORYSTATUSEX =
+            std::mem::zeroed();
+        status.dwLength = std::mem::size_of::<
+            windows_sys::Win32::System::SystemInformation::MEMORYSTATUSEX,
+        >() as u32;
+        if windows_sys::Win32::System::SystemInformation::GlobalMemoryStatusEx(&mut status) != 0
+            && status.ullTotalPhys > 0
+        {
+            return Some(status.ullTotalPhys);
+        }
+    }
     None
 }
 
@@ -1044,6 +1057,34 @@ fn partial_download_size(model: &LocalModelProfile) -> u64 {
         .unwrap_or(0)
 }
 
+fn wait_for_local_server_ready(
+    child: &mut Child,
+    address: std::net::SocketAddr,
+    timeout: Duration,
+) -> Result<(), String> {
+    let deadline = Instant::now() + timeout;
+    loop {
+        if TcpStream::connect_timeout(&address, Duration::from_millis(250)).is_ok() {
+            return Ok(());
+        }
+        if let Some(status) = child
+            .try_wait()
+            .map_err(|error| format!("Failed to inspect llama.cpp: {error}"))?
+        {
+            return Err(format!("llama.cpp exited before becoming ready: {status}"));
+        }
+        if Instant::now() >= deadline {
+            let _ = child.kill();
+            let _ = child.wait();
+            return Err(format!(
+                "llama.cpp did not become ready within {} seconds",
+                timeout.as_secs()
+            ));
+        }
+        thread::sleep(Duration::from_millis(100));
+    }
+}
+
 pub fn start_model(model_id: &str) -> Result<LocalModelEndpoint, String> {
     let built_in = profile(model_id);
     let installed = if built_in.is_none() {
@@ -1145,26 +1186,19 @@ pub fn start_model(model_id: &str) -> Result<LocalModelEndpoint, String> {
         report_runtime(&resolved_id, "failed", None, None, Some(message.clone()));
         message
     })?;
-    let address = format!("127.0.0.1:{port}")
-        .parse()
-        .map_err(|error| format!("Invalid local model address: {error}"))?;
-    let deadline = Instant::now() + Duration::from_secs(30);
-    loop {
-        if TcpStream::connect_timeout(&address, Duration::from_millis(250)).is_ok() {
-            break;
-        }
-        if let Some(status) = child
-            .try_wait()
-            .map_err(|error| format!("Failed to inspect llama.cpp: {error}"))?
-        {
-            return Err(format!("llama.cpp exited before becoming ready: {status}"));
-        }
-        if Instant::now() >= deadline {
+    let address: std::net::SocketAddr = match format!("127.0.0.1:{port}").parse() {
+        Ok(address) => address,
+        Err(error) => {
             let _ = child.kill();
             let _ = child.wait();
-            return Err("llama.cpp did not become ready within 30 seconds".to_string());
+            let message = format!("Invalid local model address: {error}");
+            report_runtime(&resolved_id, "failed", None, None, Some(message.clone()));
+            return Err(message);
         }
-        thread::sleep(Duration::from_millis(100));
+    };
+    if let Err(message) = wait_for_local_server_ready(&mut child, address, Duration::from_secs(30)) {
+        report_runtime(&resolved_id, "failed", None, None, Some(message.clone()));
+        return Err(message);
     }
     let state = RuntimeState {
         child,

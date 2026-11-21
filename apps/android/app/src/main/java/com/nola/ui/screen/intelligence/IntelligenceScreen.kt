@@ -390,7 +390,7 @@ fun IntelligenceScreen(
                 Text(stringResource(if (unchanged) R.string.ui_delete_entry_message else R.string.ui_entry_changed))
             } },
             confirmButton = { TextButton(enabled = unchanged, onClick = {
-                if (index != null) viewModel.deleteEntry(target.kind, index)
+                if (index != null) viewModel.deleteEntry(target.kind, index, target.initialValue)
                 pendingEntryDeletion = null
             }) { Text(stringResource(R.string.common_delete), color = MaterialTheme.colorScheme.error) } },
             dismissButton = { TextButton(onClick = { pendingEntryDeletion = null }) { Text(stringResource(R.string.common_cancel)) } },

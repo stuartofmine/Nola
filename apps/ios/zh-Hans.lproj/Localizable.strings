@@ -3439,3 +3439,5 @@
 "harness.pair" = "连接其他 Host";
 
 "Icon could not be rendered" = "无法渲染图标";
+
+"model.center.selection_error.title" = "无法选择模型";

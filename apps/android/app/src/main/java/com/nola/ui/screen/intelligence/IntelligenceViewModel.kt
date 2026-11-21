@@ -136,8 +136,15 @@ class IntelligenceViewModel @Inject constructor(
         }
     }
 
-    fun deleteEntry(kind: IntelligenceEntryKind, index: Int) {
+    fun deleteEntry(kind: IntelligenceEntryKind, index: Int, expectedValue: String? = null) {
         mutateMemory { profile ->
+            val currentEntries = when (kind) {
+                IntelligenceEntryKind.Preference -> profile.userPreferences
+                IntelligenceEntryKind.Memory -> profile.longTermMemory
+            }
+            if (expectedValue != null && currentEntries.getOrNull(index) != expectedValue) {
+                throw IllegalStateException("The selected entry changed; reload before deleting")
+            }
             when (kind) {
                 IntelligenceEntryKind.Preference -> profile.copy(
                     userPreferences = profile.userPreferences.filterIndexed { itemIndex, _ -> itemIndex != index }

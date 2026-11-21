@@ -48,10 +48,16 @@ if (llamaSource) {
     if (existsSync(llamaLicense)) copyFileSync(llamaLicense, path.join(licenseDirectory, "llama.cpp.txt"));
 }
 
+const ALLOWED_BACKENDS = new Set(["cpu", "vulkan", "cuda"]);
+const backend = (process.env.NOLA_LLAMA_BACKEND || "cpu").trim().toLowerCase();
+if (!ALLOWED_BACKENDS.has(backend)) {
+    throw new Error(`Unsupported NOLA_LLAMA_BACKEND "${backend}". Expected one of: cpu, vulkan, cuda.`);
+}
+
 const nativeLock = JSON.parse(readFileSync(path.join(windowsRoot, "native-lock.json"), "utf8"));
 writeFileSync(path.join(windowsRoot, "resources", "native-runtime.json"), `${JSON.stringify({
     architecture: requestedArch,
-    backend: process.env.NOLA_LLAMA_BACKEND || "external",
+    backend,
     llamaCppRelease: nativeLock.llamaCpp.release,
     llamaCppCommit: process.env.NOLA_LLAMA_COMMIT || nativeLock.llamaCpp.commitPrefix,
 }, null, 2)}\n`);

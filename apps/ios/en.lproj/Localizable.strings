@@ -3448,3 +3448,5 @@
 "Write what you want the expert to do." = "Write what you want the expert to do.";
 "View expert history" = "View expert history";
 "Icon could not be rendered" = "Icon could not be rendered";
+
+"model.center.selection_error.title" = "Could not select model";

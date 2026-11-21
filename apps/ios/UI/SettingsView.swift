@@ -398,7 +398,10 @@ struct SettingsView: View {
 
     @MainActor
     private func updateNotificationPreference(enabled: Bool) async {
-        guard enabled else { return }
+        guard enabled else {
+            UNUserNotificationCenter.current().removeAllPendingNotificationRequests()
+            return
+        }
         guard !isUpdatingNotificationAuthorization else { return }
         guard !notificationsAreUsable else { return }
         notificationError = nil
@@ -530,11 +533,59 @@ struct SettingsView: View {
             completelyCleared = false
             container.logger.log(.warn, "SettingsView", "Failed to clear MCP servers", metadata: ["error": error.localizedDescription])
         }
+        if let notificationManager = container.notificationManager {
+            do {
+                try notificationManager.clearAll()
+            } catch {
+                completelyCleared = false
+                container.logger.log(.warn, "SettingsView", "Failed to clear notifications", metadata: ["error": error.localizedDescription])
+            }
+        }
+        if let promptTemplates = container.promptTemplates {
+            let customTemplates = promptTemplates.templates.filter { !$0.isBuiltIn }
+            for template in customTemplates {
+                do {
+                    try promptTemplates.deleteTemplate(id: template.id)
+                } catch {
+                    completelyCleared = false
+                    container.logger.log(.warn, "SettingsView", "Failed to clear custom prompt template", metadata: ["error": error.localizedDescription])
+                }
+            }
+        }
+        if let storage = container.localJSONStorage {
+            do {
+                let tasks = try storage.getAllUserTasks()
+                for task in tasks {
+                    try storage.deleteUserTask(id: task.id)
+                }
+            } catch {
+                completelyCleared = false
+                container.logger.log(.warn, "SettingsView", "Failed to clear user tasks", metadata: ["error": error.localizedDescription])
+            }
+        }
+        for localModel in container.modelDownloader.downloadedModels {
+            do {
+                try container.modelDownloader.deleteModel(localModel)
+            } catch {
+                completelyCleared = false
+                container.logger.log(.warn, "SettingsView", "Failed to delete local model", metadata: ["error": error.localizedDescription])
+            }
+        }
+        for model in ModelSelectionManager.getAvailableModels() {
+            ModelSelectionManager.removeModel(model)
+        }
+        container.summaryStorage.clearAllSummaries()
         return completelyCleared
     }
 
     private func refreshLocalDataSize() {
-        localDataSize = container.dataManager.getDataSize()
+        let databaseURL = container.applicationRuntime.databaseURL
+        Task.detached(priority: .utility) {
+            let size = DataManager.computeDataSize(databaseURL: databaseURL)
+            await MainActor.run {
+                localDataSize = size
+            }
+        }
     }
 
     private func openApplicationSettings() {

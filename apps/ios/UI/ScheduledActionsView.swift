@@ -153,6 +153,7 @@ struct ScheduledActionsView: View {
                             latestSummary: entry.latestSummary,
                             onToggleEnabled: {
                                 container.urlFetcher?.toggleSource(id: entry.source.id)
+                                container.scheduler.scheduleNextRefresh()
                                 refreshNonce += 1
                             }
                         )
@@ -314,14 +315,18 @@ struct ScheduledActionsView: View {
 
             var snippets: [String: String] = [:]
             for (aid, run) in latestByActionId {
-                guard let jid = run.resultJournalId, !jid.isEmpty else { continue }
-                if let journal = try storage.getJournal(id: jid) {
+                if let jid = run.resultJournalId, !jid.isEmpty,
+                   let journal = try storage.getJournal(id: jid) {
                     let raw = journal.content
                         .replacingOccurrences(of: "\n\n\n", with: "\n\n")
                         .trimmingCharacters(in: .whitespacesAndNewlines)
                     if !raw.isEmpty {
                         snippets[aid] = String(raw.prefix(240))
+                        continue
                     }
+                }
+                if let fallback = run.displayResultText {
+                    snippets[aid] = String(fallback.prefix(240))
                 }
             }
             latestSummaryByActionId = snippets
@@ -729,7 +734,7 @@ private struct ScheduledActionSimpleRow: View {
                 label: NSLocalizedString("scheduled.actions.badge.paused", value: "Paused", comment: "Scheduled action paused badge"),
                 tint: .secondary
             )
-        } else if let latestRun, latestRun.status != .success {
+        } else if let latestRun, !latestRun.status.isSuccessful {
             ScheduledActionInfoBadge(
                 label: statusText(for: latestRun),
                 tint: statusColor(for: latestRun)
@@ -749,12 +754,11 @@ private struct ScheduledActionSimpleRow: View {
 
     private func statusColor(for run: LocalJSONStorage.ScheduledActionRunRecord) -> Color {
         switch run.status {
-        case .success: return DesignTokens.successColor
+        case .success, .answered, .actionCompleted: return DesignTokens.successColor
         case .partial: return DesignTokens.warningColor
         case .skipped: return .secondary
         case .failed: return DesignTokens.dangerColor
-        case .actionCompleted: return DesignTokens.successColor
-        case .answered, .delegationAccepted, .cancelled: return .secondary
+        case .delegationAccepted, .cancelled: return .secondary
         case .incomplete, .blocked: return DesignTokens.warningColor
         }
     }

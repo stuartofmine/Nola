@@ -268,7 +268,7 @@ private struct ScheduledActionRunRow: View {
                 )
                 .foregroundStyle(.secondary)
             }
-            if let count = run.eventsCount, count > 0, run.status == .success {
+            if let count = run.eventsCount, count > 0, run.status.isSuccessful {
                 if includeLeadingSeparator || executionPath != nil {
                     Text("·")
                         .foregroundStyle(.tertiary)

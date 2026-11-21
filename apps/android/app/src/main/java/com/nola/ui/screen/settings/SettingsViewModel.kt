@@ -46,7 +46,10 @@ data class SettingsUiState(
     val webHostIdentity: String = "",
     val webHostCertificateSha256: String = "",
     val clientUuid: String = "",
-    val localDataSizeBytes: Long? = null
+    val localDataSizeBytes: Long? = null,
+    val isExportingData: Boolean = false,
+    val exportedArchiveFile: File? = null,
+    val exportErrorMessage: String? = null,
 )
 
 @HiltViewModel
@@ -103,7 +106,13 @@ class SettingsViewModel @Inject constructor(
                     localDataSizeBytes = dataSize
                 )
             }.onSuccess { loaded ->
-                _uiState.value = loaded
+                _uiState.update { current ->
+                    loaded.copy(
+                        isExportingData = current.isExportingData,
+                        exportedArchiveFile = current.exportedArchiveFile,
+                        exportErrorMessage = current.exportErrorMessage,
+                    )
+                }
             }.onFailure { error ->
                 if (error is kotlinx.coroutines.CancellationException) throw error
                 _uiState.update { it.copy(isLoading = false, loadFailed = true) }
@@ -159,6 +168,37 @@ class SettingsViewModel @Inject constructor(
             exportFile.delete()
             throw error
         }
+    }
+
+    fun startExportArchive() {
+        if (_uiState.value.isExportingData) return
+        _uiState.update { it.copy(isExportingData = true, exportedArchiveFile = null, exportErrorMessage = null) }
+        viewModelScope.launch {
+            try {
+                val exportFile = createExportArchive()
+                _uiState.update {
+                    it.copy(
+                        isExportingData = false,
+                        exportedArchiveFile = exportFile,
+                        exportErrorMessage = null,
+                    )
+                }
+            } catch (cancelled: kotlinx.coroutines.CancellationException) {
+                _uiState.update { it.copy(isExportingData = false) }
+                throw cancelled
+            } catch (e: Exception) {
+                _uiState.update {
+                    it.copy(
+                        isExportingData = false,
+                        exportErrorMessage = e.message ?: "",
+                    )
+                }
+            }
+        }
+    }
+
+    fun consumeExportResult() {
+        _uiState.update { it.copy(exportedArchiveFile = null, exportErrorMessage = null) }
     }
 
     fun clearAllData(): Boolean {

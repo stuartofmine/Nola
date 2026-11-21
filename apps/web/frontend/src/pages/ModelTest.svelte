@@ -9,6 +9,7 @@
     import { api as unscopedApi, errorMessage } from '../lib/api';
     import { freezeHostToolPlan } from '../lib/hostToolPlan';
     import { locale, t } from '../lib/i18n';
+    import { randomId } from '../lib/randomId';
     import { parseChatConversation, conversationUrl } from '../lib/chatConversations';
     import type { ChatConversation } from '../lib/chatConversations';
     import { createChatTimeline, reduceChatTimeline, timelineMessageText } from '../lib/chatTimeline';
@@ -191,13 +192,13 @@
                 return current() && !!turn && !canReleaseChatTurn(turn) && ready;
             }, () => turn?.runId ? { run_id: turn.runId, assistant_message_id: turn.identity.assistantMessageId } : undefined);
     }
-    async function cancelCapturedSubmission(captured: PendingSourceSubmission) {
+    async function cancelCapturedSubmission(captured: PendingSourceSubmission, requestApi: typeof api = api) {
         if (captured.request_digest === null && !captured.sent) { submissionStorage().clear(captured); return; }
-        const response = await api<{ source_host_id: string; result: unknown }>('/api/chat/agent/v2/submission', {
+        const response = await requestApi<{ source_host_id: string; result: unknown }>('/api/chat/agent/v2/submission', {
             method: 'POST', body: JSON.stringify(sourceSubmissionQuery(captured, true)) });
         if (response.source_host_id !== captured.identity.source_host_id || response.result === null) throw new Error('Cancellation remains unresolved');
         const settled = acceptSourceReceipt(captured, response.result); submissionStorage().save(settled);
-        if (settled.receipt?.phase === 'admitted') await api('/api/chat/agent/v2/cancel', { method: 'POST', body: JSON.stringify(exactSubmissionCancel(settled)) });
+        if (settled.receipt?.phase === 'admitted') await requestApi('/api/chat/agent/v2/cancel', { method: 'POST', body: JSON.stringify(exactSubmissionCancel(settled)) });
         else if (settledSourceSubmission(settled)) submissionStorage().clear(settled);
     }
     const activeRemote = $derived(activeApiTestModel(profiles));
@@ -219,7 +220,7 @@
             if (!session.authenticated || !session.hostId?.trim()) throw new Error('Session unavailable');
             if (disposed) return;
             hostId = session.hostId;
-            clientId = sessionStorage.getItem(editorStorageKey('client')) || `web-model-test-${crypto.randomUUID()}`;
+            clientId = sessionStorage.getItem(editorStorageKey('client')) || `web-model-test-${randomId()}`;
             sessionStorage.setItem(editorStorageKey('client'), clientId);
             profiles = remote.profiles;
             localModels = local.models;
@@ -256,7 +257,9 @@
             stopObservation(); document.removeEventListener('visibilitychange', visibility);
             streamController?.abort();
             journalReader?.dispose();
-            if (pendingSubmission && turn && !canReleaseChatTurn(turn)) void cancelCapturedSubmission(pendingSubmission).catch(() => {});
+            if (pendingSubmission && turn && !canReleaseChatTurn(turn)) {
+                void cancelCapturedSubmission(pendingSubmission, (path, options) => unscopedApi(path, { ...options, signal: AbortSignal.timeout(15_000) })).catch(() => {});
+            }
         };
     });
 
@@ -398,8 +401,11 @@
         usageProjection.reset(); contextUsage = null;
         stopObservation(); consumedResumeAuthorities.clear();
         journalReader?.dispose(); journalReader = null;
+        turn = null; timeline = null;
         compactPane = 'output';
         preparing = true; error = ''; warning = ''; output = ''; firstTokenMs = null; totalMs = null;
+        let createdConversationId: string | null = null;
+        let savedSubmission: PendingSourceSubmission | null = null;
         try {
             if (target === 'local' && activeLocal && !activeLocal.running) {
                 await api(`/api/local-models/${encodeURIComponent(activeLocal.id)}/start`, { method: 'POST' });
@@ -409,30 +415,58 @@
             const created = parseChatConversation(await api('/api/chat/conversations', {
                 method: 'POST', body: JSON.stringify(modelTestConversationRequest(target, model.id, t($locale, 'modelTest.title'))),
             }));
-            if (serial !== generation || disposed) { await retireConversation(created.conversationId); return; }
+            createdConversationId = created.conversationId;
+            if (serial !== generation || disposed) {
+                createdConversationId = null;
+                await retireConversation(created.conversationId);
+                return;
+            }
             conversation = created;
             const owner: ChatTurnOwner = { conversationId: created.conversationId, generation: serial, hostId, clientId };
-            const submissionId = crypto.randomUUID();
-            turn = createChatTurn(owner, chatTurnIdentity(submissionId));
-            timeline = reduceChatTimeline(createChatTimeline(owner), { type: 'beginSubmission', owner, submissionId }).state;
-            startedAt = Date.now();
-            preparing = false;
+            const submissionId = randomId();
+            const turnIdentity = chatTurnIdentity(submissionId);
             const request = { ...modelTestRunRequest(
                 created, clientId, submissionId, prompt, $locale,
                 Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC'
             ), expected_host_id: hostId };
             const frozenRequest = await freezeHostToolPlan(request, api);
-            if (serial !== generation || disposed) return;
-            pendingSubmission = createSourceSubmission(sourceIdentity(owner, turn.identity), frozenRequest);
-            submissionStorage().save(pendingSubmission); sessionStorage.setItem(editorStorageKey('pending-conversation'), created.conversationId);
-            const captured = pendingSubmission;
-            const prepared = await api('/api/chat/agent/v2/submission', { method: 'POST', body: JSON.stringify({ operation: 'prepare', identity: captured.identity, request: captured.request }) });
-            if (serial !== generation || disposed || pendingSubmission?.identity.submission_id !== captured.identity.submission_id) return;
-            pendingSubmission = bindSourceDigest(captured, prepared); submissionStorage().save(pendingSubmission);
-            const body = sourceSubmissionBody(pendingSubmission);
-            pendingSubmission = { ...pendingSubmission, sent: true }; submissionStorage().save(pendingSubmission);
+            if (serial !== generation || disposed) {
+                createdConversationId = null;
+                await retireConversation(created.conversationId);
+                return;
+            }
+            const draftSubmission = createSourceSubmission(sourceIdentity(owner, turnIdentity), frozenRequest);
+            const prepared = await api('/api/chat/agent/v2/submission', { method: 'POST', body: JSON.stringify({ operation: 'prepare', identity: draftSubmission.identity, request: draftSubmission.request }) });
+            if (serial !== generation || disposed) {
+                createdConversationId = null;
+                await retireConversation(created.conversationId);
+                return;
+            }
+            const boundSubmission = bindSourceDigest(draftSubmission, prepared);
+            const body = sourceSubmissionBody(boundSubmission);
+            const dispatchedSubmission: PendingSourceSubmission = { ...boundSubmission, sent: true };
+            submissionStorage().save(dispatchedSubmission);
+            savedSubmission = dispatchedSubmission;
+            sessionStorage.setItem(editorStorageKey('pending-conversation'), created.conversationId);
+            pendingSubmission = dispatchedSubmission;
+            turn = createChatTurn(owner, turnIdentity);
+            timeline = reduceChatTimeline(createChatTimeline(owner), { type: 'beginSubmission', owner, submissionId }).state;
+            startedAt = Date.now();
+            preparing = false;
+            createdConversationId = null;
+            savedSubmission = null;
             await consume('/api/chat/agent/v2/stream', body, serial);
-        } catch (cause) { if (serial === generation && !disposed) error = errorMessage(cause); }
+        } catch (cause) {
+            if (savedSubmission) {
+                submissionStorage().clear(savedSubmission);
+                if (pendingSubmission?.identity.submission_id === savedSubmission.identity.submission_id) pendingSubmission = null;
+                sessionStorage.removeItem(editorStorageKey('pending-conversation'));
+            }
+            if (createdConversationId) {
+                await retireConversation(createdConversationId);
+            }
+            if (serial === generation && !disposed) error = errorMessage(cause);
+        }
         finally { if (serial === generation && !disposed) { preparing = false; observeSubmission(); } }
     }
 

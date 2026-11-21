@@ -3288,3 +3288,5 @@
 "Write what you want the expert to do." = "Schreiben Sie, was der Experte tun soll.";
 "View expert history" = "Expertenverlauf anzeigen";
 "Icon could not be rendered" = "Symbol konnte nicht gerendert werden";
+
+"model.center.selection_error.title" = "Modell konnte nicht ausgewählt werden";

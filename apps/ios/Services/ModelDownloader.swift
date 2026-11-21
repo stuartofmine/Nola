@@ -118,6 +118,17 @@ public final class ModelDownloader: ObservableObject {
             case .qwen3_5_4b: return rawValue
             }
         }
+
+        #if os(iOS)
+        public var canonicalModelInfo: ModelInfo {
+            ModelInfo(
+                id: rawValue,
+                name: displayName,
+                source: "local",
+                isLocal: true
+            )
+        }
+        #endif
         
         var modelscopeRepo: String {
             switch self {
@@ -285,6 +296,17 @@ public final class ModelDownloader: ObservableObject {
     public func applyDownloadedModels(_ downloaded: Set<ModelType>) {
         downloadedModels = downloaded
         state = downloaded.isEmpty ? .notDownloaded : .downloaded
+        syncDownloadedModelsWithSelectionManager(downloaded)
+    }
+
+    private func syncDownloadedModelsWithSelectionManager(_ downloaded: Set<ModelType>) {
+        #if os(iOS)
+        guard !downloaded.isEmpty else { return }
+        let existingLocalIDs = Set(ModelSelectionManager.getAvailableModels().filter(\.isLocal).map(\.id))
+        for model in downloaded where !existingLocalIDs.contains(model.rawValue) {
+            ModelSelectionManager.addModel(model.canonicalModelInfo)
+        }
+        #endif
     }
 
     /// Refresh downloaded models asynchronously to avoid blocking the main thread
@@ -356,6 +378,8 @@ public final class ModelDownloader: ObservableObject {
         if isModelDownloaded(model) {
             logger.log(.info, "ModelDownloader", "Model already downloaded")
             await MainActor.run {
+                currentDownloadingFile = nil
+                currentModel = nil
                 state = .downloaded
             }
             return
@@ -366,6 +390,8 @@ public final class ModelDownloader: ObservableObject {
             let error = "磁盘空间不足，需要至少 \(formatBytes(model.estimatedSize * 2))"
             logger.log(.error, "ModelDownloader", error)
             await MainActor.run {
+                currentDownloadingFile = nil
+                currentModel = nil
                 state = .failed(error: error)
             }
             return
@@ -479,6 +505,9 @@ public final class ModelDownloader: ObservableObject {
             await MainActor.run {
                 downloadedModels.insert(model)
                 state = .downloaded
+                #if os(iOS)
+                ModelSelectionManager.addModel(model.canonicalModelInfo)
+                #endif
                 scheduleDiskUsageUpdate(reason: "downloadCompleted")
             }
 
@@ -533,6 +562,8 @@ public final class ModelDownloader: ObservableObject {
                 totalBytes = 0
                 downloadSpeed = 0
                 lastDownloadedBytes = 0
+                currentDownloadingFile = nil
+                currentModel = nil
                 scheduleDiskUsageUpdate(reason: "downloadFailed")
             }
             throw error
@@ -550,6 +581,9 @@ public final class ModelDownloader: ObservableObject {
         
         try FileManager.default.removeItem(at: modelPath)
         downloadedModels.remove(model)
+        #if os(iOS)
+        ModelSelectionManager.removeModel(model.canonicalModelInfo)
+        #endif
         
         if downloadedModels.isEmpty {
             state = .notDownloaded

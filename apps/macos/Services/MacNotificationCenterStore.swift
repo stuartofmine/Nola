@@ -70,17 +70,35 @@ actor MacNotificationHistoryRepository {
         NotificationCenter.default.post(name: .nolaMacNotificationsDidChange, object: nil)
     }
 
-    func markRead(identifier: String) {
+    func markRead(identifier: String, fallbackItem: MacNotificationInboxItem? = nil) {
         var values = items()
-        guard let index = values.firstIndex(where: { $0.identifier == identifier }) else { return }
-        values[index].isRead = true
+        if let index = values.firstIndex(where: { $0.identifier == identifier }) {
+            values[index].isRead = true
+        } else if var item = fallbackItem {
+            item.isRead = true
+            values.insert(item, at: 0)
+            values = Array(deduplicated(values).prefix(maximumItems))
+        } else {
+            return
+        }
         persist(values)
         NotificationCenter.default.post(name: .nolaMacNotificationsDidChange, object: nil)
     }
 
-    func markAllRead() {
+    func markAllRead(including deliveredItems: [MacNotificationInboxItem] = []) {
         var values = items()
         for index in values.indices { values[index].isRead = true }
+        let existingIDs = Set(values.map(\.identifier))
+        let missingDelivered = deliveredItems.compactMap { item -> MacNotificationInboxItem? in
+            guard !existingIDs.contains(item.identifier) else { return nil }
+            var readItem = item
+            readItem.isRead = true
+            return readItem
+        }
+        if !missingDelivered.isEmpty {
+            let merged = (missingDelivered + values).sorted { $0.date > $1.date }
+            values = Array(deduplicated(merged).prefix(maximumItems))
+        }
         persist(values)
         NotificationCenter.default.post(name: .nolaMacNotificationsDidChange, object: nil)
     }
@@ -98,9 +116,15 @@ actor MacNotificationHistoryRepository {
     }
 
     func replaceAll(_ restored: [MacNotificationInboxItem]) {
-        let values = Array(restored.sorted { $0.date > $1.date }.prefix(maximumItems))
+        let sorted = restored.sorted { $0.date > $1.date }
+        let values = Array(deduplicated(sorted).prefix(maximumItems))
         persist(values)
         NotificationCenter.default.post(name: .nolaMacNotificationsDidChange, object: nil)
+    }
+
+    private func deduplicated(_ values: [MacNotificationInboxItem]) -> [MacNotificationInboxItem] {
+        var seen = Set<String>()
+        return values.filter { seen.insert($0.identifier).inserted }
     }
 
     private func persist(_ values: [MacNotificationInboxItem]) {
@@ -153,7 +177,10 @@ final class MacNotificationCenterStore {
         let historyItems = await MacNotificationHistoryRepository.shared.items()
         authorizationStatus = settings.authorizationStatus
 
-        let readByIdentifier = Dictionary(uniqueKeysWithValues: historyItems.map { ($0.identifier, $0.isRead) })
+        let readByIdentifier = Dictionary(
+            historyItems.map { ($0.identifier, $0.isRead) },
+            uniquingKeysWith: { first, _ in first }
+        )
 
         let deliveredItems = deliveredNotifications.map { notification in
             makeItem(
@@ -219,7 +246,7 @@ final class MacNotificationCenterStore {
 
     func markRead(_ item: MacNotificationInboxItem) async {
         guard item.deliveryState != .scheduled else { return }
-        await MacNotificationHistoryRepository.shared.markRead(identifier: item.identifier)
+        await MacNotificationHistoryRepository.shared.markRead(identifier: item.identifier, fallbackItem: item)
         if let index = items.firstIndex(where: { $0.identifier == item.identifier }) {
             items[index].isRead = true
         }
@@ -227,7 +254,7 @@ final class MacNotificationCenterStore {
     }
 
     func markAllRead() async {
-        await MacNotificationHistoryRepository.shared.markAllRead()
+        await MacNotificationHistoryRepository.shared.markAllRead(including: delivered)
         for index in items.indices where items[index].deliveryState != .scheduled {
             items[index].isRead = true
         }

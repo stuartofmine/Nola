@@ -71,7 +71,9 @@ internal class ChatRunSession(
     }
     fun dispose() {
         retired = true
+        val hasGeneration = runtime.hasOutstandingGeneration()
         runtime.cancelGeneration()
+        if (!hasGeneration) ChatDeviceExecutionLease.release(this)
         observer.reset()
         taskObservation.reset()
         permission.clear()

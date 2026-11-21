@@ -85,8 +85,12 @@ class PreferenceDataStore @Inject constructor(
     suspend fun defaultModelSelection(models: List<com.nola.domain.model.ModelInfo>): com.nola.domain.model.ModelInfo? {
         val snapshot = context.preferenceDataStore.data.first()
         val raw = snapshot[KEY_DEFAULT_MODEL_SELECTION] ?: return null
-        val value = kotlinx.serialization.json.Json.parseToJsonElement(raw) as? kotlinx.serialization.json.JsonObject ?: return null
-        fun text(key: String) = (value[key] as? kotlinx.serialization.json.JsonPrimitive)?.content
+        val value = runCatching {
+            kotlinx.serialization.json.Json.parseToJsonElement(raw) as? kotlinx.serialization.json.JsonObject
+        }.getOrNull() ?: return null
+        fun text(key: String) = (value[key] as? kotlinx.serialization.json.JsonPrimitive)
+            ?.takeUnless { it is kotlinx.serialization.json.JsonNull }
+            ?.content
         val model = models.singleOrNull { it.source.name == text("source") && it.selectionId == text("selection_id") } ?: return null
         if (model.source == com.nola.domain.model.ModelInfo.ModelSource.WebHost &&
             (text("host_id").isNullOrBlank() || text("host_id") != snapshot[KEY_WEB_HOST_ID] ||
@@ -261,14 +265,16 @@ class PreferenceDataStore @Inject constructor(
         if (identity.length !in 16..128 || identity.any { !it.isLetterOrDigit() && it != '-' && it != '_' }) {
             return false
         }
-        var trusted = false
-        context.preferenceDataStore.edit { preferences ->
-            if (preferences[KEY_WEB_HOST_BASE_URL] != normalizedUrl) return@edit
-            val existing = preferences[KEY_WEB_HOST_ID].orEmpty()
-            trusted = existing.isEmpty() || existing == identity
-            if (trusted && existing.isEmpty()) preferences[KEY_WEB_HOST_ID] = identity
+        return hostConfigurationMutex.withLock {
+            var trusted = false
+            context.preferenceDataStore.edit { preferences ->
+                if (preferences[KEY_WEB_HOST_BASE_URL] != normalizedUrl) return@edit
+                val existing = preferences[KEY_WEB_HOST_ID].orEmpty()
+                trusted = existing.isEmpty() || existing == identity
+                if (trusted && existing.isEmpty()) preferences[KEY_WEB_HOST_ID] = identity
+            }
+            trusted
         }
-        return trusted
     }
 
     private fun clearHostGrantsAndDefault(preferences: androidx.datastore.preferences.core.MutablePreferences) {

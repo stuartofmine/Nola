@@ -673,26 +673,43 @@ fn read_json_value(request: &mut Request) -> Result<Value, Response<Box<dyn Read
     })
 }
 
+const MAX_MOBILE_JSON_BODY_BYTES: usize = 12 * 1024 * 1024;
+const MAX_URLENCODED_FORM_BODY_BYTES: usize = 64 * 1024;
+
+#[derive(Debug, PartialEq, Eq)]
+enum BoundedBodyError {
+    TooLarge,
+    Read(String),
+}
+
+fn read_bounded_utf8(reader: &mut dyn Read, limit: usize) -> Result<String, BoundedBodyError> {
+    let mut bytes = Vec::new();
+    reader
+        .take((limit as u64).saturating_add(1))
+        .read_to_end(&mut bytes)
+        .map_err(|error| BoundedBodyError::Read(error.to_string()))?;
+    if bytes.len() > limit {
+        return Err(BoundedBodyError::TooLarge);
+    }
+    String::from_utf8(bytes).map_err(|error| BoundedBodyError::Read(error.to_string()))
+}
+
 fn read_mobile_json_value(
     request: &mut Request,
     token: &str,
 ) -> Result<Value, Response<Box<dyn Read + Send>>> {
-    let mut body = String::new();
-    request
-        .as_reader()
-        .read_to_string(&mut body)
-        .map_err(|error| {
-            json_response(
+    let body = read_bounded_utf8(request.as_reader(), MAX_MOBILE_JSON_BODY_BYTES).map_err(
+        |error| match error {
+            BoundedBodyError::TooLarge => json_response(
+                StatusCode(413),
+                json!({"error": "mobile request is too large"}),
+            ),
+            BoundedBodyError::Read(message) => json_response(
                 StatusCode(400),
-                json!({"error": format!("failed to read mobile request: {error}")}),
-            )
-        })?;
-    if body.len() > 12 * 1024 * 1024 {
-        return Err(json_response(
-            StatusCode(413),
-            json!({"error": "mobile request is too large"}),
-        ));
-    }
+                json!({"error": format!("failed to read mobile request: {message}")}),
+            ),
+        },
+    )?;
     if request_header(request, "X-Nola-Mobile-Auth").is_some() {
         let expected = request_header(request, "X-Nola-Mobile-Body-SHA256").unwrap_or("");
         let actual = nola_core::mobile_crypto::mobile_body_sha256(body.as_bytes());
@@ -817,7 +834,7 @@ fn decode_path_segment(raw: &str) -> Option<String> {
     if raw.is_empty() {
         return None;
     }
-    let decoded = percent_decode(raw);
+    let decoded = percent_decode_path(raw);
     if decoded.trim().is_empty() || decoded.bytes().any(|byte| byte.is_ascii_control()) {
         return None;
     }
@@ -1345,7 +1362,7 @@ fn resolve_local_readable_path(
 ) -> Result<PathBuf, String> {
     let mut text = raw_path.trim().to_string();
     if let Some(value) = text.strip_prefix("file://") {
-        text = percent_decode(value);
+        text = percent_decode_path(value);
     }
     if text.is_empty() {
         return Err("本地数据源缺少路径".to_string());
@@ -2790,18 +2807,26 @@ fn query_param(url: &str, key: &str) -> Option<String> {
     None
 }
 
-fn percent_decode(value: &str) -> String {
-    let mut bytes = Vec::new();
+fn hex_nibble(byte: u8) -> Option<u8> {
+    match byte {
+        b'0'..=b'9' => Some(byte - b'0'),
+        b'a'..=b'f' => Some(byte - b'a' + 10),
+        b'A'..=b'F' => Some(byte - b'A' + 10),
+        _ => None,
+    }
+}
+
+fn percent_decode_inner(value: &str, plus_as_space: bool) -> String {
+    let mut bytes = Vec::with_capacity(value.len());
     let raw = value.as_bytes();
     let mut index = 0;
     while index < raw.len() {
-        if raw[index] == b'+' {
+        if plus_as_space && raw[index] == b'+' {
             bytes.push(b' ');
             index += 1;
         } else if raw[index] == b'%' && index + 2 < raw.len() {
-            let hex = &value[index + 1..index + 3];
-            if let Ok(byte) = u8::from_str_radix(hex, 16) {
-                bytes.push(byte);
+            if let (Some(hi), Some(lo)) = (hex_nibble(raw[index + 1]), hex_nibble(raw[index + 2])) {
+                bytes.push((hi << 4) | lo);
                 index += 3;
             } else {
                 bytes.push(raw[index]);
@@ -2813,6 +2838,18 @@ fn percent_decode(value: &str) -> String {
         }
     }
     String::from_utf8_lossy(&bytes).to_string()
+}
+
+fn percent_decode_path(value: &str) -> String {
+    percent_decode_inner(value, false)
+}
+
+fn percent_decode_form(value: &str) -> String {
+    percent_decode_inner(value, true)
+}
+
+fn percent_decode(value: &str) -> String {
+    percent_decode_form(value)
 }
 
 fn sse_event(value: Value) -> Vec<u8> {
@@ -3241,6 +3278,40 @@ mod tests {
     #[test]
     fn decodes_query_values() {
         assert_eq!(percent_decode("hello+%E4%B8%96%E7%95%8C"), "hello 世界");
+        assert_eq!(percent_decode("%中"), "%中");
+        assert_eq!(percent_decode("token=%中&ok=%2F"), "token=%中&ok=/");
+        assert_eq!(percent_decode("a%😀b"), "a%😀b");
+        assert_eq!(percent_decode("%2G%2%"), "%2G%2%");
+        assert_eq!(super::percent_decode_path("conv+1%2B2%20ok"), "conv+1+2 ok");
+        assert_eq!(
+            chat_conversation_route("/api/chat/conversations/conv+1/messages"),
+            Some(("conv+1".to_string(), "messages"))
+        );
+    }
+
+    #[test]
+    fn read_bounded_utf8_enforces_limit_without_unbounded_reads() {
+        use super::{read_bounded_utf8, BoundedBodyError};
+        use std::io::Cursor;
+
+        let mut exact = Cursor::new(b"abcd".to_vec());
+        assert_eq!(read_bounded_utf8(&mut exact, 4).unwrap(), "abcd");
+
+        // An oversized stream (even if truncation at limit + 1 splits a multi-byte UTF-8 char)
+        // must stop after limit + 1 bytes and return TooLarge.
+        let mut oversized_ascii = Cursor::new(b"abcdef".to_vec());
+        assert_eq!(
+            read_bounded_utf8(&mut oversized_ascii, 4),
+            Err(BoundedBodyError::TooLarge)
+        );
+        assert_eq!(oversized_ascii.position(), 5);
+
+        let mut oversized_utf8 = Cursor::new("ab中".as_bytes().to_vec());
+        assert_eq!(
+            read_bounded_utf8(&mut oversized_utf8, 3),
+            Err(BoundedBodyError::TooLarge)
+        );
+        assert_eq!(oversized_utf8.position(), 4);
     }
 
     #[test]

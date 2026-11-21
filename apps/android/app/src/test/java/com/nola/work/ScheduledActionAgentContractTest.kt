@@ -154,6 +154,50 @@ class ScheduledActionAgentContractTest {
             ZonedDateTime.parse("2026-03-16T09:15:00Z").toInstant().toEpochMilli(),
             nextScheduledAt(weekly, mondayAfter),
         )
+
+        // One-time schedule with offset and no seconds (e.g. DST overlap resolution) must preserve offset.
+        val onceOffsetNoSeconds = onceFuture.copy(
+            id = "once-offset",
+            scheduledTimeIso = "2026-11-01T01:30-04:00",
+            timezone = "America/New_York",
+        )
+        val beforeDstOverlap = ZonedDateTime.parse("2026-11-01T05:00:00Z").toInstant().toEpochMilli()
+        assertEquals(
+            ZonedDateTime.parse("2026-11-01T01:30:00-04:00").toInstant().toEpochMilli(),
+            nextScheduledAt(onceOffsetNoSeconds, beforeDstOverlap),
+        )
+
+        // One-time local timestamp without offset must use action.timezone rather than device default.
+        val onceTokyoLocal = onceFuture.copy(
+            id = "once-tokyo-local",
+            scheduledTimeIso = "2026-06-15T09:00",
+            timezone = "Asia/Tokyo",
+        )
+        val beforeTokyo = ZonedDateTime.parse("2026-06-15T08:00:00+09:00[Asia/Tokyo]").toInstant().toEpochMilli()
+        assertEquals(
+            ZonedDateTime.parse("2026-06-15T09:00:00+09:00[Asia/Tokyo]").toInstant().toEpochMilli(),
+            nextScheduledAt(onceTokyoLocal, beforeTokyo),
+        )
+    }
+
+    @Test
+    fun permanentErrorsAndMaxRetriesStopInfiniteWorkManagerRetries() {
+        assertTrue(isPermanentScheduledError(IllegalArgumentException("bad url")))
+        assertTrue(isPermanentScheduledError(IllegalStateException("missing definition")))
+        assertFalse(isPermanentScheduledError(java.io.IOException("network timeout")))
+
+        assertEquals(
+            ListenableWorker.Result.failure(),
+            workResultForScheduledOutcomes(listOf(ScheduledActionOutcome.Failed), runAttemptCount = 0),
+        )
+        assertEquals(
+            ListenableWorker.Result.retry(),
+            workResultForScheduledOutcomes(listOf(ScheduledActionOutcome.Deferred), runAttemptCount = MAX_RETRY_ATTEMPTS - 1),
+        )
+        assertEquals(
+            ListenableWorker.Result.failure(),
+            workResultForScheduledOutcomes(listOf(ScheduledActionOutcome.Deferred), runAttemptCount = MAX_RETRY_ATTEMPTS),
+        )
     }
 
     @Test

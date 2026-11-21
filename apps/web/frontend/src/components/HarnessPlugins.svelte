@@ -19,6 +19,7 @@
     let adding = $state(false);
     let busy = $state(false);
     let error = $state('');
+    let disposed = false;
     let gate: ConfirmationHandle;
     let field = $state<HTMLInputElement>();
     let addButton = $state<HTMLButtonElement>();
@@ -45,59 +46,66 @@
         const response = await api<{profiles:Profile[]}>('/api/harness-plugins', {
             method:'POST', body:JSON.stringify({action:'library'}),
         });
+        if (disposed) return;
         if (!Array.isArray(response.profiles)) throw Error(t($locale,'plugin.readError'));
         profiles = response.profiles;
     }
     async function refresh() {
-        if (busy) return;
+        if (disposed || busy) return;
         busy = true;
         error = '';
         try { await read(); }
-        catch (cause) { profiles = undefined; error = errorMessage(cause); }
-        finally { busy = false; }
+        catch (cause) { if (!disposed) { profiles = undefined; error = errorMessage(cause); } }
+        finally { if (!disposed) busy = false; }
     }
     async function begin() {
-        if (busy || !usable) return;
+        if (disposed || busy || !usable) return;
         chosen = profiles?.find(p => p.available)?.profile ?? '';
         draft = ''; error = ''; adding = true;
-        await tick(); field?.focus();
+        await tick(); if (!disposed) field?.focus();
     }
     async function end() {
         adding = false; draft = '';
-        await tick(); addButton?.focus();
+        await tick(); if (!disposed) addButton?.focus();
     }
     async function change(action:'install'|'remove', profile:Profile, source:string) {
-        if (busy || !profile.available || !source) return;
+        if (disposed || busy || !profile.available || !source) return;
         const verb = t($locale,action === 'install' ? 'plugin.install' : 'plugin.remove');
         const accepted = await gate.ask({
             title: verb + ' · ' + source,
             description: [label(profile), host, action === 'install' ? t($locale,'plugin.trust') : undefined].filter(Boolean).join(' · '),
             confirmLabel:verb, destructive:action === 'remove',
         });
-        if (!accepted) return;
+        if (!accepted || disposed) return;
         const previous = new Set(profile.packages.map(plugin => plugin.source));
         busy = true; error = '';
         try {
             await api('/api/harness-plugins',{method:'POST', body:JSON.stringify({runtime:profile.runtime, profile:profile.profile, action, source})});
+            if (disposed) return;
             if (action === 'install') adding = false;
-        } catch (cause) { error = errorMessage(cause); }
+        } catch (cause) { if (!disposed) error = errorMessage(cause); }
+        if (disposed) return;
         try { await read(); }
-        catch (cause) { profiles = undefined; error = [error,errorMessage(cause)].filter(Boolean).join(' '); }
+        catch (cause) { if (!disposed) { profiles = undefined; error = [error,errorMessage(cause)].filter(Boolean).join(' '); } }
         finally {
-            busy = false;
-            window.dispatchEvent(new Event(desktopPluginsChanged));
-            if (action === 'remove' && !error) { await tick(); addButton?.focus(); }
-            if (action === 'install' && !adding) {
-                draft = '';
-                await tick();
-                const added = Array.from(list?.children ?? []).find(row => row instanceof HTMLElement &&
-                    row.dataset.profile === profile.profile && !previous.has(row.dataset.source ?? ''));
-                if (added instanceof HTMLElement) (added.querySelector('a') ?? added).focus();
-                else addButton?.focus();
+            if (!disposed) {
+                busy = false;
+                window.dispatchEvent(new Event(desktopPluginsChanged));
+                if (action === 'remove' && !error) { await tick(); if (!disposed) addButton?.focus(); }
+                if (action === 'install' && !adding) {
+                    draft = '';
+                    await tick();
+                    if (!disposed) {
+                        const added = Array.from(list?.children ?? []).find(row => row instanceof HTMLElement &&
+                            row.dataset.profile === profile.profile && !previous.has(row.dataset.source ?? ''));
+                        if (added instanceof HTMLElement) (added.querySelector('a') ?? added).focus();
+                        else addButton?.focus();
+                    }
+                }
             }
         }
     }
-    onMount(() => { void refresh(); });
+    onMount(() => { void refresh(); return () => { disposed = true; }; });
 </script>
 <ConfirmationDialog bind:this={gate}/>
 <section class="library" aria-label={t($locale,'plugin.title')}>

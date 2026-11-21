@@ -103,7 +103,13 @@ fun NotificationCenterScreen(
     }
     val selectedNotification = selectedNotificationId?.let { id -> state.notifications.firstOrNull { it.id == id } }
 
-    BackHandler(enabled = selectedNotificationId != null) {
+    androidx.compose.runtime.LaunchedEffect(selectedNotificationId, state.notifications, state.isLoading) {
+        if (!state.isLoading && selectedNotificationId != null && selectedNotification == null) {
+            selectedNotificationId = null
+        }
+    }
+
+    BackHandler(enabled = selectedNotification != null) {
         selectedNotificationId = null
     }
 

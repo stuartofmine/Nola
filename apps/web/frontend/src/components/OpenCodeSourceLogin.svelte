@@ -3,6 +3,7 @@
     import { sourceAccountStateKey } from '../lib/locales/sourceAccounts';
     import { onDestroy, onMount } from 'svelte';
     import { api } from '../lib/api';
+    import { randomId } from '../lib/randomId';
     type Prompt = {type: 'text' | 'select'; key: string; message: string; placeholder?: string; options?: {label: string; value: string}[]; when?: {key: string; op: string; value: string}};
     type Method = {provider: string; method: number; binding: string; declaration: {type: string; label: string; prompts: Prompt[]}};
     type Owner = {account_id: string; revision: number; display_name: string; origin: string; directory: string};
@@ -13,9 +14,20 @@
     let consent = $state(false), loginConsent = $state(false), callbackConsent = $state(false);
     let selected = $state(''), inputs = $state<Record<string, string>>({}), code = $state('');
     let login = $state<Login | null>(null), busy = $state(false), failed = $state(false);
-    let accountID = crypto.randomUUID();
+    let accountID = randomId();
     let alive = true;
     const method = $derived(connected?.methods.find(value => value.binding + ':' + value.provider + ':' + value.method === selected));
+    function safeAuthorizationUrl(raw: string | null): { href: string; host: string } | null {
+        if (!raw) return null;
+        try {
+            const parsed = new URL(raw);
+            if (!['http:', 'https:'].includes(parsed.protocol)) return null;
+            return { href: parsed.href, host: parsed.host };
+        } catch {
+            return null;
+        }
+    }
+    const authorizationLink = $derived(safeAuthorizationUrl(login?.authorization_url ?? null));
     function visible(prompt: Prompt) {return !prompt.when || (prompt.when.op === 'eq' ? inputs[prompt.when.key] === prompt.when.value : inputs[prompt.when.key] !== prompt.when.value);}
     function reference() {if (!connected) throw new Error('owner missing'); return {account_id: connected.account.account.id, expected_revision: connected.account.revision};}
     function selectOwner() {
@@ -34,7 +46,7 @@
                 account_id: ownerID, revision: result.account.revision,
                 display_name: 'OpenCode', origin: result.origin, directory: result.directory,
             }];
-            accountID = crypto.randomUUID();
+            accountID = randomId();
             consent = false; loginConsent = false; callbackConsent = false;
         }
     });}
@@ -45,7 +57,7 @@
     });}
     async function authorize() {if (!method || !loginConsent || login) return; const chosen = method;
         await run(async () => {
-            const request_id = crypto.randomUUID();
+            const request_id = randomId();
             // Keep an uncertain handle even when the HTTP receipt is lost; never auto-repeat POST.
             login = {request_id, provider: chosen.provider, method: chosen.method, state: 'unknown', authorization_url: null, callback_mode: null, instructions: null};
             const values = Object.fromEntries(chosen.declaration.prompts.filter(visible).map(prompt => [prompt.key, inputs[prompt.key] ?? '']));
@@ -93,7 +105,7 @@
     {/if}
     {#if login}
         <p>{t($locale, 'sourceAccounts.providerStatus', {provider: login.provider, state: t($locale, sourceAccountStateKey(login.state))})}</p>
-        {#if login.authorization_url}<a href={login.authorization_url} target="_blank" rel="noopener noreferrer">{t($locale, 'sourceAccounts.openAuthorization', {host: new URL(login.authorization_url).host})}</a>{/if}
+        {#if authorizationLink}<a href={authorizationLink.href} target="_blank" rel="noopener noreferrer">{t($locale, 'sourceAccounts.openAuthorization', {host: authorizationLink.host})}</a>{/if}
         {#if login.instructions}<p class="instructions">{login.instructions}</p>{/if}
         {#if login.state === 'pending'}
             {#if login.callback_mode === 'code'}<label>{t($locale, 'sourceAccounts.code')} <input type="password" bind:value={code} autocomplete="off" disabled={busy} /></label>{/if}

@@ -5,6 +5,7 @@
     const api = workspacePageApi(unscopedApi);
     import { api as unscopedApi } from '../lib/api';
     import { locale, t } from '../lib/i18n';
+    import { randomId } from '../lib/randomId';
     import { sourceAccountActionKey, sourceAccountStateKey } from '../lib/locales/sourceAccounts';
     import CodexSourceLogin from './CodexSourceLogin.svelte';
     import KimiSourceLogin from './KimiSourceLogin.svelte';
@@ -34,7 +35,7 @@
         busy = true; failed = false;
         try {
             const body = refresh && status ? {account_id: status.account.account.id, expected_revision: status.account.revision}
-                : {account_id: crypto.randomUUID(), display_name: name.trim(), source, path: path.trim(), expected_revision: null};
+                : {account_id: randomId(), display_name: name.trim(), source, path: path.trim(), expected_revision: null};
             status = await api<Status>(`/api/model-connections/source-accounts/${refresh ? 'refresh' : 'bind'}`, {method: 'POST', body: JSON.stringify(body)});
         } catch { failed = true; } finally { busy = false; }
     }

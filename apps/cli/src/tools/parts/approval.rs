@@ -185,7 +185,7 @@ fn execute_tool_inner(request: &ToolRequest, ctx: &ToolContext, enforce_availabi
     if let Some(outcome) = validate_tool_request_with_skills(request, &ctx.skills) {
         return outcome;
     }
-    if !authority.is_core_approved() && is_network_sensitive_tool(request) && ctx.policy.network_policy() == "deny" {
+    if is_network_sensitive_tool(request) && ctx.policy.network_policy() == "deny" {
         return error_data(json!({"error":"Network access is disabled by configured policy",
             "code":"permission_denied","tool_execution_skipped":true}));
     }

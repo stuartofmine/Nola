@@ -248,8 +248,8 @@ Example of valid output:
       "priority": "medium",
       "dedupeKey": "url:example.com:post-123:2025-11-16",
       "scheduledAt": "2025-11-16T12:00:00Z",
-      "contentSummary": NSLocalizedString("autogen.PromptTemplates.cb75bb1c", comment: "AUTOGEN"),
-      "reason": NSLocalizedString("autogen.PromptTemplates.0e286f95", comment: "AUTOGEN"),
+      "contentSummary": "New article published on Example Blog about Swift concurrency.",
+      "reason": "Relevant to your saved reading topics; scheduled for noon.",
       "confidence": 0.85
     }
   ],
