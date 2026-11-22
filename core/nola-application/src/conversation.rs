@@ -438,7 +438,7 @@ fn validate_settings_object(settings: &str) -> Result<(), String> {
         Ok(Value::Object(settings)) => {
             let mut configuration = serde_json::Map::new();
             for key in ["modelSelectionID", "executionHostRawValue", "executionHostBinding", "clientHostParameters", "clientModelPresentation",
-                "memoryEnabledOverride", "retrievalEnabledOverride", "isPinned", "language", "selectedPromptTemplateID", "expertReasoningEffort", "promptResponseStyle",
+                "memoryEnabledOverride", "retrievalEnabledOverride", "isPinned", "language", "selectedPromptTemplateID", "expertReasoningEffort", "expertExecutor", "promptResponseStyle",
                 "executionBackend", "externalExecutionSessions", "persistenceEnabled", "dataSourceOverrides", "dataSourceIds", "executionPolicy",
                 "promptTemplateSelectionIsExplicit", "contextLimitOverride", "externalExecutionModelIDs", "externalExecutionModelProviderIDs"] {
                 if let Some(value) = settings.get(key).filter(|value| !value.is_null()) {

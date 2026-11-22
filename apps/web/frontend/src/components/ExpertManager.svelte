@@ -1,6 +1,6 @@
 <script lang="ts">
     import {randomId} from '../lib/randomId';
-    import {parseExpertRoles, ExpertRoleCatalogUnavailable, expertLocalized, expertEfforts, expertDefaultProfileId, type ExpertRoleTemplate} from '../lib/expertRoles';
+    import {supportsExpertExecutors, parseExpertRoles, ExpertRoleCatalogUnavailable, expertLocalized, expertEfforts, expertDefaultProfileId, type ExpertRoleTemplate} from '../lib/expertRoles';
     import {onMount} from 'svelte';
     import {api, ApiError} from '../lib/api';
     import {locale, t} from '../lib/i18n';
@@ -8,14 +8,21 @@
     import type {RemoteProfile} from '../lib/modelProfiles';
     import {roomCommandAtSource} from '../lib/agentRooms';
     import type {AgentDirectory, PersistentAgent} from '../lib/agentRooms';
-    import {editedExpertDefaults, confirmsExpertWrite, expertEditorValues, rebaseExpertEditorValues, type ExpertEditorValues} from '../lib/expertDefinition';
+    import {expertExecutorKey, expertExecutorSelection, type ExpertExecutorOption, editedExpertDefaults, confirmsExpertWrite, expertEditorValues, rebaseExpertEditorValues, type ExpertEditorValues} from '../lib/expertDefinition';
     import ConfirmationDialog from './ConfirmationDialog.svelte';
+    import ExpertBubbleColorPicker from './ExpertBubbleColorPicker.svelte';
     let {hostId, onclose}: {hostId: string; onclose: () => void} = $props();
     let dialog: HTMLDialogElement, confirmation: ConfirmationDialog;
     let directory = $state<AgentDirectory>({revision: null, agents: []});
     let profiles = $state<RemoteProfile[]>([]);
     let templates = $state<{id: string; name: string}[]>([]);
     let roles = $state<ExpertRoleTemplate[]>([]);
+    let executors = $state<ExpertExecutorOption[]>([]);
+    let executor = $state('');
+    let executorCatalogLoading = $state(false);
+    let executorCatalogRequest = 0;
+    const selectedBackend = $derived(executor ? (JSON.parse(executor) as string[])[0] : '');
+    const backend = $derived(executors.find(option => option.kind === selectedBackend));
     let effort = $state('automatic');
     let defaultProfileId = $state<string | null>(null);
     let editing = $state<PersistentAgent | null>(null);
@@ -28,7 +35,7 @@
     let loaded = $state(false), catalogUnavailable = $state(false);
     let alive = true;
     const lifetime = new AbortController();
-    const draft = $derived(JSON.stringify([name, description, model, template, effort, enabled]));
+    const draft = $derived(JSON.stringify([name, description, model, template, effort, enabled, executor]));
     const dirty = $derived(baseline !== '' && draft !== baseline);
     let sourceEpoch:string|null=null;
     const command = async <T,>(value: unknown):Promise<T> => {
@@ -46,8 +53,9 @@
         model = typeof agent?.defaults.modelSelectionID === 'string' ? agent.defaults.modelSelectionID : '';
         template = typeof agent?.defaults.selectedPromptTemplateID === 'string' ? agent.defaults.selectedPromptTemplateID : '';
         effort = typeof agent?.defaults.expertReasoningEffort === 'string' ? agent.defaults.expertReasoningEffort : 'automatic';
+        executor = expertExecutorSelection(agent);
         enabled = !agent || agent.availability === 'active';
-        baseline = JSON.stringify([name, description, model, template, effort, enabled]);
+        baseline = JSON.stringify([name, description, model, template, effort, enabled, executor]);
     }
     async function discard() {
         return !dirty || await confirmation.ask({title: t($locale, 'rooms.manageExperts'), description: t($locale, 'shell.navigationDiscard'),
@@ -58,6 +66,21 @@
         dialog.close(); onclose();
     }
     async function select(agent: PersistentAgent | null) {if (!saving && !uncertain && await discard() && alive) reset(agent);}
+    async function loadExecutors() {
+        const request = ++executorCatalogRequest;
+        executorCatalogLoading = true;
+        try {
+            const settings = await api<{execution_backends: ExpertExecutorOption[]}>('/api/agent/settings', {signal: lifetime.signal});
+            await command<AgentDirectory>({type: 'directory'});
+            if (alive && request === executorCatalogRequest) {
+                executors = settings.execution_backends.filter(option => option.kind && option.kind !== 'nola');
+            }
+        } catch {
+            if (alive && request === executorCatalogRequest) { executors = []; error = true; }
+        } finally {
+            if (alive && request === executorCatalogRequest) executorCatalogLoading = false;
+        }
+    }
     async function refresh() {
         if (saving || loading) return;
         loading = true; loaded = false; catalogUnavailable = false;
@@ -75,6 +98,8 @@
             directory = next; error = false;
             profiles = catalog.profiles.filter(p => p.enabled && p.endpoint.enabled && p.capabilities.includes('chat'));
             defaultProfileId = expertDefaultProfileId(catalog.default_chat_model_resolution);
+            if (supportsExpertExecutors(roleCatalog)) void loadExecutors();
+            else { executorCatalogRequest++; executors = []; executorCatalogLoading = false; }
             roles = parseExpertRoles(roleCatalog);
             templates = Array.isArray(promptCatalog.templates) ? promptCatalog.templates.filter(item => typeof item.id === 'string' && typeof item.name === 'string') : [];
             loaded = true;
@@ -82,8 +107,8 @@
                 const latest = editing && next.agents.find(agent => agent.id === editing!.id);
                 if (latest) {
                     const fresh = expertEditorValues(latest);
-                    [name,description,model,template,effort,enabled] = rebaseExpertEditorValues(
-                        [name,description,model,template,effort,enabled],JSON.parse(baseline) as ExpertEditorValues,fresh);
+                    [name,description,model,template,effort,enabled,executor] = rebaseExpertEditorValues(
+                        [name,description,model,template,effort,enabled,executor],JSON.parse(baseline) as ExpertEditorValues,fresh);
                     editing = latest; baseline = JSON.stringify(fresh);
                 }
                 conflicted = false;
@@ -100,11 +125,11 @@
         finally {if (alive) loading = false;}
     }
     async function save() {
-        if (saving || loading || !loaded || uncertain || conflicted || !name.trim() || !editing && model !== '' && !profiles.some(p => `configured:${p.id}` === model) || (effort !== 'automatic' && !allowedEfforts.includes(effort))) return;
+        if (saving || loading || !loaded || uncertain || conflicted || !name.trim() || !executor && !editing && model !== '' && !profiles.some(p => `configured:${p.id}` === model) || (!executor && effort !== 'automatic' && !allowedEfforts.includes(effort))) return;
         const current = editing;
         let id: string;
         try { id = current?.id ?? randomId(); } catch { error = true; return; }
-        const defaults = editedExpertDefaults(current, model, template, effort);
+        const defaults = editedExpertDefaults(current, model, template, executor ? undefined : effort, executor);
         const input = {id, expected_directory_revision: directory.revision, expected_agent_revision: current?.revision ?? null,
             name: name.trim(), description, defaults, availability: enabled ? 'active' : 'archived', updated_at_ms: Date.now()};
         saving = true; error = false;
@@ -136,35 +161,62 @@
 </script>
 <svelte:window onbeforeunload={event => {if (dirty || saving || uncertain) {event.preventDefault(); event.returnValue = '';}}} />
 <ConfirmationDialog bind:this={confirmation} />
-<dialog use:portal bind:this={dialog} aria-label={t($locale, 'rooms.manageExperts')} oncancel={close}>
+<dialog use:portal bind:this={dialog} aria-label={t($locale, 'rooms.manageExperts')} oncancel={close} onclick={event => { if (event.target === dialog && !saving) void close(); }}>
     <header><h2>{t($locale, 'rooms.manageExperts')}</h2><button disabled={saving} onclick={() => close()}>{t($locale, 'rooms.close')}</button></header>
     {#if loading}<p role="status">{t($locale, 'rooms.loading')}</p>{/if}
-    {#if error}<p role="alert">{t($locale, catalogUnavailable ? 'rooms.expertCatalogUnavailable' : 'rooms.failed')}</p><button disabled={saving} onclick={refresh}>{t($locale, 'rooms.refresh')}</button>{/if}
-    <nav aria-label={t($locale, 'rooms.experts')}>
-        <button disabled={saving || uncertain} aria-pressed={!editing} onclick={() => select(null)}>{t($locale, 'rooms.createAgent')}</button>
-        {#each directory.agents as agent (agent.id)}<button disabled={saving || uncertain} aria-pressed={editing?.id === agent.id} onclick={() => select(agent)}>{agent.name}{agent.availability === 'active' ? '' : ` · ${t($locale, 'rooms.inactive')}`}</button>{/each}
+    {#if error}<p role="alert" class="error">{t($locale, catalogUnavailable ? 'rooms.expertCatalogUnavailable' : 'rooms.failed')}</p><button disabled={saving} onclick={refresh}>{t($locale, 'rooms.refresh')}</button>{/if}
+    <div class="expert-panes">
+    <nav class="expert-sidebar" aria-label={t($locale, 'rooms.experts')}>
+        <button class="create-btn" disabled={saving || uncertain} aria-pressed={!editing} onclick={() => select(null)}>+ {t($locale, 'rooms.createAgent')}</button>
+        {#each directory.agents as agent (agent.id)}<button class="expert-item" disabled={saving || uncertain} aria-pressed={editing?.id === agent.id} onclick={() => select(agent)}><span class="expert-initial" aria-hidden="true">{Array.from(agent.name.trim())[0] ?? '?'}</span><span class="expert-item-label">{agent.name}{#if agent.availability !== 'active'}<small class="muted"> · {t($locale, 'rooms.inactive')}</small>{/if}</span></button>{/each}
     </nav>
-    <form onsubmit={event => {event.preventDefault(); void save();}} aria-busy={saving}>
+    <form class="expert-form" onsubmit={event => {event.preventDefault(); void save();}} aria-busy={saving}>
+        {#if editing}
+            <div class="expert-identity-bar">
+                <ExpertBubbleColorPicker {hostId} agentId={editing.id} name={editing.name} avatar />
+                <div class="expert-identity-copy"><strong>{editing.name}</strong><small class="muted">{t($locale, editing.availability === 'active' ? 'rooms.enabled' : 'rooms.inactive')}</small></div>
+            </div>
+        {/if}
         <fieldset disabled={loading || !loaded || saving || uncertain || conflicted}>
             <label>{t($locale, 'rooms.agentName')}<input bind:value={name} maxlength="200" required /></label>
             <label>{t($locale, 'rooms.agentDescription')}<textarea bind:value={description} rows="3"></textarea></label>
-            <label>{t($locale, 'rooms.model')}<select bind:value={model}>
-                <option value="">{t($locale, 'rooms.useAppDefaultModel')}</option>
-                {#if model && !profiles.some(p => `configured:${p.id}` === model)}<option value={model}>{t($locale, 'rooms.inactive')} ({model.replace(/^configured:/, '').slice(0, 8)})</option>{/if}
-                {#each profiles as profile (profile.id)}<option value={`configured:${profile.id}`}>{profile.displayName}</option>{/each}
-            </select></label>
+            {#if executorCatalogLoading || executors.length || executor}
+                <label>{t($locale, 'messaging.execution_backend')}<select value={selectedBackend} aria-busy={executorCatalogLoading} disabled={executorCatalogLoading}
+                    onchange={event => { executor = event.currentTarget.value ? expertExecutorKey(event.currentTarget.value) : ''; }}>
+                    <option value="">{executorCatalogLoading && !selectedBackend ? t($locale, 'rooms.loading') : 'Nola'}</option>
+                    {#if selectedBackend && !backend}<option value={selectedBackend} disabled>{selectedBackend} · {t($locale, 'rooms.inactive')}</option>{/if}
+                    {#each executors as option (option.id)}<option value={option.kind} disabled={option.availability !== 'available'}>{option.display_name}{option.availability !== 'available' ? ' · ' + t($locale, 'rooms.inactive') : ''}</option>{/each}
+                </select></label>
+            {/if}
+            {#if selectedBackend}
+                <label>{t($locale, 'rooms.model')}<select bind:value={executor}>
+                    <option value={expertExecutorKey(selectedBackend)}>{t($locale, 'chatSession.automatic')}</option>
+                    {#if executor !== expertExecutorKey(selectedBackend) && !backend?.models?.some(m => expertExecutorKey(selectedBackend, m) === executor)}
+                        <option value={executor} disabled>{JSON.parse(executor).slice(1).filter(Boolean).join(' · ')} · {t($locale, 'rooms.inactive')}</option>
+                    {/if}
+                    {#each backend?.models ?? [] as item (expertExecutorKey(selectedBackend, item))}<option value={expertExecutorKey(selectedBackend, item)}>{selectedBackend === 'codex' && item.provider_id ? item.display_name + ' · ' + item.provider_id : item.display_name}</option>{/each}
+                </select></label>
+            {:else}
+                <label>{t($locale, 'rooms.model')}<select bind:value={model}>
+                    <option value="">{t($locale, 'rooms.useAppDefaultModel')}</option>
+                    {#if model && !profiles.some(p => `configured:${p.id}` === model)}<option value={model}>{t($locale, 'rooms.inactive')} ({model.replace(/^configured:/, '').slice(0, 8)})</option>{/if}
+                    {#each profiles as profile (profile.id)}<option value={`configured:${profile.id}`}>{profile.displayName}</option>{/each}
+                </select></label>
+            {/if}
             <label>{t($locale, 'rooms.promptTemplate')}<select bind:value={template}>
                 <option value="">{t($locale, 'rooms.defaultPromptTemplate')}</option>
                 {#if template && !templates.some(p => p.id === template) && !roles.some(p => p.id === template)}<option value={template}>{t($locale, 'rooms.inactive')} ({template.slice(0, 8)})</option>{/if}
                 {#each roles as role (role.id)}<option value={role.id}>{expertLocalized(role.name, $locale)}</option>{/each}
                 {#each templates.filter(item => !roles.some(role => role.id === item.id)) as item (item.id)}<option value={item.id}>{item.name}</option>{/each}
             </select></label>
-            <label>{t($locale, 'chatSession.reasoning')}<select bind:value={effort}>
-                <option value="automatic">{t($locale, 'chatSession.automatic')}</option>
-                {#if effort !== 'automatic' && !allowedEfforts.includes(effort)}<option value={effort} disabled>{effort} · {t($locale, 'rooms.inactive')}</option>{/if}
-                {#each allowedEfforts as value}<option value={value}>{t($locale, `chatSession.${value}`)}</option>{/each}
-            </select></label>
-            {#if effort !== 'automatic' && !allowedEfforts.includes(effort)}<p role="status">{t($locale,'chatSession.invalidReasoning')}</p>{/if}
+            {#if !selectedBackend}
+                <label>{t($locale, 'chatSession.reasoning')}<select bind:value={effort}>
+                    <option value="automatic">{t($locale, 'chatSession.automatic')}</option>
+                        {#if effort !== 'automatic' && !allowedEfforts.includes(effort)}<option value={effort} disabled>{effort} · {t($locale, 'rooms.inactive')}</option>{/if}
+                    {#each allowedEfforts as value}<option value={value}>{t($locale, `chatSession.${value}`)}</option>{/each}
+                </select></label>
+                {#if effort !== 'automatic' && !allowedEfforts.includes(effort)}<p role="status">{t($locale,'chatSession.invalidReasoning')}</p>{/if}
+            {/if}
             {#if selectedRole}<section class="role-preview" aria-label={expertLocalized(selectedRole.name, $locale)}>
                 <p>{expertLocalized(selectedRole.description, $locale)}</p>
                 <details><summary>{t($locale, 'rooms.rolePrompt')}</summary><pre>{selectedRole.prompt}</pre></details>
@@ -172,16 +224,33 @@
                 <details><summary>{t($locale, 'rooms.roleSkills')} · {selectedRole.skills.length}</summary>{#each selectedRole.skills as skill}<h3>{expertLocalized(skill.name, $locale)}</h3><pre>{skill.instructions}</pre>{/each}</details>
             </section>{/if}
             <p class="muted">{t($locale,'rooms.roleNextIntroduction')}</p>
-            <label class="enabled"><input type="checkbox" bind:checked={enabled} />{t($locale, 'rooms.enabled')}</label>
-            <button type="submit" disabled={!name.trim() || !dirty || (effort !== 'automatic' && !allowedEfforts.includes(effort))}>{t($locale, 'rooms.saveAgent')}</button>
+            <label class="enabled"><input type="checkbox" role="switch" bind:checked={enabled} />{t($locale, 'rooms.enabled')}</label>
+            <button type="submit" class="primary" disabled={!name.trim() || !dirty || (!executor && effort !== 'automatic' && !allowedEfforts.includes(effort))}>{t($locale, saving ? 'rooms.saving' : 'rooms.saveAgent')}</button>
         </fieldset>
     </form>
+    </div>
 </dialog>
 <style>
-    dialog {width: min(560px, calc(100vw - 24px)); max-height: calc(100dvh - 24px); overflow: auto;}
-    header {display: flex; justify-content: space-between; align-items: center; gap: 16px;} h2 {margin: 0;}
-    nav {display: flex; flex-wrap: wrap; gap: 6px; margin: 16px 0;} nav button[aria-pressed="true"] {border-color: transparent; background: var(--accent-subtle);}
+    dialog {width: min(860px, calc(100vw - 24px)); max-height: calc(100dvh - 24px); overflow: auto;}
+    header {display: flex; justify-content: space-between; align-items: center; gap: 16px; padding-bottom: 12px; border-bottom: 1px solid var(--border);} h2 {margin: 0;}
+    .expert-panes {display: grid; grid-template-columns: 230px minmax(0, 1fr); gap: 20px; margin-top: 16px; align-items: start;}
+    .expert-sidebar {display: grid; gap: 4px; margin: 0; padding-inline-end: 16px; border-inline-end: 1px solid var(--border); max-height: min(65dvh, 560px); overflow: auto;}
+    .expert-sidebar button {display: flex; align-items: center; gap: 8px; width: 100%; text-align: start; border-color: transparent; background: transparent; box-shadow: none; padding: 8px 10px; min-height: 40px;}
+    .expert-sidebar button:hover:not(:disabled) {background: var(--panel);}
+    .expert-sidebar button[aria-pressed="true"] {border-color: transparent; background: var(--accent-subtle); color: var(--accent); font-weight: 600;}
+    .create-btn {font-weight: 500; border-bottom: 1px solid var(--border); border-radius: 6px; margin-bottom: 4px;}
+    .expert-initial {width: 24px; height: 24px; flex: none; display: grid; place-items: center; border-radius: 7px; background: var(--panel); font-size: 12px; font-weight: 600;}
+    .expert-item-label {min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;}
+    .expert-form {min-width: 0; display: grid; gap: 16px;}
+    .expert-identity-bar {display: flex; align-items: center; gap: 10px; padding-bottom: 12px; border-bottom: 1px solid var(--border);}
+    .expert-identity-copy {display: grid; gap: 2px; min-width: 0;}
+    .expert-identity-copy strong {overflow-wrap: anywhere;}
     .role-preview { display: grid; gap: 10px; min-width: 0; } .role-preview pre { white-space: pre-wrap; overflow-wrap: anywhere; max-height: 240px; overflow: auto; } .role-preview summary { min-height: 44px; display: flex; align-items: center; cursor: pointer; }
     fieldset, label {display: grid; gap: 8px;} fieldset {padding: 0; border: 0; gap: 16px;} .enabled {display: flex; align-items: center;}
     input:not([type="checkbox"]), select, textarea {width: 100%; min-width: 0; box-sizing: border-box;} button {min-height: 44px;} [role="alert"] {color: var(--danger);}
+    @media (max-width: 720px) {
+        .expert-panes {grid-template-columns: minmax(0, 1fr); gap: 14px;}
+        .expert-sidebar {display: flex; flex-wrap: wrap; gap: 6px; padding-inline-end: 0; padding-bottom: 12px; border-inline-end: 0; border-bottom: 1px solid var(--border); max-height: none;}
+        .expert-sidebar button {width: auto;}
+    }
 </style>

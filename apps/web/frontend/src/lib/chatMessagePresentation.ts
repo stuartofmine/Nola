@@ -7,6 +7,20 @@ export type MessagePresentation = {id: string; kind: 'text'; text: string}
 
 export type MessageFlowPresentation = MessagePresentation | {id: string; kind: 'process'; parts: TimelinePart[]};
 
+/** Only the final model attempt can explain a terminal reply failure. */
+export function modelFailureHelpKey(parts: TimelinePart[]): string | null {
+    const attempt = [...parts].reverse().find(part => part.value.kind === 'model_attempt')?.value;
+    if (!attempt || attempt.state !== 'failed' || attempt.fallback_attempt_id) return null;
+    const failure = attempt.failure;
+    const code = attempt.failure_code || (failure && typeof failure === 'object' && 'code' in failure ? failure.code : null);
+    switch (code) {
+        case 'provider_unavailable': return 'chatPage.modelUnavailableHelp';
+        case 'rate_limited': return 'chatPage.modelRateLimitHelp';
+        case 'quota_exhausted': return 'chatPage.modelQuotaHelp';
+        default: return null;
+    }
+}
+
 /** Partition by typed provenance, never by generated prose or localized titles. */
 export function isExecutionPart(part: TimelinePart): boolean {
     return part.value.kind === 'tool' || part.value.kind === 'reasoning'

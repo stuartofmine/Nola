@@ -66,7 +66,19 @@ data class IntelligenceRecallRequest(
     val minimum_score: Double = 0.18
 )
 
-object PersonalIntelligenceCore {
+@dagger.hilt.EntryPoint
+@dagger.hilt.InstallIn(dagger.hilt.components.SingletonComponent::class)
+internal interface IntelligenceEntryPoint {
+    fun intelligence(): PersonalIntelligenceCore
+}
+
+class PersonalIntelligenceCore @javax.inject.Inject constructor(
+    private val runtime: com.nola.data.local.AndroidApplicationRuntime,
+) {
+    companion object {
+        internal fun from(context: android.content.Context): PersonalIntelligenceCore =
+            dagger.hilt.android.EntryPointAccessors.fromApplication(context.applicationContext, IntelligenceEntryPoint::class.java).intelligence()
+    }
     private val json = Json {
         ignoreUnknownKeys = true
         explicitNulls = false
@@ -78,12 +90,12 @@ object PersonalIntelligenceCore {
 
     fun ingest(request: IntelligenceIngestRequest): JsonObject? = call(
         json.encodeToString(request),
-        AgentCoreNative::nativeIntelligenceIngest
+        runtime::intelligenceIngest
     )
 
     fun recall(request: IntelligenceRecallRequest): JsonObject? = call(
         json.encodeToString(request),
-        AgentCoreNative::nativeIntelligenceRecall
+        runtime::intelligenceRecall
     )
 
     fun recallContext(query: String, limit: Int = 6): String =
@@ -95,11 +107,11 @@ object PersonalIntelligenceCore {
 
     fun snapshot(): JsonObject? {
         if (!isAvailable) return null
-        val bytes = AgentCoreNative.nativeIntelligenceSnapshot() ?: return null
+        val bytes = runtime.intelligenceSnapshot() ?: return null
         return runCatching { json.parseToJsonElement(bytes.decodeToString()) as? JsonObject }.getOrNull()
     }
 
-    fun clear(): Boolean = isAvailable && AgentCoreNative.nativeIntelligenceClear()
+    fun clear(): Boolean = isAvailable && runtime.intelligenceClear()
 
     private fun call(payload: String, function: (ByteArray) -> ByteArray?): JsonObject? {
         if (!isAvailable) return null

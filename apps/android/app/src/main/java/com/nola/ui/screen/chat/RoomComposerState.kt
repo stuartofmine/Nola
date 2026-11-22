@@ -11,10 +11,6 @@ internal data class RoomComposerState(
     val failed: Boolean = false,
 )
 
-/** Only explicit @ completion opens candidates; ordinary words never select an agent. */
-internal fun roomMentionQuery(text: String): String? = Regex("(?:^|\\s)@([^\\s@]*)$").find(text)?.groupValues?.get(1)
-internal fun removeRoomMentionQuery(text: String): String = text.replace(Regex("(^|\\s)@[^\\s@]*$"), "$1")
-
 /** Late polling/submit receipts cannot erase messages or regress terminal state. */
 internal fun mergeRoomSubmissions(roomId: String, current: List<RoomSubmission>, received: List<RoomSubmission>): List<RoomSubmission> {
     val merged = current.filter { it.input.roomId == roomId }.associateBy { it.input.submissionId }.toMutableMap()

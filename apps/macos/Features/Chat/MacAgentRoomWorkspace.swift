@@ -105,6 +105,12 @@ nonisolated enum MacExpertMentionPreparationError: Error { case reintroductionRe
     @Published var directoryError: String?
     @Published private(set) var conversationAssociation: MacConversationRoomAssociation?
     @Published private(set) var peerExchanges: [AppleExpertPeerView] = []
+    @Published private var remotePeerContexts: Set<String> = []
+
+    var transcriptOwners: [String: MacWorkspaceModel] {
+        let owners = executionService?.owners ?? [:]
+        return mainIsRemote?() == true ? owners.filter { remotePeerContexts.contains($0.key) } : owners
+    }
     @Published private(set) var admissionError: String?
     @Published private(set) var isAdmitting = false
     private var pendingAdmission: MacAgentRoomService.UserMessageAdmission?
@@ -148,78 +154,90 @@ nonisolated enum MacExpertMentionPreparationError: Error { case reintroductionRe
         mentionedExpertRevisions[parentID, default: [:]][child.agentID] = revision
     }
 
-    func refreshPeerExchanges(for conversationID: String) async {
-        guard mainConversationID == conversationID, !isAdmitting else { return }
-        if mainIsRemote?() == true, mainCommand != nil {
-            guard conversationAssociation != nil else { return }
-            if let exchanges: AppleExpertPeerExchanges = try? await mainRead([
-                "type": .string("peer_exchanges"),
-                "conversation_id": .string(conversationID),
-                "limit": .signedInteger(100),
-                "offset": .signedInteger(0),
-            ], owner: conversationID),
-               mainConversationID == conversationID {
-                peerExchanges = exchanges.exchanges
-                for exchange in peerExchanges {
-                    executionService?.observe(contextID: exchange.target.context_conversation_id)
-                }
-            }
-            return
-        }
-        guard conversationAssociation != nil else { return }
-        let service = service
-        if let exchanges = try? await Task.detached(operation: {
-            try service.peerExchanges(conversationID: conversationID)
-        }).value,
-           mainConversationID == conversationID {
-            peerExchanges = exchanges.exchanges
-            for exchange in peerExchanges {
-                executionService?.observe(contextID: exchange.target.context_conversation_id)
-            }
-        }
+    private func mainAssociation(for conversationID: String) async throws -> MacConversationRoomAssociation? {
+        let association: MacConversationRoomAssociation? = try await mainRead([
+            "type": .string("for_conversation"), "conversation_id": .string(conversationID)
+        ], owner: conversationID)
+        if let association { try MacAgentRoomService.validate(association, conversationID: conversationID) }
+        return association
     }
+
+    private func readPeerExchanges(for association: MacConversationRoomAssociation, remote: Bool) async throws -> [AppleExpertPeerView] {
+        let owner = association.conversationID
+        let page: AppleExpertPeerExchanges
+        if remote {
+            page = try await mainRead(["type": .string("peer_exchanges"), "conversation_id": .string(owner),
+                "limit": .signedInteger(100), "offset": .signedInteger(0)], owner: owner)
+            try page.validate(parentID: owner, offset: 0)
+        } else {
+            let service = service
+            page = try await Task.detached { try service.peerExchanges(conversationID: owner) }.value
+        }
+        guard page.exchanges.allSatisfy({ $0.roomID == association.roomID }) else {
+            throw MacApplicationPortError.invalidResponse
+        }
+        return page.exchanges
+    }
+
+    func refreshPeerExchanges(for conversationID: String) async {
+        guard mainConversationID == conversationID, !isAdmitting, let association = conversationAssociation,
+              association.conversationID == conversationID else { return }
+        let epoch = restoreEpoch
+        let remote = mainIsRemote?() == true
+        func current() -> Bool {
+            epoch == restoreEpoch && !Task.isCancelled && (mainIsRemote?() == true) == remote
+                && conversationAssociation?.roomID == association.roomID
+        }
+        guard let exchanges = try? await readPeerExchanges(for: association, remote: remote), current() else { return }
+        let contextIDs = Set(exchanges.map(\.target.context_conversation_id))
+        let observable = remote ? await executionService?.cachedRemotePeers(contextIDs, parentID: conversationID) ?? [] : contextIDs
+        guard current() else { return }
+        if remote { remotePeerContexts = observable }
+        peerExchanges = exchanges
+        for contextID in observable { executionService?.observe(contextID: contextID) }
+    }
+
+    private var pendingRestoreConversationID: String?
 
     func restoreConversation(_ conversationID: String) async {
         mainConversationID = conversationID
         restoreEpoch &+= 1
-        let mainReadEpoch = restoreEpoch
-        guard !isAdmitting else { return }
-        if mainIsRemote?() == true, mainCommand != nil {
-            do {
-                let association: MacConversationRoomAssociation? = try await mainRead(["type": .string("for_conversation"), "conversation_id": .string(conversationID)], owner: conversationID)
-                let exchanges: AppleExpertPeerExchanges? = if association != nil {
-                    try? await mainRead(["type": .string("peer_exchanges"),
-                        "conversation_id": .string(conversationID), "limit": .signedInteger(100), "offset": .signedInteger(0)], owner: conversationID)
-                } else { nil }
-                guard mainConversationID == conversationID, restoreEpoch == mainReadEpoch, mainIsRemote?() == true else { return }
-                conversationAssociation = association; peerExchanges = exchanges?.exchanges ?? []; directoryError = nil
-            } catch { if mainConversationID == conversationID { conversationAssociation = nil; peerExchanges = []; directoryError = error.localizedDescription } }
-            return
-        }
-        restoreEpoch &+= 1
         let epoch = restoreEpoch
         conversationAssociation = nil
         peerExchanges = []
+        remotePeerContexts = []
         resumableExpertMessages = [:]
         resumingExpertMessage = nil
         expertResumeError = nil
+        if isAdmitting {
+            pendingRestoreConversationID = conversationID
+            return
+        }
+        pendingRestoreConversationID = nil
+        if mainIsRemote?() == true {
+            do {
+                let association = try await mainAssociation(for: conversationID)
+                guard epoch == restoreEpoch, !Task.isCancelled, mainIsRemote?() == true else { return }
+                conversationAssociation = association
+                directoryError = nil
+                await refreshPeerExchanges(for: conversationID)
+            } catch {
+                if epoch == restoreEpoch, !Task.isCancelled { directoryError = error.localizedDescription }
+            }
+            return
+        }
         let service = service
         do {
             let restored = try await Task.detached {
                 let association = try service.forConversation(conversationID)
                 let draft = try service.loadExpertAdmission(conversationID: conversationID)
-                let exchanges = association == nil ? nil : (try? service.peerExchanges(conversationID: conversationID))
-                return (association, draft, exchanges)
+                return (association, draft)
             }.value
             guard epoch == restoreEpoch, !Task.isCancelled, !isAdmitting else { return }
             if let association = restored.0 {
                 await select(association.room, resumeExecutions: false)
                 guard epoch == restoreEpoch, !Task.isCancelled, !isAdmitting else { return }
                 conversationAssociation = association
-            }
-            peerExchanges = restored.2?.exchanges ?? []
-            for exchange in peerExchanges {
-                executionService?.observe(contextID: exchange.target.context_conversation_id)
             }
             admissionOwner = conversationID
             admissionStorageRevision = restored.1?.1
@@ -228,13 +246,16 @@ nonisolated enum MacExpertMentionPreparationError: Error { case reintroductionRe
             pendingExpertIDs = restored.1?.0.expertIDs ?? []
             pendingExpertRevisions = restored.1?.0.expertRevisions ?? [:]
             admissionError = pendingAdmission == nil ? nil : "An expert message is pending. Retry sends the original message."
-        } catch { admissionError = error.localizedDescription }
+            await refreshPeerExchanges(for: conversationID)
+        } catch {
+            if epoch == restoreEpoch, !Task.isCancelled { admissionError = error.localizedDescription }
+        }
     }
 
 
     /// Freeze the entire user message before any suspension; retry never substitutes edited text.
-    func recordMainExpertSelection(_ agent: MacPersistentAgent, conversationID: String) {
-        mentionedExpertRevisions[conversationID, default: [:]][agent.id] = agent.revision
+    func recordMainExpertSelection(_ agent: MacPersistentAgent, conversationID: String, observedRevision: Int64? = nil) {
+        mentionedExpertRevisions[conversationID, default: [:]][agent.id] = observedRevision ?? agent.revision
         if let epoch = mainSourceEpoch?(conversationID), let identity = mainSourceIdentity?(conversationID) {
             selectedSourceEpochs[conversationID, default: [:]][agent.id] = epoch
             selectedSourceIDs[conversationID, default: [:]][agent.id] = identity
@@ -256,7 +277,7 @@ nonisolated enum MacExpertMentionPreparationError: Error { case reintroductionRe
         let service = service
         _ = try capturedMainSourceEpoch(owner: conversationID, agentIDs: agentIDs)
         let room: MacConversationRoomAssociation?
-        if mainCommand != nil { room = try await mainRead(["type": .string("for_conversation"), "conversation_id": .string(conversationID)], owner: conversationID) }
+        if mainCommand != nil { room = try await mainAssociation(for: conversationID) }
         else { room = try await MacConversationReadTask.run { try service.forConversation(conversationID) } }
         let joined = (room?.room.room.participants ?? []).filter(\.active).map {
             AppleExpertParticipantReference(participant_id: $0.id, agent_id: $0.agentID,
@@ -296,7 +317,17 @@ nonisolated enum MacExpertMentionPreparationError: Error { case reintroductionRe
             }
         }
         isAdmitting = true
-        defer { isAdmitting = false }
+        defer {
+            isAdmitting = false
+            if let pending = pendingRestoreConversationID {
+                pendingRestoreConversationID = nil
+                if mainConversationID == pending {
+                    Task { @MainActor [weak self] in
+                        await self?.restoreConversation(pending)
+                    }
+                }
+            }
+        }
         do {
             let service = service
             let frozen = MacAgentRoomService.ExpertAdmissionDraft(conversationID: conversationID,
@@ -342,7 +373,9 @@ nonisolated enum MacExpertMentionPreparationError: Error { case reintroductionRe
             let completeRevision = admissionStorageRevision
             admissionStorageRevision = try await Task.detached { try service.saveExpertAdmission(saved, expectedRevision: completeRevision) }.value
             let manifest = try await admitCompleteExpertIntent(complete)
-            conversationAssociation = association
+            if mainConversationID == conversationID {
+                conversationAssociation = association
+            }
             for entry in manifest.entries {
                 let exact = try await Task.detached { try service.submission(roomID: frozenAssociation.roomID, submissionID: entry.child_submission_id) }.value
                 guard let receipt = exact,
@@ -365,7 +398,10 @@ nonisolated enum MacExpertMentionPreparationError: Error { case reintroductionRe
             pendingExpertRevisions = [:]
             admissionError = nil
             return input.text
-        } catch { admissionError = error.localizedDescription; return nil }
+        } catch {
+            if mainConversationID == conversationID { admissionError = error.localizedDescription }
+            return nil
+        }
     }
 
     func deliverPreparedExpertResend(_ plan: ApplePreparedExpertResend<MacCanonicalJSONValue>) async throws {
@@ -448,7 +484,11 @@ nonisolated enum MacExpertMentionPreparationError: Error { case reintroductionRe
         let epoch = restoreEpoch, service = service
         func current() -> Bool { !Task.isCancelled && epoch == restoreEpoch && conversationAssociation?.conversationID == original.input.conversation_id }
         resumingExpertMessage = messageID; expertResumeError = nil
-        defer { if current() { resumingExpertMessage = nil } }
+        defer {
+            if epoch == restoreEpoch && resumingExpertMessage == messageID {
+                resumingExpertMessage = nil
+            }
+        }
         do {
             if let prepared = try await Task.detached(operation: { try service.loadPreparedExpertResend(original.input.conversation_id) }).value {
                 guard current() else { return }
@@ -655,7 +695,7 @@ nonisolated enum MacExpertMentionPreparationError: Error { case reintroductionRe
     /// Explicit ID selection can include experts not yet joined. Blank unsaved
     /// composers validate directory identity only; send admission creates their room.
     func prepareExpertMention(agentID: String, expectedRevision: Int64, conversationID: String,
-                              isPersisted: Bool, allowReintroduction: Bool = false) async throws {
+                              isPersisted: Bool, allowReintroduction: Bool = false, useMemberSnapshot: Bool = false) async throws {
         guard !requiresMainSource || mainSourceReady else { throw MacApplicationPortError.serviceUnavailable }
         if mainCommand != nil {
             let fresh: MacAgentDirectory = try await mainRead(["type": .string("directory")], owner: conversationID)
@@ -663,16 +703,19 @@ nonisolated enum MacExpertMentionPreparationError: Error { case reintroductionRe
                 throw MacApplicationPortError.rejected("The selected expert changed. Select it again.")
             }
             var association: MacConversationRoomAssociation? = isPersisted
-                ? try await mainRead(["type": .string("for_conversation"), "conversation_id": .string(conversationID)], owner: conversationID) : nil
-            if let current = association?.room.room.participants.first(where: { $0.agentID == agentID && $0.active }), current.agentRevision != expectedRevision {
+                ? try await mainAssociation(for: conversationID) : nil
+            if !useMemberSnapshot, let current = association?.room.room.participants.first(where: { $0.agentID == agentID && $0.active }), current.agentRevision != expectedRevision {
                 guard allowReintroduction, let room = association?.room else { throw MacExpertMentionPreparationError.reintroductionRequired }
                 let _: MacAgentRoomSnapshot = try await mainRead(["type": .string("rejoin"), "input": .object([
                     "room_id": .string(room.room.id), "expected_room_revision": .signedInteger(room.revision),
                     "agent_id": .string(agentID), "expected_agent_revision": .signedInteger(expectedRevision),
                     "at_ms": .signedInteger(Int64(Date().timeIntervalSince1970 * 1000))])], owner: conversationID)
-                association = try await mainRead(["type": .string("for_conversation"), "conversation_id": .string(conversationID)], owner: conversationID)
+                association = try await mainAssociation(for: conversationID)
             }
-            recordMainExpertSelection(agent, conversationID: conversationID)
+            let snapshotRevision = useMemberSnapshot
+                ? association?.room.room.participants.first(where: { $0.agentID == agentID && $0.active })?.agentRevision
+                : nil
+            recordMainExpertSelection(agent, conversationID: conversationID, observedRevision: snapshotRevision)
             if mainConversationID == conversationID { conversationAssociation = association }
             return
         }
@@ -686,27 +729,18 @@ nonisolated enum MacExpertMentionPreparationError: Error { case reintroductionRe
             mentionedExpertRevisions[conversationID, default: [:]][agentID] = expectedRevision
             return
         }
-        var association = try await Task.detached { try service.ensureForConversation(conversationID) }.value
-        if let previous = association.room.room.participants.first(where: { $0.agentID == agentID && $0.active }),
-           previous.agentRevision != agent.revision {
-            let catalog = try await Task.detached { try service.roleTemplates() }.value
-            guard catalog.features.rejoin else {
-                throw MacApplicationPortError.rejected(String(localized: "This Host does not support expert reintroduction."))
-            }
+        var association = try await Task.detached { try service.forConversation(conversationID) }.value
+        if !useMemberSnapshot, let room = association?.room,
+           let previous = room.room.participants.first(where: { $0.active && $0.agentID == agentID }), previous.agentRevision != expectedRevision {
             guard allowReintroduction else { throw MacExpertMentionPreparationError.reintroductionRequired }
-            let room = association.room
             _ = try await Task.detached { try service.rejoin(agent: agent, room: room) }.value
-            association = try await Task.detached { try service.ensureForConversation(conversationID) }.value
-        } else if !association.room.room.participants.contains(where: { $0.agentID == agentID && $0.active }) {
-            let room = association.room
-            _ = try await Task.detached { try service.join(agent: agent, room: room) }.value
-            association = try await Task.detached { try service.ensureForConversation(conversationID) }.value
+            association = try await Task.detached { try service.forConversation(conversationID) }.value
         }
-        guard association.room.room.participants.contains(where: { $0.agentID == agentID && $0.active }) else {
-            throw MacApplicationPortError.invalidResponse
-        }
-        mentionedExpertRevisions[conversationID, default: [:]][agentID] = expectedRevision
-        if admissionOwner == conversationID, !isAdmitting { conversationAssociation = association }
+        let snapshotRevision = useMemberSnapshot
+            ? association?.room.room.participants.first(where: { $0.active && $0.agentID == agentID })?.agentRevision
+            : nil
+        recordMainExpertSelection(agent, conversationID: conversationID, observedRevision: snapshotRevision)
+        if mainConversationID == conversationID { conversationAssociation = association }
     }
 
     func refreshExpertDirectory() async {
@@ -734,28 +768,20 @@ nonisolated enum MacExpertMentionPreparationError: Error { case reintroductionRe
         let epoch = selectionEpoch
         selectedRoom = room
         let service = service
-        let ownerConversationID = mainConversationID
+        let ownerEpoch = restoreEpoch
         do {
             let loadDraft = !loadedDrafts.contains(room.room.id)
             let beforeDraft = drafts[room.room.id]?.revision
             let result = try await Task.detached {
                 (try service.load(id: room.room.id), try service.submissions(roomID: room.room.id),
-                 loadDraft ? try service.loadDraft(roomID: room.room.id) : nil,
-                 ownerConversationID.flatMap { try? service.peerExchanges(conversationID: $0) })
+                 loadDraft ? try service.loadDraft(roomID: room.room.id) : nil)
             }.value
-            guard epoch == selectionEpoch else { return }
+            guard epoch == selectionEpoch, ownerEpoch == restoreEpoch else { return }
             guard let snapshot = result.0, snapshot.room.id == room.room.id,
                   result.1.allSatisfy({ $0.input.roomID == room.room.id }) else {
                 throw MacApplicationPortError.rejected("Room response ownership mismatch")
             }
             selectedRoom = snapshot
-            if let loadedExchanges = result.3?.exchanges,
-               mainConversationID == ownerConversationID {
-                peerExchanges = loadedExchanges
-                for exchange in loadedExchanges {
-                    executionService?.observe(contextID: exchange.target.context_conversation_id)
-                }
-            }
             for participant in snapshot.room.participants {
                 executionService?.observe(contextID: participant.contextConversationID)
             }
@@ -786,7 +812,7 @@ nonisolated enum MacExpertMentionPreparationError: Error { case reintroductionRe
             }
             errors[room.room.id] = nil
         } catch {
-            guard epoch == selectionEpoch else { return }
+            guard epoch == selectionEpoch, ownerEpoch == restoreEpoch else { return }
             errors[room.room.id] = error.localizedDescription
         }
     }

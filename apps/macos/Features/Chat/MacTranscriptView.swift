@@ -54,11 +54,14 @@ struct MacTranscriptView: View {
     let isRunning: Bool
     let liveActivities: [MacAgentActivity]
     let searchText: String
+    var focusedSearchMessageID: UUID? = nil
+    var searchNavigationToken: UUID = UUID()
     let bottomClearance: CGFloat
     var viewportStore: MacTranscriptViewportStore? = nil
     var terminalRevision: UInt64 = 0
     let onSendTaskGuidance: (String, String, String) -> Void
     let onRequestTaskCancellation: (String, String) -> Void
+    var resolveTaskRunID: ((MacChatMessage) -> String?)? = nil
     var hasEarlierStoredMessages = false
     var isViewingHistory = false
     var isLoadingHistoryPage = false
@@ -120,7 +123,7 @@ struct MacTranscriptView: View {
                 // measured container: lazy height estimates feeding native follow
                 // can oscillate, and moving the previous tail to another parent
                 // destroys its disclosure/editor identity on every new message.
-                VStack(spacing: 18) {
+                VStack(spacing: 24) {
                     if isViewingHistory {
                         Button(action: onReturnToLatestHistory) {
                             Label(String(localized: "Go to Latest Message"), systemImage: "arrow.down.circle")
@@ -253,6 +256,27 @@ struct MacTranscriptView: View {
             .onChange(of: isRunning) { _, _ in
                 scrollController.contentChanged()
             }
+            .onChange(of: searchNavigationToken) { _, _ in
+                guard let targetID = focusedSearchMessageID else { return }
+                let navigationGeneration = scrollController.beginNavigation()
+                if let targetIndex = messages.firstIndex(where: { $0.id == targetID }) {
+                    let requiredVisible = messages.count - targetIndex
+                    if requiredVisible > visibleMessageLimit {
+                        visibleMessageLimit = requiredVisible
+                    }
+                }
+                Task { @MainActor in
+                    await Task.yield()
+                    guard scrollController.acceptsNavigation(navigationGeneration) else { return }
+                    if reduceMotion {
+                        proxy.scrollTo(targetID, anchor: .center)
+                    } else {
+                        withAnimation(.easeOut(duration: 0.18)) {
+                            proxy.scrollTo(targetID, anchor: .center)
+                        }
+                    }
+                }
+            }
             .overlay(alignment: .bottomTrailing) {
                 MacTranscriptFollowControl(controller: scrollController, bottomClearance: bottomClearance)
             }
@@ -276,6 +300,7 @@ struct MacTranscriptView: View {
             context: .init(readChanges: readUIChanges, preview: previewUI,
                 readRevision: readUIRevision, pendingSubmission: pendingUI, submit: submitUI, permitsFollowupActions: permitsFollowupUIActions, readLocalSource: readLocalSource),
             isCurrent: { trackedConversationID == conversationID }) {
+        let resolvedTaskRunID = resolveTaskRunID?(message) ?? message.journalReference?.cursor.identity.run_id
         MacMessageView(
             conversationID: conversationID,
             message: message,
@@ -285,13 +310,14 @@ struct MacTranscriptView: View {
                 ? liveActivities : [],
             isSearchMatch: !searchText.isEmpty && message.text.localizedCaseInsensitiveContains(searchText),
             onSendTaskGuidance: { taskID, text in
-                guard let runID = message.journalReference?.cursor.identity.run_id else { return }
+                guard let runID = resolvedTaskRunID else { return }
                 onSendTaskGuidance(taskID, runID, text)
             },
             onRequestTaskCancellation: { taskID in
-                guard let runID = message.journalReference?.cursor.identity.run_id else { return }
+                guard let runID = resolvedTaskRunID else { return }
                 onRequestTaskCancellation(taskID, runID)
             },
+            canControlTasks: resolvedTaskRunID != nil,
             userDisplayName: sourceAuthors[message.canonicalMessageID ?? ""],
             journalPresentationOwner: message.journalReference.map { journalResidency.owner(for: $0) }
         )

@@ -112,6 +112,41 @@ pub(crate) fn apply_expert_settings(
     settings: &Value,
     store: &NolaStore,
 ) -> Result<(), String> {
+    if let Some(value) = settings
+        .get("expertExecutor")
+        .filter(|value| !value.is_null())
+    {
+        let executor: nola_domain::delegation::ExternalAgentExecutor =
+            serde_json::from_value(value.clone()).map_err(|error| error.to_string())?;
+        executor.validate()?;
+        let permission_profile = settings["permissionModeRawValue"]
+            .as_str()
+            .and_then(crate::permissions::PermissionProfile::from_canonical_name)
+            .ok_or("Expert permission configuration missing")?;
+        return restore(
+            config,
+            Snapshot {
+                model: HostModelRequest {
+                    endpoint: String::new(),
+                    api_key: String::new(),
+                    model: String::new(),
+                    swe_mode: false,
+                },
+                execution: HostExecutionRequest {
+                    execution_backend: executor.backend.id().into(),
+                    external_execution_model: executor.model,
+                    external_execution_model_provider: executor.model_provider,
+                    external_execution_session_id: None,
+                    max_iterations: 0,
+                },
+                runtime: crate::runtime_config::RuntimeConfig::default().host_runtime_options(),
+                credential: None,
+                fallback_credentials: Vec::new(),
+                permission_profile,
+            },
+            store,
+        );
+    }
     restore(config, snapshot_for_settings(settings, store)?, store)
 }
 
@@ -332,7 +367,7 @@ fn explicit_profile_settings(store:&NolaStore,id:&str,revision:i64,config:&Confi
 
 fn apply_initial_model(config: &mut Config, store: &NolaStore) -> Result<(), String> {
     if config.cli_profile_selection.is_none() {
-        if config.runtime.model_binding.is_some() {
+        if config.runtime.uses_file_catalog() {
             config.cli_profile_selection = Some(crate::model_connection_host::file_config::resolve_default(store)?);
         }
     }
@@ -352,7 +387,7 @@ pub(crate) fn initialize_or_restore(config: &mut Config) -> Result<(), String> {
     if config.host_request_stdin || config.show_help { return Ok(()); }
     if !matches!(config.command, CommandMode::Run) || !config.save_session {
         if matches!(config.command, CommandMode::Run | CommandMode::Init | CommandMode::Wiki)
-            && config.runtime.model_binding.is_some() {
+            && config.runtime.uses_file_catalog() {
             apply_initial_model(config, &NolaStore::open_default()?)?;
         }
         return Ok(());

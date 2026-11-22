@@ -2,6 +2,8 @@
 // File Overview:
 // - Purpose: Web Host facade grouped into routes, native bridge, and streaming state.
 
+#[path = "web_parts/model_acquisition.rs"]
+mod acquisition;
 include!("web_parts/routes.rs");
 include!("web_parts/routes_scheduled_actions.rs");
 include!("web_parts/native_bridge.rs");

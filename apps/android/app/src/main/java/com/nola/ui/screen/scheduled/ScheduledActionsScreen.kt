@@ -1,5 +1,6 @@
 package com.nola.ui.screen.scheduled
 
+import com.nola.ui.components.dismissImeOnBlankTap
 import android.Manifest
 import android.content.pm.PackageManager
 import android.os.Build
@@ -8,14 +9,18 @@ import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.horizontalScroll
+import androidx.compose.foundation.text.KeyboardActions
+import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
@@ -26,6 +31,7 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.ui.draw.clip
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
@@ -65,12 +71,16 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalFocusManager
+import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.res.stringResource
 import androidx.core.content.ContextCompat
 import androidx.compose.ui.platform.LocalUriHandler
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -86,6 +96,7 @@ import com.nola.ui.components.NolaColors
 import com.nola.ui.components.NolaDivider
 import com.nola.ui.components.NolaEmptyState
 import com.nola.ui.components.NolaHeroCard
+import com.nola.ui.components.NolaIconButton
 import com.nola.ui.components.NolaSectionTitle
 import com.nola.ui.components.NolaSpacing
 import com.nola.ui.components.NolaSwitch
@@ -108,15 +119,25 @@ fun ScheduledActionsScreen(
     viewModel: ScheduledActionsViewModel = hiltViewModel()
 ) {
     val context = LocalContext.current
+    var notificationPermissionDenied by rememberSaveable { mutableStateOf(false) }
     val notificationPermissionLauncher = rememberLauncherForActivityResult(
         ActivityResultContracts.RequestPermission()
-    ) { }
+    ) { granted -> notificationPermissionDenied = !granted }
+    androidx.lifecycle.compose.LifecycleResumeEffect(Unit) {
+        if (androidx.core.app.NotificationManagerCompat.from(context).areNotificationsEnabled()) {
+            notificationPermissionDenied = false
+        }
+        onPauseOrDispose { }
+    }
+    val lifecycle = androidx.lifecycle.compose.LocalLifecycleOwner.current.lifecycle
     fun ensureNotificationPermissionIfNeeded(enabled: Boolean) {
-        if (enabled && Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU &&
+        if (!enabled || !lifecycle.currentState.isAtLeast(androidx.lifecycle.Lifecycle.State.STARTED) ||
+            androidx.core.app.NotificationManagerCompat.from(context).areNotificationsEnabled()) return
+        if (!notificationPermissionDenied && Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU &&
             ContextCompat.checkSelfPermission(context, Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED
         ) {
             notificationPermissionLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
-        }
+        } else notificationPermissionDenied = true
     }
     val state by viewModel.uiState.collectAsStateWithLifecycle()
     var pendingDelete by remember { mutableStateOf<ScheduledActionEntity?>(null) }
@@ -189,10 +210,11 @@ fun ScheduledActionsScreen(
         ScheduledActionEditorSheet(
             existing = editingAction,
             onSave = {
-                ensureNotificationPermissionIfNeeded(it.enabled)
+                val enabled = it.enabled
                 viewModel.save(it) {
                     creatingAction = false
                     editingAction = null
+                    ensureNotificationPermissionIfNeeded(enabled)
                 }
             },
             onDismiss = {
@@ -207,6 +229,7 @@ fun ScheduledActionsScreen(
 
     Scaffold(
         containerColor = MaterialTheme.colorScheme.background,
+        contentWindowInsets = WindowInsets(0),
         topBar = {
             NolaTopAppBar(
                 title = stringResource(R.string.scheduled_title),
@@ -223,10 +246,17 @@ fun ScheduledActionsScreen(
                     Icon(Icons.Filled.Add, contentDescription = stringResource(R.string.scheduled_action_editor_new))
                 }
                 if (state.actions.isNotEmpty()) {
-                    TextButton(onClick = onCreateInChat) {
-                        Icon(Icons.Filled.AutoAwesome, contentDescription = null)
-                        Spacer(Modifier.width(6.dp))
-                        Text(stringResource(R.string.scheduled_create_in_chat))
+                    val label = stringResource(R.string.scheduled_create_in_chat)
+                    if (LocalConfiguration.current.screenWidthDp < 600) {
+                        NolaIconButton(label = label, onClick = onCreateInChat) {
+                            Icon(painterResource(R.drawable.nola_chat), contentDescription = label)
+                        }
+                    } else {
+                        TextButton(onClick = onCreateInChat) {
+                            Icon(Icons.Filled.AutoAwesome, contentDescription = null)
+                            Spacer(Modifier.width(6.dp))
+                            Text(label)
+                        }
                     }
                 }
             }
@@ -245,6 +275,19 @@ fun ScheduledActionsScreen(
                     .padding(horizontal = NolaSpacing.lg),
                 verticalArrangement = Arrangement.spacedBy(NolaSpacing.sm)
             ) {
+            if (notificationPermissionDenied) item {
+                NolaCard {
+                    Column(Modifier.padding(horizontal = 14.dp, vertical = 8.dp)) {
+                        Text(stringResource(R.string.settings_notification_permissions), style = MaterialTheme.typography.titleSmall)
+                        Text(stringResource(R.string.settings_notification_permissions_blocked),
+                            style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        TextButton(onClick = { com.nola.ui.screen.settings.openNotificationSettings(context) },
+                            modifier = Modifier.testTag("scheduled.notification-settings")) {
+                            Text(stringResource(R.string.permission_settings_open))
+                        }
+                    }
+                }
+            }
             if (state.actions.isNotEmpty()) item {
                 Spacer(Modifier.height(NolaSpacing.sm))
                 val enabledCount = state.actions.count { it.enabled }
@@ -385,7 +428,11 @@ fun ScheduledActionsScreen(
                         Text(stringResource(R.string.scheduled_no_automations), style = MaterialTheme.typography.titleMedium)
                         Text(stringResource(R.string.scheduled_no_automations_message), style = MaterialTheme.typography.bodyMedium,
                             color = MaterialTheme.colorScheme.onSurfaceVariant)
-                        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        @OptIn(androidx.compose.foundation.layout.ExperimentalLayoutApi::class)
+                        androidx.compose.foundation.layout.FlowRow(
+                            horizontalArrangement = Arrangement.spacedBy(8.dp),
+                            verticalArrangement = Arrangement.spacedBy(4.dp)
+                        ) {
                             androidx.compose.material3.Button(onClick = {
                                 viewModel.beginEditing()
                                 editingAction = null
@@ -425,8 +472,7 @@ fun ScheduledActionsScreen(
                         latestResult = latestResult,
                         isBusy = action.id in state.busyActionIds,
                         onToggle = { enabled ->
-                            ensureNotificationPermissionIfNeeded(enabled)
-                            viewModel.toggle(action.id, enabled)
+                            viewModel.toggle(action.id, enabled) { ensureNotificationPermissionIfNeeded(enabled) }
                         },
                         onRequestEdit = { viewModel.beginEditing(); creatingAction = false; editingAction = action },
                         onRequestDelete = { pendingDelete = action },
@@ -439,12 +485,12 @@ fun ScheduledActionsScreen(
             if (state.recentResults.isNotEmpty()) {
                 item {
                     Surface(
+                        onClick = {
+                            showsRecentActivity = !showsRecentActivity
+                        },
                         modifier = Modifier
                             .fillMaxWidth()
-                            .testTag("scheduled.recent.toggle")
-                            .clickable(role = Role.Button) {
-                                showsRecentActivity = !showsRecentActivity
-                            },
+                            .testTag("scheduled.recent.toggle"),
                         shape = MaterialTheme.shapes.large,
                         color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.34f)
                     ) {
@@ -570,7 +616,10 @@ fun ScheduledActionCard(
     val dateFormat = remember { SimpleDateFormat("MMM dd, HH:mm", Locale.getDefault()) }
     var showMenu by remember(action.id) { mutableStateOf(false) }
     val needsAttention = latestResult?.let { scheduledResultNeedsAttention(it.status) } == true
-    val isRunning = latestResult?.status?.lowercase(Locale.ROOT) in setOf("pending", "running")
+    val isRunning = latestResult?.let { result ->
+        result.status.lowercase(Locale.ROOT) in setOf("pending", "running") &&
+            (System.currentTimeMillis() - result.createdAt) < 5 * 60_000L
+    } == true
     Box(modifier = Modifier.testTag("scheduled.card.${action.id}")) {
     NolaCard {
         Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
@@ -750,10 +799,10 @@ fun ScheduledActionCard(
                 latestResult?.let { result ->
                     val detail = result.failureReason?.takeUnless { it == "permission_required" } ?: result.llmSummaryText
                     Surface(
+                        onClick = onResultClick,
                         modifier = Modifier
                             .fillMaxWidth()
-                            .testTag("scheduled.result.${action.id}")
-                            .clickable(role = Role.Button, onClick = onResultClick),
+                            .testTag("scheduled.result.${action.id}"),
                         shape = MaterialTheme.shapes.medium,
                         color = resultStatusColor(result.status).copy(alpha = 0.08f)
                     ) {
@@ -882,6 +931,7 @@ internal fun ExecutionResultDetailSheet(
         || result.eventsJson.trim() !in setOf("", "[]", "{}")
 
     ModalBottomSheet(
+        modifier = Modifier.dismissImeOnBlankTap(),
         onDismissRequest = onDismiss,
         sheetState = androidx.compose.material3.rememberModalBottomSheetState(skipPartiallyExpanded = true),
     ) {
@@ -1007,6 +1057,8 @@ internal fun ExecutionResultDetailSheet(
                         Row(
                             modifier = Modifier
                                 .fillMaxWidth()
+                                .heightIn(min = 48.dp)
+                                .clip(RoundedCornerShape(8.dp))
                                 .clickable(role = Role.Button) {
                                     showsTechnicalDetails = !showsTechnicalDetails
                                 }
@@ -1130,12 +1182,15 @@ internal fun nextScheduledAt(
     if (!action.enabled) return null
     val rawTime = action.scheduledTimeIso?.trim().orEmpty()
     if (action.scheduleFrequency == "once") {
-        val patterns = listOf("yyyy-MM-dd'T'HH:mm:ssXXX", "yyyy-MM-dd'T'HH:mm", "yyyy-MM-dd HH:mm")
-        return patterns.firstNotNullOfOrNull { pattern ->
-            runCatching {
-                SimpleDateFormat(pattern, Locale.US).parse(rawTime)?.time
-            }.getOrNull()?.takeIf { it > now }
-        }
+        if (rawTime.isBlank()) return null
+        val zone = runCatching {
+            java.time.ZoneId.of(action.timezone.ifBlank { java.time.ZoneId.systemDefault().id })
+        }.getOrElse { java.time.ZoneId.systemDefault() }
+        val normalized = rawTime.replace(' ', 'T')
+        val targetMillis = runCatching { java.time.ZonedDateTime.parse(normalized).toInstant().toEpochMilli() }.getOrNull()
+            ?: runCatching { java.time.OffsetDateTime.parse(normalized).toInstant().toEpochMilli() }.getOrNull()
+            ?: runCatching { java.time.LocalDateTime.parse(normalized).atZone(zone).toInstant().toEpochMilli() }.getOrNull()
+        return targetMillis?.takeIf { it > now }
     }
     if (action.scheduleFrequency != "daily" && action.scheduleFrequency != "weekly") return null
     val match = Regex("""(\d{1,2}):(\d{2})""").findAll(rawTime).lastOrNull() ?: return null
@@ -1189,6 +1244,7 @@ fun ScheduledActionEditorSheet(
     val initialTime = existing?.scheduledTimeIso ?: ""
     val initialTimezone = existing?.timezone?.takeIf { it.isNotBlank() } ?: TimeZone.getDefault().id
     val draftId = remember(existing?.id) { existing?.id ?: java.util.UUID.randomUUID().toString() }
+    val focusManager = LocalFocusManager.current
     var name by remember(existing?.id) { mutableStateOf(initialName) }
     var url by remember(existing?.id) { mutableStateOf(initialUrl) }
     var scheduleFrequency by remember(existing?.id) {
@@ -1245,10 +1301,11 @@ fun ScheduledActionEditorSheet(
     }
 
     androidx.compose.material3.ModalBottomSheet(
+        modifier = Modifier.dismissImeOnBlankTap(),
         onDismissRequest = requestDismiss,
         sheetState = com.nola.ui.components.rememberGuardedEditorSheetState(isSaving, isDirty) { showDiscardConfirmation = true },
     ) {
-        LazyColumn(modifier = Modifier.imePadding().navigationBarsPadding().padding(24.dp)) {
+        LazyColumn(modifier = Modifier.imePadding().navigationBarsPadding().padding(24.dp).testTag("scheduled.editor")) {
             item {
                 Text(
                     if (existing != null) stringResource(R.string.scheduled_action_editor_edit) else stringResource(R.string.scheduled_action_editor_new),
@@ -1265,7 +1322,9 @@ fun ScheduledActionEditorSheet(
                     label = { Text(stringResource(R.string.scheduled_name)) },
                     placeholder = { Text(stringResource(R.string.scheduled_name_placeholder)) },
                     modifier = Modifier.fillMaxWidth(),
-                    singleLine = true
+                    singleLine = true,
+                    keyboardOptions = KeyboardOptions(imeAction = ImeAction.Done),
+                    keyboardActions = KeyboardActions(onDone = { focusManager.clearFocus() })
                 )
                 Spacer(Modifier.height(8.dp))
             }
@@ -1369,6 +1428,20 @@ fun ScheduledActionEditorSheet(
                         color = MaterialTheme.colorScheme.error)
                     Spacer(Modifier.height(8.dp))
                 }
+                val canSave = !isSaving && name.isNotBlank()
+                    && userPrompt.isNotBlank()
+                    && url.isNotBlank()
+                    && isTimeValid
+                    && isTimezoneValid
+                    && (scheduleFrequency != "weekly" || scheduledWeekday.toIntOrNull() in 1..7)
+                if (!canSave && !isSaving) {
+                    Text(
+                        stringResource(R.string.scheduled_required_fields_hint),
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                    Spacer(Modifier.height(8.dp))
+                }
                 androidx.compose.material3.Button(
                     onClick = {
                         val action = ScheduledActionEntity(
@@ -1389,12 +1462,7 @@ fun ScheduledActionEditorSheet(
                         onSave(action)
                     },
                     modifier = Modifier.fillMaxWidth().testTag("schedule-save"),
-                    enabled = !isSaving && name.isNotBlank()
-                        && userPrompt.isNotBlank()
-                        && url.isNotBlank()
-                        && isTimeValid
-                        && isTimezoneValid
-                        && (scheduleFrequency != "weekly" || scheduledWeekday.toIntOrNull() in 1..7)
+                    enabled = canSave
                 ) { Text(stringResource(if (isSaving) R.string.scheduled_saving else R.string.common_save)) }
                 TextButton(onClick = requestDismiss, enabled = !isSaving, modifier = Modifier.fillMaxWidth()) {
                     Text(stringResource(R.string.common_cancel))

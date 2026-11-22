@@ -1664,13 +1664,13 @@ final class MacConversationPresentationOverlayTests: XCTestCase {
     }
 }
 
-private final class SnapshotSourceURLProtocol: URLProtocol, @unchecked Sendable {
-    @MainActor static var handlers: [String: (URLRequest) -> Void] = [:]
+final class SnapshotSourceURLProtocol: URLProtocol, @unchecked Sendable {
+    @MainActor static var handlers: [String: (URLRequest) async -> Void] = [:]
     override class func canInit(with request: URLRequest) -> Bool { true }
     override class func canonicalRequest(for request: URLRequest) -> URLRequest { request }
     override func startLoading() {
         Task { @MainActor in
-            Self.handlers[request.url!.host!]?(request)
+            await Self.handlers[request.url!.host!]?(request)
             let response = HTTPURLResponse(url: request.url!, statusCode: 200,
                 httpVersion: nil, headerFields: ["Content-Type": "text/plain"])!
             client?.urlProtocol(self, didReceive: response, cacheStoragePolicy: .notAllowed)
@@ -1887,6 +1887,41 @@ final class MacContextSelectionSnapshotTests: XCTestCase {
 
 @MainActor
 final class MacEditedResendTests: XCTestCase {
+    func testAdmissionDropsTransientRowsThatBelongedToEditedSuffix() {
+        let prefix = MacChatMessage(role: .user, text: "prefix", createdAt: .now)
+        let old = MacChatMessage(role: .assistant, text: "original", createdAt: .now)
+        let replacement = MacChatMessage(role: .user, text: "edited", createdAt: .now)
+        let streaming = MacChatMessage(role: .assistant, text: "new", createdAt: .now)
+        var overlay = MacConversationPresentationOverlay()
+        XCTAssertTrue(overlay.mutateMessage(canonical: [prefix, old], messageID: old.id, createAssistantIfMissing: false) { $0.text += " finish" })
+        overlay.beginSubmission(.init(submissionID: "obsolete", userMessage: prefix, assistantMessage: old))
+        let visible = [prefix, replacement, streaming]
+        overlay.reconcileAfterRewind(visible)
+        XCTAssertEqual(overlay.renderedMessages(canonical: visible), visible)
+        XCTAssertTrue(overlay.isEmpty)
+    }
+
+    func testInitialUserRevisionEnablesInPlaceEditWithoutInventingAVersion() throws {
+        let messageJSON = """
+        {"message_id":"first-user","role":"user","state":"completed","revision":0,"created_at_ms":1,
+         "parts":[{"kind":"text","part_id":"p","revision":0,"markdown":"first","is_final":true}]}
+        """
+        let original = try JSONDecoder().decode(MacCanonicalConversationProjectionV1.Message.self, from: Data(messageJSON.utf8))
+        guard case .text(let body)? = original.parts.first else { return XCTFail("Missing original user text") }
+        XCTAssertTrue(body.isFinal)
+        XCTAssertEqual(body.revision, 0)
+
+        let draft = AppleMessageEditDraft(sourceConversationID: "thread", sourceMessageID: "first-user",
+            expectedSourceRevision: 2, expectedMessageRevision: original.revision, text: "replacement")
+        XCTAssertTrue(draft.hasSourceWitness)
+        let request = try XCTUnwrap(draft.inPlacePreparation())
+        XCTAssertEqual(request.expected_message_revision, 0)
+        XCTAssertEqual(request.expected_revision, 2)
+        let missing = AppleMessageEditDraft(sourceConversationID: "thread", sourceMessageID: "first-user",
+            expectedSourceRevision: 2, expectedMessageRevision: nil, text: "replacement")
+        XCTAssertNil(missing.inPlacePreparation())
+    }
+
     func testInPlaceEditKeepsOwnerAndStableRetryIdentity() throws {
         var draft = AppleMessageEditDraft(sourceConversationID: "existing-conversation", sourceMessageID: "user-message",
             expectedSourceRevision: 7, expectedMessageRevision: 3, text: "original")

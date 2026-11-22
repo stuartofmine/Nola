@@ -9,6 +9,34 @@ import java.io.File
 import java.util.UUID
 
 class InPlaceResendNativeTest {
+    @Test fun firstMessageTitleTracksOnlyItsOwnerAndPreservesManualOrUnknownNames() {
+        val context = ApplicationProvider.getApplicationContext<android.content.Context>()
+        val root = File(context.cacheDir, "automatic-title-" + UUID.randomUUID()).apply { mkdirs() }
+        try {
+            AndroidApplicationRuntime(context, File(root, "title.db")).use { runtime ->
+                for ((id, initialTitle) in listOf("derived" to "", "existing" to "Saved title")) {
+                    runtime.createConversation(id, initialTitle, 1, 1, null)
+                    for (message in listOf("first", "second")) {
+                        runtime.execute(buildJsonObject {
+                            put("type", "admit_conversation_user_message")
+                            put("input", buildJsonObject {
+                                put("conversation_id", id); put("message_id", "$id-$message")
+                                put("text", message); put("created_at_ms", 2)
+                            })
+                        })
+                    }
+                }
+                assertTrue(runtime.updateFirstMessageTitle("derived", "derived-first", "Original title"))
+                assertFalse(runtime.updateFirstMessageTitle("derived", "derived-second", "Other query"))
+                assertFalse(runtime.updateFirstMessageTitle("existing", "existing-first", "Other query"))
+                assertEquals("Original title", runtime.loadConversation("derived")?.title)
+                runtime.renameConversation("derived", "Original title", 3)
+                assertFalse(runtime.updateFirstMessageTitle("derived", "derived-first", "Edited title"))
+                assertEquals("Original title", runtime.loadConversation("derived")?.title)
+            }
+        } finally { root.deleteRecursively() }
+    }
+
     @Test fun textWithIndependentMetadataRemainsEditableAcrossClients() {
         val context = ApplicationProvider.getApplicationContext<android.content.Context>()
         val root = File(context.cacheDir,"in-place-metadata-${UUID.randomUUID()}").apply { mkdirs() }

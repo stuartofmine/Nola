@@ -4,6 +4,7 @@ import com.nola.domain.model.ModelInput
 import com.nola.domain.model.ModelOutput
 import com.nola.domain.model.ModelParameterLimits
 import com.nola.domain.model.providerMessages
+import com.nola.llm.LlmRequestException
 import com.nola.llm.LlmStreamEvent
 import com.nola.llm.LlmStreamUsage
 import io.ktor.client.HttpClient
@@ -272,7 +273,7 @@ internal class OpenAiResponsesAdapter(
                                 emit(LlmStreamEvent.ReasoningDelta(delta))
                             }
                     }
-                    "response.failed", "error" -> error("Responses provider reported failure")
+                    "response.failed", "error" -> throw responsesStreamFailure(event)
                     "response.completed", "response.incomplete" -> {
                         check(!completed) { "Responses stream returned duplicate terminal events" }
                         val result = event["response"]?.jsonObject ?: error("Responses terminal event has no response")
@@ -372,5 +373,34 @@ internal class OpenAiResponsesAdapter(
             }
         }
         return ModelOutput(text.toString(), usage.totalTokens, finishReason, reasoning.toString(), calls, continuation)
+    }
+}
+
+internal fun responsesStreamFailure(event: JsonObject): Exception {
+    val errorObject = (event["response"] as? JsonObject)?.get("error") as? JsonObject
+        ?: event["error"] as? JsonObject
+    val code = errorObject?.get("code").string()?.takeIf(String::isNotBlank)
+        ?: event["code"].string()?.takeIf(String::isNotBlank)
+    val message = errorObject?.get("message").string()?.takeIf(String::isNotBlank)
+        ?: event["message"].string()?.takeIf(String::isNotBlank)
+    val detail = buildString {
+        append("Responses provider reported failure")
+        if (code != null) append(" (").append(code).append(")")
+        if (message != null) append(": ").append(message)
+    }
+    return if (code != null) {
+        val statusCode = when (code) {
+            "rate_limit_exceeded" -> 429
+            "server_error", "overloaded" -> 503
+            else -> 400
+        }
+        LlmRequestException(
+            statusCode = statusCode,
+            retryable = statusCode == 429 || statusCode >= 500,
+            providerErrorCode = code,
+            message = detail,
+        )
+    } else {
+        IllegalStateException(detail)
     }
 }

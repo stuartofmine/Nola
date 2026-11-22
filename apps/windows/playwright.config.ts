@@ -23,9 +23,5 @@ export default defineConfig({
                 ? { launchOptions: { executablePath: path.resolve(repoRoot, chromePath) } }
                 : { channel: "chrome" },
         },
-        {
-            name: "windows-electron",
-            testMatch: /electron\.e2e\.ts/,
-        },
     ],
 });

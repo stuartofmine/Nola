@@ -267,6 +267,37 @@ fn ordinary_angle_bracket_text_is_not_swallowed() {
     assert_eq!(visible.concat(), choice.content);
 }
 
+#[test]
+fn trailing_partial_protocol_prefix_after_visible_text_is_flushed_on_finish() {
+    for trailing in ["<", "</", "<tool", "<tool_call", "<｜DSML｜"] {
+        let mut choice = StreamedChoice::default();
+        let mut buffer = TextToolProtocolBuffer::default();
+        let mut visible = Vec::new();
+        for chunk in ["prefix text ", trailing] {
+            assert!(buffer
+                .push(&mut choice, chunk, &mut |event| {
+                    if let LlmEvent::TextDelta(text) = event {
+                        visible.push(text);
+                    }
+                    Ok(())
+                })
+                .unwrap());
+        }
+        assert!(buffer
+            .finish(&mut choice, &mut |event| {
+                if let LlmEvent::TextDelta(text) = event {
+                    visible.push(text);
+                }
+                Ok(())
+            })
+            .unwrap()
+            .is_none());
+        let expected = format!("prefix text {trailing}");
+        assert_eq!(choice.content, expected);
+        assert_eq!(visible.concat(), expected);
+    }
+}
+
 fn without_provider_hint<T>(f: impl FnOnce() -> T) -> T {
     let _guard = ENV_LOCK.lock().unwrap();
     let previous = env::var_os("NOLA_LLM_PROVIDER");

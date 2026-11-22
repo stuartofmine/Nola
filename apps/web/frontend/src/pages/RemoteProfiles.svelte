@@ -25,8 +25,16 @@
     let confirmation: ConfirmationHandle;
     let endpointEditor: ModelEndpointEditor;
     let credentialEditor: EndpointCredentialEditor;
-    let creation: CreateRemoteModel;
-    let { profiles, openProfileId = '', reload, onSelectionSaved }: { profiles: RemoteProfile[]; openProfileId?: string; reload: () => Promise<void>; onSelectionSaved: (profiles: RemoteProfile[]) => void } = $props();
+    let creation = $state<CreateRemoteModel>();
+    let { profiles, openProfileId = '', requestedEndpointName = $bindable(''), reload, onSelectionSaved }: { profiles: RemoteProfile[]; openProfileId?: string; requestedEndpointName?: string; reload: () => Promise<void>; onSelectionSaved: (profiles: RemoteProfile[]) => void } = $props();
+    $effect(() => {
+        const name = requestedEndpointName;
+        const editor = creation;
+        if (editor && name) {
+            requestedEndpointName = '';
+            untrack(() => editor.open(undefined, '', name));
+        }
+    });
     let openedProfileId = '';
     let editing = $state<RemoteProfile>();
     let draft = $state<RemoteProfile['parameters']>({});
@@ -68,16 +76,18 @@
     const thinkingError = $derived(reasoningExecutionValidationError(thinking, metadata.executionCapabilities)
         ?? reasoningValidationError(thinking, editing?.endpoint.wireProtocol ?? '', Number(draft.maxOutputTokens ?? 16384)));
     const parameterError = $derived(editing ? executionParameterValidationError({ ...editing,
-        parameters: { ...editing.parameters, ...draft }, executionCapabilities: metadata.executionCapabilities }) : null);
+        parameters: { ...editing.parameters, ...draft }, executionCapabilities: metadata.executionCapabilities, reasoning: thinking }) : null);
     const legacyThinkingDefault = $derived(editing?.endpoint.wireProtocol === 'chat_completions' && thinking.control === 'effort'
         && ['concise', 'balanced', 'detailed'].includes(thinking.defaultPreference ?? ''));
     const invalidThinkingDefault = $derived(!legacyThinkingDefault && thinking.defaultPreference != null && thinking.defaultPreference !== 'automatic' && !thinkingOptions.includes(thinking.defaultPreference));
     const dirty = $derived(!!editing && (Object.keys(metadataChanges(editing, metadata)).length > 0 || Object.keys(parameterChanges(editing.parameters, draft)).length > 0 || Object.keys(reasoningChanges(editing.reasoning, thinking)).length > 0));
-    const fields = [
+    const primaryFields = [
         { key: 'temperature', label: 'models.temperature', min: 0, max: 2, step: 0.05 },
         { key: 'topP', label: 'modelDisplay.topP', min: 0, max: 1, step: 0.01 },
         { key: 'maxOutputTokens', label: 'remote.output', min: 64, max: 1000000, step: 1 },
         { key: 'maxContextLength', label: 'models.context', min: 512, max: 4000000, step: 1 },
+    ];
+    const penaltyFields = [
         { key: 'presencePenalty', label: 'remote.presence', min: -2, max: 2, step: 0.1 },
         { key: 'frequencyPenalty', label: 'remote.frequency', min: -2, max: 2, step: 0.1 },
     ];
@@ -154,6 +164,19 @@
         busy = false;
     }
     function discardCatalog() { savedCatalog = copyRemoteCatalog(profiles); draftCatalog = copyRemoteCatalog(profiles); selectionError = ''; }
+    async function confirmDiscardCatalog() {
+        if (busy) return;
+        if (catalogDirty && !await confirmation.ask({ title: t($locale, 'remote.discard_title'),
+            description: t($locale, 'remote.discard_body'), confirmLabel: t($locale, 'models.discard'), destructive: true })) return;
+        discardCatalog();
+    }
+    function closeMenu(target: EventTarget | null) {
+        const details = target instanceof Element ? target.closest('details') : null;
+        if (details) {
+            details.open = false;
+            details.querySelector('summary')?.focus({preventScroll: true});
+        }
+    }
     async function reloadCatalog() {
         if (catalogDirty && !await confirmation.ask({ title: t($locale, 'remote.discard_title'),
             description: t($locale, 'remote.discard_body'), confirmLabel: t($locale, 'models.discard'), destructive: true })) return;
@@ -198,17 +221,18 @@
 {#if discoveryError}<p class="notice error" role="alert">{t($locale, 'remote.discovery_failed')}: {discoveryError}</p>{/if}
 {#if discoveryNotice}<p role="status">{discoveryNotice}</p>{/if}
 <div class="catalog-actions">
-    <button type="button" class:primary={!catalogDirty} disabled={busy} onclick={() => creation.open()}>{t($locale, 'remote.add_endpoint_model')}</button>
+    <button type="button" class:primary={!catalogDirty} disabled={busy} onclick={() => creation?.open()}>{t($locale, 'remote.add_endpoint_model')}</button>
     {#if catalogDirty}
-        <button type="button" disabled={busy} onclick={discardCatalog}>{t($locale, 'models.discard')}</button>
+        <button type="button" class="danger" disabled={busy} onclick={confirmDiscardCatalog}>{t($locale, 'models.discard')}</button>
         <button type="button" class="primary" disabled={busy || !!catalogError} onclick={saveCatalog}>{t($locale, busy ? 'models.saving' : 'models.save')}</button>
     {/if}
 </div>
-{#if !draftCatalog.length}<p class="empty-catalog">{t($locale, 'remote.empty_catalog')}</p>{/if}
+{#if !draftCatalog.length && !profiles.some(profile => profile.connectionId)}<p class="empty-catalog">{t($locale, 'remote.empty_catalog')}</p>{/if}
 {#if draftCatalog.length}<p class="routing-policy">{t($locale, 'remote.routing_policy')}</p>{/if}
 {#if catalogDirty}<p class="muted" role="status">{t($locale, 'remote.unsaved_changes')}</p>{/if}
 <div class="groups">
     {#each groups as group (group.endpoint.id)}
+        {@const credentialsBlocked = catalogDirty || !savedCatalog.some(model => model.endpoint.id === group.endpoint.id)}
         <details class="endpoint-card"><summary class="endpoint-summary"><strong>{group.endpoint.name || group.endpoint.baseURL}</strong><span class="muted">{group.models.length} · {protocolTitle(group.endpoint.wireProtocol)}</span></summary>
             <header class="row between endpoint-head">
                 <div class="identity"><h2>{group.endpoint.name || group.endpoint.baseURL}</h2><p class="muted endpoint" title={group.endpoint.baseURL}>{group.endpoint.baseURL}</p><p class="muted">{protocolTitle(group.endpoint.wireProtocol || 'chat_completions')}</p></div>
@@ -222,20 +246,23 @@
                         <button aria-label={t($locale, 'remote.move_down')} title={t($locale, 'remote.move_down')} disabled={busy || position >= editableGroups.length - 1} onclick={() => mutateCatalog('move_endpoint', group.endpoint.id, group.endpoint.name, 1)}>↓</button>
                         <button class="danger" disabled={busy} onclick={() => mutateCatalog('delete_endpoint', group.endpoint.id, group.endpoint.name)}>{t($locale, 'remote.delete_endpoint')}</button>
                     {/if}
-                    <button disabled={busy || catalogDirty || !savedCatalog.some(model => model.endpoint.id === group.endpoint.id)} onclick={() => credentialEditor.open(group.endpoint.id, group.endpoint.name || '')}>{t($locale, 'remote.credentials')}</button>
+                    <button disabled={busy || credentialsBlocked} title={credentialsBlocked ? t($locale, 'remote.credentials_save_first') : undefined} onclick={() => credentialEditor.open(group.endpoint.id, group.endpoint.name || '')}>{t($locale, 'remote.credentials')}</button>
                     <button disabled={busy || !group.endpoint.id} onclick={() => editEndpoint(group.endpoint.id)}>{t($locale, 'remote.edit_endpoint')}</button>
                 </div>
                 <details class="compact-actions" use:dismissibleDisclosure><summary>{t($locale, 'remote.more_actions')}</summary><div class="compact-menu" popover="manual" use:anchoredPopover>
-                    <button disabled={busy || !group.endpoint.id} onclick={() => editEndpoint(group.endpoint.id)}>{t($locale, 'remote.edit_endpoint')}</button>
-                    <button disabled={busy || catalogDirty || !savedCatalog.some(model => model.endpoint.id === group.endpoint.id)} onclick={() => credentialEditor.open(group.endpoint.id, group.endpoint.name || '')}>{t($locale, 'remote.credentials')}</button>
+                    <button disabled={busy || !group.endpoint.id} onclick={event => { closeMenu(event.currentTarget); editEndpoint(group.endpoint.id); }}>{t($locale, 'remote.edit_endpoint')}</button>
+                    <button disabled={busy || credentialsBlocked} title={credentialsBlocked ? t($locale, 'remote.credentials_save_first') : undefined} onclick={event => { closeMenu(event.currentTarget); credentialEditor.open(group.endpoint.id, group.endpoint.name || ''); }}>{t($locale, 'remote.credentials')}</button>
                     {#if group.models.some(model => model.provider === 'openai-compatible')}
                         {@const position = editableGroups.findIndex(item => item.endpoint.id === group.endpoint.id)}
-                        <button disabled={busy || position <= 0} onclick={() => mutateCatalog('move_endpoint', group.endpoint.id, group.endpoint.name, -1)}>{t($locale, 'remote.move_up')}</button>
-                        <button disabled={busy || position >= editableGroups.length - 1} onclick={() => mutateCatalog('move_endpoint', group.endpoint.id, group.endpoint.name, 1)}>{t($locale, 'remote.move_down')}</button>
-                        <button class="danger" disabled={busy} onclick={() => mutateCatalog('delete_endpoint', group.endpoint.id, group.endpoint.name)}>{t($locale, 'remote.delete_endpoint')}</button>
+                        <button disabled={busy || position <= 0} onclick={event => { closeMenu(event.currentTarget); void mutateCatalog('move_endpoint', group.endpoint.id, group.endpoint.name, -1); }}>{t($locale, 'remote.move_up')}</button>
+                        <button disabled={busy || position >= editableGroups.length - 1} onclick={event => { closeMenu(event.currentTarget); void mutateCatalog('move_endpoint', group.endpoint.id, group.endpoint.name, 1); }}>{t($locale, 'remote.move_down')}</button>
+                        <button class="danger" disabled={busy} onclick={event => { closeMenu(event.currentTarget); void mutateCatalog('delete_endpoint', group.endpoint.id, group.endpoint.name); }}>{t($locale, 'remote.delete_endpoint')}</button>
                     {/if}
                 </div></details>
             </header>
+            {#if catalogDirty || !savedCatalog.some(model => model.endpoint.id === group.endpoint.id)}
+                <p class="muted credentials-hint">{t($locale, 'remote.credentials_save_first')}</p>
+            {/if}
             <div class="model-toolbar row between"><h3>{t($locale, 'remote.models')} <span class="muted">{group.models.length}</span></h3>
                 {#if group.models.some(model => model.provider === 'openai-compatible')}
                     {@const discovered = discoveredModelsForEndpoint(discoveredModels[group.endpoint.id], group.endpoint)
@@ -243,11 +270,11 @@
                     <div class="actions">
                     {#if endpointDiscoveryMatchesSaved(savedCatalog, draftCatalog, group.endpoint.id) && discovered.length}
                         <details class="discovered" use:dismissibleDisclosure><summary>{t($locale, 'remote.add_discovered')} ({discovered.length})</summary>
-                            <div class="discovered-list" popover="manual" use:anchoredPopover>{#each discovered as name (name)}<button type="button" disabled={busy} onclick={() => creation.open(group.endpoint, name)}>{name}</button>{/each}</div>
+                            <div class="discovered-list" popover="manual" use:anchoredPopover>{#each discovered as name (name)}<button type="button" disabled={busy} onclick={event => { closeMenu(event.currentTarget); creation?.open(group.endpoint, name); }}>{name}</button>{/each}</div>
                         </details>
                     {/if}
                     <button disabled={busy || !!discoveringEndpoint || !endpointDiscoveryMatchesSaved(savedCatalog, draftCatalog, group.endpoint.id)} onclick={() => discover(group)}>{discoveringEndpoint === group.endpoint.id ? t($locale, 'remote.discovering') : t($locale, 'remote.discover')}</button>
-                    <button disabled={busy} onclick={() => creation.open(group.endpoint)}>{t($locale, 'remote.add_model')}</button>
+                    <button disabled={busy} onclick={() => creation?.open(group.endpoint)}>{t($locale, 'remote.add_model')}</button>
                 </div>{/if}
             </div>
             {#each group.models as model (model.id)}
@@ -261,13 +288,13 @@
                             <button class="danger" disabled={busy || members.length <= 1} onclick={() => mutateCatalog('delete_model', model.id, model.displayName || model.modelName)}>{t($locale, 'remote.delete_model')}</button>
                         {/if}
                     </div><details class="compact-actions" use:dismissibleDisclosure><summary>{t($locale, 'remote.more_actions')}</summary><div class="compact-menu" popover="manual" use:anchoredPopover>
-                        <button onclick={() => edit(model)} disabled={busy}>{t($locale, 'models.configure')}…</button>
+                        <button onclick={event => { closeMenu(event.currentTarget); void edit(model); }} disabled={busy}>{t($locale, 'models.configure')}…</button>
                         {#if model.provider === 'openai-compatible'}
                             {@const members = group.models.filter(value => value.provider === 'openai-compatible')}
                             {@const position = members.findIndex(value => value.id === model.id)}
-                            <button disabled={busy || position <= 0} onclick={() => mutateCatalog('move_model', model.id, model.displayName || model.modelName, -1)}>{t($locale, 'remote.move_up')}</button>
-                            <button disabled={busy || position >= members.length - 1} onclick={() => mutateCatalog('move_model', model.id, model.displayName || model.modelName, 1)}>{t($locale, 'remote.move_down')}</button>
-                            <button class="danger" disabled={busy || members.length <= 1} onclick={() => mutateCatalog('delete_model', model.id, model.displayName || model.modelName)}>{t($locale, 'remote.delete_model')}</button>
+                            <button disabled={busy || position <= 0} onclick={event => { closeMenu(event.currentTarget); void mutateCatalog('move_model', model.id, model.displayName || model.modelName, -1); }}>{t($locale, 'remote.move_up')}</button>
+                            <button disabled={busy || position >= members.length - 1} onclick={event => { closeMenu(event.currentTarget); void mutateCatalog('move_model', model.id, model.displayName || model.modelName, 1); }}>{t($locale, 'remote.move_down')}</button>
+                            <button class="danger" disabled={busy || members.length <= 1} onclick={event => { closeMenu(event.currentTarget); void mutateCatalog('delete_model', model.id, model.displayName || model.modelName); }}>{t($locale, 'remote.delete_model')}</button>
                         {/if}
                     </div></details></div>
                     {#if model.provider === 'openai-compatible'}<label class="inline-toggle"><input type="checkbox" role="switch" checked={model.enabled} disabled={busy} aria-label={`${t($locale, 'remote.enable_model')}: ${model.displayName || model.modelName}`} onchange={event => setModelEnabled(model, event.currentTarget.checked)} />{t($locale, 'remote.enable_model')}</label>{/if}
@@ -286,7 +313,7 @@
         </details>
     {/each}
 </div>
-<dialog use:ownDialog bind:this={dialog} oncancel={close} aria-label={t($locale, 'remote.configure_title', { name: editing?.displayName || editing?.modelName || '' })}>
+<dialog use:ownDialog bind:this={dialog} oncancel={close} onclick={event => { if (event.target === dialog && !busy) void close(); }} aria-label={t($locale, 'remote.configure_title', { name: editing?.displayName || editing?.modelName || '' })}>
     {#if editing}<form onsubmit={save} aria-busy={busy}>
         <div><h2>{editing.displayName || editing.modelName}</h2><p class="muted">{t($locale, 'remote.defaults_hint')}</p></div>
         {#if error}<div role="alert" class="error"><p>{error}</p><button type="button" disabled={busy} onclick={() => close(undefined, true)}>{t($locale, 'remote.discard_refresh')}</button></div>{/if}
@@ -294,7 +321,6 @@
             <legend>{t($locale, 'remote.model')}</legend>
             <div class="fields">
                 <label>{t($locale, 'remote.display_name')}<input bind:value={metadata.displayName} maxlength="512" required /></label>
-                <label>{t($locale, 'remote.priority')}<input type="number" bind:value={metadata.priority} min="0" max="100" step="1" required /></label>
             </div>
             <div class="efforts"><label><input type="checkbox" role="switch" bind:checked={metadata.enabled} />{t($locale, 'remote.enable_model')}</label></div>
             <p class="muted">{t($locale, 'remote.capabilities_hint')}</p>
@@ -303,19 +329,10 @@
             <div class="efforts execution-capabilities">
                 <label><input type="checkbox" bind:checked={metadata.executionCapabilities.toolCalls} />{t($locale, 'remote.execution.tool_calls')}</label>
                 <label><input type="checkbox" bind:checked={metadata.executionCapabilities.imageInput} />{t($locale, 'remote.execution.image_input')}</label>
-                <label><input type="checkbox" bind:checked={metadata.executionCapabilities.reasoning} />{t($locale, 'remote.execution.reasoning')}</label>
-                <label><input type="checkbox" bind:checked={metadata.executionCapabilities.samplingParameters} />{t($locale, 'remote.execution.sampling')}</label>
-                <label><input type="checkbox" bind:checked={metadata.executionCapabilities.samplingRequiresNoReasoning} disabled={!metadata.executionCapabilities.samplingParameters} />{t($locale, 'remote.execution.sampling_none_only')}</label>
+                <label><input type="checkbox" bind:checked={metadata.executionCapabilities.reasoning} onchange={() => { if (!metadata.executionCapabilities.reasoning) metadata.executionCapabilities.samplingRequiresNoReasoning = false; }} />{t($locale, 'remote.execution.reasoning')}</label>
+                <label><input type="checkbox" bind:checked={metadata.executionCapabilities.samplingParameters} onchange={() => { if (!metadata.executionCapabilities.samplingParameters) metadata.executionCapabilities.samplingRequiresNoReasoning = false; }} />{t($locale, 'remote.execution.sampling')}</label>
+                <label><input type="checkbox" bind:checked={metadata.executionCapabilities.samplingRequiresNoReasoning} disabled={!metadata.executionCapabilities.samplingParameters || !metadata.executionCapabilities.reasoning} />{t($locale, 'remote.execution.sampling_none_only')}</label>
             </div>
-            {#if editing.endpoint.wireProtocol === 'chat_completions'}
-                <label>{t($locale, 'remote.execution.output_field')}
-                    <select bind:value={metadata.executionCapabilities.chatOutputTokenField}>
-                        <option value="auto">{t($locale, 'remote.execution.output_auto')}</option>
-                        <option value="max_tokens">max_tokens</option>
-                        <option value="max_completion_tokens">max_completion_tokens</option>
-                    </select>
-                </label>
-            {/if}
             <p class="muted">{t($locale, 'remote.execution_unchecked_hint')}</p>
             {#if declarationError}
                 <p class="capability-notice" role="alert">{modelValidationText($locale, declarationError)}</p>
@@ -325,10 +342,26 @@
             {/if}
         </fieldset>
         <div class="fields">
-            {#each fields as field}<label>{t($locale, field.label)}<input type="number" value={Number(draft[field.key] ?? 0)} oninput={event => draft[field.key] = event.currentTarget.valueAsNumber} min={field.min} max={field.max} step={field.step === 1 ? 1 : 'any'} disabled={busy} required /></label>{/each}
-            <label>{t($locale, 'remote.seed')}<input type="number" value={draft.seed == null ? '' : Number(draft.seed)} oninput={event => draft.seed = event.currentTarget.value === '' ? null : event.currentTarget.valueAsNumber} step="1" disabled={busy} /></label>
-            <label>{t($locale, 'remote.stop_sequences')}<textarea value={String(draft.stopSequences || '')} oninput={event => draft.stopSequences = event.currentTarget.value} disabled={busy}></textarea></label>
+            {#each primaryFields as field}<label>{t($locale, field.label)}<input type="number" value={Number(draft[field.key] ?? 0)} oninput={event => draft[field.key] = event.currentTarget.valueAsNumber} min={field.min} max={field.max} step={field.step === 1 ? 1 : 'any'} disabled={busy} required /></label>{/each}
         </div>
+        <details class="disclosure">
+            <summary>{t($locale, 'remote.advanced')}</summary>
+            <div class="fields advanced-fields">
+                <label>{t($locale, 'remote.priority')}<input type="number" bind:value={metadata.priority} min="0" max="100" step="1" disabled={busy} required /></label>
+                {#if editing.endpoint.wireProtocol === 'chat_completions'}
+                    <label>{t($locale, 'remote.execution.output_field')}
+                        <select bind:value={metadata.executionCapabilities.chatOutputTokenField} disabled={busy}>
+                            <option value="auto">{t($locale, 'remote.execution.output_auto')}</option>
+                            <option value="max_tokens">max_tokens</option>
+                            <option value="max_completion_tokens">max_completion_tokens</option>
+                        </select>
+                    </label>
+                {/if}
+                {#each penaltyFields as field}<label>{t($locale, field.label)}<input type="number" value={Number(draft[field.key] ?? 0)} oninput={event => draft[field.key] = event.currentTarget.valueAsNumber} min={field.min} max={field.max} step={field.step === 1 ? 1 : 'any'} disabled={busy} required /></label>{/each}
+                <label>{t($locale, 'remote.seed')}<input type="number" value={draft.seed == null ? '' : Number(draft.seed)} oninput={event => draft.seed = event.currentTarget.value === '' ? null : event.currentTarget.valueAsNumber} step="1" disabled={busy} /></label>
+                <label>{t($locale, 'remote.stop_sequences')}<textarea value={String(draft.stopSequences || '')} oninput={event => draft.stopSequences = event.currentTarget.value} disabled={busy}></textarea></label>
+            </div>
+        </details>
         <fieldset disabled={busy}>
             <legend>{t($locale, 'remote.thinking.title')}</legend>
             <p class="muted">{t($locale, 'remote.thinking.hint')}</p>
@@ -371,7 +404,10 @@
     </form>{/if}
 </dialog>
 <style>
-    .endpoint-summary { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+    .endpoint-summary { display: flex; align-items: center; justify-content: space-between; gap: 12px; list-style: none; }
+    .endpoint-summary::-webkit-details-marker { display: none; }
+    .endpoint-summary::after { content: ''; width: 12px; height: 12px; flex: none; background: currentColor; opacity: .65; -webkit-mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2.2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='m6 9 6 6 6-6'/%3E%3C/svg%3E") center / contain no-repeat; mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2.2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='m6 9 6 6 6-6'/%3E%3C/svg%3E") center / contain no-repeat; transition: transform var(--motion-fast) ease; }
+    .endpoint-card[open] > .endpoint-summary::after { transform: rotate(180deg); }
     .endpoint-card[open] > summary { margin-bottom: 16px; }
     .catalog-actions { display:flex;flex-wrap:wrap;gap:8px;justify-content:flex-end;margin:16px 0 }
     .empty-catalog,.routing-policy{padding:12px 0;color:var(--muted);line-height:1.6}
@@ -389,6 +425,8 @@
     .inline-toggle { display:inline-flex;align-items:center;gap:8px;white-space:nowrap;font-size:.9rem }
     .inline-toggle input { width:auto;margin:0 }
     .capability-notice { color:var(--warning, #a66a13);font-size:.9rem }
+    .credentials-hint { margin: 8px 0 12px; font-size: .8125rem; }
+    .advanced-fields { padding-top: 12px; }
     .identity{min-width:0;flex:1 1 190px;overflow-wrap:anywhere}
     .model .actions{flex:0 1 auto}
     .endpoint { overflow-wrap:anywhere }

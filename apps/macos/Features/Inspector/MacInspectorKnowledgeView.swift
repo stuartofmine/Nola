@@ -40,178 +40,141 @@ enum MacInspectorKnowledgePane: String, CaseIterable, Identifiable {
 struct MacInspectorKnowledgeView: View {
     @Bindable var model: MacWorkspaceModel
     @ObservedObject var navigation: MacInspectorNavigationState
+    @State private var showsDiscardConfirmation = false
+    @Environment(\.colorScheme) private var colorScheme
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
-            VStack(alignment: .leading, spacing: 8) {
-                HStack(spacing: 5) {
-                    Label(
-                        String(
-                            format: String(localized: "%lld original messages", table: "Chat"),
-                            Int64(model.selectedMessages.count)
-                        ),
-                        systemImage: "text.bubble"
+            HStack(spacing: 6) {
+                Text(String(localized: "Conversation Knowledge", table: "Chat"))
+                    .font(.system(size: MacDesignTokens.Typography.inspectorBody, weight: .semibold))
+                Spacer()
+                Text(
+                    String(
+                        format: String(localized: "%lld original messages", table: "Chat"),
+                        Int64(model.selectedMessages.count)
                     )
-                    Spacer()
-                    Label(
-                        model.selectedContextArchiveCount.map { count in String(
-                            format: String(localized: "%lld summaries", table: "Chat"),
-                            Int64(count)
-                        ) } ?? (model.selectedContextArchiveCountFailed ? "--" : "..."),
-                        systemImage: "archivebox"
-                    )
-                    .task(id: "\(model.selectedConversationID ?? ""):archive:\(model.isSelectedConversationVisiblyRunning)") {
-                        await model.refreshContextArchiveCount()
-                    }
+                    + " · "
+                    + (model.selectedContextArchiveCount.map { count in
+                        String(format: String(localized: "%lld summaries", table: "Chat"), Int64(count))
+                    } ?? (model.selectedContextArchiveCountFailed ? "--" : "…"))
+                )
+                .font(.system(size: MacDesignTokens.Typography.inspectorCaption, weight: .medium))
+                .foregroundStyle(.secondary)
+                .monospacedDigit()
+                .task(id: "\(model.selectedConversationID ?? ""):archive:\(model.isSelectedConversationVisiblyRunning)") {
+                    await model.refreshContextArchiveCount()
                 }
-                .font(.system(size: MacDesignTokens.Typography.inspectorDetail, weight: .medium))
-                .foregroundStyle(Color.secondary.opacity(0.84))
             }
-            .padding(.horizontal, 10)
-            .padding(.vertical, 8)
-            .background(
-                RoundedRectangle(cornerRadius: 8, style: .continuous)
-                    .fill(MacDesignColor.subtleFill.opacity(0.6))
-                    .overlay {
-                        RoundedRectangle(cornerRadius: 8, style: .continuous)
-                            .strokeBorder(MacDesignColor.borderSubtle, lineWidth: 0.75)
-                    }
+
+            MacSegmentedTabBar(
+                options: MacInspectorKnowledgePane.allCases,
+                selection: $navigation.knowledgePane,
+                title: { $0.compactTitle }
             )
 
-            DisclosureGroup(isExpanded: Binding(
-                get: { navigation.expandedKnowledge.contains(.points) },
-                set: { expanded in
-                    navigation.setKnowledgeExpanded(.points, expanded)
-                }
-            )) {
-                VStack(alignment: .leading, spacing: 8) {
-                    Text(String(localized: "Keep stable facts, decisions, constraints, and open questions for this conversation.", table: "Chat"))
-                        .font(.system(size: MacDesignTokens.Typography.inspectorBody))
-                        .foregroundStyle(.secondary)
-                        .fixedSize(horizontal: false, vertical: true)
-                    MacInspectorDocumentEditor(
-                        text: Binding(
-                            get: { model.selectedKnowledgePointsText },
-                            set: { model.selectedKnowledgePointsText = $0 }
-                        ),
-                        placeholder: String(localized: "Add one knowledge point per line…", table: "Chat"),
-                        minHeight: 230
-                    )
-                    knowledgeSaveStatus
-                }
-            } label: {
-                Label(MacInspectorKnowledgePane.points.title, systemImage: MacInspectorKnowledgePane.points.symbol)
-                    .font(.system(size: 13, weight: .medium))
-            }
-            .id("knowledge-points")
-            DisclosureGroup(isExpanded: Binding(
-                get: { navigation.expandedKnowledge.contains(.wiki) },
-                set: { expanded in
-                    navigation.setKnowledgeExpanded(.wiki, expanded)
-                }
-            )) {
-                VStack(alignment: .leading, spacing: 8) {
-                    Text(String(localized: "Maintain a living Markdown reference that belongs only to this conversation.", table: "Chat"))
-                        .font(.system(size: MacDesignTokens.Typography.inspectorBody))
-                        .foregroundStyle(.secondary)
-                        .fixedSize(horizontal: false, vertical: true)
-                    MacInspectorDocumentEditor(
-                        text: Binding(
-                            get: { model.selectedWikiText },
-                            set: { model.selectedWikiText = $0 }
-                        ),
-                        placeholder: String(localized: "Write the conversation Wiki in Markdown…", table: "Chat"),
-                        minHeight: 300
-                    )
-                    knowledgeSaveStatus
-                }
-            } label: {
-                Label(MacInspectorKnowledgePane.wiki.title, systemImage: MacInspectorKnowledgePane.wiki.symbol)
-                    .font(.system(size: 13, weight: .medium))
-            }
-            .id("knowledge-wiki")
-            DisclosureGroup(isExpanded: Binding(
-                get: { navigation.expandedKnowledge.contains(.recall) },
-                set: { expanded in
-                    navigation.setKnowledgeExpanded(.recall, expanded)
-                }
-            )) {
-                VStack(alignment: .leading, spacing: 8) {
-                    Text(String(localized: "Search original messages. Compaction summaries are not included.", table: "Chat"))
-                        .font(.system(size: MacDesignTokens.Typography.inspectorBody))
-                        .foregroundStyle(.secondary)
-                        .fixedSize(horizontal: false, vertical: true)
-
-                    HStack(spacing: 7) {
-                        Image(systemName: "text.magnifyingglass")
-                            .foregroundStyle(.secondary)
-                        TextField(
-                            String(localized: "Search original conversation", table: "Chat"),
-                            text: $model.conversationRecallQuery
+            Group {
+                switch navigation.knowledgePane {
+                case .points:
+                    VStack(alignment: .leading, spacing: 8) {
+                        MacInspectorDocumentEditor(
+                            text: Binding(
+                                get: { model.selectedKnowledgePointsText },
+                                set: { model.selectedKnowledgePointsText = $0 }
+                            ),
+                            placeholder: String(localized: "Add one knowledge point per line…", table: "Chat"),
+                            minHeight: 150
                         )
-                        .textFieldStyle(.plain)
-                        if !model.conversationRecallQuery.isEmpty {
-                            Button {
-                                model.conversationRecallQuery = ""
-                            } label: {
-                                Image(systemName: "xmark.circle.fill")
-                                    .foregroundStyle(.tertiary)
-                                    .frame(width: 28, height: 28)
-                                    .contentShape(Rectangle())
-                            }
-                            .buttonStyle(MacPressFeedbackButtonStyle(contentInsets: .init()))
-                            .accessibilityLabel(String(localized: "Clear"))
-                            .help(String(localized: "Clear"))
-                            .accessibilityIdentifier("inspector-recall-clear")
-                        }
+                        knowledgeSaveStatus
                     }
-                    .padding(.horizontal, 10)
-                    .frame(height: 34)
-                    .background(
-                        MacDesignColor.hover,
-                        in: RoundedRectangle(cornerRadius: 8, style: .continuous)
-                    )
-
-                    if !model.conversationRecallQuery.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-                        if model.isConversationRecallSearching {
-                            ProgressView()
-                                .controlSize(.small)
-                                .frame(maxWidth: .infinity, minHeight: 160)
-                                .accessibilityLabel(String(localized: "Search"))
-                        } else if model.conversationRecallFailed {
-                            VStack(spacing: 12) {
-                                Text(String(localized: "Conversation search failed. Please try again.", table: "Chat"))
-                                    .foregroundStyle(.secondary)
-                                    .multilineTextAlignment(.center)
-                                Button(String(localized: "Retry search", table: "Chat")) {
-                                    model.retryConversationRecallSearch()
-                                }
-                            }
-                            .frame(maxWidth: .infinity, minHeight: 160)
-                            .accessibilityIdentifier("conversation-recall-error")
-                        } else if model.conversationRecallResults.isEmpty {
-                            ContentUnavailableView(
-                                String(localized: "No matching conversation memory", table: "Chat"),
-                                systemImage: "text.magnifyingglass"
+                    .id("knowledge-points")
+                case .wiki:
+                    VStack(alignment: .leading, spacing: 8) {
+                        MacInspectorDocumentEditor(
+                            text: Binding(
+                                get: { model.selectedWikiText },
+                                set: { model.selectedWikiText = $0 }
+                            ),
+                            placeholder: String(localized: "Write the conversation Wiki in Markdown…", table: "Chat"),
+                            minHeight: 180
+                        )
+                        knowledgeSaveStatus
+                    }
+                    .id("knowledge-wiki")
+                case .recall:
+                    VStack(alignment: .leading, spacing: 8) {
+                        HStack(spacing: 7) {
+                            Image(systemName: "text.magnifyingglass")
+                                .font(.system(size: 12))
+                                .foregroundStyle(.secondary)
+                            TextField(
+                                String(localized: "Search original conversation", table: "Chat"),
+                                text: $model.conversationRecallQuery
                             )
-                            .frame(maxWidth: .infinity, minHeight: 160)
-                        } else {
-                            LazyVStack(spacing: 7) {
-                                ForEach(model.conversationRecallResults) { result in
-                                    MacConversationRecallRow(result: result)
+                            .textFieldStyle(.plain)
+                            if !model.conversationRecallQuery.isEmpty {
+                                Button {
+                                    model.conversationRecallQuery = ""
+                                } label: {
+                                    Image(systemName: "xmark.circle.fill")
+                                        .foregroundStyle(.tertiary)
+                                        .frame(width: 24, height: 24)
+                                        .contentShape(Rectangle())
+                                }
+                                .buttonStyle(MacPressFeedbackButtonStyle(contentInsets: .init()))
+                                .accessibilityLabel(String(localized: "Clear"))
+                                .help(String(localized: "Clear"))
+                                .accessibilityIdentifier("inspector-recall-clear")
+                            }
+                        }
+                        .padding(.horizontal, 10)
+                        .frame(height: 32)
+                        .background(
+                            colorScheme == .dark ? Color.white.opacity(0.045) : MacDesignColor.hover,
+                            in: RoundedRectangle(cornerRadius: 8, style: .continuous)
+                        )
+                        .overlay {
+                            RoundedRectangle(cornerRadius: 8, style: .continuous)
+                                .strokeBorder(colorScheme == .dark ? Color.white.opacity(0.09) : MacDesignColor.borderSubtle, lineWidth: 0.75)
+                        }
+
+                        if !model.conversationRecallQuery.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                            if model.isConversationRecallSearching {
+                                ProgressView()
+                                    .controlSize(.small)
+                                    .frame(maxWidth: .infinity, minHeight: 100)
+                                    .accessibilityLabel(String(localized: "Search"))
+                            } else if model.conversationRecallFailed {
+                                VStack(spacing: 10) {
+                                    Text(String(localized: "Conversation search failed. Please try again.", table: "Chat"))
+                                        .foregroundStyle(.secondary)
+                                        .multilineTextAlignment(.center)
+                                    Button(String(localized: "Retry search", table: "Chat")) {
+                                        model.retryConversationRecallSearch()
+                                    }
+                                }
+                                .frame(maxWidth: .infinity, minHeight: 100)
+                                .accessibilityIdentifier("conversation-recall-error")
+                            } else if model.conversationRecallResults.isEmpty {
+                                ContentUnavailableView(
+                                    String(localized: "No matching conversation memory", table: "Chat"),
+                                    systemImage: "text.magnifyingglass"
+                                )
+                                .frame(maxWidth: .infinity, minHeight: 100)
+                            } else {
+                                LazyVStack(spacing: 7) {
+                                    ForEach(model.conversationRecallResults) { result in
+                                        MacConversationRecallRow(result: result)
+                                    }
                                 }
                             }
                         }
                     }
+                    .id("knowledge-recall")
                 }
-            } label: {
-                Label(MacInspectorKnowledgePane.recall.title, systemImage: MacInspectorKnowledgePane.recall.symbol)
-                    .font(.system(size: 13, weight: .medium))
             }
-            .id("knowledge-recall")
         }
-        .disclosureGroupStyle(MacRowDisclosureStyle())
     }
 
     @ViewBuilder
@@ -245,7 +208,7 @@ struct MacInspectorKnowledgeView: View {
                     }
                     .buttonStyle(MacActionButtonStyle())
                     Button(String(localized: "Discard Unsaved Edits", table: "Chat"), role: .destructive) {
-                        model.discardSelectedKnowledgeEdits()
+                        showsDiscardConfirmation = true
                     }
                     .buttonStyle(.bordered)
                 }
@@ -255,5 +218,15 @@ struct MacInspectorKnowledgeView: View {
         .foregroundStyle(.secondary)
         .frame(minHeight: 16, alignment: .leading)
         .animation(reduceMotion ? nil : .smooth(duration: 0.18), value: model.selectedKnowledgeIsSaving)
+        .confirmationDialog(
+            String(localized: "Discard unsaved changes?"),
+            isPresented: $showsDiscardConfirmation,
+            titleVisibility: .visible
+        ) {
+            Button(String(localized: "Discard Unsaved Edits", table: "Chat"), role: .destructive) {
+                model.discardSelectedKnowledgeEdits()
+            }
+            Button(String(localized: "Keep Editing"), role: .cancel) {}
+        }
     }
 }

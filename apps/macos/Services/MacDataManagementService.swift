@@ -529,12 +529,12 @@ final class MacDataManagementService {
             try await canonicalRepository.restoreCanonicalBackupSnapshotAsync(
                 backup.conversations
             )
-            activityStore.restore(backup.activity)
-            automationStore.replaceAll(backup.automations)
+            try activityStore.restoreThrowing(backup.activity)
+            try automationStore.replaceAllThrowing(backup.automations)
             restoreSettings(backup.settings)
             try restoreProductSettings(backup.productSettings)
             try MacPromptLibrary.service.reloadFromPersistence()
-            MacWebSourceStore.shared.replaceAll(backup.webSources)
+            try MacWebSourceStore.shared.replaceAllThrowing(backup.webSources)
             await MacNotificationHistoryRepository.shared.replaceAll(backup.notifications)
             NotificationCenter.default.post(name: .nolaMacPersistentDataDidChange, object: nil)
             NotificationCenter.default.post(name: .nolaMacConfigurationDidChange, object: nil)
@@ -542,6 +542,9 @@ final class MacDataManagementService {
             await refresh()
         } catch {
             errorMessage = error.localizedDescription
+            NotificationCenter.default.post(name: .nolaMacPersistentDataDidChange, object: nil)
+            NotificationCenter.default.post(name: .nolaMacConfigurationDidChange, object: nil)
+            await refresh()
         }
     }
 
@@ -552,49 +555,39 @@ final class MacDataManagementService {
         errorMessage = nil
         defer { isWorking = false }
 
+        var clearedSuccessfully = false
         do {
             try canonicalRepository.clear()
             try MacPromptLibrary.service.replaceCustomTemplates([])
             try MacPromptLibrary.setDefaultTemplateID(nil)
-        } catch {
-            errorMessage = error.localizedDescription
-            return
-        }
-        activityStore.clear()
-        automationStore.replaceAll([])
-        MacWebSourceStore.shared.replaceAll([])
-        await MacNotificationHistoryRepository.shared.clear()
-        let notificationCenter = UNUserNotificationCenter.current()
-        notificationCenter.removeAllDeliveredNotifications()
-        notificationCenter.removeAllPendingNotificationRequests()
-        do {
+            activityStore.clear()
+            try automationStore.replaceAllThrowing([])
+            try MacWebSourceStore.shared.replaceAllThrowing([])
+            await MacNotificationHistoryRepository.shared.clear()
+            let notificationCenter = UNUserNotificationCenter.current()
+            notificationCenter.removeAllDeliveredNotifications()
+            notificationCenter.removeAllPendingNotificationRequests()
+            try await MacModelConnectionService(application: applicationPort).clearAllConnectionsAndAccounts()
             try MacAppleChatConfigurationStore.shared.save(baseURL: "", apiKey: "", model: "")
-        } catch {
-            errorMessage = error.localizedDescription
-            return
-        }
-        do {
             try MacRemoteHostConfigurationStore.shared.save(url: "", token: "")
+            for key in MacProductSettingKeys.backedUpKeys {
+                try applicationPort.deleteProductSetting(key: key)
+            }
+            for (key, _) in exportedSettings {
+                UserDefaults.standard.removeObject(forKey: key)
+            }
+            MacDebugLoggingConfiguration.reset()
+            MacSecurityScopedBookmarkStore.shared.clearAllWorkspaces()
+            await LogFileStore.shared.clear()
+            clearedSuccessfully = true
         } catch {
             errorMessage = error.localizedDescription
-            return
         }
-        for key in MacProductSettingKeys.backedUpKeys {
-            do {
-                try applicationPort.deleteProductSetting(key: key)
-            } catch {
-                errorMessage = error.localizedDescription
-                return
-            }
-        }
-        for (key, _) in exportedSettings {
-            UserDefaults.standard.removeObject(forKey: key)
-        }
-        MacDebugLoggingConfiguration.reset()
-        MacSecurityScopedBookmarkStore.shared.clearWorkspace()
         NotificationCenter.default.post(name: .nolaMacPersistentDataDidChange, object: nil)
-        statusMessage = NSLocalizedString("mac.data.status.cleared", value: "Application data cleared", comment: "Application data cleared status")
-        await LogFileStore.shared.clear()
+        NotificationCenter.default.post(name: .nolaMacConfigurationDidChange, object: nil)
+        if clearedSuccessfully {
+            statusMessage = NSLocalizedString("mac.data.status.cleared", value: "Application data cleared", comment: "Application data cleared status")
+        }
         await refresh()
     }
 
@@ -651,29 +644,23 @@ final class MacDataManagementService {
     }
 
     private func calculateDataSize() async -> Int64 {
-        let roots = [
-            fileManager.urls(for: .applicationSupportDirectory, in: .userDomainMask).first,
-            fileManager.urls(for: .cachesDirectory, in: .userDomainMask).first,
-        ].compactMap { $0 }
-        let logURL = LogFileStore.shared.logFileURL()
+        let environment = MacAppEnvironment.shared
+        let paths = Set([environment.supportRoot.standardizedFileURL, environment.cacheRoot.standardizedFileURL])
+        let roots = paths.filter { candidate in
+            !paths.contains { $0 != candidate && candidate.pathComponents.starts(with: $0.pathComponents) }
+        }
         return await Task.detached {
             var total: Int64 = 0
             for root in roots {
-                let candidates = [root.appendingPathComponent("Nola", isDirectory: true)]
-                for candidate in candidates {
-                    guard let enumerator = FileManager.default.enumerator(
-                        at: candidate,
-                        includingPropertiesForKeys: [.fileSizeKey, .isRegularFileKey],
-                        options: [.skipsHiddenFiles]
-                    ) else { continue }
-                    while let url = enumerator.nextObject() as? URL {
-                        let values = try? url.resourceValues(forKeys: [.fileSizeKey, .isRegularFileKey])
-                        if values?.isRegularFile == true { total += Int64(values?.fileSize ?? 0) }
-                    }
+                guard let enumerator = FileManager.default.enumerator(
+                    at: root,
+                    includingPropertiesForKeys: [.fileSizeKey, .isRegularFileKey],
+                    options: [.skipsHiddenFiles]
+                ) else { continue }
+                while let url = enumerator.nextObject() as? URL {
+                    let values = try? url.resourceValues(forKeys: [.fileSizeKey, .isRegularFileKey])
+                    if values?.isRegularFile == true { total += Int64(values?.fileSize ?? 0) }
                 }
-            }
-            if let values = try? logURL.resourceValues(forKeys: [.fileSizeKey]) {
-                total += Int64(values.fileSize ?? 0)
             }
             return total
         }.value

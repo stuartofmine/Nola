@@ -1,3 +1,5 @@
+import type {ExpertMentionSegments} from './inlineExpertMentions.ts';
+import type {MainExpertSelection} from './mainExpertSelection.ts';
 import { uiSurfaceReference, validateUiActionPart } from './generativeUi.ts';
 /** UI-neutral adapter for verified journal parts and canonical history.
  * Sources: cli/src/agent_parts/emitter.rs, core/nola-domain/src/projection.rs,
@@ -46,7 +48,8 @@ export interface ChatTimeline {
 }
 export interface TimelineRequest { owner: TimelineOwner; version: number; window: TimelineWindow | null }
 export type TimelineAction =
-    | { type: 'beginSubmission'; owner: TimelineOwner; submissionId: string; userMessageId?: string; userText?: string }
+    | { type: 'beginSubmission'; owner: TimelineOwner; submissionId: string; userMessageId?: string; userText?: string; expertMentions?:ExpertMentionSegments & {selected_experts:MainExpertSelection[]} }
+    | { type: 'admittedEdit'; owner: TimelineOwner; submissionId:string; editedId:string; replacementId:string }
     | { type: 'terminal'; owner: TimelineOwner; evidence: VerifiedTerminal }
     | { type: 'terminal_witness'; request: TimelineRequest; sourceHostId:string; evidence:VerifiedTerminal; payload:unknown }
     | { type: 'admissions'; owner: TimelineOwner; messages: readonly AdmittedMessage[] }
@@ -218,10 +221,16 @@ function admittedMessages(existing: TimelineMessage[], declarations: readonly Ad
         if (old && old.role !== input.role) throw new Error('Admission role mismatch');
         if (input.role === 'assistant') return old ?? { id: input.id, role: 'assistant', state: 'running', canonical: null, parts: [] };
         const textParts = input.initial_parts.filter(part => part.kind === 'text');
-        const retained = old?.parts.length === textParts.length && old.parts.every((part,index) =>
-            part.source === 'canonical' && part.id === textParts[index].id && part.value.kind === 'text'
-            && part.value.markdown === (textParts[index].content_text ?? '')
-            && (part.value.review == null || part.value.review === 'approved'));
+        const retained = old?.parts.length === textParts.length && old.parts.every((part,index) => {
+            const admitted=textParts[index];
+            if(part.source!=='canonical'||part.id!==admitted.id)return false;
+            const text=admitted.content_text??'',value=part.value;
+            if(value.kind==='text')return value.markdown===text && (value.review==null||value.review==='approved');
+            if(value.kind!=='historical'||!object(value.projection)||value.projection.canonical_kind!=='text')return false;
+            const preview=value.projection.canonical_text,owner=value.projection.owner;
+            return object(owner)&&owner.message_id===input.id&&owner.part_id===part.id
+                && object(preview)&&preview.text===text&&preview.total_utf8_bytes===new TextEncoder().encode(text).length;
+        });
         return { id: input.id, role: 'user', state: 'completed', canonical: old?.canonical ?? null, canonicalSnapshot:old?.canonicalSnapshot??null,
             parts: retained ? old!.parts : textParts.map(part => ({ source: 'canonical', id: part.id,
                 value: { kind: 'text', part_id: part.id, revision: 0, markdown: part.content_text ?? '' } })) };
@@ -235,6 +244,16 @@ export function reduceChatTimeline(state: ChatTimeline, action: TimelineAction):
     const owner = action.type === 'history' || action.type === 'terminal_witness' ? action.request.owner : action.owner;
     if (!sameTimelineOwner(state.owner, owner)) return { state, ignored: 'owner' };
     try {
+        if(action.type==='admittedEdit'){
+            if(state.activeSubmissionId!==action.submissionId)return {state,ignored:'submission'};
+            const first=state.messages.findIndex(m=>m.id===action.editedId&&m.role==='user');
+            const replacement=state.messages.findIndex(m=>m.id===action.replacementId&&m.role==='user');
+            if(first<0 || replacement<=first)return {state,ignored:'stale_event'};
+            const removed=new Set(state.messages.slice(first,replacement).map(m=>m.id));
+            const messages=state.messages.filter(m=>!removed.has(m.id));
+            const projection=state.projection&&{...state.projection,messages:state.projection.messages.filter(m=>!removed.has(m.message_id))};
+            return {state:{...state,messages,projection,version:state.version+1}};
+        }
         if (action.type === 'admissions') return { state: { ...state, version: state.version + 1, messages: admittedMessages(state.messages, action.messages) } };
         if (action.type === 'terminal') {
             const evidence = action.evidence;
@@ -286,19 +305,27 @@ export function reduceChatTimeline(state: ChatTimeline, action: TimelineAction):
                 const declaration=declared.get(message.id),canonical=incoming.get(message.id);
                 if(!declaration||!canonical||message.canonical&&message.canonicalSnapshot)return message;
                 if(message.role!=='user'||message.state!=='completed'||canonical.role!=='user'||canonical.state!=='completed'
-                    ||canonical.revision<1||projection.revision<1||message.canonical&&canonical.revision<message.canonical.revision)
+                    ||projection.revision<1||message.canonical&&canonical.revision<message.canonical.revision)
                     throw new Error('Terminal user witness identity/revision mismatch');
                 const part=canonical.parts.length===1?canonical.parts[0]:null;
                 const previousPart=part&&message.canonical?.parts.find(value=>value.part_id===part.part_id);
                 if(part&&previousPart&&part.revision<previousPart.revision)throw new Error('Terminal user Part revision regressed');
                 const admitted=declaration.initial_parts.length===1?declaration.initial_parts[0]:null;
-                if(!part||part.kind!=='text'||part.is_final!==true||typeof part.markdown!=='string'
-                    ||part.review!=null&&part.review!=='approved'||part.revision<1||displayTextAttachmentMessage(part.markdown)!==null
-                    ||!admitted||admitted.kind!=='text'||admitted.id!==part.part_id||admitted.content_text!==part.markdown
-                    ||message.parts.length!==1||message.parts[0].value.kind!=='text'||message.parts[0].id!==part.part_id
-                    ||timelineMessageText(message)!==part.markdown)throw new Error('Terminal user witness body mismatch');
+                const canonicalPart=part?{source:'canonical' as const,id:part.part_id,value:part}:null;
+                const visible=canonicalPart?timelinePartText(canonicalPart):null;
+                const historical=part?.kind==='historical'&&object(part.projection)?part.projection:null;
+                const complete=part?.kind==='text'?part.is_final===true&&typeof part.markdown==='string'&&(part.review==null||part.review==='approved')
+                    :historical?.canonical_kind==='text'&&object(historical.owner)&&historical.owner.message_id===message.id
+                        &&historical.owner.part_id===part?.part_id&&historical.owner.conversation_id===owner.conversationId
+                        &&object(historical.canonical_text)&&typeof visible==='string'&&historical.canonical_text.text===visible
+                        &&historical.canonical_text.total_utf8_bytes===new TextEncoder().encode(visible).length;
+                if(!part||!canonicalPart||!complete||typeof visible!=='string'||displayTextAttachmentMessage(visible)!==null
+                    ||!admitted||admitted.kind!=='text'||admitted.id!==part.part_id||admitted.content_text!==visible
+                    ||message.parts.length!==1||message.parts[0].id!==part.part_id
+                    ||timelineMessageText(message)!==visible)throw new Error('Terminal user witness body mismatch');
                 changed=true;
-                return {...message,canonical,canonicalSnapshot:snapshot};
+                return {...message,canonical,canonicalSnapshot:snapshot,...(historical?{parts:[canonicalPart]}:{})};
+
             });
             // This is not a history replacement. Keep the exact loaded range,
             // pagination snapshot, visible Parts, journal and terminal authority.
@@ -352,7 +379,7 @@ export function reduceChatTimeline(state: ChatTimeline, action: TimelineAction):
                 // Optimistic display of the user's exact input, never persistence evidence.
                 const partId = `${action.userMessageId}:local-text`;
                 messages.push({ id: action.userMessageId, role: 'user', state: 'pending', canonical: null, parts: [{ source: 'optimistic', id: partId,
-                    value: { kind: 'text', markdown: action.userText } }] });
+                    value: { kind: 'text', markdown: action.userText, ...(action.expertMentions?{expert_mentions:action.expertMentions}:{}) } }] });
             }
             return { state: { ...state, messages, version: state.version + 1, activeSubmissionId: action.submissionId, durable: false } };
         }

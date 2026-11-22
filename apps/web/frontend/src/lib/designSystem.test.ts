@@ -66,7 +66,7 @@ test('phone navigation has its own list and desktop retains one focus-managed wo
     assert.doesNotMatch(app, /<ChatResponsivePanel/);
     assert.match(app, /path === '\/conversations'/);
     assert.match(app, /initialWorkspaceLocation/);
-    assert.match(chat, /ChatResponsivePanel bind:this=\{navigationPanel\} breakpoint=\{700\}/);
-    assert.match(chat, /@media \(max-width: 700px\)/);
+    assert.match(chat, /ChatResponsivePanel bind:this=\{navigationPanel\} breakpoint=\{760\}/);
+    assert.match(chat, /@media \(max-width: 760px\)/);
     assert.match(responsivePanel, /opener\?\.isConnected[^\n]*opener\.focus\(\)/);
 });

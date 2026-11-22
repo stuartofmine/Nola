@@ -8,7 +8,7 @@
     import { locale, t } from '../lib/i18n';
     import { api as unscopedApi } from '../lib/api';
     import { activityErrorKey } from '../lib/activityErrors';
-    import { activeTask, dashboardFocus, dashboardSnapshot, scheduleLabel } from '../lib/dashboard';
+    import { activeTask, attentionTask, dashboardFocus, dashboardSnapshot, scheduleLabel } from '../lib/dashboard';
     import type { DashboardSnapshot } from '../lib/dashboard';
     import { resultStatus, resultTime } from '../lib/results';
     let snapshot = $state<DashboardSnapshot>();
@@ -76,7 +76,7 @@
             <div class="row between"><h2 id="dashboard-tasks-title">{t($locale, 'activity.automations')}</h2><a class="button" href="/scheduled-actions">{t($locale, 'activity.view_all', { count: snapshot.tasks.length })}</a></div>
             {#each snapshot.tasks.slice(0, 6) as task (task.sourceId)}
                 <a class="task" href={task.latestResult ? '/results' : '/scheduled-actions'}>
-                    <div class="row between"><strong>{task.name || task.sourceId}</strong><span class:error={['failed', 'partial'].includes(task.latestResult?.status ?? '')}>{task.latestResult ? resultStatus(task.latestResult.status, $locale) : t($locale, 'activity.not_run')}</span></div>
+                    <div class="row between"><strong>{task.name || task.sourceId}</strong><span class:error={attentionTask(task)}>{task.latestResult ? resultStatus(task.latestResult.status, $locale) : t($locale, 'activity.not_run')}</span></div>
                     <p class="muted">{task.enabled ? t($locale, 'activity.enabled') : t($locale, 'activity.disabled')} · {scheduleLabel(task, $locale)}</p>
                     <small>{t($locale, 'activity.last_run', { time: resultTime(task.latestResult?.createdAt, $locale) })}{#if task.enabled && task.nextScheduledAt} · {t($locale, 'activity.next_run', { time: resultTime(task.nextScheduledAt, $locale) })}{/if}</small>
                 </a>

@@ -91,9 +91,17 @@ final class MacWorkspaceModel {
 
     @ObservationIgnored private var remoteExpertTargets: [String: MacRemoteSubmissionTarget] = [:]
     @ObservationIgnored private var remoteExpertSourceIDs: [String: UUID] = [:]
-    func mainExpertSourceIdentity(_ owner: String) -> String? { remoteExpertSourceIDs[owner]?.uuidString }
+    func mainExpertSourceIdentity(_ owner: String) -> String? { executionHost == .remote ? remoteExpertSourceIDs[owner]?.uuidString : nil }
 
-    func mainExpertSelectionSourceEpoch(_ owner: String) -> String? { remoteExpertTargets[owner]?.expectedSourceStoreEpoch }
+    @ObservationIgnored private var verifiedInlineTargets: [String: MacRemoteSubmissionTarget] = [:]
+    /// A draft may survive a restart. Persist only the attested Host ID and Store epoch.
+    func mainExpertDraftSource(_ owner: String) -> String? {
+        guard executionHost == .remote, let verified = verifiedInlineTargets[owner], let current = try? remoteHost.captureSubmissionTarget(),
+              Self.sameExpertTarget(verified, current), verified.expectedSourceStoreEpoch == mainExpertSelectionSourceEpoch(owner) else { return nil }
+        return verified.configuration.expectedHostID
+    }
+
+    func mainExpertSelectionSourceEpoch(_ owner: String) -> String? { executionHost == .remote ? remoteExpertTargets[owner]?.expectedSourceStoreEpoch : nil }
 
     func expertRoomCommand(owner requestedOwner: String?, command: MacCanonicalJSONValue) async throws -> MacCanonicalJSONValue {
         guard let owner = requestedOwner ?? selectedConversationID, selectedConversationID == owner,
@@ -121,11 +129,12 @@ final class MacWorkspaceModel {
         let isDirectory = fields["type"] == .string("directory")
         var target = !isDirectory ? (remoteExpertTargets[owner] ?? .init(configuration: current.configuration, clientID: current.clientID, expectedSourceStoreEpoch: epoch))
             : .init(configuration: current.configuration, clientID: current.clientID, expectedSourceStoreEpoch: epoch)
-        guard Self.sameExpertTarget(target, current) else { throw MacRemoteHostError.invalidResponse }
+        guard Self.sameExpertTarget(target, current), epoch == nil || target.expectedSourceStoreEpoch == epoch else { throw MacRemoteHostError.invalidResponse }
         if isDirectory {
+            verifiedInlineTargets[owner] = nil
             let read = try await remoteHost.expertRooms(command: .object(["type": .string("role_templates")]), target: target)
             let catalog = try JSONDecoder().decode(AppleExpertRoleTemplateCatalog.self, from: JSONEncoder().encode(read.result))
-            guard catalog.features.mainAgentDelegation else { throw MacApplicationPortError.rejected(String(localized: "Update the connected Host to use experts from the main conversation.")) }
+            guard catalog.features.mainAgentDelegation, catalog.features.inlineExpertMentions else { throw MacApplicationPortError.rejected(String(localized: "Update the connected Host to use experts from the main conversation.")) }
             target = .init(configuration: target.configuration, clientID: target.clientID, expectedSourceStoreEpoch: read.sourceStoreEpoch)
         }
         let response = try await remoteHost.expertRooms(command: command, target: target)
@@ -134,7 +143,18 @@ final class MacWorkspaceModel {
         if let previous = remoteExpertTargets[owner], Self.sameExpertTarget(previous, target), previous.expectedSourceStoreEpoch == response.sourceStoreEpoch { }
         else { remoteExpertSourceIDs[owner] = UUID() }
         remoteExpertTargets[owner] = .init(configuration: target.configuration, clientID: target.clientID, expectedSourceStoreEpoch: response.sourceStoreEpoch)
+        if isDirectory { verifiedInlineTargets[owner] = remoteExpertTargets[owner] }
         return response.result
+    }
+
+    func expertHistoryMarkdown(parent: String, child: String, identity: String?, cursor: MacAssistantJournalCursor) async throws -> String? {
+        guard selectedConversationID == parent, cursor.identity.conversation_id == child,
+              let identity, mainExpertSourceIdentity(parent) == identity, let target = try uiRemoteTarget(conversationID: parent),
+              Self.sameExpertTarget(target, try remoteHost.captureSubmissionTarget()) else { throw MacRemoteHostError.invalidResponse }
+        let value = try await remoteHost.expertJournalMarkdown(at: cursor, target: target)
+        guard selectedConversationID == parent, mainExpertSourceIdentity(parent) == identity,
+              Self.sameExpertTarget(target, try remoteHost.captureSubmissionTarget()) else { throw CancellationError() }
+        return value
     }
 
     private static func sameExpertTarget(_ a: MacRemoteSubmissionTarget, _ b: MacRemoteSubmissionTarget) -> Bool {
@@ -361,7 +381,11 @@ final class MacWorkspaceModel {
                     return
                 }
             } catch is CancellationError { }
-            catch { self.remoteRecoveryError = error.localizedDescription }
+            catch {
+                if self.selectedConversationID == conversationID && self.activeGenerationID == generation {
+                    self.remoteRecoveryError = error.localizedDescription
+                }
+            }
         }
     }
 
@@ -465,6 +489,7 @@ final class MacWorkspaceModel {
     var selectedConversationID: String? {
         didSet {
             guard selectedConversationID != oldValue else { return }
+            isTranscriptSearchVisible = false
             if let selectedConversationID { refreshPermissionDisplayOwner(conversationID: selectedConversationID) }
             parkUnselectedLocalRecovery()
             parkUnselectedRemoteRecovery()
@@ -514,6 +539,8 @@ final class MacWorkspaceModel {
     private(set) var loadingConversationID: String? = nil
     private var presentationOverlays: [String: MacConversationPresentationOverlay] = [:]
     private var journalMessageReferences: [String: [UUID: MacJournalMessageReference]] = [:]
+    private var mentionsByConversation: [String: [AppleDraftMention]] = [:]
+    func draftMentions(_ owner: String) -> [AppleDraftMention] { mentionsByConversation[owner] ?? [] }
     private var draftsByConversation: [String: String] = [:]
     @ObservationIgnored private var draftRepository: MacConversationDraftRepository?
     private var loadedDraftIDs = Set<String>()
@@ -543,7 +570,15 @@ final class MacWorkspaceModel {
         }
     }
     var searchText = ""
-    var transcriptSearchText = ""
+    var transcriptSearchText = "" {
+        didSet {
+            guard transcriptSearchText != oldValue else { return }
+            transcriptSearchMatchIndex = 0
+            transcriptSearchNavigationToken = UUID()
+        }
+    }
+    var transcriptSearchMatchIndex = 0
+    var transcriptSearchNavigationToken = UUID()
     var conversationRecallQuery = "" {
         didSet {
             guard conversationRecallQuery != oldValue else { return }
@@ -553,7 +588,11 @@ final class MacWorkspaceModel {
     private(set) var conversationRecallResults: [MacConversationRecallResult] = []
     private(set) var isConversationRecallSearching = false
     private(set) var conversationRecallFailed = false
-    var isTranscriptSearchVisible = false
+    var isTranscriptSearchVisible = false {
+        didSet {
+            if !isTranscriptSearchVisible { transcriptSearchText = "" }
+        }
+    }
     var attachments: [MacAttachment] {
         get { selectedConversationID.flatMap { attachmentsByConversation[$0] } ?? [] }
         set {
@@ -581,6 +620,7 @@ final class MacWorkspaceModel {
     private var userInputWaitLoadErrors: [String: String] = [:]
     var resolvingUserInputWaitIDs: Set<String> = []
     var isResolvingPermission = false
+    @ObservationIgnored private var permissionResolutionToken: UUID?
     private(set) var permissionResolutionErrors: [String: String] = [:]
     var selectedPermissionResolutionError: String? {
         selectedConversationID.flatMap { permissionResolutionErrors[$0] }
@@ -711,9 +751,15 @@ final class MacWorkspaceModel {
         let before = try await repository.sessionProjectionAsync(conversationID: owner)
         let projection = try before.map { try JSONSerialization.jsonObject(with: $0.goalProjection) as? [String: Any] } ?? nil
         let ledger = projection?["applied_operations"] as? [String: Any] ?? [:]
-        if ledger[intent.control.operationId] == nil {
+        var authoritative = ledger[intent.control.operationId] != nil
+        if !authoritative {
             let sent = try await MacAgentHostRuntime.shared.sendGoalControl(conversationID: owner, control: intent.control)
-            if !sent, goalTasks[owner] == nil {
+            if sent {
+                authoritative = true
+            } else if goalTasks[owner] == nil {
+                guard !isRunning && (activeConversationID == nil || runCoordinator.isFinalized(generationID: activeGenerationID)) else {
+                    throw MacApplicationPortError.rejected("Another run is already active.")
+                }
                 guard let conversation = conversations.first(where: { $0.id == owner }) else { throw MacApplicationPortError.invalidResponse }
                 let start = intent.control.action == .start
                 let needsModel = start || intent.control.action == .resume
@@ -766,52 +812,83 @@ final class MacWorkspaceModel {
                     apiKey: provider?.apiKey, modelExecutionCapabilities: provider?.executionCapabilities,
                     wireProtocol: provider?.wireProtocol, databaseURLOverride: repository.databaseURL)
                 request.goalControl = intent.control
+                var generation = runCoordinator.begin(
+                    identity: .init(conversationID: owner, runID: nil, assistantMessageID: UUID())
+                )
                 isRunning = true
                 activeConversationID = owner
                 activeRunExecutionLocation = .thisMac
-                var generation = activeGenerationID
-                goalTasks[owner] = Task { @MainActor [weak self, request] in
-                    guard let self else { return }
-                    defer {
-                        self.goalTasks.removeValue(forKey: owner)
-                        if self.activeConversationID == owner, self.activeGenerationID == generation { self.isRunning = false }
+                @MainActor final class GoalStartAck {
+                    var continuation: CheckedContinuation<Bool, Never>?
+                    func settle(_ value: Bool) {
+                        guard let continuation else { return }
+                        self.continuation = nil
+                        continuation.resume(returning: value)
                     }
-                    do {
-                        var response = ""
-                        var assembler = MacSemanticStreamAssembler()
-                        var succeeded = true
-                        for try await event in await MacAgentHostRuntime.shared.run(request) {
-                            // Host commits stay with the Goal owner while this UI observation retires.
-                            guard self.activeGenerationID == generation, self.selectedConversationID == owner else { continue }
-
-                            if let run = event.canonicalRunID, let port = request.applicationPort,
-                               let active = try port.activeRunIdentity(conversationID: owner), active.runID == run,
-                               let messageID = MacCanonicalMessageIdentity.stableID(active.assistantMessageID) {
-                                if self.runCoordinator.identity?.runID != run {
-                                    generation = self.runCoordinator.begin(
-                                        identity: .init(conversationID: owner, runID: run, assistantMessageID: messageID)
-                                    )
+                }
+                let ack = GoalStartAck()
+                authoritative = await withCheckedContinuation { continuation in
+                    ack.continuation = continuation
+                    goalTasks[owner] = Task { @MainActor [weak self, request] in
+                        guard let self else {
+                            ack.settle(false)
+                            return
+                        }
+                        defer {
+                            ack.settle(false)
+                            self.goalTasks.removeValue(forKey: owner)
+                            if self.activeConversationID == owner, self.activeGenerationID == generation {
+                                self.isRunning = false
+                                self.activeConversationID = nil
+                                self.activeRunExecutionLocation = nil
+                                if self.runCoordinator.identity?.conversationID == owner,
+                                   self.runCoordinator.canFinish(generationID: generation),
+                                   !self.runCoordinator.isFinalized(generationID: generation) {
+                                    _ = self.runCoordinator.claimFinish(generationID: generation)
+                                    self.runCoordinator.completeFinish(generationID: generation)
                                 }
-                                await self.consumeTracedAgentEvent(event, prompt: request.prompt, conversationID: owner,
-                                    modelID: request.modelID ?? "", assistantMessageID: messageID,
-                                    generationID: generation, permissionUsesLocalRuntime: true,
-                                    permissionAttachmentURLs: [], response: &response, assembler: &assembler, succeeded: &succeeded)
-                            }
-                            if event.assistantJournalCursor != nil || event.coreTurnTerminal != nil {
-                                await self.reconcileCanonicalConversation(conversationID: owner, generationID: generation)
                             }
                         }
-                        await self.reconcileCanonicalConversation(conversationID: owner, generationID: generation)
-                    } catch {
-                        if self.selectedConversationID == owner, self.activeGenerationID == generation { self.goalControlError = error.localizedDescription }
+                        do {
+                            var response = ""
+                            var assembler = MacSemanticStreamAssembler()
+                            var succeeded = true
+                            for try await event in await MacAgentHostRuntime.shared.run(request) {
+                                ack.settle(true)
+                                // Host commits stay with the Goal owner while this UI observation retires.
+                                guard self.activeGenerationID == generation, self.selectedConversationID == owner else { continue }
+
+                                if let run = event.canonicalRunID, let port = request.applicationPort,
+                                   let active = try port.activeRunIdentity(conversationID: owner), active.runID == run,
+                                   let messageID = MacCanonicalMessageIdentity.stableID(active.assistantMessageID) {
+                                    if self.runCoordinator.identity?.runID != run {
+                                        generation = self.runCoordinator.begin(
+                                            identity: .init(conversationID: owner, runID: run, assistantMessageID: messageID)
+                                        )
+                                    }
+                                    await self.consumeTracedAgentEvent(event, prompt: request.prompt, conversationID: owner,
+                                        modelID: request.modelID ?? "", assistantMessageID: messageID,
+                                        generationID: generation, permissionUsesLocalRuntime: true,
+                                        permissionAttachmentURLs: [], response: &response, assembler: &assembler, succeeded: &succeeded)
+                                }
+                                if event.assistantJournalCursor != nil || event.coreTurnTerminal != nil {
+                                    await self.reconcileCanonicalConversation(conversationID: owner, generationID: generation)
+                                }
+                            }
+                            await self.reconcileCanonicalConversation(conversationID: owner, generationID: generation)
+                        } catch {
+                            if self.selectedConversationID == owner, self.activeGenerationID == generation { self.goalControlError = error.localizedDescription }
+                        }
                     }
                 }
             }
         }
         let latest = try await repository.sessionProjectionAsync(conversationID: owner)
         let current = try latest.map { try JSONSerialization.jsonObject(with: $0.goalProjection) } ?? NSNull()
+        let latestLedger = (current as? [String: Any])?["applied_operations"] as? [String: Any] ?? [:]
+        let isAuthoritative = authoritative || latestLedger[intent.control.operationId] != nil
         let body: [String: Any] = ["source_host_id": intent.expected_host_id, "conversationId": owner,
-            "operationId": intent.control.operationId, "authoritative": true, "goalProjection": current]
+            "operationId": intent.control.operationId, "authoritative": isAuthoritative, "goalProjection": current]
         return try JSONDecoder().decode(AppleGoalControlResponse.self, from: JSONSerialization.data(withJSONObject: body))
     }
 
@@ -853,6 +930,7 @@ final class MacWorkspaceModel {
     @ObservationIgnored private var activeRunExecutionLocation: MacExecutionLocation?
     private(set) var remoteRunRecovery: MacRemoteRunRecovery?
     private(set) var isResumingRemoteRun = false
+    @ObservationIgnored private var remoteResumeToken: UUID?
     private(set) var remoteRecoveryError: String?
     private(set) var localRunRecovery: MacLocalRunRecovery?
     private struct ParkedLocalRecovery {
@@ -1045,6 +1123,7 @@ final class MacWorkspaceModel {
 
     init(
         initialConversationID: String? = nil,
+        createMissingConversation: Bool = true,
         canonicalRepository: MacCanonicalConversationRepository,
         localAgentRuntime: any MacLocalAgentRuntime,
         remoteHost: any MacRemoteAgentRunning,
@@ -1229,7 +1308,7 @@ final class MacWorkspaceModel {
         if let initialConversationID,
            let archived = archives.first(where: { $0.conversation.id == initialConversationID }) {
             initial = archived.conversation
-        } else if let initialConversationID {
+        } else if let initialConversationID, createMissingConversation {
             initial = MacConversation(
                 id: initialConversationID,
                 title: String(localized: "New Conversation"),
@@ -1238,7 +1317,7 @@ final class MacWorkspaceModel {
                 isPinned: false,
                 isPersisted: true
             )
-        } else if let archived = archives.first {
+        } else if initialConversationID == nil, let archived = archives.first {
             initial = archived.conversation
         } else {
             initial = MacConversation(title: String(localized: "New Conversation"), preview: "", updatedAt: .now, isPinned: false)
@@ -1978,13 +2057,20 @@ final class MacWorkspaceModel {
             guard let owner = selectedConversationID, let conversation = selectedConversation,
                   !configurationCommitIsPending(owner) else { return }
             if newValue == permissionMode, permissionModeDrafts[owner] == nil { return }
+            if !conversation.isPersisted {
+                if committedPermissionModes[owner] == nil { committedPermissionModes[owner] = permissionMode }
+                permissionModeDrafts[owner] = newValue
+                if let index = conversations.firstIndex(where: { $0.id == owner }) {
+                    conversations[index].permissionModeRawValue = newValue.rawValue
+                }
+                return
+            }
+            guard let repository = canonicalRepository, let revision = conversation.configurationRevision else { return }
             if committedPermissionModes[owner] == nil { committedPermissionModes[owner] = permissionMode }
             permissionModeDrafts[owner] = newValue
             if let index = conversations.firstIndex(where: { $0.id == owner }) {
                 conversations[index].permissionModeRawValue = newValue.rawValue
             }
-            guard conversation.isPersisted else { return }
-            guard let repository = canonicalRepository, let revision = conversation.configurationRevision else { return }
             let policyOwner: PermissionConfigurationOwner
             do { policyOwner = try permissionConfigurationOwner(conversationID: owner) }
             catch { modelConfigurationErrors[owner] = error; return }
@@ -2566,7 +2652,7 @@ final class MacWorkspaceModel {
         }
         let parameters = MacLocalModelConfigurationStore(applicationPort: modelApplication).parameters(for: profile)
         return min(
-            max(MacLocalModelProfile.minimumContextTokens, parameters.maxContextLength),
+            max(profile.configurableContext.lowerBound, parameters.maxContextLength),
             profile.nativeContextTokens
         )
     }
@@ -2862,12 +2948,11 @@ final class MacWorkspaceModel {
     }
 
     var filteredConversations: [MacConversation] {
-        guard !searchText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
-            return conversations
-        }
+        let query = searchText.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !query.isEmpty else { return conversations }
         return conversations.filter {
-            $0.title.localizedCaseInsensitiveContains(searchText)
-                || $0.preview.localizedCaseInsensitiveContains(searchText)
+            $0.title.localizedCaseInsensitiveContains(query)
+                || $0.preview.localizedCaseInsensitiveContains(query)
         }
     }
 
@@ -2965,10 +3050,28 @@ final class MacWorkspaceModel {
         return workspaceURL?.lastPathComponent ?? String(localized: "Workspace")
     }
 
-    var transcriptMatchCount: Int {
+    var transcriptMatchingMessageIDs: [UUID] {
         let query = transcriptSearchText.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !query.isEmpty else { return 0 }
-        return selectedMessages.filter { $0.text.localizedCaseInsensitiveContains(query) }.count
+        guard !query.isEmpty else { return [] }
+        return selectedMessages.filter { $0.text.localizedCaseInsensitiveContains(query) }.map(\.id)
+    }
+
+    var transcriptMatchCount: Int {
+        transcriptMatchingMessageIDs.count
+    }
+
+    var transcriptSearchFocusedMessageID: UUID? {
+        let matches = transcriptMatchingMessageIDs
+        guard !matches.isEmpty else { return nil }
+        let clampedIndex = min(max(0, transcriptSearchMatchIndex), matches.count - 1)
+        return matches[clampedIndex]
+    }
+
+    func stepTranscriptSearchMatch(by delta: Int) {
+        let matches = transcriptMatchingMessageIDs
+        guard !matches.isEmpty else { return }
+        transcriptSearchMatchIndex = (transcriptSearchMatchIndex + delta % matches.count + matches.count) % matches.count
+        transcriptSearchNavigationToken = UUID()
     }
 
     var selectedConversationAttachments: [MacConversationAttachmentReference] {
@@ -3032,26 +3135,15 @@ final class MacWorkspaceModel {
     }
 
     func newConversation() {
-        let defaultTemplate: UUID?
-        do { defaultTemplate = try MacPromptLibrary.defaultTemplateID() }
-        catch { conversationOperationError = error.localizedDescription; return }
-        var conversation = MacConversation(
-            title: String(localized: "New Conversation"),
-            preview: "",
-            updatedAt: .now,
-            isPinned: false,
-            promptTemplateID: defaultTemplate,
-            promptTemplateSelectionIsExplicit: true
-        )
+        let conversation: MacConversation
         do {
             guard let canonicalRepository else { throw MacApplicationPortError.invalidResponse }
-            conversation.configurationRevision = try canonicalRepository.ensureConversation(conversation)
-            guard conversation.configurationRevision != nil else { throw MacApplicationPortError.invalidResponse }
-            conversation.isPersisted = true
+            conversation = try canonicalRepository.createEmptyConversation()
         } catch {
             conversationOperationError = error.localizedDescription
             return
         }
+        searchText = ""
         conversations.insert(conversation, at: 0)
         messagesByConversation[conversation.id] = []
         newlyCreatedEmptyConversationID = conversation.id
@@ -3062,7 +3154,7 @@ final class MacWorkspaceModel {
         draftsByConversation[conversation.id] = ""
         attachmentsByConversation[conversation.id] = []
         loadedDraftIDs.insert(conversation.id)
-        selectedPromptTemplateID = defaultTemplate
+        selectedPromptTemplateID = conversation.promptTemplateID
         // An outstanding request belongs to its original conversation. The
         // selectedPendingRemotePermission projection hides it in this new one.
     }
@@ -3246,6 +3338,7 @@ final class MacWorkspaceModel {
         presentationOverlays[conversation.id] = nil
         journalMessageReferences[conversation.id] = nil
         permissionProjectionsByConversation[conversation.id] = nil
+        mentionsByConversation[conversation.id] = nil
         draftsByConversation[conversation.id] = nil
         attachmentsByConversation[conversation.id] = nil
         loadedDraftIDs.remove(conversation.id)
@@ -3413,7 +3506,7 @@ final class MacWorkspaceModel {
             if loadedDraftIDs.contains(selectedConversationID) || editedBrowserSnapshotIDs.contains(selectedConversationID) {
                 conversations[index].browserSnapshot = browser
             }
-            if !isDefaultConversationTitle(currentTitle) {
+            if isDefaultConversationTitle(archive.conversation.title), !isDefaultConversationTitle(currentTitle) {
                 conversations[index].title = currentTitle
             }
         }
@@ -3663,7 +3756,7 @@ final class MacWorkspaceModel {
         default: throw MacEditedResendError.sourceUnavailable
         }
         return AppleMessageEditDraft(sourceConversationID: conversationID, sourceMessageID: original.messageID,
-            expectedSourceRevision: conversation.revision, expectedMessageRevision: original.revision, text: text)
+            expectedSourceRevision: conversation.revision, expectedMessageRevision: original.revision, text: text, mentions: message.expertMentions?.runs(in: text) ?? [])
     }
 
     func performEditedResend(_ draft: AppleMessageEditDraft, expertWorkspace: MacAgentRoomWorkspace? = nil) async throws {
@@ -3673,7 +3766,10 @@ final class MacWorkspaceModel {
         let port = modelApplication
         if try port.activeRunIdentity(conversationID: input.conversation_id)?.runID == input.operation_id
             || port.canonicalRunTerminal(conversationID: input.conversation_id, runID: input.operation_id) != nil {
-            reloadPersistentData()
+            let prepared = try port.prepareInPlaceResend(input)
+            if prepared.deferred_rewind == true { try await publishAdmittedRewind(prepared, repository: repository) }
+            else { reloadPersistentData() }
+            adoptEditedTitle(conversationID: input.conversation_id, messageID: prepared.user_message_id, text: input.edited_text)
             return
         }
         guard !isRunning, localRunRecovery == nil, remoteRunRecovery == nil else {
@@ -3687,12 +3783,13 @@ final class MacWorkspaceModel {
         if try port.expertMessageSource(conversationID: input.conversation_id, messageID: input.message_id) != nil,
            expertWorkspace == nil { throw MacEditedResendError.sourceUnavailable }
         let prepared = try port.prepareInPlaceResend(input)
-        reloadPersistentData()
+        if prepared.deferred_rewind != true { reloadPersistentData() }
         // Normal admission creates the replacement message using its stable ID.
         // Passing text explicitly preserves the unsent composer and attachments.
         send(preassignedSubmissionID: prepared.run_id,
-            canonicalUserMessageID: prepared.user_message_id, preassignedText: input.edited_text,
-            selectedExperts: prepared.experts.map { .init(agentID: $0.agent_id, agentRevision: $0.agent_revision, participantID: $0.participant_id, contextConversationID: $0.context_conversation_id) })
+            canonicalUserMessageID: prepared.user_message_id, preassignedText: input.edited_text, isInPlaceResend: true,
+            deferredRewind: prepared.deferred_rewind == true, editedMentions: input.expert_mentions,
+            selectedExperts: input.selected_experts ?? prepared.experts.map { .init(agentID: $0.agent_id, agentRevision: $0.agent_revision, participantID: $0.participant_id, contextConversationID: $0.context_conversation_id) })
         guard let ticket = runCoordinator.submissionTicket,
               ticket.identity.submissionID == prepared.run_id else { throw MacEditedResendError.admissionUnconfirmed }
         let deadline = Date().addingTimeInterval(30)
@@ -3700,6 +3797,42 @@ final class MacWorkspaceModel {
             try await Task.sleep(for: .milliseconds(50))
         }
         guard ticket.phase == .accepted else { throw MacEditedResendError.admissionUnconfirmed }
+        if prepared.deferred_rewind == true {
+            try await publishAdmittedRewind(prepared, repository: repository)
+        }
+        adoptEditedTitle(conversationID: input.conversation_id, messageID: prepared.user_message_id, text: input.edited_text)
+    }
+
+    /// The old suffix stays in the transcript until the replacement is present in Core.
+    private func publishAdmittedRewind(_ prepared: ApplePreparedInPlaceResend, repository: MacCanonicalConversationRepository) async throws {
+        let owner = prepared.input.conversation_id
+        let generation = activeGenerationID
+        projectionObservationCoordinator.cancel(conversationID: owner)
+        conversationWindowCache.evict(conversationID: owner)
+        defer {
+            if generation == activeGenerationID { startProjectionObservation(conversationID: owner, selectionRevision: conversationLoadRevision) }
+        }
+        guard let archive = try await repository.loadAsync(conversationID: owner, windowed: true),
+              archive.messages.contains(where: { $0.role == .user && $0.canonicalMessageID == prepared.user_message_id }),
+              !archive.messages.contains(where: { $0.canonicalMessageID == prepared.input.message_id }) else {
+            throw MacEditedResendError.admissionUnconfirmed
+        }
+        guard generation == activeGenerationID else { return }
+        publishCanonicalMessages(archive.messages, conversationID: owner)
+        if var overlay = presentationOverlays[owner] {
+            overlay.reconcileAfterRewind(archive.messages)
+            overlay.acceptCanonical(archive.messages, retainPendingAssistantPresentation: isRunning && activeConversationID == owner)
+            presentationOverlays[owner] = overlay.isEmpty ? nil : overlay
+        }
+    }
+
+    private func adoptEditedTitle(conversationID: String, messageID: String, text: String) {
+        let title = MacConversationTitlePolicy.normalizedTitle(text)
+        if (try? canonicalRepository?.adoptMessageTitle(conversationID: conversationID, title: title,
+                                                        editedMessageID: messageID)) == true,
+           let index = conversations.firstIndex(where: { $0.id == conversationID }) {
+            conversations[index].title = title
+        }
     }
 
     func prepareEditedRoomExecution(_ prepared: ApplePreparedEditedResend<MacCanonicalJSONValue>) async throws -> MacAgentRoomService.ExecutionIntent.Envelope {
@@ -3978,7 +4111,7 @@ final class MacWorkspaceModel {
         }
     }
 
-    private func send(preassignedSubmissionID: String?, queuedUserCommandID: String? = nil, canonicalUserMessageID: String? = nil, preassignedText: String? = nil, selectedExperts: [AppleMainExpertSelectionEntry] = [], expertSelectionSourceEpoch: String? = nil) {
+    private func send(preassignedSubmissionID: String?, queuedUserCommandID: String? = nil, canonicalUserMessageID: String? = nil, preassignedText: String? = nil, isInPlaceResend: Bool = false, deferredRewind: Bool = false, editedMentions: AppleExpertMentions? = nil, selectedExperts: [AppleMainExpertSelectionEntry] = [], expertSelectionSourceEpoch: String? = nil) {
         guard !selectedModelConfigurationPending else { return }
         parkUnselectedLocalRecovery()
         parkUnselectedRemoteRecovery()
@@ -4015,7 +4148,9 @@ final class MacWorkspaceModel {
         let exactResendText = selectedConversationID.flatMap { editedResendModels[$0] }.flatMap {
             $0.prepared.run_id == preassignedSubmissionID ? $0.prepared.input.edited_text : nil
         }
-        let text = exactResendText ?? preassignedText ?? (queuedUserCommandID == nil ? submittedDraft.trimmingCharacters(in: .whitespacesAndNewlines) : "表单操作")
+        let submittedMentions = preassignedText == nil && queuedUserCommandID == nil ? (selectedConversationID.map(draftMentions) ?? []) : []
+        let mentionSegments = editedMentions ?? AppleDraftMention.segments(submittedMentions, in: submittedDraft)
+        let text = exactResendText ?? preassignedText ?? (queuedUserCommandID == nil ? (mentionSegments == nil ? submittedDraft.trimmingCharacters(in: .whitespacesAndNewlines) : submittedDraft) : "表单操作")
         guard !isRunning,
               (!text.isEmpty || !attachments.isEmpty),
               let selectedConversationID else { return }
@@ -4177,6 +4312,34 @@ final class MacWorkspaceModel {
                 detail: error.localizedDescription, state: .failed)
             return
         }
+        let submissionID = preassignedSubmissionID ?? UUID().uuidString
+        let mainExpertSelectionComponent: MacCoreContextComponent?
+        if !selectedExperts.isEmpty {
+            do {
+                let selected = AppleMainExpertSelectionContext(
+                    selectedExperts: selectedExperts,
+                    expectedSourceStoreEpoch: expertSelectionSourceEpoch,
+                    expertMentions: mentionSegments
+                )
+                try selected.validate()
+                mainExpertSelectionComponent = .init(
+                    kind: "main_expert_selection",
+                    id: "nola.main-expert-selection",
+                    content: try JSONDecoder().decode(MacCoreJSONValue.self, from: JSONEncoder().encode(selected)),
+                    source: nil
+                )
+            } catch {
+                localSubmissionFailure = .init(
+                    conversationID: selectedConversationID,
+                    submissionID: submissionID,
+                    code: "invalid_expert_selection",
+                    message: error.localizedDescription
+                )
+                return
+            }
+        } else {
+            mainExpertSelectionComponent = nil
+        }
         // Establish the active-run boundary before metadata and archive updates
         // can publish persistence notifications. This prevents a reload from
         // replacing the newly appended turn with the previous disk snapshot.
@@ -4196,7 +4359,6 @@ final class MacWorkspaceModel {
             ?? canonicalUserMessageID.flatMap { MacCanonicalMessageIdentity.stableID($0) }
             ?? queuedUserCommandID.flatMap { MacCanonicalMessageIdentity.stableID("ui:\($0):user") }
             ?? preassignedSubmissionID.flatMap(UUID.init(uuidString:)) ?? UUID()
-        let submissionID = preassignedSubmissionID ?? UUID().uuidString
         let canonicalAssistantMessageID = "\(submissionID):assistant"
         guard let assistantMessageID = MacCanonicalMessageIdentity.stableID(
             canonicalAssistantMessageID
@@ -4231,16 +4393,19 @@ final class MacWorkspaceModel {
         // and persists only conversation metadata while execution is active.
         // Pre-creating a Run here makes the Host's atomic submission overlap
         // itself when both processes use the same canonical database.
-        var presentationOverlay = presentationOverlays[selectedConversationID]
-            ?? MacConversationPresentationOverlay()
-        presentationOverlay.beginSubmission(MacPendingSubmissionOverlay(
-            submissionID: submissionID,
-            userMessage: message,
-            assistantMessage: pendingAssistantMessage
-        ))
-        presentationOverlays[selectedConversationID] = presentationOverlay
+        if !deferredRewind {
+            var presentationOverlay = presentationOverlays[selectedConversationID]
+                ?? MacConversationPresentationOverlay()
+            presentationOverlay.beginSubmission(MacPendingSubmissionOverlay(
+                submissionID: submissionID,
+                userMessage: message,
+                assistantMessage: pendingAssistantMessage
+            ))
+            presentationOverlays[selectedConversationID] = presentationOverlay
+        }
         if queuedUserCommandID == nil && preassignedText == nil {
             draftsByConversation[selectedConversationID] = ""
+            mentionsByConversation[selectedConversationID] = nil
             attachmentsByConversation[selectedConversationID] = []
             persistDraft(conversationID: selectedConversationID, attachmentsChanged: true)
         }
@@ -4253,17 +4418,13 @@ final class MacWorkspaceModel {
             let userMessages = renderedMessages(conversationID: selectedConversationID)
                 .filter { $0.role == .user }
                 .map(\.text)
-            if let title = MacConversationTitlePolicy.automaticTitle(
+            if !isInPlaceResend, let title = MacConversationTitlePolicy.automaticTitle(
                 currentTitle: conversations[index].title,
                 conversationID: selectedConversationID,
                 userMessages: userMessages,
                 latestSource: titleSource
-            ) {
+            ), (try? canonicalRepository?.adoptMessageTitle(conversationID: selectedConversationID, title: title)) == true {
                 conversations[index].title = title
-                try? canonicalRepository?.rename(
-                    conversationID: selectedConversationID,
-                    title: title
-                )
             }
         }
         conversations.sort {
@@ -4325,7 +4486,7 @@ final class MacWorkspaceModel {
                     for: localProfile
                 )
                 runContextWindowTokens = min(
-                    max(MacLocalModelProfile.minimumContextTokens, parameters.maxContextLength),
+                    max(localProfile.configurableContext.lowerBound, parameters.maxContextLength),
                     localProfile.nativeContextTokens
                 )
             }
@@ -4359,13 +4520,8 @@ final class MacWorkspaceModel {
             style: runResponseStyle, customSystemPrompt: runModelParameters.customSystemPrompt).map {
                 .init(kind: "prompt_template", id: $0.component_id, content: $0.content)
             }
-        if !selectedExperts.isEmpty {
-            do {
-                let selected = AppleMainExpertSelectionContext(selectedExperts: selectedExperts, expectedSourceStoreEpoch: expertSelectionSourceEpoch)
-                try selected.validate()
-                capturedComponents.append(.init(kind: "main_expert_selection", id: "nola.main-expert-selection",
-                    content: try JSONDecoder().decode(MacCoreJSONValue.self, from: JSONEncoder().encode(selected)), source: nil))
-            } catch { localSubmissionFailure = .init(conversationID: selectedConversationID, submissionID: submissionID, code: "invalid_expert_selection", message: error.localizedDescription); return }
+        if let mainExpertSelectionComponent {
+            capturedComponents.append(mainExpertSelectionComponent)
         }
         if let managedTemplate { capturedComponents.append(managedTemplate) }
             let userPreferences = runMemoryEnabled
@@ -4405,7 +4561,7 @@ final class MacWorkspaceModel {
             workspaceSelection: bookmarkStore.captureSubmissionSelection(conversationID: selectedConversationID, selectedURL: workspaceURL),
             externalSessionID: externalSessionID(conversationID: selectedConversationID, backend: runExecutionBackend),
             remoteTarget: runRemoteTarget, expectedParentMessageID: submittedParentMessageID,
-            queuedUserCommandID: queuedUserCommandID, canonicalUserMessageID: canonicalUserMessageID, ownsComposerDraft: preassignedText == nil)
+            queuedUserCommandID: queuedUserCommandID, canonicalUserMessageID: canonicalUserMessageID, ownsComposerDraft: preassignedText == nil, mentions: submittedMentions)
         localRecoverySelection = runRemoteTarget == nil
             ? (submissionID, snapshot.workspaceSelection) : nil
         preparingSubmission = snapshot
@@ -4492,7 +4648,7 @@ final class MacWorkspaceModel {
         runCoordinator.preparationFailed(generationID: generationID)
         // Do not overwrite a new draft composed while preparation was pending.
         if snapshot.queuedUserCommandID == nil && snapshot.ownsComposerDraft {
-            if draftsByConversation[conversationID]?.isEmpty != false { draftsByConversation[conversationID] = snapshot.draft }
+            if draftsByConversation[conversationID]?.isEmpty != false { draftsByConversation[conversationID] = snapshot.draft; mentionsByConversation[conversationID] = snapshot.mentions }
             if attachmentsByConversation[conversationID]?.isEmpty != false { attachmentsByConversation[conversationID] = snapshot.attachments }
             persistDraft(conversationID: conversationID, attachmentsChanged: true)
         }
@@ -4510,8 +4666,9 @@ final class MacWorkspaceModel {
 
     func dismissLocalSubmissionFailure() { localSubmissionFailure = nil }
 
-    func setDraft(_ value: String, conversationID: String) {
+    func setDraft(_ value: String, conversationID: String, mentions: [AppleDraftMention] = []) {
         guard conversations.contains(where: { $0.id == conversationID }) else { return }
+        mentionsByConversation[conversationID] = mentions
         if value.isEmpty {
             draftsByConversation[conversationID] = nil
         } else {
@@ -4541,7 +4698,7 @@ final class MacWorkspaceModel {
                     browser.isConnected = false
                     conversations[index].browserSnapshot = browser
                 }
-                if !editedDraftTextIDs.contains(conversationID) { draftsByConversation[conversationID] = record.text }
+                if !editedDraftTextIDs.contains(conversationID) { draftsByConversation[conversationID] = record.text; mentionsByConversation[conversationID] = record.mentions }
                 if !editedDraftAttachmentIDs.contains(conversationID) { attachmentsByConversation[conversationID] = record.attachments.map {
                     var attachment = MacAttachment(url: $0.url)
                     attachment.extractedText = $0.text
@@ -4585,7 +4742,7 @@ final class MacWorkspaceModel {
         let record = MacConversationDraftRecord(conversationID: conversationID, text: draftsByConversation[conversationID] ?? "",
             attachments: (attachmentsByConversation[conversationID] ?? []).map {
                 .init(url: $0.url, text: $0.extractedText, method: $0.extractionMethod, byteCount: $0.byteCount, ready: $0.status == .ready)
-            }, browserSnapshot: conversation.browserSnapshot)
+            }, browserSnapshot: conversation.browserSnapshot, mentions: mentionsByConversation[conversationID])
         draftRepository.save(record) { [weak self] succeeded in
             Task { @MainActor [weak self] in
                 guard let self, self.conversations.contains(where: { $0.id == conversationID }),
@@ -4777,13 +4934,7 @@ final class MacWorkspaceModel {
         }
 
         do {
-            let directory = try FileManager.default.url(
-                for: .applicationSupportDirectory,
-                in: .userDomainMask,
-                appropriateFor: nil,
-                create: true
-            )
-                .appendingPathComponent("Nola", isDirectory: true)
+            let directory = MacAppEnvironment.shared.supportRoot
                 .appendingPathComponent("Attachments", isDirectory: true)
                 .appendingPathComponent("Clipboard", isDirectory: true)
             try FileManager.default.createDirectory(
@@ -4807,14 +4958,18 @@ final class MacWorkspaceModel {
         }
     }
 
-    func chooseWorkspace() {
-        guard let selectedConversationID else { return }
-        Task {
-            if let selected = await bookmarkStore.chooseWorkspace(conversationID: selectedConversationID),
-               self.selectedConversationID == selectedConversationID {
-                workspaceURL = selected
-            }
-        }
+    @discardableResult
+    func chooseWorkspace() async -> URL? {
+        guard let selectedConversationID,
+              let selected = await bookmarkStore.chooseWorkspace(conversationID: selectedConversationID),
+              self.selectedConversationID == selectedConversationID else { return nil }
+        workspaceURL = selected
+        return selected
+    }
+
+    func workspaceForReview() async -> URL? {
+        if let workspaceURL { return workspaceURL }
+        return await chooseWorkspace()
     }
 
     func useSessionSandbox() {
@@ -4843,16 +4998,20 @@ final class MacWorkspaceModel {
     }
 
     func stop(reason: String? = nil) {
-        if let owner = activeConversationID, goalTasks[owner] != nil {
+        if let owner = activeConversationID, owner == selectedConversationID, let goalTask = goalTasks[owner] {
             Task { @MainActor in
                 do {
                     guard let snapshot = try await inspectorGoalSnapshot(conversationID: owner),
                           let goal = snapshot.active, let token = snapshot.control_token else {
-                        throw MacApplicationPortError.invalidResponse
+                        goalTask.cancel()
+                        return
                     }
                     _ = try await controlGoal(conversationID: owner,
                         control: .init(action: .pause, expectedGoalId: goal.id, expectedControlToken: token))
-                } catch { goalControlError = error.localizedDescription }
+                } catch {
+                    goalTask.cancel()
+                    goalControlError = error.localizedDescription
+                }
             }
             return
         }
@@ -5055,6 +5214,25 @@ final class MacWorkspaceModel {
         }
     }
 
+    func taskParentRunID(for conversationID: String, message: MacChatMessage) -> String? {
+        if let runID = message.journalReference?.cursor.identity.run_id, !runID.isEmpty {
+            return runID
+        }
+        if let identity = runCoordinator.identity,
+           identity.conversationID == conversationID,
+           let runID = identity.runID, !runID.isEmpty,
+           identity.assistantMessageID == message.id {
+            return runID
+        }
+        if let observed = remoteObservedRun,
+           selectedConversationID == conversationID,
+           MacCanonicalMessageIdentity.stableID(observed.assistant_message_id) == message.id,
+           !observed.run_id.isEmpty {
+            return observed.run_id
+        }
+        return nil
+    }
+
     func sendTaskGuidance(conversationID: String, parentRunID: String, taskID: String, message: String) {
         guard selectedConversationID == conversationID, !conversationID.isEmpty, !parentRunID.isEmpty else { return }
         // Capture the source before suspension; changing the model/Host selector
@@ -5225,9 +5403,17 @@ final class MacWorkspaceModel {
                   generationID == activeGenerationID else { return }
         }
         permissionResolutionErrors[conversationID] = nil
+        let resolutionToken = UUID()
+        permissionResolutionToken = resolutionToken
         isResolvingPermission = true
         if usesLocalRuntime {
             Task {
+                defer {
+                    if permissionResolutionToken == resolutionToken {
+                        permissionResolutionToken = nil
+                        isResolvingPermission = false
+                    }
+                }
                 let resolvedAllow = allow
                 do {
                     guard generationID == activeGenerationID,
@@ -5266,7 +5452,6 @@ final class MacWorkspaceModel {
                           pendingRemotePermission == request,
                           permissionRequestIsValid(request, conversationID: conversationID,
                                                    usesLocalRuntime: true) else { return }
-                    isResolvingPermission = false
                     permissionResolutionErrors[conversationID] = error.localizedDescription
                     updateActivity(
                         title: request.toolName,
@@ -5278,6 +5463,12 @@ final class MacWorkspaceModel {
             return
         }
         Task {
+            defer {
+                if permissionResolutionToken == resolutionToken {
+                    permissionResolutionToken = nil
+                    isResolvingPermission = false
+                }
+            }
             let resolvedAllow = allow
             do {
                 try await remoteHost.resolvePermission(
@@ -5298,7 +5489,6 @@ final class MacWorkspaceModel {
                 )
             } catch {
                 guard generationID == activeGenerationID, pendingRemotePermission == request else { return }
-                isResolvingPermission = false
                 permissionResolutionErrors[conversationID] = error.localizedDescription
                 updateActivity(
                     title: request.toolName,
@@ -5324,7 +5514,15 @@ final class MacWorkspaceModel {
         // Validate before locking controls. Core remains the final budget owner.
         _ = try request.instructionDecision(instruction)
         let usesLocalRuntime = pendingPermissionUsesLocalRuntime
+        let resolutionToken = UUID()
+        permissionResolutionToken = resolutionToken
         isResolvingPermission = true
+        defer {
+            if permissionResolutionToken == resolutionToken {
+                permissionResolutionToken = nil
+                isResolvingPermission = false
+            }
+        }
         do {
             if usesLocalRuntime {
                 try await localAgentRuntime.providePermissionInstruction(
@@ -5341,13 +5539,6 @@ final class MacWorkspaceModel {
             // waiting until Core publishes its successor permission request.
             clearPendingPermission()
         } catch {
-            if generationID == activeGenerationID,
-               pendingRemoteConversationID == conversationID,
-               pendingRemotePermission == request,
-               permissionRequestIsValid(request, conversationID: conversationID,
-                                        usesLocalRuntime: usesLocalRuntime) {
-                isResolvingPermission = false
-            }
             throw error
         }
     }
@@ -5403,6 +5594,7 @@ final class MacWorkspaceModel {
         pendingRemoteAttachmentURLs = []
         pendingPermissionUsesLocalRuntime = false
         pendingPermissionCreatedAt = nil
+        permissionResolutionToken = nil
         isResolvingPermission = false
     }
 
@@ -5808,12 +6000,8 @@ final class MacWorkspaceModel {
                 if loadedDraftIDs.contains(conversationID) || editedBrowserSnapshotIDs.contains(conversationID) {
                     conversations[index].browserSnapshot = browser
                 }
-                if !isDefaultConversationTitle(currentTitle) {
+                if isDefaultConversationTitle(archive.conversation.title), !isDefaultConversationTitle(currentTitle) {
                     conversations[index].title = currentTitle
-                    try? canonicalRepository.rename(
-                        conversationID: conversationID,
-                        title: currentTitle
-                    )
                 }
             }
         } catch {
@@ -6081,6 +6269,11 @@ final class MacWorkspaceModel {
             clearPendingPermission()
         }
         let task = Task { [self] in
+            defer {
+                if localResumeTransportPendingGeneration == generation {
+                    localResumeTransportPendingGeneration = nil
+                }
+            }
             var response = assistantText(conversationID: recovery.conversationID, messageID: recovery.assistantMessageID)
             var assembler = MacSemanticStreamAssembler(existingText: response,
                 identitySeed: recovery.assistantMessageID.uuidString)
@@ -6362,8 +6555,23 @@ final class MacWorkspaceModel {
                     guard self.remoteObservationLease == lease,
                           self.selectedConversationID == conversationID else { return }
                     guard let observed = batch.observation else {
-                        self.remoteObservationBlocksSubmission = self.remoteRunRecovery != nil
-                        if self.remoteRunRecovery == nil { self.remoteRecoveryError = nil; self.remoteObservedRun = nil }
+                        if self.remoteRunRecovery != nil {
+                            if await self.reconcileCanonicalRunTerminal(conversationID: conversationID) {
+                                self.remoteRunRecovery = nil
+                                self.remoteObservationBlocksSubmission = false
+                                self.remoteRecoveryError = nil
+                                self.remoteObservedRun = nil
+                            } else {
+                                self.remoteObservationBlocksSubmission = true
+                                if self.remoteRecoveryError == nil {
+                                    self.remoteRecoveryError = String(localized: "Remote run is still pending. You can retry recovery.", table: "Chat")
+                                }
+                            }
+                        } else {
+                            self.remoteObservationBlocksSubmission = false
+                            self.remoteRecoveryError = nil
+                            self.remoteObservedRun = nil
+                        }
                         self.wakeRemoteUIQueue(conversationID: conversationID)
                         return
                     }
@@ -6588,12 +6796,20 @@ final class MacWorkspaceModel {
                     callID: identity.callID, createdSequence: identity.createdSequence)
             }
         }
+        let resumeToken = UUID()
+        remoteResumeToken = resumeToken
         isResumingRemoteRun = true
         remoteRecoveryError = nil
         isRunning = true
         activeConversationID = conversationID
         activeRunExecutionLocation = .connectedHost
         let task = Task { [self] in
+            defer {
+                if remoteResumeToken == resumeToken {
+                    remoteResumeToken = nil
+                    isResumingRemoteRun = false
+                }
+            }
             var response = assistantText(conversationID: conversationID, messageID: recovery.assistantMessageID)
             var assembler = MacSemanticStreamAssembler(existingText: response,
                 identitySeed: recovery.assistantMessageID.uuidString)
@@ -8672,5 +8888,7 @@ final class MacWorkspaceModel {
 
     private func invalidatePendingArchiveSave(conversationID: String) {
         archiveScheduler.invalidate(conversationID: conversationID)
+        scheduledConfigurationOwners.remove(conversationID)
+        resumeConfigurationWaitersIfSettled(conversationID)
     }
 }

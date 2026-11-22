@@ -729,48 +729,55 @@ enum MacJournalTextRead {
             let port = try MacApplicationPort(databaseURL: reference.databaseURL)
             let snapshot = try port.openAssistantJournalSnapshot(at: reference.cursor)
             defer { try? port.releaseAssistantJournalSnapshot(snapshot) }
-            var after: String?
-            var visited = Set<String>()
-            var parts = Set<String>()
-            var result = ""
-            var historical = false
-            repeat {
-                try Task.checkCancellation()
-                let page = try port.assistantJournalParts(snapshot: snapshot, afterPartID: after)
-                guard page.at == reference.cursor else { throw MacRemoteHostError.invalidResponse }
-                for part in page.parts {
-                    guard part.identity == reference.cursor.identity, parts.insert(part.part_id).inserted else {
-                        throw MacRemoteHostError.invalidResponse
-                    }
-                    if case .historical(let value) = part.metadata, value.canonical_kind == "text" {
-                        historical = true
-                    }
-                    guard case .text(let text) = part.metadata, text.visibility == "public",
-                          let content = part.bodies.first(where: { $0.field == "markdown" }) else { continue }
-                    var offset = "0"
-                    while true {
-                        try Task.checkCancellation()
-                        let range = try port.assistantJournalRange(snapshot: snapshot, partID: part.part_id,
-                            content: content, offsetBytes: offset)
-                        guard range.offset_bytes == offset, range.total_utf8_bytes == content.utf8_bytes,
-                              let start = UInt64(offset), let next = UInt64(range.next_offset_bytes),
-                              let total = UInt64(content.utf8_bytes), start <= next, next <= total,
-                              next - start == UInt64(range.text.utf8.count), range.text.utf8.count <= 32768,
-                              range.end_of_content == (next == total), range.end_of_content || next > start else {
-                            throw MacRemoteHostError.invalidResponse
-                        }
-                        result += range.text
-                        if range.end_of_content { break }
-                        offset = range.next_offset_bytes
-                    }
-                }
-                after = page.next_part_id
-                if let after, !visited.insert(after).inserted { throw MacRemoteHostError.invalidResponse }
-            } while after != nil
-            try Task.checkCancellation()
-            return historical ? historicalFallback : result
+            return try await publicMarkdown(at: reference.cursor, parts: { after in
+                try port.assistantJournalParts(snapshot: snapshot, afterPartID: after)
+            }, range: { partID, content, offset in
+                try port.assistantJournalRange(snapshot: snapshot, partID: partID, content: content, offsetBytes: offset)
+            }) ?? historicalFallback
         }
         return try await withTaskCancellationHandler { try await task.value } onCancel: { task.cancel() }
+    }
+
+    /// One immutable source snapshot serves every page and body range.
+    nonisolated static func publicMarkdown(at cursor: MacAssistantJournalCursor,
+        parts readParts: (String?) async throws -> MacAssistantJournalPartPage,
+        range readRange: (String, MacAssistantJournalContentReference, String) async throws -> MacAssistantJournalTextRange) async throws -> String? {
+        var after: String?
+        var seen = Set<String>()
+        var markdown: [(position: UInt64, id: String, content: MacAssistantJournalContentReference)] = []
+        repeat {
+            try Task.checkCancellation()
+            let page = try await readParts(after)
+            guard page.at == cursor else { throw MacRemoteHostError.invalidResponse }
+            for part in page.parts {
+                guard part.identity == cursor.identity, seen.insert(part.part_id).inserted else { throw MacRemoteHostError.invalidResponse }
+                if case .historical(let value) = part.metadata, value.canonical_kind == "text" { return nil }
+                guard case .text(let text) = part.metadata, text.visibility == "public", part.order_key.section == "transcript",
+                      let content = part.bodies.first(where: { $0.field == "markdown" }) else { continue }
+                guard let position = UInt64(part.order_key.position) else { throw MacRemoteHostError.invalidResponse }
+                markdown.append((position, part.part_id, content))
+            }
+            if let next = page.next_part_id {
+                guard next == page.parts.last?.part_id, after == nil || after!.utf8.lexicographicallyPrecedes(next.utf8) else { throw MacRemoteHostError.invalidResponse }
+            }
+            after = page.next_part_id
+        } while after != nil
+        var result = ""
+        for part in markdown.sorted(by: { $0.position < $1.position }) {
+            var offset = "0"
+            repeat {
+                try Task.checkCancellation()
+                let range = try await readRange(part.id, part.content, offset)
+                guard range.offset_bytes == offset, range.total_utf8_bytes == part.content.utf8_bytes,
+                      let start = UInt64(offset), let next = UInt64(range.next_offset_bytes), let total = UInt64(part.content.utf8_bytes),
+                      start <= next, next <= total, next - start == UInt64(range.text.utf8.count), range.text.utf8.count <= 32768,
+                      range.end_of_content == (next == total), range.end_of_content || next > start else { throw MacRemoteHostError.invalidResponse }
+                result += range.text
+                if range.end_of_content { break }
+                offset = range.next_offset_bytes
+            } while true
+        }
+        return result
     }
 
     static func updatedParts(_ reference: MacJournalMessageReference,

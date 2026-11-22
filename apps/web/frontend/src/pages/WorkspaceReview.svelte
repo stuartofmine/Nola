@@ -45,7 +45,7 @@
         <div class="actions start"><a class="button" href="/conversations">{t($locale, 'shell.conversations')}</a></div>
     {/if}
     {#if loading}<p role="status">{t($locale, 'chatPage.loading')}</p>{/if}
-    {#if failed}<p role="alert">{t($locale, 'chatInspector.reviewUnavailable')}</p>{/if}
+    {#if failed}<p role="alert" class="error">{t($locale, 'chatInspector.reviewUnavailable')}</p>{/if}
     {#if review}
         <p class="workspace-root">{t($locale, 'chatInspector.hostWorkspace')}<code>{review.root}</code></p>
         {#if review.entries.length}<ul>{#each review.entries as entry}<li><span class="badge">{t($locale, entryStatusKey(entry.index, entry.worktree))}</span> <span>{entry.path}</span></li>{/each}</ul>
@@ -53,7 +53,7 @@
         {#if review.truncated}<p role="status">{t($locale, 'chatInspector.reviewTruncated')}</p>{/if}
         {#each [{label: 'unstaged', value: review.unstaged}, {label: 'staged', value: review.staged}] as section}
             <details open={!!section.value.text}><summary>{t($locale, `chatInspector.${section.label}`)}</summary>
-                {#if section.value.failed}<p role="alert">{t($locale, 'chatInspector.diffUnavailable')}</p>
+                {#if section.value.failed}<p role="alert" class="error">{t($locale, 'chatInspector.diffUnavailable')}</p>
                 {:else if section.value.text}
                     <!-- svelte-ignore a11y_no_noninteractive_tabindex (Scrollable diff supports keyboard reading.) -->
                     <pre tabindex="0" role="region" aria-label={t($locale, `chatInspector.${section.label}`)}>{section.value.text}</pre>

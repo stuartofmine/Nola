@@ -31,7 +31,11 @@
         draft = { ...snapshot.draft };
         error = '';
         const owner = snapshot;
-        void tick().then(() => { if (snapshot === owner && dialog?.isConnected && !dialog.open) dialog.showModal(); });
+        void tick().then(() => {
+            if (snapshot !== owner || !dialog?.isConnected || dialog.open) return;
+            dialog.showModal();
+            dialog.querySelector<HTMLInputElement>('input:not(:disabled)')?.focus({preventScroll: true});
+        });
     }
     function setBusy(value: boolean) { busy = value; onBusyChange(value); }
     async function discardConfirmed() {
@@ -79,7 +83,7 @@
 
 <svelte:window onbeforeunload={beforeUnload} />
 <ConfirmationDialog bind:this={confirmation} />
-<dialog use:ownDialog bind:this={dialog} oncancel={close} onkeydown={event => { if (event.key === 'Escape' && !event.defaultPrevented) { event.stopPropagation(); void close(event); } }} aria-labelledby="endpoint-editor-title">
+<dialog use:ownDialog bind:this={dialog} oncancel={close} onclick={event => { if (event.target === dialog && !busy) void close(); }} onkeydown={event => { if (event.key === 'Escape' && !event.defaultPrevented) { event.stopPropagation(); void close(event); } }} aria-labelledby="endpoint-editor-title">
     {#if snapshot && draft}<form onsubmit={save} aria-busy={busy}>
         <header><h2 id="endpoint-editor-title">{t($locale, 'remote.edit_endpoint')}</h2><p class="muted">{t($locale, 'remote.endpoint_scope', { count: snapshot.profiles.length })}</p></header>
         {#if error}<div class="notice error" role="alert">{modelValidationText($locale, error)}<button type="button" disabled={busy} onclick={reload}>{t($locale, 'models.reload')}</button></div>{/if}

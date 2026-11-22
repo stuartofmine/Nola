@@ -1,14 +1,31 @@
 import type { WorkspacePageScope } from './workspacePageScope';
 import { getContext } from 'svelte';
+import { createSubscriber } from 'svelte/reactivity';
 
 export const workspacePageLocationContext = Symbol('workspace-page-location');
 export type WorkspacePageLocation = { key?: string; scope?: WorkspacePageScope; read: () => URL; active: () => boolean; replace: (url: URL) => void };
+let standaloneUpdate: (() => void) | undefined;
+const subscribeStandaloneLocation = createSubscriber(update => {
+    standaloneUpdate = update;
+    if (typeof window === 'undefined') return () => { if (standaloneUpdate === update) standaloneUpdate = undefined; };
+    window.addEventListener('popstate', update);
+    return () => {
+        window.removeEventListener('popstate', update);
+        if (standaloneUpdate === update) standaloneUpdate = undefined;
+    };
+});
 /** Embedded management pages must not rewrite their enclosing conversation URL. */
 export function workspacePageLocation(): WorkspacePageLocation {
     return getContext<WorkspacePageLocation | undefined>(workspacePageLocationContext) ?? {
-        read: () => new URL(typeof window === 'undefined' ? 'http://nola.invalid/' : window.location.href),
+        read: () => {
+            subscribeStandaloneLocation();
+            return new URL(typeof window === 'undefined' ? 'http://nola.invalid/' : window.location.href);
+        },
         active: () => true,
-        replace: url => window.history.replaceState(window.history.state, '', url),
+        replace: url => {
+            window.history.replaceState(window.history.state, '', url);
+            standaloneUpdate?.();
+        },
     };
 }
 

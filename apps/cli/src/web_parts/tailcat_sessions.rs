@@ -57,6 +57,15 @@ fn create_tailcat_lease(
     owner: String,
     public: &str,
 ) -> Result<Value, (u16, &'static str)> {
+    create_tailcat_lease_with_timeout(config, owner, public, StdDuration::from_secs(35))
+}
+
+fn create_tailcat_lease_with_timeout(
+    config: &Config,
+    owner: String,
+    public: &str,
+    startup_timeout: StdDuration,
+) -> Result<Value, (u16, &'static str)> {
     let (program, digest) = config
         .tailcat_helper
         .as_ref()
@@ -100,6 +109,8 @@ fn create_tailcat_lease(
     };
     let mut input = child.stdin.take().expect("private transport stdin");
     let output = child.stdout.take().expect("private transport stdout");
+    let child = Arc::new(Mutex::new(child));
+    let child_for_timeout = child.clone();
     let (ready, result) = mpsc::sync_channel(1);
     let grant_id = id.clone();
     let host = host_identity().to_owned();
@@ -139,23 +150,41 @@ fn create_tailcat_lease(
         let _ = input.write_all(b"{\"version\":1,\"kind\":\"stop\"}\n");
         let _ = input.flush();
         drop(input);
-        let stopped = child.wait().is_ok();
-        let (state, wake) = &*finished;
-        *state.lock().unwrap() = Some(stopped);
-        wake.notify_all();
-        if stopped {
-            tailcat_leases().lock().unwrap().remove(&grant_id);
-        }
+        let exit = child.lock().unwrap().wait();
+        finish_tailcat_lease(&grant_id, &finished, exit);
     });
-    // Verified helper has its own30s startup deadline. A dropped HTTP receiver
+    // Verified helper has its own 30s startup deadline. A dropped HTTP receiver
     // also drops the ready receiver; the owner then closes the helper.
-    let address = result
-        .recv_timeout(StdDuration::from_secs(35))
-        .map_err(|_| (503, "tailcat_start_timeout"))?
-        .map_err(|_| (503, "tailcat_start_failed"))?;
+    let address = match result.recv_timeout(startup_timeout) {
+        Ok(Ok(address)) => address,
+        Ok(Err(())) => return Err((503, "tailcat_start_failed")),
+        Err(_) => {
+            if let Ok(mut guard) = child_for_timeout.lock() {
+                let _ = guard.kill();
+            }
+            if let Ok(mut leases) = tailcat_leases().lock() {
+                leases.remove(&id);
+            }
+            return Err((503, "tailcat_start_timeout"));
+        }
+    };
     Ok(
         json!({"version":1,"leaseId":id,"address":address,"hostId":host_identity(),"expiresIn":TAILCAT_GRANT_SECONDS}),
     )
+}
+
+fn finish_tailcat_lease(
+    id: &str,
+    finished: &(Mutex<Option<bool>>, std::sync::Condvar),
+    exit: std::io::Result<std::process::ExitStatus>,
+) {
+    let (state, wake) = finished;
+    *state.lock().unwrap() = Some(exit.as_ref().is_ok_and(|status| status.success()));
+    wake.notify_all();
+    // A reaped child no longer consumes a grant slot, including on an error exit.
+    if exit.is_ok() {
+        tailcat_leases().lock().unwrap().remove(id);
+    }
 }
 
 fn close_tailcat_lease(owner: &str, id: &str) -> Result<Value, (u16, &'static str)> {
@@ -184,6 +213,38 @@ fn close_tailcat_lease(owner: &str, id: &str) -> Result<Value, (u16, &'static st
 #[cfg(test)]
 mod tailcat_lease_tests {
     use super::*;
+    #[cfg(unix)]
+    #[test]
+    fn abnormal_helper_exit_does_not_acknowledge_close_or_leak_a_slot() {
+        let id = uuid::Uuid::new_v4().to_string();
+        let (stop, close_requested) = mpsc::channel();
+        let finished = Arc::new((Mutex::new(None), std::sync::Condvar::new()));
+        tailcat_leases().lock().unwrap().insert(
+            id.clone(),
+            TailcatLease {
+                owner: "owner".into(),
+                stop,
+                finished: finished.clone(),
+            },
+        );
+        let lease_id = id.clone();
+        let closer = thread::spawn(move || close_tailcat_lease("owner", &lease_id).unwrap());
+        close_requested
+            .recv_timeout(StdDuration::from_secs(5))
+            .unwrap();
+        let exit = std::process::Command::new("/bin/sh")
+            .args(["-c", "exit 7"])
+            .status();
+        assert_eq!(exit.as_ref().unwrap().code(), Some(7));
+        finish_tailcat_lease(&id, &finished, exit);
+        let receipt = closer.join().unwrap();
+        assert_eq!(
+            receipt,
+            json!({"closed":false,"closing":false,"stopUnconfirmed":true,"runStateChanged":false})
+        );
+        assert!(!tailcat_leases().lock().unwrap().contains_key(&id));
+    }
+
     #[test]
     fn lease_close_requires_original_owner_and_never_fabricates_a_stop() {
         let id = uuid::Uuid::new_v4().to_string();
@@ -206,5 +267,40 @@ mod tailcat_lease_tests {
         *finished.0.lock().unwrap() = Some(true);
         assert_eq!(close_tailcat_lease("owner-a", &id).unwrap()["closed"], true);
         tailcat_leases().lock().unwrap().remove(&id);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn startup_timeout_kills_helper_and_releases_lease_slot() {
+        use sha2::{Digest, Sha256};
+        use std::os::unix::fs::PermissionsExt;
+
+        let dir = tempfile::tempdir().unwrap();
+        let script = dir.path().canonicalize().unwrap().join("hang-helper.sh");
+        fs::write(&script, "#!/bin/sh\nsleep 30\n").unwrap();
+        let mut perms = fs::metadata(&script).unwrap().permissions();
+        perms.set_mode(0o755);
+        fs::set_permissions(&script, perms).unwrap();
+        let bytes = fs::read(&script).unwrap();
+        let digest = format!("{:x}", Sha256::digest(&bytes));
+
+        let mut config = Config::for_test().unwrap();
+        config.web_port = 18080;
+        config.tailcat_helper = Some((script, digest));
+
+        let owner = format!("timeout-owner-{}", uuid::Uuid::new_v4());
+        let err = create_tailcat_lease_with_timeout(
+            &config,
+            owner.clone(),
+            "nodekey:deadbeef",
+            StdDuration::from_millis(120),
+        )
+        .unwrap_err();
+        assert_eq!(err, (503, "tailcat_start_timeout"));
+        assert!(!tailcat_leases()
+            .lock()
+            .unwrap()
+            .values()
+            .any(|lease| lease.owner == owner));
     }
 }

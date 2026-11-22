@@ -750,6 +750,7 @@ mod tests {
         let external = tempfile::tempdir().expect("create external cwd");
         let ext_task_id = format!("bash-ext-{}", uuid::Uuid::new_v4());
         let ext_record = crate::store::DbBackgroundTask {
+            local_execution: None,
             process_sandbox: None,
             terminal: None,
             id: ext_task_id.clone(),

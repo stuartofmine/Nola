@@ -15,16 +15,12 @@ struct MacInspectorBrowserView: View {
         browserContent
             .accessibilityIdentifier("mac-inspector-browser")
             .sheet(isPresented: $showsExpandedBrowser) {
-                if let browser = model.selectedConversationBrowserSnapshot,
-                   let previewURL = browser.previewURL,
-                   URL(string: previewURL) != nil {
-                    MacExpandedManagedBrowserView(
-                        model: model,
-                        onSelectPage: { index in
-                            Task { await model.switchManagedBrowserPage(to: index) }
-                        }
-                    )
-                }
+                MacExpandedManagedBrowserView(
+                    model: model,
+                    onSelectPage: { index in
+                        Task { await model.switchManagedBrowserPage(to: index) }
+                    }
+                )
             }
     }
 
@@ -318,6 +314,7 @@ private struct MacExpandedManagedBrowserView: View {
                         .frame(width: 28, height: 28)
                 }
                 .buttonStyle(.plain)
+                .keyboardShortcut(.cancelAction)
                 .help(String(localized: "Close"))
             }
             .padding(.horizontal, 16)
@@ -362,6 +359,12 @@ private struct MacExpandedManagedBrowserView: View {
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
                     .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
                     .padding([.horizontal, .bottom], 14)
+            } else {
+                ContentUnavailableView(
+                    String(localized: "Managed Browser", table: "Chat"),
+                    systemImage: "safari"
+                )
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
             }
         }
         .frame(minWidth: 560, idealWidth: 1120, minHeight: 420, idealHeight: 760)

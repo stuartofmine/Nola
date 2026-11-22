@@ -163,12 +163,23 @@ fn reject_obviously_non_sqlite_file(path: &Path) -> Result<(), String> {
     Ok(())
 }
 
+/// SQLite appends its companion suffixes to the original OS path.
+fn with_suffix(path: &Path, suffix: &str) -> PathBuf {
+    let mut name = path.as_os_str().to_owned();
+    name.push(suffix);
+    PathBuf::from(name)
+}
+
+fn sqlite_family(path: &Path) -> [PathBuf; 4] {
+    ["", "-wal", "-shm", "-journal"].map(|suffix| with_suffix(path, suffix))
+}
+
+fn persistence_family(path: &Path) -> impl Iterator<Item = PathBuf> {
+    sqlite_family(path).into_iter().chain(sqlite_family(&with_suffix(path, ".uploads.sqlite")))
+}
+
 fn remove_persistence_family(path: &Path) -> Result<(), String> {
-    for member in [
-        path.to_path_buf(),
-        PathBuf::from(format!("{}-wal", path.display())),
-        PathBuf::from(format!("{}-shm", path.display())),
-    ] {
+    for member in sqlite_family(path) {
         match fs::remove_file(&member) {
             Ok(()) => {}
             Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
@@ -184,30 +195,16 @@ fn remove_persistence_family(path: &Path) -> Result<(), String> {
 }
 
 fn archive_persistence_family(path: &Path, archive_directory: &Path) -> Result<(), String> {
-    if archive_directory.exists() {
-        return Err(format!(
-            "incompatible Application persistence archive already exists: {}",
-            archive_directory.display()
-        ));
+    if let Some(parent) = archive_directory.parent().filter(|p| !p.as_os_str().is_empty()) {
+        fs::create_dir_all(parent).map_err(|error| error.to_string())?;
     }
-    fs::create_dir_all(archive_directory).map_err(|error| {
-        format!(
-            "create incompatible Application persistence archive {} failed: {error}",
-            archive_directory.display()
-        )
+    // The archive is ours only when this creation succeeds. A pre-existing archive must survive.
+    fs::create_dir(archive_directory).map_err(|error| {
+        format!("create incompatible Application persistence archive {} failed: {error}", archive_directory.display())
     })?;
-    let uploads = PathBuf::from(format!("{}.uploads.sqlite", path.display()));
-    let family = [
-        path.to_path_buf(),
-        PathBuf::from(format!("{}-wal", path.display())),
-        PathBuf::from(format!("{}-shm", path.display())),
-        uploads.clone(),
-        PathBuf::from(format!("{}-wal", uploads.display())),
-        PathBuf::from(format!("{}-shm", uploads.display())),
-    ];
     let mut archived = Vec::new();
-    for source in family {
-        if !source.exists() {
+    for source in persistence_family(path) {
+        if !source.try_exists().map_err(|error| error.to_string())? {
             continue;
         }
         let file_name = source
@@ -343,6 +340,8 @@ mod tests {
         fs::write(&wal, b"preserved wal bytes").unwrap();
         fs::write(&shm, b"preserved shm bytes").unwrap();
         fs::write(&uploads, b"preserved upload bytes").unwrap();
+        let rollback = directory.path().join("old.db.uploads.sqlite-journal");
+        fs::write(&rollback, b"staged rollback bytes").unwrap();
         let archive = directory.path().join("archive");
 
         archive_persistence_family(&path, &archive).unwrap();
@@ -364,6 +363,20 @@ mod tests {
         assert!(!wal.exists());
         assert!(!shm.exists());
         assert!(!uploads.exists());
+        assert_eq!(fs::read(archive.join("old.db.uploads.sqlite-journal")).unwrap(), b"staged rollback bytes");
+        assert!(!rollback.exists());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn recovery_companions_preserve_original_unix_path_bytes() {
+        use std::os::unix::ffi::OsStrExt;
+        let raw = |name: &[u8]| PathBuf::from(std::ffi::OsStr::from_bytes(name));
+        let path = raw(b"notes-\xff.db");
+        let members = persistence_family(&path).collect::<Vec<_>>();
+        assert!(members.contains(&raw(b"notes-\xff.db.uploads.sqlite")));
+        assert!(members.contains(&raw(b"notes-\xff.db-journal")));
+        assert!(!members.contains(&PathBuf::from("notes-�.db.uploads.sqlite")));
     }
 
     #[test]

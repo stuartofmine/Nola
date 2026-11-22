@@ -9,6 +9,7 @@
     import { api as unscopedApi } from '../lib/api';
     import { locale, t } from '../lib/i18n';
     import { memoryRecords, memoryView, memoryDeleteUrl, memoryDeletionConfirmed } from '../lib/memoryCenter';
+    import RefreshButton from './RefreshButton.svelte';
     import ConfirmationDialog from './ConfirmationDialog.svelte';
     import MemoryEditor from './MemoryEditor.svelte';
     let editing = $state(false), editRecord = $state<MemoryRecord>();
@@ -19,7 +20,7 @@
     }
     async function closeEditor() {editing = false; await tick(); if (disposed || !pageLocation.active()) return; if (editorOpener?.isConnected) editorOpener.focus(); else refreshButton?.focus();}
     let confirmation: ConfirmationDialog;
-    let refreshButton: HTMLButtonElement;
+    let refreshButton = $state<HTMLButtonElement>();
     let removing = $state(false), deletionFailed = $state(false);
     import type { MemoryRecord } from '../lib/memoryCenter';
     let records = $state<MemoryRecord[]>([]), query = $state('');
@@ -62,11 +63,11 @@
 <ConfirmationDialog bind:this={confirmation} />
 {#if editing}<MemoryEditor record={editRecord} onclose={closeEditor} onrefresh={load} />{/if}
 <section class="memory-center card" aria-busy={loading}>
-    <div class="row memory-actions"><button bind:this={refreshButton} disabled={loading || removing} onclick={load}>{t($locale, 'data_sources.action.refresh')}</button></div>
+    <div class="row memory-actions"><RefreshButton bind:element={refreshButton} disabled={removing} {loading} refresh={load} /></div>
     <p class="muted">{t($locale, 'memoryCenter.hint')}</p>
     <button disabled={loading || removing || editing || !loaded} onclick={event => edit(undefined, event.currentTarget)}>{t($locale, 'memoryCenter.create')}</button>
     <label>{t($locale, 'memoryCenter.search')}<input type="search" bind:value={query} /></label>
-    {#if loading}<p role="status">{t($locale, 'memoryCenter.loading')}</p>{/if}
+    {#if loading && !loaded}<p role="status">{t($locale, 'memoryCenter.loading')}</p>{/if}
     {#if failed}<p role="alert" class="error">{t($locale, 'memoryCenter.failed')}{#if loaded} {t($locale, 'data_sources.stale')}{/if}</p>{/if}
     {#if deletionFailed}<p role="alert" class="error">{t($locale, 'memoryCenter.deleteFailed')}</p>{/if}
     {#if loaded}
@@ -77,8 +78,10 @@
                 {#if record.summary}<p>{record.summary}</p>{/if}
                 <p class="muted">{t($locale, 'memoryCenter.source')}: {record.source} · {t($locale, 'memoryCenter.confidence')}: {new Intl.NumberFormat($locale, {style: 'percent', maximumFractionDigits: 0}).format(record.confidence)}</p>
                 {#if record.tags.length}<p class="muted">{record.tags.join(' · ')}</p>{/if}
-                <button disabled={loading || removing || editing} onclick={event => edit(record, event.currentTarget)}>{t($locale, 'memoryCenter.revise')}</button>
-                <button class="danger" disabled={loading || removing} onclick={event => remove(record.id, event.currentTarget)}>{t($locale, 'memoryCenter.delete')}</button>
+                <div class="actions">
+                    <button disabled={loading || removing || editing} onclick={event => edit(record, event.currentTarget)}>{t($locale, 'memoryCenter.revise')}</button>
+                    <button class="danger" disabled={loading || removing} onclick={event => remove(record.id, event.currentTarget)}>{t($locale, 'memoryCenter.delete')}</button>
+                </div>
             </article>
         {:else}<p role="status">{t($locale, 'memoryCenter.empty')}</p>{/each}
     {/if}

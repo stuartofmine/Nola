@@ -57,8 +57,10 @@ fn agent_context_messages_from_request(body: &Value, settings: &AgentSettings) -
                 if let Some(pending_user) = pending_user {
                     let already_stored = stored.last().is_some_and(|message| {
                         message.get("role").and_then(Value::as_str) == Some("user")
-                            && message.get("content").and_then(Value::as_str)
-                                == pending_user.get("content").and_then(Value::as_str)
+                            && match body["user_message_id"].as_str() {
+                                Some(id) => message["id"].as_str() == Some(id),
+                                None => message["content"] == pending_user["content"],
+                            }
                     });
                     if !already_stored {
                         stored.push(pending_user.clone());
@@ -527,7 +529,7 @@ fn prepare_web_chat_context(
     })
 }
 
-fn split_web_core_items(messages: &[Value]) -> (Vec<AgentItem>, Vec<AgentItem>) {
+fn split_web_core_items(messages: &[Value], submitted_message_id: &str) -> (Vec<AgentItem>, Vec<AgentItem>) {
     let items = messages
         .iter()
         .enumerate()
@@ -546,7 +548,12 @@ fn split_web_core_items(messages: &[Value]) -> (Vec<AgentItem>, Vec<AgentItem>) 
         return (items, Vec::new());
     };
     let mut initial = items;
-    let current = initial.split_off(current_user_index);
+    let mut current = initial.split_off(current_user_index);
+    // The submitted message and its applied Core item must name the same user
+    // source when the Store validates a later task_scope_update.
+    if let AgentItem::Message { id, .. } = &mut current[0] {
+        *id = nola_core::agent::ItemId::from_string(submitted_message_id.to_owned());
+    }
     (initial, current)
 }
 
@@ -666,26 +673,43 @@ fn read_json_value(request: &mut Request) -> Result<Value, Response<Box<dyn Read
     })
 }
 
+const MAX_MOBILE_JSON_BODY_BYTES: usize = 12 * 1024 * 1024;
+const MAX_URLENCODED_FORM_BODY_BYTES: usize = 64 * 1024;
+
+#[derive(Debug, PartialEq, Eq)]
+enum BoundedBodyError {
+    TooLarge,
+    Read(String),
+}
+
+fn read_bounded_utf8(reader: &mut dyn Read, limit: usize) -> Result<String, BoundedBodyError> {
+    let mut bytes = Vec::new();
+    reader
+        .take((limit as u64).saturating_add(1))
+        .read_to_end(&mut bytes)
+        .map_err(|error| BoundedBodyError::Read(error.to_string()))?;
+    if bytes.len() > limit {
+        return Err(BoundedBodyError::TooLarge);
+    }
+    String::from_utf8(bytes).map_err(|error| BoundedBodyError::Read(error.to_string()))
+}
+
 fn read_mobile_json_value(
     request: &mut Request,
     token: &str,
 ) -> Result<Value, Response<Box<dyn Read + Send>>> {
-    let mut body = String::new();
-    request
-        .as_reader()
-        .read_to_string(&mut body)
-        .map_err(|error| {
-            json_response(
+    let body = read_bounded_utf8(request.as_reader(), MAX_MOBILE_JSON_BODY_BYTES).map_err(
+        |error| match error {
+            BoundedBodyError::TooLarge => json_response(
+                StatusCode(413),
+                json!({"error": "mobile request is too large"}),
+            ),
+            BoundedBodyError::Read(message) => json_response(
                 StatusCode(400),
-                json!({"error": format!("failed to read mobile request: {error}")}),
-            )
-        })?;
-    if body.len() > 12 * 1024 * 1024 {
-        return Err(json_response(
-            StatusCode(413),
-            json!({"error": "mobile request is too large"}),
-        ));
-    }
+                json!({"error": format!("failed to read mobile request: {message}")}),
+            ),
+        },
+    )?;
     if request_header(request, "X-Nola-Mobile-Auth").is_some() {
         let expected = request_header(request, "X-Nola-Mobile-Body-SHA256").unwrap_or("");
         let actual = nola_core::mobile_crypto::mobile_body_sha256(body.as_bytes());
@@ -806,50 +830,55 @@ fn web_runtime_directory() -> Result<PathBuf, String> {
     Ok(home.join(".nola").join("web"))
 }
 
-fn chat_conversation_route(path: &str) -> Option<(&str, &str)> {
+fn decode_path_segment(raw: &str) -> Option<String> {
+    if raw.is_empty() {
+        return None;
+    }
+    let decoded = percent_decode_path(raw);
+    if decoded.trim().is_empty() || decoded.bytes().any(|byte| byte.is_ascii_control()) {
+        return None;
+    }
+    Some(decoded)
+}
+
+fn chat_conversation_route(path: &str) -> Option<(String, &str)> {
     let prefix = "/api/chat/conversations/";
     let rest = path.strip_prefix(prefix)?;
     if rest.is_empty() {
         return None;
     }
-    let (id, suffix) = rest.split_once('/').unwrap_or((rest, ""));
-    if id.is_empty() {
-        return None;
-    }
+    let (raw_id, suffix) = rest.split_once('/').unwrap_or((rest, ""));
+    let id = decode_path_segment(raw_id)?;
     Some((id, suffix))
 }
 
-fn data_source_route(path: &str) -> Option<(&str, &str)> {
+fn data_source_route(path: &str) -> Option<(String, &str)> {
     let rest = path.strip_prefix("/api/data-sources/")?;
     if rest.is_empty() || rest == "usage" {
         return None;
     }
-    let (id, suffix) = rest.split_once('/').unwrap_or((rest, ""));
-    if id.is_empty() {
-        return None;
-    }
+    let (raw_id, suffix) = rest.split_once('/').unwrap_or((rest, ""));
+    let id = decode_path_segment(raw_id)?;
     Some((id, suffix))
 }
 
-fn scheduled_action_route(path: &str) -> Option<(&str, &str)> {
+fn scheduled_action_route(path: &str) -> Option<(String, &str)> {
     let prefix = "/api/scheduled-actions/";
     let rest = path.strip_prefix(prefix)?;
     if rest.is_empty() {
         return None;
     }
-    let (id, suffix) = rest.split_once('/').unwrap_or((rest, ""));
-    if id.is_empty() {
-        return None;
-    }
+    let (raw_id, suffix) = rest.split_once('/').unwrap_or((rest, ""));
+    let id = decode_path_segment(raw_id)?;
     Some((id, suffix))
 }
 
-fn result_detail_route(path: &str) -> Option<&str> {
+fn result_detail_route(path: &str) -> Option<String> {
     let rest = path.strip_prefix("/api/results/")?;
     if rest.is_empty() || rest.contains('/') {
         None
     } else {
-        Some(rest)
+        decode_path_segment(rest)
     }
 }
 
@@ -892,14 +921,7 @@ fn apply_execution_backend(
     backend: &str,
 ) -> Result<(), String> {
     let backend = backend.trim();
-    let available = crate::external_executor::discover_execution_backends()
-        .into_iter()
-        .any(|entry| {
-            entry.id == backend
-                && entry.availability
-                    == nola_domain::execution_backend::ExecutionBackendAvailability::Available
-        });
-    if !available {
+    if !crate::external_executor::execution_backend_available(backend) {
         return Err(format!("execution backend is unavailable: {backend}"));
     }
     conversation.execution_backend = backend.to_string();
@@ -1340,7 +1362,7 @@ fn resolve_local_readable_path(
 ) -> Result<PathBuf, String> {
     let mut text = raw_path.trim().to_string();
     if let Some(value) = text.strip_prefix("file://") {
-        text = percent_decode(value);
+        text = percent_decode_path(value);
     }
     if text.is_empty() {
         return Err("本地数据源缺少路径".to_string());
@@ -1926,12 +1948,7 @@ fn merge_agent_settings(settings: &mut AgentSettings, value: Value) {
         settings.enable_local_dev_tools = value;
     }
     if let Some(value) = string_field(map, "execution_backend") {
-        let available = crate::external_executor::discover_execution_backends();
-        if available.iter().any(|backend| {
-            backend.id == value
-                && backend.availability
-                    == nola_domain::execution_backend::ExecutionBackendAvailability::Available
-        }) {
+        if crate::external_executor::execution_backend_available(&value) {
             settings.execution_backend = value;
         }
     }
@@ -2262,8 +2279,9 @@ fn adopt_first_message_conversation_title_after_admission(
     identity:&nola_domain::remote_submission::RemoteSubmissionIdentity,
     request_digest:&str,
     visible_user_text:&str,
+    in_place_resend: bool,
 )->Result<bool,String>{
-    adopt_first_message_conversation_title_at(&NolaStore::open_default()?,identity,request_digest,visible_user_text)
+    adopt_first_message_conversation_title_at(&NolaStore::open_default()?,identity,request_digest,visible_user_text,in_place_resend)
 }
 
 fn adopt_first_message_conversation_title_at(
@@ -2271,6 +2289,7 @@ fn adopt_first_message_conversation_title_at(
     identity:&nola_domain::remote_submission::RemoteSubmissionIdentity,
     request_digest:&str,
     visible_user_text:&str,
+    in_place_resend: bool,
 )->Result<bool,String>{
     let mut app=crate::application_port::CliApplicationPort::persistent(store.path())?;
     let receipt:nola_domain::remote_submission::SourceSubmissionReceipt=app.execute(
@@ -2280,25 +2299,29 @@ fn adopt_first_message_conversation_title_at(
     if receipt.phase!=nola_domain::remote_submission::RemoteSubmissionPhase::Admitted {return Ok(false);}
     let conversation_id=&identity.conversation_id;
     let Some(title)=first_message_title(visible_user_text) else {return Ok(false);};
-    if !store.web_automatic_title_is_current(conversation_id)? {
+    if !in_place_resend && !store.web_automatic_title_is_current(conversation_id)? {
         return Ok(false);
     }
     let Some(value) = store.get_web_conversation(conversation_id)? else {
         return Ok(false);
     };
-    let mut conversation = serde_json::from_value::<WebConversation>(value)
+    let conversation = serde_json::from_value::<WebConversation>(value)
         .map_err(|error| format!("parse web conversation failed: {error}"))?;
-    if conversation.title_source != ConversationTitleSource::Automatic {
-        return Ok(false);
+    match conversation.title_source {
+        ConversationTitleSource::Automatic => {}
+        ConversationTitleSource::FirstMessage if in_place_resend && conversation.title != title => {
+            let first: nola_domain::ConversationProjection = app.execute(
+                nola_application::ApplicationCommand::LoadConversationProjectionPageV1 {
+                    conversation_id: conversation_id.clone(), offset: 0, limit: 1,
+                },
+            )?;
+            if !first.messages.first().is_some_and(|message| message.message_id.0 == identity.user_message_id) {
+                return Ok(false);
+            }
+        }
+        _ => return Ok(false),
     }
-    conversation.title = title;
-    conversation.title_source = ConversationTitleSource::FirstMessage;
-    conversation.updated_at = now_string();
-    if store.rename_web_conversation(conversation_id,&conversation.title,ConversationTitleSource::FirstMessage,conversation.revision)? {
-        Ok(true)
-    } else {
-        Err(format!("web conversation {conversation_id} does not exist"))
-    }
+    store.rename_web_conversation(conversation_id, &title, ConversationTitleSource::FirstMessage, conversation.revision)
 }
 
 fn sanitize_meta(value: Value) -> Value {
@@ -2784,18 +2807,26 @@ fn query_param(url: &str, key: &str) -> Option<String> {
     None
 }
 
-fn percent_decode(value: &str) -> String {
-    let mut bytes = Vec::new();
+fn hex_nibble(byte: u8) -> Option<u8> {
+    match byte {
+        b'0'..=b'9' => Some(byte - b'0'),
+        b'a'..=b'f' => Some(byte - b'a' + 10),
+        b'A'..=b'F' => Some(byte - b'A' + 10),
+        _ => None,
+    }
+}
+
+fn percent_decode_inner(value: &str, plus_as_space: bool) -> String {
+    let mut bytes = Vec::with_capacity(value.len());
     let raw = value.as_bytes();
     let mut index = 0;
     while index < raw.len() {
-        if raw[index] == b'+' {
+        if plus_as_space && raw[index] == b'+' {
             bytes.push(b' ');
             index += 1;
         } else if raw[index] == b'%' && index + 2 < raw.len() {
-            let hex = &value[index + 1..index + 3];
-            if let Ok(byte) = u8::from_str_radix(hex, 16) {
-                bytes.push(byte);
+            if let (Some(hi), Some(lo)) = (hex_nibble(raw[index + 1]), hex_nibble(raw[index + 2])) {
+                bytes.push((hi << 4) | lo);
                 index += 3;
             } else {
                 bytes.push(raw[index]);
@@ -2807,6 +2838,18 @@ fn percent_decode(value: &str) -> String {
         }
     }
     String::from_utf8_lossy(&bytes).to_string()
+}
+
+fn percent_decode_path(value: &str) -> String {
+    percent_decode_inner(value, false)
+}
+
+fn percent_decode_form(value: &str) -> String {
+    percent_decode_inner(value, true)
+}
+
+fn percent_decode(value: &str) -> String {
+    percent_decode_form(value)
 }
 
 fn sse_event(value: Value) -> Vec<u8> {
@@ -3204,25 +3247,71 @@ mod tests {
     fn parses_chat_conversation_routes() {
         assert_eq!(
             chat_conversation_route("/api/chat/conversations/abc/messages"),
-            Some(("abc", "messages"))
+            Some(("abc".to_string(), "messages"))
         );
         assert_eq!(
             chat_conversation_route("/api/chat/conversations/abc"),
-            Some(("abc", ""))
+            Some(("abc".to_string(), ""))
         );
         assert_eq!(
             chat_conversation_route("/api/chat/conversations/abc/traces"),
-            Some(("abc", "traces"))
+            Some(("abc".to_string(), "traces"))
         );
         assert_eq!(
             chat_conversation_route("/api/chat/conversations/abc/goal"),
-            Some(("abc", "goal"))
+            Some(("abc".to_string(), "goal"))
+        );
+        assert_eq!(
+            chat_conversation_route("/api/chat/conversations/conv%3A123/messages"),
+            Some(("conv:123".to_string(), "messages"))
+        );
+        assert_eq!(
+            chat_conversation_route("/api/chat/conversations/%00bad/messages"),
+            None
+        );
+        assert_eq!(
+            chat_conversation_route("/api/chat/conversations/%20%20/messages"),
+            None
         );
     }
 
     #[test]
     fn decodes_query_values() {
         assert_eq!(percent_decode("hello+%E4%B8%96%E7%95%8C"), "hello 世界");
+        assert_eq!(percent_decode("%中"), "%中");
+        assert_eq!(percent_decode("token=%中&ok=%2F"), "token=%中&ok=/");
+        assert_eq!(percent_decode("a%😀b"), "a%😀b");
+        assert_eq!(percent_decode("%2G%2%"), "%2G%2%");
+        assert_eq!(super::percent_decode_path("conv+1%2B2%20ok"), "conv+1+2 ok");
+        assert_eq!(
+            chat_conversation_route("/api/chat/conversations/conv+1/messages"),
+            Some(("conv+1".to_string(), "messages"))
+        );
+    }
+
+    #[test]
+    fn read_bounded_utf8_enforces_limit_without_unbounded_reads() {
+        use super::{read_bounded_utf8, BoundedBodyError};
+        use std::io::Cursor;
+
+        let mut exact = Cursor::new(b"abcd".to_vec());
+        assert_eq!(read_bounded_utf8(&mut exact, 4).unwrap(), "abcd");
+
+        // An oversized stream (even if truncation at limit + 1 splits a multi-byte UTF-8 char)
+        // must stop after limit + 1 bytes and return TooLarge.
+        let mut oversized_ascii = Cursor::new(b"abcdef".to_vec());
+        assert_eq!(
+            read_bounded_utf8(&mut oversized_ascii, 4),
+            Err(BoundedBodyError::TooLarge)
+        );
+        assert_eq!(oversized_ascii.position(), 5);
+
+        let mut oversized_utf8 = Cursor::new("ab中".as_bytes().to_vec());
+        assert_eq!(
+            read_bounded_utf8(&mut oversized_utf8, 3),
+            Err(BoundedBodyError::TooLarge)
+        );
+        assert_eq!(oversized_utf8.position(), 4);
     }
 
     #[test]
@@ -3800,13 +3889,23 @@ mod tests {
     fn parses_scheduled_and_result_routes() {
         assert_eq!(
             scheduled_action_route("/api/scheduled-actions/a1/run-now"),
-            Some(("a1", "run-now"))
+            Some(("a1".to_string(), "run-now"))
         );
         assert_eq!(
             scheduled_action_route("/api/scheduled-actions/a1"),
-            Some(("a1", ""))
+            Some(("a1".to_string(), ""))
         );
-        assert_eq!(result_detail_route("/api/results/r1"), Some("r1"));
+        assert_eq!(
+            scheduled_action_route("/api/scheduled-actions/act%3A1/run-now"),
+            Some(("act:1".to_string(), "run-now"))
+        );
+        assert_eq!(scheduled_action_route("/api/scheduled-actions/bad%0Aid"), None);
+        assert_eq!(result_detail_route("/api/results/r1"), Some("r1".to_string()));
+        assert_eq!(
+            result_detail_route("/api/results/automation-launch-failure%3Arun-42"),
+            Some("automation-launch-failure:run-42".to_string())
+        );
+        assert_eq!(result_detail_route("/api/results/r1%00"), None);
         assert_eq!(result_detail_route("/api/results/r1/extra"), None);
         assert_eq!(
             permission_rule_route("/api/agent/permission_rules/42"),
@@ -3854,6 +3953,14 @@ mod tests {
     }
 
     #[test]
+    fn mobile_context_usage_uses_the_published_version_and_conversation_owner() {
+        let mut event = json!({"type": "context_usage", "used_tokens": 5});
+        crate::web::bind_mobile_context_usage(&mut event, "conversation", "host");
+        assert_eq!(event, json!({"protocol_version": 1, "type":"context_usage",
+            "session_id":"conversation", "source_host_id":"host", "used_tokens":5}));
+    }
+
+    #[test]
     fn web_sse_forwards_typed_core_projections_without_trace_wrappers() {
         for event_type in [
             "core_task_updated",
@@ -3863,6 +3970,7 @@ mod tests {
             "core_memory_runtime_projection_updated",
             "assistant_journal_committed_v1",
             "assistant_run_terminal_committed_v1",
+            "external_session_started",
             "context_usage",
         ] {
             assert!(crate::web::web_event_is_core_projection(
@@ -4350,17 +4458,40 @@ mod tests {
     fn parses_persisted_data_source_routes_without_confusing_conversation_routes() {
         assert_eq!(
             super::data_source_route("/api/data-sources/source-1"),
-            Some(("source-1", ""))
+            Some(("source-1".to_string(), ""))
         );
         assert_eq!(
             super::data_source_route("/api/data-sources/source-1/test"),
-            Some(("source-1", "test"))
+            Some(("source-1".to_string(), "test"))
         );
+        assert_eq!(
+            super::data_source_route("/api/data-sources/src%3A1/test"),
+            Some(("src:1".to_string(), "test"))
+        );
+        assert_eq!(super::data_source_route("/api/data-sources/bad%7Fid"), None);
         assert_eq!(super::data_source_route("/api/data-sources/usage"), None);
         assert_eq!(
             chat_conversation_route("/api/chat/conversations/conversation-1/data-sources/source-1"),
-            Some(("conversation-1", "data-sources/source-1"))
+            Some(("conversation-1".to_string(), "data-sources/source-1"))
         );
+    }
+
+    #[test]
+    fn in_flight_automation_guard_cleans_up_on_drop_and_panic() {
+        let in_flight = std::sync::Arc::new(Mutex::new(std::collections::HashSet::new()));
+        in_flight.lock().unwrap().insert("act-1".to_string());
+        let handle = std::thread::spawn({
+            let in_flight = std::sync::Arc::clone(&in_flight);
+            move || {
+                let _guard = super::InFlightAutomationGuard {
+                    in_flight,
+                    action_id: "act-1".to_string(),
+                };
+                panic!("simulated worker panic");
+            }
+        });
+        assert!(handle.join().is_err());
+        assert!(!in_flight.lock().unwrap().contains("act-1"));
     }
 
     #[test]
@@ -4404,12 +4535,12 @@ mod admitted_first_message_title_tests {
     #[test]
     fn prepared_or_wrong_epoch_source_cannot_adopt_a_title(){
         let root=tempfile::tempdir().unwrap();let(store,mut app,id,digest)=setup(&root.path().join("rejected.db"));
-        assert!(!adopt_first_message_conversation_title_at(&store,&id,&digest,"Stale draft must not rename").unwrap());
+        assert!(!adopt_first_message_conversation_title_at(&store,&id,&digest,"Stale draft must not rename",false).unwrap());
         let component=nola_core::context_engine::ContextComponent{kind:nola_core::context_engine::ContextComponentKind::MainExpertSelection,
             id:nola_domain::expert_task_target::MAIN_EXPERT_SELECTION_COMPONENT_ID.into(),source:None,
             content:json!({"version":1,"expected_source_store_epoch":"retired-store","selected_experts":[{"agent_id":"reviewer","agent_revision":1}]})};
         assert!(begin(&mut app,&id,vec![component]).unwrap_err().contains("main_expert_selection_source_changed"));
-        assert!(!adopt_first_message_conversation_title_at(&store,&id,&digest,"Stale draft must not rename").unwrap());
+        assert!(!adopt_first_message_conversation_title_at(&store,&id,&digest,"Stale draft must not rename",false).unwrap());
         let view=store.get_web_conversation("main").unwrap().unwrap();assert_eq!(view["title"],"New conversation");assert_eq!(view["titleSource"],"automatic");
         assert!(app.load_conversation("main").unwrap().unwrap().messages.is_empty());
     }
@@ -4424,11 +4555,27 @@ mod admitted_first_message_title_tests {
                 response:HostResponseEnvelope{request_id:request.request_id.clone(),attempt_id:request.attempt_id.clone(),effect_id:request.effect_id.clone(),delegated_invocation_id:request.delegated_invocation_id.clone(),host_id:request.host_id.clone(),lease_id:request.lease_id.clone(),
                     session_id:request.session_id.clone(),turn_id:request.turn_id.clone(),catalog_revision:request.catalog_revision,availability_epoch:request.availability_epoch,delivery:request.delivery.clone(),sequence,payload}}).unwrap();
         }
-        assert!(adopt_first_message_conversation_title_at(&store,&id,&digest,"Actual user input").unwrap());
+        assert!(adopt_first_message_conversation_title_at(&store,&id,&digest,"Actual user input",false).unwrap());
         let view=store.get_web_conversation("main").unwrap().unwrap();assert_eq!(view["title"],"Actual user input");assert_eq!(view["titleSource"],"first_message");
-        let mut wrong=id.clone();wrong.client_id="different-client".into();assert!(adopt_first_message_conversation_title_at(&store,&wrong,&digest,"Foreign title").is_err());
+        let mut wrong=id.clone();wrong.client_id="different-client".into();assert!(adopt_first_message_conversation_title_at(&store,&wrong,&digest,"Foreign title",false).is_err());
+        assert!(adopt_first_message_conversation_title_at(&store,&id,&digest,"Updated opening message",true).unwrap());
+        let view=store.get_web_conversation("main").unwrap().unwrap();assert_eq!(view["title"],"Updated opening message");
         store.rename_web_conversation("main","My chosen title",crate::store::ConversationTitleSource::User,view["revision"].as_i64().unwrap()).unwrap();
-        assert!(!adopt_first_message_conversation_title_at(&store,&id,&digest,"Do not overwrite my title").unwrap());
+        assert!(!adopt_first_message_conversation_title_at(&store,&id,&digest,"Do not overwrite my title",true).unwrap());
         assert_eq!(store.get_web_conversation("main").unwrap().unwrap()["title"],"My chosen title");
+    }
+}
+
+#[cfg(test)]
+#[test]
+fn web_scope_sources_bind_only_current_input_to_the_admitted_message() {
+    let history = json!({"role":"user","id":"earlier","content":"同一条消息"});
+    for current in [
+        json!({"role":"user","content":"同一条消息"}),
+        json!({"role":"user","id":"untrusted","core_message_id":"untrusted","content":"同一条消息"}),
+    ] {
+        let (previous, input) = split_web_core_items(&[history.clone(), current], "admitted-user");
+        assert!(matches!(previous.as_slice(), [AgentItem::Message { id, .. }] if id.as_str() == "earlier"));
+        assert!(matches!(input.as_slice(), [AgentItem::Message { id, role: AgentRole::User, .. }] if id.as_str() == "admitted-user"));
     }
 }

@@ -5,37 +5,51 @@ use rusqlite::Connection;
 pub(crate) const SCHEMA_VERSION: i64 = 1;
 pub(crate) const EXTRACTOR_VERSION: &str = "nola-native-arborium-v1";
 
+// Identify a store before changing its persistent journal mode or creating tables.
+fn is_new_store(connection: &Connection) -> rusqlite::Result<bool> {
+    let (empty, baseline_tables, application, version): (bool, usize, i64, i64) = connection.query_row(
+        "SELECT NOT EXISTS(SELECT 1 FROM sqlite_schema WHERE name NOT GLOB 'sqlite_*'),
+                (SELECT COUNT(*) FROM sqlite_schema WHERE type='table' AND name IN
+                 ('metadata','projects','files','symbols','references_raw','edges','symbols_fts','symbols_search')),
+                (SELECT application_id FROM pragma_application_id),
+                (SELECT user_version FROM pragma_user_version)",
+        [],
+        |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
+    )?;
+    if application == 0 && version == 0 {
+        if empty {
+            return Ok(true);
+        }
+        if baseline_tables == 8
+            && metadata_value(connection, "schema_version")? == Some(SCHEMA_VERSION.to_string())
+            && metadata_value(connection, "extractor_version")?.as_deref()
+                == Some(EXTRACTOR_VERSION)
+        {
+            return Ok(false);
+        }
+    }
+    Err(rusqlite::Error::InvalidParameterName(
+        "incompatible code-memory schema or extractor version; existing data was not rebuilt"
+            .into(),
+    ))
+}
+
 pub(crate) fn initialize(connection: &Connection) -> rusqlite::Result<()> {
+    connection.busy_timeout(std::time::Duration::from_secs(5))?;
+    is_new_store(connection)?;
     connection.execute_batch(
         "PRAGMA foreign_keys = ON;
          PRAGMA journal_mode = WAL;
          PRAGMA synchronous = NORMAL;
-         PRAGMA temp_store = MEMORY;
-         PRAGMA busy_timeout = 5000;
-         CREATE TABLE IF NOT EXISTS metadata (
-             key TEXT PRIMARY KEY,
-             value TEXT NOT NULL
-         );",
+         PRAGMA temp_store = MEMORY;",
     )?;
-    let existing_schema = metadata_value(connection, "schema_version")?;
-    let existing_extractor = metadata_value(connection, "extractor_version")?;
-    let has_index_tables: bool = connection.query_row(
-        "SELECT EXISTS(SELECT 1 FROM sqlite_master WHERE type='table' AND name='projects')",
-        [],
-        |row| row.get(0),
+    let transaction =
+        rusqlite::Transaction::new_unchecked(connection, rusqlite::TransactionBehavior::Immediate)?;
+    let fresh = is_new_store(&transaction)?;
+    transaction.execute_batch(
+        "CREATE TABLE IF NOT EXISTS metadata (key TEXT PRIMARY KEY, value TEXT NOT NULL);",
     )?;
-    let expected_schema = SCHEMA_VERSION.to_string();
-    if has_index_tables
-        && (existing_schema.as_deref() != Some(expected_schema.as_str())
-            || existing_extractor.as_deref() != Some(EXTRACTOR_VERSION))
-    {
-        // Single-version contract: an incompatible store is rejected, never
-        // silently destroyed or converted, even when it contains derived data.
-        return Err(rusqlite::Error::InvalidParameterName(
-            "incompatible code-memory schema or extractor version; existing data was not rebuilt".into(),
-        ));
-    }
-    connection.execute_batch(
+    transaction.execute_batch(
         "
          CREATE TABLE IF NOT EXISTS projects (
              id INTEGER PRIMARY KEY,
@@ -127,17 +141,13 @@ pub(crate) fn initialize(connection: &Connection) -> rusqlite::Result<()> {
              DELETE FROM symbols_search WHERE symbol_id=old.id;
          END;",
     )?;
-    connection.execute(
-        "INSERT INTO metadata(key,value) VALUES('schema_version',?1)
-         ON CONFLICT(key) DO UPDATE SET value=excluded.value",
-        [SCHEMA_VERSION.to_string()],
-    )?;
-    connection.execute(
-        "INSERT INTO metadata(key,value) VALUES('extractor_version',?1)
-         ON CONFLICT(key) DO UPDATE SET value=excluded.value",
-        [EXTRACTOR_VERSION],
-    )?;
-    Ok(())
+    if fresh {
+        transaction.execute(
+            "INSERT INTO metadata(key,value) VALUES('schema_version',?1),('extractor_version',?2)",
+            rusqlite::params![SCHEMA_VERSION.to_string(), EXTRACTOR_VERSION],
+        )?;
+    }
+    transaction.commit()
 }
 
 fn metadata_value(connection: &Connection, key: &str) -> rusqlite::Result<Option<String>> {
@@ -189,6 +199,31 @@ mod tests {
             metadata_value(&connection, "extractor_version").unwrap(),
             Some("old-extractor".to_string())
         );
+    }
+
+    #[test]
+    fn opening_damaged_index_does_not_recreate_a_missing_data_table() {
+        let connection = Connection::open_in_memory().unwrap();
+        initialize(&connection).unwrap();
+        connection.execute("DROP TABLE references_raw", []).unwrap();
+        assert!(initialize(&connection).is_err());
+        assert!(connection.prepare("SELECT * FROM references_raw").is_err());
+    }
+
+    #[test]
+    fn unknown_databases_are_rejected_without_changing_the_file() {
+        for creation in [
+            "CREATE TABLE notes(body TEXT); INSERT INTO notes VALUES('retain me')",
+            "CREATE TABLE metadata(key TEXT PRIMARY KEY,value TEXT); INSERT INTO metadata VALUES('schema_version','99')",
+            "PRAGMA user_version = 42",
+        ] {
+            let dir = tempfile::tempdir().unwrap();
+            let file = dir.path().join("fixture.sqlite");
+            Connection::open(&file).unwrap().execute_batch(creation).unwrap();
+            let before = std::fs::read(&file).unwrap();
+            assert!(crate::NativeCodeMemory::open(&file).is_err());
+            assert_eq!(std::fs::read(&file).unwrap(), before);
+        }
     }
 
     #[test]

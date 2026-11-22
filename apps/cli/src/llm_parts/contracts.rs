@@ -238,6 +238,7 @@ pub struct ProviderFailure {
 #[derive(Debug)]
 pub(super) enum ProviderAttemptError {
     Admission(String),
+    StreamFailure { code: &'static str, message: &'static str, retryable: bool },
     /// Local transport worker disappeared; never inferred from provider text.
     WorkerDisconnected,
     Http {

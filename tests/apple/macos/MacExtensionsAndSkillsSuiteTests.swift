@@ -558,6 +558,11 @@ final class MacBuiltInSkillRegistryTests: XCTestCase {
         XCTAssertEqual(skill.name, "skill")
         XCTAssertEqual(skill.authorization, "granted")
         XCTAssertNil(plan.output.enabledTools.first { $0.toolId == "skill_context" })
+        for id in ["github_skill_find", "github_skill_install"] {
+            let tool = try XCTUnwrap(plan.output.enabledTools.first { $0.toolId == id && $0.enabled })
+            XCTAssertEqual(tool.route, "agent_host")
+            XCTAssertEqual(tool.authorization, "granted")
+        }
     }
 
     private var defaults: UserDefaults!
@@ -1111,6 +1116,51 @@ final class MacBuiltInSkillRegistryTests: XCTestCase {
         XCTAssertTrue(try MacBuiltInSkillRegistry.activeDescriptors().contains {
             $0.id == .fileOrganization
         })
+    }
+
+    func testInstalledGitHubSkillSettingsAndNextNativeLaunchShareCanonicalRegistry() async throws {
+        let workspace = FileManager.default.temporaryDirectory.appendingPathComponent("mac-installed-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: workspace) }
+        let app = MacAppEnvironment(applicationSupportRoot: workspace.appendingPathComponent("support"),
+                                    cachesRoot: workspace.appendingPathComponent("cache"))
+        try app.prepare()
+        let store = try MacApplicationPort(databaseURL: app.databaseURL)
+        let id = "example-card"
+        let origin = "owner/repo/tree/" + String(repeating: "a", count: 40) + "/skills/example-card"
+        let created = try store.createUserSkill(MacCanonicalSkillInput(id: id, source: .user,
+            version: "v1", displayName: id, summary: "Research card", category: "custom",
+            instructionsRef: "nola://github-skills/" + origin, instructionsText: "# Original",
+            requiredTools: [], defaultMode: nil, enabled: true, createdAtMs: 1, updatedAtMs: 1))
+        func launch() throws -> MacLocalAgentRunRequest {
+            try MacLocalAgentRunRequest(conversationID: "github-selection", prompt: "hello", projectURL: workspace,
+                attachmentURLs: [], appEnvironment: app, applicationPort: store)
+        }
+        let config = app.processEnvironment(base: ["NOLA_HOME": "/unrelated"], projectURL: workspace)
+        XCTAssertEqual(config["NOLA_HOME"], app.runtimeHome.path)
+        XCTAssertEqual(config["NOLA_DB_PATH"], app.databaseURL.path)
+        XCTAssertTrue(try launch().activeSkillIDs.contains(id))
+        XCTAssertTrue(try launch().skillDirectoryArguments.contains(id))
+        let items = try await MacExtensionsService.shared.localExtensions(workspaceURL: nil, store: store)
+        let item = try XCTUnwrap(items.first { $0.installedSkillID == id })
+        let document = try await MacExtensionsService.shared.document(for: item, store: store)
+        XCTAssertEqual(document.url.absoluteString, "https://github.com/" + origin)
+        XCTAssertEqual(document.canonicalSkillRevision, created.revision)
+        let edited = try await MacExtensionsService.shared.save("# New", for: item,
+            expectedRevision: document.canonicalSkillRevision, store: store)
+        XCTAssertEqual(edited.content, "# New")
+        do {
+            _ = try await MacExtensionsService.shared.save("# Stale", for: item,
+                expectedRevision: document.canonicalSkillRevision, store: store)
+            XCTFail("A stale draft replaced the new instructions")
+        } catch { }
+        let current = try XCTUnwrap(store.skillEditor(id))
+        XCTAssertEqual(current.record.instructionsRef, created.record.instructionsRef)
+        XCTAssertEqual(current.record.instructionsText, "# New")
+        XCTAssertTrue(try launch().activeSkillIDs.contains(id))
+        XCTAssertTrue(try launch().skillDirectoryArguments.contains(id))
+        _ = try store.setSkillEnabled(current, enabled: false, updatedAtMs: 3)
+        XCTAssertFalse(try launch().activeSkillIDs.contains(id))
+        XCTAssertFalse(try launch().skillDirectoryArguments.contains(id))
     }
 
     func testDiscoveredWorkspaceSkillRequiresExplicitActivationAndEntersHostSnapshot() async throws {

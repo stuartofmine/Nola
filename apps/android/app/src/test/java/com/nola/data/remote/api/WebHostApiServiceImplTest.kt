@@ -2,6 +2,7 @@ package com.nola.data.remote.api
 
 import com.nola.core.AndroidAgentPermissionMode
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertTrue
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotEquals
 import org.junit.Test
@@ -9,6 +10,35 @@ import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
 
 class WebHostApiServiceImplTest {
+    @Test fun expertHistoryQueriesBindHostAndEpochAndRejectMutationCommands() = kotlinx.coroutines.runBlocking {
+        val command = JsonObject(mapOf("type" to JsonPrimitive("peer_exchanges"), "conversation_id" to JsonPrimitive("parent")))
+        val result = JsonObject(mapOf("conversation_id" to JsonPrimitive("parent")))
+        var host = "owned-host"
+        var epoch = "owned-epoch"
+        var requests = 0
+        val api = java.lang.reflect.Proxy.newProxyInstance(WebHostApiService::class.java.classLoader,
+            arrayOf(WebHostApiService::class.java)) { _, method, args ->
+            check(method.name == "agentRoomCommand")
+            val request = args[2] as JsonObject
+            assertEquals(JsonPrimitive("owned-host"), request["expected_host_id"])
+            assertEquals(JsonPrimitive("owned-epoch"), request["expected_source_store_epoch"])
+            assertEquals(command, request["command"])
+            requests++
+            JsonObject(mapOf("host_id" to JsonPrimitive(host), "source_store_epoch" to JsonPrimitive(epoch), "result" to result))
+        } as WebHostApiService
+        val provider = com.nola.llm.provider.WebAgentProvider(api, com.nola.llm.provider.LocaleWebAgentSummaryTextSource)
+        val config = com.nola.llm.provider.WebAgentProvider.Config("http://127.0.0.1", "fixture", expectedHostId = host)
+        assertEquals(result, provider.readExpertHistoryCommand(command, config, epoch))
+        host = "different-host"
+        assertTrue(runCatching { provider.readExpertHistoryCommand(command, config, "owned-epoch") }.isFailure)
+        host = "owned-host"
+        epoch = "different-epoch"
+        assertTrue(runCatching { provider.readExpertHistoryCommand(command, config, "owned-epoch") }.isFailure)
+        val mutation = JsonObject(mapOf("type" to JsonPrimitive("configure_agent")))
+        assertTrue(runCatching { provider.readExpertHistoryCommand(mutation, config, "owned-epoch") }.isFailure)
+        assertEquals(3, requests)
+    }
+
     @Test fun tailcatStartupErrorsDoNotExposeNativeMessages() {
         assertEquals("native_host_inspection", tailcatStartupErrorCode(java.lang.reflect.InvocationTargetException(Exception("encrypted Nola Host inspection failed")), "native_connect"))
         assertEquals("native_host_dns", tailcatStartupErrorCode(java.lang.reflect.InvocationTargetException(Exception("encrypted Nola Host inspection failed (dns)")), "native_connect"))
@@ -273,5 +303,12 @@ class WebHostApiServiceImplTest {
         assertFalse(body.containsKey("language"))
         assertFalse(body.containsKey("expected_host_id"))
         assertFalse(body.containsKey("client_id"))
+    }
+
+    @Test
+    fun generativeUiOperationsIncludePreviewWithDedicatedResponseLimit() {
+        assertTrue("preview" in GENERATIVE_UI_OPERATIONS)
+        assertEquals(2 * 1024 * 1024, generativeUiMaxResponseBytes("preview"))
+        assertEquals(16 * 1024 * 1024, generativeUiMaxResponseBytes("surfaces"))
     }
 }

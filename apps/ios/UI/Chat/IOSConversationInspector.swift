@@ -29,10 +29,19 @@ nonisolated struct IOSInspectorProgressFacts: Decodable, Sendable {
             }
             let id: String
             let objective: String
+            let constraints: [String]?
             let status: String
             let next_wake_at_epoch_ms: Int64?
             let requirements: [String: Requirement]
             let work: Work
+
+            var unlistedConstraints: [String] {
+                var shown = Set(requirements.values.map { $0.description.trimmingCharacters(in: .whitespacesAndNewlines) })
+                return (constraints ?? []).filter { constraint in
+                    let text = constraint.trimmingCharacters(in: .whitespacesAndNewlines)
+                    return !text.isEmpty && shown.insert(text).inserted
+                }
+            }
         }
         let active: Goal?
         let control_token: String?
@@ -126,6 +135,7 @@ struct IOSConversationInspector: View {
     let documents: [UserUploadedContextItem]
     let processingState: ChatProcessingState
     var initialObjective: String = ""
+    var embeddedInNavigationStack: Bool = false
     @Environment(\.dismiss) private var dismiss
     @State private var facts: IOSInspectorProgressFacts?
     @State private var plan: IOSInspectorProgressFacts.Plan?
@@ -146,94 +156,144 @@ struct IOSConversationInspector: View {
     @State private var showSchedule = false
     @State private var goalWake = Date().addingTimeInterval(3600)
 
-    var body: some View {
-        NavigationStack {
-            List {
-                Group {
-                if pane == .resources {
-                    if documents.isEmpty {
-                        ContentUnavailableView(String(localized: "inspector.no_resources", table: "ConversationInspector"), systemImage: "folder")
-                    }
-                    ForEach(documents) { item in
-                        DisclosureGroup {
-                            Text(item.content).textSelection(.enabled)
-                                .font(.body).padding(.vertical, 8)
-                        } label: { Label(item.name, systemImage: "doc") }
-                        .disclosureGroupStyle(NolaRowDisclosureStyle(isPlain: true))
-                    }
-                } else if conversationID == nil {
-                    ContentUnavailableView {
-                        Label(String(localized: "inspector.progress", table: "ConversationInspector"), systemImage: "bubble.left.and.bubble.right")
-                    } description: {
-                        Text(String(localized: "inspector.conversation_needed", table: "ConversationInspector"))
-                    }
-                } else if (loading && facts == nil && plan == nil) || loadedOwner != conversationID {
-                    ProgressView()
-                } else if failed && facts == nil && plan == nil {
+    private var inspectorContent: some View {
+        List {
+            Group {
+            if pane == .resources {
+                if documents.isEmpty {
+                    ContentUnavailableView(String(localized: "inspector.no_resources", table: "ConversationInspector"), systemImage: "folder")
+                }
+                ForEach(documents) { item in
+                    DisclosureGroup {
+                        Text(item.content).textSelection(.enabled)
+                            .font(.body).padding(.vertical, 8)
+                    } label: { Label(item.name, systemImage: "doc") }
+                    .disclosureGroupStyle(NolaRowDisclosureStyle(isPlain: true))
+                }
+            } else if conversationID == nil {
+                ContentUnavailableView {
+                    Label(String(localized: "inspector.progress", table: "ConversationInspector"), systemImage: "bubble.left.and.bubble.right")
+                } description: {
+                    Text(String(localized: "inspector.conversation_needed", table: "ConversationInspector"))
+                }
+            } else if (loading && facts == nil && plan == nil) || loadedOwner != conversationID {
+                ProgressView()
+            } else if failed && facts == nil && plan == nil {
+                Text("inspector.failed", tableName: "ConversationInspector")
+                Button(String(localized: "inspector.retry", table: "ConversationInspector")) { retry += 1 }
+            } else {
+                if failed {
                     Text("inspector.failed", tableName: "ConversationInspector")
                     Button(String(localized: "inspector.retry", table: "ConversationInspector")) { retry += 1 }
-                } else {
-                    if failed {
-                        Text("inspector.failed", tableName: "ConversationInspector")
-                        Button(String(localized: "inspector.retry", table: "ConversationInspector")) { retry += 1 }
+                }
+                Section {
+                    HStack {
+                        Text(goalText("inspector.section.status", "Session status"))
+                            .font(.subheadline.weight(.medium))
+                        Spacer()
+                        status(processingState.blocksInput ? "running" : "idle")
                     }
-                    status(processingState.blocksInput ? "running" : "idle")
-                    if pane == .goals && supportsGoalControl && submitGoalControl != nil { goalControls }
-                    if pane == .goals, let goal = facts?.goal_projection?.active {
-                        Section {
+                }
+                if pane == .goals && supportsGoalControl && submitGoalControl != nil { goalControls }
+                if pane == .goals, let goal = facts?.goal_projection?.active {
+                    Section(goalText("goal.section.goal", "Goal")) {
+                        VStack(alignment: .leading, spacing: 8) {
                             Text(goal.objective).font(.headline)
                             status(goal.status)
-                            if let wake = goal.next_wake_at_epoch_ms, wake > 0 {
-                                LabeledContent(goalText("goal.wake", "Continue at")) {
-                                    Text(Date(timeIntervalSince1970: TimeInterval(wake) / 1_000.0), format: .dateTime.month().day().hour().minute())
-                                }
+                        }
+                        if let wake = goal.next_wake_at_epoch_ms, wake > 0 {
+                            LabeledContent(goalText("goal.wake", "Continue at")) {
+                                Text(Date(timeIntervalSince1970: TimeInterval(wake) / 1_000.0), format: .dateTime.month().day().hour().minute())
+                            }
+                            .font(.caption).foregroundStyle(.secondary)
+                        }
+                        if ["paused", "needs_user"].contains(goal.status) {
+                            Text(goalText("goal.paused_reply_hint", "Paused for your input. Send a reply in chat or tap Continue."))
                                 .font(.caption).foregroundStyle(.secondary)
-                            }
-                            if ["paused", "needs_user"].contains(goal.status) {
-                                Text(goalText("goal.paused_reply_hint", "Paused for your input. Send a reply in chat or tap Continue."))
-                                    .font(.caption).foregroundStyle(.secondary)
-                            }
                         }
-                        ForEach(goal.requirements.values.sorted { $0.id < $1.id }) { requirement in
-                            VStack(alignment: .leading) { Text(requirement.description); status(requirement.status) }
-                        }
-                        ForEach(goal.work.current) { entry in
-                            VStack(alignment: .leading) {
-                                Text(entry.content)
-                                if let value = entry.progress { status(value) }
+                    }
+                    let constraints = goal.unlistedConstraints
+                    if !constraints.isEmpty {
+                        Section(goalText("goal.constraints", "Constraints")) {
+                            ForEach(constraints.indices, id: \.self) { index in
+                                Text(verbatim: constraints[index])
+                                    .accessibilityIdentifier("goal.constraint.\(index)")
                             }
                         }
                     }
-                    if pane != .goals {
-                        ForEach(plan?.todos ?? []) { todo in
-                            VStack(alignment: .leading) { Text(todo.content); status(todo.status) }
-                        }
-                        ForEach(currentTasks) { task in
-                            VStack(alignment: .leading) {
-                                Text(taskDisplayTitle(task))
-                                status(task.state.rawValue)
+                    let sortedRequirements = goal.requirements.values.sorted { $0.id < $1.id }
+                    if !sortedRequirements.isEmpty {
+                        Section(goalText("goal.section.requirements", "Requirements")) {
+                            ForEach(sortedRequirements) { requirement in
+                                inspectorStatusRow(title: requirement.description, state: requirement.status)
                             }
                         }
                     }
-                    if facts?.goal_projection?.active == nil && (pane == .goals || ((plan?.todos.isEmpty ?? true) && currentTasks.isEmpty)) {
-                        if pane == .goals {
-                            ContentUnavailableView(String(localized: "work.tools.noGoal"), systemImage: "target")
-                        } else {
-                            ContentUnavailableView(String(localized: "inspector.no_plan", table: "ConversationInspector"), systemImage: "checklist")
+                    let workEntries = goal.work.current
+                    if !workEntries.isEmpty {
+                        Section(goalText("goal.section.work", "Progress")) {
+                            ForEach(workEntries) { entry in
+                                if let value = entry.progress {
+                                    inspectorStatusRow(title: entry.content, state: value)
+                                } else {
+                                    Text(entry.content)
+                                }
+                            }
                         }
                     }
                 }
+                if pane != .goals {
+                    let todos = plan?.todos ?? []
+                    if !todos.isEmpty {
+                        Section(goalText("inspector.section.checklist", "Checklist")) {
+                            ForEach(todos) { todo in
+                                inspectorStatusRow(title: todo.content, state: todo.status)
+                            }
+                        }
+                    }
+                    if !currentTasks.isEmpty {
+                        Section(goalText("inspector.section.tasks", "Tasks")) {
+                            ForEach(currentTasks) { task in
+                                inspectorStatusRow(title: taskDisplayTitle(task), state: task.state.rawValue)
+                            }
+                        }
+                    }
                 }
-                .listRowBackground(DesignTokens.surfaceColor)
-                .listRowSeparatorTint(DesignTokens.borderColor)
+                if facts?.goal_projection?.active == nil && (pane == .goals || ((plan?.todos.isEmpty ?? true) && currentTasks.isEmpty)) {
+                    if pane == .goals {
+                        ContentUnavailableView(String(localized: "work.tools.noGoal"), systemImage: "target")
+                    } else {
+                        ContentUnavailableView(String(localized: "inspector.no_plan", table: "ConversationInspector"), systemImage: "checklist")
+                    }
+                }
             }
-            .nolaGroupedSurface()
-            .navigationTitle(pane == .goals ? String(localized: "work.tools.goals") : pane == .progress
-                ? String(localized: "inspector.progress", table: "ConversationInspector")
-                : String(localized: "inspector.resources", table: "ConversationInspector"))
-            .toolbar { ToolbarItem(placement: .confirmationAction) {
-                Button(L10n.close) { dismiss() }.accessibilityIdentifier("chat.inspector.close")
-            } }
+            }
+            .listRowBackground(DesignTokens.surfaceColor)
+            .listRowSeparatorTint(DesignTokens.borderColor)
+        }
+        .nolaGroupedSurface()
+        .navigationTitle(pane == .goals ? String(localized: "work.tools.goals") : pane == .progress
+            ? String(localized: "inspector.progress", table: "ConversationInspector")
+            : String(localized: "inspector.resources", table: "ConversationInspector"))
+        .navigationBarTitleDisplayMode(.inline)
+        .toolbar {
+            if !embeddedInNavigationStack {
+                ToolbarItem(placement: .confirmationAction) {
+                    Button(L10n.close) { dismiss() }.accessibilityIdentifier("chat.inspector.close")
+                }
+            }
+        }
+    }
+
+    var body: some View {
+        Group {
+            if embeddedInNavigationStack {
+                inspectorContent
+            } else {
+                NavigationStack {
+                    inspectorContent
+                }
+            }
         }
         .task(id: "\(conversationID ?? ""):\(retry)") {
             if loadedOwner != conversationID {
@@ -263,7 +323,10 @@ struct IOSConversationInspector: View {
                         if canStartNewGoal { showGoalStart = true }
                     }
                 }
-                if goalObjective.isEmpty, let draft = result.goalDraft { goalObjective = draft.objective }
+                if goalObjective.isEmpty, let draft = result.goalDraft {
+                    goalObjective = draft.objective
+                    if goalConstraints.isEmpty { goalConstraints = draft.constraints.joined(separator: "\n") }
+                }
                 if let notice = result.goalControlNotice { goalControlNotice = notice }
                 else if result.pendingGoalControl == nil { goalControlNotice = nil }
             } catch {
@@ -283,12 +346,16 @@ struct IOSConversationInspector: View {
                 Text(goalText("goal.pending", "Waiting for Host confirmation"))
                 HStack {
                     Button(goalText("goal.retry", "Retry saved action")) { sendGoalControl(nil) }
+                        .buttonStyle(.borderless)
+                        .frame(minHeight: 44)
                         .disabled(sendingGoalControl)
                     if discardGoalControl != nil {
                         Spacer()
                         Button(goalText("goal.discard", "Discard"), role: .destructive) {
                             discardPendingControl()
                         }
+                        .buttonStyle(.borderless)
+                        .frame(minHeight: 44)
                         .disabled(sendingGoalControl)
                     }
                 }
@@ -297,9 +364,13 @@ struct IOSConversationInspector: View {
                 HStack {
                     if projection.can_pause {
                         Button(goalText("goal.pause", "Pause")) { sendObservedGoalControl(.pause) }
+                            .buttonStyle(.borderless)
+                            .frame(minHeight: 44)
                     }
                     if projection.can_resume {
                         Button(goalText("goal.resume", "Continue")) { sendObservedGoalControl(.resume) }
+                            .buttonStyle(.borderless)
+                            .frame(minHeight: 44)
                     }
                     Spacer()
                     Menu {
@@ -311,7 +382,13 @@ struct IOSConversationInspector: View {
                                 }
                             }
                         }
-                    } label: { Image(systemName: "ellipsis.circle").accessibilityLabel(goalText("goal.actions", "Goal actions")) }
+                    } label: {
+                        Image(systemName: "ellipsis.circle")
+                            .frame(width: 44, height: 44)
+                            .contentShape(Rectangle())
+                            .accessibilityLabel(goalText("goal.actions", "Goal actions"))
+                    }
+                    .buttonStyle(.borderless)
                 }
                 .disabled(sendingGoalControl || facts?.goal_projection?.control_token == nil)
             } else if canStartNewGoal {
@@ -465,12 +542,69 @@ struct IOSConversationInspector: View {
             .filter { $0.ownerSessionId == conversationID }
     }
 
+    private func inspectorStatusRow(title: String, state: String) -> some View {
+        let normalized = state.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        let isCompleted = ["completed", "done", "succeeded", "satisfied", "verified"].contains(normalized)
+        return HStack(alignment: .top, spacing: 10) {
+            Image(systemName: statusSymbol(for: normalized))
+                .font(.body)
+                .foregroundStyle(statusTint(for: normalized))
+                .padding(.top, 1)
+                .accessibilityHidden(true)
+            VStack(alignment: .leading, spacing: 5) {
+                Text(title)
+                    .font(.body)
+                    .foregroundStyle(isCompleted ? .secondary : .primary)
+                    .strikethrough(isCompleted)
+                status(state)
+            }
+        }
+        .padding(.vertical, 2)
+    }
+
+    private func statusSymbol(for normalized: String) -> String {
+        switch normalized {
+        case "completed", "done", "succeeded", "satisfied", "verified":
+            return "checkmark.circle.fill"
+        case "running", "in_progress", "active":
+            return "clock.arrow.circlepath"
+        case "failed", "error", "cancelled", "canceled":
+            return "exclamationmark.circle.fill"
+        case "paused", "needs_user", "waiting":
+            return "pause.circle.fill"
+        default:
+            return "circle"
+        }
+    }
+
+    private func statusTint(for normalized: String) -> Color {
+        switch normalized {
+        case "completed", "done", "succeeded", "satisfied", "verified":
+            return DesignTokens.successColor
+        case "running", "in_progress", "active":
+            return DesignTokens.actionColor
+        case "failed", "error", "cancelled", "canceled":
+            return DesignTokens.dangerColor
+        case "paused", "needs_user", "waiting":
+            return DesignTokens.warningColor
+        default:
+            return DesignTokens.secondaryContentColor
+        }
+    }
+
     private func status(_ value: String) -> some View {
+        let normalized = value.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        let tint = statusTint(for: normalized)
         let key = "inspector.state." + value
         let localized = NSLocalizedString(key, tableName: "ConversationInspector", comment: "Canonical progress state")
-        return Text(localized == key
+        let label = localized == key
             ? String(localized: "inspector.state.unknown", table: "ConversationInspector") + " · " + value
-            : localized)
-            .font(.caption).foregroundStyle(.secondary)
+            : localized
+        return Text(label)
+            .font(.caption2.weight(.semibold))
+            .foregroundStyle(tint)
+            .padding(.horizontal, 8)
+            .padding(.vertical, 3)
+            .background(tint.opacity(0.12), in: Capsule())
     }
 }

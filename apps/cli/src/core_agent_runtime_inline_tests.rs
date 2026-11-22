@@ -1091,6 +1091,16 @@ mod tests {
     }
 
     #[test]
+    fn github_skill_install_requires_separate_admission_and_obeys_network_deny() {
+        assert!(!core_network_policy_rules("allow").iter().any(|rule| rule.capability_pattern == "github_skill_install"));
+        let rules = PermissionRuleSet { rules: core_network_policy_rules("deny") };
+        for name in ["github_skill_find", "github_skill_install"] {
+            assert_eq!(rules.evaluate(&PermissionSubject {capability: name.into(), resource: "*".into()}),
+                PermissionPolicyDecision::Deny);
+        }
+    }
+
+    #[test]
     fn network_allow_is_visible_to_agent_core() {
         assert_eq!(network_decision("allow"), PermissionPolicyDecision::Ask,
             "an opaque call still needs trusted operation classification");
@@ -1098,6 +1108,71 @@ mod tests {
         assert_eq!(rules.evaluate_resolved_for_origin_with_explanation(&PermissionSubject {
             capability:"web_search".into(),resource:"web_search".into(),
         },nola_core::agent::protocol::AgentInputOrigin::InteractiveUser,false).decision,PermissionPolicyDecision::Allow);
+    }
+
+    #[test]
+    fn network_policy_deny_is_enforced_in_core_rules_and_tool_execution() {
+        for profile in [
+            crate::permissions::PermissionProfile::Cautious,
+            crate::permissions::PermissionProfile::AllowAll,
+        ] {
+            let mut config =
+                crate::host_invocation_request::HostInvocationRequest::for_test().unwrap();
+            config.tool_settings.network_policy = "deny".to_string();
+            config.tool_settings.permission_profile = Some(profile);
+            let rules = core_permission_rules(&config);
+            for tool in [
+                "web_search",
+                "web_fetch",
+                "chrome_native_open_page",
+                "github_skill_find",
+                "github_skill_install",
+            ] {
+                assert_eq!(
+                    rules.evaluate(&PermissionSubject {
+                        capability: tool.to_string(),
+                        resource: "*".to_string(),
+                    }),
+                    PermissionPolicyDecision::Deny,
+                    "expected network_policy=deny to deny {tool} under {profile:?}"
+                );
+            }
+        }
+
+        let temp = tempfile::tempdir().unwrap();
+        let ctx = crate::tools::ToolContext {
+            memory_binding: nola_domain::memory_owner::MemoryExecutionBinding::local_profile(),
+            language_services: Default::default(),
+            skills: crate::skill_runtime::SkillRuntimeContext::default(),
+            allowed_dirs: vec![temp.path().to_path_buf()],
+            policy: crate::tools::ToolExecutionPolicy::new(
+                Vec::new(),
+                true,
+                "deny".to_string(),
+                Vec::new(),
+            ),
+            permission_scope: crate::tools::SessionPermissionScope::default(),
+            cancellation: Default::default(),
+            plan_state: Default::default(),
+            output_store: crate::tools::ToolOutputStore::for_test(),
+            browser: crate::tools::BrowserRuntime::new(temp.path().join("browser-runtime")),
+        };
+        let request = ToolRequest {
+            id: "network-deny-test".to_string(),
+            name: "web_search".to_string(),
+            args: serde_json::Map::from_iter([("query".to_string(), json!("nola"))]),
+        };
+        let outcome = crate::tools::execute_authorized_tool(
+            &request,
+            &ctx,
+            crate::tools::ExecutionAuthority::CoreApproved(
+                crate::permissions::PermissionProfile::AllowAll,
+            ),
+        );
+        assert!(outcome.error);
+        let data = outcome.data.as_ref().expect("structured denial payload");
+        assert_eq!(data["code"], "permission_denied");
+        assert_eq!(data["tool_execution_skipped"], true);
     }
 
     #[test]

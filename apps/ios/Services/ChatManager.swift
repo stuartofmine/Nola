@@ -16,6 +16,7 @@
 
 import Foundation
 import Combine
+import os
 import SwiftUI
 import UIKit
 
@@ -40,13 +41,14 @@ import UIKit
         let hybridToolsEnabled: Bool
         let hybridCapabilities: Set<String>
         var selectedExperts: [AppleMainExpertSelectionEntry] = []
+        var expertMentions: AppleExpertMentions? = nil
         var expertSelectionSourceEpoch: String? = nil
     }
     private unowned let workspace: ChatManager
     private var runs: [UUID: (identity: UUID, task: Task<Void, Never>)] = [:]
     init(workspace: ChatManager) { self.workspace = workspace }
 
-    func prepare(title: String, initialParameters: ModelParameters?,
+    func prepare(initialParameters: ModelParameters?,
                  drafts: inout ConversationComposerDraftStore) throws -> Prepared {
         try workspace.reconcileCommittedDraftSubmissions()
         try drafts.validateForSubmission()
@@ -56,7 +58,7 @@ import UIKit
         default:
             throw IOSApplicationRuntimeError.rejected("Conversation selection changed. Your original draft is retained; reopen its conversation before sending.")
         }
-        guard let conversationID = workspace.ensureCurrentConversation(title: title,
+        guard let conversationID = workspace.ensureCurrentConversation(
             language: nil, initialParameters: initialParameters, selectOnCreate: false) else {
             throw ChatManagerError.failedToCreateConversation("The conversation could not be opened. Your draft is retained.")
         }
@@ -109,7 +111,7 @@ import UIKit
                 result = .success(try await execution.processMessage(input.prompt,
                     displayMessage: input.displayText, userMessageMeta: input.metadata,
                     attachments: input.attachments, userMessageID: prepared.identity.visibleUserMessageID,
-                    assistantMessageID: identity, responseStyle: input.responseStyle, selectedExperts: input.selectedExperts, expertSelectionSourceEpoch: input.expertSelectionSourceEpoch))
+                    assistantMessageID: identity, responseStyle: input.responseStyle, selectedExperts: input.selectedExperts, expertMentions: input.expertMentions, expertSelectionSourceEpoch: input.expertSelectionSourceEpoch))
             } catch {
                 execution.recordSubmissionFailure(error)
                 result = .failure(error)
@@ -121,13 +123,18 @@ import UIKit
 
     func cancel(conversationID: UUID) {
         let submission = runs[conversationID]?.task
+        let editedResend = workspace.editedResendTask(for: conversationID)
         guard let execution = workspace.executionForConversation(conversationID) else {
             submission?.cancel()
+            editedResend?.cancel()
             return
         }
         // Cancelling the consumer first detaches its native stream and retires
         // the execution permit before Core can persist the user interrupt.
-        execution.cancelCurrentGeneration(retireSubmission: { submission?.cancel() })
+        execution.cancelCurrentGeneration(retireSubmission: {
+            submission?.cancel()
+            editedResend?.cancel()
+        })
     }
 }
 
@@ -327,6 +334,19 @@ public final class ChatManager: ObservableObject {
             && (current.epoch == nil || current.epoch == source.epoch)
     }
 
+    func scopedExpertHistoryCommand<T: Decodable & Sendable>(owner: UUID, source: ExpertRoomSource, command: [String: AgentCoreJSONValue]) async throws -> T {
+        func validateSource() throws {
+            guard source.owner == owner, currentConversationId == owner, let epoch = source.epoch,
+                  case .remote(let host, let canonicalEpoch) = try container.applicationRuntime.conversationSourceOwner(conversationID: owner.uuidString),
+                  host == source.provider.journalSourceHostID, epoch == canonicalEpoch,
+                  try matchesExpertRoomSource(source) else { throw IOSApplicationRuntimeError.invalidResponse }
+        }
+        try validateSource()
+        let response = try await source.provider.expertRooms(command: .object(command), expectedEpoch: source.epoch)
+        try validateSource()
+        return try JSONDecoder().decode(T.self, from: JSONEncoder().encode(response.result))
+    }
+
     /// A paired address is transport configuration; Core owns the durable source.
     private func uiSourceEpoch(conversationID: UUID, provider: WebAgentProvider) throws -> String? {
         switch try container.applicationRuntime.conversationSourceOwner(conversationID: conversationID.uuidString) {
@@ -367,7 +387,7 @@ public final class ChatManager: ObservableObject {
         container.chatMemoryProfileStore.loadProfile().uploadedSkills.filter(\.enabled).map {
             IOSAgentSkillSnapshot(id: $0.id.uuidString, name: $0.name, summary: $0.description,
                 instructions: $0.content, version: $0.version, requiredTools: $0.requiredTools ?? [],
-                validationSteps: $0.validationSteps ?? [])
+                validationSteps: $0.validationSteps ?? [], packageReference: $0.packageReference)
         }
     }
 
@@ -520,7 +540,7 @@ public final class ChatManager: ObservableObject {
                 await self?.finishBackgroundGraceTeardown()
             }
         }
-        backgroundTaskIdentifier = taskID
+        backgroundTaskLock.withLock { $0 = taskID }
         backgroundGraceTask = Task { @MainActor [weak self] in
             do {
                 try await Task.sleep(for: .seconds(20))
@@ -535,9 +555,13 @@ public final class ChatManager: ObservableObject {
     private func cancelBackgroundGraceWindow() {
         backgroundGraceTask?.cancel()
         backgroundGraceTask = nil
-        if backgroundTaskIdentifier != .invalid {
-            UIApplication.shared.endBackgroundTask(backgroundTaskIdentifier)
-            backgroundTaskIdentifier = .invalid
+        let taskID = backgroundTaskLock.withLock { current -> UIBackgroundTaskIdentifier in
+            let previous = current
+            current = .invalid
+            return previous
+        }
+        if taskID != .invalid {
+            UIApplication.shared.endBackgroundTask(taskID)
         }
     }
 
@@ -550,10 +574,28 @@ public final class ChatManager: ObservableObject {
         remoteTaskObservation.cancel()
         remoteResumeTask?.cancel()
         remoteRecoveryGeneration &+= 1
-        if backgroundTaskIdentifier != .invalid {
-            UIApplication.shared.endBackgroundTask(backgroundTaskIdentifier)
-            backgroundTaskIdentifier = .invalid
+        let taskID = backgroundTaskLock.withLock { current -> UIBackgroundTaskIdentifier in
+            let previous = current
+            current = .invalid
+            return previous
         }
+        if taskID != .invalid {
+            UIApplication.shared.endBackgroundTask(taskID)
+        }
+    }
+
+    private func retireObserversAndTasks() {
+        cancelBackgroundGraceWindow()
+        localGoalDriver?.cancel()
+        localGoalDriver = nil
+        remoteRunObserver.cancel()
+        remoteTaskObservation.cancel()
+        remoteResumeTask?.cancel()
+        remoteResumeTask = nil
+        remoteUIWakeTask?.cancel()
+        remoteUIWakeTask = nil
+        remoteLifecycleSubscriptions.removeAll()
+        remoteRecoveryGeneration &+= 1
     }
 
     private func pauseLocalGoalForLifecycle() async {
@@ -930,6 +972,9 @@ public final class ChatManager: ObservableObject {
     
     private var inPlaceExpertWorkspaces: [UUID: IOSRoomSubmissionWorkspace] = [:]
     private var editedResendJobs: [UUID: Task<Void, Never>] = [:]
+    fileprivate func editedResendTask(for conversationID: UUID) -> Task<Void, Never>? {
+        editedResendJobs[conversationID]
+    }
     private let container: ServiceContainer
     fileprivate var submissionCommitted: (@Sendable () -> Void)?
     private let isConversationExecution: Bool
@@ -1387,7 +1432,20 @@ public final class ChatManager: ObservableObject {
     private var remoteObservationForeground = true
     private var remoteLifecycleSubscriptions = Set<AnyCancellable>()
     private var backgroundGraceTask: Task<Void, Never>?
-    private var backgroundTaskIdentifier: UIBackgroundTaskIdentifier = .invalid
+    private let backgroundTaskLock = OSAllocatedUnfairLock<UIBackgroundTaskIdentifier>(initialState: .invalid)
+
+    deinit {
+        let taskID = backgroundTaskLock.withLock { current -> UIBackgroundTaskIdentifier in
+            let previous = current
+            current = .invalid
+            return previous
+        }
+        if taskID != .invalid {
+            Task { @MainActor in
+                UIApplication.shared.endBackgroundTask(taskID)
+            }
+        }
+    }
     @Published public private(set) var remoteRunNeedsResume = false
     @Published public private(set) var remoteRunObservationError: String?
     @Published public private(set) var remoteSubmissionPending = false
@@ -1395,7 +1453,7 @@ public final class ChatManager: ObservableObject {
     private var agentTraceContext = AgentTraceContext(conversationId: "")
     private var webAgentTaskProjectionReducer = AgentCoreTaskProjectionReducer()
     private var webAgentSkillRuntimeReducer = AgentCoreSkillRuntimeProjectionReducer()
-    private let agentCoreHostExecutor = IOSAgentHostExecutor()
+    private let agentCoreHostExecutor: IOSAgentHostExecutor
     private let agentCorePermissionBroker = IOSAgentPermissionBroker()
 
     /// Each session owns its reducer, transports, permission continuations and
@@ -2335,6 +2393,7 @@ public final class ChatManager: ObservableObject {
 
     private init(container: ServiceContainer, restorePersistedState: Bool, isConversationExecution: Bool) {
         self.container = container
+        self.agentCoreHostExecutor = IOSAgentHostExecutor(applicationRuntime: container.applicationRuntime)
         self.isConversationExecution = isConversationExecution
         if isConversationExecution {
             // Freeze the actual provider, not the app-wide mutable facade.
@@ -3126,7 +3185,9 @@ public final class ChatManager: ObservableObject {
     public func appendMessageToConversation(conversationId: UUID, message: ConversationMessage) throws {
         guard let store = container.conversationStore else { return }
         var shouldSyncTitle = false
-        if message.role == .user,
+        if message.role == .user, let local = store as? LocalConversationStore {
+            _ = try local.refreshFirstMessageTitle(conversationId: conversationId)
+        } else if message.role == .user,
            let conversation = try? store.getConversation(conversationId: conversationId),
            isDefaultConversationTitle(conversation.title) {
             let existingUserMessages = (try? store.getMessages(conversationId: conversationId, limit: 0)) ?? []
@@ -3443,8 +3504,7 @@ public final class ChatManager: ObservableObject {
                 return nil
             }
         }
-        let resolvedTitle = title ?? L10n.chatConversationDefaultTitle
-        let convId = startConversation(title: resolvedTitle, language: language, initialParameters: initialParameters, selectOnCreate: selectOnCreate)
+        let convId = startConversation(title: title, language: language, initialParameters: initialParameters, selectOnCreate: selectOnCreate)
         if selectOnCreate { currentConversationId = convId }
         return convId
     }
@@ -3735,6 +3795,7 @@ public final class ChatManager: ObservableObject {
         responseStyle: PromptResponseStyle? = nil,
         inputOrigin: AgentCoreInputOrigin = .interactiveUser,
         selectedExperts: [AppleMainExpertSelectionEntry] = [],
+        expertMentions: AppleExpertMentions? = nil,
         expertSelectionSourceEpoch: String? = nil
     ) async throws -> String {
         if !isConversationExecution {
@@ -3751,7 +3812,7 @@ public final class ChatManager: ObservableObject {
             return try await session.processMessage(message, displayMessage: displayMessage,
                 userMessageMeta: userMessageMeta, attachments: attachments,
                 userMessageID: userMessageID, assistantMessageID: assistantMessageID,
-                responseStyle: responseStyle, inputOrigin: inputOrigin, selectedExperts: selectedExperts, expertSelectionSourceEpoch: expertSelectionSourceEpoch)
+                responseStyle: responseStyle, inputOrigin: inputOrigin, selectedExperts: selectedExperts, expertMentions: expertMentions, expertSelectionSourceEpoch: expertSelectionSourceEpoch)
         }
         if !selectedExperts.isEmpty { try AppleMainExpertSelectionContext(selectedExperts: selectedExperts).validate() }
         guard !messageInFlight, !processingState.blocksInput, deviceAgentCoordinator == nil else {
@@ -3853,7 +3914,7 @@ public final class ChatManager: ObservableObject {
         var journalConsumer: IOSAssistantJournalConsumer?
         if let store = container.conversationStore {
             if currentConversationId == nil {
-                if let convId = startConversation(title: firstQueryTitle(from: displayMessage ?? message) ?? L10n.chatConversationDefaultTitle, language: nil) {
+                if let convId = startConversation() {
                     currentConversationId = convId
                     generationConversationId = convId
                 } else {
@@ -3879,7 +3940,7 @@ public final class ChatManager: ObservableObject {
                                 conversationID: convId.uuidString,
                                 conversationTitle: title,
                                 identity: turnIdentity,
-                                userText: message,
+                                userText: expertMentions == nil ? message : (displayMessage ?? message),
                                 userContentJSON: try? String(decoding: JSONEncoder().encode(canonicalUserMessageMeta), as: UTF8.self),
                                 contextCheckpointID: nil,
                                 createdAtMs: Int64(Date().timeIntervalSince1970 * 1_000)
@@ -4023,7 +4084,7 @@ public final class ChatManager: ObservableObject {
                         }
                     }
                     if container.healthDataSource != nil,
-                       let health = try? await HealthDashboardRepository().fetchSnapshot() {
+                       let health = try? await HealthDashboardRepository(runtime: container.applicationRuntime).fetchSnapshot() {
                         let formatter = ISO8601DateFormatter()
                         formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
                         var healthLines = [
@@ -4162,7 +4223,7 @@ public final class ChatManager: ObservableObject {
                     conversationId: generationConversationId,
                     preparedModel: preparedRunModel,
                     turnIdentity: turnIdentity,
-                    persistedUserText: message,
+                    persistedUserText: expertMentions == nil ? message : (displayMessage ?? message),
                     userContentJSON: roomExpertEntry == nil ? (try? String(
                         decoding: JSONEncoder().encode(canonicalUserMessageMeta),
                         as: UTF8.self
@@ -4170,7 +4231,7 @@ public final class ChatManager: ObservableObject {
                     inputOrigin: inputOrigin,
                     expectedConfigurationRevision: submittedConfigurationRevision,
                     expectedParentMessageID: submittedParentMessageID,
-                    contextComponents: (preparedCorePayload?.contextComponents ?? []) + (try mainExpertSelectionComponents(selectedExperts, expectedSourceEpoch: expertSelectionSourceEpoch)),
+                    contextComponents: (preparedCorePayload?.contextComponents ?? []) + (try mainExpertSelectionComponents(selectedExperts, expectedSourceEpoch: expertSelectionSourceEpoch, mentions: expertMentions)),
                     promptComposition: preparedPromptComposition,
                     queuedUserAdmission: queuedUIInput?.admission
                 )
@@ -4197,7 +4258,7 @@ public final class ChatManager: ObservableObject {
 
             // Build a minimal ModelInput for chat-mode streaming (providers will interpret userPrefs["message"]).
             var userPrefs: [String: String] = [
-                "message": message,
+                "message": expertMentions == nil ? message : (displayMessage ?? message),
                 "response_style": resolvedResponseStyle.rawValue,
             ]
             if let preparedCorePayload {
@@ -4258,7 +4319,7 @@ public final class ChatManager: ObservableObject {
                     dateRange: inputDateRange,
                     candidates: [],
                     userPrefs: userPrefs,
-                    attachments: attachments, selectedExperts: selectedExperts.isEmpty ? nil : selectedExperts,
+                    attachments: attachments, selectedExperts: selectedExperts.isEmpty ? nil : selectedExperts, expertMentions: expertMentions,
                     expertSelectionSourceEpoch: expertSelectionSourceEpoch
                 )
             }
@@ -4415,6 +4476,9 @@ public final class ChatManager: ObservableObject {
                             sourceAdmitted = accepted.phase == "admitted"
                             if sourceAdmitted {
                                 submissionCommitted?()
+                                if let owner = generationConversationId {
+                                    await autoNameConversationIfNeeded(conversationId: owner)
+                                }
                                 permissionOwnerProjectionRunID = nil
                                 if let owner = generationConversationId { refreshPermissionOwnerProjection(conversationID: owner) }
                             }
@@ -4808,9 +4872,9 @@ public final class ChatManager: ObservableObject {
         return String(parsed[start...])
     }
 
-    private func mainExpertSelectionComponents(_ selected: [AppleMainExpertSelectionEntry], expectedSourceEpoch: String? = nil) throws -> [AgentCoreContextComponent] {
+    private func mainExpertSelectionComponents(_ selected: [AppleMainExpertSelectionEntry], expectedSourceEpoch: String? = nil, mentions: AppleExpertMentions? = nil) throws -> [AgentCoreContextComponent] {
         guard !selected.isEmpty else { return [] }
-        let selection = AppleMainExpertSelectionContext(selectedExperts: selected, expectedSourceStoreEpoch: expectedSourceEpoch)
+        let selection = AppleMainExpertSelectionContext(selectedExperts: selected, expectedSourceStoreEpoch: expectedSourceEpoch, expertMentions: mentions)
         try selection.validate()
         return [.init(kind: .mainExpertSelection, id: "nola.main-expert-selection",
             content: try JSONDecoder().decode(AgentCoreJSONValue.self, from: JSONEncoder().encode(selection)), source: nil)]
@@ -4884,7 +4948,12 @@ public final class ChatManager: ObservableObject {
                 expectedParentMessageID: expectedConfigurationRevision != nil
                     ? expectedParentMessageID : automationAdmissionSource?.messages.last?.id,
                 queuedUserAdmission: queuedUserAdmission
-            ), submissionCommitted: submissionCommitted
+            ), submissionCommitted: { [weak self, submissionCommitted] in
+                submissionCommitted?()
+                if let conversationId {
+                    Task { @MainActor in await self?.autoNameConversationIfNeeded(conversationId: conversationId) }
+                }
+            }
         )
         let preparedInvocation = try preparedModel.prepareHostInvocation()
         let recoveryPreparation: (@Sendable (IOSExactRunInvocation) async throws -> Void)?
@@ -5793,7 +5862,7 @@ public final class ChatManager: ObservableObject {
             tags: ["conversation", route],
             dedupeKey: "conversation:\(conversationId.uuidString):\(eventID)"
         )
-        _ = PersonalIntelligenceCore.ingest(
+        _ = container.applicationRuntime.ingestIntelligence(
             IntelligenceIngestRequest(
                 events: [event],
                 outcomes: [
@@ -5827,6 +5896,12 @@ public final class ChatManager: ObservableObject {
     private func autoNameConversationIfNeeded(conversationId: UUID? = nil) async {
         guard let store = container.conversationStore, let convId = conversationId ?? currentConversationId else { return }
         do {
+            if let local = store as? LocalConversationStore {
+                if let title = try local.refreshFirstMessageTitle(conversationId: convId) {
+                    NotificationCenter.default.post(name: .nolaConversationRenamed, object: convId, userInfo: ["title": title])
+                }
+                return
+            }
             if let conv = try store.getConversation(conversationId: convId) {
                 if !isDefaultConversationTitle(conv.title) { return }
 
@@ -5881,7 +5956,11 @@ public final class ChatManager: ObservableObject {
             try store.deleteConversation(conversationId: convId)
             // Only retire the session after canonical deletion succeeds. An
             // active Run rejected by Store keeps its execution and observers.
-            conversationExecutions.removeValue(forKey: convId)
+            submissionUseCase.cancel(conversationID: convId)
+            editedResendJobs.removeValue(forKey: convId)?.cancel()
+            if let execution = conversationExecutions.removeValue(forKey: convId) {
+                execution.retireObserversAndTasks()
+            }
             Task.detached { [weak self] in
                 await self?.deleteRemoteConversationIfNeeded(conversationId: convId)
             }
@@ -6178,12 +6257,16 @@ extension ChatManager {
         guard let owner = UUID(uuidString: input.conversation_id),
               let execution = executionForConversation(owner, prepareForSubmission: currentConversationId == owner)
                 ?? ensureExecutionForConversation(owner) else { throw IOSApplicationRuntimeError.invalidResponse }
-        if try runtime.editReceipt(request) == .admitted { return owner }
+        if try runtime.editReceipt(request) == .admitted {
+            NotificationCenter.default.post(name: .nolaConversationRewound, object: owner)
+            return owner
+        }
         guard execution.canBeginNewMessage, editedResendJobs[owner] == nil else { throw DeviceAgentCoordinatorError.alreadyRunning }
         let encoded = try JSONDecoder().decode(AgentCoreJSONValue.self, from: JSONEncoder().encode(input))
         let result = try runtime.executeAgentCommand(.object(["type": .string("prepare_in_place_resend"), "input": encoded]))
         let prepared = try JSONDecoder().decode(ApplePreparedInPlaceResend.self, from: JSONEncoder().encode(result))
         guard prepared.input == input else { throw IOSApplicationRuntimeError.invalidResponse }
+        if prepared.deferred_rewind != true { NotificationCenter.default.post(name: .nolaConversationRewound, object: owner) }
         let admission = AsyncThrowingStream<UUID, Error>.makeStream()
         execution.beginSubmissionAttempt()
         execution.prepareAgentTrace(conversationId: owner, canonicalAssistantMessageID: prepared.run_id + ":assistant")
@@ -6195,13 +6278,18 @@ extension ChatManager {
             }
             execution.roomCanonicalIdentity = .init(queuedSubmissionID: prepared.run_id, userMessageID: prepared.user_message_id)
             do {
-                _ = try await execution.processMessage(input.edited_text, selectedExperts: prepared.experts.map {
+                _ = try await execution.processMessage(input.edited_text, selectedExperts: input.selected_experts ?? prepared.experts.map {
                     .init(agentID: $0.agent_id, agentRevision: $0.agent_revision, participantID: $0.participant_id, contextConversationID: $0.context_conversation_id)
-                })
+                }, expertMentions: input.expert_mentions)
                 admission.continuation.finish(throwing: DeviceAgentCoordinatorError.missingTransition)
             } catch { execution.recordSubmissionFailure(error); admission.continuation.finish(throwing: error) }
         }
-        for try await admitted in admission.stream { return admitted }
+        for try await admitted in admission.stream {
+            if prepared.deferred_rewind == true {
+                NotificationCenter.default.post(name: .nolaConversationRewound, object: admitted)
+            }
+            return admitted
+        }
         throw DeviceAgentCoordinatorError.missingTransition
     }
 
@@ -6377,7 +6465,11 @@ extension ChatManager {
                     inputOrigin: .interactiveUser, expectedConfigurationRevision: configuredTarget.configurationRevision,
                     expectedParentMessageID: nil, contextComponents: contextComponents,
                     freshResendTarget: prepared.input.target_conversation_id)
-                execution.processingState = .idle
+                if case .error = execution.processingState {
+                    // Preserve blocked-run error feedback set by runDeviceAgentTurn.
+                } else {
+                    execution.processingState = .idle
+                }
                 execution.thinkingFinished = true
                 admission.continuation.finish(throwing: DeviceAgentCoordinatorError.missingTransition)
             } catch {

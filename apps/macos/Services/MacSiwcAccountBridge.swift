@@ -97,6 +97,7 @@ nonisolated final class MacSiwcAccountBridge: MacSiwcAccountTransport, @unchecke
         process.standardInput = incoming; process.standardOutput = outgoing
         process.standardError = FileHandle.nullDevice
         try process.run()
+        MacOwnedChildProcessRegistry.shared.register(process)
     }
     #if DEBUG
     init(fixtureInput: FileHandle, fixtureOutput: FileHandle) {
@@ -106,7 +107,11 @@ nonisolated final class MacSiwcAccountBridge: MacSiwcAccountTransport, @unchecke
     deinit { close() }
     func close() {
         try? input.close()
-        if process.isRunning { process.terminate() }
+        if process.isRunning {
+            MacOwnedChildProcessRegistry.shared.stop(process)
+        } else {
+            MacOwnedChildProcessRegistry.shared.unregister(process)
+        }
     }
     func start(accountID: String, revision: Int64?, name: String) async throws -> MacSiwcFlow {
         try await operation { [self] in

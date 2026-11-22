@@ -34,8 +34,12 @@ test('activity URLs encode opaque conversation and parsers keep exact owner', ()
     assert.equal(chatActivityUrl(conversationId, 'goal'), '/api/chat/conversations/conversation%20A%2F%3F/goal');
     assert.equal(chatActivityUrl(conversationId, 'traces'), '/api/chat/conversations/conversation%20A%2F%3F/traces?summaryOnly=1');
     assert.deepEqual(parseChatGoal({ conversationId, authoritative: true, goalProjection: goal }, conversationId),
-        { canSubmit: false, canPause: true, canResume: false, canCancel: true, controlToken: 'core-token', id: 'goal-one', executionBlocker: null, revision: 4, objective: 'Ship the app', status: 'running', completedRequirements: 1, totalRequirements: 2, nextWakeAtEpochMs: null,
+        { canSubmit: false, canPause: true, canResume: false, canCancel: true, controlToken: 'core-token', id: 'goal-one', executionBlocker: null, revision: 4, objective: 'Ship the app', status: 'running', completedRequirements: 1, totalRequirements: 2, constraintsOutsideRequirements: [], nextWakeAtEpochMs: null,
             requirements: [{ id: 'one', description: 'Build', status: 'completed' }, { id: 'two', description: 'Verify', status: 'pending' }] });
+    const readConstraints = (constraints: unknown) => parseChatGoal({ conversationId, authoritative: true,
+        goalProjection: { ...goal, active: { ...goal.active, constraints } } }, conversationId)?.constraintsOutsideRequirements;
+    assert.deepEqual(readConstraints(['Build', 'Keep original files', '保留来源', 'Verify']), ['Keep original files', '保留来源']);
+    assert.throws(() => readConstraints(['valid', 1]), /invalidResponse/);
     assert.equal(parseChatGoal({ conversationId, authoritative: true, goalProjection: { revision: 5 } }, conversationId), null);
     assert.throws(() => parseChatGoal({ conversationId: 'other', authoritative: true, goalProjection: goal }, conversationId));
     assert.throws(() => parseChatGoal({ conversationId, authoritative: false, goalProjection: goal }, conversationId));

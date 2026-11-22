@@ -1,6 +1,7 @@
 <script lang="ts">
     import type { Snippet } from 'svelte';
     import { anchoredPopover } from '../lib/anchoredPopover';
+    import PrototypeIcon from './PrototypeIcon.svelte';
     let { label, children, iconOnly = false }: { label: string; children: Snippet; iconOnly?: boolean } = $props();
     let root: HTMLDetailsElement;
     let open = $state(false);
@@ -17,7 +18,7 @@
     onkeydown={event => { if (root?.open && event.key === 'Escape' && event.composedPath().includes(root)) { event.preventDefault(); close(true); } }} />
 <details class="action-disclosure" class:compact-actions={iconOnly} bind:this={root} bind:open>
     <summary aria-label={label} title={label}>
-        {#if iconOnly}<span aria-hidden="true">⋯</span>{:else}<span>{label}</span><span class="chevron" aria-hidden="true">⌄</span>{/if}
+        {#if iconOnly}<PrototypeIcon name="more" size={16} />{:else}<span>{label}</span><svg class="chevron" aria-hidden="true" viewBox="0 0 24 24"><path d="m6 9 6 6 6-6" /></svg>{/if}
     </summary>
     {#if iconOnly}
         <div class="disclosed-actions" popover="manual" use:anchoredPopover={216}>{@render children()}</div>
@@ -39,15 +40,14 @@
     .disclosed-actions[popover] {
         position: fixed; inset: auto; margin: 0; box-sizing: border-box; overflow: auto;
         padding: 4px; border: 1px solid var(--border); border-radius: var(--radius-control);
-        background: var(--canvas); color: var(--content); box-shadow: 0 6px 18px rgb(0 0 0 / .15);
+        background: var(--surface-elevated, var(--surface)); color: var(--content); box-shadow: 0 6px 18px rgb(0 0 0 / .18);
     }
-    .disclosed-actions[popover]:not(:popover-open) { display: none; }
     .disclosed-actions:popover-open { display: grid; gap: 0; }
     .disclosed-actions[popover] :global(button:focus-visible) { outline-offset: -2px; }
-    .chevron { transition: transform var(--motion-base) ease; }
+    .chevron { width: 13px; height: 13px; flex: none; fill: none; stroke: currentColor; stroke-width: 1.6; stroke-linecap: round; stroke-linejoin: round; transition: transform var(--motion-base) ease; }
     details[open] .chevron { transform: rotate(180deg); }
     .disclosed-actions { display: flex; flex-wrap: wrap; gap: 4px; padding: 8px 0; }
-    details[open] .disclosed-actions { animation: enter var(--motion-base) ease-out; }
+    details[open] .disclosed-actions:not([popover]) { animation: enter var(--motion-base) ease-out; }
     .disclosed-actions :global(button) { text-align: start; }
     @keyframes enter { from { opacity: 0; } to { opacity: 1; } }
 </style>

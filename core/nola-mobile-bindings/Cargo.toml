@@ -8,6 +8,7 @@ name = "nola_mobile_bindings"
 crate-type = ["staticlib", "cdylib", "rlib"]
 
 [dependencies]
+nola_skill_host = { path = "../nola-skill-host" }
 nola_update_host = { path = "../nola-update-host" }
 nola_mcp_host = { path = "../nola-mcp-host" }
 nola_runtime_driver = { path = "../nola-runtime-driver" }

@@ -28,6 +28,7 @@ struct NotificationDetailView: View {
     @State private var lastRemovedRequest: UNNotificationRequest? = nil
     @State private var lastMarkedEntityIDs: [String] = []
     @State private var showUndoBanner: Bool = false
+    @State private var undoDismissTask: Task<Void, Never>? = nil
     @State private var showConfirmMark: Bool = false
     @State private var canonicalCreatedAt: Date? = nil
     @State private var matchedEntity: NotificationEntity? = nil
@@ -424,6 +425,10 @@ struct NotificationDetailView: View {
         #endif
         .onAppear {
             markViewedNotificationRead()
+        }
+        .onDisappear {
+            undoDismissTask?.cancel()
+            undoDismissTask = nil
         }
         .overlay(alignment: .bottom) {
             if showUndoBanner {
@@ -933,11 +938,19 @@ struct NotificationDetailView: View {
             }
         }
 
-        // Update UI first
+        // Update UI and show undo banner before auto-dismissing
         await MainActor.run {
             self.hasPendingNotification = false
             self.notificationScheduledAt = nil
             self.lastMarkedEntityIDs = markedIds
+            self.showUndoBanner = true
+            self.undoDismissTask?.cancel()
+            self.undoDismissTask = Task { @MainActor in
+                try? await Task.sleep(for: .seconds(4))
+                guard !Task.isCancelled, self.showUndoBanner else { return }
+                self.showUndoBanner = false
+                self.dismiss()
+            }
         }
 
         // Notify HomeView to remove this processed event from the list.
@@ -947,17 +960,11 @@ struct NotificationDetailView: View {
             userInfo: ["dedupeKey": self.dedupeKey]
         )
         AppEventBus.postNotificationsUpdated()
-
-        // Small delay to ensure broadcasts are processed before dismissing
-        try? await Task.sleep(nanoseconds: 100_000_000) // 0.1 seconds
-        
-        // Dismiss and return to previous screen
-        await MainActor.run {
-            dismiss()
-        }
     }
 
     private func undoMarkAsProcessed() {
+        undoDismissTask?.cancel()
+        undoDismissTask = nil
         Task { @MainActor in
             // Re-add previously removed UNNotificationRequest if available
             let req = self.lastRemovedRequest

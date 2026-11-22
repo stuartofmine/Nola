@@ -556,36 +556,54 @@ fn validate_consumed_entry(connection:&Connection,input:&BeginTurnInput,entry:&E
     let model = FrozenResendModel::from_invocation(&config).ok_or_else(|| {
         StoreError::Conflict("expert_message_actual_model_witness_missing".into())
     })?;
-    let profile:Option<(String,String,String,String,String,i64,bool,Option<i64>)>=connection.query_row(
-        "SELECT provider,model_name,runtime,source_json,parameters_json,revision,enabled,deleted_at_ms FROM model_profiles WHERE id=?1",
-        [&entry.model_declaration.profile_id],|r|Ok((r.get(0)?,r.get(1)?,r.get(2)?,r.get(3)?,r.get(4)?,r.get(5)?,r.get(6)?,r.get(7)?))).optional()?;
-    let Some((provider, name, runtime, source, parameters, revision, enabled, deleted)) = profile
-    else {
-        return Err(StoreError::Conflict(
-            "expert_message_declared_profile_missing".into(),
-        ));
-    };
-    if provider != entry.model_declaration.provider
-        || name != entry.model_declaration.model_name
-        || runtime != entry.model_declaration.runtime
-        || revision != entry.model_declaration.profile_revision
-        || !enabled
-        || deleted.is_some()
-        || serde_json::from_str::<serde_json::Value>(&parameters)?
-            != entry.model_declaration.parameters
-    {
-        return Err(StoreError::Conflict(
-            "expert_message_declared_profile_revision_changed".into(),
-        ));
+    if let Some(executor) = entry.defaults.expert_executor() {
+        let expected =
+            nola_domain::expert_message::expert_executor_declaration(&entry.participant, &executor);
+        if entry.model_declaration != expected {
+            return Err(StoreError::Conflict(
+                "expert_message_executor_revision_changed".into(),
+            ));
+        }
+        validate_expert_model_route(
+            &expected,
+            &serde_json::Value::Null,
+            &entry.defaults,
+            &model.primary,
+        )
+        .map_err(StoreError::Conflict)?;
+    } else {
+        let profile:Option<(String,String,String,String,String,i64,bool,Option<i64>)>=connection.query_row(
+            "SELECT provider,model_name,runtime,source_json,parameters_json,revision,enabled,deleted_at_ms FROM model_profiles WHERE id=?1",
+            [&entry.model_declaration.profile_id],|r|Ok((r.get(0)?,r.get(1)?,r.get(2)?,r.get(3)?,r.get(4)?,r.get(5)?,r.get(6)?,r.get(7)?))).optional()?;
+        let Some((provider, name, runtime, source, parameters, revision, enabled, deleted)) =
+            profile
+        else {
+            return Err(StoreError::Conflict(
+                "expert_message_declared_profile_missing".into(),
+            ));
+        };
+        if provider != entry.model_declaration.provider
+            || name != entry.model_declaration.model_name
+            || runtime != entry.model_declaration.runtime
+            || revision != entry.model_declaration.profile_revision
+            || !enabled
+            || deleted.is_some()
+            || serde_json::from_str::<serde_json::Value>(&parameters)?
+                != entry.model_declaration.parameters
+        {
+            return Err(StoreError::Conflict(
+                "expert_message_declared_profile_revision_changed".into(),
+            ));
+        }
+        let source: serde_json::Value = serde_json::from_str(&source)?;
+        validate_expert_model_route(
+            &entry.model_declaration,
+            &source,
+            &entry.defaults,
+            &model.primary,
+        )
+        .map_err(StoreError::Conflict)?;
     }
-    let source: serde_json::Value = serde_json::from_str(&source)?;
-    validate_expert_model_route(
-        &entry.model_declaration,
-        &source,
-        &entry.defaults,
-        &model.primary,
-    )
-    .map_err(StoreError::Conflict)?;
     let checkpoint: serde_json::Value = serde_json::from_str(&input.checkpoint_json)?;
     let turn = checkpoint
         .pointer("/state/execution/active_turn")

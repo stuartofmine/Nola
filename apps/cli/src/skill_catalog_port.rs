@@ -129,6 +129,9 @@ pub(crate) fn load_web_uploaded_skills_with(
                 "content": skill.instructions_text,
                 "instructions_ref": skill.instructions_ref,
             });
+            if let Some(url) = crate::github_skills::source_url(&skill.instructions_ref) {
+                value["source_url"] = Value::String(url);
+            }
             if !skill.required_tools.is_empty() {
                 value["required_tools"] = serde_json::to_value(&skill.required_tools)
                     .map_err(|error| format!("encode Skill tools failed: {error}"))?;
@@ -276,7 +279,8 @@ pub(crate) fn save_web_uploaded_skills_with(
             display_name,
             summary,
             category,
-            instructions_ref: format!("nola://skills/{id}/{version}"),
+            instructions_ref: existing.get(&id).filter(|s| crate::github_skills::source_url(&s.instructions_ref).is_some())
+                .map(|s| s.instructions_ref.clone()).unwrap_or_else(|| format!("nola://skills/{id}/{version}")),
             instructions_text: instructions,
             required_tools,
             default_mode,

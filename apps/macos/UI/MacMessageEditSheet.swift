@@ -7,6 +7,7 @@ struct MacMessageEditSession: Identifiable {
 }
 
 struct MacMessageEditAction {
+    var sourceAllowsEditing = true
     let enabled: Bool
     let open: (String, MacChatMessage) -> Void
 }
@@ -22,6 +23,7 @@ extension EnvironmentValues {
 
 struct MacMessageEditSheet: View {
     @State var draft: AppleMessageEditDraft
+    var candidates: [AppleExpertEditCandidate] = []
     let submit: (AppleMessageEditDraft) async throws -> Void
     let cancel: () -> Void
     @State private var submitting = false
@@ -31,16 +33,18 @@ struct MacMessageEditSheet: View {
             Text("Edit and resend").font(.headline)
             Text("This message and everything after it will be replaced. Resend continues in this conversation.")
                 .font(.callout).foregroundStyle(.secondary)
-            TextEditor(text: $draft.text)
+            AppleExpertResendEditor(draft: $draft, candidates: candidates)
+                .environment(\.macComposerEditorPlaceholder, String(localized: "Edit message"))
+                .environment(\.macComposerEditorMaxHeight, 320)
                 .font(.system(size: MacMarkdownTypography.bodySize))
                 .lineSpacing(MacMarkdownTypography.lineSpacing)
                 .scrollContentBackground(.hidden)
                 .padding(10)
-                .frame(minHeight: 220)
+                .frame(minHeight: 220, maxHeight: .infinity, alignment: .topLeading)
                 .background(MacDesignColor.canvas, in: RoundedRectangle(cornerRadius: 10))
                 .overlay { RoundedRectangle(cornerRadius: 10).strokeBorder(MacDesignColor.controlOutline, lineWidth: 1) }
-                .disabled(submitting).accessibilityIdentifier("mac-message-edit-text")
-            if let error { Text(error).font(.callout).foregroundStyle(.red).textSelection(.enabled)
+                .disabled(submitting)
+            if let error { Text(error).font(.callout).foregroundStyle(MacDesignColor.danger).textSelection(.enabled)
                 .accessibilityIdentifier("mac-message-edit-error") }
             HStack {
                 Button("Cancel", action: cancel).buttonStyle(MacActionButtonStyle()).keyboardShortcut(.cancelAction).disabled(submitting)
@@ -53,11 +57,11 @@ struct MacMessageEditSheet: View {
                         do { try await submit(draft) }
                         catch { self.error = error.localizedDescription; submitting = false }
                     }
-                }.buttonStyle(MacActionButtonStyle()).keyboardShortcut(.defaultAction)
+                }.buttonStyle(.nolaProminent).keyboardShortcut(.defaultAction)
                     .disabled(submitting || !draft.hasSourceWitness || draft.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
                     .accessibilityIdentifier("mac-message-edit-submit")
             }
-        }.padding(24).frame(width: 620, height: 430)
+        }.padding(24).frame(minWidth: 620, idealWidth: 640, minHeight: 460, idealHeight: 520)
             .background(MacDesignColor.canvas)
             .interactiveDismissDisabled(submitting)
     }

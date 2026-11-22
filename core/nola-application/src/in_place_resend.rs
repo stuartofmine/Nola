@@ -20,7 +20,6 @@ pub fn prepare<S: crate::repositories::ApplicationCommandRepositories>(
     if input.conversation_id.trim().is_empty()
         || input.message_id.trim().is_empty()
         || input.expected_revision < 1
-        || input.expected_message_revision < 1
         || input.created_at_ms < 0
         || input.edited_text.trim().is_empty()
         || input.edited_text.len() > 1_000_000
@@ -54,6 +53,7 @@ pub fn prepare<S: crate::repositories::ApplicationCommandRepositories>(
             .iter()
             .find(|m| m.message_id.0 == input.message_id)
             .ok_or("resend_message_not_visible")?;
+        // A first-turn provider failure can seal an untouched reducer at revision zero.
         if message.revision != input.expected_message_revision {
             return Err(format!("resend_message_revision_changed: expected {}, current {}",input.expected_message_revision,message.revision));
         }
@@ -101,6 +101,25 @@ pub fn prepare<S: crate::repositories::ApplicationCommandRepositories>(
                 }
             }
         }
+        if let Some(mentions) = &input.expert_mentions {
+            mentions.validate(&input.edited_text, &input.selected_experts)?;
+        } else if !input.selected_experts.is_empty() || input.expected_source_store_epoch.is_some() {
+            return Err("resend_requires_inline_expert_mentions".into());
+        }
+        let original_mentions = message.parts.iter().any(|part| matches!(part,
+            MessagePartView::Historical { projection, .. } if projection.fields.contains_key("expert_mentions")));
+        if input.defer_until_admission || input.expert_mentions.is_some() || original_mentions {
+            if !children.is_empty() { return Err("resend_inline_mentions_with_legacy_expert_children".into()); }
+            // The target remains visible until the fresh Main turn, exact references and
+            // new model configuration are admitted in one publication transaction.
+            let prepared = PreparedInPlaceResend { deferred_rewind: true,
+                user_message_id: format!("{}:user", input.operation_id),
+                run_id: input.operation_id.clone(), input, experts: vec![] };
+            store.put_prepared_in_place_resend(&prepared).map_err(|e| e.to_string())?;
+            return Ok(prepared);
+        }
+        rewind_delegated_experts(store, &input.conversation_id, boundary.boundary_ordinal,
+            &input.operation_id, input.created_at_ms)?;
         for (index, (conversation, message)) in children.into_iter().enumerate() {
             crate::expert_message::require_context_available(
                 store,
@@ -158,6 +177,7 @@ pub fn prepare<S: crate::repositories::ApplicationCommandRepositories>(
                 .map_err(|e| e.to_string())?;
         }
         let prepared = PreparedInPlaceResend {
+            deferred_rewind: false,
             run_id: input.operation_id.clone(),
             input,
             user_message_id,
@@ -170,7 +190,57 @@ pub fn prepare<S: crate::repositories::ApplicationCommandRepositories>(
     })
 }
 
-fn rewind<S: crate::repositories::ApplicationCommandRepositories>(
+pub(crate) fn consume_inline_edit<S: crate::repositories::AssistantAdmissionRepositories + ?Sized>(
+    store: &mut S, command: &mut crate::assistant_turn::BeginAssistantTurn,
+) -> Result<(), String> {
+    use nola_agent_engine::context_engine::ContextComponentKind;
+    let AgentSubmission::UserInput { submission_id: Some(run), turn_context_components, .. } = &command.submission
+        else { return Ok(()); };
+    if uuid::Uuid::parse_str(run).is_err() { return Ok(()); }
+    let Some(prepared) = store.prepared_in_place_resend(run).map_err(|e| e.to_string())?
+        .filter(|p| p.deferred_rewind) else { return Ok(()); };
+    let input = &prepared.input;
+    let selection = turn_context_components.iter().find(|c| c.kind == ContextComponentKind::MainExpertSelection)
+        .map(|c| serde_json::from_value::<nola_domain::expert_task_target::MainExpertSelectionContextV1>(c.content.clone()))
+        .transpose().map_err(|_| "invalid_main_expert_selection")?;
+    if input.conversation_id != command.conversation_id || prepared.user_message_id != command.user_message_id
+        || command.assistant_message_id != format!("{run}:assistant") || input.edited_text != command.user_text
+        || selection.as_ref().and_then(|v| v.expert_mentions.as_ref()) != input.expert_mentions.as_ref()
+        || selection.as_ref().map(|v| v.selected_experts.as_slice()).unwrap_or_default() != input.selected_experts
+        || selection.as_ref().and_then(|v| v.expected_source_store_epoch.as_ref()) != input.expected_source_store_epoch.as_ref() {
+        return Err("in_place_resend_request_changed".into());
+    }
+    let boundary = store.conversation_revert_boundary(&input.conversation_id, &input.message_id, false)
+        .map_err(|e| e.to_string())?;
+    if boundary.conversation_revision != input.expected_revision {
+        return Err("resend_conversation_changed".into());
+    }
+    // CAS is checked against the pre-edit head; admission uses the remaining prefix.
+    if command.expected_parent_message_id.as_ref().is_some_and(|id| Some(id) != boundary.hidden_message_ids.last()) {
+        return Err("resend_parent_changed".into());
+    }
+    rewind_delegated_experts(store, &input.conversation_id, boundary.boundary_ordinal, run, command.created_at_ms)?;
+    command.expected_parent_message_id = boundary.parent_message_id;
+    rewind(store, &input.conversation_id, &input.message_id, run, command.created_at_ms)?;
+    Ok(())
+}
+
+fn rewind_delegated_experts<S: crate::repositories::AssistantAdmissionRepositories + ?Sized>(
+    store: &mut S,
+    parent: &str,
+    boundary_ordinal: i64,
+    operation: &str,
+    at: i64,
+) -> Result<(), String> {
+    let children = store.delegated_expert_rewind_points(parent, boundary_ordinal)
+        .map_err(|error| error.to_string())?;
+    for (index, (child, message)) in children.into_iter().enumerate() {
+        rewind(store, &child, &message, &format!("{operation}:delegate:{index}"), at)?;
+    }
+    Ok(())
+}
+
+fn rewind<S: crate::repositories::AssistantAdmissionRepositories + ?Sized>(
     store: &mut S,
     conversation: &str,
     message: &str,

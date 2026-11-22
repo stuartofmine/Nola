@@ -2,6 +2,9 @@
 
 # UI 和交互设计
 
+[插件工作区交互设计](shared/PLUGIN_WORKSPACE.md)覆盖能力库、安装、首次打开、侧栏切换和移除。
+
+
 更新：2026-11-08。现行行为按下列契约维护；静态原型仍供视觉方向、布局实验和演示参考，不能覆盖已接受的产品变更或证明生产能力已实现。
 
 ## 按用途与平台阅读
@@ -12,10 +15,11 @@
 
 1. [对话与工具交互](shared/CONVERSATION_UI_DESIGN.md)：输入区、模型原生档位、提示词位置、主题、流式显示与移动手势。
 2. [会话检查器](shared/CONVERSATION_INSPECTOR.md)、[Apple 适配](../platforms/apple/CONVERSATION_INSPECTOR.md)：右侧原地展开、多区段、草稿与观察生命周期。
-3. [视觉系统](shared/DESIGN_SYSTEM.md)：语义主题、悬停/按压、复制动作、间距、减少动态效果及平台实现入口。
-4. [统一对话与可保存 Agent](shared/MULTI_AGENT_NAVIGATION.md)：领域对象目标与执行归属；目标不等于当前 Room 代码已经删除。
-5. [客户端交互与配置架构](../architecture/模块/13-客户端投影/CLIENT_INTERACTION_AND_CONFIGURATION.md)：状态所有者、精确参数调用链、各端差异与源码映射。
-6. [视觉验收](shared/VISUAL_ACCEPTANCE_CONTRACT.md)、[跨端对齐门槛](shared/CROSS_PLATFORM_UI_PARITY.md)：原型、组件、隔离存储、整窗和真实模型证据分别记录。
+3. [视觉系统](shared/DESIGN_SYSTEM.md)：语义主题、图标位置与入口归属原则、悬停/按压、复制动作、间距、减少动态效果及平台实现入口。
+4. [本地模型体验](shared/LOCAL_MODEL_EXPERIENCE.md)：动态在线推荐与缓存、UTC+8 默认 ModelScope、链接直达解析与一键下载启用。
+5. [统一对话与可保存 Agent](shared/MULTI_AGENT_NAVIGATION.md)：领域对象目标与执行归属；目标不等于当前 Room 代码已经删除。
+6. [客户端交互与配置架构](../architecture/模块/13-客户端投影/CLIENT_INTERACTION_AND_CONFIGURATION.md)：状态所有者、精确参数调用链、各端差异与源码映射。
+7. [视觉验收](shared/VISUAL_ACCEPTANCE_CONTRACT.md)、[跨端对齐门槛](shared/CROSS_PLATFORM_UI_PARITY.md)：原型、组件、隔离存储、整窗和真实模型证据分别记录。
 
 手机当前以会话列表进入聊天，主导航为对话、活动、资料、设置；Today 不再是现行默认入口。桌面保留单顶栏、内容标签、独立左栏和可关闭右栏。检查器原地展开，预设提示词归入模型设置，聊天推理选择按模型实际档位显示，不并列固定三档。
 
@@ -126,10 +130,10 @@
 - 实际 SIGKILL 进程组曾被 OS 拒绝，后续未重试；此前协议进程 cleanup 断言失败仍保留，不能用编译代替最终取消通过。GUI 工具自动解锁错误也未重试，不推断真实屏幕锁定状态。
 
 
-### iOS 三档推理接线
+### iOS 推理档位与已发布三档配置
 
 - `ResolveRemoteModelProfile` 对显式 request `reasoning_tier` 或 profile parameters `reasoningTier` 使用现有 Core `resolve_model_reasoning_tier`，而非只记标签；没有声明可调整档位的模型仍返回空 selection，客户端不提供可调控件、请求不编造 effort；不兼容的显式物理参数仍拒绝。未选择档位时保留服务商/模型原默认。
-- iOS 模型参数页仅对声明 effort 能力的远程模型提供服务商默认/简单/中等/复杂；Core 解析结果随 profile revision 进入 prepared client 和冻结 generation，恢复/编辑重发保持原 selection/tier，而不重新按当前偏好推算。
+- iOS 模型参数页根据当前连接和模型声明的原生 effort 显示服务商默认及可选值；Core 解析结果随 profile revision 进入 prepared client 和冻结 generation，恢复/编辑重发保持原 selection/tier，而不重新按当前偏好推算。
 - Responses 发 `reasoning.effort`，Chat Completions 发 `reasoning_effort`。summary 是独立可选能力，关闭展示不悄悄改掉已选 effort，effort none 不请求 summary。没有承诺上游必定返回公开摘要，更不展示私有思维链。
 - 本次只运行共享 Core 定向回归与编译本地 wire/状态断言，不再尝试此前被拒绝的原生窗口或进程操作；真实手机/窗口交互与真实上游输出仍须单列验收。
 
@@ -162,5 +166,7 @@
 - 已显示文字不重播，权威正文和布局立即更新。关闭流式状态不能直接卸载尚在收尾的绘制组件。Reduced Motion 立即清晰显示，切回正常模式不重播历史。
 - Mac 检查器正文/详情/注释统一为 13/12/11pt 角色，避免大面积 9–10pt 文本；详情开合由父布局调整高度，内容轻淡入，不缩放字形。
 - 验证必须覆盖实际 renderer，包含连续增量、大段突发、完成、替换、选区、窄屏与组合字符；回放不等于真实模型网络时序。
+
+如何在输入时点名专家、阅读已发消息与编辑重发，见[消息内的专家提及](shared/EXPERT_MENTIONS.md)。
 
 专家上下文在主会话下的树形归属、旧配置历史、只读阅读与返回父会话继续的边界见[专家子会话与历史阅读](shared/EXPERT_CONVERSATION_HISTORY.md)。

@@ -10,6 +10,7 @@ struct ConversationComposerDraftStore {
     nonisolated struct Draft: Sendable {
         private(set) var textRevision = UUID()
         var text = "" { didSet { if text != oldValue { textRevision = UUID() } } }
+        var mentions: [AppleDraftMention] = []
         var attachments: [ChatAttachmentDraft] = []
         var notice: String?
         var importID: UUID?
@@ -81,6 +82,7 @@ struct ConversationComposerDraftStore {
     mutating func acknowledgeSubmittedText(_ ticket: TextSubmissionTicket) -> Bool {
         guard var draft = drafts[ticket.owner], draft.textRevision == ticket.revision else { return false }
         draft.text = ""
+        draft.mentions = []
         drafts[ticket.owner] = draft
         persist(ticket.owner)
         return true

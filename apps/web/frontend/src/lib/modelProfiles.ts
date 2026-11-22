@@ -1,7 +1,7 @@
 import type { ModelValidationIssue } from './modelValidation.ts';
 
 export type RemoteProfile = {
-    id: string; provider?: string; displayName: string; modelName: string; revision: number;
+    id: string; provider?: string; connectionId?: string | null; displayName: string; modelName: string; revision: number;
     enabled: boolean; selected: boolean; priority: number; order: number;
     endpoint: { id: string; name: string; baseURL: string; wireProtocol: string; enabled: boolean; order: number };
     capabilities: string[];

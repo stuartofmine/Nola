@@ -24,6 +24,8 @@ members = [
     "core/nola-store",
     "core/nola-store-port",
     "core/nola-update-host",
+    "core/nola-windows-permissions",
+    "core/nola-skill-host",
     "apps/cli",
 ]
 exclude = ["apps/cli/vendor/tiny_http"]

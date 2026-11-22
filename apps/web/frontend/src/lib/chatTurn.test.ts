@@ -147,3 +147,17 @@ test('observed Goal permission retains its execution client without changing bro
     const ordinary = reduceChatTurn(start(), {type:'run_bound', owner, runId:'normal'}).state;
     assert.equal(reduceChatTurn(ordinary, {type:'permission_pending', owner, challenge, nowSeconds:100}).ignored, 'owner');
 });
+
+test('goal-owned runs with submission receipts allow both browser and web-goal permissions across transitions', () => {
+    const dual = reduceChatTurn(start(), {type:'run_bound', owner, runId:'goal-user-run', permissionClientIds:[owner.clientId, 'web-goal']}).state;
+    const goalChallenge = {...permission, nonce:'goal-nonce', client_id:'web-goal'};
+    assert.equal(reduceChatTurn(dual, {type:'permissions_observed', owner, challenges:[permission], nowSeconds:100}).state.permission?.client_id, owner.clientId);
+    assert.equal(reduceChatTurn(dual, {type:'permissions_observed', owner, challenges:[goalChallenge], nowSeconds:100}).state.permission?.client_id, 'web-goal');
+    assert.equal(reduceChatTurn(dual, {type:'permission_pending', owner, challenge:{...permission, client_id:'foreign'}, nowSeconds:100}).ignored, 'owner');
+
+    const submitted = reduceChatTurn(start(), {type:'run_bound', owner, runId:'transition-run'}).state;
+    const promoted = reduceChatTurn(submitted, {type:'run_bound', owner, runId:'transition-run', permissionClientIds:[owner.clientId, 'web-goal']});
+    assert.equal(promoted.ignored, undefined);
+    assert.equal(reduceChatTurn(promoted.state, {type:'permissions_observed', owner, challenges:[goalChallenge], nowSeconds:100}).state.permission?.client_id, 'web-goal');
+    assert.equal(reduceChatTurn(promoted.state, {type:'run_bound', owner, runId:'transition-run', permissionClientIds:[owner.clientId, 'foreign']}).ignored, 'owner');
+});

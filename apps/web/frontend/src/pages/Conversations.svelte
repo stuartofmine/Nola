@@ -10,5 +10,6 @@
 </main>
 <style>
     .conversation-list-page { min-height: 100dvh; max-width: 760px; margin-inline: auto; padding: max(16px, env(safe-area-inset-top)) 16px max(16px, env(safe-area-inset-bottom)); background: var(--canvas); }
+    @media (max-width: 700px) { .conversation-list-page { width: 100%; min-height: 0; flex: 1; } }
     @media (min-width: 360px) and (max-width: 700px) { .conversation-list-page { padding-inline: 20px; } }
 </style>

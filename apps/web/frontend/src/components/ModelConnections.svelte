@@ -1,13 +1,19 @@
 <script lang="ts">
     import { workspacePageApi } from '../lib/workspacePageLocation';
     const api = workspacePageApi(unscopedApi);
-    import { onMount } from 'svelte';
+    import { onMount, tick } from 'svelte';
     import GatewayClients from './GatewayClients.svelte';
     import SourceAccounts from './SourceAccounts.svelte';
     import ModelCapabilityProbe from './ModelCapabilityProbe.svelte';
+    import ConfirmationDialog from './ConfirmationDialog.svelte';
+    import type { ConfirmationHandle } from '../lib/confirmation';
     import { api as unscopedApi } from '../lib/api';
     import { locale, t } from '../lib/i18n';
+    import { randomId } from '../lib/randomId';
     import { loadConnections, modelSelectionCommand, type ConnectionInventory, type ConnectionSnapshot, type ImportPlan, type ImportResult } from '../lib/modelConnections';
+    import type { RemoteProfile } from '../lib/modelProfiles';
+    let { openConnectionId = '', profiles, onChanged }: { openConnectionId?: string; profiles?: RemoteProfile[]; onChanged?: () => Promise<void> | void } = $props();
+    let confirmation: ConfirmationHandle;
     function importCredentialLabel(status: string) {
         switch (status) {
             case 'available': return t($locale, 'connections.importKeyAvailable');
@@ -25,6 +31,8 @@
     }
     let inventory = $state<ConnectionInventory>({connections: [], accounts: [], selections: []});
     let query = $state('');
+    let expanded = $state<Record<string, boolean>>({});
+    $effect(() => { if (openConnectionId) expanded[openConnectionId] = true; });
     const visibleConnections = $derived(inventory.connections.filter(item => `${item.document.connection.display_name} ${item.document.connection.base_url} ${(item.document.catalog?.models ?? []).map(model => model.display_name).join(' ')}`.toLocaleLowerCase().includes(query.trim().toLocaleLowerCase())));
     function modelEnabled(connectionId: string, key: string) {
         return inventory.selections.some(item => item.connection_id === connectionId && item.catalog_key === key && item.enabled);
@@ -46,6 +54,11 @@
     let enableModels = $state(false);
     let results = $state<ImportResult[]>([]);
     let gateway = $state({revision: 0, enabled: false});
+    let accessPanel: HTMLDetailsElement;
+    function openGatewayAccess() {
+        accessPanel.open = true;
+        accessPanel.querySelector('button')?.focus();
+    }
     let gatewayToken = $state('');
     let tokenCopied = $state(false);
     function attemptLabel(profileId: string) {
@@ -80,23 +93,33 @@
         finally { if (alive && !signal.aborted) loading = false; }
     }
     async function operation(action: () => Promise<void>) {
-        if (busy) return; busy = true; failed = null;
+        if (busy) return;
+        const trigger = document.activeElement;
+        busy = true; failed = null;
         try { await action(); } catch { if (alive) failed = 'connections.failed'; }
-        finally { if (alive) busy = false; }
+        finally {
+            if (alive) {
+                busy = false;
+                await tick();
+                if (trigger instanceof HTMLElement && trigger.isConnected && document.activeElement === document.body) {
+                    trigger.focus({preventScroll: true});
+                }
+            }
+        }
     }
     function toggle(snapshot: ConnectionSnapshot, key: string, enabled: boolean) {
         void operation(async () => {
             await api('/api/model-connections', {method: 'POST', body: JSON.stringify(modelSelectionCommand(snapshot, inventory, key, enabled))});
-            if (alive) await refresh();
+            if (alive) { await refresh(); await onChanged?.(); }
         });
     }
     function discover(snapshot: ConnectionSnapshot) {
-        const request = {request_id: crypto.randomUUID(), connection_id: snapshot.document.connection.id, expected_revision: snapshot.revision};
+        const request = {request_id: randomId(), connection_id: snapshot.document.connection.id, expected_revision: snapshot.revision};
         void operation(async () => {
             discovery = request;
             try {
                 await api('/api/model-connections/discover', {method: 'POST', body: JSON.stringify(request)});
-                if (alive) await refresh();
+                if (alive) { await refresh(); await onChanged?.(); }
             } catch (error) {
                 if (discovery?.request_id === request.request_id) throw error;
             } finally {
@@ -104,18 +127,21 @@
             }
         });
     }
-    async function cancelDiscovery() {
+    async function cancelDiscovery(teardown = false) {
         const request = discovery;
         if (!request || cancellingDiscovery) return;
         cancellingDiscovery = true;
         try {
-            const result = await api<{cancelled: boolean}>('/api/model-connections/discover/cancel', {method: 'POST', body: JSON.stringify(request)});
-            if (alive) {
+            const result = teardown
+                ? await unscopedApi<{cancelled: boolean}>('/api/model-connections/discover/cancel', {method: 'POST', body: JSON.stringify(request), signal: AbortSignal.timeout(15_000)})
+                : await api<{cancelled: boolean}>('/api/model-connections/discover/cancel', {method: 'POST', body: JSON.stringify(request)});
+            if (!teardown && alive) {
                 if (result.cancelled && discovery?.request_id === request.request_id) { discovery = null; failed = null; }
                 await refresh();
+                await onChanged?.();
             }
-        } catch { if (alive) failed = 'connections.failed'; }
-        finally { if (alive) cancellingDiscovery = false; }
+        } catch { if (!teardown && alive) failed = 'connections.failed'; }
+        finally { if (!teardown && alive) cancellingDiscovery = false; }
     }
     function preview() {
         const identity = sourceIdentity; expiredPlan = false;
@@ -133,29 +159,41 @@
         void operation(async () => {
             const value = await api<ImportResult[]>('/api/model-import/commit', {method: 'POST', body: JSON.stringify({plan_id: current.plan_id,
                 selections: selected.map(candidate_id => ({candidate_id, display_name: null, update_existing: updates.includes(candidate_id), enable_models: enableModels}))})});
-            if (alive) { results = value; plan = null; await refresh(); }
+            if (alive) { results = value; plan = null; await refresh(); await onChanged?.(); }
         });
     }
-    function configureGateway(revoke: boolean) {
+    async function configureGateway(revoke: boolean) {
+        if (busy) return;
+        if (revoke) {
+            const approved = await confirmation.ask({
+                title: t($locale, 'connections.revokeToken'),
+                description: t($locale, 'connections.gatewayHint'),
+                confirmLabel: t($locale, 'connections.revokeToken'),
+                destructive: true,
+            });
+            if (!approved || !alive) return;
+        }
         void operation(async () => {
             const value = await api<{revision: number; token?: string}>('/api/model-gateway/access', {method: 'POST', body: JSON.stringify({expected_revision: gateway.revision, revoke})});
             if (alive) { gatewayToken = value.token ?? ''; tokenCopied = false; gateway = {revision: value.revision, enabled: !revoke}; }
         });
     }
     function readAttempts() { void operation(async () => { const value = await api<typeof attempts>('/api/model-gateway/attempts'); if (alive) attempts = value; }); }
-    onMount(() => { void refresh(); void api<typeof gateway>('/api/model-gateway/access').then(value => { if (alive) gateway = value; }).catch(() => { if (alive) failed = 'connections.loadFailed'; }); return () => { void cancelDiscovery(); alive = false; gatewayToken = ''; controller?.abort(); }; });
+    onMount(() => { void refresh(); void api<typeof gateway>('/api/model-gateway/access').then(value => { if (alive) gateway = value; }).catch(() => { if (alive) failed = 'connections.loadFailed'; }); return () => { void cancelDiscovery(true); alive = false; gatewayToken = ''; controller?.abort(); }; });
 </script>
 
+<ConfirmationDialog bind:this={confirmation} />
 <section class="connections"><div class="row between connections-heading"><h2>{t($locale, 'connections.title')}</h2><button disabled={busy || loading} onclick={refresh}>{t($locale, 'rooms.refresh')}</button></div>
     {#if loading || busy}<p role="status">{t($locale, busy ? 'rooms.saving' : 'rooms.loading')}</p>{/if}
-    {#if discovery}<button disabled={cancellingDiscovery} onclick={cancelDiscovery}>{t($locale, 'rooms.cancel')}</button>{/if}
+    {#if discovery}<button disabled={cancellingDiscovery} onclick={() => void cancelDiscovery()}>{t($locale, 'rooms.cancel')}</button>{/if}
     {#if failed}<p role="alert" class="error">{t($locale, failed)}</p>{/if}
     <label>{t($locale, 'connections.search')}<input type="search" bind:value={query} /></label>
     {#if !loading && !failed && !inventory.connections.length}<p class="muted">{t($locale, 'connections.empty')}</p>{/if}
     {#if !loading && !failed && inventory.connections.length && !visibleConnections.length}<p class="muted" role="status">{t($locale, 'connections.noMatches')}</p>{/if}
     {#each visibleConnections as snapshot (snapshot.document.connection.id)}
         {@const connection = snapshot.document.connection}
-        <details class="connection-detail"><summary class="connection-summary"><svg class="connection-chevron" aria-hidden="true" viewBox="0 0 16 16"><path d="m6 3 5 5-5 5" /></svg><span class="connection-identity"><strong>{connection.display_name}</strong><small title={connection.base_url}>{connection.base_url}</small></span><span class="connection-count">{snapshot.document.catalog?.models.length ?? 0} · {t($locale, connection.enabled ? 'connections.enabled' : 'connections.disabled')}</span></summary>
+        <details class="connection-detail" open={expanded[connection.id] ?? false}
+            ontoggle={event => { expanded[connection.id] = event.currentTarget.open; }}><summary class="connection-summary"><svg class="connection-chevron" aria-hidden="true" viewBox="0 0 16 16"><path d="m6 3 5 5-5 5" /></svg><span class="connection-identity"><strong>{connection.display_name}</strong><small title={connection.base_url}>{connection.base_url}</small></span><span class="connection-count">{snapshot.document.catalog?.models.length ?? 0} · {t($locale, connection.enabled ? 'connections.enabled' : 'connections.disabled')}</span></summary>
         <div class="connection-body">
             <button disabled={busy} onclick={() => discover(snapshot)}>{t($locale, 'connections.discover')}</button>
             {#each inventory.accounts.filter(item => item.account.id === connection.account_id) as item}<p class="muted">{item.account.display_name}</p>{/each}
@@ -163,7 +201,7 @@
                 {@const key = `${model.protocol}:${model.model_id}`}
                 <label class="model"><input type="checkbox" role="switch" disabled={busy} checked={modelEnabled(connection.id, key)} onchange={event => selectModel(event, snapshot, key)} />
                     <span>{model.display_name} <small>{model.protocol}{#if model.context_window} · {model.context_window.toLocaleString()}{/if}</small></span></label>
-                <ModelCapabilityProbe {snapshot} {model} {refresh} accountRevision={inventory.accounts.find(item => item.account.id === snapshot.document.connection.account_id)?.revision ?? null} />
+                <ModelCapabilityProbe {snapshot} {model} refresh={async () => { await refresh(); await onChanged?.(); }} accountRevision={inventory.accounts.find(item => item.account.id === snapshot.document.connection.account_id)?.revision ?? null} />
             {/each}
         </div></details>
     {/each}
@@ -191,13 +229,13 @@
         </div>{/if}
         {#each results as result}<p role="status" class:error={result.status !== 'imported'}>{t($locale, result.status === 'imported' ? 'connections.imported' : 'connections.importFailed')} {result.error ?? ''}</p>{/each}
     </details>
-    <details><summary>{t($locale, 'connections.gateway')}</summary>
+    <details bind:this={accessPanel}><summary>{t($locale, 'connections.gateway')}</summary>
         <p>{t($locale, 'connections.gatewayHint')}</p><code>{typeof location === 'undefined' ? '' : location.origin}/gateway/v1</code>
         <p><button disabled={busy} onclick={() => configureGateway(false)}>{t($locale, 'connections.issueToken')}</button>
-        {#if gateway.enabled}<button disabled={busy} onclick={() => configureGateway(true)}>{t($locale, 'connections.revokeToken')}</button>{/if}</p>
+        {#if gateway.enabled}<button class="danger" disabled={busy} onclick={() => configureGateway(true)}>{t($locale, 'connections.revokeToken')}</button>{/if}</p>
         {#if gatewayToken}<div class="gateway-token"><label>{t($locale, 'connections.tokenOnce')}<input readonly type="text" class="token-value" value={gatewayToken} onclick={event => event.currentTarget.select()} /></label><button type="button" onclick={copyGatewayToken}>{t($locale, tokenCopied ? 'shell.login.copied' : 'shell.markdown.copy')}</button></div>{/if}
     </details>
-    <GatewayClients />
+    <GatewayClients {gateway} {profiles} openAccess={openGatewayAccess} />
     <SourceAccounts />
     <details><summary>{t($locale, 'connections.gatewayUsage')}</summary>
         <button disabled={busy} onclick={readAttempts}>{t($locale, 'rooms.refresh')}</button>
@@ -230,7 +268,7 @@
     .model > span { min-width: 0; overflow-wrap: anywhere; }
     .model small { display: block; font-size: .75rem; }
     .integrations > h3 { font-size: .9375rem; font-weight: 600; margin: 0 0 8px; }
-    summary { cursor: pointer; min-height: 44px; padding: 10px 0; }
+    summary { cursor: pointer; min-height: 44px; padding: 10px 12px; }
     .gateway-token { display: flex; flex-wrap: wrap; align-items: flex-end; gap: 10px; }
     .gateway-token label { flex: 1 1 240px; min-width: 0; }
     .token-value { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }

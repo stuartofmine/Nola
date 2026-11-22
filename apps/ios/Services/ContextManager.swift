@@ -77,9 +77,10 @@ nonisolated public struct UserUploadedContextItem: Codable, Equatable, Identifia
     public var version: String?
     public var requiredTools: [String]?
     public var validationSteps: [String]?
+    public var packageReference: String?
 
     fileprivate enum CodingKeys: String, CodingKey, CaseIterable {
-        case id, name, content, description, enabled, version, requiredTools, validationSteps
+        case id, name, content, description, enabled, version, requiredTools, validationSteps, packageReference
     }
 
     public init(
@@ -90,7 +91,8 @@ nonisolated public struct UserUploadedContextItem: Codable, Equatable, Identifia
         enabled: Bool = true,
         version: String? = nil,
         requiredTools: [String]? = nil,
-        validationSteps: [String]? = nil
+        validationSteps: [String]? = nil,
+        packageReference: String? = nil
     ) {
         self.id = id
         self.name = name
@@ -100,6 +102,7 @@ nonisolated public struct UserUploadedContextItem: Codable, Equatable, Identifia
         self.version = version
         self.requiredTools = requiredTools
         self.validationSteps = validationSteps
+        self.packageReference = packageReference
     }
 }
 
@@ -543,8 +546,9 @@ nonisolated public final class CanonicalChatMemoryProfileStore: ChatMemoryProfil
                   !item.content.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
                 throw IOSApplicationRuntimeError.rejected("Skill name and instructions are required")
             }
-            guard item.content.count <= maxCharacters * 8 else {
-                throw ChatMemoryProfileStoreError.textTooLong(field: "Skill", maxCharacters: maxCharacters * 8)
+            let limit = IOSGitHubSkillPackages.sourceURL(reference: expected?.record.instructionsRef) == nil ? maxCharacters * 8 : 200_000
+            guard item.content.count <= limit else {
+                throw ChatMemoryProfileStoreError.textTooLong(field: "Skill", maxCharacters: limit)
             }
             let proposed = item.canonicalSkill
             guard let expected else { return try applicationRuntime.createUserSkill(proposed) }
@@ -705,8 +709,9 @@ nonisolated public final class CanonicalChatMemoryProfileStore: ChatMemoryProfil
         for record in normalized.memoryRecords where record.text.count > maxCharacters {
             throw ChatMemoryProfileStoreError.textTooLong(field: "Memory record", maxCharacters: maxCharacters)
         }
-        for item in normalized.uploadedSkills where item.content.count > maxCharacters * 8 {
-            throw ChatMemoryProfileStoreError.textTooLong(field: "Skill: \(item.name)", maxCharacters: maxCharacters * 8)
+        for item in normalized.uploadedSkills {
+            let limit = item.packageReference == nil ? maxCharacters * 8 : 200_000
+            if item.content.count > limit { throw ChatMemoryProfileStoreError.textTooLong(field: "Skill: \(item.name)", maxCharacters: limit) }
         }
         for item in normalized.uploadedDocuments where item.content.count > maxCharacters * 8 {
             throw ChatMemoryProfileStoreError.textTooLong(field: "文档: \(item.name)", maxCharacters: maxCharacters * 8)

@@ -96,7 +96,7 @@ struct ModelTestDetailViewNew: View {
                                     TextField("4096", value: $maxTokens, format: .number.grouping(.never))
                                         .keyboardType(.numberPad)
                                         .multilineTextAlignment(.trailing)
-                                        .textFieldStyle(.roundedBorder)
+                                        .nolaInputFieldSurface()
                                         .frame(width: 112)
                                         .monospacedDigit()
                                         .onChange(of: maxTokens) { _, newValue in
@@ -118,7 +118,7 @@ struct ModelTestDetailViewNew: View {
                                     TextField("0.7", value: $temperature, format: .number.precision(.fractionLength(2)))
                                         .keyboardType(.decimalPad)
                                         .multilineTextAlignment(.trailing)
-                                        .textFieldStyle(.roundedBorder)
+                                        .nolaInputFieldSurface()
                                         .frame(width: 104)
                                         .monospacedDigit()
                                         .onChange(of: temperature) { _, newValue in
@@ -296,8 +296,8 @@ struct ModelTestDetailViewNew: View {
                             }
                             .frame(height: DesignTokens.rowHeightCompact)
                             .frame(maxWidth: .infinity)
-                            .background(DesignTokens.primaryColor)
-                            .foregroundColor(.white)
+                            .background(DesignTokens.actionColor)
+                            .foregroundColor(DesignTokens.onActionColor)
                             .cornerRadius(DesignTokens.radius_md)
                         }
                         .disabled(promptText.isEmpty && !isRunning)

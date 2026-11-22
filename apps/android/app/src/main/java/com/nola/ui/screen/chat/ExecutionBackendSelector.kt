@@ -73,6 +73,7 @@ internal fun ExecutionBackendSelector(
             )
             Text(
                 text = selectedBackend.displayName,
+                modifier = Modifier.weight(1f, fill = false),
                 style = MaterialTheme.typography.labelMedium,
                 fontWeight = FontWeight.SemiBold,
                 color = MaterialTheme.colorScheme.primary,

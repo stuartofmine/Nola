@@ -5,7 +5,8 @@ import SwiftUI
 struct IOSPersonalWorkspaceView: View {
     @EnvironmentObject private var container: ServiceContainer
     @Environment(\.scenePhase) private var scenePhase
-    @State private var pageWidth: CGFloat = 390
+    @Environment(\.horizontalSizeClass) private var horizontalSizeClass
+    private var pageInset: CGFloat { horizontalSizeClass == .regular ? 24 : 20 }
     @State private var conversations: [IOSWorkspaceConversationSummary] = []
     @State private var notifications: [NotificationEntity] = []
     @State private var persistedWaitingIDs: Set<UUID> = []
@@ -140,16 +141,17 @@ struct IOSPersonalWorkspaceView: View {
                     }
                 }
                 }
-                .listRowInsets(EdgeInsets(top: 12, leading: pageWidth < 359 ? 16 : 20, bottom: 12, trailing: pageWidth < 359 ? 16 : 20))
+                .listRowInsets(EdgeInsets(top: 12, leading: pageInset, bottom: 12, trailing: pageInset))
                 .listRowBackground(DesignTokens.backgroundColor)
                 .listRowSeparator(.hidden)
             }
             .listStyle(.plain)
+            .modifier(IOSWorkspaceTopEdge())
             .scrollContentBackground(.hidden)
             .background(DesignTokens.backgroundColor)
-            .background(IOSWorkspaceWidthObserver(width: $pageWidth))
             .navigationTitle("")
-            .toolbar(.hidden, for: .navigationBar)
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbarBackground(.hidden, for: .navigationBar)
             .refreshable { refresh(); await refreshTask?.value }
             .task(id: scenePhase) {
                 guard scenePhase == .active else { refreshTask?.cancel(); return }
@@ -167,7 +169,7 @@ struct IOSPersonalWorkspaceView: View {
 
     @ViewBuilder private func conversationRow(_ conversation: IOSWorkspaceConversationSummary) -> some View {
         Button {
-            NotificationCenter.default.post(name: .nolaOpenChatTab, object: conversation.id)
+            NotificationCenter.default.post(name: .nolaOpenChatTab, object: conversation.canonicalID)
         } label: {
             VStack(alignment: .leading, spacing: 5) {
                 Text(IOSConversationTitlePresentationPolicy.displayTitle(conversation.title,
@@ -195,7 +197,7 @@ struct IOSPersonalWorkspaceView: View {
                 var seen = Set<UUID>()
                 let conversations = (facts.conversations + facts.recent_conversations).compactMap { fact -> IOSWorkspaceConversationSummary? in
                     guard let id = UUID(uuidString: fact.conversation_id), seen.insert(id).inserted else { return nil }
-                    return IOSWorkspaceConversationSummary(id: id, title: fact.title,
+                    return IOSWorkspaceConversationSummary(id: id, canonicalID: fact.conversation_id, title: fact.title,
                         lastActiveAt: Date(timeIntervalSince1970: Double(fact.updated_at_ms) / 1000))
                 }
                 let waiting = Set(facts.conversations.filter(\.needs_response).compactMap { UUID(uuidString: $0.conversation_id) })
@@ -238,6 +240,7 @@ struct IOSPersonalWorkspaceView: View {
 
 nonisolated private struct IOSWorkspaceConversationSummary: Identifiable, Sendable {
     let id: UUID
+    let canonicalID: String
     let title: String
     let lastActiveAt: Date
 }
@@ -288,14 +291,15 @@ enum IOSWorkspaceDestination: String, CaseIterable, Identifiable, Hashable {
 /// one container, while editors retain their existing sheets and cancellation guards.
 struct IOSWorkspaceManagementContent: View {
     let destination: IOSWorkspaceDestination
+    var initialDirectory: [IOSConversationDirectoryEntry]? = nil
     var notificationKey: String? = nil
     var notificationRequestID: UUID? = nil
     var onModelConfigured: ((ModelInfo) -> Void)? = nil
     var body: some View {
         Group {
             switch destination {
-            case .knowledge: IOSKnowledgePointsView()
-            case .sources: HomeView(ownsNavigationStack: false)
+            case .knowledge: IOSKnowledgePointsView(initialDirectory: initialDirectory)
+            case .sources: DataSourcesView()
             case .memory: PersonalIntelligenceDashboardView(embedded: true)
             case .plans: ScheduledActionsView(embedded: true)
             case .records:
@@ -309,7 +313,6 @@ struct IOSWorkspaceManagementContent: View {
         }
         .navigationTitle(destination.informationTitle)
         .navigationBarTitleDisplayMode(.inline)
-        .toolbar(.visible, for: .navigationBar)
     }
 }
 
@@ -349,22 +352,23 @@ struct IOSInformationNavigationRequest: Identifiable, Equatable {
 
 struct IOSInformationView: View {
     @EnvironmentObject private var container: ServiceContainer
-    @State private var pageWidth: CGFloat = 390
+    @Environment(\.horizontalSizeClass) private var horizontalSizeClass
     @State private var directory: [IOSConversationDirectoryEntry] = []
     @State private var directoryLoadedAt: Date?
     @State private var directoryError: String?
-    private var pageInset: CGFloat { pageWidth < 359 ? 16 : 20 }
+    private var pageInset: CGFloat { horizontalSizeClass == .regular ? 24 : 20 }
     @Binding var path: [IOSWorkspaceDestination]
     @Binding var pendingRequests: [IOSInformationNavigationRequest]
     @State private var activeRequest: IOSInformationNavigationRequest?
     var body: some View {
         NavigationStack(path: $path) {
             List {
-                IOSWorkspacePageHeading(title: String(localized: "navigation.library"),
-                    subtitle: String(localized: "information.subtitle"))
-                    .accessibilityIdentifier("information.heading")
-                    .listRowInsets(EdgeInsets(top: 8, leading: pageInset, bottom: 16, trailing: pageInset))
-                    .listRowSeparator(.hidden).listRowBackground(Color.clear)
+                if horizontalSizeClass != .compact {
+                    IOSWorkspacePageHeading(title: String(localized: "navigation.library"), titleRowHeight: 64)
+                        .accessibilityIdentifier("information.heading")
+                        .listRowInsets(EdgeInsets(top: 4, leading: 0, bottom: 0, trailing: 0))
+                        .listRowSeparator(.hidden).listRowBackground(Color.clear)
+                }
                 Section {
                 ForEach([IOSWorkspaceDestination.knowledge, .memory, .sources]) { item in
                     Button {
@@ -400,7 +404,7 @@ struct IOSInformationView: View {
                 if !directory.isEmpty {
                     Section {
                         ForEach(Array(recentKnowledge.prefix(3))) { item in
-                            Button { NotificationCenter.default.post(name: .nolaOpenChatTab, object: item.id) } label: {
+                            Button { NotificationCenter.default.post(name: .nolaOpenChatTab, object: item.canonicalID) } label: {
                                 VStack(alignment: .leading, spacing: 6) {
                                     Text(IOSConversationTitlePresentationPolicy.displayTitle(item.title,
                                         conversationID: item.id.uuidString, fallback: L10n.chatConversationDefaultTitle))
@@ -421,13 +425,23 @@ struct IOSInformationView: View {
                 }
             }
             .listStyle(.insetGrouped)
+            .modifier(IOSWorkspaceTopEdge())
+            .contentMargins(.top, 0, for: .scrollContent)
+            .contentMargins(.horizontal, pageInset, for: .scrollContent)
+            .listSectionSpacing(12)
             .scrollContentBackground(.hidden)
             .background(DesignTokens.backgroundColor)
-            .background(IOSWorkspaceWidthObserver(width: $pageWidth))
-            .navigationTitle(NSLocalizedString("navigation.information", value: "Information", comment: "Information tab"))
-            .toolbar(.hidden, for: .navigationBar)
+            .navigationTitle("")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbarBackground(.hidden, for: .navigationBar)
+            .toolbar {
+                if horizontalSizeClass == .compact {
+                    IOSWorkspaceToolbarHeading(title: String(localized: "navigation.library"), identifier: "information.heading")
+                }
+            }
             .navigationDestination(for: IOSWorkspaceDestination.self) { item in
                 IOSWorkspaceManagementContent(destination: item,
+                    initialDirectory: directoryLoadedAt == nil ? nil : directory,
                     notificationKey: item == .records ? activeRequest?.notificationKey : nil,
                     notificationRequestID: item == .records ? activeRequest?.id : nil)
             }
@@ -471,44 +485,120 @@ struct IOSInformationView: View {
 /// A reading surface over existing conversation knowledge, with the conversation
 /// as the editing destination. No synthetic global knowledge store is introduced.
 private struct IOSKnowledgePointsView: View {
-    @State private var pageWidth: CGFloat = 390
+    @Environment(\.horizontalSizeClass) private var horizontalSizeClass
+    private var pageInset: CGFloat { horizontalSizeClass == .regular ? 24 : 20 }
     @EnvironmentObject private var container: ServiceContainer
     @Environment(\.dismiss) private var dismiss
     @State private var conversations: [IOSConversationDirectoryEntry] = []
+    @State private var hasLoaded = false
     @State private var loadError: String?
+    @State private var searchText = ""
+    @State private var expandedIDs: Set<UUID> = []
+
+    init(initialDirectory: [IOSConversationDirectoryEntry]?) {
+        _conversations = State(initialValue: Self.savedKnowledge(in: initialDirectory ?? []))
+        _hasLoaded = State(initialValue: initialDirectory != nil)
+    }
+
+    private static func savedKnowledge(in directory: [IOSConversationDirectoryEntry]) -> [IOSConversationDirectoryEntry] {
+        directory.filter { !$0.knowledgePoints.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
+    }
+
+    private var filteredConversations: [IOSConversationDirectoryEntry] {
+        let query = searchText.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !query.isEmpty else { return conversations }
+        return conversations.filter { conversation in
+            let displayTitle = IOSConversationTitlePresentationPolicy.displayTitle(
+                conversation.title,
+                conversationID: conversation.id.uuidString,
+                fallback: L10n.chatConversationDefaultTitle
+            )
+            return displayTitle.localizedStandardContains(query)
+                || conversation.knowledgePoints.localizedStandardContains(query)
+        }
+    }
 
     var body: some View {
         List {
             if let loadError {
                 Text(loadError).foregroundStyle(.secondary)
                 Button(String(localized: "common.retry")) { Task { await reload() } }.frame(minHeight: 44)
+            } else if !hasLoaded {
+                ProgressView()
+                    .frame(maxWidth: .infinity)
+                    .padding(.vertical, 24)
+                    .listRowSeparator(.hidden)
+                    .listRowBackground(DesignTokens.backgroundColor)
             } else if conversations.isEmpty {
                 Text(NSLocalizedString("information.knowledge.empty", value: "No conversation knowledge points yet.", comment: "Empty knowledge list"))
                     .foregroundStyle(.secondary).padding(.vertical, 20).listRowSeparator(.hidden)
                     .listRowBackground(DesignTokens.backgroundColor)
+            } else if filteredConversations.isEmpty {
+                ContentUnavailableView.search(text: searchText)
+                    .listRowSeparator(.hidden)
+                    .listRowBackground(DesignTokens.backgroundColor)
             }
-            ForEach(conversations) { conversation in
-                VStack(alignment: .leading, spacing: 10) {
-                    Text(IOSConversationTitlePresentationPolicy.displayTitle(conversation.title,
-                        conversationID: conversation.id.uuidString, fallback: L10n.chatConversationDefaultTitle))
-                        .font(.body.weight(.semibold))
-                    ChatMarkdownView(content: conversation.knowledgePoints).textSelection(.enabled)
-                    Button {
-                        dismiss()
-                        NotificationCenter.default.post(name: .nolaOpenChatTab, object: conversation.id)
+            ForEach(filteredConversations) { conversation in
+                let isExpanded = Binding<Bool>(
+                    get: { expandedIDs.contains(conversation.id) },
+                    set: { expanded in
+                        if expanded { expandedIDs.insert(conversation.id) }
+                        else { expandedIDs.remove(conversation.id) }
+                    }
+                )
+                NolaCard {
+                    DisclosureGroup(isExpanded: isExpanded) {
+                        VStack(alignment: .leading, spacing: 10) {
+                            ChatMarkdownView(content: conversation.knowledgePoints)
+                                .textSelection(.enabled)
+                                .padding(.top, 6)
+                            Button {
+                                dismiss()
+                                NotificationCenter.default.post(name: .nolaOpenChatTab, object: conversation.canonicalID)
+                            } label: {
+                                Label(
+                                    NSLocalizedString("information.knowledge.open_conversation", value: "Open conversation", comment: "Open source conversation from knowledge point"),
+                                    systemImage: "bubble.left"
+                                )
+                                .font(.subheadline.weight(.medium))
+                                .foregroundStyle(DesignTokens.actionColor)
+                                .frame(minHeight: 44)
+                            }
+                            .buttonStyle(.borderless)
+                        }
                     } label: {
-                        Label(L10n.chatTitle, systemImage: "bubble.left").frame(minHeight: 44)
-                    }.buttonStyle(.borderless)
+                        VStack(alignment: .leading, spacing: 4) {
+                            Text(IOSConversationTitlePresentationPolicy.displayTitle(conversation.title,
+                                conversationID: conversation.id.uuidString, fallback: L10n.chatConversationDefaultTitle))
+                                .font(.body.weight(.semibold))
+                                .foregroundStyle(DesignTokens.contentColor)
+                                .lineLimit(2)
+                            if !expandedIDs.contains(conversation.id) {
+                                Text(conversation.knowledgePoints)
+                                    .font(.caption)
+                                    .foregroundStyle(DesignTokens.secondaryContentColor)
+                                    .lineLimit(2)
+                            }
+                            Text(conversation.lastActiveAt, format: .dateTime.month().day())
+                                .font(.caption2)
+                                .foregroundStyle(DesignTokens.secondaryContentColor)
+                        }
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                    }
+                    .disclosureGroupStyle(NolaRowDisclosureStyle(isPlain: true))
                 }
                 .listRowSeparator(.hidden)
                 .listRowBackground(DesignTokens.backgroundColor)
-                .listRowInsets(EdgeInsets(top: 12, leading: pageWidth < 359 ? 16 : 20, bottom: 12, trailing: pageWidth < 359 ? 16 : 20))
+                .listRowInsets(EdgeInsets(top: 6, leading: pageInset, bottom: 6, trailing: pageInset))
             }
         }
         .listStyle(.plain)
         .scrollContentBackground(.hidden)
         .background(DesignTokens.backgroundColor)
-        .background(IOSWorkspaceWidthObserver(width: $pageWidth))
+        .searchable(
+            text: $searchText,
+            prompt: Text(NSLocalizedString("information.knowledge.search", value: "Search knowledge points", comment: "Search knowledge points"))
+        )
         .task { await reload() }
         .refreshable { await reload() }
         .accessibilityIdentifier("information.knowledge.list")
@@ -519,20 +609,47 @@ private struct IOSKnowledgePointsView: View {
         do {
             let loaded = try await Task.detached { try IOSWorkspaceReadFacts.conversationDirectory(runtime: runtime) }.value
             try Task.checkCancellation()
-            conversations = loaded.filter { !$0.knowledgePoints.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
+            conversations = Self.savedKnowledge(in: loaded)
+            hasLoaded = true
             loadError = nil
         } catch is CancellationError { }
-        catch { loadError = error.localizedDescription }
+        catch {
+            hasLoaded = true
+            loadError = error.localizedDescription
+        }
     }
 }
 
-struct IOSWorkspaceWidthObserver: View {
-    @Binding var width: CGFloat
-    var body: some View {
-        GeometryReader { geometry in
-            Color.clear.onChange(of: geometry.size.width, initial: true) { _, value in
-                if value > 0 { width = value }
-            }
+struct IOSWorkspaceTopEdge: ViewModifier {
+    func body(content: Content) -> some View {
+        if #available(iOS 26.0, *) {
+            content.scrollEdgeEffectHidden(true, for: .top)
+        } else {
+            content
+        }
+    }
+}
+
+/// A visible root navigation bar keeps UIKit's top inset stable through a push.
+struct IOSWorkspaceToolbarHeading: ToolbarContent {
+    let title: String
+    let identifier: String
+
+    private var heading: some View {
+        Text(title)
+            .font(.system(.largeTitle, design: .serif, weight: .semibold))
+            .fixedSize(horizontal: true, vertical: false)
+            .foregroundStyle(DesignTokens.contentColor)
+            .accessibilityAddTraits(.isHeader)
+            .accessibilityIdentifier(identifier)
+    }
+
+    var body: some ToolbarContent {
+        if #available(iOS 26.0, *) {
+            ToolbarItem(placement: .topBarLeading) { heading }
+                .sharedBackgroundVisibility(.hidden)
+        } else {
+            ToolbarItem(placement: .topBarLeading) { heading }
         }
     }
 }
@@ -540,12 +657,13 @@ struct IOSWorkspaceWidthObserver: View {
 struct IOSWorkspacePageHeading: View {
     let title: String
     var subtitle: String? = nil
-    @ScaledMetric(relativeTo: .title) private var titleSize: CGFloat = 28
+    var titleRowHeight: CGFloat? = nil
     @ScaledMetric(relativeTo: .title) private var titleLineSpacing: CGFloat = 3
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
-            Text(title).font(.system(size: titleSize, weight: .semibold))
-                .lineSpacing(titleLineSpacing).foregroundStyle(.primary)
+            Text(title).font(.system(.largeTitle, design: .serif, weight: .semibold))
+                .lineSpacing(titleLineSpacing).foregroundStyle(DesignTokens.contentColor)
+                .frame(minHeight: titleRowHeight, alignment: .leading)
                 .accessibilityAddTraits(.isHeader)
             if let subtitle {
                 Text(subtitle).font(.subheadline).foregroundStyle(.secondary)
@@ -558,6 +676,8 @@ struct IOSWorkspacePageHeading: View {
 
 struct IOSConversationActivityView: View {
     var isRootTab = false
+    @Environment(\.horizontalSizeClass) private var horizontalSizeClass
+    private var pageInset: CGFloat { horizontalSizeClass == .regular ? 24 : 20 }
     @EnvironmentObject private var container: ServiceContainer
     @State private var nextPlan: AppleTodayQueuedInstance?
     @State private var plansLoadedAt: Date?
@@ -565,55 +685,101 @@ struct IOSConversationActivityView: View {
     var body: some View {
         let runtime = container.applicationRuntime
         VStack(spacing: 0) {
-        if isRootTab {
-            IOSWorkspacePageHeading(title: String(localized: "information.activity"))
-                .padding(.horizontal, 16)
-                .padding(.top, 8)
+        if isRootTab && horizontalSizeClass != .compact {
+            IOSWorkspacePageHeading(title: String(localized: "information.activity"), titleRowHeight: 64)
+                .padding(.horizontal, pageInset)
+                .padding(.top, 4)
                 .padding(.bottom, 4)
         }
         NavigationLink { ScheduledActionsView(embedded: true) } label: {
             HStack(spacing: 12) {
                 Image(systemName: "calendar").font(.title3).foregroundStyle(DesignTokens.actionColor)
-                VStack(alignment: .leading, spacing: 4) {
+                VStack(alignment: .leading, spacing: 3) {
                     Text("workspace.plans").font(.subheadline.weight(.semibold)).foregroundStyle(.primary)
                     if let nextPlan {
-                        Text(nextPlan.title ?? String(localized: "workspace.plans")).font(.subheadline).foregroundStyle(.secondary).lineLimit(1)
+                        Text(nextPlan.title ?? String(localized: "workspace.plans")).font(.footnote).foregroundStyle(.secondary).lineLimit(1)
                         Text(Date(timeIntervalSince1970: Double(nextPlan.scheduled_for_ms) / 1000),
                             format: .dateTime.month().day().hour().minute()).font(.caption).foregroundStyle(.secondary)
+                    } else {
+                        Text(NSLocalizedString("workspace.plans.empty_subtitle", value: "No upcoming scheduled plans", comment: "Empty subtitle when no scheduled plans are queued"))
+                            .font(.caption)
+                            .foregroundStyle(DesignTokens.secondaryContentColor)
+                            .lineLimit(1)
                     }
                 }
                 Spacer(minLength: 8)
                 Image("nola-chevron").resizable().renderingMode(.template).scaledToFit()
                     .frame(width: 14, height: 14).foregroundStyle(.secondary)
-            }.frame(maxWidth: .infinity, minHeight: 44, alignment: .leading).padding(14)
+            }.frame(maxWidth: .infinity, minHeight: 52, alignment: .leading).padding(.horizontal, 14).padding(.vertical, 10)
                 .background(DesignTokens.surfaceColor, in: RoundedRectangle(cornerRadius: 14))
                 .overlay(RoundedRectangle(cornerRadius: 14).stroke(DesignTokens.borderColor, lineWidth: 0.75))
                 .contentShape(Rectangle())
-        }.buttonStyle(.plain).padding(.horizontal, 16).padding(.top, 8)
+        }.buttonStyle(.plain).padding(.horizontal, pageInset).padding(.top, 8)
             .accessibilityIdentifier("activity.plans")
-        if let plansError { Text(plansError).font(.footnote).foregroundStyle(.secondary).padding(.horizontal) }
+        if let plansError {
+            HStack(spacing: 10) {
+                Text(plansError)
+                    .font(.footnote)
+                    .foregroundStyle(.secondary)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                Button(NSLocalizedString("common.retry", value: "Retry", comment: "Retry")) {
+                    Task { await loadNextPlan(force: true) }
+                }
+                .buttonStyle(.bordered)
+                .frame(minHeight: 44)
+            }
+            .padding(.horizontal, pageInset)
+            .padding(.top, 6)
+        }
         AppleActivityView(load: { query in
             try await Task.detached { try IOSWorkspaceReadFacts.activity(runtime: runtime, query: query) }.value
         }, detail: { entry in
             try await Task.detached { try IOSWorkspaceReadFacts.activityDetail(runtime: runtime, entry: entry) }.value
         }, openSource: { source in
-            if let id = UUID(uuidString: source) {
-                NotificationCenter.default.post(name: .nolaOpenChatTab, object: id)
+            if UUID(uuidString: source) != nil {
+                NotificationCenter.default.post(name: .nolaOpenChatTab, object: source)
             }
         }, canOpenSource: { UUID(uuidString: $0) != nil })
         }
         .background(DesignTokens.backgroundColor)
         .navigationTitle(isRootTab ? "" : String(localized: "information.activity"))
-        .toolbar(isRootTab ? .hidden : .visible, for: .navigationBar)
-        .task {
-            guard plansLoadedAt.map({ Date().timeIntervalSince($0) >= 30 }) ?? true else { return }
-            do {
-                let facts = try await Task.detached { try IOSWorkspaceReadFacts.snapshot(runtime: runtime) }.value
-                try Task.checkCancellation()
-                nextPlan = facts.queued_instances.min { $0.scheduled_for_ms < $1.scheduled_for_ms }
-                plansLoadedAt = Date(); plansError = nil
-            } catch is CancellationError { }
-            catch { plansError = error.localizedDescription }
+        .navigationBarTitleDisplayMode(.inline)
+        .toolbar {
+            if isRootTab && horizontalSizeClass == .compact {
+                IOSWorkspaceToolbarHeading(title: String(localized: "information.activity"), identifier: "activity.heading")
+            }
+            ToolbarItem(placement: .topBarTrailing) {
+                NavigationLink {
+                    NotificationCenterView(ownsNavigationStack: false)
+                        .environmentObject(container)
+                } label: {
+                    Image(systemName: "bell")
+                        .font(.system(size: 17, weight: .medium))
+                        .foregroundStyle(DesignTokens.contentColor)
+                        .frame(width: 44, height: 44)
+                        .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel(L10n.notificationsTitle)
+                .accessibilityIdentifier("activity.notifications")
+            }
         }
+        .toolbarBackground(.hidden, for: .navigationBar)
+        .task {
+            await loadNextPlan(force: false)
+        }
+    }
+
+    private func loadNextPlan(force: Bool) async {
+        guard force || plansLoadedAt.map({ Date().timeIntervalSince($0) >= 30 }) ?? true else { return }
+        let runtime = container.applicationRuntime
+        do {
+            let facts = try await Task.detached { try IOSWorkspaceReadFacts.snapshot(runtime: runtime) }.value
+            try Task.checkCancellation()
+            nextPlan = facts.queued_instances.min { $0.scheduled_for_ms < $1.scheduled_for_ms }
+            plansLoadedAt = Date()
+            plansError = nil
+        } catch is CancellationError { }
+        catch { plansError = error.localizedDescription }
     }
 }

@@ -56,8 +56,8 @@ pub(crate) fn run() -> Result<(), String> {
         },
         CommandMode::SessionDelete(id) => {
             crate::core_agent_runtime::end_agent_core_session(id)?;
-            crate::session::delete_session(id)?;
-            write_json(json!({"type":"session_deleted", "id":id}))
+            let deleted = crate::session::delete_session(id)?;
+            write_json(json!({"type":"session_deleted", "id":id, "deleted":deleted}))
         },
         _ => Err("nola-agent-host requires native stdin for runs; unsupported product command".into()),
     }

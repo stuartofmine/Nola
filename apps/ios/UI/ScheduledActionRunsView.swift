@@ -268,7 +268,7 @@ private struct ScheduledActionRunRow: View {
                 )
                 .foregroundStyle(.secondary)
             }
-            if let count = run.eventsCount, count > 0, run.status == .success {
+            if let count = run.eventsCount, count > 0, run.status.isSuccessful {
                 if includeLeadingSeparator || executionPath != nil {
                     Text("·")
                         .foregroundStyle(.tertiary)
@@ -405,6 +405,8 @@ private struct ScheduledRunsSummary: View {
                                 .foregroundStyle(isSelected ? Color.primary : Color.secondary)
                                 .padding(.horizontal, 11)
                                 .padding(.vertical, 7)
+                                .frame(minHeight: 44)
+                                .contentShape(Capsule())
                                 .background(
                                     isSelected ? DesignTokens.accentSubtleColor : Color.clear,
                                     in: Capsule()

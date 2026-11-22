@@ -214,6 +214,7 @@ struct MacConversationModelSettingsView: View {
                     .disabled(!invalidNumericFields.isEmpty)
             }
         }.padding(24).frame(minWidth: 440, idealWidth: 520, maxWidth: 680)
+            .background(MacDesignColor.canvas)
             .interactiveDismissDisabled(hasUnsavedChanges)
             .confirmationDialog(String(localized: "Discard unsaved changes?"), isPresented: $showsDiscardConfirmation, titleVisibility: .visible) {
                 Button(String(localized: "Discard Changes"), role: .destructive) { dismiss() }

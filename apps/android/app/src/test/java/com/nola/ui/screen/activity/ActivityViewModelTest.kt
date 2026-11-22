@@ -50,6 +50,40 @@ class ActivityViewModelTest {
         } finally { Dispatchers.resetMain() }
     }
 
+    @Test fun retryRepeatsTheFailedPageEvenWhenRowsAreAlreadyVisible() = runTest {
+        val dispatcher = StandardTestDispatcher(testScheduler)
+        Dispatchers.setMain(dispatcher)
+        try {
+            val cursor = ActivityCursor(1, "run")
+            val requested = mutableListOf<ActivityCursor?>()
+            var fail = false
+            val model = ActivityViewModel({ request ->
+                val page = Json.decodeFromJsonElement<ActivityQuery>(request.getValue("input")).cursor
+                requested += page
+                if (fail) error("offline")
+                Json.encodeToJsonElement(if (page == null) ActivityPage(listOf(entry()), cursor)
+                    else ActivityPage(listOf(entry("older")), null))
+            }, dispatcher) { 1L }
+            model.refresh(null, false, "")
+            advanceUntilIdle()
+            fail = true
+            model.refresh(null, false, "")
+            advanceUntilIdle()
+            fail = false
+            model.retry()
+            advanceUntilIdle()
+            fail = true
+            model.loadMore()
+            advanceUntilIdle()
+            fail = false
+            model.retry()
+            advanceUntilIdle()
+            assertEquals(listOf(null, null, null, cursor, cursor), requested)
+            assertEquals(listOf("run", "older"), model.state.value.entries.map { it.run_id })
+            assertFalse(model.state.value.failed)
+        } finally { Dispatchers.resetMain() }
+    }
+
     @Test fun detailRejectsOwnerMismatchInsteadOfOpeningAnotherConversationsResult() = runTest {
         val dispatcher = StandardTestDispatcher(testScheduler)
         Dispatchers.setMain(dispatcher)

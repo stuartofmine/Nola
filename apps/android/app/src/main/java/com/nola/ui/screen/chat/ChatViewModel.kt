@@ -318,14 +318,14 @@ class ChatViewModel @Inject constructor(
         require(frozen == null || repository.remoteHostId == frozen.host) { "Expert source changed; reopen the expert picker" }
         return repository
     }
-    private fun mainExpertDirectory(repository: com.nola.data.repository.AgentRoomRepository): com.nola.data.repository.AgentDirectory {
+    private fun mainExpertDirectory(repository: com.nola.data.repository.AgentRoomRepository, inline: Boolean = false): com.nola.data.repository.AgentDirectory {
         if (repository.remoteHostId != null) {
-            val supported = try { repository.roleTemplates().features.mainAgentDelegation }
+            val supported = try { repository.roleTemplates().features.let { it.mainAgentDelegation && (!inline || it.inlineExpertMentions) } }
             catch (failure: Exception) {
                 if (failure is kotlinx.coroutines.CancellationException || failure is com.nola.data.remote.api.WebHostStatusException && failure.errorCode == "room_source_epoch_changed") throw failure
                 throw IllegalStateException(context.getString(R.string.expert_role_catalog_unavailable), failure)
             }
-            check(supported) { context.getString(R.string.expert_role_catalog_unavailable) }
+            check(supported) { context.getString(if (inline) R.string.expert_mention_upgrade_host else R.string.expert_role_catalog_unavailable) }
         }
         return repository.directory()
     }
@@ -340,7 +340,6 @@ class ChatViewModel @Inject constructor(
     internal val expertRejoinRequest = MutableStateFlow<ExpertRejoinRequest?>(null)
     internal val expertRejoining = MutableStateFlow(false)
     internal val expertRejoinError = MutableStateFlow<String?>(null)
-    private var expertRejoinCompletion: (() -> Unit)? = null
     internal val resumableExpertMessages = MutableStateFlow<Set<String>>(emptySet())
     internal val resumingExpertMessage = MutableStateFlow<String?>(null)
     internal data class ExpertParentMessageKey(val conversationId: String, val messageId: String)
@@ -385,64 +384,36 @@ class ChatViewModel @Inject constructor(
         }
     }
 
-    internal fun conversationExpertLabel(agentId: String): String = selectedExpertLabel(agentId,
-        selectedConversationAgentParticipants[agentId], conversationAgentDirectory.value, context.getString(R.string.chat_experts))
+    internal fun inlineMentionCandidate(agentId: String): InlineExpertMention? {
+        val agent = conversationAgentDirectory.value?.agents?.singleOrNull { it.id == agentId && it.availability == "active" } ?: return null
+        val member = pickerMembers.value[agentId]
+        return InlineExpertMention(0, "@" + (member?.displayName ?: agent.name), agentId, member?.agentRevision ?: agent.revision,
+            member, expertPickerSource?.host, expertPickerSource?.epoch)
+    }
 
-    internal fun toggleConversationExpert(agentId: String, onSelected: () -> Unit = {}) {
-        if (agentId in selectedConversationAgentIds.value) {
-            selectedConversationAgentIds.update { it - agentId }
-            selectedConversationAgentRevisions.remove(agentId); selectedConversationAgentParticipants.remove(agentId)
-            return
-        }
-        val candidate = conversationAgentDirectory.value?.agents?.singleOrNull { it.id == agentId && it.availability == "active" } ?: return
-        val id = displayedState.value.conversationId
+    internal val pickerMembers = MutableStateFlow<Map<String, com.nola.data.repository.RoomParticipant>>(emptyMap())
+
+    internal fun requestLatestExpert(agentId: String) {
+        val agent = conversationAgentDirectory.value?.agents?.singleOrNull { it.id == agentId && it.availability == "active" } ?: return
+        val owner = displayedState.value.conversationId ?: return
         val generation = conversationLoads.currentGeneration()
-        fun current() = displayedState.value.conversationId == id && conversationLoads.currentGeneration() == generation
-        if (id == null) {
-            // An unsent draft only owns ID+revision; typing @ never creates a conversation.
-            selectedConversationAgentRevisions[agentId] = candidate.revision
-            selectedConversationAgentIds.update { it + agentId }
-            onSelected()
-            return
-        }
         viewModelScope.launch {
-            expertSelectionMutex.withLock {
-                try {
-                    if (!current()) return@withLock
-                    val agentRooms = expertSelectionRepository(id)
-                    val latest = withContext(Dispatchers.IO) { mainExpertDirectory(agentRooms) }
-                    if (!current()) return@withLock
-                    captureExpertPickerSource(agentRooms)
-                    conversationAgentDirectory.value = latest
-                    val agent = checkedExpertCandidate(latest, agentId, candidate.revision)
-                    val room = withContext(Dispatchers.IO) { agentRooms.ensureForConversation(id).room }
-                    if (!current()) return@withLock
-                    val member = try { currentExpertParticipant(room, agent) } catch (_: ExpertSelectionChanged) {
-                        expertRejoinRequest.value = ExpertRejoinRequest(id, room, agent)
-                        expertRejoinCompletion = onSelected; expertRejoinError.value = null
-                        throw ExpertSelectionChanged()
-                    }
-                    val joined = if (member == null) withContext(Dispatchers.IO) { agentRooms.join(agent, room) } else room
-                    if (!current()) return@withLock
-                    check(joined.room.id == room.room.id)
-                    val joinedMember = checkNotNull(currentExpertParticipant(joined, agent))
-                    selectedConversationAgentParticipants[agentId] = joinedMember
-                    selectedConversationAgentRevisions[agentId] = agent.revision
-                    selectedConversationAgentIds.update { it + agentId }
-                    expertRejoinRequest.value = null; expertRejoinCompletion = null; expertRejoinError.value = null
-                    onSelected()
-                } catch (cancelled: kotlinx.coroutines.CancellationException) { throw cancelled }
-                catch (failure: Exception) {
-                    if (current()) composerDrafts.forConversation(id).notice.value = if (failure is ExpertSelectionChanged)
-                        context.getString(R.string.expert_profile_changed) else failure.localizedMessage ?: context.getString(R.string.expert_source_unavailable)
-                }
-            }
+            try {
+                val room = withContext(Dispatchers.IO) { expertSelectionRepository(owner).forConversation(owner)?.room } ?: return@launch
+                if (generation != conversationLoads.currentGeneration() || displayedState.value.conversationId != owner) return@launch
+                val member = room.room.participants.singleOrNull { it.agentId == agentId && it.active } ?: return@launch
+                if (member.agentRevision == agent.revision) return@launch
+                expertRejoinRequest.value = ExpertRejoinRequest(owner, room, agent)
+                expertRejoinError.value = null
+            } catch (cancelled: kotlinx.coroutines.CancellationException) { throw cancelled }
+            catch (failure: Exception) { if (generation == conversationLoads.currentGeneration())
+                composerDrafts.forConversation(owner).notice.value = failure.localizedMessage }
         }
     }
 
     internal fun cancelExpertRejoin() {
         if (expertRejoining.value) return
-        expertRejoinRequest.value = null; expertRejoinCompletion = null; expertRejoinError.value = null
+        expertRejoinRequest.value = null; expertRejoinError.value = null
     }
 
     internal fun refreshExpertRejoin() {
@@ -458,7 +429,7 @@ class ChatViewModel @Inject constructor(
                 val agent = directory.agents.singleOrNull { it.id == request.agent.id && it.availability == "active" }
                 val member = room?.room?.participants?.singleOrNull { it.agentId == request.agent.id && it.active }
                 if (agent == null || room == null || member?.agentRevision == agent.revision) {
-                    expertRejoinRequest.value = null; expertRejoinCompletion = null
+                    expertRejoinRequest.value = null
                     composerDrafts.forConversation(request.conversationId).notice.value = context.getString(R.string.expert_profile_changed)
                 } else expertRejoinRequest.value = ExpertRejoinRequest(request.conversationId, room, agent)
             } catch (cancelled: kotlinx.coroutines.CancellationException) { throw cancelled }
@@ -498,11 +469,17 @@ class ChatViewModel @Inject constructor(
                     }
                     if (!current()) return@withLock
                     val joinedMember = rejoinedExpertParticipant(request.room, joined, request.agent)
-                    selectedConversationAgentParticipants[request.agent.id] = joinedMember
-                    selectedConversationAgentRevisions[request.agent.id] = request.agent.revision
-                    selectedConversationAgentIds.update { it + request.agent.id }
-                    expertRejoinCompletion?.invoke()
-                    expertRejoinRequest.value = null; expertRejoinCompletion = null
+                    pickerMembers.update { it + (request.agent.id to joinedMember) }
+                    // Explicitly swap all occurrences of this one expert in the owning unsent draft.
+                    val draft = composerDrafts.forConversation(request.conversationId)
+                    val current = draft.text.value
+                    var edit = MentionEdit(androidx.compose.ui.text.input.TextFieldValue(current), draft.mentions)
+                    for (previous in draft.mentions.asReversed().filter { it.agentId == request.agent.id }) {
+                        val replacement = previous.copy(label = "@${joinedMember.displayName}", revision = joinedMember.agentRevision, member = joinedMember)
+                        edit = insertExpert(edit.value, edit.mentions, androidx.compose.ui.text.TextRange(previous.start, previous.end), replacement)
+                    }
+                    draft.setContent(edit.value.text, edit.mentions)
+                    expertRejoinRequest.value = null
                 } catch (cancelled: kotlinx.coroutines.CancellationException) { throw cancelled }
                 catch (failure: Exception) {
                     if (current()) expertRejoinError.value = failure.localizedMessage ?: context.getString(R.string.expert_profile_changed)
@@ -620,13 +597,15 @@ class ChatViewModel @Inject constructor(
                 for (id in pending.selectedAgentIds.sorted()) {
                     if (selectedExpertParticipant(room, id, selectedRevisions[id], selectedMembers[id]) == null) {
                         val currentDirectory = directory ?: agentRooms.directory().also { directory = it }
-                        val candidate = currentDirectory.agents.single { it.id == id && it.availability == "active" }
+                        val candidate = currentDirectory.agents.singleOrNull { it.id == id && it.availability == "active" }
+                            ?: throw ExpertSelectionChanged()
                         val agent = checkedExpertCandidate(currentDirectory, id, selectedRevisions[id] ?: candidate.revision)
                         room = agentRooms.join(agent, room)
                     }
                 }
                 val participants = pending.selectedAgentIds.sorted().map { id ->
-                    val member = room.room.participants.single { it.agentId == id && it.active }
+                    val member = room.room.participants.singleOrNull { it.agentId == id && it.active }
+                        ?: throw ExpertSelectionChanged()
                     AndroidExpertParticipantReference(member.id, member.agentId, member.agentRevision, member.contextConversationId)
                 }
                 applicationRuntime.admitExpertMessage(AndroidAdmitExpertMessage(conversationId,
@@ -697,13 +676,16 @@ class ChatViewModel @Inject constructor(
             for (id in pending.selectedAgentIds.sorted()) {
                 if (selectedExpertParticipant(room, id, revisions[id], members[id]) == null) {
                     val directory = repository.directory()
-                    val candidate = directory.agents.single { it.id == id && it.availability == "active" }
+                    val candidate = directory.agents.singleOrNull { it.id == id && it.availability == "active" }
+                        ?: throw ExpertSelectionChanged()
                     room = repository.join(checkedExpertCandidate(directory, id, revisions[id] ?: candidate.revision), room)
                 }
             }
-            val participants = pending.selectedAgentIds.sorted().map { id -> room.room.participants.single { it.agentId == id && it.active }.let {
-                AndroidExpertParticipantReference(it.id, it.agentId, it.agentRevision, it.contextConversationId)
-            } }
+            val participants = pending.selectedAgentIds.sorted().map { id ->
+                val member = room.room.participants.singleOrNull { it.agentId == id && it.active }
+                    ?: throw ExpertSelectionChanged()
+                AndroidExpertParticipantReference(member.id, member.agentId, member.agentRevision, member.contextConversationId)
+            }
             AndroidAdmitExpertMessage(conversation.id, prepared.getValue("parent").jsonObject.getValue("revision").jsonPrimitive.long,
                 room.room.id, room.revision, pending.messageId, pending.messageId, pending.text, participants, pending.createdAtMs)
             }
@@ -803,7 +785,11 @@ class ChatViewModel @Inject constructor(
                 require(receipt.contextConversationId == participant.contextConversationId && receipt.selectedParticipantId == participant.id &&
                     receipt.input.conversationId == parent && receipt.input.parentMessageId == message)
                 val roomConfiguration = configuration.copy(clientId = "room:${source.manifest.input.roomId}")
-                val session = receipt.executionId?.let { ensureRemoteExpertChildObservation(message, participant, receipt, entry.childAssistantMessageId, roomConfiguration) }
+                val session = receipt.executionId?.let {
+                    withContext(Dispatchers.Main.immediate) {
+                        ensureRemoteExpertChildObservation(message, participant, receipt, entry.childAssistantMessageId, roomConfiguration)
+                    }
+                }
                 val canonical = session?.state?.value?.journalResponse ?: conversationRepo.getActiveMessages(participant.contextConversationId)
                     .singleOrNull { it.id == entry.childAssistantMessageId }
                 val running = receipt.state in setOf("accepted", "selected", "executing") || (session != null && !session.hasCommittedTerminalSeal)
@@ -881,7 +867,13 @@ class ChatViewModel @Inject constructor(
         val run = taskParentRun(task, messageId)
         val binding = checkNotNull(conversationRepo.getConversation(parent)).executionHostBinding
         val transport = binding?.let { webAgentProvider.journalTransport(resolveBoundHost(it)) }
-        com.nola.data.repository.readTaskChildDetail(parent, run, task.id, child, before, transport != null) { command ->
+        val callId = task.lineage.parentCallId
+        val message = _uiState.value.messages.singleOrNull { (it.meta?.get("nola.canonicalMessageID") ?: it.id) == messageId }
+        val origin = message?.canonicalParts?.filterIsInstance<ConversationProjectionV1.Part.Tool>()
+            ?.singleOrNull { it.toolCallId == callId }
+        val expertCallId = callId?.takeIf { origin?.capabilityId in setOf("delegate_expert", "expert_exchange") }
+        com.nola.data.repository.readTaskChildDetail(parent, run, task.id, child, before, transport != null,
+            expertCallId = expertCallId, expertQuery = { command -> expertHistoryCommand(parent, command) }) { command ->
             if (transport != null) transport(command).getValue("result") else applicationRuntime.execute(command)
         }
     }
@@ -966,7 +958,15 @@ class ChatViewModel @Inject constructor(
                     if (value == null) remove(key) else putString(key, value)
                 }.commit()) { "Could not persist Goal operation" } },
                 observe = { webAgentProvider.conversationProgress(owner, host) },
-                transport = { webAgentProvider.goalControl(it, host) })
+                transport = { intent ->
+                    try {
+                        webAgentProvider.goalControl(intent, host)
+                    } catch (failure: com.nola.data.remote.api.WebHostStatusException) {
+                        if (failure.statusCode == 409 && failure.errorCode == "goal_host_default_unavailable")
+                            throw IllegalStateException(context.getString(R.string.goal_host_default_unavailable), failure)
+                        throw failure
+                    }
+                })
         } }
 
     private val localGoalWakes = mutableSetOf<String>()
@@ -979,21 +979,22 @@ class ChatViewModel @Inject constructor(
         userPrompt: String = "",
     ): JsonObject = withContext(Dispatchers.IO) {
         check(resolveConversationProgressHost(owner) == null) { "Goal belongs to a paired Host" }
-        val nativeHost = withContext(Dispatchers.Main) { localToolPlan(owner,
-            runRegistry.find(composerDrafts.ownerKey(owner))?.state?.value ?: _uiState.value).identity.hostId }
+        val plan = withContext(Dispatchers.Main) { localToolPlan(owner,
+            runRegistry.find(composerDrafts.ownerKey(owner))?.state?.value ?: _uiState.value) }
         val action = control?.get("action")?.jsonPrimitive?.content
         val state = withContext(Dispatchers.Main) { runRegistry.find(composerDrafts.ownerKey(owner))?.state?.value ?: _uiState.value }
         val needsModel = action in setOf("start", "resume") || userPrompt.isNotBlank()
-        val selectedModel = if (needsModel) {
+        val admission = if (needsModel) {
             val resolvedModel = state.currentModel
             if (resolvedModel != null) {
-                agentTurnService.goalModelAdmission(resolvedModel, state.effectiveGenerationParameters,
-                    state.currentParameters.enableThinking)
+                agentTurnService.goalModelAdmission(owner, resolvedModel, state.effectiveGenerationParameters,
+                    state.currentParameters.enableThinking, state.responseStyle, action == "start",
+                    state.agentMode, plan.permissionMode)
             } else {
                 check(action != "start") { context.getString(R.string.chat_no_model_selected) }
-                JsonNull
+                null
             }
-        } else JsonNull
+        } else null
         val operation = control?.getValue("operationId")?.jsonPrimitive?.content
         val intent = control?.let { value -> buildJsonObject {
                 put("conversation_id", owner); put("operation_id", value.getValue("operationId")); put("action", value.getValue("action"))
@@ -1006,8 +1007,9 @@ class ChatViewModel @Inject constructor(
             put("type", "prepare_goal_control_intent"); put("input", it)
         }, operation?.let { "goal-intent:$owner:$it" }) }
         val command = buildJsonObject {
-            put("type", "step_goal"); put("conversation_id", owner); put("source_host_id",nativeHost); put("host_available",hostAvailable)
-            put("control", envelope ?: JsonNull); put("selected_model",selectedModel); put("user_prompt", userPrompt)
+            put("type", "step_goal"); put("conversation_id", owner); put("source_host_id", plan.identity.hostId); put("host_available",hostAvailable)
+            put("control", envelope ?: JsonNull); put("selected_model", admission?.selection ?: JsonNull); put("user_prompt", userPrompt)
+            admission?.startConfiguration?.let { put("start_configuration", it) }
         }
         val result = applicationRuntime.submitMutation(command, operation?.let { "embedded-goal:$owner:$it" }).jsonObject
         result["error"]?.takeUnless { it is JsonNull }?.jsonPrimitive?.content?.let { error(it) }
@@ -1086,7 +1088,18 @@ class ChatViewModel @Inject constructor(
 
     internal suspend fun loadConversationProgress(owner: String): com.nola.data.repository.ConversationProgress = withContext(Dispatchers.IO) {
         val host = resolveConversationProgressHost(owner)
-        if (host != null) webAgentProvider.conversationProgress(owner, host) else conversationProgress.load(owner)
+        if (host == null) return@withContext conversationProgress.load(owner)
+        val progress = webAgentProvider.conversationProgress(owner, host)
+        remoteGoalMutex.withLock {
+            val preferences = context.getSharedPreferences("goal-control-intents", android.content.Context.MODE_PRIVATE)
+            val key = "${host.expectedHostId}:$owner"
+            preferences.getString(key, null)?.let { raw ->
+                com.nola.data.local.settleRemoteGoalReceipt(Json.parseToJsonElement(raw).jsonObject, host.expectedHostId, progress) {
+                    check(preferences.edit().remove(key).commit()) { context.getString(R.string.goal_operation_failed) }
+                }
+            }
+        }
+        progress
     }
 
     internal val roomDrafts = androidx.compose.runtime.mutableStateMapOf<String, RoomComposerState>()
@@ -1135,7 +1148,14 @@ class ChatViewModel @Inject constructor(
         var permissionMirror: Job? = null
         try {
             if (current.state == "accepted") {
-                current = roomCoordinator.select(room, current)
+                val ownerHostId = current.input.conversationId?.let { id ->
+                    withContext(Dispatchers.IO) {
+                        conversationRepo.getConversation(id)?.executionHostBinding?.let { binding ->
+                            runCatching { resolveBoundHost(binding).expectedHostId }.getOrNull()
+                        }
+                    }
+                }
+                current = roomCoordinator.select(room, current, remoteHostId = ownerHostId)
             }
             if (current.state !in setOf("selected", "executing")) return
             val contextId = requireNotNull(current.contextConversationId)
@@ -1189,21 +1209,28 @@ class ChatViewModel @Inject constructor(
             val executionModel = capturedExpertModel?.model ?: checkNotNull(snapshot.currentModel) {
                 "The original expert model declaration is unavailable"
             }
+            val (executionProfileId, executionProfileRevision) = if (executionModel.source == ModelInfo.ModelSource.Local) {
+                val localProfile = withContext(Dispatchers.IO) { applicationRuntime.modelProfile(executionModel.id) }
+                (executionModel.profileId ?: localProfile?.id ?: executionModel.id) to
+                    (executionModel.profileRevision ?: localProfile?.revision ?: 0L)
+            } else {
+                requireNotNull(executionModel.profileId) to requireNotNull(executionModel.profileRevision)
+            }
             val persisted = withContext(Dispatchers.IO) { agentRooms.executionIntent(current) }
             val intent = persisted ?: buildJsonObject {
                 put("execution_id", manifestEntry?.childSubmissionId ?: UUID.randomUUID().toString())
                 put("envelope", buildJsonObject {
                     put("kind", "native"); put("platform", "android")
                     put("conversation_configuration_revision", requireNotNull(snapshot.configurationRevision))
-                    put("model_profile_id", requireNotNull(executionModel.profileId)); put("model_profile_revision", requireNotNull(executionModel.profileRevision))
+                    put("model_profile_id", executionProfileId); put("model_profile_revision", executionProfileRevision)
                     put("expected_parent_message_id", parent?.let(::JsonPrimitive) ?: JsonNull); put("text", current.input.text)
                 })
             }
             val envelope = intent.getValue("envelope").jsonObject
             check(envelope["platform"]?.jsonPrimitive?.content == "android"
                 && envelope["conversation_configuration_revision"]?.jsonPrimitive?.longOrNull == snapshot.configurationRevision
-                && envelope["model_profile_id"]?.jsonPrimitive?.content == executionModel.profileId
-                && envelope["model_profile_revision"]?.jsonPrimitive?.longOrNull == executionModel.profileRevision
+                && envelope["model_profile_id"]?.jsonPrimitive?.content == executionProfileId
+                && envelope["model_profile_revision"]?.jsonPrimitive?.longOrNull == executionProfileRevision
                 && envelope["expected_parent_message_id"] == (parent?.let(::JsonPrimitive) ?: JsonNull))
             if (persisted == null) current = withContext(Dispatchers.IO) { agentRooms.prepareExecution(current, intent) }
             val claim = withContext(Dispatchers.IO) { agentRooms.claimExecution(current) }
@@ -1255,7 +1282,9 @@ class ChatViewModel @Inject constructor(
                                 it.id == "${current.executionId}:assistant" && it.conversationId == contextId && it.role == ChatRole.assistant
                             }
                         }
-                        checkNotNull(exact) { "The exact completed expert assistant is unavailable" }
+                        if (current.state == "completed") {
+                            checkNotNull(exact) { "The exact completed expert assistant is unavailable" }
+                        }
                         publishConversationExpertReply(parentId, participant, current, "", terminalMessage = exact)
                     }
                     break
@@ -1276,31 +1305,35 @@ class ChatViewModel @Inject constructor(
             }
         } finally {
             withContext(kotlinx.coroutines.NonCancellable) {
-                runCatching { refreshRoomSubmissions(room.room.id) }
+                runCatching { refreshRoomSubmissions(room.room.id, accepted.input.conversationId) }
             }
             permissionMirror?.cancel()
             activeRoomDispatches.remove(accepted.input.submissionId)
         }
     }
 
-    internal suspend fun refreshRoomSubmissions(roomId: String) {
+    internal suspend fun refreshRoomSubmissions(roomId: String, parentConversationId: String?) {
         val (values, exchanges) = withContext(Dispatchers.IO) {
             val submissions = agentRooms.submissions(roomId).map { value ->
                 if (value.state == "executing") runCatching { agentRooms.observeExecution(value) }.getOrDefault(value) else value
             }
-            val peerList = agentRooms.load(roomId)?.room?.participants.orEmpty()
-                .flatMap { participant ->
-                    runCatching {
-                        (agentRooms.peerExchanges(participant.contextConversationId)["exchanges"] as? JsonArray)
-                            .orEmpty()
-                            .mapNotNull { it as? JsonObject }
-                    }.getOrDefault(emptyList())
-                }
+            val parent = parentConversationId ?: submissions.mapNotNull { it.input.conversationId }.distinct().singleOrNull()
+            val peerList = if (parent != null && agentRooms.forConversation(parent)?.roomId == roomId) {
+                agentRooms.peerExchanges(parent).getValue("exchanges").jsonArray.map { it.jsonObject }
+            } else emptyList()
             submissions to peerList
         }
         roomSubmissions[roomId] = mergeRoomSubmissions(roomId, roomSubmissions[roomId].orEmpty(), values)
         roomSubmissions[roomId].orEmpty().filter { it.state in setOf("accepted", "selected", "executing") && it.input.submissionId !in activeRoomDispatches }.forEach { value ->
-            viewModelScope.launch { withContext(Dispatchers.IO) { agentRooms.load(roomId) }?.let { dispatchRoomSubmission(it, value) } }
+            viewModelScope.launch {
+                try {
+                    withContext(Dispatchers.IO) { agentRooms.load(roomId) }?.let { dispatchRoomSubmission(it, value) }
+                } catch (cancelled: kotlinx.coroutines.CancellationException) {
+                    throw cancelled
+                } catch (error: Exception) {
+                    Log.e("ChatViewModel", "Room submission dispatch failed", error)
+                }
+            }
         }
         exchanges.mapNotNull { exchange ->
             exchange["target"]?.jsonObject?.get("context_conversation_id")?.jsonPrimitive?.contentOrNull
@@ -1321,14 +1354,22 @@ class ChatViewModel @Inject constructor(
         viewModelScope.launch {
             runCatching {
                 withContext(Dispatchers.IO) { agentRooms.cancelPending(value) }
-                runCatching { roomCoordinator.cancel(value) }
-                refreshRoomSubmissions(value.input.roomId)
+                val ownerHostId = value.input.conversationId?.let { id ->
+                    withContext(Dispatchers.IO) {
+                        conversationRepo.getConversation(id)?.executionHostBinding?.let { binding ->
+                            runCatching { resolveBoundHost(binding).expectedHostId }.getOrNull()
+                        }
+                    }
+                }
+                runCatching { roomCoordinator.cancel(value, remoteHostId = ownerHostId) }
+                refreshRoomSubmissions(value.input.roomId, value.input.conversationId)
             }
         }
     }
 
     /** This editor's directory is the local Store, never a paired Host mirror. */
-    internal data class ExpertEditorScope(val remote: Boolean, val models: List<ModelInfo>, val defaultProfileId: String?, val efforts: Map<String, List<String>>, val sourceIdentity: String = "local", val storeEpoch: String? = null)
+    internal data class ExpertEditorScope(val remote: Boolean, val models: List<ModelInfo>, val defaultProfileId: String?, val efforts: Map<String, List<String>>, val sourceIdentity: String = "local", val storeEpoch: String? = null,
+        val executors: List<com.nola.data.remote.dto.ExecutionBackendDto> = emptyList())
     internal suspend fun expertEditorScope(): ExpertEditorScope = withContext(Dispatchers.IO) {
         val state = displayedState.value
         val binding = state.conversationId?.let { conversationRepo.getConversation(it)?.executionHostBinding } ?: state.executionHostBinding
@@ -1344,10 +1385,11 @@ class ChatViewModel @Inject constructor(
         val efforts = settings.modelProfiles.associate { it.profileId to it.reasoning?.takeIf { it.control == "effort" }?.efforts.orEmpty()
             .filter { value -> value in listOf("none", "minimal", "low", "medium", "high", "xhigh", "max") }.distinct() }
         ExpertEditorScope(true, models, settings.defaultChatModelResolution?.takeIf { it.kind == "resolved" }?.profileId, efforts,
-            JsonArray(listOf(configuration.expectedHostId, configuration.clientId, epoch).map(::JsonPrimitive)).toString(), epoch)
+            JsonArray(listOf(configuration.expectedHostId, configuration.clientId, epoch).map(::JsonPrimitive)).toString(), epoch, settings.executionBackends)
     }
 
-    internal suspend fun readableExpertTemplates(): com.nola.data.local.ReadableExpertTemplateCatalog = withContext(Dispatchers.IO) {
+    internal suspend fun readableExpertTemplates(localDirectory: Boolean = false): com.nola.data.local.ReadableExpertTemplateCatalog = withContext(Dispatchers.IO) {
+        if (localDirectory) return@withContext applicationRuntime.readableExpertTemplates()
         val state = displayedState.value
         val binding = state.conversationId?.let { conversationRepo.getConversation(it)?.executionHostBinding } ?: state.executionHostBinding
         require(binding == null) { "The connected Host custom-template catalog is unavailable; built-in roles remain available" }
@@ -1363,18 +1405,6 @@ class ChatViewModel @Inject constructor(
             modelParamsStore.parameterSnapshot(profileId).reasoningEfforts
         } catch (cancelled: kotlinx.coroutines.CancellationException) { throw cancelled }
         catch (_: Exception) { emptyList() }
-    }
-
-    internal suspend fun expertDefaultsForModel(model: ModelInfo): JsonObject {
-        val selected = displayedState.value
-        val identity = com.nola.data.repository.conversationModelIdentity(model)
-        val modelParameters = if (selected.currentModel?.let {
-            it.source == model.source && it.selectionId == model.selectionId
-        } == true) selected.currentParameters else modelParamsStore.loadParameters(model.parameterProfileId)
-        val parameters = Json.parseToJsonElement(com.nola.data.repository.writeConversationParameters(
-            null, model, modelParameters)).jsonObject
-        return JsonObject(parameters.filterKeys { it == "modelOverrides" } +
-            ("modelSelectionID" to JsonPrimitive(identity)))
     }
 
     internal suspend fun openAgentRoom(roomId: String) {
@@ -1687,6 +1717,38 @@ class ChatViewModel @Inject constructor(
 
     init {
         viewModelScope.launch {
+            memoryProfileDataStore.skillCatalog.collect { skills ->
+                _uiState.update { it.copy(uploadedSkills = skills) }
+            }
+        }
+        viewModelScope.launch {
+            memoryProfileDataStore.profile.collect { profile ->
+                val previousSnapshot = memoryEditorSnapshot
+                val previousLongTerm = previousSnapshot?.longTermMemory?.joinToString("\n")
+                val previousUserPrefs = previousSnapshot?.userPreferences?.joinToString("\n")
+                memoryEditorSnapshot = profile
+                _uiState.update { state ->
+                    val longTermDirty = previousLongTerm != null && state.longTermMemory != previousLongTerm
+                    val userPrefsDirty = previousUserPrefs != null && state.userPreferences != previousUserPrefs
+                    state.copy(
+                        longTermMemory = if (longTermDirty) state.longTermMemory else profile.longTermMemory.joinToString("\n"),
+                        userPreferences = if (userPrefsDirty) state.userPreferences else profile.userPreferences.joinToString("\n"),
+                        uploadedSkills = profile.uploadedSkills,
+                        uploadedDocuments = profile.uploadedDocuments,
+                        mcpServers = profile.mcpServers,
+                        customDataSources = profile.customDataSources,
+                        dataSources = buildDataSources(
+                            uploadedDocuments = profile.uploadedDocuments,
+                            hostUploadedDocuments = state.hostUploadedDocuments,
+                            mcpServers = profile.mcpServers,
+                            hostMcpServers = state.hostMcpServers,
+                            customDataSources = profile.customDataSources,
+                        ),
+                    )
+                }
+            }
+        }
+        viewModelScope.launch {
             var displayedChildRequest: String? = null
             combine(AndroidChildPermissions.pending, _uiState) { pending, state ->
                 pending.firstOrNull { state.taskChildOwner == null &&
@@ -1727,12 +1789,15 @@ class ChatViewModel @Inject constructor(
 
     private fun loadPreferences() {
         viewModelScope.launch {
+            prefs.hostDeviceGrants.collect { grants ->
+                _uiState.update { it.copy(pairedHostIdentity = grants.identity,
+                    hybridDeviceToolsEnabled = grants.enabled, hybridDeviceCapabilities = grants.capabilities) }
+            }
+        }
+        viewModelScope.launch {
             val agentMode = prefs.isAgentModeEnabled.first()
             val permissionMode = prefs.agentPermissionMode.first()
             defaultPermissionMode = permissionMode
-            val hybridDeviceTools = prefs.hybridDeviceToolsEnabled.first()
-            val hybridCapabilities = prefs.hybridDeviceCapabilities.first()
-            val pairedHostIdentity = prefs.webHostIdentity.first()
             val autoCompact = memoryProfileDataStore.autoCompactTriggerPercent.first()
             val documents = memoryProfileDataStore.documentEditor()
             val profile = chatRepo.getMemoryProfile().copy(uploadedDocuments = documents.documents)
@@ -1747,9 +1812,6 @@ class ChatViewModel @Inject constructor(
             _uiState.update { it.copy(
                 agentMode = agentMode,
                 permissionMode = if (it.conversationId == null) permissionMode else it.permissionMode,
-                hybridDeviceToolsEnabled = hybridDeviceTools,
-                hybridDeviceCapabilities = hybridCapabilities,
-                pairedHostIdentity = pairedHostIdentity,
                 autoCompactTriggerPercent = autoCompact,
                 longTermMemory = profile.longTermMemory.joinToString("\n"),
                 userPreferences = profile.userPreferences.joinToString("\n"),
@@ -1775,7 +1837,8 @@ class ChatViewModel @Inject constructor(
             models.addAll(deviceModelStore.installedModels().map { record ->
                 ModelInfo(id = record.id, name = record.displayName, source = ModelInfo.ModelSource.Local)
             })
-            if (prefs.webHostBaseUrl.first().isNotBlank() && prefs.webHostToken.first().isNotBlank()) {
+            val host = prefs.webHostConfiguration()
+            if (host != null) {
                 models.add(ModelInfo("web-host", "Nola Web Host", ModelInfo.ModelSource.WebHost))
             }
 
@@ -1788,9 +1851,8 @@ class ChatViewModel @Inject constructor(
                     it.profileId == null && it.id == modelService.currentModelId
             } ?: prefs.defaultModelSelection(models)
             val activeParameters = activeModel?.let { modelParamsStore.loadParameters(it.parameterProfileId) }
-            val defaultHostBinding = if (activeModel?.source == ModelInfo.ModelSource.WebHost)
-                com.nola.domain.model.ExecutionHostBinding(prefs.webHostBaseUrl.first(),
-                    prefs.webHostCertificateSha256.first().takeIf { it.isNotBlank() }) else null
+            val defaultHostBinding = if (activeModel?.source == ModelInfo.ModelSource.WebHost && host != null)
+                com.nola.domain.model.ExecutionHostBinding(host.address, host.pin.takeIf { it.isNotBlank() }) else null
             if (request != modelCatalogGeneration) return@launch
             // The directory is application-scoped; only selection/defaults belong
             // to the captured conversation or pending draft.
@@ -1863,7 +1925,7 @@ class ChatViewModel @Inject constructor(
         if (!background) {
             modelSelectionGeneration += 1
             if (_uiState.value.conversationId != convId) {
-                selectedConversationAgentIds.value = emptySet(); selectedConversationAgentRevisions.clear(); selectedConversationAgentParticipants.clear(); expertPickerSource = null; expertRejoinRequest.value = null; expertRejoinCompletion = null; expertRejoinError.value = null
+                selectedConversationAgentIds.value = emptySet(); selectedConversationAgentRevisions.clear(); selectedConversationAgentParticipants.clear(); expertPickerSource = null; expertRejoinRequest.value = null; expertRejoinError.value = null
             }
         }
         val loadGeneration = if (background) conversationLoads.currentGeneration() else conversationLoads.beginRequest()
@@ -2064,20 +2126,21 @@ class ChatViewModel @Inject constructor(
                 if (childOwner != null) return@launch
                 val pendingRun = window.projection.activeRun
                 val pendingCommand = withContext(Dispatchers.IO) { applicationRuntime.pendingConversationCommand(convId) }
+                if (!canCommitLoad() || _uiState.value.conversationId != convId) return@launch
                 if (pendingCommand != null) _uiState.update {
                     it.copy(processingState = ProcessingState.AwaitingRecovery, pendingCommandId = pendingCommand,
                         error = com.nola.data.local.AndroidApplicationRuntime.PendingMutation(pendingCommand).message)
                 }
                 val permissionOwnerSession = executionSession
                 if (runRegistry.current == null) permissionOwnerSession.state.value = displayedState.value
-                permissionOwnerSession.permissionSourceUnconfirmed = conv.selectedModelInfo?.source == ModelInfo.ModelSource.WebHost
+                permissionOwnerSession.permissionSourceUnconfirmed = remoteBacked
                 if (!permissionOwnerSession.permissionSourceUnconfirmed) runCatching { refreshPermissionOwnerProjection(permissionOwnerSession) }
-                val recoveryInspected = if (pendingRun != null && conv.selectedModelInfo?.source != ModelInfo.ModelSource.WebHost) {
+                val recoveryInspected = if (pendingRun != null && !remoteBacked) {
                     refreshUnknownEffectRecovery(conv, pendingRun?.runId, loadGeneration)
                 } else false
                 if (!isExecutionCurrent(loadGeneration) || _uiState.value.conversationId != convId) return@launch
                 if (
-                    conv.selectedModelInfo?.source != ModelInfo.ModelSource.WebHost &&
+                    !remoteBacked &&
                     shouldResumeLoadedDeviceRun(pendingRun?.state, recoveryInspected,
                         pendingCommand != null, _uiState.value.unknownEffectRecovery != null)
                 ) {
@@ -2107,8 +2170,8 @@ class ChatViewModel @Inject constructor(
                             conv.agentRoomOwner?.let { captured.copy(clientId = "room:${it.roomId}") } ?: captured
                         }
                         if (currentWindow()) {
-                            if (!currentWindow()) return@launch
                             remoteObservationConfiguration = configuration
+                            webAgentProvider.config = configuration
                             // Discovery supplies the canonical root even with no
                             // heads; a display message ID alone is not a root.
                             remoteObservationInitialKey = null
@@ -2116,16 +2179,17 @@ class ChatViewModel @Inject constructor(
                             _uiState.update { if (currentWindow()) it.copy(processingState = ProcessingState.BuildingContext) else it }
                             startRemoteConversationObservation(convId)
                             observeRemoteAgentTasks(convId)
-                        } else if (currentWindow()) {
-                            _uiState.update { it.copy(processingState = ProcessingState.BuildingContext,
-                                error = context.getString(R.string.chat_error_web_host_not_configured)) }
+                            val hostSettingsGeneration = modelSelectionGeneration
+                            viewModelScope.launch {
+                                refreshHostAgentSettings(convId, hostSettingsGeneration)
+                            }
                         }
                     } catch (cancelled: kotlinx.coroutines.CancellationException) {
                         throw cancelled
                     } catch (failure: Exception) {
                         // Offline history stays usable; a later window refresh retries exact cursors.
                         Log.w("ChatViewModel", "Visible journal refresh unavailable")
-                        if (currentWindow()) _uiState.update { it.copy(processingState = ProcessingState.BuildingContext,
+                        if (currentWindow()) _uiState.update { it.copy(processingState = ProcessingState.AwaitingRecovery,
                             error = failure.message ?: context.getString(R.string.chat_agent_error)) }
                     }
                 }
@@ -2150,8 +2214,17 @@ class ChatViewModel @Inject constructor(
         _uiState.value.conversationId?.let { wakeLocalGoal(it) }
         if (!turnRuntime.hasActiveGeneration()) _uiState.value.conversationId?.let { conversationId ->
             if (_uiState.value.currentModel?.source == ModelInfo.ModelSource.WebHost) {
-                startRemoteConversationObservation(conversationId)
-                wakeRemoteUiQueue(conversationId)
+                if (executionSession.configuration == null &&
+                    _uiState.value.processingState == ProcessingState.AwaitingRecovery) {
+                    loadConversation(conversationId)
+                } else {
+                    startRemoteConversationObservation(conversationId)
+                    wakeRemoteUiQueue(conversationId)
+                    val hostSettingsGeneration = modelSelectionGeneration
+                    viewModelScope.launch {
+                        refreshHostAgentSettings(conversationId, hostSettingsGeneration)
+                    }
+                }
             } else viewModelScope.launch {
                 try { wakeIdleQueuedUiInput(conversationId) }
                 catch (cancelled: kotlinx.coroutines.CancellationException) { throw cancelled }
@@ -2256,7 +2329,7 @@ class ChatViewModel @Inject constructor(
                 if (current()) {
                     val terminal = terminalCommitted && (observation.canSubmit || _uiState.value.expertContextOwner != null) &&
                         observation.recovery == com.nola.data.remote.api.RemoteRunRecovery.Terminal
-                    var state = _uiState.value.copy(processingState = if (terminal) ProcessingState.Idle else ProcessingState.Streaming,
+                    var state = _uiState.value.copy(hostGoalInProgress = false, processingState = if (terminal) ProcessingState.Idle else ProcessingState.Streaming,
                         error = if (observation.recovery == com.nola.data.remote.api.RemoteRunRecovery.Inconsistent)
                             context.getString(R.string.chat_agent_error) else null)
                     // These are the original live nonce challenges, not trace
@@ -2266,8 +2339,11 @@ class ChatViewModel @Inject constructor(
                         require(wire.getValue("canonical_run_id").jsonPrimitive.content == observation.key.runId)
                         val event = com.nola.data.remote.sse.decodeSsePayload(wire.toString(), null) as? SseEvent.PermissionRequest
                             ?: error("Observation permission is not a typed live challenge")
+                        val permissionClient = if (observation.goalExecution != null && event.clientId == "web-goal")
+                            "web-goal" else configuration.clientId
+                        require(observation.submissionReceipt != null || permissionClient == "web-goal")
                         val next = acceptHostPermissionEvent(state, event, convId, configuration.expectedHostId,
-                            configuration.clientId, System.currentTimeMillis() / 1_000L)
+                            permissionClient, System.currentTimeMillis() / 1_000L)
                             ?: error("Observation permission identity mismatch")
                         state = next; permission = next.permissionRequest
                     }
@@ -2304,7 +2380,22 @@ class ChatViewModel @Inject constructor(
                 resume(key).collect { event -> if (current()) handleAgentEvent(event, convId) }
             }, reconcileSubmission = { reconcileRemoteSubmissionBeforeRun(convId, configuration, ::current) },
             admittedKey = { remoteObservationInitialKey.takeIf { _uiState.value.activeResponseId != null } },
-            stopAtTerminal = _uiState.value.expertContextOwner != null)
+            stopAtTerminal = _uiState.value.expertContextOwner != null,
+            presentHostExecution = { observation ->
+                val pending = withContext(Dispatchers.IO) { conversationRepo.readRemoteSubmissionIntent(convId) }
+                require(pending == null) { "A Host execution cannot acknowledge a mobile submission" }
+                if (current()) {
+                    remoteAdmissionReceipt = null
+                    remoteSubmissionAdmitted = false
+                    executionSession.permissionSourceUnconfirmed = !observation.canSubmit
+                    permissionSession.setHostRequest(null)
+                    _uiState.update { state -> state.copy(
+                        hostGoalInProgress = observation.goalExecution != null && !observation.canSubmit,
+                        processingState = if (observation.canSubmit) ProcessingState.Idle else ProcessingState.AwaitingRecovery,
+                        activeResponseId = null, activeResponseStartedAt = null, permissionRequest = null, error = null,
+                    ) }
+                }
+            })
     }
 
     private suspend fun reconcileRemoteSubmissionBeforeRun(convId: String, configuration: WebAgentProvider.Config,
@@ -2396,9 +2487,17 @@ class ChatViewModel @Inject constructor(
         if (state.currentModel?.source == ModelInfo.ModelSource.WebHost || turnRuntime.hasActiveGeneration()) return
         val generation = conversationLoads.currentGeneration()
         viewModelScope.launch {
-            val conversation = conversationRepo.getConversation(conversationId) ?: return@launch
-            val projection = withContext(Dispatchers.IO) { conversationRepo.getProjectionWindow(conversationId, null).projection }
-            refreshUnknownEffectRecovery(conversation, projection.activeRun?.runId, generation)
+            try {
+                val conversation = conversationRepo.getConversation(conversationId) ?: return@launch
+                val projection = withContext(Dispatchers.IO) { conversationRepo.getProjectionWindow(conversationId, null).projection }
+                refreshUnknownEffectRecovery(conversation, projection.activeRun?.runId, generation)
+            } catch (cancelled: kotlinx.coroutines.CancellationException) {
+                throw cancelled
+            } catch (_: Exception) {
+                if (_uiState.value.conversationId == conversationId && conversationLoads.currentGeneration() == generation) {
+                    _uiState.update { it.copy(error = context.getString(R.string.chat_unknown_check_failed)) }
+                }
+            }
         }
     }
 
@@ -2479,13 +2578,17 @@ class ChatViewModel @Inject constructor(
             return
         }
         val session = runRegistry.beginExecution(key, _uiState.value)
-        if (conversation.selectedModelInfo?.source == ModelInfo.ModelSource.Local) check(runRegistry.acquireLocal(session))
-        session.runtime.bindOwner(conversation.id)
-        runRegistry.start(session) {
+        try {
+            if (conversation.selectedModelInfo?.source == ModelInfo.ModelSource.Local) check(runRegistry.acquireLocal(session))
+            session.runtime.bindOwner(conversation.id)
+            runRegistry.start(session) {
             try {
                 val state = _uiState.value
                 val toolPlan = localToolPlan(conversation.id, state)
-                _uiState.update { it.copy(processingState = ProcessingState.Streaming) }
+                val descriptor = withContext(Dispatchers.IO) {
+                    agentTurnService.recoveryDescriptor(conversation.id, conversation.title.orEmpty(), runId)
+                }
+                _uiState.update { it.bindRecoveredAssistant(descriptor) }
                 runDeviceAgentResponse(
                     input = "",
                     convId = conversation.id,
@@ -2493,8 +2596,7 @@ class ChatViewModel @Inject constructor(
                     state = state,
                     toolPlan = toolPlan,
                     attachments = emptyList(),
-                    canonicalTurn = agentTurnService.recoveryDescriptor(
-                        conversation.id, conversation.title.orEmpty(), runId),
+                    canonicalTurn = descriptor,
                     recoverExistingRun = true,
                 )
             } catch (error: Exception) {
@@ -2511,6 +2613,11 @@ class ChatViewModel @Inject constructor(
             } finally {
                 clearGenerationJobIfCurrent(coroutineContext[Job])
             }
+            }
+        } catch (error: Throwable) {
+            runRegistry.releaseLocal(session)
+            runRegistry.remove(key)
+            throw error
         }
     }
 
@@ -2699,7 +2806,7 @@ class ChatViewModel @Inject constructor(
     }
 
     fun newConversation() {
-        selectedConversationAgentIds.value = emptySet(); selectedConversationAgentRevisions.clear(); selectedConversationAgentParticipants.clear(); expertPickerSource = null; expertRejoinRequest.value = null; expertRejoinCompletion = null; expertRejoinError.value = null
+        selectedConversationAgentIds.value = emptySet(); selectedConversationAgentRevisions.clear(); selectedConversationAgentParticipants.clear(); expertPickerSource = null; expertRejoinRequest.value = null; expertRejoinError.value = null
         modelSelectionGeneration += 1
         conversationLoads.beginRequest()
         _uiState.update { it.newConversationPresentation(defaultPermissionMode) }
@@ -2786,11 +2893,16 @@ class ChatViewModel @Inject constructor(
         }
     }
 
+    fun clearPermissionSaveFailed() {
+        _uiState.update { if (it.permissionSaveFailed) it.copy(permissionSaveFailed = false) else it }
+    }
+
     private suspend fun savePermissionModeForOwner(mode: com.nola.core.AndroidAgentPermissionMode) {
         val session = executionSession
         val conversationId = _uiState.value.conversationId
         val remoteConfiguration = remoteObservationConfiguration
         if (_uiState.value.permissionSaving) return
+        val previousMode = _uiState.value.permissionMode
         session.permissionHydration.invalidate()
         _uiState.update { it.copy(permissionMode = mode, permissionSaving = true, permissionSaveFailed = false) }
         try {
@@ -2830,7 +2942,13 @@ class ChatViewModel @Inject constructor(
             }
         } catch (error: Throwable) {
             _uiState.update {
-                if (it.conversationId == conversationId) it.copy(permissionSaving = false, permissionSaveFailed = true) else it
+                if (it.conversationId == conversationId) {
+                    it.copy(
+                        permissionMode = previousMode,
+                        permissionSaving = false,
+                        permissionSaveFailed = true,
+                    )
+                } else it
             }
             throw error
         }
@@ -2892,9 +3010,10 @@ class ChatViewModel @Inject constructor(
         val conversationId = _uiState.value.conversationId
         val generation = ++modelSelectionGeneration
         viewModelScope.launch {
-            prefs.forgetWebHostIdentity()
+            prefs.clearWebHostConfig()
+            webAgentProvider.config = null
+            if (modelService.currentModelSource == "web-host") modelService.usePlaceholder()
             if (generation != modelSelectionGeneration || _uiState.value.conversationId != conversationId) return@launch
-            webAgentProvider.config = webAgentProvider.config?.copy(expectedHostId = "")
             _uiState.update {
                 it.copy(
                     pairedHostIdentity = "",
@@ -2902,7 +3021,7 @@ class ChatViewModel @Inject constructor(
                     hybridDeviceCapabilities = emptySet()
                 )
             }
-            refreshHostAgentSettings(conversationId, generation)
+            loadAvailableModels()
         }
     }
 
@@ -2911,16 +3030,13 @@ class ChatViewModel @Inject constructor(
 
     private suspend fun resolveBoundHost(binding: com.nola.domain.model.ExecutionHostBinding): WebAgentProvider.Config {
         com.nola.data.repository.validateExecutionHostBinding(binding)
-        val url = prefs.webHostBaseUrl.first()
-        val pin = prefs.webHostCertificateSha256.first()
-        require(binding.baseURL == url && binding.tlsCertificateSHA256.orEmpty() == pin) {
+        val host = prefs.webHostConfiguration()
+        require(host != null && binding.baseURL == host.address && binding.tlsCertificateSHA256.orEmpty() == host.pin) {
             "This conversation's Host is not the currently paired connection; reconnect its Host to continue"
         }
-        val token = prefs.webHostToken.first()
-        require(token.isNotBlank()) { "Host credentials are unavailable" }
-        return WebAgentProvider.Config(hostBaseUrl = binding.baseURL, token = token,
-            expectedHostId = prefs.webHostIdentity.first(), clientId = prefs.getOrCreateClientUuid(),
-            pinnedCertificateSha256 = binding.tlsCertificateSHA256.orEmpty())
+        return WebAgentProvider.Config(hostBaseUrl = host.address, token = host.token,
+            expectedHostId = host.identity, clientId = prefs.getOrCreateClientUuid(),
+            pinnedCertificateSha256 = host.pin)
     }
 
     fun setModel(model: ModelInfo) {
@@ -2956,13 +3072,11 @@ class ChatViewModel @Inject constructor(
                     }
                 }
                 ModelInfo.ModelSource.WebHost -> {
-                    val url = prefs.webHostBaseUrl.first()
-                    val token = prefs.webHostToken.first()
-                    require(url.isNotBlank() && token.isNotBlank()) { "Host connection is not configured" }
-                    hostConfiguration = WebAgentProvider.Config(hostBaseUrl = url, token = token,
+                    val host = requireNotNull(prefs.webHostConfiguration()) { "Host connection is not configured" }
+                    hostConfiguration = WebAgentProvider.Config(hostBaseUrl = host.address, token = host.token,
                         timezone = TimeZone.getDefault().id, maxIterations = 0,
-                        expectedHostId = prefs.webHostIdentity.first(), clientId = prefs.getOrCreateClientUuid(),
-                        pinnedCertificateSha256 = prefs.webHostCertificateSha256.first())
+                        expectedHostId = host.identity, clientId = prefs.getOrCreateClientUuid(),
+                        pinnedCertificateSha256 = host.pin)
                 }
             }
 
@@ -2993,7 +3107,10 @@ class ChatViewModel @Inject constructor(
             }
             if (requestedConversationId == null) composerDrafts.savePendingConfiguration(requestedDraftOwner,
                 ConversationDraftRepository.Configuration(model, params, hostBinding = binding))
-            if (hostConfiguration != null && current()) webAgentProvider.config = hostConfiguration
+            if (hostConfiguration != null && current()) {
+                webAgentProvider.config = hostConfiguration
+                refreshHostAgentSettings(requestedConversationId, generation)
+            }
             } catch (error: Exception) {
                 if (error is kotlinx.coroutines.CancellationException) throw error
                 _uiState.update {
@@ -3023,9 +3140,12 @@ class ChatViewModel @Inject constructor(
     suspend fun saveResponseStyle(style: String?) {
         com.nola.domain.model.requireValidPromptResponseStyle(style)
         val conversationId = _uiState.value.conversationId
-        if (conversationId != null) conversationRepo.updateResponseStyle(conversationId, style)
-        _uiState.update {
-            if (it.conversationId == conversationId) it.copy(responseStyleOverride = style) else it
+        val committedRevision = if (conversationId != null) conversationRepo.updateResponseStyle(conversationId, style) else null
+        _uiState.update { current ->
+            if (current.conversationId == conversationId) current.copy(
+                responseStyleOverride = style,
+                configurationRevision = committedRevision?.let { maxOf(current.configurationRevision, it) } ?: current.configurationRevision,
+            ) else current
         }
     }
 
@@ -3103,11 +3223,12 @@ class ChatViewModel @Inject constructor(
         val conversationId = checkNotNull(state.conversationId) { "Select a conversation first" }
         val model = checkNotNull(state.currentModel) { "Select a model first" }
         require(model.source != ModelInfo.ModelSource.WebHost) { "Host model settings are managed by the host" }
-        conversationRepo.updateGenerationOverride(conversationId, model, value)
+        val committedRevision = conversationRepo.updateGenerationOverride(conversationId, model, value)
         _uiState.update { current ->
             if (current.conversationId == conversationId && current.currentModel == model) {
                 current.copy(
                     generationOverride = value,
+                    configurationRevision = maxOf(current.configurationRevision, committedRevision),
                     contextMaxTokens = value.applyingTo(current.currentParameters).maxContextTokens,
                     contextUsage = (current.contextTokens.toFloat() /
                         value.applyingTo(current.currentParameters).maxContextTokens).coerceIn(0f, 1f),
@@ -3279,9 +3400,25 @@ class ChatViewModel @Inject constructor(
     }
 
     fun updateSessionMemory(memory: String) {
+        val previous = _uiState.value.sessionMemory
         _uiState.update { it.copy(sessionMemory = memory) }
         val convId = _uiState.value.conversationId ?: return
-        viewModelScope.launch { conversationRepo.updateSessionMemory(convId, memory) }
+        viewModelScope.launch {
+            try {
+                conversationRepo.updateSessionMemory(convId, memory)
+            } catch (cancelled: kotlinx.coroutines.CancellationException) {
+                throw cancelled
+            } catch (error: Exception) {
+                _uiState.update { current ->
+                    if (current.conversationId == convId) {
+                        current.copy(
+                            sessionMemory = if (current.sessionMemory == memory) previous else current.sessionMemory,
+                            error = error.localizedMessage ?: context.getString(R.string.chat_save_failed),
+                        )
+                    } else current
+                }
+            }
+        }
     }
 
     fun selectExecutionBackend(backendId: String) {
@@ -3289,25 +3426,65 @@ class ChatViewModel @Inject constructor(
         val backend = state.executionBackends.firstOrNull { it.id == backendId } ?: return
         if (backend.availability != "available") return
         val conversationId = state.conversationId ?: return
+        val previousBackend = state.currentExecutionBackend
         _uiState.update { it.copy(currentExecutionBackend = backendId) }
         viewModelScope.launch {
-            val conversation = conversationRepo.getConversation(conversationId) ?: return@launch
-            conversationRepo.updateExecutionBackend(
-                conversationId,
-                backendId,
-                conversation.externalExecutionSessions,
-            )
-            loadConversations()
+            try {
+                val conversation = conversationRepo.getConversation(conversationId) ?: return@launch
+                val committedRevision = conversationRepo.updateExecutionBackend(
+                    conversationId,
+                    backendId,
+                    conversation.externalExecutionSessions,
+                )
+                _uiState.update { current ->
+                    if (current.conversationId == conversationId) {
+                        current.copy(configurationRevision = maxOf(current.configurationRevision, committedRevision))
+                    } else current
+                }
+                loadConversations()
+            } catch (cancelled: kotlinx.coroutines.CancellationException) {
+                throw cancelled
+            } catch (error: Exception) {
+                _uiState.update { current ->
+                    if (current.conversationId == conversationId) {
+                        current.copy(
+                            currentExecutionBackend = if (current.currentExecutionBackend == backendId) previousBackend else current.currentExecutionBackend,
+                            error = error.localizedMessage ?: context.getString(R.string.chat_save_failed),
+                        )
+                    } else current
+                }
+            }
         }
     }
 
     fun updateConversationKnowledge(knowledgePoints: String, wiki: String) {
+        val previousKnowledge = _uiState.value.knowledgePoints
+        val previousWiki = _uiState.value.conversationWiki
         _uiState.update {
             it.copy(knowledgePoints = knowledgePoints, conversationWiki = wiki)
         }
         val convId = _uiState.value.conversationId ?: return
         viewModelScope.launch {
-            conversationRepo.updateKnowledge(convId, knowledgePoints, wiki)
+            try {
+                val committedRevision = conversationRepo.updateKnowledge(convId, knowledgePoints, wiki)
+                _uiState.update { current ->
+                    if (current.conversationId == convId) {
+                        current.copy(configurationRevision = maxOf(current.configurationRevision, committedRevision))
+                    } else current
+                }
+            } catch (cancelled: kotlinx.coroutines.CancellationException) {
+                throw cancelled
+            } catch (error: Exception) {
+                _uiState.update { current ->
+                    if (current.conversationId == convId) {
+                        current.copy(
+                            knowledgePoints = if (current.knowledgePoints == knowledgePoints) previousKnowledge else current.knowledgePoints,
+                            conversationWiki = if (current.conversationWiki == wiki) previousWiki else current.conversationWiki,
+                            error = error.localizedMessage ?: context.getString(R.string.chat_save_failed),
+                        )
+                    } else current
+                }
+            }
         }
     }
 
@@ -3380,13 +3557,13 @@ class ChatViewModel @Inject constructor(
         viewModelScope.launch {
             healthConnectionState = readHealthConnectionState()
             val profile = chatRepo.getMemoryProfile()
-            val state = _uiState.value
-            _uiState.update {
-                it.copy(
+            _uiState.update { state ->
+                state.copy(
+                    mcpServers = profile.mcpServers,
                     dataSources = buildDataSources(
                         uploadedDocuments = state.uploadedDocuments,
                         hostUploadedDocuments = state.hostUploadedDocuments,
-                        mcpServers = state.mcpServers,
+                        mcpServers = profile.mcpServers,
                         hostMcpServers = state.hostMcpServers,
                         customDataSources = profile.customDataSources
                     ),
@@ -3397,8 +3574,10 @@ class ChatViewModel @Inject constructor(
     }
 
     suspend fun compactNow() {
-        val convId = _uiState.value.conversationId ?: return
-        checkAutoCompact(convId)
+        val state = _uiState.value
+        if (state.processingState.blocksInput) return
+        val convId = state.conversationId ?: return
+        checkAutoCompact(convId, mode = "force_summary")
     }
 
     fun reloadContextState() {
@@ -3430,40 +3609,48 @@ class ChatViewModel @Inject constructor(
         )
     }
 
+    private val documentMutationMutex = kotlinx.coroutines.sync.Mutex()
+
     fun deleteDocument(document: UploadedContent) {
-        mutateDocuments { documents ->
-            val id = requireNotNull(document.resourceId) { "Document identity is missing" }
-            require(documents.singleOrNull { it.resourceId == id } == document) { "Reload the document before deleting" }
-            documents.filterNot { it.resourceId == id }
+        viewModelScope.launch {
+            try {
+                mutateDocuments { documents ->
+                    val id = requireNotNull(document.resourceId) { "Document identity is missing" }
+                    require(documents.singleOrNull { it.resourceId == id } == document) { "Reload the document before deleting" }
+                    documents.filterNot { it.resourceId == id }
+                }
+            } catch (error: Exception) {
+                if (error is kotlinx.coroutines.CancellationException) throw error
+                _uiState.update { it.copy(error = error.localizedMessage ?: error.javaClass.simpleName) }
+            }
         }
     }
 
-    fun addDocument(document: UploadedContent) {
+    suspend fun addDocument(document: UploadedContent) {
         mutateDocuments { documents ->
             documents + document.copy(resourceId = document.resourceId ?: java.util.UUID.randomUUID().toString())
         }
     }
 
-    private fun mutateDocuments(transform: (List<UploadedContent>) -> List<UploadedContent>) {
-        val baseline = documentEditorSnapshot
-        if (baseline == null) {
-            _uiState.update { it.copy(error = context.getString(R.string.chat_save_failed)) }
-            return
-        }
-        viewModelScope.launch {
-            try {
-                val committed = memoryProfileDataStore.saveDocuments(baseline, transform(baseline.documents))
-                documentEditorSnapshot = committed
-                _uiState.update { it.copy(
-                    uploadedDocuments = committed.documents, error = null,
+    private suspend fun mutateDocuments(transform: (List<UploadedContent>) -> List<UploadedContent>) {
+        documentMutationMutex.withLock {
+            val baseline = documentEditorSnapshot
+                ?: throw IllegalStateException(context.getString(R.string.chat_save_failed))
+            val committed = withContext(Dispatchers.IO) {
+                memoryProfileDataStore.saveDocuments(baseline, transform(baseline.documents))
+            }
+            documentEditorSnapshot = committed
+            _uiState.update {
+                it.copy(
+                    uploadedDocuments = committed.documents,
+                    error = null,
                     dataSources = buildDataSources(
-                        uploadedDocuments = committed.documents, hostUploadedDocuments = it.hostUploadedDocuments,
-                        mcpServers = it.mcpServers, hostMcpServers = it.hostMcpServers,
+                        uploadedDocuments = committed.documents,
+                        hostUploadedDocuments = it.hostUploadedDocuments,
+                        mcpServers = it.mcpServers,
+                        hostMcpServers = it.hostMcpServers,
                     ),
-                ) }
-            } catch (error: Exception) {
-                if (error is kotlinx.coroutines.CancellationException) throw error
-                _uiState.update { it.copy(error = error.localizedMessage ?: error.javaClass.simpleName) }
+                )
             }
         }
     }
@@ -3503,7 +3690,10 @@ class ChatViewModel @Inject constructor(
                         requireNotNull(conversationRepo.getConversation(conversationId))
                     }
                     _uiState.update { state ->
-                        if (state.conversationId == conversationId) state.copy(selectedDataSourceIds = saved.dataSourceIds)
+                        if (state.conversationId == conversationId) state.copy(
+                            selectedDataSourceIds = saved.dataSourceIds,
+                            configurationRevision = maxOf(state.configurationRevision, saved.configurationRevision),
+                        )
                         else state
                     }
                 } catch (error: kotlinx.coroutines.CancellationException) {
@@ -3775,6 +3965,7 @@ class ChatViewModel @Inject constructor(
 
     fun beginMessageEdit(message: ConversationMessage) {
         if (_messageEditDraft.value?.busy == true || _uiState.value.processingState.blocksInput) return
+        if (_uiState.value.currentModel?.source == ModelInfo.ModelSource.WebHost) return
         viewModelScope.launch {
             try {
                 val source = message.conversationId
@@ -3800,10 +3991,12 @@ class ChatViewModel @Inject constructor(
                     check(text != null && text == message.text) { "The original message changed; reload it before editing" }
                     raw.revision
                 }
+                val remote = withContext(Dispatchers.IO) { applicationRuntime.conversationSourceOwner(source) } as? com.nola.data.local.ConversationSourceOwner.Remote
                 val pending = withContext(Dispatchers.IO) { applicationRuntime.expertHostFactory.pendingEdit(source, canonicalId) }
                 _messageEditDraft.value = AndroidMessageEditDraft(pending?.input ?: AndroidPrepareEditedResend(
                     UUID.randomUUID().toString(), source, canonicalId, facts, expectedRevision, message.text,
                     UUID.randomUUID().toString(), context.getString(R.string.chat_edit_resend), System.currentTimeMillis()), message.text,
+                    mentions = historyMentions(message.text, message.expertMentionHistory()).map { it.copy(host = remote?.hostId, epoch = remote?.storeEpoch) },
                     outcomePending = pending != null,
                     progress = if (pending != null) context.getString(R.string.expert_host_awaiting_confirmation) else null)
             } catch (failure: Exception) {
@@ -3812,9 +4005,9 @@ class ChatViewModel @Inject constructor(
         }
     }
 
-    fun updateMessageEditText(text: String) {
+    fun updateMessageEditText(text: String, mentions: List<InlineExpertMention>) {
         _messageEditDraft.update { it?.takeUnless { it.busy || it.outcomePending }?.let { draft ->
-            if (draft.input.editedText == text) draft else draft.copy(input = draft.input.copy(editedText = text,
+            if (draft.input.editedText == text && draft.mentions == mentions) draft else draft.copy(mentions = mentions, input = draft.input.copy(editedText = text,
                 operationId = UUID.randomUUID().toString(), targetConversationId = UUID.randomUUID().toString(),
                 createdAtMs = System.currentTimeMillis()), error = null, progress = null) } ?: it }
     }
@@ -3829,6 +4022,17 @@ class ChatViewModel @Inject constructor(
     fun submitMessageEdit() {
         val draft = _messageEditDraft.value ?: return
         if (draft.busy || draft.input.editedText.isBlank()) return
+        if (mentionOnly(draft.input.editedText, draft.mentions)) {
+            _messageEditDraft.value = draft.copy(error = context.getString(R.string.expert_mention_needs_text))
+            return
+        }
+        if (draft.mentions.isNotEmpty()) {
+            val model = _uiState.value.currentModel
+            if (model == null || model.executionCapabilitiesDeclared && !model.executionCapabilities.toolCalls) {
+                _messageEditDraft.value = draft.copy(error = context.getString(R.string.expert_main_requires_tools))
+                return
+            }
+        }
         _messageEditDraft.value = draft.copy(busy = true, error = null, progress = null)
         viewModelScope.launch {
             var expertEdit = draft.outcomePending
@@ -3838,7 +4042,10 @@ class ChatViewModel @Inject constructor(
                     _messageEditDraft.value = null
                     return@launch
                 }
-                val input = draft.input.inPlace()
+                val selected = inlineSelection(draft.input.editedText, draft.mentions)
+                val input = draft.input.inPlace().copy(selectedExperts = selected?.get("selected_experts")?.jsonArray,
+                    expertSourceEpoch = selected?.get("expected_source_store_epoch")?.jsonPrimitive?.content,
+                    expertMentions = selected?.get("expert_mentions")?.jsonObject)
                 val existing = withContext(Dispatchers.IO) { applicationRuntime.loadRunIdentity(input.operationId) }
                 if (existing != null) {
                     check(existing["conversation_id"] == JsonPrimitive(input.conversationId))
@@ -3850,8 +4057,15 @@ class ChatViewModel @Inject constructor(
                 check(prepared.input == input && prepared.runId == input.operationId)
                 val owner = input.conversationId
                 conversationLoads.invalidate()
-                val rewoundMessages = withContext(Dispatchers.IO) { conversationRepo.getActiveMessages(owner) }
-                _uiState.update { current -> check(current.conversationId == owner); current.copy(messages = rewoundMessages) }
+                val priorMessages = withContext(Dispatchers.IO) { conversationRepo.getActiveMessages(owner) }
+                val prefix = if (prepared.deferredRewind) {
+                    val boundary = priorMessages.indexOfFirst { it.id == input.messageId }
+                    check(boundary >= 0) { "The original message changed; reopen it before editing" }
+                    priorMessages.take(boundary)
+                } else priorMessages
+                if (!prepared.deferredRewind) {
+                    _uiState.update { current -> check(current.conversationId == owner); current.copy(messages = prefix) }
+                }
                 if (prepared.experts.isNotEmpty()) {
                     expertEdit = true
                     val manifest = withContext(Dispatchers.IO) {
@@ -3864,14 +4078,30 @@ class ChatViewModel @Inject constructor(
                     dispatchExpertManifest(manifest)
                     loadConversation(owner)
                 } else {
-                    // Reload the rewound prefix before admitting the replacement input.
-                    sendMessage(input.editedText, submissionIdentity = prepared.runId, canonicalUserMessageId = prepared.userMessageId)
+                    val started = sendMessage(input.editedText, submissionIdentity = prepared.runId, canonicalUserMessageId = prepared.userMessageId, inlineMentions = draft.mentions)
+                    if (!started) {
+                        error(_uiState.value.error ?: "Resend was not admitted")
+                    }
                     kotlinx.coroutines.withTimeout(30_000) {
                         while (withContext(Dispatchers.IO) { applicationRuntime.loadRunIdentity(prepared.runId) } == null) {
-                            if (_uiState.value.processingState == ProcessingState.Error) error(_uiState.value.error ?: "Resend was not admitted")
+                            val currentState = _uiState.value
+                            if (currentState.processingState == ProcessingState.Error ||
+                                (currentState.processingState == ProcessingState.Idle && currentState.error != null)) {
+                                error(currentState.error ?: "Resend was not admitted")
+                            }
                             delay(50)
                         }
                     }
+                    if (prepared.deferredRewind) {
+                        // Begin committed the rewind together with the replacement. Drop only retired
+                        // rows so a newer streaming update cannot be overwritten by this snapshot.
+                        val retired = priorMessages.drop(prefix.size).mapTo(mutableSetOf()) { it.id }
+                        _uiState.update { current -> if (current.conversationId != owner) current
+                            else current.copy(messages = current.messages.filterNot { it.id in retired }) }
+                    }
+                }
+                if (prefix.none { it.role == ChatRole.user }) {
+                    updateFirstMessageTitle(owner, prepared.userMessageId, input.editedText)
                 }
                 _messageEditDraft.value = null
             } catch (cancel: kotlinx.coroutines.CancellationException) {
@@ -3937,8 +4167,9 @@ class ChatViewModel @Inject constructor(
         editedResend: AndroidPreparedEditedResend? = null,
         canonicalUserMessageId: String? = null,
         capturedExpertModel: com.nola.core.AndroidTurnModelSnapshot? = null,
-    ) {
-        if (text.isBlank() && attachments.isEmpty()) return
+        inlineMentions: List<InlineExpertMention> = emptyList(),
+    ): Boolean {
+        if (text.isBlank() && attachments.isEmpty()) return false
         val state = capturedExpertModel?.let { _uiState.value.copy(currentModel = it.model, currentParameters = it.parameters) } ?: _uiState.value
         if (context.applicationInfo.flags and android.content.pm.ApplicationInfo.FLAG_DEBUGGABLE != 0) {
             val existing = runRegistry.find(composerDrafts.ownerKey(state.conversationId))
@@ -3952,11 +4183,11 @@ class ChatViewModel @Inject constructor(
             state.conversationId == editedResend.input.targetConversationId && text == editedResend.input.editedText &&
             attachments.isEmpty() && messageMeta == null && queuedAdmission == null && remoteQueuedCommandId == null &&
             expertParticipantAgentIds.isEmpty()))
-        if (state.taskChildOwner != null) return
+        if (state.taskChildOwner != null) return false
         require((remoteQueuedCommandId == null) == (remoteQueuedConfiguration == null))
         require(remoteQueuedCommandId == null || (remoteQueuedCommandId == submissionIdentity &&
             state.currentModel?.source == ModelInfo.ModelSource.WebHost && queuedAdmission == null && attachments.isEmpty()))
-        if (preparingExpertPicker.value || state.processingState.blocksInput || state.permissionSaving || state.permissionSaveFailed) return
+        if (preparingExpertPicker.value || state.processingState.blocksInput || state.permissionSaving || state.permissionSaveFailed) return false
         val draftOwner = if (submissionIdentity == null) composerDrafts.ownerKey(state.conversationId) else null
         val pendingExpertAdmission = draftOwner?.let { pendingExpertAdmissionByDraft.find(it, state.conversationId) }
         val selectedExpertIds = if (submissionIdentity == null) pendingExpertAdmission?.selectedAgentIds ?: expertParticipantAgentIds else emptySet()
@@ -3964,10 +4195,10 @@ class ChatViewModel @Inject constructor(
         if (selectedExpertIds.isNotEmpty() && pendingExpertAdmission != null) {
             if (attachments.isNotEmpty() || !messageMeta.isNullOrEmpty()) {
                 _uiState.update { it.copy(error = "Expert-only messages currently support plain text only. Remove attachments and try again.") }
-                return
+                return false
             }
             val owner = requireNotNull(draftOwner)
-            if (!activeExpertAdmissionDrafts.add(owner)) return
+            if (!activeExpertAdmissionDrafts.add(owner)) return false
             val selectionChanged = pendingExpertAdmission != null && expertParticipantAgentIds != pendingExpertAdmission.selectedAgentIds
             if (pendingExpertAdmission != null) selectedConversationAgentIds.value = pendingExpertAdmission.selectedAgentIds
             _uiState.update { it.copy(processingState = ProcessingState.BuildingContext,
@@ -3993,28 +4224,32 @@ class ChatViewModel @Inject constructor(
                             context.getString(R.string.expert_profile_changed) else failure.message ?: "Expert messages could not be confirmed") else current }
                 } finally { activeExpertAdmissionDrafts.remove(owner) }
             }
-            return
+            return true
         }
-        val selectedExpertSource = expertPickerSource
+        val selectedExpertSource = if (inlineMentions.isEmpty()) expertPickerSource else inlineMentions.first().let { ref -> ref.host?.let { ExpertPickerSource(it, checkNotNull(ref.epoch)) } }
         val selectedExpertContext = runCatching {
-            mainExpertSelection(selectedExpertIds, selectedConversationAgentRevisions.toMap(), selectedConversationAgentParticipants.toMap())?.let { selection ->
+            inlineSelection(text, inlineMentions) ?: mainExpertSelection(selectedExpertIds, selectedConversationAgentRevisions.toMap(), selectedConversationAgentParticipants.toMap())?.let { selection ->
                 selectedExpertSource?.let { JsonObject(selection + ("expected_source_store_epoch" to JsonPrimitive(it.epoch))) } ?: selection
             }
-        }.getOrElse { _uiState.update { it.copy(error = context.getString(R.string.expert_profile_changed)) }; return }
+        }.getOrElse { _uiState.update { it.copy(error = context.getString(R.string.expert_profile_changed)) }; return false }
         if (state.currentModel == null) {
             _uiState.update { it.copy(error = context.getString(R.string.chat_no_model_selected)) }
-            return
+            return false
+        }
+        if (state.currentModel.source == ModelInfo.ModelSource.WebHost && attachments.isNotEmpty()) {
+            _uiState.update { it.copy(error = context.getString(R.string.chat_web_host_images_unsupported)) }
+            return false
         }
         if (selectedExpertContext != null && state.currentModel.source != ModelInfo.ModelSource.WebHost &&
             state.currentModel.executionCapabilitiesDeclared && !state.currentModel.executionCapabilities.toolCalls) {
             _uiState.update { it.copy(error = context.getString(R.string.expert_main_requires_tools)) }
-            return
+            return false
         }
         val existingExpertAdmission = pendingExpertAdmissionByDraft.find(
             composerDrafts.ownerKey(state.conversationId), state.conversationId)
         if (existingExpertAdmission != null) {
             _uiState.update { it.copy(error = "An expert message is still awaiting confirmation. Restore its original text and select its experts to retry.") }
-            return
+            return false
         }
         val targetGoalConversationId = state.conversationId
         if (submissionIdentity == null && editedResend == null && selectedExpertIds.isEmpty() && attachments.isEmpty() &&
@@ -4057,20 +4292,24 @@ class ChatViewModel @Inject constructor(
                     } finally {
                         activeGoalReplies.remove(targetGoalConversationId)
                     }
+                    if (displayedState.value.conversationId != targetGoalConversationId) {
+                        return@launch
+                    }
                     dispatchSendMessage(
                         text, messageMeta, attachments, submissionIdentity, queuedAdmission,
                         remoteQueuedCommandId, remoteQueuedConfiguration, expertParticipantAgentIds,
-                        editedResend, canonicalUserMessageId, capturedExpertModel,
+                        editedResend, canonicalUserMessageId, capturedExpertModel, inlineMentions,
+                        expectedConversationId = targetGoalConversationId,
                     )
                 }
-                return
+                return true
             }
-            return
+            return false
         }
-        dispatchSendMessage(
+        return dispatchSendMessage(
             text, messageMeta, attachments, submissionIdentity, queuedAdmission,
             remoteQueuedCommandId, remoteQueuedConfiguration, expertParticipantAgentIds,
-            editedResend, canonicalUserMessageId, capturedExpertModel,
+            editedResend, canonicalUserMessageId, capturedExpertModel, inlineMentions,
         )
     }
 
@@ -4086,55 +4325,65 @@ class ChatViewModel @Inject constructor(
         editedResend: AndroidPreparedEditedResend? = null,
         canonicalUserMessageId: String? = null,
         capturedExpertModel: com.nola.core.AndroidTurnModelSnapshot? = null,
-    ) {
+        inlineMentions: List<InlineExpertMention> = emptyList(),
+        expectedConversationId: String? = null,
+    ): Boolean {
         val state = capturedExpertModel?.let { _uiState.value.copy(currentModel = it.model, currentParameters = it.parameters) } ?: _uiState.value
+        if (expectedConversationId != null && state.conversationId != expectedConversationId) {
+            return false
+        }
         val draftOwner = if (submissionIdentity == null) composerDrafts.ownerKey(state.conversationId) else null
         val pendingExpertAdmission = draftOwner?.let { pendingExpertAdmissionByDraft.find(it, state.conversationId) }
         val selectedExpertIds = if (submissionIdentity == null) pendingExpertAdmission?.selectedAgentIds ?: expertParticipantAgentIds else emptySet()
-        val selectedExpertSource = expertPickerSource
+        val selectedExpertSource = if (inlineMentions.isEmpty()) expertPickerSource else inlineMentions.first().let { ref -> ref.host?.let { ExpertPickerSource(it, checkNotNull(ref.epoch)) } }
         val selectedExpertContext = runCatching {
-            mainExpertSelection(selectedExpertIds, selectedConversationAgentRevisions.toMap(), selectedConversationAgentParticipants.toMap())?.let { selection ->
+            inlineSelection(text, inlineMentions) ?: mainExpertSelection(selectedExpertIds, selectedConversationAgentRevisions.toMap(), selectedConversationAgentParticipants.toMap())?.let { selection ->
                 selectedExpertSource?.let { JsonObject(selection + ("expected_source_store_epoch" to JsonPrimitive(it.epoch))) } ?: selection
             }
-        }.getOrElse { _uiState.update { it.copy(error = context.getString(R.string.expert_profile_changed)) }; return }
+        }.getOrElse { _uiState.update { it.copy(error = context.getString(R.string.expert_profile_changed)) }; return false }
         if (state.currentModel == null) {
             _uiState.update { it.copy(error = context.getString(R.string.chat_no_model_selected)) }
-            return
+            return false
+        }
+        if (state.currentModel.source == ModelInfo.ModelSource.WebHost && attachments.isNotEmpty()) {
+            _uiState.update { it.copy(error = context.getString(R.string.chat_web_host_images_unsupported)) }
+            return false
         }
         if (selectedExpertContext != null && state.currentModel.source != ModelInfo.ModelSource.WebHost &&
             state.currentModel.executionCapabilitiesDeclared && !state.currentModel.executionCapabilities.toolCalls) {
             _uiState.update { it.copy(error = context.getString(R.string.expert_main_requires_tools)) }
-            return
+            return false
         }
         val executionOwner = composerDrafts.ownerKey(state.conversationId)
         if (runRegistry.find(executionOwner)?.runtime?.hasOutstandingGeneration() == true) {
             _uiState.update { it.copy(error = context.getString(R.string.chat_previous_turn_settling)) }
-            return
+            return false
         }
         if (state.currentModel?.source == ModelInfo.ModelSource.Local && !runRegistry.localAvailable(executionOwner)) {
             _uiState.update { it.copy(error = "Waiting for the device execution resource. Your draft is retained.") }
-            return
+            return false
         }
         val session = runRegistry.beginExecution(executionOwner, state)
-        if (state.currentModel?.source == ModelInfo.ModelSource.Local) check(runRegistry.acquireLocal(session))
+        try {
+            if (state.currentModel?.source == ModelInfo.ModelSource.Local) check(runRegistry.acquireLocal(session))
 
-        // Invalidate any database snapshot that started before this turn. A
-        // late load must never replace the optimistic user/assistant messages.
-        conversationLoads.invalidate()
-        session.permission.clear()
-        session.trace.reset()
-        session.observer.reset()
-        session.taskObservation.reset()
-        val submissionId = submissionIdentity ?: UUID.randomUUID().toString().lowercase()
-        val responseId = "$submissionId:assistant"
-        val responseStartedAt = System.currentTimeMillis()
-        _uiState.update { it.beginAssistantTurn(responseId, responseStartedAt) }
-        session.state.value = _uiState.value
-        val submittedState = state
-        val submittedDraftOwner = composerDrafts.ownerKey(state.conversationId)
-        val submittedDraftCapture = composerDrafts.captureSubmission(submittedDraftOwner)
+            // Invalidate any database snapshot that started before this turn. A
+            // late load must never replace the optimistic user/assistant messages.
+            conversationLoads.invalidate()
+            session.permission.clear()
+            session.trace.reset()
+            session.observer.reset()
+            session.taskObservation.reset()
+            val submissionId = submissionIdentity ?: UUID.randomUUID().toString().lowercase()
+            val responseId = "$submissionId:assistant"
+            val responseStartedAt = System.currentTimeMillis()
+            _uiState.update { it.beginAssistantTurn(responseId, responseStartedAt) }
+            session.state.value = _uiState.value
+            val submittedState = state
+            val submittedDraftOwner = composerDrafts.ownerKey(state.conversationId)
+            val submittedDraftCapture = composerDrafts.captureSubmission(submittedDraftOwner)
 
-        runRegistry.start(session) {
+            runRegistry.start(session) {
             try {
                 // A frozen Room/queued submission already owns its input. It must not
                 // require or retire a UI draft in the expert's private context.
@@ -4158,7 +4407,7 @@ class ChatViewModel @Inject constructor(
                     resolveBoundHost(checkNotNull(conv.executionHostBinding)) else null
                 if (selectedExpertContext != null) {
                     require(if (frozenHost == null) selectedExpertSource == null else selectedExpertSource?.host == frozenHost.expectedHostId) { "The selected expert Host changed; reopen the expert picker" }
-                    if (frozenHost != null) withContext(Dispatchers.IO) { mainExpertDirectory(expertSelectionRepository(convId)) }
+                    if (frozenHost != null) withContext(Dispatchers.IO) { mainExpertDirectory(expertRoomRepository(convId, selectedExpertSource?.epoch), inline = inlineMentions.isNotEmpty()) }
                 }
                 check(remoteQueuedConfiguration == null || frozenHost == remoteQueuedConfiguration) {
                     "The queued UI command's Host connection changed; reload the original conversation"
@@ -4290,7 +4539,7 @@ class ChatViewModel @Inject constructor(
                     recordPreparedDataSourceUsage(prepared, convId, AndroidContextRoute.Web)
                     streamAgentResponse(prepared.modelInput, convId, submissionId, text,
                         checkNotNull(remoteFrontier).configurationRevision, remoteFrontier.parentMessageId,
-                        remoteQueuedCommandId, selectedExpertContext?.get("selected_experts")?.jsonArray, selectedExpertContext?.get("expected_source_store_epoch")?.jsonPrimitive?.content)
+                        remoteQueuedCommandId, selectedExpertContext?.get("selected_experts")?.jsonArray, selectedExpertContext?.get("expected_source_store_epoch")?.jsonPrimitive?.content, selectedExpertContext?.get("expert_mentions")?.jsonObject)
                 }
             } catch (e: Exception) {
                 if (e is kotlinx.coroutines.CancellationException) throw e
@@ -4328,6 +4577,12 @@ class ChatViewModel @Inject constructor(
                 clearGenerationJobIfCurrent(coroutineContext[Job])
             }
         }
+        } catch (error: Throwable) {
+            runRegistry.releaseLocal(session)
+            runRegistry.remove(executionOwner)
+            throw error
+        }
+        return true
     }
 
     private suspend fun runDeviceAgentResponse(
@@ -4367,9 +4622,7 @@ class ChatViewModel @Inject constructor(
             // Cancellation after admission preserves the independent Run for
             // exact recovery; never dispatch it with the predecessor's stop.
             if (executionSession.successorCancellationRequested || executionSession.retired) return
-            _uiState.update { it.copy(activeResponseId = next.assistantMessageId,
-                processingState = ProcessingState.Streaming, agentPermissionRequest = null,
-                agentPermissionAction = null) }
+            _uiState.update { it.bindRecoveredAssistant(next).copy(agentPermissionRequest = null, agentPermissionAction = null) }
             mayContinue = runSingleDeviceAgentResponse("", convId, null, _uiState.value,
                 localToolPlan(convId, _uiState.value), emptyList(), next, true, null)
         }
@@ -4557,7 +4810,7 @@ class ChatViewModel @Inject constructor(
     }
 
     private suspend fun streamAgentResponse(input: ModelInput, convId: String, submissionId: String, originalText: String,
-        expectedConfigurationRevision: Long?, expectedParentMessageId: String?, queuedUserCommandId: String? = null, selectedExperts: JsonArray? = null, expertSourceEpoch: String? = null) {
+        expectedConfigurationRevision: Long?, expectedParentMessageId: String?, queuedUserCommandId: String? = null, selectedExperts: JsonArray? = null, expertSourceEpoch: String? = null, expertMentions: JsonObject? = null) {
         remoteConversationObserver.reset()
         val configuration = checkNotNull(remoteObservationConfiguration)
         val hostId = configuration.expectedHostId
@@ -4580,10 +4833,10 @@ class ChatViewModel @Inject constructor(
         val request = webAgentProvider.prepareAgentRequest(
             input = input,
             conversationId = convId,
-            agentMode = true,
+            agentMode = _uiState.value.agentMode,
             permissionMode = _uiState.value.permissionMode,
-            responseStyle = "",
-            customSystemPrompt = "",
+            responseStyle = _uiState.value.responseStyle,
+            customSystemPrompt = _uiState.value.currentParameters.customSystemPrompt,
             nativeAppHostId = _uiState.value.hostComputerUseStatus
                 ?.hosts
                 ?.firstOrNull()
@@ -4599,7 +4852,7 @@ class ChatViewModel @Inject constructor(
             expectedConfigurationRevision = expectedConfigurationRevision,
             expectedParentMessageId = expectedParentMessageId,
             queuedUserCommandId = queuedUserCommandId,
-            selectedExperts = selectedExperts, expertSourceEpoch = expertSourceEpoch,
+            selectedExperts = selectedExperts, expertSourceEpoch = expertSourceEpoch, expertMentions = expertMentions,
         )
         val intent = checkNotNull(remoteSubmissionIntent)
         val frozenRequest = webAgentProvider.freezeHostToolPlan(request, configuration)
@@ -4767,11 +5020,16 @@ class ChatViewModel @Inject constructor(
                 if (event.backendId.isBlank() || event.sessionId.isBlank()) return
                 val conversation = conversationRepo.getConversation(convId) ?: return
                 if (conversation.executionBackend != event.backendId) return
-                conversationRepo.updateExecutionBackend(
+                val committedRevision = conversationRepo.updateExecutionBackend(
                     convId,
                     conversation.executionBackend,
                     conversation.externalExecutionSessions + (event.backendId to event.sessionId),
                 )
+                _uiState.update { current ->
+                    if (current.conversationId == convId) {
+                        current.copy(configurationRevision = maxOf(current.configurationRevision, committedRevision))
+                    } else current
+                }
             }
             is SseEvent.PermissionRequest -> {
                 val hostConfig = remoteObservationConfiguration
@@ -5260,9 +5518,12 @@ class ChatViewModel @Inject constructor(
             val id = state.conversationId
 
             val repository = expertSelectionRepository(id, true)
-            val directory = withContext(Dispatchers.IO) { mainExpertDirectory(repository) }
+            val (directory, members) = withContext(Dispatchers.IO) {
+                mainExpertDirectory(repository, inline = true) to id?.let { repository.forConversation(it)?.room?.room?.participants }.orEmpty()
+            }
             if (!current()) return false
             captureExpertPickerSource(repository)
+            pickerMembers.value = members.filter { it.active }.associateBy { it.agentId }
             conversationAgentDirectory.value = directory
             return true
         } catch (cancelled: kotlinx.coroutines.CancellationException) { throw cancelled }
@@ -5281,8 +5542,10 @@ class ChatViewModel @Inject constructor(
         val configuration = resolveBoundHost(binding)
         val source = parentId?.let { applicationRuntime.conversationSourceOwner(it) }
         if (source is com.nola.data.local.ConversationSourceOwner.Remote) require(source.hostId == configuration.expectedHostId)
-        if (source == com.nola.data.local.ConversationSourceOwner.Local && parentId != null)
-            require(applicationRuntime.executeQuery(buildJsonObject { put("type", "load_conversation_tail_snapshot"); put("conversation_id", parentId); put("message_limit", 1); put("part_text_limit", 1); put("part_json_limit", 1) }).jsonObject.getValue("total_message_count").jsonPrimitive.long == 0L) { "Local history cannot be used as a remote expert parent" }
+        if (source == com.nola.data.local.ConversationSourceOwner.Local && parentId != null) {
+            val local = applicationRuntime.loadConversationProjectionWindowV1(parentId, null, limit = 1, contentByteLimit = 4096)
+            require(local.totalMessageCount == 0L) { "Local history cannot be used as a remote expert parent" }
+        }
         check(source != com.nola.data.local.ConversationSourceOwner.Unavailable)
         var capturedEpoch = (source as? com.nola.data.local.ConversationSourceOwner.Remote)?.storeEpoch ?: expectedStoreEpoch
         require(expectedStoreEpoch == null || capturedEpoch == expectedStoreEpoch)
@@ -5335,6 +5598,29 @@ class ChatViewModel @Inject constructor(
         }, source.toString())).validated(parentId, offset).copy(sourceIdentity = source.toString())
     }
 
+    internal suspend fun namedExpertHistory(parentId: String, ref: InlineExpertMention): Pair<ExpertHistoryTarget, String>? {
+        val pinned = ref.member ?: return null
+        val first = loadExpertChildren(parentId, 0)
+        val roomId = first.roomId ?: return null
+        var page = first
+        while (true) {
+            if (page.roomId != roomId || page.roomRevision != first.roomRevision || page.sourceIdentity != first.sourceIdentity) return null
+            val child = page.children.singleOrNull(ref::matchesHistory)
+            if (child != null) {
+                val description = if (!child.isCurrent) "" else try {
+                    val repository = expertRoomRepository(parentId)
+                    val room = withContext(Dispatchers.IO) { repository.forConversation(parentId)?.room }
+                    room?.takeIf { it.room.id == roomId && it.revision == page.roomRevision }?.room?.participants
+                        ?.singleOrNull { it.id == pinned.id && it.agentId == ref.agentId && it.agentRevision == ref.revision &&
+                            it.contextConversationId == pinned.contextConversationId }?.description.orEmpty()
+                } catch (cancelled: kotlinx.coroutines.CancellationException) { throw cancelled }
+                  catch (_: Exception) { "" }
+                return ExpertHistoryTarget(parentId, roomId, page.sourceIdentity, child) to description
+            }
+            page = loadExpertChildren(parentId, page.nextOffset ?: return null)
+        }
+    }
+
     internal suspend fun loadExpertChildHistory(target: ExpertHistoryTarget, before: Long?): ExpertHistoryWindow {
         val response = expertHistoryCommand(target.parentId, buildJsonObject {
             put("type", "child_history"); put("conversation_id", target.parentId); put("child_conversation_id", target.child.conversationId)
@@ -5362,9 +5648,14 @@ class ChatViewModel @Inject constructor(
         } }
         check(conversationLoads.currentGeneration() == generation && displayedState.value.conversationId == parentId)
         captureExpertPickerSource(repository)
-        selectedConversationAgentParticipants[member.agentId] = member
-        selectedConversationAgentRevisions[member.agentId] = member.agentRevision
-        selectedConversationAgentIds.update { it + member.agentId }
+        val draft = composerDrafts.awaitReady(parentId)
+        check(conversationLoads.currentGeneration() == generation && displayedState.value.conversationId == parentId)
+        val text = draft.text.value
+        val caret = androidx.compose.ui.text.TextRange((draft.caret ?: text.length).coerceIn(0, text.length))
+        val inserted = insertExpert(androidx.compose.ui.text.input.TextFieldValue(text, caret), draft.mentions, caret,
+            InlineExpertMention(0, "@${member.displayName}", member.agentId, member.agentRevision, member, expertPickerSource?.host, expertPickerSource?.epoch))
+        draft.caret = inserted.value.selection.end
+        draft.setContent(inserted.value.text, inserted.mentions)
     }
 
     internal suspend fun canReadExpertSource(id: String): Boolean = runCatching { expertRoomRepository(id); true }.getOrElse {
@@ -5393,6 +5684,19 @@ class ChatViewModel @Inject constructor(
         composerDrafts.bindConversation(conv.id, draftOwner)
         loadConversations()
         conv.id
+    }
+
+    private suspend fun updateFirstMessageTitle(owner: String, firstMessageId: String, text: String) {
+        val title = text.replace(CHAT_ATTACHMENT_BLOCK, "").trim().take(80)
+        try {
+            if (withContext(Dispatchers.IO) { applicationRuntime.updateFirstMessageTitle(owner, firstMessageId, title) }) {
+                loadConversations()
+            }
+        } catch (cancelled: kotlinx.coroutines.CancellationException) {
+            throw cancelled
+        } catch (failure: Exception) {
+            Log.w("NolaAgentProtocol", "Unable to update first-message title", failure)
+        }
     }
 
     private suspend fun finalizeResponse(convId: String, currentOwner: () -> Boolean = { _uiState.value.conversationId == convId }) {
@@ -5447,20 +5751,11 @@ class ChatViewModel @Inject constructor(
         capabilityActivationBuffer.clear(convId)
         if (currentOwner()) runCatching { refreshPermissionOwnerProjection() }
 
-        val conv = conversationRepo.getConversation(convId)
-        if (conv?.title == null || conv.title.isNullOrEmpty()) {
-            val firstUser = canonicalMessages.firstOrNull { it.role == ChatRole.user }
-            val rawFirstQuery = firstUser?.meta?.get("nola.displayMessage")?.takeIf(String::isNotBlank)
-                ?: firstUser?.text
-            val firstQuery = rawFirstQuery
-                ?.replace(CHAT_ATTACHMENT_BLOCK, "")
-                ?.trim()
-                ?.takeIf(String::isNotEmpty)
-                ?.take(80)
-            if (firstQuery != null) {
-                conversationRepo.updateTitle(convId, firstQuery)
-                loadConversations()
-            }
+        val firstUser = canonicalMessages.firstOrNull { it.role == ChatRole.user }
+        val answeredUser = canonicalMessages.takeWhile { it.id != responseId }.lastOrNull { it.role == ChatRole.user }
+        if (firstUser != null && answeredUser?.id == firstUser.id) {
+            val query = firstUser.meta?.get("nola.displayMessage")?.takeIf(String::isNotBlank) ?: firstUser.text
+            updateFirstMessageTitle(convId, firstUser.id, query)
         }
 
         checkAutoCompact(convId)
@@ -5478,7 +5773,7 @@ class ChatViewModel @Inject constructor(
         val route = model?.source?.name?.lowercase() ?: "unknown"
         executionScope.launch(Dispatchers.IO) {
             runCatching {
-                PersonalIntelligenceCore.ingest(
+                PersonalIntelligenceCore(applicationRuntime).ingest(
                     IntelligenceIngestRequest(
                         events = listOf(
                             IntelligenceEvent(
@@ -5652,27 +5947,21 @@ class ChatViewModel @Inject constructor(
     private fun completeBridgeDevicePermission(decision: AndroidAgentPermissionDecision) {
         val request = permissionSession.takeDeviceToolRequest() ?: return
         val configuration = remoteObservationConfiguration?.copy()
+        val stateSnapshot = _uiState.value
         _uiState.update {
             it.copy(agentPermissionRequest = null, agentPermissionAction = null, permissionRequest = null)
         }
         executionScope.launch {
-            val result = if (decision.isAllowed) {
-                com.nola.core.AndroidAgentHostCallResult(
-                    callId = request.id,
-                    output = JsonObject(mapOf(
-                        "error" to JsonPrimitive(
-                            "Direct device bridge execution is unsupported; retry the call through Agent Core"
-                        )
-                    )),
-                    isError = true
-                )
-            } else {
-                com.nola.core.AndroidAgentHostCallResult(
-                    callId = request.id,
-                    output = JsonObject(mapOf("error" to JsonPrimitive("Permission denied by user or system"))),
-                    isError = true
-                )
-            }
+            val result = executeBridgeDeviceCall(
+                request = request,
+                decision = decision,
+                executor = { hostCall ->
+                    val bridgePlan = localToolPlan(request.sessionId, stateSnapshot)
+                    withContext(Dispatchers.IO) {
+                        agentHostExecutor.execute(hostCall, bridgePlan)
+                    }
+                },
+            )
             val payload = mapOf(
                 "protocol_version" to request.protocolVersion,
                 "nonce" to request.nonce,
@@ -5747,7 +6036,7 @@ class ChatViewModel @Inject constructor(
         )}
     }
 
-    private suspend fun checkAutoCompact(convId: String) {
+    private suspend fun checkAutoCompact(convId: String, mode: String = "normal") {
         val conv = conversationRepo.getConversation(convId) ?: return
         val messages = conversationRepo.getActiveMessages(convId)
         val state = _uiState.value
@@ -5772,7 +6061,21 @@ class ChatViewModel @Inject constructor(
             currentUserText = messages.lastOrNull { it.role == ChatRole.user }?.text.orEmpty(),
             route = route,
             tools = tools,
+            mode = mode,
         )
+        val refreshedConv = withContext(Dispatchers.IO) { conversationRepo.getConversation(convId) }
+        val refreshedMessages = withContext(Dispatchers.IO) { conversationRepo.getActiveMessages(convId) }
+        if (mode == "force_summary" ||
+            refreshedConv?.sessionMemory != conv.sessionMemory ||
+            refreshedMessages.size != messages.size
+        ) {
+            _uiState.update { current ->
+                if (current.conversationId != convId) current else current.copy(
+                    sessionMemory = refreshedConv?.sessionMemory ?: current.sessionMemory,
+                    messages = refreshedMessages,
+                )
+            }
+        }
     }
 
     private suspend fun prepareFinalContext(
@@ -5880,4 +6183,42 @@ internal object ConversationLoadCommitGate {
         requestedGeneration: Long,
         currentGeneration: Long,
     ): Boolean = requestedGeneration == currentGeneration
+}
+
+internal suspend fun executeBridgeDeviceCall(
+    request: SseEvent.DeviceToolRequest,
+    decision: AndroidAgentPermissionDecision,
+    executor: suspend (com.nola.core.AndroidAgentHostCallRequest) -> com.nola.core.AndroidAgentHostCallResult,
+): com.nola.core.AndroidAgentHostCallResult {
+    if (!decision.isAllowed) {
+        return com.nola.core.AndroidAgentHostCallResult(
+            callId = request.id,
+            output = JsonObject(mapOf("error" to JsonPrimitive("Permission denied by user or system"))),
+            isError = true,
+        )
+    }
+    val hostCall = com.nola.core.AndroidAgentHostCallRequest(
+        callId = request.id,
+        toolName = request.toolName,
+        capability = request.capability,
+        arguments = request.arguments,
+        grant = decision.scopedUri?.let { uri -> buildJsonObject { put("uri", uri) } },
+    )
+    return try {
+        executor(hostCall)
+    } catch (cancelled: kotlinx.coroutines.CancellationException) {
+        throw cancelled
+    } catch (error: Exception) {
+        com.nola.core.AndroidAgentHostCallResult(
+            callId = request.id,
+            output = JsonObject(
+                mapOf(
+                    "error" to JsonPrimitive(error.message ?: "Device tool execution failed"),
+                    "capability" to JsonPrimitive(request.capability),
+                    "tool_name" to JsonPrimitive(request.toolName),
+                )
+            ),
+            isError = true,
+        )
+    }
 }

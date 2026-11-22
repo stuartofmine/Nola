@@ -19,7 +19,7 @@ import UIKit
 // MARK: - Nola Design System
 
 struct DesignTokens {
-    // Mobile semantic roles: neutral chrome keeps the conversation in focus.
+    // Shared semantic colors for reading, navigation and interactive controls.
     private static func mobileColor(_ light: UInt32, _ dark: UInt32) -> Color {
         Color(uiColor: UIColor { traits in
             let rgb = traits.userInterfaceStyle == .dark ? dark : light
@@ -28,31 +28,35 @@ struct DesignTokens {
                            blue: CGFloat(rgb & 255) / 255, alpha: 1)
         })
     }
-    static let primaryColor = mobileColor(0x181817, 0xF2F0EB)
-    static let actionColor = primaryColor
+    static let primaryColor = mobileColor(0x111113, 0xF5F5F7)
+    static let actionColor = mobileColor(0x18181B, 0xF5F5F7)
     static let contentColor = primaryColor
-    static let secondaryContentColor = mobileColor(0x5C5B57, 0xA3A09A)
-    static let onActionColor = mobileColor(0xFFFFFF, 0x131312)
+    static let secondaryContentColor = mobileColor(0x52525B, 0xA1A1AA)
+    static let onActionColor = mobileColor(0xFFFFFF, 0x0B0B0C)
     static let onAccentColor = onActionColor
-    static let accentSubtleColor = mobileColor(0xEAE8E2, 0x292825)
-    static let chatBackgroundColor = mobileColor(0xF7F6F3, 0x131312)
+    static let accentSubtleColor = mobileColor(0xEBEBEF, 0x202024)
+    static let chatBackgroundColor = mobileColor(0xFAFAFA, 0x0b0b0c)
     static let successColor = Color("NolaSuccess")
     static let warningColor = Color("NolaWarning")
     static let dangerColor = Color("NolaDanger")
-    static let infoColor = mobileColor(0x1F5F8B, 0x8AB8E6)
+    static let infoColor = mobileColor(0x2563EB, 0x78B4F8)
 
     // Both Apple clients align fallback surfaces with canonical Warm Ink & Warm Paper tokens.
-    static let backgroundColor = mobileColor(0xF7F6F3, 0x131312)
-    static let surfaceColor = mobileColor(0xFFFFFF, 0x1B1B19)
+    static let backgroundColor = mobileColor(0xFAFAFA, 0x0b0b0c)
+    static let surfaceColor = mobileColor(0xFFFFFF, 0x131315)
     static let cardBackgroundColor = surfaceColor
-    static let elevatedColor = mobileColor(0xF1F0EC, 0x232320)
-    static let secondaryBackgroundColor = elevatedColor
-    static let rowFillColor = mobileColor(0xF1F0EC, 0x232320)
+    static let elevatedColor = mobileColor(0xFFFFFF, 0x242428)
+    static let rowFillColor = mobileColor(0xF2F2F4, 0x1a1a1d)
+    static let secondaryBackgroundColor = rowFillColor
     static let mutedFillColor = secondaryBackgroundColor
-    static let switchTintColor = mobileColor(0x237047, 0x2E8B57)
-    static let borderColor = mobileColor(0xE5E3DD, 0x2E2D2A)
+    static let switchTintColor = actionColor
+    static let borderColor = mobileColor(0xE4E4E7, 0x26262a)
     static let strongBorderColor = Color("NolaControlOutline")
-    static let separatorColor = mobileColor(0xE5E3DD, 0x2E2D2A)
+    static let separatorColor = mobileColor(0xE4E4E7, 0x26262a)
+
+    static func hairlineBorderColor(for colorScheme: ColorScheme) -> Color {
+        colorScheme == .dark ? Color.white.opacity(0.09) : borderColor
+    }
 
     static let overlayStrongOpacity = 0.18
     static let overlayMediumOpacity = 0.12
@@ -194,6 +198,35 @@ enum NolaHaptics {
     }
 }
 
+struct NolaPrimaryButtonStyle: ButtonStyle {
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @Environment(\.isEnabled) private var isEnabled
+    @Environment(\.colorScheme) private var colorScheme
+    var cornerRadius: CGFloat = DesignTokens.radius_md
+
+    func makeBody(configuration: Configuration) -> some View {
+        configuration.label
+            .foregroundStyle(
+                isEnabled
+                    ? DesignTokens.onActionColor
+                    : (colorScheme == .dark ? Color.white.opacity(0.38) : DesignTokens.secondaryContentColor)
+            )
+            .frame(minWidth: 44, minHeight: 44)
+            .background(
+                (isEnabled
+                    ? DesignTokens.actionColor
+                    : (colorScheme == .dark ? Color.white.opacity(0.10) : DesignTokens.rowFillColor)),
+                in: RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
+            )
+            .contentShape(RoundedRectangle(cornerRadius: cornerRadius, style: .continuous))
+            .opacity(configuration.isPressed ? 0.84 : 1)
+            .animation(
+                reduceMotion ? nil : .easeOut(duration: DesignTokens.motionFast),
+                value: configuration.isPressed
+            )
+    }
+}
+
 struct NolaPressableButtonStyle: ButtonStyle {
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
@@ -237,6 +270,7 @@ struct NolaPage<Content: View>: View {
             .padding(.bottom, DesignTokens.pageBottomInset)
         }
         .scrollContentBackground(.hidden)
+        .clipped()
         .background(NolaPageBackground())
     }
 }
@@ -279,8 +313,8 @@ struct NolaPageHeader: View {
             }
         } else if let trailing {
             ViewThatFits(in: .horizontal) {
-                HStack(spacing: DesignTokens.spacing_md) {
-                    heading.fixedSize(horizontal: true, vertical: false)
+                HStack(alignment: .center, spacing: DesignTokens.spacing_md) {
+                    heading
                     Spacer(minLength: 0)
                     trailing.fixedSize()
                 }
@@ -312,8 +346,8 @@ struct NolaPageHeader: View {
 
             VStack(alignment: .leading, spacing: 4) {
                 Text(title)
-                    .font(.title2.weight(.semibold))
-                    .foregroundColor(.primary)
+                    .font(.system(.title, design: .serif, weight: .semibold))
+                    .foregroundColor(DesignTokens.contentColor)
                     .fixedSize(horizontal: false, vertical: true)
                 if let subtitle, !subtitle.isEmpty {
                     Text(subtitle)
@@ -330,6 +364,7 @@ struct NolaPageHeader: View {
 }
 
 struct NolaCard<Content: View>: View {
+    @Environment(\.colorScheme) private var colorScheme
     let content: Content
 
     init(@ViewBuilder content: () -> Content) {
@@ -337,7 +372,7 @@ struct NolaCard<Content: View>: View {
     }
 
     private var strokeColor: Color {
-        DesignTokens.borderColor
+        DesignTokens.hairlineBorderColor(for: colorScheme)
     }
 
     var body: some View {
@@ -364,12 +399,13 @@ struct NolaPressableStyle: ButtonStyle {
 }
 
 struct NolaDivider: View {
+    @Environment(\.colorScheme) private var colorScheme
     var leading: CGFloat = 0
     var trailing: CGFloat = 0
 
     var body: some View {
         Rectangle()
-            .fill(DesignTokens.separatorColor)
+            .fill(colorScheme == .dark ? Color.white.opacity(0.08) : DesignTokens.separatorColor)
             .frame(height: 1)
             .padding(.leading, leading)
             .padding(.trailing, trailing)
@@ -424,6 +460,7 @@ struct NolaIconBadge: View {
 
 struct NolaInlineEmptyState: View {
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
+    @Environment(\.colorScheme) private var colorScheme
     let icon: String
     let title: String
     let message: String?
@@ -487,7 +524,7 @@ struct NolaInlineEmptyState: View {
         )
         .overlay(
             RoundedRectangle(cornerRadius: DesignTokens.radius_lg, style: .continuous)
-                .stroke(DesignTokens.borderColor, lineWidth: 1)
+                .stroke(DesignTokens.hairlineBorderColor(for: colorScheme), lineWidth: 1)
         )
     }
 }
@@ -549,9 +586,12 @@ struct NolaEmptyState: View {
                     .foregroundColor(.secondary)
                     .multilineTextAlignment(.leading)
                 if let actionTitle, let action {
-                    Button(actionTitle, action: action)
-                        .buttonStyle(.borderedProminent)
-                        .tint(DesignTokens.primaryColor)
+                    Button(action: action) {
+                        Text(actionTitle)
+                            .font(.subheadline.weight(.semibold))
+                            .padding(.horizontal, DesignTokens.spacing_lg)
+                    }
+                    .buttonStyle(NolaPrimaryButtonStyle())
                 }
             }
             .frame(maxWidth: .infinity, alignment: .leading)
@@ -588,13 +628,14 @@ struct NolaSectionTitle: View {
 /// Minimum interaction bounds live inside the button label, not outside its action.
 struct NolaActionButtonStyle: ButtonStyle {
     @Environment(\.isEnabled) private var isEnabled
+    @Environment(\.colorScheme) private var colorScheme
 
     func makeBody(configuration: Configuration) -> some View {
         configuration.label
             .frame(minWidth: 44, minHeight: 44)
             .contentShape(Rectangle())
             .background(NolaSurfaceBackground(fill: configuration.isPressed ? DesignTokens.rowFillColor : DesignTokens.surfaceColor,
-                                              border: DesignTokens.borderColor,
+                                              border: DesignTokens.hairlineBorderColor(for: colorScheme),
                                               cornerRadius: DesignTokens.radius_sm, raised: false))
             .opacity(isEnabled ? (configuration.isPressed ? 0.78 : 1) : 0.45)
     }

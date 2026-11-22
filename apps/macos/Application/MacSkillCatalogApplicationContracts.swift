@@ -41,6 +41,12 @@ nonisolated struct MacCanonicalSkill: Codable, Equatable, Sendable {
     let updatedAtMs: Int64
     let deletedAtMs: Int64?
 
+    var gitHubSourceURL: URL? {
+        let prefix = "nola://github-skills/"
+        guard source == .user, deletedAtMs == nil, instructionsRef.hasPrefix(prefix) else { return nil }
+        return URL(string: "https://github.com/" + String(instructionsRef.dropFirst(prefix.count)))
+    }
+
     private enum CodingKeys: String, CodingKey {
         case id, source, version, summary, category, enabled
         case displayName = "display_name"

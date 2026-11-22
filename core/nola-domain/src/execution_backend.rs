@@ -24,10 +24,11 @@ pub enum ExecutionBackendKind {
     Codex,
     ClaudeCode,
     OpenCode,
+    Antigravity,
 }
 
 impl ExecutionBackendKind {
-    pub const ALL: [Self; 4] = [Self::Nola, Self::Codex, Self::ClaudeCode, Self::OpenCode];
+    pub const ALL: [Self; 5] = [Self::Nola, Self::Codex, Self::ClaudeCode, Self::OpenCode, Self::Antigravity];
 
     pub const fn id(self) -> &'static str {
         match self {
@@ -35,6 +36,7 @@ impl ExecutionBackendKind {
             Self::Codex => "codex",
             Self::ClaudeCode => "claude_code",
             Self::OpenCode => "opencode",
+            Self::Antigravity => "antigravity",
         }
     }
 
@@ -44,6 +46,7 @@ impl ExecutionBackendKind {
             Self::Codex => Some("codex"),
             Self::ClaudeCode => Some("claude"),
             Self::OpenCode => Some("opencode"),
+            Self::Antigravity => Some("agy"),
         }
     }
 }

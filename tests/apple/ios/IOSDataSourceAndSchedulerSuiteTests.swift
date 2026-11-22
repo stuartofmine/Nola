@@ -4,6 +4,7 @@
 
 import Foundation
 import HealthKit
+import SwiftUI
 import Testing
 import UIKit
 import XCTest
@@ -11,6 +12,24 @@ import XCTest
 
 @MainActor
 final class HealthDashboardStoreTests: XCTestCase {
+    func testHealthActionsKeepTheirSpaceDuringPendingRead() async {
+        let gate = HealthDashboardTestGate()
+        let store = HealthDashboardStore {
+            await gate.wait()
+            throw NSError(domain: HKErrorDomain, code: HKError.Code.errorAuthorizationNotDetermined.rawValue)
+        }
+        let card = HomeHealthDashboardCard(store: store, onTapManage: {}, onTapAuthorize: {}, onTapOpenSettings: {})
+        let host = UIHostingController(rootView: card.environment(\.locale, Locale(identifier: "en_US")))
+        let proposal = CGSize(width: 350, height: CGFloat.greatestFiniteMagnitude)
+        let initialHeight = host.sizeThatFits(in: proposal).height
+        let request = Task { await store.load() }
+        while !store.isLoading { await Task.yield() }
+        XCTAssertEqual(host.sizeThatFits(in: proposal).height, initialHeight, accuracy: 1)
+        await gate.open()
+        await request.value
+        XCTAssertEqual(host.sizeThatFits(in: proposal).height, initialHeight, accuracy: 1)
+    }
+
     func testInitialHealthAuthorizationWaitIsNotPresentedAsRefreshFailure() async {
         let store = HealthDashboardStore {
             throw NSError(domain: HKErrorDomain, code: HKError.Code.errorAuthorizationNotDetermined.rawValue)
@@ -432,6 +451,11 @@ final class URLDataSourceBoundaryTests: XCTestCase {
         XCTAssertTrue(urlAutomation.isScheduledAutomation)
     }
 
+    func testSystemDataSourcePolicyRejectsWriteWithoutRuntime() {
+        let store = SystemDataSourceAccessPolicyStore(applicationRuntime: nil)
+        XCTAssertThrowsError(try store.setPolicy(.blocked, for: .calendars))
+    }
+
     func testSystemDataSourcePolicyPersistsAndRespectsConversationOverrides() throws {
         let root = FileManager.default.temporaryDirectory
             .appendingPathComponent("nola-source-policy-\(UUID().uuidString)", isDirectory: true)
@@ -445,15 +469,15 @@ final class URLDataSourceBoundaryTests: XCTestCase {
         XCTAssertEqual(store.policy(for: .health), .conversationOptIn)
         XCTAssertFalse(store.isEnabledForConversation(type: .health, explicitOverride: nil))
 
-        store.setPolicy(.defaultEnabled, for: .health)
+        try store.setPolicy(.defaultEnabled, for: .health)
         XCTAssertEqual(store.policy(for: .health), .defaultEnabled)
         XCTAssertTrue(store.isEnabledForConversation(type: .health, explicitOverride: nil))
         XCTAssertFalse(store.isEnabledForConversation(type: .health, explicitOverride: false))
 
-        store.setPolicy(.conversationOptIn, for: .health)
+        try store.setPolicy(.conversationOptIn, for: .health)
         XCTAssertTrue(store.isEnabledForConversation(type: .health, explicitOverride: true))
 
-        store.setPolicy(.blocked, for: .health)
+        try store.setPolicy(.blocked, for: .health)
         XCTAssertFalse(store.isEnabledForConversation(type: .health, explicitOverride: true))
         XCTAssertEqual(store.conversationOverrideKey(for: .health), "system:health")
     }

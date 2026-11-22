@@ -7,7 +7,7 @@ const editableParameters = ['temperature', 'topP', 'maxOutputTokens', 'maxContex
     'presencePenalty', 'frequencyPenalty', 'seed', 'stopSequences'];
 
 export function copyRemoteCatalog(profiles: RemoteProfileDraft[]): RemoteProfileDraft[] {
-    return profiles.filter(profile => profile.provider === 'openai-compatible').map(profile => ({
+    return profiles.filter(profile => profile.provider === 'openai-compatible' && !profile.connectionId).map(profile => ({
         ...profile,
         endpoint: { ...profile.endpoint },
         capabilities: [...profile.capabilities],
@@ -20,9 +20,9 @@ export function copyRemoteCatalog(profiles: RemoteProfileDraft[]): RemoteProfile
 }
 
 export function catalogReplacement(saved: RemoteProfile[], draft: RemoteProfile[]) {
-    const expectedRevisions = Object.fromEntries(saved.filter(profile => profile.provider === 'openai-compatible')
+    const expectedRevisions = Object.fromEntries(saved.filter(profile => profile.provider === 'openai-compatible' && !profile.connectionId)
         .map(profile => [profile.id, profile.revision]));
-    const endpoints = groupedProfiles(draft.filter(profile => profile.provider === 'openai-compatible')).map(group => ({
+    const endpoints = groupedProfiles(draft.filter(profile => profile.provider === 'openai-compatible' && !profile.connectionId)).map(group => ({
         id: group.endpoint.id,
         name: group.endpoint.name,
         baseURL: group.endpoint.baseURL,

@@ -233,6 +233,7 @@ data class ConversationProjectionV1(
         val canonicalTextUTF8Bytes: Long? = null,
         val notLoadedReason: String? = null,
     ) {
+        val expertMentions: JsonObject? get() = (fields["expert_mentions"] as? HistoricalField.Complete)?.value as? JsonObject
         val decodedText: String? get() {
             if (status == HistoricalStatus.Unsupported || status == HistoricalStatus.NotLoaded) return null
             val key = when (schema to canonicalKind) {

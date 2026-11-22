@@ -5,8 +5,8 @@
 "room.left" = "Вышел · история сохранена";
 "room.remove" = "Удалить";
 "room.add" = "Добавить агента";
-"room.create_agent" = "Создать агента";
-"room.agent_name" = "Имя агента";
+"room.create_agent" = "Создать эксперта";
+"room.agent_name" = "Имя эксперта";
 "room.use_current_model" = "Использовать текущую модель";
 "room.open" = "Открыть чат";
 "room.all" = "Все чаты агентов";
@@ -678,6 +678,9 @@
 "chat.host_tool.name.time" = "Прочитать системное время";
 "chat.host_tool.name.browser" = "Управлять браузером";
 "chat.host_tool.name.computer" = "Управлять компьютером";
+"chat.host_tool.name.find_skill" = "Найти навык на GitHub";
+"chat.host_tool.name.install_skill" = "Установить и включить навык";
+"chat.host_tool.name.read_skill_resource" = "Прочитать ресурс навыка";
 "chat.host_tool.name.skill" = "Использовать навык";
 "chat.host_tool.name.mcp" = "Вызвать MCP";
 "chat.host_tool.name.background" = "Фоновая задача";
@@ -1641,6 +1644,7 @@
 "common.frequency.weekly" = "Еженедельно";
 "common.no.zh" = "Нет";
 "common.retry" = "Повторить";
+"common.search" = "Поиск";
 "common.unknown" = "Неизвестно";
 "common.yes.zh" = "Да";
 "data.subtitle.local_first" = "Источники данных на устройстве, запланированные действия и недавний статус выполнения.";
@@ -1968,6 +1972,12 @@
 "chat.permission.action.create_calendar" = "Создать событие";
 "chat.hybrid.clipboard" = "Буфер обмена";
 "model.web_host.connect" = "Подключить";
+"model.web_host.setup_payload" = "Данные подключения";
+"model.web_host.paste_setup" = "Вставить данные подключения";
+"model.web_host.invalid_setup" = "Скопируйте данные подключения в Nola на хосте и вставьте их здесь.";
+"model.web_host.cancel_verification" = "Отменить проверку";
+"model.web_host.error.rollback" = "Не удалось сохранить токен и удалить новый идентификатор хоста. Удалите сопряжение и повторите попытку.";
+"model.web_host.recheck" = "Проверить снова";
 "chat.model.not_configured" = "Не настроено";
 "chat.permission.action.write_clipboard" = "Обновить буфер обмена";
 "chat.model.group.cloud" = "Облако";
@@ -2266,7 +2276,7 @@
 /* macOS Settings workspace */
 
 /* Personal intelligence capabilities */
-"personal.capabilities.title" = "Навыки и MCP";
+"personal.capabilities.title" = "Библиотека возможностей";
 "personal.capabilities.gateway.detail" = "Управляйте повторно используемыми сценариями и внешними инструментами.";
 "personal.capabilities.gateway.count" = "включено";
 "personal.capabilities.subtitle" = "Сценарии и подключённые инструменты, доступные во всех диалогах.";
@@ -2445,7 +2455,7 @@
 
 "chat.task.guidance.send" = "Отправить указание";
 "model.web_host.setup" = "Перед подключением";
-"model.web_host.setup.start" = "На Mac откройте в Nola «Настройки > Подключение к хосту» и разрешите подключения устройств.";
+"model.web_host.setup.start" = "На Mac откройте в Nola «Настройки > Подключения» и включите «Использовать этот Mac как Nola Server».";
 "model.web_host.setup.copy" = "Скопируйте адрес и токен сопряжения, показанные Nola на Mac. Используйте доверенную частную сеть или HTTPS.";
 "model.web_host.checking" = "Проверка хоста";
 "model.web_host.checking.detail" = "Перед сохранением проверяются токен, протокол разрешений и идентификатор хоста.";
@@ -2708,6 +2718,7 @@
 "chat.history.retry" = "Повторить";
 "chat.history.running" = "Выполняется";
 "chat.history.search" = "Поиск бесед";
+"chat.history.search.clear" = "Очистить поиск";
 "chat.history.stop_before_delete" = "Остановите задачу перед удалением";
 "chat.response.cancelled" = "Ответ остановлен";
 "chat.response.failed" = "Не удалось получить ответ. Откройте процесс, чтобы узнать подробности.";
@@ -2860,6 +2871,7 @@
 
 "room.pending_expert_message" = "Запрос экспертам ожидает запуска.";
 "room.resume_complete_experts" = "Возобновить исходный запрос экспертам";
+"room.retry_expert_reply" = "Повторить ответ эксперта";
 
 // Expert directory management
 "experts.manage" = "Управление экспертами";
@@ -3177,6 +3189,7 @@
 "chat.context.import.failed_count" = "Не удалось импортировать файлов: %d. Используйте непустые текстовые файлы UTF-8: не более 40 000 символов (192 КБ).";
 
 /* Expert roles and revision-aware mentions */
+"experts.useModelDefaults" = "Использовать настройки модели по умолчанию";
 "experts.reasoning.inherit" = "Наследовать настройку модели";
 "experts.reasoning.unknown" = "Эта модель не объявляет уровни рассуждения. Используется её настройка по умолчанию.";
 "experts.role.details" = "Промпт, инструменты и Skills";
@@ -3259,3 +3272,22 @@
 "chat.message.pendingEdit" = "Проверить ожидающую правку";
 "chat.message.editSavedForReview" = "Редактор можно закрыть. Чтобы проверить отправку, откройте ожидающую правку в этом разговоре.";
 "chat.context.documents.blank" = "Введите текст для %@ или удалите пустой документ.";
+
+"chat.history.otherClientReadOnly" = "Только для чтения. Чтобы продолжить беседу, откройте её в клиенте, в котором она была создана.";
+"chat.history.ambiguousIDs" = "Идентификаторы двух бесед различаются только регистром. Откройте их в исходном клиенте.";
+"experts.executor.requiresHost" = "Подключитесь к хосту, на котором работает этот агент программирования, и выберите эксперта в чате этого хоста.";
+
+"harness.plugins" = "Плагины";
+"harness.host" = "Выберите Host";
+"harness.device_note" = "Подключите компьютер, на котором работают плагины, чтобы пользоваться ими здесь.";
+"harness.connect" = "Подключить настольный хост";
+"harness.pair" = "Подключить другой Host";
+
+"Keep names as plain text" = "Оставить имена обычным текстом";
+"The expert selection changed. Remove the mention and select the expert again." = "Выбор эксперта изменился. Удалите упоминание и выберите эксперта снова.";
+"Write what you want the expert to do." = "Напишите, что должен сделать эксперт.";
+"View expert history" = "Посмотреть историю эксперта";
+"Icon could not be rendered" = "Не удалось отобразить значок";
+
+"model.center.selection_error.title" = "Не удалось выбрать модель";
+"prompt.templates.copy_name" = "%@ (копия)";

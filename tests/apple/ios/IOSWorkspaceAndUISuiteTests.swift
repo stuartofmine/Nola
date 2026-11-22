@@ -41,6 +41,27 @@ final class IOSCompactTabContainerTests: XCTestCase {
         XCTAssertEqual(label(host.view)?.text, "theme changed")
     }
 
+    func testSwitchingTabsUsesCurrentSafeAreaBeforeTheNextLayoutPass() throws {
+        let scene = try XCTUnwrap(UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }.first)
+        let controller = IOSCompactTabContainer<Tab>.Controller()
+        let window = UIWindow(windowScene: scene)
+        window.rootViewController = controller
+        window.makeKeyAndVisible()
+        defer { window.isHidden = true; window.rootViewController = nil; window.windowScene = nil }
+        controller.additionalSafeAreaInsets.bottom = 12
+        window.layoutIfNeeded()
+        for tab in [Tab.chat, .settings, .chat] {
+            controller.select(tab, content: AnyView(Text("Page")), revision: 0)
+            let host = try XCTUnwrap(controller.children.first)
+            let firstFrame = host.view.frame
+            XCTAssertEqual(firstFrame, controller.view.safeAreaLayoutGuide.layoutFrame)
+            window.layoutIfNeeded()
+            XCTAssertEqual(host.view.frame, firstFrame)
+            controller.additionalSafeAreaInsets.bottom += 20
+            window.layoutIfNeeded()
+        }
+    }
+
     func testReturningToActivityKeepsItsSnapshotWithoutReloading() async throws {
         let scene = try XCTUnwrap(UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }.first)
         let controller = IOSCompactTabContainer<Tab>.Controller()
@@ -161,12 +182,60 @@ final class IOSConversationInspectorTests: XCTestCase {
         XCTAssertEqual(plan.todos.first?.status, "pending")
     }
 
+    private var goalFixture: Data { Data(#"{"control_token":"token","can_pause":true,"can_resume":false,"can_cancel":true,"applied_operations":{},"active":{"id":"goal","objective":"Ship","status":"running","requirements":{"r":{"id":"r","description":"Review","status":"blocked"}},"work":{"entries":[{"id":"old","content":"Old","progress":"planned","supersedes":null},{"id":"new","content":"New","progress":"reported_done","supersedes":"old"}]}}}"#.utf8) }
+
     func testGoalWorkDoesNotPromoteReportedDoneToCompletion() throws {
-        let data = Data(#"{"control_token":"token","can_pause":true,"can_resume":false,"can_cancel":true,"applied_operations":{},"active":{"id":"goal","objective":"Ship","status":"running","requirements":{"r":{"id":"r","description":"Review","status":"blocked"}},"work":{"entries":[{"id":"old","content":"Old","progress":"planned","supersedes":null},{"id":"new","content":"New","progress":"reported_done","supersedes":"old"}]}}}"#.utf8)
+        let data = goalFixture
         let projection = try JSONDecoder().decode(IOSInspectorProgressFacts.GoalProjection.self, from: data)
         XCTAssertEqual(projection.active?.work.current.map(\.id), ["new"])
         XCTAssertEqual(projection.active?.work.current.first?.progress, "reported_done")
         XCTAssertEqual(projection.active?.requirements["r"]?.status, "blocked")
+    }
+
+    @MainActor func testReopenedGoalInspectorDisplaysEachSavedConstraint() async throws {
+        let legacy = try JSONDecoder().decode(IOSInspectorProgressFacts.GoalProjection.self, from: goalFixture)
+        XCTAssertNil(legacy.active?.constraints)
+        var payload = try XCTUnwrap(JSONSerialization.jsonObject(with: goalFixture) as? [String: Any])
+        var active = try XCTUnwrap(payload["active"] as? [String: Any])
+        let constraints = ["Keep source files", "Run tests offline"]
+        active["constraints"] = constraints
+        active["requirements"] = ["r": ["id": "r", "description": constraints[0], "status": "blocked"]]
+        payload["active"] = active
+        let saved = try JSONSerialization.data(withJSONObject: payload)
+        let scene = try XCTUnwrap(UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }.first)
+        for opening in 1...2 {
+            let inspector = IOSConversationInspector(pane: .goals, conversationID: "owner", loadProgress: { owner in
+                let projection = try JSONDecoder().decode(IOSInspectorProgressFacts.GoalProjection.self, from: saved)
+                XCTAssertEqual(projection.active?.unlistedConstraints, [constraints[1]])
+                XCTAssertEqual(projection.active?.requirements["r"]?.status, "blocked")
+                return .init(facts: .init(conversation_id: owner, goal_projection: projection, task_projection: nil), plan: nil)
+            }, documents: [], processingState: .idle)
+            let controller = UIHostingController(rootView: inspector.environment(\.locale, Locale(identifier: "en")))
+            let window = UIWindow(windowScene: scene)
+            window.frame = CGRect(x: 0, y: 0, width: 390, height: 844)
+            window.rootViewController = controller
+            window.makeKeyAndVisible()
+            defer { window.isHidden = true; window.rootViewController = nil }
+            var words = ""
+            for _ in 0..<12 {
+                try await Task.sleep(for: .milliseconds(200))
+                controller.view.layoutIfNeeded()
+                let image = UIGraphicsImageRenderer(bounds: window.bounds).image { _ in
+                    window.drawHierarchy(in: window.bounds, afterScreenUpdates: true)
+                }
+                let request = VNRecognizeTextRequest()
+                try VNImageRequestHandler(cgImage: XCTUnwrap(image.cgImage)).perform([request])
+                words = (request.results ?? []).compactMap { $0.topCandidates(1).first?.string }.joined(separator: "\n")
+                if constraints.allSatisfy({ words.contains($0) }) {
+                    let attachment = XCTAttachment(image: image)
+                    attachment.name = "Goal constraints opening \(opening)"
+                    attachment.lifetime = .keepAlways
+                    add(attachment)
+                    break
+                }
+            }
+            for constraint in constraints { XCTAssertEqual(words.components(separatedBy: constraint).count - 1, 1, words) }
+        }
     }
 
     func testGoalControlsUseCoreObservationForNeedsUserAndRejectForeignOwner() throws {
@@ -500,7 +569,7 @@ final class IOSUIInteractionPolicyTests: XCTestCase {
             ("mutedFillColor", DesignTokens.mutedFillColor, "surfaceSubtle"),
             ("contentColor", DesignTokens.contentColor, "ink"),
             ("secondaryContentColor", DesignTokens.secondaryContentColor, "inkSecondary"),
-            ("primaryColor", DesignTokens.primaryColor, "accent"),
+            ("primaryColor", DesignTokens.primaryColor, "ink"),
             ("actionColor", DesignTokens.actionColor, "accent"),
             ("accentSubtleColor", DesignTokens.accentSubtleColor, "accentSubtle"),
             ("borderColor", DesignTokens.borderColor, "border"),
@@ -1124,9 +1193,6 @@ final class IOSUIInteractionPolicyTests: XCTestCase {
                 ChatMoreSettingsSheet(
                     selectedModel: sampleModel,
                     contextUsage: nil,
-                    hostUploadedSkills: [],
-                    hostUploadedDocuments: [],
-                    hostMCPServers: [],
                     hostComputerUseStatus: nil,
                     hostNativeBrowserStatus: nil,
                     pairedHostIdentity: nil,
@@ -1144,12 +1210,6 @@ final class IOSUIInteractionPolicyTests: XCTestCase {
                     permissionMode: .constant(.cautious),
                     autoCompactTriggerPercent: .constant(85),
                     responseStyle: .constant(nil),
-                    sessionMemory: .constant("Session memory"),
-                    longTermMemory: .constant("Long-term memory"),
-                    userPreferences: .constant("Warm Ink"),
-                    uploadedSkills: .constant([sampleSkill]),
-                    onSaveMemoryProfile: {},
-                    onSetSkillEnabled: { _, _ in },
                     onOpenContextSettings: {},
                     onOpenSkillLibrary: {},
                     onForgetHostPairing: {}
@@ -1229,7 +1289,7 @@ final class IOSUIInteractionPolicyTests: XCTestCase {
 
             try await IOSVisualPixelAssertions.assertPresentedSheet(
                 NavigationStack {
-                    WebHostConfigurationView(existingModel: nil) { _ in }
+                    WebHostConfigurationView(existingModel: nil) { _, _ in }
                 },
                 label: "sheet-web-host-config-\(themeName)",
                 userInterfaceStyle: style
@@ -1241,8 +1301,16 @@ final class IOSUIInteractionPolicyTests: XCTestCase {
 @MainActor
 final class WebHostConnectionUIVisualTests: XCTestCase {
     func testConnectionSheetRendersSetupAndInputsAtPhoneSize() async throws {
+        #if targetEnvironment(simulator)
+        // A disabled system Paste control is deliberately dim. Verify its
+        // visible, actionable state with a local plaintext test item.
+        UIPasteboard.general.setItems([["public.utf8-plain-text": "Nola UI fixture"]],
+                                      options: [.localOnly: true, .expirationDate: Date().addingTimeInterval(120)])
+        let change = UIPasteboard.general.changeCount
+        defer { if UIPasteboard.general.changeCount == change { UIPasteboard.general.setItems([], options: [.localOnly: true]) } }
+        #endif
         let view = NavigationStack {
-            WebHostConfigurationView(existingModel: nil) { _ in }
+            WebHostConfigurationView(existingModel: nil) { _, _ in }
         }
         let image = try await IOSVisualPixelAssertions.assertHostedView(
             view,
@@ -1256,11 +1324,18 @@ final class WebHostConnectionUIVisualTests: XCTestCase {
         recognition.recognitionLanguages = ["zh-Hans", "en-US"]
         recognition.recognitionLevel = .accurate
         try VNImageRequestHandler(cgImage: XCTUnwrap(image.cgImage)).perform([recognition])
-        let visibleText = recognition.results?.compactMap { $0.topCandidates(1).first?.string }
-            .joined().filter { !$0.isWhitespace } ?? ""
-        let pasteLabel = NSLocalizedString("model.web_host.paste_setup", value: "Paste Connection Setup", comment: "")
-            .filter { !$0.isWhitespace }
-        XCTAssertTrue(visibleText.contains(pasteLabel), "The pairing action must be visible, not an empty control row")
+        let observations = recognition.results ?? []
+        func text(_ line: VNRecognizedTextObservation) -> String {
+            line.topCandidates(1).first?.string.lowercased().filter { !$0.isWhitespace } ?? ""
+        }
+        let row = try XCTUnwrap(observations.first { line in
+            text(line).hasPrefix("connectionsetup") || text(line).hasPrefix("连接信息")
+        }, "The setup row must have a readable title")
+        let paste = observations.contains { line in
+            guard abs(line.boundingBox.midY - row.boundingBox.midY) < 0.025 else { return false }
+            return text(line).hasSuffix("paste") || text(line).hasSuffix("粘贴")
+        }
+        XCTAssertTrue(paste, "Expected Paste beside the setup title; recognized \(observations.map(text))")
     }
 
     func testConnectionFailuresUseStableLocalizedMessages() {
@@ -1277,6 +1352,42 @@ final class WebHostConnectionUIVisualTests: XCTestCase {
             NSLocalizedString("model.web_host.error.unreachable", comment: "")
         )
     }
+    func testPairingFailureRestoresPreviousKeychainState() throws {
+        let url = try XCTUnwrap(URL(string: "http://127.0.0.1:1/" + UUID().uuidString))
+        defer { ModelSelectionManager.forgetWebHostIdentity(for: url) }
+        let id = UUID().uuidString
+        XCTAssertTrue(ModelSelectionManager.saveWebHostToken("previous", for: url.absoluteString))
+        XCTAssertThrowsError(try ModelSelectionManager.saveVerifiedHostPairing("invalid pin", token: "new", for: url))
+        XCTAssertNil(ModelSelectionManager.pairedWebHostIdentity(for: url))
+        XCTAssertEqual(ModelSelectionManager.webHostToken(for: url.absoluteString), "previous")
+        XCTAssertThrowsError(try ModelSelectionManager.saveVerifiedHostPairing(id, token: "new", for: url) { _, _ in false })
+        XCTAssertNil(ModelSelectionManager.pairedWebHostIdentity(for: url))
+        XCTAssertEqual(ModelSelectionManager.webHostToken(for: url.absoluteString), "previous")
+        try ModelSelectionManager.saveVerifiedHostPairing(id, token: "verified", for: url)
+        XCTAssertThrowsError(try ModelSelectionManager.saveVerifiedHostPairing(id, token: "new", for: url) { _, _ in false })
+        XCTAssertThrowsError(try ModelSelectionManager.saveVerifiedHostPairing(UUID().uuidString, token: "new", for: url))
+        XCTAssertEqual(ModelSelectionManager.pairedWebHostIdentity(for: url), id)
+        XCTAssertEqual(ModelSelectionManager.webHostToken(for: url.absoluteString), "verified")
+    }
+
+    func testForgettingPairingRemovesOnlyItsIdentityAndToken() throws {
+        let local = "http://127.0.0.1:1/" + UUID().uuidString
+        let first = try XCTUnwrap(URL(string: local + "/first"))
+        let second = try XCTUnwrap(URL(string: local + "/second"))
+        defer { ModelSelectionManager.forgetWebHostIdentity(for: second) }
+        for host in [first, second] {
+            XCTAssertTrue(ModelSelectionManager.installEphemeralWebHostCredential(
+                token: "fixture", identity: UUID().uuidString, for: host
+            ))
+            XCTAssertEqual(ModelSelectionManager.webHostToken(for: host.absoluteString), "fixture")
+        }
+        ModelSelectionManager.forgetWebHostIdentity(for: first)
+        XCTAssertNil(ModelSelectionManager.pairedWebHostIdentity(for: first))
+        XCTAssertNil(ModelSelectionManager.webHostToken(for: first.absoluteString))
+        XCTAssertNotNil(ModelSelectionManager.pairedWebHostIdentity(for: second))
+        XCTAssertEqual(ModelSelectionManager.webHostToken(for: second.absoluteString), "fixture")
+    }
+
     func testSavedPairingTokenNeverLoadsForAnEditedDestination() throws {
         let original = "https://host.example/routed"
         var reads = 0

@@ -66,14 +66,15 @@ struct MacHostPermissionCard: View {
     }
 
     private var requestContent: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            HStack(alignment: .center, spacing: 12) {
+        VStack(alignment: .leading, spacing: 10) {
+            HStack(alignment: .center, spacing: 10) {
                 Image(systemName: "hand.raised.fill")
                     .font(.system(size: 13, weight: .semibold))
                     .foregroundStyle(.orange)
-                    .frame(width: 28, height: 28)
+                    .frame(width: 26, height: 26)
+                    .background(Color.orange.opacity(0.12), in: RoundedRectangle(cornerRadius: 7, style: .continuous))
                     .accessibilityHidden(true)
-                VStack(alignment: .leading, spacing: 2) {
+                HStack(spacing: 8) {
                     Text(
                         MacToolPresentationPolicy.displayTitle(
                             for: request.toolName,
@@ -81,14 +82,16 @@ struct MacHostPermissionCard: View {
                             mcpDescriptorData: request.mcpDescriptorData
                         )
                     )
-                        .font(.system(size: 14, weight: .semibold))
-                    Text(String(localized: "Permission required"))
-                        .font(.system(size: 12))
-                        .foregroundStyle(.secondary)
+                    .font(.system(size: 14, weight: .semibold))
+                    .lineLimit(2)
+
                     Text(request.hostID == "local"
-                         ? String(localized: "This Mac") : String(localized: "Connected Host"))
-                        .font(.caption)
+                         ? String(localized: "This Mac") : String(localized: "Nola Server"))
+                        .font(.system(size: 11, weight: .medium))
                         .foregroundStyle(.secondary)
+                        .padding(.horizontal, 7)
+                        .padding(.vertical, 2)
+                        .background(MacDesignColor.subtleFill, in: Capsule())
                 }
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .fixedSize(horizontal: false, vertical: true)
@@ -123,16 +126,9 @@ struct MacHostPermissionCard: View {
                 Text(request.reason).font(.system(size: 13)).foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
             }
-            if requestedFolder == nil && request.allowConversation {
-                Text(String(localized: "Remembering this approval applies only to the requested operation and resource in this conversation, not every command or file.", table: "Chat"))
-                    .font(.callout)
-                    .foregroundStyle(.secondary)
-                    .fixedSize(horizontal: false, vertical: true)
-                    .accessibilityIdentifier("chat.permission.scope")
-            }
             if !request.permissionInstructions.isEmpty {
                 VStack(alignment: .leading, spacing: 4) {
-                    Text(String(localized: "Guidance recorded. Tool arguments are unchanged; explicit approval is still required.", table: "Chat"))
+                    Text(String(localized: "Guidance recorded. Explicit approval is still required.", table: "Chat"))
                         .font(.caption).foregroundStyle(.secondary)
                     ForEach(Array(request.permissionInstructions.enumerated()), id: \.offset) { _, record in
                         Text(record.instruction).font(.caption).textSelection(.enabled)
@@ -140,23 +136,22 @@ struct MacHostPermissionCard: View {
                 }
             }
             if showsDetails, !request.arguments.isEmpty {
-                VStack(alignment: .leading, spacing: 6) {
-                    ScrollView {
-                        Text(MacPermissionArgumentPresentation.readable(request.arguments))
-                            .font(.system(size: 12, design: .monospaced))
-                            .foregroundStyle(.primary)
-                            .textSelection(.enabled)
-                            .frame(maxWidth: .infinity, alignment: .leading)
-                            .fixedSize(horizontal: false, vertical: true)
+                Text(MacPermissionArgumentPresentation.readable(request.arguments))
+                    .font(.system(size: 12, design: .monospaced))
+                    .foregroundStyle(.primary)
+                    .textSelection(.enabled)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .padding(10)
+                    .background(MacDesignColor.subtleFill, in: RoundedRectangle(cornerRadius: 8, style: .continuous))
+                    .overlay {
+                        RoundedRectangle(cornerRadius: 8, style: .continuous)
+                            .strokeBorder(MacDesignColor.borderSubtle, lineWidth: 0.75)
                     }
-                    .frame(maxHeight: 120)
-                    .padding(8)
-                    .background(MacDesignColor.panel, in: RoundedRectangle(cornerRadius: 8, style: .continuous))
-                }
-                .macDisclosureTransition(reduceMotion: reduceMotion)
+                    .macDisclosureTransition(reduceMotion: reduceMotion)
             }
 
-            if showsInstruction {
+            DisclosureGroup(isExpanded: $showsInstruction) {
                 VStack(alignment: .leading, spacing: 6) {
                     Text(String(localized: "Guidance does not approve this operation or change its arguments.", table: "Chat"))
                         .font(.caption).foregroundStyle(.secondary)
@@ -174,36 +169,37 @@ struct MacHostPermissionCard: View {
                     .accessibilityIdentifier("chat.permission.guidance.send")
                     .disabled(isResolving || !instructionComposer.canSubmit(request: request))
                 }
-                .macDisclosureTransition(reduceMotion: reduceMotion)
+                .padding(.top, 6)
+            } label: {
+                Label(String(localized: "Add guidance", table: "Chat"), systemImage: "text.bubble")
+                    .font(.system(size: 12, weight: .medium))
+                    .foregroundStyle(.secondary)
             }
+            .disclosureGroupStyle(MacRowDisclosureStyle(toggleIdentifier: "chat.permission.guidance.open", isPlain: true))
         }
     }
 
     @ViewBuilder
     private var permissionActions: some View {
-        Button(String(localized: "Add guidance", table: "Chat")) {
-            withAnimation(reduceMotion ? nil : MacDesignTokens.Motion.disclosureAnimation) {
-                showsInstruction.toggle()
-            }
-        }
-        .accessibilityIdentifier("chat.permission.guidance.open")
-        Button(String(localized: "Deny for Run"), role: .destructive, action: deny)
+        Button(String(localized: "Deny"), role: .destructive, action: deny)
+            .buttonStyle(.bordered)
             .accessibilityIdentifier("chat.permission.deny")
         if requestedFolder == nil {
             if request.allowConversation {
-                Button(String(localized: "Remember This Approval", table: "Chat"), action: allowConversation)
+                Button(String(localized: "Remember", table: "Chat"), action: allowConversation)
                     .buttonStyle(.bordered)
+                    .help(String(localized: "Remembering this approval applies only to the requested operation and resource in this conversation.", table: "Chat"))
             }
             Button(String(localized: "Allow Once"), action: allowOnce)
                 .accessibilityIdentifier("chat.permission.allow-once")
-                .buttonStyle(.borderedProminent)
+                .buttonStyle(.nolaProminent)
         } else if request.allowConversation {
             Button(String(localized: "Allow for Conversation"), action: allowConversation)
-                .buttonStyle(.borderedProminent)
+                .buttonStyle(.nolaProminent)
         } else {
             Button(String(localized: "Allow Once"), action: allowOnce)
                 .accessibilityIdentifier("chat.permission.allow-once")
-                .buttonStyle(.borderedProminent)
+                .buttonStyle(.nolaProminent)
         }
     }
 }

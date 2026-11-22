@@ -7,6 +7,72 @@ mod tests {
     use std::time::Duration;
 
     #[test]
+    fn sealed_cli_turn_executes_late_fifo_receipts_once_without_keyboard_input() {
+        crate::agent_command_port::with_terminal_fixture(|root, _| {
+            let server = tiny_http::Server::http("127.0.0.1:0").unwrap();
+            let endpoint = format!("http://{}/v1", server.server_addr());
+            let (stop, stopped) = std::sync::mpsc::channel::<()>();
+            let provider = std::thread::spawn(move || {
+                let mut samples = 0;
+                while stopped.try_recv() == Err(std::sync::mpsc::TryRecvError::Empty) {
+                    let Some(request) = server.recv_timeout(Duration::from_millis(20)).unwrap() else { continue; };
+                    let (mime, text) = match request.url() {
+                        "/v1/models" => ("application/json", json!({"data":[{"id":"fixture-model","context_length":32768}]}).to_string()),
+                        "/v1/chat/completions" => {
+                            samples += 1;
+                            let delta = json!({"choices":[{"index":0,"delta":{"content":format!("reply {samples}")},"finish_reason":null}]});
+                            let end = json!({"choices":[{"index":0,"delta":{},"finish_reason":"stop"}]});
+                            ("text/event-stream", format!("data: {delta}\n\ndata: {end}\n\ndata: [DONE]\n\n"))
+                        }
+                        other => panic!("unexpected provider path: {other}"),
+                    };
+                    request.respond(tiny_http::Response::from_string(text)
+                        .with_header(tiny_http::Header::from_bytes("Content-Type", mime).unwrap())).unwrap();
+                }
+                samples
+            });
+            let session = "cli-finish-followups";
+            let config = Config::from_args(vec!["nola".into(), "--session".into(), session.into(),
+                "--project".into(), root.to_string_lossy().into(), "--endpoint".into(), endpoint,
+                "--model".into(), "fixture-model".into(), "--api-key".into(), "fixture".into(),
+                "--no-tools".into()]).unwrap();
+            let initial = run_single_prompt(&config, "first").unwrap();
+            let complete = nola_core::agent::AgentTurnStatus::Completed;
+            assert_eq!(initial.run_outcome.turn_status, complete);
+            let owner = interaction::ExecutionCancellation::default();
+            owner.bind_session_input(session, crate::runtime_control::InputRetention::Persistent).unwrap();
+            let admit = |text: &str| {
+                let receipt = owner.queue_runtime_input(crate::runtime_input::RuntimeInput::UserFollowUp(text.into())).unwrap();
+                let crate::runtime_input::InputReceipt::Durable(id) = receipt else { panic!("missing receipt") };
+                id
+            };
+            let earlier = admit("already consumed");
+            let existing = crate::agent_command_port::claim_next_agent_command(session, "prior-consumer", 1, i64::MAX).unwrap().unwrap();
+            assert_eq!(existing.command_id, earlier);
+            // The finishing listener may still hold IDs whose Application FIFO
+            // entry was already ACKed by the predecessor's boundary consumer.
+            assert!(crate::agent_command_port::acknowledge_agent_command(session, &earlier, "prior-consumer").unwrap());
+            let first = admit("late one");
+            let second = admit("late two");
+            assert!(owner.runtime_control().take_admitted_followups("another-session").is_empty());
+            let mut waiting = initial.run_outcome.clone();
+            waiting.turn_status = nola_core::agent::AgentTurnStatus::AwaitingPermission;
+            let mut emitter = Emitter::with_event_sink(|_| {});
+            assert_eq!(finish_cli_foreground(&config, owner.clone(), &mut emitter, waiting.clone()).unwrap(), waiting);
+            let done = finish_cli_foreground(&config, owner, &mut emitter, initial.run_outcome).unwrap();
+            assert_eq!(done.turn_status, complete);
+            let mut app = crate::application_port::CliApplicationPort::persistent_default().unwrap();
+            let messages = app.load_conversation(session).unwrap().unwrap().messages;
+            let ids: Vec<_> = messages.iter().map(|message| message.id.as_str()).collect();
+            assert_eq!(&ids[2..], [first.as_str(), &format!("{first}:assistant"), second.as_str(), &format!("{second}:assistant")]);
+            assert!(app.active_run(session).unwrap().is_none());
+            assert!(crate::agent_command_port::claim_next_agent_command(session, "verify", 1, i64::MAX).unwrap().is_none());
+            drop(stop);
+            assert_eq!(provider.join().unwrap(), 3);
+        });
+    }
+
+    #[test]
     fn replay_includes_surface_summary_beside_text_without_reading_form_values() {
         let message = json!({
             "content":"Here is the form.",
@@ -187,11 +253,11 @@ mod tests {
     }
 
     #[test]
-    fn permission_picker_digits_confirm_while_navigation_only_selects() {
+    fn permission_picker_digits_and_arrows_preview_until_enter() {
         use PermissionPickerAction::*;
         let key = |code| KeyEvent::new(code, KeyModifiers::NONE);
         for (digit, index) in [('1', 0), ('2', 1)] {
-            assert_eq!(permission_picker_action(key(KeyCode::Char(digit)), 0), SelectAndConfirm(index));
+            assert_eq!(permission_picker_action(key(KeyCode::Char(digit)), 0), Select(index));
             for kind in [KeyEventKind::Repeat, KeyEventKind::Release] {
                 assert_eq!(permission_picker_action(KeyEvent::new_with_kind(KeyCode::Char(digit), KeyModifiers::NONE, kind), 0), Ignore);
             }
@@ -206,6 +272,9 @@ mod tests {
                 assert!(next < ALL_PERMISSION_LEVELS.len());
             }
         }
+        assert_eq!(permission_picker_action(key(KeyCode::PageDown), 0), Scroll(true));
+        assert_eq!(permission_picker_action(key(KeyCode::PageUp), 1), Scroll(false));
+        assert_eq!(permission_picker_action(KeyEvent::new_with_kind(KeyCode::PageDown, KeyModifiers::NONE, KeyEventKind::Release), 0), Ignore);
         assert_eq!(permission_picker_action(key(KeyCode::Enter), 2), Confirm);
         assert_eq!(permission_picker_action(key(KeyCode::Esc), 2), Cancel);
         assert_eq!(permission_picker_action(KeyEvent::new(KeyCode::Char('c'), KeyModifiers::CONTROL), 2), Cancel);
@@ -295,9 +364,22 @@ mod tests {
     }
 
     #[test]
+    fn user_history_fits_the_transcript_without_a_second_wrap() {
+        for columns in [40, 108, 180] {
+            let width = crate::terminal_ui::transcript_width(columns);
+            let message = "A test message with several words. ".repeat(7);
+            let rendered = interactive_user_history_at_width(&message, columns, true);
+            for row in rendered.lines() {
+                assert_eq!(crate::terminal_ui::wrap_styled_line(row, width).len(), 1,
+                           "history row wrapped a second time at {columns} columns");
+            }
+        }
+    }
+
+    #[test]
     fn cli_polish_user_history_keeps_multiline_cjk_content_and_background() {
         let text = "这是很长的历史输入，需要完整换行显示。\n第二行 🙂";
-        let rendered = interactive_user_history_at_width(text, 24, true);
+        let rendered = interactive_user_history_at_width(text, 26, true);
         let mut terminal = vt100::Parser::new(20, 24, 0);
         terminal.process(rendered.replace('\n', "\r\n").as_bytes());
         for row in 0..rendered.lines().count() as u16 {
@@ -307,7 +389,7 @@ mod tests {
                 assert_eq!(last.bgcolor(), vt100::Color::Rgb(35, 35, 32), "row={row} {rendered:?}");
             }
         }
-        let plain = interactive_user_history_at_width(text, 24, false);
+        let plain = interactive_user_history_at_width(text, 26, false);
         let reconstructed = plain.lines().enumerate().map(|(index, row)| {
             row.strip_prefix(if index == 0 { "    › " } else { "      " }).unwrap()
         }).collect::<String>();
@@ -799,6 +881,25 @@ mod tests {
     }
 
     #[test]
+    fn typing_a_short_alias_shows_all_matching_commands() {
+        let names: Vec<_> = matching_slash_commands_inner("/m", None)
+            .into_iter().map(|item| item.name).collect();
+        assert_eq!(names, ["/model", "/mcp", "/memory"]);
+        assert_eq!(normalize_interactive_command("/m"), Some("/model"));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn file_suggestions_do_not_descend_through_directory_links() {
+        let workspace = tempfile::tempdir().unwrap();
+        let outside = tempfile::tempdir().unwrap();
+        fs::write(outside.path().join("elsewhere.md"), "external").unwrap();
+        std::os::unix::fs::symlink(outside.path(), workspace.path().join("linked")).unwrap();
+        fs::write(workspace.path().join("here.md"), "local").unwrap();
+        assert_eq!(workspace_file_completions(workspace.path(), ".md"), ["here.md"]);
+    }
+
+    #[test]
     fn executor_completion_lists_stable_backend_ids() {
         let names = matching_slash_commands_inner("/executor cla", None)
             .into_iter()
@@ -976,11 +1077,23 @@ mod tests {
             assert!(constraints.is_none());
         }
         assert!(matches!(begin_interactive_goal_input("  ", &config, &mut None, &mut None).unwrap(), SlashCommandResult::GoalEntry));
-        let old = GOAL_COMPOSER_ACTIVE.with(|active| active.replace(true));
-        let scope = GoalComposerScope(old);
+        let old = COMPOSER_PURPOSE.with(|active| active.replace(ComposerPurpose::Goal));
+        let scope = ComposerScope(old);
         assert!(interactive_input_bar_line_with_color("", true, true, "", 80, false).contains(ui_text(UiText::GoalPlaceholder)));
         drop(scope);
-        assert!(!GOAL_COMPOSER_ACTIVE.with(Cell::get));
+        assert!(COMPOSER_PURPOSE.with(Cell::get) == ComposerPurpose::Chat);
+    }
+
+    #[test]
+    fn edit_composer_preserves_slash_text_until_resend() {
+        let config = Config::for_test().unwrap();
+        {
+            let previous = COMPOSER_PURPOSE.with(|active| active.replace(ComposerPurpose::Edit));
+            let _scope = ComposerScope(previous);
+            assert!(matching_slash_commands_with_config("/sta", &config).is_empty());
+        }
+        assert!(matching_slash_commands_with_config("/sta", &config)
+            .iter().any(|command| command.name == "/status"));
     }
 
     #[test]
@@ -1631,7 +1744,8 @@ mod tests {
             // Use the real shell producer so the Work projection receives its
             // complete metadata contract, not an Agent-shaped shell record.
             let task = crate::store::DbBackgroundTask {
-        process_sandbox: None,
+                local_execution: None,
+                process_sandbox: None,
                 terminal: None,
                 id: format!("work-{marker}"),
                 project_root: project_root.to_string_lossy().to_string(),
@@ -2818,6 +2932,51 @@ mod runtime_provider_environment_tests {
     }
 
     #[test]
+    fn paste_blocks_keep_literal_labels_and_atomic_word_edits() {
+        let label = "[Pasted Content 300 chars]";
+        let second_label = "[Pasted Content 300 chars #2]";
+        let mut draft = format!("例{label}{second_label}{label}末");
+        let second_start = "例".len() + label.len();
+        let first_start = second_start + second_label.len();
+        let mut blocks = vec![
+            InteractivePastedContent {
+                start: second_start, placeholder: second_label.into(), content: format!("乙{label}").into(),
+            },
+            InteractivePastedContent { start: first_start, placeholder: label.into(), content: "甲".into() },
+        ];
+        assert_eq!(expand_interactive_pasted_content(&draft, &blocks), format!("例{label}乙{label}甲末"));
+        let mut cursor = second_start;
+        assert!(edit_with_paste_blocks(&mut draft, &mut cursor, &mut blocks,
+            &KeyEvent::new(KeyCode::Right, KeyModifiers::CONTROL)));
+        assert_eq!(cursor, first_start);
+        assert!(edit_with_paste_blocks(&mut draft, &mut cursor, &mut blocks,
+            &KeyEvent::new(KeyCode::Backspace, KeyModifiers::CONTROL)));
+        assert_eq!(cursor, second_start);
+        assert_eq!(blocks.len(), 1);
+        assert_eq!(blocks[0].start, second_start);
+        assert_eq!(expand_interactive_pasted_content(&draft, &blocks), format!("例{label}甲末"));
+    }
+
+    #[test]
+    fn slash_menu_preserves_query_and_dismissal_across_repaint() {
+        let config = Config::for_test().unwrap();
+        let mut menu = SlashMenu::default();
+        menu.sync("/m", 2, &config);
+        menu.step(false);
+        assert_eq!(menu.query.as_deref(), Some("/m"));
+        assert_eq!(menu.entries[menu.selected.unwrap()].name, "/mcp");
+        assert!(menu.render(40, 12).unwrap().contains("Esc"));
+        menu.dismissed = true;
+        menu.sync("/m", 2, &config);
+        assert!(menu.render(40, 12).is_none());
+        menu.sync("/mc", 3, &config);
+        assert!(menu.is_open());
+        let draft = "/s keep my text";
+        menu.sync(draft, draft.len(), &config);
+        assert!(!menu.is_open());
+    }
+
+    #[test]
     fn paste_threshold_atomic_delete_and_backslash_continuation_work_cleanly() {
         assert!(!should_collapse_pasted_content("line1\nline2\nline3"));
         assert!(!should_collapse_pasted_content(&"a".repeat(300)));
@@ -2828,10 +2987,11 @@ mod runtime_provider_environment_tests {
         let mut draft = format!("prefix {placeholder} suffix");
         let mut cursor = "prefix ".len() + placeholder.len();
         let mut pasted = vec![InteractivePastedContent {
+            start: "prefix ".len(),
             placeholder: placeholder.clone(),
-            content: "full body".to_string(),
+            content: "full body".into(),
         }];
-        assert!(try_delete_pasted_placeholder(
+        assert!(edit_with_paste_blocks(
             &mut draft,
             &mut cursor,
             &mut pasted,
@@ -2880,13 +3040,13 @@ mod runtime_provider_environment_tests {
         let mut cycle = None;
         let mut line = "read @al".to_string();
         let mut cursor = line.len();
-        assert!(apply_composer_completion_cycle(&mut line, &mut cursor, &config, &mut cycle, false));
+        assert!(apply_composer_completion_cycle(&mut line, &mut cursor, &config, &mut cycle, false, &mut vec![], &mut vec![]));
         let first = line.clone();
         assert!(first == "read @alpha.rs" || first == "read @alpha_two.rs", "{first}");
-        assert!(apply_composer_completion_cycle(&mut line, &mut cursor, &config, &mut cycle, false));
+        assert!(apply_composer_completion_cycle(&mut line, &mut cursor, &config, &mut cycle, false, &mut vec![], &mut vec![]));
         let second = line.clone();
         assert_ne!(first, second);
-        assert!(apply_composer_completion_cycle(&mut line, &mut cursor, &config, &mut cycle, true));
+        assert!(apply_composer_completion_cycle(&mut line, &mut cursor, &config, &mut cycle, true, &mut vec![], &mut vec![]));
         assert_eq!(line, first);
     }
 }

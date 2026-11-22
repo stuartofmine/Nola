@@ -270,6 +270,7 @@ fn begin_assistant_turn_in_transaction<R: RunCreationRepository
     successor: Option<SuccessorAdmission>,
 ) -> Result<(AcceptedAssistantTurn, AgentCore), String> {
     crate::validate_invocation_binding(&command.core_config)?;
+    crate::in_place_resend::consume_inline_edit(store, &mut command)?;
     crate::main_expert_selection::admit(store, &mut command)?;
     if let AgentSubmission::AutomatedInput {
         origin: nola_agent_engine::agent::AgentInputOrigin::GoalContinuation,

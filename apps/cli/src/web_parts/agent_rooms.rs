@@ -70,7 +70,7 @@ fn public_room_command(body: Value) -> Result<nola_application::agent_room::Agen
     let command: nola_application::agent_room::AgentRoomCommand = serde_json::from_value(body).map_err(|_| "invalid room command")?;
     use nola_application::agent_room::AgentRoomCommand;
     if !matches!(&command, AgentRoomCommand::ForConversation { .. } | AgentRoomCommand::EnsureForConversation { .. }
-        | AgentRoomCommand::AttachConversation { .. } | AgentRoomCommand::ChildConversations { .. } | AgentRoomCommand::ChildHistory { .. } | AgentRoomCommand::Directory | AgentRoomCommand::RoleTemplates | AgentRoomCommand::List { .. } | AgentRoomCommand::Read { .. }
+        | AgentRoomCommand::AttachConversation { .. } | AgentRoomCommand::ChildConversations { .. } | AgentRoomCommand::ChildHistory { .. } | AgentRoomCommand::PeerExchanges { .. } | AgentRoomCommand::Directory | AgentRoomCommand::RoleTemplates | AgentRoomCommand::List { .. } | AgentRoomCommand::Read { .. }
         | AgentRoomCommand::ConfigureAgent { .. } | AgentRoomCommand::Create { .. } | AgentRoomCommand::Join { .. } | AgentRoomCommand::Rejoin { .. }
         | AgentRoomCommand::Deactivate { .. } | AgentRoomCommand::Submit { .. } | AgentRoomCommand::Submission { .. } | AgentRoomCommand::Submissions { .. } | AgentRoomCommand::CancelPending { .. }) {
         return Err("room command is owned by the Host".into());
@@ -351,6 +351,7 @@ mod room_http_contract_tests {
             json!({"type":"execution_intent","room_id":"r","submission_id":"s"}),
             json!({"type":"observe_execution","room_id":"r","submission_id":"s","run_id":"run","at_ms":1}),
         ] { assert!(public_room_command(command).is_err()); }
+        assert!(public_room_command(json!({"type":"peer_exchanges","conversation_id":"parent","limit":50,"offset":0})).is_ok());
         assert!(public_room_command(json!({"type":"submission","room_id":"r","submission_id":"s"})).is_ok());
         assert!(public_room_command(json!({"type":"submissions","room_id":"r","limit":100,"offset":0})).is_ok());
         assert!(public_room_command(json!({"type":"cancel_pending","room_id":"r","submission_id":"s","expected_revision":1,"at_ms":1})).is_ok());
@@ -526,6 +527,10 @@ fn execute_selected_room(config: &Config, mut selected: nola_application::agent_
                 expected_host_id: host_identity().into(), client_id: client_id.clone(), session_id: context_id.clone(),
             }, config)?;
             let (configuration_revision, settings) = conversation_configuration_state(&context_id)?.ok_or("room context configuration missing")?;
+            if reserved.as_ref().is_some_and(|entry| entry.defaults.expert_executor().is_some())
+                || settings.get("expertExecutor").is_some_and(|value| !value.is_null()) {
+                return Err("External experts are dispatched by the main agent. Mention the expert in the main conversation.".into());
+            }
             let profile_id = if let Some(entry)=&reserved {entry.model_declaration.profile_id.as_str()} else {
                 settings["modelSelectionID"].as_str().and_then(|id|id.strip_prefix("configured:")).ok_or("room model profile missing")?
             };

@@ -7,10 +7,12 @@ data class GoalOperationObservation(val commandSha256: String, val goalRevision:
 data class GoalControlObservation(val goalId: String?, val controlToken: String?, val revision: ULong,
     val appliedOperations: Map<String, GoalOperationObservation>,
     val canPause: Boolean, val canResume: Boolean, val canCancel: Boolean)
+data class GoalContractRun(val runId: String, val objective: String, val status: String)
 data class ConversationProgressItem(val id: String, val text: String, val status: String)
 data class ConversationProgress(val conversationId: String, val objective: String?, val status: String?,
     val requirements: List<ConversationProgressItem>, val todos: List<ConversationProgressItem>,
-    val goalControl: GoalControlObservation? = null, val nextWakeAtEpochMs: Long? = null)
+    val goalControl: GoalControlObservation? = null, val nextWakeAtEpochMs: Long? = null,
+    val constraints: List<String> = emptyList(), val latestContractRun: GoalContractRun? = null)
 
 class ConversationProgressRepository(private val runtime: AndroidApplicationRuntime) {
     fun load(owner: String): ConversationProgress {
@@ -116,11 +118,20 @@ class ConversationProgressRepository(private val runtime: AndroidApplicationRunt
                 return ConversationProgressItem(obj.getValue("id").jsonPrimitive.content,
                     obj.getValue(textKey).jsonPrimitive.content, obj.getValue("status").jsonPrimitive.content)
             }
+            val latestRun = goal?.get("contracts")?.jsonArray?.asReversed()?.firstNotNullOfOrNull { raw ->
+                val contract = raw.jsonObject
+                contract["execution_run_id"]?.takeUnless { it == JsonNull }?.let { run ->
+                    GoalContractRun(identity(run, "Goal contract run"), text(contract.getValue("objective"), "Goal contract objective"),
+                        text(contract.getValue("status"), "Goal contract status"))
+                }
+            }
             return ConversationProgress(owner, goal?.get("objective")?.jsonPrimitive?.content,
                 goal?.get("status")?.jsonPrimitive?.content,
                 goal?.get("requirements")?.jsonObject?.values?.map { item(it, "description") }.orEmpty(),
                 savedPlan?.get("todos")?.jsonArray?.map { item(it, "content") }.orEmpty(), control,
-                goal?.get("next_wake_at_epoch_ms")?.takeUnless { it is JsonNull }?.jsonPrimitive?.longOrNull)
+                goal?.get("next_wake_at_epoch_ms")?.takeUnless { it is JsonNull }?.jsonPrimitive?.longOrNull,
+                constraints = goal?.get("constraints")?.jsonArray?.map { text(it, "Goal constraint") }.orEmpty(),
+                latestContractRun = latestRun)
         }
     }
 }

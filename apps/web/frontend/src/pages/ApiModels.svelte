@@ -9,7 +9,7 @@
     import { loadModelCatalog } from '../lib/modelCatalog';
     import { locale, t } from '../lib/i18n';
 
-    let { openProfileId = '' }: { openProfileId?: string } = $props();
+    let { openProfileId = '', requestedEndpointName = $bindable('') }: { openProfileId?: string; requestedEndpointName?: string } = $props();
     let profiles = $state<RemoteProfile[]>([]);
     let error = $state(false);
     let loading = $state(false);
@@ -49,8 +49,8 @@
 <section class="profile-settings" aria-label={t($locale, 'models.api')}>
     {#if error}<p class="notice error" role="alert">{t($locale, 'connections.catalogLoadFailed')} <button onclick={load} disabled={loading}>{t($locale, 'models.reload')}</button></p>{/if}
     {#if loading && !error}<p role="status">{t($locale, 'remote.loading')}</p>{/if}
-    {#if loaded}<RemoteProfiles {profiles} {openProfileId} reload={load} onSelectionSaved={applySelectionSnapshot} />{/if}
+    {#if loaded}<RemoteProfiles {profiles} {openProfileId} bind:requestedEndpointName reload={load} onSelectionSaved={applySelectionSnapshot} />{/if}
 </section>
 {/if}
-<ModelConnections />
+<ModelConnections {profiles} onChanged={load} openConnectionId={profiles.find(profile => profile.id === openProfileId)?.connectionId ?? ''} />
 <style>.profile-settings { margin-block: 24px 36px; }</style>

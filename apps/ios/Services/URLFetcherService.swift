@@ -526,16 +526,17 @@ extension URLFetcherService {
     /// - Parameters:
     ///   - urlString: URL to fetch
     ///   - preferredFormat: User-specified format (optional). If provided, only try this format. If nil, auto-detect.
-    public func detectFormatAndPreview(urlString: String, preferredFormat: URLDataFormat? = nil) async throws -> (format: URLDataFormat, preview: [RawEvent], description: String?) {
+    public func detectFormatAndPreview(urlString: String, preferredFormat: URLDataFormat? = nil, securityBookmarkData: Data? = nil) async throws -> (format: URLDataFormat, preview: [RawEvent], description: String?) {
         guard let url = URL(string: urlString) else { throw URLFetcherError.invalidURL }
 
         if url.isFileURL {
-            let source = URLDataSource(
+            var source = URLDataSource(
                 url: urlString,
                 format: preferredFormat ?? .html,
                 kind: url.hasDirectoryPath ? .folder : .file,
                 name: url.lastPathComponent.isEmpty ? "Local Data Source" : url.lastPathComponent
             )
+            source.securityBookmarkData = securityBookmarkData
             let preview = try localFileEvents(from: source, limit: 5)
             return (
                 preferredFormat ?? .html,
@@ -1019,10 +1020,11 @@ public final class URLFetcherService: ObservableObject {
                 logger.log(.warn, "URLFetcher", "Data source edit denied", metadata: ["id": id.uuidString])
                 return
             }
+            let previous = sources[index]
             sources[index].enabled.toggle()
             sources[index].accessRevision = nextAccessRevision(max(1, sources[index].accessRevision))
             sources[index].updatedAt = Date()
-            persistSource(sources[index])
+            persistSource(sources[index], rollbackTo: previous)
             didToggle = true
         }
         if didToggle {
@@ -2016,7 +2018,7 @@ public final class URLFetcherService: ObservableObject {
         }
     }
 
-    private func persistSource(_ source: URLDataSource) {
+    private func persistSource(_ source: URLDataSource, rollbackTo previous: URLDataSource? = nil) {
         persistenceQueue.async { [self, logger] in
             do {
                 let saved = try commitSource(source, expectedRevision: sourceRevisions[source.id.uuidString])
@@ -2034,6 +2036,16 @@ public final class URLFetcherService: ObservableObject {
                     "id": source.id.uuidString,
                     "error": error.localizedDescription
                 ])
+                if let previous {
+                    Task { @MainActor [weak self] in
+                        guard let self,
+                              let index = self.sources.firstIndex(where: { $0.id == source.id }),
+                              self.sources[index].updatedAt == source.updatedAt,
+                              self.sources[index].accessRevision == source.accessRevision else { return }
+                        self.sources[index] = previous
+                        self.notifySourcesUpdated()
+                    }
+                }
             }
         }
     }

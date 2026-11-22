@@ -4,13 +4,13 @@
 
 Rust command-line agent for local coding workflows. It follows the same high-level loop used by the Web host: stream a configured LLM provider, execute approved local tools, append tool results, and continue until the model stops.
 
-To save the connections and default model declared in your configuration, run
-`nola model apply-config`. It reads `~/.nola/config.json`, or `config.jsonc` when
-the JSON file is absent (`NOLA_HOME` overrides the application home). To select
-a different file, pass its path (relative, `~/`, or absolute). This explicit command updates the
-Host model center without making a model request; ordinary startup does not
-import or rewrite model configuration. When the binary is not on `PATH`, use
-`/absolute/path/to/nola model apply-config`.
+Run `nola config` in a project to see the files in startup order, the file that declares the model catalog, and the saved Host default. Use `/config` inside a conversation.
+
+- `nola config edit [path]` opens the last loaded file, or the specified file, in your editor. `nola config example` prints a sample catalog.
+- `nola config check [path]` validates the startup layers together or a single file independently.
+- Save the file and start Nola. The CLI and Web Host apply the effective catalog in one transaction before using its default. If a catalog is rejected, startup reports the file and keeps the last saved catalog. Reopening an unchanged catalog preserves connection and profile revisions.
+
+The published `nola model apply-config [path]` command retains its JSON receipt and user-directory fallback. Without a path it chooses `~/.nola/config.json`, then `config.jsonc`. `NOLA_HOME` changes the application home. The new `config apply` instead selects the catalog from the effective startup configuration. Both accept relative paths and `--dry-run`.
 
 ## Core / Host architecture
 
@@ -94,7 +94,7 @@ cd apps/cli
 管理本地 Skills、MCP 服务、长期记忆与版本信息（无需连接模型）：
 
 ```bash
-nola skills [list | enable <id> | disable <id>] [--json]
+nola skills [list | find <name-or-github-url> | install <github-url> | enable <id> | disable <id>] [--json]
 nola mcp [list | add <name> <command-or-url> [args...] | remove <id-or-name> | enable <id-or-name> | disable <id-or-name>] [--json]
 nola memory [list | add "<text>" [--scope global|project] | search "<query>" | create | revise <id> | delete <id>] [--json]
 nola version [--json]   # 等价于 nola --version / nola -V

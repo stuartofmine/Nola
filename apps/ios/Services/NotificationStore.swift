@@ -84,6 +84,15 @@ public protocol NotificationStore {
     func findByDedupeKey(_ dedupeKey: String) throws -> [NotificationEntity]
     func findById(_ id: String) throws -> NotificationEntity?
     func markCancelled(id: String) throws
+    func clearAll() throws
+}
+
+public extension NotificationStore {
+    func clearAll() throws {
+        for entity in try fetchAll() {
+            try remove(id: entity.id)
+        }
+    }
 }
 
 func notificationStoreNotFoundError(id: String) -> NSError {
@@ -229,6 +238,13 @@ public final class InMemoryNotificationStore: NotificationStore {
     public func remove(id: String) throws {
         try mutateAndNotify {
             db.removeValue(forKey: id)
+            return true
+        }
+    }
+
+    public func clearAll() throws {
+        try mutateAndNotify {
+            db.removeAll()
             return true
         }
     }

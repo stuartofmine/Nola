@@ -22,4 +22,5 @@ struct MacRunSubmissionSnapshot {
     var queuedUserCommandID: String? = nil
     var canonicalUserMessageID: String? = nil
     var ownsComposerDraft = true
+    var mentions: [AppleDraftMention] = []
 }

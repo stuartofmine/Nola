@@ -1359,6 +1359,11 @@ nonisolated final class MacAppleChatConfigurationStore: @unchecked Sendable {
         return bound.secret
     }
 
+    func deleteAccountSecret(_ reference: String) {
+        guard !reference.isEmpty else { return }
+        deleteAPIKey(account: reference)
+    }
+
     private func readAPIKey(account: String) throws -> String? {
         guard !account.isEmpty else { return nil }
         if let credentialReader { return try credentialReader(account) }

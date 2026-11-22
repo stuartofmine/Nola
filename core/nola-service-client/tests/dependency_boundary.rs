@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: Apache-2.0
-//! The SDK's production workspace graph is Protocol -> Domain, without adapters.
+//! Verify the SDK's protocol types and its Windows-only access-control leaf.
 use std::{
     collections::{BTreeMap, BTreeSet},
     process::Command,
@@ -40,7 +40,7 @@ fn service_client_does_not_depend_on_application_or_store_implementations() {
         assert!(
             matches!(
                 name,
-                "nola_service_client" | "nola_protocol" | "nola_domain"
+                "nola_service_client" | "nola_protocol" | "nola_domain" | "nola_windows_permissions"
             ),
             "SDK production dependency graph reaches implementation package {name}"
         );
@@ -58,12 +58,17 @@ fn service_client_does_not_depend_on_application_or_store_implementations() {
                 !matches!(dependency_name, "rusqlite" | "libsqlite3-sys"),
                 "{name} introduces SQLite into the SDK production graph"
             );
+            if name == "nola_windows_permissions" {
+                assert_eq!(dependency_name, "windows-sys", "Windows ACLs use only Win32");
+                assert_eq!(dependency["target"], "cfg(windows)");
+            }
             if packages.contains_key(dependency_name) {
-                if name == "nola_service_client" {
-                    assert_eq!(
-                        dependency_name, "nola_protocol",
-                        "SDK's only direct workspace dependency is Protocol"
-                    );
+                match (name, dependency_name) {
+                    ("nola_service_client", "nola_windows_permissions") => {
+                        assert_eq!(dependency["target"], "cfg(windows)");
+                    }
+                    ("nola_service_client", "nola_protocol") | ("nola_protocol", "nola_domain") => {}
+                    _ => panic!("Unexpected SDK dependency edge {name} -> {dependency_name}"),
                 }
                 pending.push(dependency_name);
             }

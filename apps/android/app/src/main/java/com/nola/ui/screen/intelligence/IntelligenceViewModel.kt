@@ -41,6 +41,7 @@ enum class IntelligenceEntryKind {
 data class IntelligenceUiState(
     val profile: ChatMemoryProfile = ChatMemoryProfile(),
     val isSaving: Boolean = false,
+    val openingPlugins: Boolean = false,
     val isLoadingProfile: Boolean = true,
     val profileLoadError: String? = null,
     val errorMessage: String? = null,
@@ -53,6 +54,8 @@ data class IntelligenceUiState(
 class IntelligenceViewModel @Inject constructor(
     private val memoryProfileDataStore: MemoryProfileDataStore,
     @ApplicationContext private val context: Context,
+    private val prefs: com.nola.data.local.datastore.PreferenceDataStore,
+    private val webHostApi: com.nola.data.remote.api.WebHostApiService,
 ) : ViewModel() {
     private val _uiState = MutableStateFlow(IntelligenceUiState())
     val uiState = _uiState.asStateFlow()
@@ -61,6 +64,33 @@ class IntelligenceViewModel @Inject constructor(
 
     init {
         reloadProfile()
+    }
+
+    val pluginHostAddress = prefs.webHostBaseUrl
+
+    fun openPlugins(address: String, connect: () -> Unit, open: (String) -> Unit) {
+        if (_uiState.value.openingPlugins) return
+        _uiState.update { it.copy(openingPlugins = true) }
+        viewModelScope.launch {
+            try {
+                val host = prefs.pairedWebHost()
+                if (host == null) { connect(); return@launch }
+                check(address == host.address) { context.getString(R.string.harness_changed) }
+                val settings = webHostApi.getAgentSettings(host.address, host.token, host.pin)
+                check(settings.hostIdentity?.id == host.identity) { context.getString(R.string.harness_changed) }
+                val url = webHostApi.requestWebManagementUrl(host.address, host.token, "/capabilities?tab=plugins", host.pin)
+                val current = prefs.pairedWebHost()
+                check(current != null && current.address == host.address && current.identity == host.identity &&
+                    current.token == host.token && current.pin == host.pin) { context.getString(R.string.harness_changed) }
+                open(url)
+            } catch (cancel: kotlinx.coroutines.CancellationException) {
+                throw cancel
+            } catch (failure: Exception) {
+                _uiState.update { it.copy(errorMessage = failure.localizedMessage) }
+            } finally {
+                _uiState.update { it.copy(openingPlugins = false) }
+            }
+        }
     }
 
     fun reloadProfile() {
@@ -91,10 +121,10 @@ class IntelligenceViewModel @Inject constructor(
         }
     }
 
-    fun saveEntry(kind: IntelligenceEntryKind, index: Int?, value: String) {
+    fun saveEntry(kind: IntelligenceEntryKind, index: Int?, value: String, onCommitted: () -> Unit = {}) {
         val normalized = value.trim()
         if (normalized.isEmpty()) return
-        mutateMemory { profile ->
+        mutateMemory(onCommitted = onCommitted) { profile ->
             when (kind) {
                 IntelligenceEntryKind.Preference -> profile.copy(
                     userPreferences = upsert(profile.userPreferences, index, normalized)
@@ -106,8 +136,15 @@ class IntelligenceViewModel @Inject constructor(
         }
     }
 
-    fun deleteEntry(kind: IntelligenceEntryKind, index: Int) {
+    fun deleteEntry(kind: IntelligenceEntryKind, index: Int, expectedValue: String? = null) {
         mutateMemory { profile ->
+            val currentEntries = when (kind) {
+                IntelligenceEntryKind.Preference -> profile.userPreferences
+                IntelligenceEntryKind.Memory -> profile.longTermMemory
+            }
+            if (expectedValue != null && currentEntries.getOrNull(index) != expectedValue) {
+                throw IllegalStateException("The selected entry changed; reload before deleting")
+            }
             when (kind) {
                 IntelligenceEntryKind.Preference -> profile.copy(
                     userPreferences = profile.userPreferences.filterIndexed { itemIndex, _ -> itemIndex != index }
@@ -126,7 +163,9 @@ class IntelligenceViewModel @Inject constructor(
             val record = snapshot.record
             onLoaded(skill.copy(
                 name = record.getValue("display_name").jsonPrimitive.content,
-                description = record["description"]?.jsonPrimitive?.content ?: skill.description,
+                description = record.getValue("summary").jsonPrimitive.content,
+                canonicalSkillRecord = record,
+                canonicalRevision = snapshot.revision,
                 content = record.getValue("instructions_text").jsonPrimitive.content,
                 enabled = record.getValue("enabled").jsonPrimitive.content.toBooleanStrict(),
             ), snapshot)
@@ -226,7 +265,7 @@ class IntelligenceViewModel @Inject constructor(
         _uiState.update { it.copy(errorMessage = null) }
     }
 
-    private fun mutateMemory(transform: (ChatMemoryProfile) -> ChatMemoryProfile) {
+    private fun mutateMemory(onCommitted: () -> Unit = {}, transform: (ChatMemoryProfile) -> ChatMemoryProfile) {
         val state = _uiState.value
         if (state.isSaving || state.isLoadingProfile || state.profileLoadError != null) return
         val draft = transform(state.profile)
@@ -238,6 +277,7 @@ class IntelligenceViewModel @Inject constructor(
                     _uiState.update { state ->
                         state.copy(saveRevision = state.saveRevision + 1)
                     }
+                    onCommitted()
                 } catch (error: Exception) {
                     if (error is kotlinx.coroutines.CancellationException) throw error
                     _uiState.update { it.copy(errorMessage = error.localizedMessage ?: error.javaClass.simpleName) }

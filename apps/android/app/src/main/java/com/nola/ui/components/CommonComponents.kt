@@ -1,5 +1,6 @@
 package com.nola.ui.components
 
+import androidx.compose.animation.animateColorAsState
 import androidx.compose.animation.animateContentSize
 import androidx.compose.animation.core.RepeatMode
 import androidx.compose.animation.core.Spring
@@ -23,6 +24,8 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.ExperimentalLayoutApi
+import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -47,7 +50,6 @@ import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Switch
-import androidx.compose.material3.SwitchDefaults
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.IconButton
@@ -70,7 +72,6 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.graphics.graphicsLayer
-import androidx.compose.ui.graphics.luminance
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalUriHandler
 import androidx.compose.ui.platform.LocalContext
@@ -161,6 +162,10 @@ internal fun hostToolDisplayNameStringRes(toolName: String): Int? {
         "git_show" -> R.string.chat_host_tool_name_changes
         "web_search" -> R.string.chat_host_tool_name_web_search
         "web_fetch", "fetch_url" -> R.string.chat_host_tool_name_web_read
+        "github_skill_find", "device_github_skill_find" -> R.string.chat_tool_find_github_skill
+        "device_github_skill_install" -> R.string.chat_tool_install_skill_device
+        "github_skill_install" -> R.string.chat_tool_install_skill_host
+        "device_skill_read_resource" -> R.string.chat_tool_read_skill_file
         "tool_search" -> R.string.chat_host_tool_name_search_tools
         "tool_output_list", "tool_output_read", "tool_output_search", "tool_output_find" -> R.string.chat_host_tool_name_read_output
         "memory_save", "memory_search" -> R.string.chat_host_tool_name_memory
@@ -286,11 +291,18 @@ fun ThinkingBlock(
     }
     val disclosureRotation by animateFloatAsState(
         targetValue = if (expanded) 180f else 0f,
-        animationSpec = tween(
-            durationMillis = if (reduceMotion) 0 else NolaMotion.disclosure,
-            easing = NolaMotion.disclosureEasing,
-        ),
+        animationSpec = nolaTween(NolaMotion.disclosure, reduceMotion, NolaMotion.disclosureEasing),
         label = "thinking-disclosure-rotation"
+    )
+    val cardBackground by animateColorAsState(
+        targetValue = if (expanded) MaterialTheme.colorScheme.surfaceVariant else Color.Transparent,
+        animationSpec = nolaTween(NolaMotion.disclosure, reduceMotion, NolaMotion.disclosureEasing),
+        label = "thinking-card-background"
+    )
+    val cardBorder by animateColorAsState(
+        targetValue = if (expanded) MaterialTheme.colorScheme.outlineVariant else Color.Transparent,
+        animationSpec = nolaTween(NolaMotion.disclosure, reduceMotion, NolaMotion.disclosureEasing),
+        label = "thinking-card-border"
     )
     AnimatedVisibility(
         visible = thinking.isNotEmpty() || isWaiting,
@@ -304,12 +316,9 @@ fun ThinkingBlock(
             modifier = Modifier
                 .fillMaxWidth()
                 .clip(RoundedCornerShape(NolaRadius.lg))
-                .background(if (expanded) MaterialTheme.colorScheme.surfaceVariant else Color.Transparent)
+                .background(cardBackground)
                 .border(
-                    BorderStroke(
-                        0.5.dp,
-                        if (expanded) MaterialTheme.colorScheme.outlineVariant else Color.Transparent
-                    ),
+                    BorderStroke(0.5.dp, cardBorder),
                     RoundedCornerShape(NolaRadius.lg)
                 )
                 .padding(horizontal = 10.dp, vertical = 5.dp)
@@ -317,11 +326,15 @@ fun ThinkingBlock(
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .clickable(enabled = thinking.isNotBlank()) {
+                    .clip(RoundedCornerShape(8.dp))
+                    .then(if (thinking.isBlank()) Modifier else Modifier.clickable(
+                        role = androidx.compose.ui.semantics.Role.Button,
+                        onClickLabel = stringResource(if (expanded) R.string.common_collapse else R.string.common_expand),
+                    ) {
                         haptics.selection()
                         userChangedExpansion = true
                         expanded = !expanded
-                    }
+                    })
                     .heightIn(min = 48.dp)
                     .padding(horizontal = 4.dp, vertical = 8.dp),
                 verticalAlignment = Alignment.CenterVertically
@@ -549,8 +562,7 @@ fun HostToolCard(
                         color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.8f),
                         maxLines = if (expanded) 6 else 1,
                         overflow = TextOverflow.Ellipsis,
-                        modifier = Modifier.animateContentSize(tween(if (reduceMotion) 0 else NolaMotion.disclosure,
-                            easing = NolaMotion.disclosureEasing))
+                        modifier = Modifier.animateContentSize(nolaTween(NolaMotion.disclosure, reduceMotion, NolaMotion.disclosureEasing))
                     )
                 }
                 AnimatedVisibility(visible = expanded, enter = nolaDisclosureEnter(reduceMotion), exit = nolaDisclosureExit(reduceMotion)) {
@@ -618,13 +630,14 @@ fun HostToolCard(
                         }
                         if (!containsSensitiveData && (screenshotUri != null || finalUri != null || downloadUri != null)) {
                             Spacer(modifier = Modifier.height(6.dp))
-                            Row(
+                            @OptIn(ExperimentalLayoutApi::class)
+                            FlowRow(
                                 modifier = Modifier.fillMaxWidth(),
-                                horizontalArrangement = Arrangement.spacedBy(8.dp)
+                                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                                verticalArrangement = Arrangement.spacedBy(4.dp)
                             ) {
                                 if (screenshotUri != null) {
                                     TextButton(
-                                        modifier = Modifier.weight(1f),
                                         onClick = { runCatching { uriHandler.openUri(screenshotUri) } }
                                     ) {
                                         Text(
@@ -636,7 +649,6 @@ fun HostToolCard(
                                 }
                                 if (finalUri != null) {
                                     TextButton(
-                                        modifier = Modifier.weight(1f),
                                         onClick = { runCatching { uriHandler.openUri(finalUri) } }
                                     ) {
                                         Text(
@@ -648,7 +660,6 @@ fun HostToolCard(
                                 }
                                 if (downloadUri != null) {
                                     TextButton(
-                                        modifier = Modifier.weight(1f),
                                         onClick = { runCatching { uriHandler.openUri(downloadUri) } }
                                     ) {
                                         Text(
@@ -954,8 +965,14 @@ fun PermissionDialog(
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                 maxLines = 1, overflow = TextOverflow.Ellipsis,
             )
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                TextButton(onClick = { showingDetails = true }) { Text(stringResource(R.string.canonical_details)) }
+            @OptIn(ExperimentalLayoutApi::class)
+            FlowRow(
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                verticalArrangement = Arrangement.spacedBy(4.dp)
+            ) {
+                TextButton(onClick = { showingDetails = true }, modifier = Modifier.testTag("permission.details.$permissionIdentity")) {
+                    Text(stringResource(R.string.canonical_details))
+                }
                 if (onProvideInstruction != null) {
                     TextButton(onClick = { editingInstruction = !editingInstruction }, enabled = !historyFull) {
                         Text(stringResource(R.string.permission_add_instruction))
@@ -981,22 +998,39 @@ fun PermissionDialog(
                 }
             }
             Spacer(modifier = Modifier.height(12.dp))
+            val configuration = androidx.compose.ui.platform.LocalConfiguration.current
+            val stackPrimaryButtons = configuration.screenWidthDp < 360 || configuration.fontScale > 1.2f
             Column(
                 modifier = Modifier.fillMaxWidth(),
                 verticalArrangement = Arrangement.spacedBy(8.dp)
             ) {
-                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                if (stackPrimaryButtons) {
                     Button(onClick = {
                         haptics.primaryAction()
                         onAllow()
-                    }, enabled = allowEnabled, modifier = Modifier.weight(1f).heightIn(min = 48.dp).testTag("permission.allow-once.$permissionIdentity")) {
+                    }, enabled = allowEnabled, modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp).testTag("permission.allow-once.$permissionIdentity")) {
                         Text(allowLabel)
                     }
                     OutlinedButton(onClick = {
                         haptics.warning()
                         onDeny()
-                    }, modifier = Modifier.weight(1f).heightIn(min = 48.dp)) {
+                    }, modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp)) {
                         Text(stringResource(R.string.common_deny))
+                    }
+                } else {
+                    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        Button(onClick = {
+                            haptics.primaryAction()
+                            onAllow()
+                        }, enabled = allowEnabled, modifier = Modifier.weight(1f).heightIn(min = 48.dp).testTag("permission.allow-once.$permissionIdentity")) {
+                            Text(allowLabel)
+                        }
+                        OutlinedButton(onClick = {
+                            haptics.warning()
+                            onDeny()
+                        }, modifier = Modifier.weight(1f).heightIn(min = 48.dp)) {
+                            Text(stringResource(R.string.common_deny))
+                        }
                     }
                 }
                 if (conversationAllowLabel != null && onAllowConversation != null) {
@@ -1019,26 +1053,17 @@ fun NolaSwitch(
     modifier: Modifier = Modifier,
     enabled: Boolean = true,
 ) {
-    val darkTheme = MaterialTheme.colorScheme.background.luminance() < 0.5f
+    val haptics = rememberNolaHaptics()
     Switch(
         checked = checked,
-        onCheckedChange = onCheckedChange,
+        onCheckedChange = onCheckedChange?.let { callback ->
+            { next ->
+                haptics.selection()
+                callback(next)
+            }
+        },
         modifier = modifier,
         enabled = enabled,
-        colors = SwitchDefaults.colors(
-            checkedThumbColor = Color.White,
-            checkedTrackColor = if (darkTheme) Color(0xFF2E8B57) else Color(0xFF237047),
-            checkedBorderColor = Color.Transparent,
-            uncheckedThumbColor = if (darkTheme) Color(0xFFF2F0EB) else Color.White,
-            uncheckedTrackColor = if (darkTheme) Color(0xFF3A3935) else Color(0xFFDDDAD3),
-            uncheckedBorderColor = if (darkTheme) Color(0xFF52504B) else Color(0xFFC4C0B7),
-            disabledCheckedThumbColor = Color.White.copy(alpha = 0.72f),
-            disabledCheckedTrackColor = (if (darkTheme) Color(0xFF2E8B57) else Color(0xFF237047)).copy(alpha = 0.45f),
-            disabledCheckedBorderColor = Color.Transparent,
-            disabledUncheckedThumbColor = (if (darkTheme) Color(0xFFF2F0EB) else Color.White).copy(alpha = 0.72f),
-            disabledUncheckedTrackColor = (if (darkTheme) Color(0xFF3A3935) else Color(0xFFDDDAD3)).copy(alpha = 0.45f),
-            disabledUncheckedBorderColor = (if (darkTheme) Color(0xFF52504B) else Color(0xFFC4C0B7)).copy(alpha = 0.45f),
-        ),
     )
 }
 
@@ -1051,15 +1076,24 @@ fun NolaDisclosureBar(
     enabled: Boolean = true,
     subtitle: String? = null,
 ) {
+    val haptics = rememberNolaHaptics()
     val reduceMotion = rememberReduceMotionEnabled()
     Row(
         modifier = modifier
             .fillMaxWidth()
-            .heightIn(min = 44.dp)
+            .heightIn(min = 48.dp)
             .clip(RoundedCornerShape(10.dp))
             .background(MaterialTheme.colorScheme.surfaceContainer)
             .border(0.5.dp, MaterialTheme.colorScheme.outlineVariant, RoundedCornerShape(10.dp))
-            .clickable(enabled = enabled, role = androidx.compose.ui.semantics.Role.Button, onClick = onToggle)
+            .clickable(
+                enabled = enabled,
+                role = androidx.compose.ui.semantics.Role.Button,
+                onClickLabel = stringResource(if (expanded) R.string.common_collapse else R.string.common_expand),
+                onClick = {
+                    haptics.selection()
+                    onToggle()
+                },
+            )
             .padding(horizontal = 12.dp, vertical = 10.dp),
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(8.dp),
@@ -1100,11 +1134,16 @@ fun NolaDropdownBar(
     Row(
         modifier = modifier
             .fillMaxWidth()
-            .heightIn(min = 44.dp)
+            .heightIn(min = 48.dp)
             .clip(RoundedCornerShape(10.dp))
             .background(MaterialTheme.colorScheme.surfaceContainer)
             .border(0.5.dp, MaterialTheme.colorScheme.outlineVariant, RoundedCornerShape(10.dp))
-            .clickable(enabled = enabled, role = androidx.compose.ui.semantics.Role.DropdownList, onClick = onClick)
+            .clickable(
+                enabled = enabled,
+                role = androidx.compose.ui.semantics.Role.DropdownList,
+                onClickLabel = stringResource(if (expanded) R.string.common_collapse else R.string.common_expand),
+                onClick = onClick,
+            )
             .padding(horizontal = 12.dp, vertical = 10.dp),
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(8.dp),

@@ -1,5 +1,6 @@
 package com.nola.ui.screen.scheduled
 
+import com.nola.ui.components.dismissImeOnBlankTap
 import android.text.format.DateFormat
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
@@ -73,12 +74,16 @@ internal fun ScheduleTimeFields(
             enabled = enabled,
             modifier = Modifier.testTag("schedule-zone")
         )
-        Text(stringResource(R.string.scheduled_zone_wall_time), style = MaterialTheme.typography.bodySmall,
-            color = MaterialTheme.colorScheme.onSurfaceVariant)
-        if (frequency != "once") {
-            Text(stringResource(R.string.scheduled_recurring_dst), style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant)
+        val infoNote = if (frequency != "once") {
+            stringResource(R.string.scheduled_zone_wall_time) + " " + stringResource(R.string.scheduled_recurring_dst)
+        } else {
+            stringResource(R.string.scheduled_zone_wall_time)
         }
+        Text(
+            infoNote,
+            style = MaterialTheme.typography.labelSmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
         when {
             zoneId == null -> Text(stringResource(R.string.scheduled_timezone_invalid), color = MaterialTheme.colorScheme.error)
             validation is ScheduleTimeValidation.Gap -> Text(stringResource(R.string.scheduled_dst_gap),
@@ -95,8 +100,14 @@ internal fun ScheduleTimeFields(
                 }
             }
             validation is ScheduleTimeValidation.Valid && frequency == "once" -> {
-                // Keeps the selected occurrence legible after resolving an overlap.
-                Text(stringResource(R.string.scheduled_exact_time, validation.wireValue),
+                val formattedExact = remember(validation.wireValue, zone) {
+                    val formatter = DateTimeFormatter.ofLocalizedDateTime(FormatStyle.MEDIUM, FormatStyle.SHORT)
+                    runCatching { java.time.OffsetDateTime.parse(validation.wireValue).format(formatter) }.getOrNull()
+                        ?: runCatching { java.time.ZonedDateTime.parse(validation.wireValue).format(formatter) }.getOrNull()
+                        ?: runCatching { LocalDateTime.parse(validation.wireValue).format(formatter) }.getOrNull()
+                        ?: validation.wireValue
+                }
+                Text(stringResource(R.string.scheduled_exact_time, formattedExact),
                     style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
             }
             value.isNotBlank() && validation is ScheduleTimeValidation.Invalid -> Text(
@@ -157,10 +168,12 @@ private fun ScheduleZoneDialog(zone: String, onDismiss: () -> Unit, onConfirm: (
     var query by rememberSaveable { mutableStateOf("") }
     val zones = remember { (ZoneId.getAvailableZoneIds() + "UTC").sorted() }
     val visible = remember(query) { zones.filter { it.contains(query.trim(), ignoreCase = true) } }
-    AlertDialog(onDismissRequest = onDismiss, title = { Text(stringResource(R.string.scheduled_timezone)) }, text = {
+    AlertDialog(
+        modifier = Modifier.dismissImeOnBlankTap().imePadding(),
+        onDismissRequest = onDismiss, title = { Text(stringResource(R.string.scheduled_timezone)) }, text = {
         Column {
             OutlinedTextField(query, onValueChange = { query = it }, singleLine = true,
-                label = { Text(stringResource(R.string.scheduled_zone_search)) }, modifier = Modifier.testTag("schedule-zone-search"))
+                label = { Text(stringResource(R.string.scheduled_zone_search)) }, modifier = Modifier.fillMaxWidth().testTag("schedule-zone-search"))
             TextButton(onClick = { selected = ZoneId.systemDefault().id }) { Text(stringResource(R.string.scheduled_zone_device, ZoneId.systemDefault().id)) }
             Text(stringResource(R.string.scheduled_zone_selected, selected), style = MaterialTheme.typography.bodySmall)
             LazyColumn(Modifier.heightIn(max = 280.dp)) {

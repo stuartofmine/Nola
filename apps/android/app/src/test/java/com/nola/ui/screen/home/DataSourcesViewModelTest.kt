@@ -12,6 +12,7 @@ import kotlinx.coroutines.test.resetMain
 import kotlinx.coroutines.test.setMain
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
@@ -97,6 +98,34 @@ class DataSourcesViewModelTest {
             assertEquals(2, reads)
             assertEquals(7, viewModel.uiState.value.enabledDocumentCount)
             assertFalse(viewModel.uiState.value.isRefreshing)
+        } finally {
+            owner.clear()
+            Dispatchers.resetMain()
+        }
+    }
+
+    @Test
+    fun successfulRefreshClearsStaleOperationErrorWithoutExplicitClear() = runTest {
+        val dispatcher = StandardTestDispatcher(testScheduler)
+        Dispatchers.setMain(dispatcher)
+        val owner = ViewModelStore()
+        try {
+            var reads = 0
+            val viewModel = DataSourcesViewModel(DataSourcesUiOperations(
+                load = { _, previous ->
+                    reads++
+                    if (reads == 1) error("Snapshot unavailable")
+                    previous.copy(isRefreshing = false, operationError = null, enabledDocumentCount = 4)
+                }, save = {}, delete = {}, setEnabled = { _, _ -> }
+            ), dispatcher)
+            owner.put("sources", viewModel)
+            runCurrent()
+            assertEquals("Snapshot unavailable", viewModel.uiState.value.operationError)
+            viewModel.refresh()
+            runCurrent()
+            assertEquals(2, reads)
+            assertEquals(4, viewModel.uiState.value.enabledDocumentCount)
+            assertNull(viewModel.uiState.value.operationError)
         } finally {
             owner.clear()
             Dispatchers.resetMain()

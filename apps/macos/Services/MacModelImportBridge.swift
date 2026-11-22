@@ -24,8 +24,9 @@ nonisolated struct MacModelImportResult: Decodable, Identifiable, Sendable {
     var id: String { candidate_id }
 }
 
-nonisolated struct MacModelProbeConfirmation: Codable, Sendable {
+nonisolated struct MacModelProbeConfirmation: Codable, Sendable, Identifiable {
     let request_id: String
+    var id: String { request_id }
     let connection_id: String
     let expected_revision: Int64
     let account_id: String?
@@ -71,6 +72,7 @@ nonisolated final class MacModelImportBridge: @unchecked Sendable {
         // Child errors are mapped to fixed service errors, never forwarded.
         process.standardError = FileHandle.nullDevice
         try process.run()
+        MacOwnedChildProcessRegistry.shared.register(process)
     }
 
     #if DEBUG
@@ -87,7 +89,11 @@ nonisolated final class MacModelImportBridge: @unchecked Sendable {
     deinit { cancel() }
     func cancel() {
         try? input.close()
-        if process.isRunning { process.terminate() }
+        if process.isRunning {
+            MacOwnedChildProcessRegistry.shared.stop(process)
+        } else {
+            MacOwnedChildProcessRegistry.shared.unregister(process)
+        }
     }
 
     func preview(source: String, path: String, credentialPath: String?, includeCredentials: Bool, allowEnvironment: Bool) async throws -> MacModelImportPlan {

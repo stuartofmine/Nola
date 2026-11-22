@@ -1303,7 +1303,14 @@ impl AgentRuntime {
                         self.session.record_item(item);
                         let item = AgentItem::ToolResult { id: ItemId::from_string(self.session.allocate_id("tool_result")),
                             call_id: call.call_id.clone(), name: call.name.clone(),
-                            output: match &result { Ok((value,_)) => value.clone(), Err(error) => json!({"error":error}) },
+                            output: match &result {
+                                Ok((value,_)) => value.clone(),
+                                Err(error) if control == super::task_scope::TOOL => json!({
+                                    "error": error,
+                                    "next_action": "The previous scope is still in effect. Correct task_scope_update before replying. To keep that scope, submit requirements=[] with a retain disposition for each current rN. To extend it, retain the existing requirements and add distinct new claims. A plain final reply does not settle this rejected control."
+                                }),
+                                Err(error) => json!({"error":error}),
+                            },
                             is_error: result.is_err(), full_output_ref: None, artifacts: Vec::new() };
                         events.push(RuntimeEvent::ItemCompleted { turn_id: turn_id.clone(), item: item.clone() });
                         self.session.record_item(item);
@@ -2772,10 +2779,13 @@ impl AgentRuntime {
                     events.push(RuntimeEvent::GoalUpdated { goal_projection_revision: self.session.goal_projection.revision, goal: self.session.goal_projection.clone() });
                 }
                 let live_turn = self.session.execution.active_turn.as_ref().filter(|turn| !turn.status.is_terminal());
-                let owns_live_goal = live_turn.is_some_and(|turn| self.session.goal_projection.execution_owner(turn.turn_id.as_str()).is_some());
-                // A Goal may be queued behind another ordinary Run. Its pause
-                // commits, but cannot interrupt that unrelated execution.
-                if accepted && (!guarded_goal || owns_live_goal) {
+                // Pause and cancel can both commit while the same Run awaits its
+                // physical stop. Keep the original cancellation identity and its
+                // pending Host acknowledgements. A queued Goal cannot stop an unrelated Run.
+                let needs_goal_interrupt = live_turn.is_some_and(|turn|
+                    turn.status != AgentTurnStatus::Cancelling
+                        && self.session.goal_projection.execution_owner(turn.turn_id.as_str()).is_some());
+                if accepted && (!guarded_goal || needs_goal_interrupt) {
                     self.cancel_with_identity(cancellation_id, reason, &mut events, &mut effects)?;
                 }
             }

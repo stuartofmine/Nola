@@ -26,7 +26,8 @@ struct MainTabView: View {
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
     @Environment(\.locale) private var locale
     @Environment(\.layoutDirection) private var layoutDirection
-    @State private var chatDetailPresented = false
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @Namespace private var tabPillNamespace
     @EnvironmentObject var container: ServiceContainer
     @SceneStorage("main.selectedTab") private var selectedTabRawValue = NolaTab.chat.rawValue
     @State private var overrideSelectedTab: NolaTab?
@@ -35,6 +36,7 @@ struct MainTabView: View {
     @State private var modelConfigurationOwner: UUID?
     @State private var informationPath: [IOSWorkspaceDestination] = []
     @State private var informationRequests: [IOSInformationNavigationRequest] = []
+    @State private var historySelection: IOSReadOnlyConversationHistory.Selection?
     @State private var requestedConversationID: UUID?
     @State private var pendingNotifDeepLink: String? = nil
 
@@ -46,8 +48,12 @@ struct MainTabView: View {
         Group {
             if horizontalSizeClass == .compact {
                 IOSCompactTabContainer(selection: selectedTabBinding.wrappedValue,
-                    contentRevision: "\(colorScheme)-\(dynamicTypeSize)-\(locale.identifier)-\(layoutDirection)") { tab in
-                    AnyView(tabContent(tab)
+                    contentRevision: "\(colorScheme)-\(dynamicTypeSize)-\(locale.identifier)-\(layoutDirection)-\(selectedTabBinding.wrappedValue.rawValue)") { tab in
+                    AnyView(VStack(spacing: 0) {
+                        tabContent(tab, compact: true)
+                            .frame(maxWidth: .infinity, maxHeight: .infinity)
+                        if tab != .chat { compactNavigation(for: selectedTabBinding.wrappedValue) }
+                    }
                         .environmentObject(container)
                         .environment(\.colorScheme, colorScheme)
                         .environment(\.dynamicTypeSize, dynamicTypeSize)
@@ -57,11 +63,7 @@ struct MainTabView: View {
                         .tint(DesignTokens.actionColor)
                         .toggleStyle(NolaSwitchToggleStyle()))
                 }
-                    .safeAreaInset(edge: .bottom, spacing: 0) {
-                        if selectedTabBinding.wrappedValue != .chat || !chatDetailPresented {
-                            IOSKeyboardAwareBottomBar { bottomNavigation }
-                        }
-                    }
+                .ignoresSafeArea(.container)
             } else if #available(iOS 18.0, *) {
                 tabs
                     .tabViewStyle(.sidebarAdaptable)
@@ -85,7 +87,16 @@ struct MainTabView: View {
             }
         }
         .onReceive(NotificationCenter.default.publisher(for: .nolaOpenChatTab)) { note in
-            requestedConversationID = note.object as? UUID
+            if let exactID = note.object as? String {
+                guard let id = UUID(uuidString: exactID) else { return }
+                guard id.uuidString == exactID else {
+                    historySelection = .init(id: exactID)
+                    return
+                }
+                requestedConversationID = id
+            } else {
+                requestedConversationID = note.object as? UUID
+            }
             select(.chat)
         }
         .onReceive(NotificationCenter.default.publisher(for: .nolaOpenModelTab)) { _ in
@@ -103,6 +114,10 @@ struct MainTabView: View {
             if let destination = IOSWorkspaceDestination(page: note.object as? Int ?? -1) {
                 enqueueInformation(destination)
             }
+        }
+        .sheet(item: $historySelection) { selection in
+            IOSReadOnlyConversationHistory(selection: selection, runtime: container.applicationRuntime)
+                .environmentObject(container)
         }
         .sheet(item: $managementDestination, onDismiss: { pendingNotifDeepLink = nil; modelConfigurationFromChat = false; modelConfigurationOwner = nil }) { destination in
             IOSWorkspaceManagementSheet(destination: destination,
@@ -135,11 +150,13 @@ struct MainTabView: View {
     }
 
     @ViewBuilder
-    private func tabContent(_ tab: NolaTab) -> some View {
+    private func tabContent(_ tab: NolaTab, compact: Bool = false) -> some View {
         switch tab {
         case .chat:
-            ChatNavigationView(requestedConversationID: $requestedConversationID, detailPresented: $chatDetailPresented)
-                .accessibilityIdentifier("screen.chat")
+            ChatNavigationView(requestedConversationID: $requestedConversationID) {
+                if compact { compactNavigation(for: .chat) }
+            }
+            .accessibilityIdentifier("screen.chat")
         case .activity:
             NavigationStack {
                 IOSConversationActivityView(isRootTab: true)
@@ -151,27 +168,53 @@ struct MainTabView: View {
         }
     }
 
-    private var bottomNavigation: some View {
+    private func compactNavigation(for tab: NolaTab) -> some View {
+        IOSKeyboardAwareBottomBar { bottomNavigation(selectedTab: tab) }
+    }
+
+    private func bottomNavigation(selectedTab: NolaTab) -> some View {
         HStack(spacing: 0) {
             ForEach([NolaTab.chat, .activity, .information, .settings], id: \.self) { tab in
-                let isSelected = selectedTabBinding.wrappedValue == tab
-                Button { selectedTabBinding.wrappedValue = tab } label: {
-                    VStack(spacing: 4) {
-                        Image(tab.icon).renderingMode(.template).resizable().scaledToFit().frame(width: 22, height: 22)
-                        Text(tab.title).font(.caption2.weight(isSelected ? .semibold : .regular))
+                let isSelected = selectedTab == tab
+                Button {
+                    withAnimation(reduceMotion ? nil : DesignTokens.disclosureAnimation) {
+                        selectedTabBinding.wrappedValue = tab
+                    }
+                } label: {
+                    VStack(spacing: 2) {
+                        Image(tab.icon).renderingMode(.template).resizable().scaledToFit()
+                            .frame(width: 21, height: 21)
+                            .frame(width: 44, height: 28)
+                            .background {
+                                if isSelected {
+                                    let pillFill = colorScheme == .dark ? Color.white.opacity(0.10) : DesignTokens.accentSubtleColor
+                                    if reduceMotion {
+                                        Capsule().fill(pillFill)
+                                    } else {
+                                        Capsule()
+                                            .fill(pillFill)
+                                            .matchedGeometryEffect(id: "main.tab.activePill", in: tabPillNamespace)
+                                    }
+                                }
+                            }
+                        Text(tab.title)
+                            .font(.caption2.weight(isSelected ? .semibold : .regular))
+                            .lineLimit(1)
+                            .minimumScaleFactor(0.8)
                     }
                     .foregroundStyle(isSelected ? DesignTokens.actionColor : DesignTokens.secondaryContentColor)
-                    .frame(minWidth: 64, minHeight: 50)
+                    .frame(maxWidth: .infinity, minHeight: 50)
+                    .contentShape(Rectangle())
                 }
-                .frame(maxWidth: .infinity)
                 .accessibilityLabel(Text(tab.title))
                 .accessibilityIdentifier("main.tab.\(tab.rawValue)")
                 .accessibilityAddTraits(isSelected ? .isSelected : [])
             }
         }
+        .animation(reduceMotion ? nil : DesignTokens.disclosureAnimation, value: selectedTab)
         .buttonStyle(.plain).padding(.horizontal, 8).padding(.top, 6).padding(.bottom, 4)
         .background(DesignTokens.backgroundColor.ignoresSafeArea(edges: .bottom))
-        .overlay(alignment: .top) { Rectangle().fill(DesignTokens.borderColor).frame(height: 0.5) }
+        .overlay(alignment: .top) { Rectangle().fill(DesignTokens.hairlineBorderColor(for: colorScheme)).frame(height: 0.5) }
         .accessibilityElement(children: .contain)
         .accessibilityAddTraits(.isTabBar)
     }
@@ -223,7 +266,7 @@ enum NolaTab: String, Hashable, CaseIterable {
 
     var icon: String {
         switch self {
-        case .activity: return "nola-clock"
+        case .activity: return "nola-bell"
         case .chat: return "nola-chat"
         case .information: return "nola-folder"
         case .settings: return "nola-settings"
@@ -267,10 +310,10 @@ struct EdgeBorder: Shape {
 }
 
 /// Navigation owns pages; ChatManager and the conversation draft store own work.
-struct ChatNavigationView: View {
+struct ChatNavigationView<RootFooter: View>: View {
     @EnvironmentObject private var container: ServiceContainer
     @Binding var requestedConversationID: UUID?
-    @Binding var detailPresented: Bool
+    @ViewBuilder let rootFooter: () -> RootFooter
     @State private var path: [UUID] = []
     @State private var readingPositions = ChatReadingPositions()
     @State private var search = ""
@@ -283,19 +326,23 @@ struct ChatNavigationView: View {
                 if container.chatManager.currentConversationId != id {
                     container.chatManager.currentConversationId = id
                 }
-                if path.last != id { path.append(id) }
+                if path.last != id {
+                    path.append(id)
+                }
             }, onContinueExpert: { request in
                 expertContinuation = request
                 container.chatManager.currentConversationId = request.parentID
                 path = [request.parentID]
             })
+            // The tab bar travels with the list during push and interactive pop.
+            // The conversation gets its final viewport on its first frame.
+            .safeAreaInset(edge: .bottom, spacing: 0, content: rootFooter)
             .navigationDestination(for: UUID.self) { id in
                 ChatView(readingPositions: readingPositions, expertHistoryContinuation: expertContinuation).id(id)
                     .toolbar(.hidden, for: .tabBar)
             }
         }
         .onChange(of: path, initial: true) { _, value in
-            detailPresented = !value.isEmpty
             if value.isEmpty { expertContinuation = nil }
         }
         .onChange(of: requestedConversationID, initial: true) { _, id in

@@ -14,9 +14,7 @@
 
     function paint(node: HTMLElement, piece: RevealPiece, now: number) {
         const remaining = reveal.remaining(piece, now);
-        node.style.opacity = String(1 - .92 * remaining);
-        node.style.top = `${3 * remaining}px`;
-        node.style.filter = remaining > .08 ? `blur(${.65 * remaining}px)` : 'none';
+        node.style.opacity = String(1 - .85 * remaining);
     }
     function register(node: HTMLElement, piece: RevealPiece) {
         nodes.set(piece.id, { node, piece });
@@ -56,9 +54,7 @@
 {view.settled}{#each view.pieces as piece (piece.id)}<span class="fresh" use:register={piece}>{piece.text}</span>{/each}
 
 <style>
-    /* Relative positioning preserves normal wrapping, shaping and selection. */
-    .fresh { position: relative; }
     @media (prefers-reduced-motion: reduce) {
-        .fresh { opacity: 1 !important; filter: none !important; top: 0 !important; }
+        .fresh { opacity: 1 !important; }
     }
 </style>

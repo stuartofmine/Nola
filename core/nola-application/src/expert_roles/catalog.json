@@ -3,8 +3,10 @@
     "features": {
         "reasoning_effort": true,
         "explicit_generation_reasoning": true,
+        "external_expert_executors": true,
         "rejoin": true,
-        "main_agent_delegation": true
+        "main_agent_delegation": true,
+        "inline_expert_mentions": true
     },
     "templates": [
         {

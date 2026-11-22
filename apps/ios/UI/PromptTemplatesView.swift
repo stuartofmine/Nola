@@ -49,11 +49,8 @@ private struct PromptTemplateLibraryContent: View {
             let current = (try? resolution.get()).flatMap { matchesSearch($0) ? $0 : nil }
             if case .failure(let error) = resolution { Text(error.localizedDescription).foregroundStyle(.red) }
             if let templateError { Text(templateError).foregroundStyle(.red) }
-            let currentLang = Locale.current.language.languageCode?.identifier ?? "en"
-            let builtIn = service.templates.filter { template in
-                guard template.isBuiltIn && template.id != current?.id && service.canReadTemplate(template) else { return false }
-                let language = template.language ?? ""
-                return (language.isEmpty || language.hasPrefix(currentLang)) && matchesSearch(template)
+            let builtIn = service.displayedTemplates.filter { template in
+                template.isBuiltIn && template.id != current?.id && service.canReadTemplate(template) && matchesSearch(template)
             }
             let custom = service.templates.filter {
                 !$0.isBuiltIn && $0.id != current?.id && service.canReadTemplate($0) && matchesSearch($0)
@@ -404,9 +401,10 @@ struct AddPromptTemplateSheet: View {
                                 Button(variable.rawValue) {
                                     content += " \(variable.rawValue)"
                                 }
+                                .buttonStyle(.plain)
                                 .font(.caption.monospaced())
                                 .padding(.horizontal, 10)
-                                .frame(minHeight: 40)
+                                .frame(minHeight: 44)
                                 .background(DesignTokens.elevatedColor)
                                 .cornerRadius(6)
                             }
@@ -528,12 +526,19 @@ struct EditPromptTemplateSheet: View {
     @Environment(\.dismiss) var dismiss
 
     let template: PromptTemplate
-    @State private var name = ""
-    @State private var description = ""
-    @State private var content = ""
+    @State private var name: String
+    @State private var description: String
+    @State private var content: String
     @State private var warnings: [String] = []
     @State private var showingDiscardConfirmation = false
     @State private var saveError: String?
+
+    init(template: PromptTemplate) {
+        self.template = template
+        _name = State(initialValue: template.name)
+        _description = State(initialValue: template.description)
+        _content = State(initialValue: template.content)
+    }
 
     var body: some View {
         NavigationStack {
@@ -553,9 +558,10 @@ struct EditPromptTemplateSheet: View {
                                 Button(variable.rawValue) {
                                     content += " \(variable.rawValue)"
                                 }
+                                .buttonStyle(.plain)
                                 .font(.caption.monospaced())
                                 .padding(.horizontal, 10)
-                                .frame(minHeight: 40)
+                                .frame(minHeight: 44)
                                 .background(DesignTokens.elevatedColor)
                                 .cornerRadius(6)
                             }
@@ -615,11 +621,6 @@ struct EditPromptTemplateSheet: View {
                     }
                     .disabled(!canSave)
                 }
-            }
-            .onAppear {
-                name = template.name
-                description = template.description
-                content = template.content
             }
             .onChange(of: content) { _, newValue in
                 validateContent(newValue)

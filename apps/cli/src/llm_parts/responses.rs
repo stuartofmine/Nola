@@ -3,8 +3,11 @@
 use nola_host_protocol::siwc_tools;
 
 use std::collections::BTreeMap;
+#[cfg(test)]
 use std::io::{BufRead, BufReader};
+#[cfg(test)]
 use std::sync::mpsc;
+#[cfg(test)]
 use std::thread;
 
 use reqwest::header::ACCEPT;
@@ -15,9 +18,12 @@ use super::contracts::{
     ToolCall,
 };
 use super::stream_state::capture_openai_response_identity;
+#[cfg(test)]
+use super::transport::recv_stream_line;
 use super::transport::{
-    build_stream_client, llm_cancelled_message, recv_stream_line, response_retry_after_ms,
-    send_request_with_cancellation, stream_idle_timeout, SendRequestResult, StreamLineRecv,
+    build_async_native_stream_client, build_async_stream_client, llm_cancelled_message,
+    llm_http_timeout, send_async_request_with_cancellation, stream_idle_timeout, AsyncSendResult,
+    StreamLineRecv,
 };
 
 pub fn model_route_identity(cfg: &LlmConfig) -> String {
@@ -318,6 +324,19 @@ fn completed_response_text(items: &[Value], kind: &str) -> String {
         .collect()
 }
 
+fn completed_reasoning_summary_text(items: &[Value]) -> String {
+    items
+        .iter()
+        .filter(|item| item["type"] == "reasoning")
+        .filter_map(|item| item["summary"].as_array())
+        .flat_map(|parts| parts.iter())
+        .filter_map(|part| match part["type"].as_str() {
+            Some("summary_text") => part["text"].as_str(),
+            _ => None,
+        })
+        .collect()
+}
+
 fn finish_streamed_text<F>(streamed: &mut String, completed: &str, emit: F) -> Result<(), String>
 where
     F: FnOnce(String) -> Result<(), String>,
@@ -422,45 +441,55 @@ where F: FnMut(LlmEvent) -> Result<(), String> {
     if credential.as_ref().is_some_and(|value| value.resource_url().trim_end_matches('/') != "https://api.openai.com/v1") {
         return Err("SIWC credential resource mismatch".into());
     }
-    let client = if siwc { super::transport::build_native_stream_client()? } else { build_stream_client(url.host_str(), None)? };
+    let (runtime, client) = if siwc {
+        build_async_native_stream_client()?
+    } else {
+        build_async_stream_client(url.host_str(), None)?
+    };
     let mut request = client
         .post(url)
         .header(ACCEPT, "text/event-stream")
         .json(&body);
-    if let Some(timeout) = timeout { request = request.timeout(timeout); }
     let bearer = credential.as_ref().map(|value| value.bearer()).unwrap_or(&cfg.api_key);
     if !bearer.is_empty() {
         request = request.bearer_auth(bearer);
     }
-    super::diagnostics::record_prepared_request(&request, &[bearer]);
+    super::diagnostics::record_prepared_async_request(&request, &[bearer]);
     super::diagnostics::log_cache_dispatch(body);
-    let response = match send_request_with_cancellation(request, &cfg.cancellation) {
-        SendRequestResult::Response(response) => response,
-        SendRequestResult::Error(error) => return Err(error.to_string().into()),
-        SendRequestResult::WorkerDisconnected => return Err(ProviderAttemptError::WorkerDisconnected),
-        SendRequestResult::Cancelled => return Err(llm_cancelled_message().into()),
+    let http_timeout = timeout.or_else(llm_http_timeout);
+    let mut response = match send_async_request_with_cancellation(
+        runtime,
+        request,
+        http_timeout,
+        http_timeout,
+        &cfg.cancellation,
+    ) {
+        AsyncSendResult::Response(response) => response,
+        AsyncSendResult::Error(error) => return Err(error.into()),
+        AsyncSendResult::Cancelled => return Err(llm_cancelled_message().into()),
     };
     if !response.status().is_success() {
+        let status = response.status().as_u16();
+        let retry_after_ms = response.retry_after_ms();
+        let detail = if siwc {
+            "SIWC request rejected".into()
+        } else {
+            response.text(&cfg.cancellation).unwrap_or_default()
+        };
         return Err(ProviderAttemptError::Http {
-            status: response.status().as_u16(),
-            retry_after_ms: response_retry_after_ms(&response),
-            detail: if siwc { "SIWC request rejected".into() } else { response.text().unwrap_or_default() },
+            status,
+            retry_after_ms,
+            detail,
         });
     }
-    let (tx, rx) = mpsc::sync_channel(32);
-    let cancel = cfg.cancellation.clone();
-    thread::spawn(move || {
-        for line in BufReader::new(response).lines() {
-            if cancel.is_requested() {
-                break;
-            }
-            if tx.send(line.map_err(|e| e.to_string())).is_err() {
-                break;
-            }
-        }
-    });
     let frozen_tools = if siwc { Some(siwc_tools::FrozenSiwcTools::from_body(body)?) } else { None };
-    let result = read_responses_stream_with_tools(cfg, &rx, stream_idle_timeout(), frozen_tools.as_ref(), emit)?;
+    let result = read_responses_stream_from_reader(
+        cfg,
+        stream_idle_timeout(),
+        frozen_tools.as_ref(),
+        |remaining, cancellation| response.next_line(remaining, cancellation, None),
+        emit,
+    )?;
     if siwc { validate_siwc_completion(&result)?; }
     Ok(result)
 }
@@ -495,6 +524,30 @@ fn validate_siwc_body(body: &Value, expected_model: &str) -> Result<(), String> 
     Ok(())
 }
 
+/// Only known protocol codes cross the boundary. Provider messages may contain
+/// request text or credentials and cannot authorize retries.
+fn responses_failure_event(event: &Value, output_started: bool) -> ProviderAttemptError {
+    let wire_code = event.pointer("/response/error/code")
+        .or_else(|| event.pointer("/error/code")).or_else(|| event.get("code"))
+        .and_then(Value::as_str);
+    let (code, message, transient) = match wire_code {
+        Some("server_error" | "server_is_overloaded" | "service_unavailable") =>
+            ("provider_unavailable", "The provider is temporarily unavailable. Try again shortly.", true),
+        Some("rate_limit_exceeded" | "slow_down") =>
+            ("rate_limited", "The provider rate limit was reached. Wait before retrying.", true),
+        Some("insufficient_quota" | "subscription_sharing_usage_limit_exceeded") =>
+            ("quota_exhausted", "The provider usage limit was reached. Check the selected account's limits.", false),
+        Some("context_length_exceeded") =>
+            ("context_length_exceeded", "The model context window was exceeded.", false),
+        Some("invalid_prompt" | "invalid_request_error") =>
+            ("invalid_model_request", "The provider rejected the request. Review the input and model settings.", false),
+        Some("content_filter" | "bio_policy" | "misalignment_policy_violation" | "image_content_policy_violation") =>
+            ("content_filtered", "The provider stopped this response because of its content policy.", false),
+        _ => ("responses_provider_failed", "The provider reported a failed response.", false),
+    };
+    ProviderAttemptError::StreamFailure { code, message, retryable: transient && !output_started }
+}
+
 #[cfg(test)]
 fn read_responses_stream<F>(
     cfg: &LlmConfig,
@@ -506,15 +559,38 @@ where F: FnMut(LlmEvent) -> Result<(), String> {
     read_responses_stream_with_tools(cfg, rx, idle_timeout, None, emit)
 }
 
+#[cfg(test)]
 fn read_responses_stream_with_tools<F>(
     cfg: &LlmConfig,
     rx: &mpsc::Receiver<Result<String, String>>,
     idle_timeout: std::time::Duration,
     frozen_tools: Option<&siwc_tools::FrozenSiwcTools>,
-    mut emit: F,
+    emit: F,
 ) -> Result<StreamedChoice, ProviderAttemptError>
 where F: FnMut(LlmEvent) -> Result<(), String> {
+    read_responses_stream_from_reader(
+        cfg,
+        idle_timeout,
+        frozen_tools,
+        |remaining, cancellation| recv_stream_line(rx, remaining, cancellation),
+        emit,
+    )
+}
+
+fn read_responses_stream_from_reader<R, F>(
+    cfg: &LlmConfig,
+    idle_timeout: std::time::Duration,
+    frozen_tools: Option<&siwc_tools::FrozenSiwcTools>,
+    mut next_line: R,
+    mut emit: F,
+) -> Result<StreamedChoice, ProviderAttemptError>
+where
+    R: FnMut(std::time::Duration, &crate::execution_context::ExecutionContext) -> StreamLineRecv,
+    F: FnMut(LlmEvent) -> Result<(), String>,
+{
     let mut choice = StreamedChoice::default();
+    let mut streamed_reasoning_summary = String::new();
+    let mut streamed_reasoning_content = String::new();
     let mut calls = BTreeMap::<u64, ToolCall>::new();
     let mut call_namespaces = BTreeMap::<u64, Value>::new();
     let mut completed = false;
@@ -524,7 +600,7 @@ where F: FnMut(LlmEvent) -> Result<(), String> {
     let mut last_progress = std::time::Instant::now();
     loop {
         let remaining = idle_timeout.saturating_sub(last_progress.elapsed());
-        let line = match recv_stream_line(rx, remaining, &cfg.cancellation) {
+        let line = match next_line(remaining, &cfg.cancellation) {
             StreamLineRecv::Line(line) => line,
             StreamLineRecv::Cancelled => return Err(llm_cancelled_message().into()),
             StreamLineRecv::Error(_) => return interrupted_response(choice, &calls, "Responses stream transport read failed"),
@@ -547,9 +623,17 @@ where F: FnMut(LlmEvent) -> Result<(), String> {
                 choice.content.push_str(delta);
                 emit(LlmEvent::TextDelta(delta.into()))?;
             }
-            "response.reasoning_summary_text.delta" | "response.reasoning_text.delta" => {
+            "response.reasoning_summary_text.delta" => {
                 let delta = event["delta"].as_str().unwrap_or_default();
                 made_progress = !delta.is_empty();
+                streamed_reasoning_summary.push_str(delta);
+                choice.reasoning.push_str(delta);
+                emit(LlmEvent::ReasoningDelta(delta.into()))?;
+            }
+            "response.reasoning_text.delta" => {
+                let delta = event["delta"].as_str().unwrap_or_default();
+                made_progress = !delta.is_empty();
+                streamed_reasoning_content.push_str(delta);
                 choice.reasoning.push_str(delta);
                 emit(LlmEvent::ReasoningDelta(delta.into()))?;
             }
@@ -635,10 +719,25 @@ where F: FnMut(LlmEvent) -> Result<(), String> {
                 finish_streamed_text(&mut choice.content, &final_text, |delta| {
                     emit(LlmEvent::TextDelta(delta))
                 })?;
+                let final_reasoning_summary =
+                    completed_reasoning_summary_text(&choice.response_items);
+                finish_streamed_text(
+                    &mut streamed_reasoning_summary,
+                    &final_reasoning_summary,
+                    |delta| {
+                        choice.reasoning.push_str(&delta);
+                        emit(LlmEvent::ReasoningDelta(delta))
+                    },
+                )?;
                 let final_reasoning = completed_response_text(&choice.response_items, "reasoning");
-                finish_streamed_text(&mut choice.reasoning, &final_reasoning, |delta| {
-                    emit(LlmEvent::ReasoningDelta(delta))
-                })?;
+                finish_streamed_text(
+                    &mut streamed_reasoning_content,
+                    &final_reasoning,
+                    |delta| {
+                        choice.reasoning.push_str(&delta);
+                        emit(LlmEvent::ReasoningDelta(delta))
+                    },
+                )?;
                 let completed_calls = choice
                     .response_items
                     .iter()
@@ -711,7 +810,7 @@ where F: FnMut(LlmEvent) -> Result<(), String> {
                 break;
             }
             "response.failed" | "error" => {
-                return Err("Responses provider reported failure".into())
+                return Err(responses_failure_event(&event, !calls.is_empty() || !choice.content.is_empty() || !choice.reasoning.is_empty()))
             }
             _ => {}
         }
@@ -1235,6 +1334,24 @@ mod responses_contract_tests {
         assert_eq!(streamed, "Hello");
     }
 
+    #[test]
+    fn typed_failed_response_retries_transient_errors_only_before_output() {
+        let cfg = config("http://localhost/v1".into());
+        for (wire, code, retry) in [("server_error","provider_unavailable",true), ("rate_limit_exceeded","rate_limited",true),
+            ("insufficient_quota","quota_exhausted",false), ("invalid_prompt","invalid_model_request",false),
+            ("private-unknown-code","responses_provider_failed",false)] {
+            let event = json!({"type":"response.failed","response":{"error":{"code":wire,"message":"private diagnostic"}}});
+            let failure = fixture_stream(format!("data: {event}\n\n")).unwrap_err().into_failure(&cfg);
+            assert_eq!(failure.code, code);
+            assert_eq!(failure.same_target_retryable, retry);
+            assert!(!failure.diagnostic.contains("private"));
+            assert!(!failure.message.contains("private"));
+        }
+        let failure = fixture_stream("data: {\"type\":\"response.output_text.delta\",\"delta\":\"visible\"}\n\ndata: {\"type\":\"error\",\"code\":\"server_error\"}\n\n".into()).unwrap_err().into_failure(&cfg);
+        assert_eq!(failure.code, "provider_unavailable");
+        assert!(!failure.same_target_retryable && !failure.fallback_eligible);
+    }
+
     fn fixture_stream(body: String) -> Result<StreamedChoice, ProviderAttemptError> {
         let listener = TcpListener::bind("127.0.0.1:0").unwrap();
         let cfg = config(format!("http://{}/v1", listener.local_addr().unwrap()));
@@ -1617,5 +1734,96 @@ mod responses_contract_tests {
             server.join().unwrap();
             assert_eq!(result.unwrap().content, "ok");
         }
+    }
+
+    #[test]
+    fn responses_completed_verifies_reasoning_summary_and_content_without_false_mismatch() {
+        let (tx, rx) = mpsc::sync_channel(16);
+        let frames = [
+            json!({"type":"response.reasoning_summary_text.delta","delta":"Plan: "}),
+            json!({"type":"response.reasoning_text.delta","delta":"step 1"}),
+            json!({"type":"response.output_text.delta","delta":"Done"}),
+            json!({
+                "type": "response.completed",
+                "response": {
+                    "id": "resp_1",
+                    "object": "response",
+                    "status": "completed",
+                    "output": [
+                        {
+                            "type": "reasoning",
+                            "summary": [{"type": "summary_text", "text": "Plan: "}],
+                            "content": [{"type": "reasoning_text", "text": "step 1"}]
+                        },
+                        {
+                            "type": "message",
+                            "content": [{"type": "output_text", "text": "Done"}]
+                        }
+                    ]
+                }
+            }),
+        ];
+        for frame in frames {
+            tx.send(Ok(format!("data: {frame}"))).unwrap();
+            tx.send(Ok(String::new())).unwrap();
+        }
+        drop(tx);
+        let cfg = LlmConfig {
+            siwc: None,
+            native_model_route: None,
+            provider: Some("openai".into()),
+            fallbacks: vec![],
+            endpoint: "https://api.openai.com/v1".into(),
+            api_key: "test-key".into(),
+            model: "o3".into(),
+            temperature: 0.7,
+            top_p: 0.9,
+            max_output_tokens: 1024,
+            compaction_output_budget: None,
+            chat_output_token_field: Default::default(),
+            max_retries: 0,
+            parallel_tool_calls: None,
+            thinking_enabled: true,
+            reasoning_summary_supported: Some(true),
+            reasoning_selection: None,
+            sampling_override: false,
+            generation_options: Default::default(),
+            cancellation: Default::default(),
+            openai_prompt_cache: false,
+            openai_prompt_cache_key: None,
+            openai_prompt_cache_key_prefix: None,
+            openai_prompt_cache_retention: None,
+            openai_prompt_cache_history_breakpoint: false,
+            openai_prompt_cache_history_breakpoint_endpoints: None,
+        };
+        let choice = read_responses_stream(&cfg, &rx, Duration::from_secs(5), |_| Ok(())).unwrap();
+        assert_eq!(choice.content, "Done");
+        assert_eq!(choice.reasoning, "Plan: step 1");
+
+        let (tx2, rx2) = mpsc::sync_channel(8);
+        let completed_only = json!({
+            "type": "response.completed",
+            "response": {
+                "id": "resp_2",
+                "object": "response",
+                "status": "completed",
+                "output": [
+                    {
+                        "type": "reasoning",
+                        "summary": [{"type": "summary_text", "text": "Only summary"}]
+                    },
+                    {
+                        "type": "message",
+                        "content": [{"type": "output_text", "text": "Answer"}]
+                    }
+                ]
+            }
+        });
+        tx2.send(Ok(format!("data: {completed_only}"))).unwrap();
+        tx2.send(Ok(String::new())).unwrap();
+        drop(tx2);
+        let choice2 = read_responses_stream(&cfg, &rx2, Duration::from_secs(5), |_| Ok(())).unwrap();
+        assert_eq!(choice2.content, "Answer");
+        assert_eq!(choice2.reasoning, "Only summary");
     }
 }

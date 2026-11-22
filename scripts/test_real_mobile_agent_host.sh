@@ -33,6 +33,17 @@ RUNTIME_ROOT="$(mktemp -d "${TMPDIR:-/tmp}/nola-real-mobile-host.XXXXXX")"
 RUNTIME_HOME="$RUNTIME_ROOT/home"
 RUNTIME_PROJECT="$RUNTIME_ROOT/project"
 mkdir -p "$RUNTIME_PROJECT"
+if [[ "${NOLA_REAL_IOS_MAIN_EXPERT:-0}" == "1" ]]; then
+    (
+        cd "$RUNTIME_PROJECT"
+        export GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_NOSYSTEM=1
+        git init -q
+        printf '# Mobile expert fixture\n' > README.md
+        git add README.md
+        git -c user.name="Nola Test" -c user.email="nola@example.invalid" \
+            -c commit.gpgSign=false -c core.hooksPath=/dev/null commit -qm "Create mobile expert fixture"
+    )
+fi
 SERVER_LOG="$RUNTIME_ROOT/web-host.log"
 DESTRUCTIVE_FILE="$RUNTIME_ROOT/permission-deny.txt"
 SERVER_PID=""
@@ -69,7 +80,17 @@ cleanup() {
     fi
     rm -f "$DESTRUCTIVE_FILE"
     if [[ "$status" -ne 0 || "${NOLA_REAL_MOBILE_PRESERVE_RUNTIME:-0}" == "1" ]]; then
-        [[ -z "$TOKEN_PATH" ]] || rm -f "$TOKEN_PATH"
+        if [[ -f "$TOKEN_PATH" ]]; then
+            python3 - "$TOKEN_PATH" "$SERVER_LOG" <<'SCRUB'
+from pathlib import Path
+import sys
+secret = Path(sys.argv[1]).read_bytes().strip()
+log = Path(sys.argv[2])
+if secret and log.is_file():
+    log.write_bytes(log.read_bytes().replace(secret, b"[REDACTED-HOST-TOKEN]"))
+SCRUB
+            rm -f "$TOKEN_PATH"
+        fi
         printf '[real-mobile-host] preserved isolated runtime: %s\n' "$RUNTIME_ROOT" >&2
     else
         rm -rf "$RUNTIME_ROOT"
@@ -84,35 +105,19 @@ cleanup() {
 trap cleanup EXIT
 
 [[ -f "$CONFIG_PATH" ]] || { printf 'Missing Nola config: %s\n' "$CONFIG_PATH" >&2; exit 2; }
-[[ -x "$JDK_HOME/bin/java" ]] || { printf 'JDK 21 is missing: %s\n' "$JDK_HOME" >&2; exit 2; }
+[[ "${NOLA_SKIP_ANDROID:-0}" == "1" || -x "$JDK_HOME/bin/java" ]] || { printf 'JDK 21 is missing: %s\n' "$JDK_HOME" >&2; exit 2; }
 if [[ "${NOLA_SKIP_ANDROID:-0}" == "1" && "${NOLA_SKIP_IOS:-0}" == "1" ]]; then
     printf 'Android and iOS cannot both be skipped in the real mobile Host acceptance.\n' >&2
     exit 2
 fi
 
 if [[ "${NOLA_SKIP_CLI_BUILD:-0}" != "1" ]]; then
-    cargo build --release --bin nola --manifest-path "$ROOT/apps/cli/Cargo.toml"
+    cargo build --release -p nola_cli --bin nola --bin nola-agent-host --manifest-path "$ROOT/apps/cli/Cargo.toml"
+    cargo build --release -p nola_service --bin nola-service --manifest-path "$ROOT/apps/cli/Cargo.toml"
 fi
 [[ -x "$BINARY" ]] || { printf 'Nola CLI executable is missing: %s\n' "$BINARY" >&2; exit 2; }
 
 mkdir -p "$RUNTIME_HOME/.nola"
-# Keep Nola's database, configuration, sessions, and generated files isolated,
-# while exercising the user's genuinely installed and authenticated execution
-# backends. Availability probes and the spawned CLIs both resolve credentials
-# from HOME, so omitting these mappings makes an installed Codex/Claude/OpenCode
-# look unavailable and turns the acceptance test into a false negative.
-for name in .codex .claude .opencode; do
-    if [[ -e "$REAL_USER_HOME/$name" && ! -e "$RUNTIME_HOME/$name" ]]; then
-        ln -s "$REAL_USER_HOME/$name" "$RUNTIME_HOME/$name"
-    fi
-done
-if [[ -e "$REAL_USER_HOME/.claude.json" && ! -e "$RUNTIME_HOME/.claude.json" ]]; then
-    ln -s "$REAL_USER_HOME/.claude.json" "$RUNTIME_HOME/.claude.json"
-fi
-mkdir -p "$RUNTIME_HOME/.config"
-if [[ -e "$REAL_USER_HOME/.config/opencode" && ! -e "$RUNTIME_HOME/.config/opencode" ]]; then
-    ln -s "$REAL_USER_HOME/.config/opencode" "$RUNTIME_HOME/.config/opencode"
-fi
 printf 'KEEP_UNTIL_PERMISSION_DENIED\n' > "$DESTRUCTIVE_FILE"
 IOS_UI_MARKER="IOS-RENDERED-TOOL-$(uuidgen | tr '[:lower:]' '[:upper:]')"
 IOS_UI_SOURCE="$RUNTIME_ROOT/ios-rendered-source.md"
@@ -205,6 +210,7 @@ HOST_COMMAND+=(--host 0.0.0.0 --port "$PORT" --web-root "$ROOT/apps/web" --proje
 (
     cd "$RUNTIME_PROJECT"
     HOME="$RUNTIME_HOME" NOLA_DB_PATH="$RUNTIME_ROOT/nola.sqlite" \
+        NOLA_EXTERNAL_EXECUTION_HOME="${NOLA_EXTERNAL_EXECUTION_HOME:-$REAL_USER_HOME}" \
         NOLA_CLI_DEBUG_LOG_PATH="$RUNTIME_ROOT/cli-debug.log" \
         exec "${HOST_COMMAND[@]}"
 ) >"$SERVER_LOG" 2>&1 &
@@ -346,7 +352,13 @@ print(selected["udid"])
             -destination "platform=iOS Simulator,id=$IOS_DEVICE_ID" \
             -derivedDataPath "$DERIVED_DATA" CODE_SIGNING_ALLOWED=NO -quiet
     fi
-    XCTESTRUN="$(find "$DERIVED_DATA/Build/Products" -maxdepth 1 -name '*.xctestrun' -print -quit)"
+    # A shared DerivedData folder can contain old simulator architectures and Mac schemes.
+    XCTESTRUN="$(python3 - "$DERIVED_DATA/Build/Products" <<'PYTHON'
+import pathlib, sys
+candidates = pathlib.Path(sys.argv[1]).glob("Nola_Nola_iphonesimulator*.xctestrun")
+print(max(candidates, key=lambda file: file.stat().st_mtime_ns, default=""))
+PYTHON
+)"
     [[ -f "$XCTESTRUN" ]] || { printf 'iOS xctestrun is missing\n' >&2; exit 2; }
 
     python3 - "$XCTESTRUN" "$IOS_DEVICE_ID" "$READY_URL" "$NOLA_REAL_WEB_AGENT_HOST_TOKEN" "$HOST_ID" "$DESTRUCTIVE_FILE" <<'PY'
@@ -391,6 +403,10 @@ try:
                 "NOLA_REAL_WEB_AGENT_HOST_TOKEN": token,
                 "NOLA_REAL_WEB_AGENT_HOST_DESTRUCTIVE_FILE": destructive_file,
             })
+            if os.environ.get("NOLA_REAL_IOS_MAIN_EXPERT") == "1":
+                target["EnvironmentVariables"]["NOLA_REAL_IOS_MAIN_EXPERT"] = "1"
+            if backends := os.environ.get("NOLA_EXTERNAL_EXECUTOR_BACKENDS"):
+                target["EnvironmentVariables"]["NOLA_EXTERNAL_EXECUTOR_BACKENDS"] = backends
             if os.environ.get("NOLA_REAL_MOBILE_COMPACTION_E2E") == "1":
                 target["EnvironmentVariables"]["NOLA_REAL_MOBILE_COMPACTION_E2E"] = "1"
             found = True
@@ -418,6 +434,8 @@ try:
             "-only-testing:NolaTests/EndToEndFlowTests/testRealWebAgentHostDestructivePermissionCanBeDeniedAndResumed",
             "-only-testing:NolaTests/EndToEndFlowTests/testRealWebAgentHostRunsInstalledExternalExecutorsAndResumesTheirNativeSessions",
         ]
+    if os.environ.get("NOLA_REAL_IOS_MAIN_EXPERT") == "1":
+        selected_tests.append("-only-testing:NolaTests/EndToEndFlowTests/testRealWebAgentHostMainDelegatesToMentionedAntigravityExpert")
     if os.environ.get("NOLA_REAL_MOBILE_COMPACTION_E2E") == "1":
         selected_tests.append(
             "-only-testing:NolaTests/EndToEndFlowTests/testRealWebAgentHostCompactsAndRecallsConversation"
@@ -447,6 +465,10 @@ finally:
 PY
 else
     printf '[real-mobile-host] iOS skipped by NOLA_SKIP_IOS=1\n'
+fi
+
+if [[ -s "$IOS_TEST_STATUS_PATH" ]] && [[ "$(<"$IOS_TEST_STATUS_PATH")" != "0" ]]; then
+    exit "$(<"$IOS_TEST_STATUS_PATH")"
 fi
 
 if [[ "${NOLA_REAL_IOS_UI_E2E:-0}" == "1" ]]; then
@@ -620,6 +642,44 @@ if "destructive_denial_preserved_file" in assertions:
 if "compaction_recall_passed" in assertions:
     assertion_evidence["compaction_recall_passed"] = ["mobile-runtime-db"]
 for platform in platforms:
+    if platform == "ios" and os.environ.get("NOLA_REAL_MOBILE_EXTERNAL_ONLY") == "1":
+        import sqlite3
+        backends = (os.environ.get("NOLA_EXTERNAL_EXECUTOR_BACKENDS") or
+                    "codex,claude_code,opencode,antigravity").split(",")
+        with sqlite3.connect(f"file:{runtime_db}?mode=ro", uri=True) as db:
+            for backend in backends:
+                rows = db.execute("""
+                    SELECT r.conversation_id, r.id, d.backend_session_id, d.state, r.status
+                    FROM runs r JOIN delegated_invocations d ON d.run_id = r.id
+                    WHERE r.conversation_id GLOB ? AND d.backend_id = ?
+                """, (f"ios-external-{backend}-*", backend)).fetchall()
+                if (len(rows) != 2 or len({row[1] for row in rows}) != 2
+                    or len({(row[0], row[2]) for row in rows}) != 1
+                    or not all(row[2] and row[3:] == ("succeeded", "sealed") for row in rows)):
+                    raise SystemExit(f"Missing two sealed iOS Runs sharing the {backend} session")
+            if os.environ.get("NOLA_REAL_IOS_MAIN_EXPERT") == "1":
+                delegated = db.execute("""
+                    SELECT e.status, d.state, d.backend_session_id
+                    FROM durable_tasks e
+                    JOIN runs r ON r.conversation_id=e.child_session_id
+                    JOIN delegated_invocations d ON d.run_id=r.id
+                    WHERE e.kind='agent' AND e.owner_session_id GLOB 'ios-main-expert-*'
+                      AND json_extract(e.metadata_json,'$.expert_target.source.kind')='main_agent'
+                      AND d.backend_id='antigravity' AND r.status='sealed'
+                """).fetchall()
+                if len(delegated) != 1 or delegated[0][:2] != ("sealed", "succeeded") or not delegated[0][2]:
+                    raise SystemExit("Missing completed Antigravity child Run owned by the iOS Main conversation")
+                print("[real-mobile-host] verified the mentioned expert completed in a child Run owned by Main")
+        record_step("ios-external-executor-session-resume", platforms=["ios"],
+            modules=["chat", "agent", "persistence", "recovery"],
+            boundaries=["agent-host", "ios-provider", "persistence"],
+            assertions={"native_session_resumed": True},
+            observations=[{"id": "runtime", "kind": "database", "path": runtime_db},
+                          {"id": "xctest", "kind": "test_report", "path": ios_test_output}],
+            assertion_evidence={"native_session_resumed": ["runtime", "xctest"]},
+            metrics={"resumedBackends": len(backends)})
+        print(f"[real-mobile-host] verified two iOS Runs per native session for {', '.join(backends)}")
+        continue
     platform_assertions = dict(assertions)
     platform_observations = list(observations)
     platform_assertion_evidence = dict(assertion_evidence)
@@ -665,8 +725,5 @@ for platform in platforms:
     )
 PY
 
-if [[ -s "$IOS_TEST_STATUS_PATH" ]] && [[ "$(<"$IOS_TEST_STATUS_PATH")" != "0" ]]; then
-    exit "$(<"$IOS_TEST_STATUS_PATH")"
-fi
 
 printf '[real-mobile-host] passed\n'

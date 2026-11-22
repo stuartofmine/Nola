@@ -26,10 +26,13 @@ struct MedicationSearchView: View {
         VStack(alignment: .leading, spacing: 12) {
             HStack {
                 TextField(L10n.medicationSearchPlaceholder, text: $query)
-                    .textFieldStyle(.roundedBorder)
+                    .nolaInputFieldSurface()
                 Button(action: search) {
                     Image(systemName: "magnifyingglass")
+                        .frame(width: 44, height: 44)
+                        .contentShape(Rectangle())
                 }
+                .accessibilityLabel(NSLocalizedString("common.search", value: "Search", comment: "Search"))
                 .disabled(query.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || isSearching)
             }
             .padding()

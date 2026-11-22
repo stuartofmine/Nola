@@ -17,7 +17,9 @@ test('model test only uses a selected eligible model', () => {
 test('model test creates an explicitly bound safe chat-only run', () => {
     const create = modelTestConversationRequest('cloud', 'profile', 'Model Test');
     assert.deepEqual(create, { title: 'Model Test', selectedModelSource: 'cloud', selectedModelId: 'profile', executionBackend: 'nola' });
-    const request = modelTestRunRequest({ conversationId: 'test-1' } as never, 'client', 'submission', 'Hello', 'en', 'UTC');
+    const request = modelTestRunRequest({ conversationId: 'test-1', configurationRevision: 3 } as never, 'client', 'submission', 'Hello', 'en', 'UTC');
+    assert.equal(request.expected_configuration_revision, 3);
+    assert.equal(request.expected_parent_message_id, null);
     assert.equal(request.permission_profile, 'cautious');
     assert.equal(request.agentMode, false);
     assert.equal(request.model_test_mode, true);
@@ -43,11 +45,13 @@ test('the Svelte model test has a routed, localized setup and result surface', a
         const { default: ModelTest } = await server.ssrLoadModule('/src/pages/ModelTest.svelte');
         const { render } = await server.ssrLoadModule('svelte/server');
         const html: string = render(ModelTest).body;
-        assert.match(html, /model-test-prompt/);
-        assert.match(html, /\/models/);
+        const prompt = html.match(/<textarea id="([^"]+)"/)?.[1];
+        assert.ok(prompt && html.includes('for="' + prompt + '"'));
+        assert.match(html, /class="model-select/);
         assert.match(html, /role="tablist"/);
         assert.match(html, /data-active-pane="setup"/);
-        assert.match(html, /id="model-test-setup"/);
-        assert.match(html, /id="model-test-output"/);
+        const controls = Array.from(html.matchAll(/aria-controls="([^"]+)"/g), match => match[1]);
+        assert.equal(new Set(controls).size, 3);
+        for (const id of controls) assert.ok(html.includes('id="' + id + '"'));
     } finally { await server.close(); }
 });

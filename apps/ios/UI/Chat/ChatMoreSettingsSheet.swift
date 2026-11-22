@@ -14,9 +14,6 @@ struct ChatMoreSettingsSheet: View {
 
     let selectedModel: ModelInfo?
     let contextUsage: ConversationContextUsage?
-    let hostUploadedSkills: [UserUploadedContextItem]
-    let hostUploadedDocuments: [UserUploadedContextItem]
-    let hostMCPServers: [UserMCPServer]
     let hostComputerUseStatus: WebAgentProvider.HostComputerUseStatus?
     let hostNativeBrowserStatus: WebAgentProvider.HostNativeBrowserStatus?
     let pairedHostIdentity: String?
@@ -31,24 +28,24 @@ struct ChatMoreSettingsSheet: View {
     @Binding var permissionMode: IOSPermissionMode
     @Binding var autoCompactTriggerPercent: Int
     @Binding var responseStyle: PromptResponseStyle?
-    @Binding var sessionMemory: String
-    @Binding var longTermMemory: String
-    @Binding var userPreferences: String
-    @Binding var uploadedSkills: [UserUploadedContextItem]
-    let onSaveMemoryProfile: () async throws -> Void
-    let onSetSkillEnabled: (UUID, Bool) throws -> Void
     let onOpenContextSettings: () -> Void
     let onOpenSkillLibrary: () -> Void
     let onForgetHostPairing: () -> Void
     var promptTemplates: [PromptTemplate] = []
     var selectedPromptTemplateID: UUID? = nil
     var onSelectPromptTemplate: (UUID?) throws -> Void = { _ in }
+    var embeddedInNavigationStack: Bool = false
+    var contextDestination: (() -> AnyView)? = nil
+    var skillLibraryDestination: (() -> AnyView)? = nil
+    var onDismissSheet: (() -> Void)? = nil
+    var executionBackendPicker: AnyView? = nil
 
     @State private var showForgetPairingConfirmation = false
-    @State private var isSaving = false
     @State private var statusMessage: String?
     @State private var errorMessage: String?
     @State private var showPersonalIntelligence = false
+    @State private var showContextDestination = false
+    @State private var showSkillLibraryDestination = false
     @State private var savedGenerationOverride: IOSConversationGenerationOverride?
     @State private var generationEditorPreventsDismiss = false
     @State private var generationEditorActive = false
@@ -97,18 +94,17 @@ struct ChatMoreSettingsSheet: View {
             .listRowSeparatorTint(DesignTokens.borderColor)
         }
         .nolaGroupedSurface()
-        .disabled(isSaving)
-        .interactiveDismissDisabled(isSaving || generationEditorPreventsDismiss)
+        .interactiveDismissDisabled(generationEditorPreventsDismiss)
         .navigationTitle(tr("chat.more_settings.title", "Conversation Settings", comment: "Chat more settings sheet title"))
         .navigationBarTitleDisplayMode(.inline)
         .toolbar {
-            if !generationEditorActive {
+            if !generationEditorActive && !embeddedInNavigationStack {
                 ToolbarItem(placement: .cancellationAction) {
                     Button(L10n.close) {
-                        guard !isSaving, !generationEditorPreventsDismiss else { return }
+                        guard !generationEditorPreventsDismiss else { return }
                         dismiss()
                     }
-                    .disabled(isSaving || generationEditorPreventsDismiss)
+                    .disabled(generationEditorPreventsDismiss)
                     .accessibilityIdentifier("chat-settings-close")
                 }
             }
@@ -126,6 +122,16 @@ struct ChatMoreSettingsSheet: View {
         }
         .navigationDestination(isPresented: $showPersonalIntelligence) {
             PersonalIntelligenceDashboardView(embedded: true)
+        }
+        .navigationDestination(isPresented: $showContextDestination) {
+            if let contextDestination {
+                contextDestination()
+            }
+        }
+        .navigationDestination(isPresented: $showSkillLibraryDestination) {
+            if let skillLibraryDestination {
+                skillLibraryDestination()
+            }
         }
     }
 
@@ -159,7 +165,7 @@ struct ChatMoreSettingsSheet: View {
                 .foregroundStyle(.secondary)
 
             Button {
-                openAfterDismiss(onOpenContextSettings)
+                openContextDestination()
             } label: {
                 HStack(spacing: 12) {
                     Image(systemName: "circle.hexagongrid")
@@ -196,7 +202,7 @@ struct ChatMoreSettingsSheet: View {
             }
 
             Button {
-                openAfterDismiss(onOpenSkillLibrary)
+                openSkillLibraryDestination()
             } label: {
                 Label(tr("chat.more_settings.scope.skills", "Skills library", comment: "Global Skills library entry"), systemImage: "shippingbox")
             }
@@ -210,9 +216,12 @@ struct ChatMoreSettingsSheet: View {
     private var globalSection: some View {
         Section {
             Button {
-                openAfterDismiss {
-                    NotificationCenter.default.post(name: .nolaOpenSettingsTab, object: nil)
+                if let onDismissSheet {
+                    onDismissSheet()
+                } else {
+                    dismiss()
                 }
+                NotificationCenter.default.post(name: .nolaOpenSettingsTab, object: nil)
             } label: {
                 Label(tr("chat.more_settings.scope.global", "Global app settings", comment: "Global app settings entry"), systemImage: "gearshape")
             }
@@ -235,7 +244,8 @@ struct ChatMoreSettingsSheet: View {
                 } label: {
                     Image(systemName: "xmark")
                         .font(.caption.weight(.bold))
-                        .frame(width: 32, height: 32)
+                        .frame(width: 44, height: 44)
+                        .contentShape(Rectangle())
                 }
                 .buttonStyle(.plain)
                 .accessibilityLabel(L10n.close)
@@ -330,6 +340,9 @@ struct ChatMoreSettingsSheet: View {
                 .font(.callout).foregroundStyle(.secondary)
             Text(String(localized: "execution.scope.child")).font(.callout).foregroundStyle(.secondary)
             if selectedModel?.isWebBackend == true {
+                if let executionBackendPicker {
+                    executionBackendPicker
+                }
                 if let model = selectedModel,
                    let rawURL = model.baseURL,
                    let url = URL(string: rawURL) {
@@ -519,135 +532,6 @@ struct ChatMoreSettingsSheet: View {
         return tr("chat.more_settings.native_browser.disconnected", "No Chrome bridge connected", comment: "Native browser disconnected status")
     }
 
-    @ViewBuilder
-    private var memorySection: some View {
-        Section {
-            TextEditor(text: $sessionMemory)
-                .frame(minHeight: 90)
-                .font(.body)
-                .scrollContentBackground(.hidden)
-                .background(DesignTokens.cardBackgroundColor)
-        } header: {
-            Text(tr("chat.more_settings.session_memory.header", "Session memory · Current conversation", comment: "Current conversation session memory section header"))
-        } footer: {
-            Text(tr("chat.more_settings.session_memory.footer", "Applies only to the current conversation for tracking task state and temporary constraints.", comment: "Session memory section footer"))
-        }
-
-        Section {
-            TextEditor(text: $longTermMemory)
-                .frame(minHeight: 100)
-                .font(.body)
-                .scrollContentBackground(.hidden)
-                .background(DesignTokens.cardBackgroundColor)
-
-            TextEditor(text: $userPreferences)
-                .frame(minHeight: 90)
-                .font(.body)
-                .scrollContentBackground(.hidden)
-                .background(DesignTokens.cardBackgroundColor)
-        } header: {
-            Text(tr("chat.more_settings.long_term.header", "Long-term memory and preferences · Global", comment: "Global long-term memory and preferences section header"))
-        } footer: {
-            Text(tr("chat.more_settings.long_term.footer", "Long-term memory and user preferences persist across conversations and are injected into future context.", comment: "Long-term memory and preferences section footer"))
-        }
-    }
-
-    private var skillsSection: some View {
-        Section {
-            if uploadedSkills.isEmpty && hostUploadedSkills.isEmpty && hostUploadedDocuments.isEmpty && hostMCPServers.isEmpty {
-                Text(tr("chat.more_settings.skills.empty", "No skills yet.", comment: "Empty state when no skills are available"))
-                    .font(.subheadline)
-                    .foregroundColor(.secondary)
-            }
-
-            ForEach(uploadedSkills) { skill in
-                Toggle(isOn: Binding(
-                    get: { skill.enabled },
-                    set: { enabled in
-                        do {
-                            try onSetSkillEnabled(skill.id, enabled)
-                        } catch {
-                            errorMessage = error.localizedDescription
-                        }
-                    }
-                )) {
-                    VStack(alignment: .leading, spacing: 4) {
-                        Text(skill.name)
-                        if !skill.description.isEmpty {
-                            Text(skill.description)
-                                .font(.caption)
-                                .foregroundColor(.secondary)
-                                .lineLimit(2)
-                        }
-                    }
-                }
-                .disabled(isSaving)
-            }
-
-            ForEach(hostUploadedSkills) { skill in
-                HStack(alignment: .top, spacing: 10) {
-                    Image(systemName: skill.enabled ? "checkmark.circle.fill" : "circle")
-                        .foregroundColor(skill.enabled ? DesignTokens.successColor : .secondary)
-                    VStack(alignment: .leading, spacing: 4) {
-                        Text(skill.name)
-                        Text(tr("chat.more_settings.skills.host_managed", "由宿主机提供；请在 Mac 上的技能库中管理。", comment: "Hint for host-managed skills"))
-                            .font(.caption)
-                            .foregroundColor(.secondary)
-                    }
-                }
-            }
-
-            ForEach(hostUploadedDocuments) { document in
-                HStack(alignment: .top, spacing: 10) {
-                    Image(systemName: document.enabled ? "doc.text.fill" : "doc.text")
-                        .foregroundColor(document.enabled ? DesignTokens.successColor : .secondary)
-                    VStack(alignment: .leading, spacing: 4) {
-                        Text(document.name)
-                        Text(
-                            String(
-                                format: tr("chat.more_settings.documents.host_format", "Provided by the Web host • %d characters", comment: "Host document summary in more settings"),
-                                document.content.count
-                            )
-                        )
-                        .font(.caption)
-                        .foregroundColor(.secondary)
-                    }
-                }
-            }
-
-            ForEach(hostMCPServers) { server in
-                HStack(alignment: .top, spacing: 10) {
-                    Image(systemName: server.enabled ? "checkmark.circle.fill" : "circle")
-                        .foregroundColor(server.enabled ? DesignTokens.successColor : .secondary)
-                    VStack(alignment: .leading, spacing: 4) {
-                        Text(server.name)
-                        Text(server.endpoint)
-                            .font(.caption)
-                            .foregroundColor(.secondary)
-                            .lineLimit(1)
-                            .truncationMode(.middle)
-                    }
-                }
-            }
-
-            Button {
-                openAfterDismiss(onOpenSkillLibrary)
-            } label: {
-                Label(tr("chat.more_settings.skills.open_library", "Open full Skill Library", comment: "Button title for opening skill library"), systemImage: "square.grid.2x2")
-            }
-
-            Button {
-                openAfterDismiss(onOpenContextSettings)
-            } label: {
-                Label(tr("chat.more_settings.skills.open_context_settings", "Open context, MCP, and data source settings", comment: "Button title for opening context settings"), systemImage: "text.badge.checkmark")
-            }
-        } header: {
-            Text(tr("chat.more_settings.skills.header", "Skills and extended context · Global", comment: "Global skills section header"))
-        } footer: {
-            Text(tr("chat.more_settings.skills.footer", "Use this panel to quickly enable or disable local skills. For uploading skills and managing MCP, documents, and data sources, open the full management page.", comment: "Skills section footer"))
-        }
-    }
-
     private func settingValueRow(title: String, value: String) -> some View {
         HStack {
             Text(title)
@@ -668,32 +552,19 @@ struct ChatMoreSettingsSheet: View {
         return String(value)
     }
 
-    private func saveAll() {
-        guard !isSaving else { return }
-        errorMessage = nil
-        statusMessage = nil
-        isSaving = true
-        Task {
-            do {
-                try await onSaveMemoryProfile()
-                await MainActor.run {
-                    statusMessage = tr("chat.more_settings.saved", "Settings saved.", comment: "Status message after saving chat more settings")
-                    isSaving = false
-                }
-            } catch {
-                await MainActor.run {
-                    errorMessage = error.localizedDescription
-                    isSaving = false
-                }
-            }
+    private func openContextDestination() {
+        if contextDestination != nil {
+            showContextDestination = true
+        } else {
+            onOpenContextSettings()
         }
     }
 
-    private func openAfterDismiss(_ action: @escaping () -> Void) {
-        guard !isSaving else { return }
-        dismiss()
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.25) {
-            action()
+    private func openSkillLibraryDestination() {
+        if skillLibraryDestination != nil {
+            showSkillLibraryDestination = true
+        } else {
+            onOpenSkillLibrary()
         }
     }
 }

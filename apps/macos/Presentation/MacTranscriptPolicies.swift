@@ -6,6 +6,7 @@ import Foundation
 import SwiftUI
 import AppKit
 import Observation
+import QuartzCore
 
 /// Window-local presentation state. It contains no messages, execution state or Store writes.
 @MainActor
@@ -49,6 +50,7 @@ final class MacTranscriptScrollController {
     @ObservationIgnored private weak var latestAnchor: NSView?
     @ObservationIgnored private var requiresLatestAnchor = false
     @ObservationIgnored private var viewportSize: NSSize = .zero
+    @ObservationIgnored private var animatesNextReconcile = false
 
     var followsLatest: Bool { intent == .latest }
 
@@ -61,6 +63,7 @@ final class MacTranscriptScrollController {
         let snapshot = viewportStore?.snapshot(for: conversationID)
         intent = snapshot?.followsLatest == false ? .reading : .latest
         userInteracting = false
+        animatesNextReconcile = false
         readingAnchor = snapshot.flatMap { value in value.messageID.map { Anchor(messageID: $0, offset: value.offset) } }
         invalidateLayout()
         contentChanged()
@@ -92,12 +95,14 @@ final class MacTranscriptScrollController {
         invalidateLayout()
         scrollView = nil
         userInteracting = false
+        animatesNextReconcile = false
     }
 
     func userBeganScrolling() {
         generation &+= 1
         userInteracting = true
         observedUserScroll = false
+        animatesNextReconcile = false
         intent = .reading
         invalidateLayout()
     }
@@ -126,6 +131,7 @@ final class MacTranscriptScrollController {
         generation &+= 1
         intent = .latest
         userInteracting = false
+        animatesNextReconcile = !NSWorkspace.shared.accessibilityDisplayShouldReduceMotion
         saveViewport()
         invalidateLayout()
         contentChanged()
@@ -134,6 +140,7 @@ final class MacTranscriptScrollController {
     func beginNavigation() -> UInt64 {
         generation &+= 1
         userInteracting = false
+        animatesNextReconcile = false
         intent = .locating
         invalidateLayout()
         return generation
@@ -244,9 +251,27 @@ final class MacTranscriptScrollController {
         case .locating:
             return
         }
+        let shouldAnimate = animatesNextReconcile
+            && intent == .latest
+            && !NSWorkspace.shared.accessibilityDisplayShouldReduceMotion
+        animatesNextReconcile = false
         guard abs(clip.bounds.origin.y - targetY) > 0.5 else { return }
-        clip.scroll(to: NSPoint(x: clip.bounds.origin.x, y: targetY))
-        scrollView.reflectScrolledClipView(clip)
+        let targetPoint = NSPoint(x: clip.bounds.origin.x, y: targetY)
+        if shouldAnimate {
+            NSAnimationContext.runAnimationGroup { context in
+                context.duration = MacDesignTokens.Motion.selection
+                context.timingFunction = CAMediaTimingFunction(name: .easeOut)
+                clip.animator().setBoundsOrigin(targetPoint)
+            } completionHandler: { [weak scrollView, weak clip] in
+                Task { @MainActor in
+                    guard let scrollView, let clip else { return }
+                    scrollView.reflectScrolledClipView(clip)
+                }
+            }
+        } else {
+            clip.scroll(to: targetPoint)
+            scrollView.reflectScrolledClipView(clip)
+        }
     }
 
     private func invalidateLayout() {

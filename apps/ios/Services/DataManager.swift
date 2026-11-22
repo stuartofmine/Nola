@@ -19,10 +19,23 @@ import Foundation
 public final class DataManager {
     private let logger: Logger
     private let localJSONStorage: LocalJSONStorage?
+    private var applicationRuntime: IOSApplicationRuntime?
+    private var conversationStore: ConversationStore?
+    private var promptTemplates: PromptTemplateService?
     
     public init(logger: Logger, localJSONStorage: LocalJSONStorage? = nil) {
         self.logger = logger
         self.localJSONStorage = localJSONStorage
+    }
+
+    func attachCanonicalServices(
+        applicationRuntime: IOSApplicationRuntime,
+        conversationStore: ConversationStore?,
+        promptTemplates: PromptTemplateService?
+    ) {
+        self.applicationRuntime = applicationRuntime
+        self.conversationStore = conversationStore
+        self.promptTemplates = promptTemplates
     }
     
     // MARK: - Export Data
@@ -58,8 +71,114 @@ public final class DataManager {
         
         exportData["settings"] = settings
         
-        // Export URL data sources (if available)
-        if let urlSourcesData = defaults.data(forKey: "urlDataSources"),
+        // Export canonical data sources, conversations, memories, templates, skills, and MCP servers (excluding secrets)
+        let iso = ISO8601DateFormatter()
+        if let runtime = applicationRuntime {
+            do {
+                let canonicalSources = try runtime.listDataSources()
+                exportData["urlDataSources"] = canonicalSources.map { source -> [String: Any] in
+                    var dict: [String: Any] = [
+                        "id": source.id,
+                        "name": source.name,
+                        "kind": source.kind.rawValue,
+                        "url": source.configuration.location,
+                        "accessPolicy": source.accessPolicy,
+                        "enabled": source.defaultEnabled,
+                        "lifecycle": source.lifecycle.rawValue,
+                        "privacy": source.privacy
+                    ]
+                    if let lastReadMs = source.lastSuccessfulReadAtMs {
+                        dict["lastFetchDate"] = iso.string(from: Date(timeIntervalSince1970: TimeInterval(lastReadMs) / 1000))
+                    }
+                    if let diagnostic = source.readState.diagnostic {
+                        dict["lastError"] = diagnostic
+                    }
+                    return dict
+                }
+            } catch {
+                logger.log(.warn, "DataManager", "Failed to export canonical data sources", metadata: ["error": error.localizedDescription])
+            }
+
+            do {
+                let conversations = try runtime.listConversations()
+                exportData["conversations"] = conversations.map { conv -> [String: Any] in
+                    var dict: [String: Any] = [
+                        "id": conv.id,
+                        "title": conv.title,
+                        "createdAt": iso.string(from: Date(timeIntervalSince1970: TimeInterval(conv.createdAtMs) / 1000)),
+                        "updatedAt": iso.string(from: Date(timeIntervalSince1970: TimeInterval(conv.updatedAtMs) / 1000))
+                    ]
+                    if let uuid = UUID(uuidString: conv.id),
+                       let messages = try? conversationStore?.getMessages(conversationId: uuid, limit: 10_000) {
+                        dict["messages"] = messages.map { message -> [String: Any] in
+                            [
+                                "id": message.id.uuidString,
+                                "role": message.role.rawValue,
+                                "text": message.text,
+                                "createdAt": iso.string(from: message.createdAt)
+                            ]
+                        }
+                    }
+                    return dict
+                }
+            } catch {
+                logger.log(.warn, "DataManager", "Failed to export canonical conversations", metadata: ["error": error.localizedDescription])
+            }
+
+            do {
+                let memories = try runtime.listMemories().filter { $0.deletedAtMs == nil }
+                exportData["memories"] = memories.map { item -> [String: Any] in
+                    var dict: [String: Any] = [
+                        "id": item.id,
+                        "scope": item.record.scope,
+                        "kind": item.record.kind,
+                        "content": item.record.content,
+                        "tags": item.record.tags,
+                        "createdAt": iso.string(from: Date(timeIntervalSince1970: TimeInterval(item.createdAtMs) / 1000)),
+                        "updatedAt": iso.string(from: Date(timeIntervalSince1970: TimeInterval(item.updatedAtMs) / 1000))
+                    ]
+                    if let summary = item.record.summary {
+                        dict["summary"] = summary
+                    }
+                    return dict
+                }
+            } catch {
+                logger.log(.warn, "DataManager", "Failed to export canonical memories", metadata: ["error": error.localizedDescription])
+            }
+
+            do {
+                let skills = try runtime.listSkills().filter { $0.source != "built_in" && $0.deletedAtMs == nil }
+                exportData["skills"] = skills.map { skill -> [String: Any] in
+                    [
+                        "id": skill.id,
+                        "displayName": skill.displayName,
+                        "summary": skill.summary,
+                        "category": skill.category,
+                        "instructionsText": skill.instructionsText,
+                        "enabled": skill.enabled,
+                        "createdAt": iso.string(from: Date(timeIntervalSince1970: TimeInterval(skill.createdAtMs) / 1000)),
+                        "updatedAt": iso.string(from: Date(timeIntervalSince1970: TimeInterval(skill.updatedAtMs) / 1000))
+                    ]
+                }
+            } catch {
+                logger.log(.warn, "DataManager", "Failed to export canonical skills", metadata: ["error": error.localizedDescription])
+            }
+
+            do {
+                let servers = try runtime.listMCPServers().filter { $0.deletedAtMs == nil }
+                exportData["mcpServers"] = servers.map { server -> [String: Any] in
+                    [
+                        "id": server.id,
+                        "displayName": server.displayName,
+                        "enabled": server.enabled,
+                        "createdAt": iso.string(from: Date(timeIntervalSince1970: TimeInterval(server.createdAtMs) / 1000)),
+                        "updatedAt": iso.string(from: Date(timeIntervalSince1970: TimeInterval(server.updatedAtMs) / 1000))
+                    ]
+                }
+            } catch {
+                logger.log(.warn, "DataManager", "Failed to export canonical MCP servers", metadata: ["error": error.localizedDescription])
+            }
+        } else if let urlSourcesData = defaults.data(forKey: "urlDataSources"),
            let urlSources = try? {
                let d = JSONDecoder()
                d.dateDecodingStrategy = .iso8601
@@ -74,7 +193,7 @@ public final class DataManager {
                     "enabled": source.enabled
                 ]
                 if let lastFetch = source.lastFetchDate {
-                    dict["lastFetchDate"] = ISO8601DateFormatter().string(from: lastFetch)
+                    dict["lastFetchDate"] = iso.string(from: lastFetch)
                 }
                 if let error = source.lastError {
                     dict["lastError"] = error
@@ -82,6 +201,23 @@ public final class DataManager {
                 return dict
             }
             exportData["urlDataSources"] = exportableSources
+        }
+
+        if let templates = promptTemplates?.templates.filter({ !$0.isBuiltIn }), !templates.isEmpty {
+            exportData["promptTemplates"] = templates.map { template -> [String: Any] in
+                var dict: [String: Any] = [
+                    "id": template.id.uuidString,
+                    "name": template.name,
+                    "description": template.description,
+                    "content": template.content,
+                    "createdAt": iso.string(from: template.createdAt),
+                    "updatedAt": iso.string(from: template.updatedAt)
+                ]
+                if let language = template.language {
+                    dict["language"] = language
+                }
+                return dict
+            }
         }
 
         // Export structured scheduled-action run history (file-backed local storage)
@@ -174,11 +310,11 @@ public final class DataManager {
         
         let defaults = UserDefaults.standard
         
-        // List of keys to clear
+        // List of keys to clear (keep hasCompletedOnboarding intact so Settings stays mounted
+        // while async local-data teardown completes and surfaces its result banner).
         let keysToRemove = [
             // App settings
             "lookAheadDays",
-            "hasCompletedOnboarding",
             
             // Advanced features
             "urlDataSources",
@@ -219,36 +355,74 @@ public final class DataManager {
         logger.log(.info, "DataManager", NSLocalizedString("autogen.DataManager.f56bfab6", comment: "AUTOGEN"))
     }
     
-    /// Get data size estimation
+    /// Get actual on-disk local data size across canonical SQLite storage, attachments, local storage, and downloaded models.
     public func getDataSize() -> String {
-        var totalSize = 0
-        
-        let defaults = UserDefaults.standard
-        
-        // Estimate size of individual data items (avoid serializing entire dictionary)
-        let keys = [
-            "urlDataSources",
-            "lookAheadDays",
-            "hasCompletedOnboarding",
-            "logger.minLevel",
-            "lastScheduledTime"
+        let dbURL = applicationRuntime?.databaseURL ?? IOSApplicationRuntime.defaultDatabaseURL
+        return Self.computeDataSize(databaseURL: dbURL)
+    }
+
+    public nonisolated static func computeDataSize(databaseURL dbURL: URL) -> String {
+        let fm = FileManager.default
+        var totalSize: Int64 = 0
+
+        let databaseFiles = [
+            dbURL,
+            URL(fileURLWithPath: dbURL.path + "-wal"),
+            URL(fileURLWithPath: dbURL.path + "-shm")
         ]
-        
-        for key in keys {
-            if let data = defaults.data(forKey: key) {
-                totalSize += data.count
-            } else if let obj = defaults.object(forKey: key) {
-                // For non-data objects, estimate size as string representation
-                let stringRep = String(describing: obj)
-                totalSize += stringRep.utf8.count
-            }
+        for fileURL in databaseFiles {
+            totalSize += Self.fileSize(at: fileURL, fileManager: fm)
         }
-        
-        // Format size
+
+        var directories: [URL] = []
+        if let docs = fm.urls(for: .documentDirectory, in: .userDomainMask).first {
+            directories.append(docs.appendingPathComponent("ChatAttachments", isDirectory: true))
+            directories.append(docs.appendingPathComponent("NolaStorage", isDirectory: true))
+        }
+        if let appSupport = fm.urls(for: .applicationSupportDirectory, in: .userDomainMask).first {
+            directories.append(appSupport.appendingPathComponent("NolaStorage", isDirectory: true))
+        }
+        if let caches = fm.urls(for: .cachesDirectory, in: .userDomainMask).first {
+            directories.append(caches.appendingPathComponent("models", isDirectory: true))
+        }
+
+        for dir in directories {
+            totalSize += Self.directorySize(at: dir, fileManager: fm)
+        }
+
         let formatter = ByteCountFormatter()
-        formatter.allowedUnits = [.useKB, .useMB]
+        formatter.allowedUnits = [.useKB, .useMB, .useGB]
         formatter.countStyle = .file
-        return formatter.string(fromByteCount: Int64(totalSize))
+        return formatter.string(fromByteCount: totalSize)
+    }
+
+    private nonisolated static func fileSize(at url: URL, fileManager: FileManager) -> Int64 {
+        guard fileManager.fileExists(atPath: url.path),
+              let values = try? url.resourceValues(forKeys: [.isRegularFileKey, .fileAllocatedSizeKey, .fileSizeKey]),
+              values.isRegularFile == true else {
+            return 0
+        }
+        return Int64(values.fileAllocatedSize ?? values.fileSize ?? 0)
+    }
+
+    private nonisolated static func directorySize(at url: URL, fileManager: FileManager) -> Int64 {
+        guard fileManager.fileExists(atPath: url.path),
+              let enumerator = fileManager.enumerator(
+                  at: url,
+                  includingPropertiesForKeys: [.isRegularFileKey, .fileAllocatedSizeKey, .fileSizeKey],
+                  options: [.skipsHiddenFiles]
+              ) else {
+            return 0
+        }
+        var total: Int64 = 0
+        for case let fileURL as URL in enumerator {
+            guard let values = try? fileURL.resourceValues(forKeys: [.isRegularFileKey, .fileAllocatedSizeKey, .fileSizeKey]),
+                  values.isRegularFile == true else {
+                continue
+            }
+            total += Int64(values.fileAllocatedSize ?? values.fileSize ?? 0)
+        }
+        return total
     }
     
     // MARK: - HealthKit Export (Optional)
@@ -324,32 +498,24 @@ public final class DataManager {
     // MARK: - Private Helpers
     
     private func clearKeychain() {
-        let keychainService = "com.nola.llm"
-        
-        // Clear base URL
-        let baseURLQuery: [String: Any] = [
-            kSecClass as String: kSecClassGenericPassword,
-            kSecAttrService as String: keychainService,
-            kSecAttrAccount as String: "baseURL"
+        let keychainServices = [
+            "nola.llm",
+            "com.nola.llm",
+            "nola.cloud-model",
+            "nola.web-host.token",
+            "com.nola.web-host.identity",
+            "nola.bing"
         ]
-        SecItemDelete(baseURLQuery as CFDictionary)
-        
-        // Clear API key
-        let apiKeyQuery: [String: Any] = [
-            kSecClass as String: kSecClassGenericPassword,
-            kSecAttrService as String: keychainService,
-            kSecAttrAccount as String: "apiKey"
-        ]
-        SecItemDelete(apiKeyQuery as CFDictionary)
-        
-        // Clear model
-        let modelQuery: [String: Any] = [
-            kSecClass as String: kSecClassGenericPassword,
-            kSecAttrService as String: keychainService,
-            kSecAttrAccount as String: "model"
-        ]
-        SecItemDelete(modelQuery as CFDictionary)
-        
+
+        for service in keychainServices {
+            let query: [String: Any] = [
+                kSecClass as String: kSecClassGenericPassword,
+                kSecAttrService as String: service
+            ]
+            SecItemDelete(query as CFDictionary)
+        }
+
+        ModelSelectionManager.clearSessionCredentials()
         logger.log(.debug, "DataManager", NSLocalizedString("autogen.DataManager.19498a0c", comment: "AUTOGEN"))
     }
 }

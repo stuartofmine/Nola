@@ -111,11 +111,12 @@ class GenerativeUiRealModelEndToEndTest {
                     compose.waitUntil(20_000) { compose.onAllNodesWithTag("chat.conversation.$resumeConversation").fetchSemanticsNodes().isNotEmpty() }
                     compose.onNodeWithTag("chat.conversation.$resumeConversation").performScrollTo().performClick()
                 } else {
-                compose.onNodeWithTag("chat.conversations.new").performClick()
-                compose.waitUntil(20_000) { compose.onAllNodesWithTag("chat.composer.input").fetchSemanticsNodes().isNotEmpty() }
-                val prompt = "Create an editable native form using render_ui, with a text field labeled Acceptance name, default Seed, and a button labeled Submit acceptance. When I submit it later, update this same card with a visible text saying A2UI-ANDROID-SUBMITTED followed by the submitted name. Do not simulate submission, use Markdown as a substitute, or access files. After creating the form, briefly answer and wait for my real action."
-                compose.onNodeWithTag("chat.composer.input").performTextInput(prompt)
-                compose.onNodeWithContentDescription(context.getString(R.string.chat_send)).performClick()
+                    compose.onNodeWithTag("chat.conversations.new").performClick()
+                    val readyInput = hasTestTag("chat.composer.input") and isEnabled()
+                    compose.waitUntil(20_000) { compose.onAllNodes(readyInput).fetchSemanticsNodes().isNotEmpty() }
+                    val prompt = "Create an editable native form using render_ui, with a text field labeled Acceptance name, default Seed, and a button labeled Submit acceptance. When I submit it later, update this same card with a visible text saying A2UI-ANDROID-SUBMITTED followed by the submitted name. Do not simulate submission, use Markdown as a substitute, or access files. After creating the form, briefly answer and wait for my real action."
+                    compose.onNode(readyInput).performTextInput(prompt)
+                    compose.onNodeWithContentDescription(context.getString(R.string.chat_send)).performClick()
                 }
                 waitWithUiApprovals {
                     AndroidApplicationRuntime(context).use { app ->

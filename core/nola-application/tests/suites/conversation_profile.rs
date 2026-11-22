@@ -668,35 +668,37 @@ fn effective_model_parameters_resolution_pins_and_previews() {
     assert_eq!(valid_pins["resolution"]["max_output_tokens"], 1024);
     assert_eq!(valid_pins["resolution"]["context_window_tokens"], 8192);
 
-    // 4. Candidate previews (mlx, remote alternative, agent-host) & read-only SQLite dispatch.
-    let mut mlx = profile.clone();
-    mlx.id = "local-candidate".into();
-    mlx.runtime = "mlx".into();
-    mlx.selected = false;
-    store.upsert_model_profile(&mlx).unwrap();
-    let stored_mlx = store.model_profile("local-candidate").unwrap().unwrap();
-    let mlx_preview = ResolveEffectiveModelParameters::CandidatePreview {
-        model_profile: HostModelProfileReference {
-            profile_id: stored_mlx.id,
-            admitted_revision: stored_mlx.revision,
-        },
-        conversation: None,
-    };
-    let mlx_res = parameters::resolve(&mut store, &mlx_preview).unwrap();
-    assert!(matches!(
-        mlx_res.resolution,
-        EffectiveModelResolution::Unavailable {
-            reason: EffectiveModelUnavailableReason::LocalBaselineUnavailable
-        }
-    ));
-    assert!(mlx_res.verified_model_profile.is_some() && mlx_res.conversation.is_none());
-    let mlx_cmd = ApplicationCommand::ResolveEffectiveModelParameters { input: mlx_preview };
-    assert!(mlx_cmd.is_read_only_query());
-    assert!(
-        serde_json::from_value::<ApplicationCommand>(serde_json::to_value(mlx_cmd).unwrap())
-            .unwrap()
-            .is_read_only_query()
-    );
+    // Device runtimes use the live local baseline for candidate previews.
+    for runtime in ["mlx", "llama.cpp", "vllm"] {
+        let mut local = profile.clone();
+        local.id = format!("local-{runtime}");
+        local.runtime = runtime.into();
+        local.selected = false;
+        store.upsert_model_profile(&local).unwrap();
+        let stored = store.model_profile(&local.id).unwrap().unwrap();
+        let preview = ResolveEffectiveModelParameters::CandidatePreview {
+            model_profile: HostModelProfileReference {
+                profile_id: stored.id,
+                admitted_revision: stored.revision,
+            },
+            conversation: None,
+        };
+        let result = parameters::resolve(&mut store, &preview).unwrap();
+        assert!(matches!(
+            result.resolution,
+            EffectiveModelResolution::Unavailable {
+                reason: EffectiveModelUnavailableReason::LocalBaselineUnavailable
+            }
+        ));
+        assert!(result.verified_model_profile.is_some() && result.conversation.is_none());
+        let command = ApplicationCommand::ResolveEffectiveModelParameters { input: preview };
+        assert!(command.is_read_only_query());
+        assert!(
+            serde_json::from_value::<ApplicationCommand>(serde_json::to_value(command).unwrap())
+                .unwrap()
+                .is_read_only_query()
+        );
+    }
 
     let mut other = profile.clone();
     other.id = "other".into();

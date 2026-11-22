@@ -30,6 +30,7 @@ enum MacModelTestRunRequestFactory {
             attachmentURLs: [],
             modelID: configuration.model,
             modelProfileID: configuration.profileID, modelProfileRevision: configuration.profileRevision,
+            siwcProfile: configuration.siwcProfile,
             endpoint: configuration.baseURL.absoluteString,
             apiKey: configuration.apiKey,
             contextWindowTokens: configuration.contextWindowTokens,
@@ -183,10 +184,11 @@ struct MacModelTestView: View {
             Text(macModelTestText("mac.model_test.subtitle", "Run the production inference path and inspect timing and output"))
         } actions: {
             Button(macModelTestText("mac.model_test.parameters", "Parameters…"), action: openParameters)
+                .disabled(target == .provider && MacAppleChatConfigurationStore.shared.load()?.profileID == nil)
             Button(isRunning ? macModelTestText("mac.model_test.stop", "Stop") : macModelTestText("mac.model_test.run", "Run")) {
                 isRunning ? stop() : run()
             }
-            .buttonStyle(.borderedProminent)
+            .buttonStyle(.nolaProminent)
             .disabled(!isRunning && !canRun)
             .keyboardShortcut(.return, modifiers: [.command])
         }
@@ -365,8 +367,14 @@ struct MacModelTestView: View {
                         parameters: store.parameters(for: profile)
                     )
                 case .provider:
-                    guard let configuration = MacAppleChatConfigurationStore.shared.load() else {
-                        throw MacRemoteModelRoutingError.allConfiguredModelsCoolingDown
+                    guard let configuration = try MacAppleChatConfigurationStore.shared.loadThrowing() else {
+                        throw NSError(
+                            domain: "MacModelTestView",
+                            code: 1,
+                            userInfo: [
+                                NSLocalizedDescriptionKey: "\(String(localized: "Model")): \(String(localized: "Not configured"))"
+                            ]
+                        )
                     }
                     request = try MacModelTestRunRequestFactory.remote(
                         prompt: runPrompt,

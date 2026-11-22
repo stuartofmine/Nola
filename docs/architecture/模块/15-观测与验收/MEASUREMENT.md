@@ -182,6 +182,8 @@ canonical-answer XCTest 1/1 通过，独立正文流验收拒绝，runner exit 1
 `scripts/e2e/test_provider_probe.py` pytest 6 项通过。该门只证明至少一条完整正文流
 被观察到，不证明所有请求成功；重试、失败前驱和完整提交分母仍由实验清单逐项核验。
 
+百步任务的 `successful_requests` 沿用这条流完成边界。`response.failed` 和 `error` 作为失败终点记录。探针只记录已知的协议错误码，未知值记作 `unknown`。错误正文可能携带请求内容，因此不进入公开验收证据。
+
 ## 已有计时点的实际含义
 
 | 来源 | 实际观测点 | 不能据此声称 |

@@ -44,6 +44,11 @@ fn mobile_model_profile_catalog(store: &NolaStore) -> Result<Vec<Value>, String>
 /// This execution Host resolves its own preference. Runtime facts describe the
 /// bound-profile execution path exposed by this API, not another device's runtime.
 fn mobile_default_chat_model_projection(store: &NolaStore) -> Result<(Value, Option<i64>), String> {
+    let (resolution, revision) = host_default_chat_model(store)?;
+    Ok((serde_json::to_value(resolution).map_err(|error| error.to_string())?, revision))
+}
+
+fn host_default_chat_model(store: &NolaStore) -> Result<(nola_application::model_selection::ChatModelResolution, Option<i64>), String> {
     use nola_application::model_selection::{ChatModelCandidate, ChatModelIntent, ModelAvailability, resolve_chat_model};
     let mut application = crate::application_port::CliApplicationPort::persistent(store.path())?;
     let setting: Option<nola_application::ProductSetting> = application.execute(
@@ -60,7 +65,7 @@ fn mobile_default_chat_model_projection(store: &NolaStore) -> Result<(Value, Opt
                 allowed_for_chat: source["capabilities"].as_array().is_some_and(|values| values.contains(&json!("chat"))) })
         }).collect::<Result<Vec<_>, String>>()?;
     let resolution = resolve_chat_model(&ChatModelIntent::Inherit, setting.as_ref().map(|value| value.value_json.as_str()), &candidates);
-    Ok((serde_json::to_value(resolution).map_err(|error| error.to_string())?, setting.map(|value| value.revision)))
+    Ok((resolution, setting.map(|value| value.revision)))
 }
 
 fn load_bound_intent_profile(
@@ -138,6 +143,7 @@ fn remote_profile_projection(profile: &nola_application::ModelProfile) -> Result
     // Explicit projection: do not publish arbitrary source metadata or credentials.
     Ok(json!({
         "id": profile.id, "provider": profile.provider, "displayName": profile.display_name, "modelName": profile.model_name,
+        "connectionId": source["connectionID"].as_str(),
         "revision": profile.revision, "selected": profile.selected,
         "enabled": source.get("modelEnabled").and_then(Value::as_bool).unwrap_or(profile.enabled),
         "endpoint": {
@@ -165,6 +171,12 @@ fn model_profiles_response() -> Response<Box<dyn Read + Send>> {
     }
 }
 
+fn is_connection_managed_profile(profile: &nola_application::ModelProfile) -> bool {
+    serde_json::from_str::<Value>(&profile.source_json)
+        .ok()
+        .is_some_and(|source| !source["connectionID"].is_null())
+}
+
 fn create_remote_model_profile(store: &NolaStore, body: &Value) -> Result<Value, String> {
     let input = body.as_object().ok_or("model request must be an object")?;
     let expected = input.get("expectedRevisions").and_then(Value::as_object)
@@ -189,7 +201,8 @@ fn create_remote_model_profile(store: &NolaStore, body: &Value) -> Result<Value,
 
     let all = store.model_profiles()?;
     let mut scoped = all.into_iter().filter(|profile| profile.provider == "openai-compatible"
-        && profile.runtime == "remote" && profile.deleted_at_ms.is_none()).collect::<Vec<_>>();
+        && profile.runtime == "remote" && profile.deleted_at_ms.is_none()
+        && !is_connection_managed_profile(profile)).collect::<Vec<_>>();
     let actual = scoped.iter().map(|profile| (profile.id.clone(), profile.revision))
         .collect::<std::collections::BTreeMap<_, _>>();
     if actual != expected { return Err("revision_conflict: model catalog membership or profile revision changed".into()); }
@@ -264,7 +277,8 @@ fn mutate_remote_model_catalog(store: &NolaStore, body: &Value) -> Result<Value,
     let action = body["action"].as_str().ok_or("action is required")?;
     let target = body["targetId"].as_str().filter(|id| !id.is_empty()).ok_or("targetId is required")?;
     let mut entries = store.model_profiles()?.into_iter().filter(|profile| profile.provider == "openai-compatible"
-        && profile.runtime == "remote" && profile.deleted_at_ms.is_none())
+        && profile.runtime == "remote" && profile.deleted_at_ms.is_none()
+        && !is_connection_managed_profile(profile))
         .map(|profile| {
             let source: Value = serde_json::from_str(&profile.source_json).map_err(|_| "invalid model source")?;
             let endpoint = source["endpointID"].as_str().filter(|id| !id.is_empty()).ok_or("invalid endpoint identity")?;
@@ -402,11 +416,14 @@ fn replace_remote_model_catalog(store: &NolaStore, body: &Value) -> Result<Value
     let draft: CatalogDraft = serde_json::from_value(body.clone()).map_err(|_| "invalid catalog draft")?;
     if draft.endpoints.len() > 200 { return Err("too many API endpoints".into()); }
     let all_existing = store.model_profiles()?;
+    let connection_managed = |profile: &nola_application::ModelProfile| {
+        serde_json::from_str::<Value>(&profile.source_json).ok().is_some_and(|source| !source["connectionID"].is_null())
+    };
     let foreign_ids = all_existing.iter().filter(|profile| profile.provider != "openai-compatible"
-        || profile.runtime != "remote" || profile.deleted_at_ms.is_some())
+        || profile.runtime != "remote" || profile.deleted_at_ms.is_some() || connection_managed(profile))
         .map(|profile| profile.id.clone()).collect::<std::collections::HashSet<_>>();
     let existing = all_existing.into_iter().filter(|profile| profile.provider == "openai-compatible"
-        && profile.runtime == "remote" && profile.deleted_at_ms.is_none()).collect::<Vec<_>>();
+        && profile.runtime == "remote" && profile.deleted_at_ms.is_none() && !connection_managed(profile)).collect::<Vec<_>>();
     let actual = existing.iter().map(|profile| (profile.id.clone(), profile.revision))
         .collect::<std::collections::BTreeMap<_, _>>();
     if actual != draft.expected_revisions { return Err("revision_conflict: model catalog membership or profile revision changed".into()); }
@@ -595,7 +612,8 @@ fn configure_remote_profile_settings(store: &NolaStore, id: &str, revision: u64,
 fn configure_remote_profile_full(store: &NolaStore, id: &str, revision: u64, patch: Value, reasoning_patch: Option<Value>, metadata: Option<&Value>) -> Result<Value, String> {
     validate_remote_parameter_patch(&patch)?;
     let mut profiles = store.model_profiles()?.into_iter().filter(|profile| profile.provider == "openai-compatible"
-        && profile.runtime == "remote" && profile.deleted_at_ms.is_none()).collect::<Vec<_>>();
+        && profile.runtime == "remote" && profile.deleted_at_ms.is_none()
+        && !is_connection_managed_profile(profile)).collect::<Vec<_>>();
     let expected = profiles.iter().map(|profile| (profile.id.clone(), profile.revision))
         .collect::<std::collections::BTreeMap<_, _>>();
     let index = profiles.iter().position(|profile| profile.id == id).ok_or("remote model profile is unavailable")?;
@@ -752,7 +770,7 @@ fn model_catalog_url(base_url: &str) -> Result<reqwest::Url, String> {
         return Err("Invalid model endpoint".into());
     }
     let mut path = url.path().trim_end_matches('/').to_owned();
-    for suffix in ["/chat/completions", "/responses"] {
+    for suffix in ["/chat/completions", "/responses", "/messages"] {
         if let Some(base) = path.strip_suffix(suffix) { path = base.to_owned(); break; }
     }
     url.set_path(&format!("{}/models", path.trim_end_matches('/')));
@@ -772,6 +790,50 @@ fn parse_discovered_model_ids(body: &[u8]) -> Result<Vec<String>, String> {
     Ok(ids.into_iter().collect())
 }
 
+fn is_loopback_discovery_host(host: Option<&str>) -> bool {
+    host.is_some_and(|host| {
+        host.eq_ignore_ascii_case("localhost")
+            || host
+                .trim_start_matches('[')
+                .trim_end_matches(']')
+                .parse::<std::net::IpAddr>()
+                .is_ok_and(|address| address.is_loopback())
+    })
+}
+
+fn discover_remote_model_ids_at(
+    url: &reqwest::Url,
+    wire_protocol: &str,
+    secret: Option<&str>,
+) -> Result<Vec<String>, String> {
+    let mut builder = reqwest::blocking::Client::builder()
+        .redirect(reqwest::redirect::Policy::none())
+        .timeout(std::time::Duration::from_secs(30));
+    if is_loopback_discovery_host(url.host_str()) {
+        builder = builder.no_proxy();
+    }
+    let client = builder
+        .build()
+        .map_err(|_| "Cannot prepare model discovery".to_string())?;
+    let mut request = client
+        .get(url.clone())
+        .header(reqwest::header::ACCEPT, "application/json");
+    if wire_protocol == "anthropic" {
+        request = request.header("anthropic-version", "2023-06-01");
+        if let Some(secret) = secret {
+            request = request.header("x-api-key", secret);
+        }
+    } else if let Some(secret) = secret {
+        request = request.bearer_auth(secret);
+    }
+    let response = request.send().map_err(|_| "Could not reach the model catalog".to_string())?;
+    if !response.status().is_success() { return Err(format!("Model discovery failed (HTTP {})", response.status().as_u16())); }
+    let mut body = Vec::new();
+    response.take(2_097_153).read_to_end(&mut body).map_err(|_| "Could not read the model catalog".to_string())?;
+    if body.len() > 2_097_152 { return Err("Provider model catalog is too large".into()); }
+    parse_discovered_model_ids(&body)
+}
+
 fn discover_remote_model_ids(store: &NolaStore, endpoint_id: &str) -> Result<Vec<String>, String> {
     use crate::host_credentials::{endpoint_binding, identity, HostCredentialVault};
     let endpoint = endpoint_binding(store, endpoint_id)?;
@@ -782,20 +844,8 @@ fn discover_remote_model_ids(store: &NolaStore, endpoint_id: &str) -> Result<Vec
         Some(_) => return Err("Endpoint credential identity changed; reload its credentials".into()),
         None => None,
     };
-    let client = reqwest::blocking::Client::builder()
-        .no_proxy()
-        .redirect(reqwest::redirect::Policy::none())
-        .timeout(std::time::Duration::from_secs(30))
-        .build().map_err(|_| "Cannot prepare model discovery".to_string())?;
-    let mut request = client.get(model_catalog_url(&endpoint.base_url)?)
-        .header(reqwest::header::ACCEPT, "application/json");
-    if let Some(secret) = secret { request = request.bearer_auth(secret); }
-    let response = request.send().map_err(|_| "Could not reach the model catalog".to_string())?;
-    if !response.status().is_success() { return Err(format!("Model discovery failed (HTTP {})", response.status().as_u16())); }
-    let mut body = Vec::new();
-    response.take(2_097_153).read_to_end(&mut body).map_err(|_| "Could not read the model catalog".to_string())?;
-    if body.len() > 2_097_152 { return Err("Provider model catalog is too large".into()); }
-    parse_discovered_model_ids(&body)
+    let url = model_catalog_url(&endpoint.base_url)?;
+    discover_remote_model_ids_at(&url, &endpoint.wire_protocol, secret.as_deref())
 }
 
 fn discover_remote_models_response(id: &str) -> Response<Box<dyn Read + Send>> {
@@ -1040,6 +1090,33 @@ mod model_profile_web_tests {
         let before = store.model_profiles().unwrap();
         assert!(create_remote_model_profile(&store, &request).unwrap_err().starts_with("revision_conflict:"));
         assert_eq!(store.model_profiles().unwrap(), before);
+    }
+
+    #[test]
+    fn replacing_manual_catalog_preserves_managed_profile_identity_revision_selection_and_credentials() {
+        let (root, store) = endpoint_fixture();
+        let connection = rusqlite::Connection::open(root.path().join("test.sqlite")).unwrap();
+        connection.execute("UPDATE model_profiles SET source_json=json_set(source_json,'$.connectionID','managed-owner') WHERE id='first'", []).unwrap();
+        let managed = store.model_profile("first").unwrap().unwrap();
+        assert_eq!(remote_profile_projection(&managed).unwrap()["connectionId"], "managed-owner");
+        let mut revisions = catalog_revisions(&store);
+        revisions.remove("first");
+        let mut fresh = route_profile();
+        fresh.id = "added-manually".into();
+        fresh.selected = true;
+        let mut source: Value = serde_json::from_str(&fresh.source_json).unwrap();
+        source["endpointID"] = json!("independent");
+        fresh.source_json = source.to_string();
+        store.replace_remote_model_profiles(vec![fresh.clone()], revisions).unwrap();
+        assert_eq!(store.model_profile("first").unwrap().unwrap(), managed);
+        assert!(!store.model_profile(&fresh.id).unwrap().unwrap().selected);
+        let mut revisions = catalog_revisions(&store);
+        revisions.remove("first");
+        source["endpointID"] = json!("endpoint");
+        fresh.source_json = source.to_string();
+        assert!(store.replace_remote_model_profiles(vec![fresh], revisions.clone()).is_err());
+        assert!(store.replace_remote_model_profiles(vec![managed.clone()], revisions).is_err());
+        assert_eq!(store.model_profile("first").unwrap().unwrap(), managed);
     }
 
     #[test]
@@ -1864,5 +1941,51 @@ mod model_profile_web_tests {
         assert!(!projection.to_string().contains("never-publish"));
         assert_eq!(projection["endpoint"]["wireProtocol"], "responses");
         assert_eq!(projection["parameters"]["temperature"], 0);
+    }
+
+    #[test]
+    fn remote_model_discovery_uses_anthropic_headers_and_loopback_only_proxy_bypass() {
+        use std::io::Write;
+        for host in ["localhost", "LOCALHOST", "127.0.0.1", "::1", "[::1]"] {
+            assert!(is_loopback_discovery_host(Some(host)), "expected loopback for {host}");
+        }
+        for host in ["api.anthropic.com", "api.openai.com", "192.168.1.10"] {
+            assert!(!is_loopback_discovery_host(Some(host)), "expected non-loopback for {host}");
+        }
+
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let addr = listener.local_addr().unwrap();
+        let server = std::thread::spawn(move || {
+            let mut captured = Vec::new();
+            for _ in 0..2 {
+                let (mut stream, _) = listener.accept().unwrap();
+                stream.set_read_timeout(Some(std::time::Duration::from_secs(5))).unwrap();
+                let mut buf = [0u8; 4096];
+                let n = stream.read(&mut buf).unwrap();
+                captured.push(String::from_utf8_lossy(&buf[..n]).to_ascii_lowercase());
+                let body = r#"{"data":[{"id":"claude-sonnet-4-20250514"}]}"#;
+                write!(
+                    stream,
+                    "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+                    body.len(),
+                    body
+                )
+                .unwrap();
+            }
+            captured
+        });
+
+        let url = model_catalog_url(&format!("http://{addr}/v1")).unwrap();
+        let anthropic_ids = discover_remote_model_ids_at(&url, "anthropic", Some("sk-ant-test")).unwrap();
+        assert_eq!(anthropic_ids, vec!["claude-sonnet-4-20250514"]);
+
+        let openai_ids = discover_remote_model_ids_at(&url, "chat_completions", Some("sk-openai-test")).unwrap();
+        assert_eq!(openai_ids, vec!["claude-sonnet-4-20250514"]);
+
+        let requests = server.join().unwrap();
+        assert!(requests[0].contains("x-api-key: sk-ant-test"), "anthropic request: {}", requests[0]);
+        assert!(requests[0].contains("anthropic-version: 2023-06-01"), "anthropic request: {}", requests[0]);
+        assert!(!requests[0].contains("authorization: bearer"), "anthropic must not send bearer: {}", requests[0]);
+        assert!(requests[1].contains("authorization: bearer sk-openai-test"), "openai request: {}", requests[1]);
     }
 }

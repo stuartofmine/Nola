@@ -111,7 +111,7 @@ final class ChatManagerTests: XCTestCase {
         var drafts = ConversationComposerDraftStore()
         drafts.select(owner)
         drafts.current.text = text
-        let prepared = try manager.submissionUseCase.prepare(title: text, initialParameters: nil, drafts: &drafts)
+        let prepared = try manager.submissionUseCase.prepare(initialParameters: nil, drafts: &drafts)
         let input = SendConversationTurnUseCase.Input(prompt: text, displayText: text, metadata: nil,
             attachments: [], responseStyle: .casual, retrievalEnabled: false, preferredHostID: "",
             hybridToolsEnabled: false, hybridCapabilities: [])
@@ -131,6 +131,14 @@ final class ChatManagerTests: XCTestCase {
     }
 
     func testInPlaceEditResendsWithRetainedPrefixAndNoAbandonedAnswer() async throws {
+        try await exerciseInPlaceEdit(withMention: false)
+    }
+
+    func testRemovingLastMentionPublishesRewindOnlyAfterReplacementAdmission() async throws {
+        try await exerciseInPlaceEdit(withMention: true)
+    }
+
+    private func exerciseInPlaceEdit(withMention: Bool) async throws {
         let (runtime, root) = try makeApplicationRuntime()
         addTeardownBlock { try await Self.removeStreamingFixtureRoot(root) }
         let container = ServiceContainer(applicationRuntime: runtime)
@@ -143,7 +151,14 @@ final class ChatManagerTests: XCTestCase {
         manager.selectedModelInfo = model
         Self.retainedManagers.append(manager)
         _ = try await manager.processMessage("RETAINED_PREFIX_8217")
-        _ = try await manager.processMessage("ABANDONED_QUESTION_8217")
+        if withMention {
+            let service = IOSAgentRoomService(runtime: runtime)
+            let directory = try service.createAgent(name: "Reviewer", description: "", defaults: .object([:]), directory: service.directory())
+            let agent = try XCTUnwrap(directory.agents.first { $0.name == "Reviewer" })
+            let entry = AppleMainExpertSelectionEntry(agentID: agent.id, agentRevision: agent.revision)
+            let mentions = AppleExpertMentions(version: 1, segments: [.init(text: "@Reviewer", agentID: agent.id), .init(text: " ABANDONED_QUESTION_8217", agentID: nil)])
+            _ = try await manager.processMessage("@Reviewer ABANDONED_QUESTION_8217", selectedExperts: [entry], expertMentions: mentions)
+        } else { _ = try await manager.processMessage("ABANDONED_QUESTION_8217") }
         let owner = try XCTUnwrap(manager.currentConversationId)
         let conversation = try XCTUnwrap(runtime.loadConversation(id: owner.uuidString))
         let projection = try runtime.loadConversationProjectionV1(id: owner.uuidString)
@@ -158,6 +173,17 @@ final class ChatManagerTests: XCTestCase {
         // verifiable by a different runtime even after Core removes its original bubble.
         let pending = IOSPendingMessageEdit(runtime: runtime, conversationID: owner)
         try pending.retain(request)
+        let notification = expectation(description: "The edit publishes its source-owned transcript")
+        let observer = NotificationCenter.default.addObserver(forName: .nolaConversationRewound, object: nil, queue: nil) { notice in
+            guard notice.object as? UUID == owner else { return }
+            if withMention {
+                let snapshot = try? runtime.loadConversation(id: owner.uuidString)
+                XCTAssertTrue(snapshot?.messages.contains { $0.parts.contains { $0.contentText.contains("REPLACEMENT_8217") } } == true)
+                XCTAssertFalse(snapshot?.messages.contains { $0.parts.contains { $0.contentText.contains("ABANDONED_QUESTION_8217") } } == true)
+            }
+            notification.fulfill()
+        }
+        defer { NotificationCenter.default.removeObserver(observer) }
         let admittedOwner: UUID
         do { admittedOwner = try await manager.sendEditedMessage(request) }
         catch {
@@ -167,6 +193,8 @@ final class ChatManagerTests: XCTestCase {
             throw error
         }
         XCTAssertEqual(admittedOwner, owner)
+        await fulfillment(of: [notification], timeout: 2)
+        NotificationCenter.default.removeObserver(observer)
         let cold = IOSPendingMessageEdit(runtime: try IOSApplicationRuntime(databaseURL: runtime.databaseURL), conversationID: owner)
         let recovered = try XCTUnwrap(cold.load())
         XCTAssertEqual(recovered, request)
@@ -209,7 +237,7 @@ final class ChatManagerTests: XCTestCase {
         var drafts = ConversationComposerDraftStore()
         drafts.select(b.id)
         drafts.current.text = "belongs to B"
-        XCTAssertThrowsError(try manager.submissionUseCase.prepare(title: "A", initialParameters: nil, drafts: &drafts))
+        XCTAssertThrowsError(try manager.submissionUseCase.prepare(initialParameters: nil, drafts: &drafts))
         XCTAssertEqual(drafts.selected, .conversation(b.id))
         XCTAssertEqual(drafts.current.text, "belongs to B")
         XCTAssertEqual(manager.currentConversationId, a.id)

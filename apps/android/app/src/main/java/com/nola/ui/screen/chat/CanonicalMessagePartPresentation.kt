@@ -18,6 +18,8 @@ internal fun canonicalMessageBlocks(parts: List<ConversationProjectionV1.Part>):
     val activity = mutableListOf<ConversationProjectionV1.Part>()
     fun flush() { if (activity.isNotEmpty()) { add(CanonicalMessageBlock.Activity(activity.toList())); activity.clear() } }
     parts.forEach { part ->
+        // Empty stream placeholders and undisclosed text occupy no space between activities.
+        if (part is ConversationProjectionV1.Part.Text && part.disclosedMarkdown.isEmpty()) return@forEach
         if (part is ConversationProjectionV1.Part.Reasoning || part is ConversationProjectionV1.Part.Tool) activity += part
         else { flush(); add(CanonicalMessageBlock.Part(part)) }
     }

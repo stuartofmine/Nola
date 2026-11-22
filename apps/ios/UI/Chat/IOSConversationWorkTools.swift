@@ -33,8 +33,12 @@ struct IOSConversationWorkTools: View {
     let modelLabel: String
     let hasOwner: Bool
     var onRename: (() -> Void)? = nil
-    let select: (IOSConversationWorkDestination) -> Void
+    var onConfirmRename: ((String) -> Void)? = nil
+    var select: ((IOSConversationWorkDestination) -> Void)? = nil
+    var destination: ((IOSConversationWorkDestination) -> AnyView)? = nil
     @Environment(\.dismiss) private var dismiss
+    @State private var showingRenameAlert = false
+    @State private var renameDraft = ""
 
     var body: some View {
         NavigationStack {
@@ -43,12 +47,19 @@ struct IOSConversationWorkTools: View {
                 Section {
                     HStack(spacing: 12) {
                         VStack(alignment: .leading, spacing: 6) {
-                            Text(conversationTitle).font(.headline).fixedSize(horizontal: false, vertical: true)
+                            Text(conversationTitle).font(.headline).lineLimit(2)
                             Text(modelLabel).font(.subheadline).foregroundStyle(.secondary)
                         }
                         Spacer(minLength: 8)
-                        if hasOwner, let onRename {
-                            Button(action: onRename) {
+                        if hasOwner, onConfirmRename != nil || onRename != nil {
+                            Button {
+                                if onConfirmRename != nil {
+                                    renameDraft = conversationTitle
+                                    showingRenameAlert = true
+                                } else {
+                                    onRename?()
+                                }
+                            } label: {
                                 Image(systemName: "pencil")
                                     .frame(width: 44, height: 44)
                             }
@@ -63,18 +74,31 @@ struct IOSConversationWorkTools: View {
                 }
                 Section {
                     ForEach(IOSConversationWorkDestination.allCases) { item in
-                        Button { select(item) } label: {
-                            HStack(spacing: 12) {
-                                Image(item.iconAsset).renderingMode(.template).resizable().scaledToFit().frame(width: 22, height: 22).accessibilityHidden(true)
-                                Text(item.title).foregroundStyle(.primary)
-                                Spacer(minLength: 8)
-                                Image("nola-chevron").renderingMode(.template).resizable().scaledToFit().frame(width: 14, height: 14).foregroundStyle(.tertiary)
-                                    .accessibilityHidden(true)
+                        if destination != nil {
+                            NavigationLink(value: item) {
+                                HStack(spacing: 12) {
+                                    Image(item.iconAsset).renderingMode(.template).resizable().scaledToFit().frame(width: 22, height: 22).accessibilityHidden(true)
+                                    Text(item.title).foregroundStyle(.primary)
+                                    Spacer(minLength: 8)
+                                }
+                                .frame(maxWidth: .infinity, minHeight: 44, alignment: .leading)
+                                .contentShape(Rectangle())
                             }
-                            .frame(maxWidth: .infinity, minHeight: 44, alignment: .leading)
-                            .contentShape(Rectangle())
+                            .accessibilityIdentifier("chat.work_tools." + item.rawValue)
+                        } else {
+                            Button { select?(item) } label: {
+                                HStack(spacing: 12) {
+                                    Image(item.iconAsset).renderingMode(.template).resizable().scaledToFit().frame(width: 22, height: 22).accessibilityHidden(true)
+                                    Text(item.title).foregroundStyle(.primary)
+                                    Spacer(minLength: 8)
+                                    Image("nola-chevron").renderingMode(.template).resizable().scaledToFit().frame(width: 14, height: 14).foregroundStyle(.tertiary)
+                                        .accessibilityHidden(true)
+                                }
+                                .frame(maxWidth: .infinity, minHeight: 44, alignment: .leading)
+                                .contentShape(Rectangle())
+                            }
+                            .accessibilityIdentifier("chat.work_tools." + item.rawValue)
                         }
-                        .accessibilityIdentifier("chat.work_tools." + item.rawValue)
                     }
                 }
                 }
@@ -83,9 +107,22 @@ struct IOSConversationWorkTools: View {
             }
             .nolaGroupedSurface()
             .navigationTitle(String(localized: "work.tools.title"))
+            .navigationBarTitleDisplayMode(.inline)
+            .navigationDestination(for: IOSConversationWorkDestination.self) { item in
+                if let destination {
+                    destination(item)
+                }
+            }
             .toolbar { ToolbarItem(placement: .confirmationAction) {
                 Button(L10n.close) { dismiss() }.accessibilityIdentifier("chat.work_tools.close")
             } }
+            .alert(String(localized: "chat.conversations.rename", defaultValue: "Rename Conversation"), isPresented: $showingRenameAlert) {
+                TextField(String(localized: "chat.conversations.title_field", defaultValue: "Title"), text: $renameDraft)
+                Button(L10n.cancel, role: .cancel) {}
+                Button(L10n.done) {
+                    onConfirmRename?(renameDraft)
+                }
+            }
         }
     }
 }

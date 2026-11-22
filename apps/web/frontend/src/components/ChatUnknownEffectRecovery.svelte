@@ -3,6 +3,7 @@
     import { onMount } from 'svelte';
     import { api } from '../lib/api';
     import { locale, t } from '../lib/i18n';
+    import { randomId } from '../lib/randomId';
     import { BrowserRecoveryIntentStore, createRecoveryDecision, parseRecoveryInspection, recoverDecision } from '../lib/unknownEffectRecovery';
     import type { RecoveryOwner, RecoveryInspection, RecoveryChoice, OwnedTaskRecoveryContext } from '../lib/unknownEffectRecovery';
     import { parseRunObservation } from '../lib/runObservation';
@@ -76,7 +77,7 @@
         busy = true; failed = false;
         try {
             const wire = createRecoveryDecision(owner, inspected, confirming, selected, reason,
-                crypto.randomUUID(), crypto.randomUUID(), Date.now());
+                randomId(), randomId(), Date.now());
             await store.create(owner, wire);
             // The confirmed old-owner intent survives component disposal. Do
             // not send it after the user has switched away; it can be checked

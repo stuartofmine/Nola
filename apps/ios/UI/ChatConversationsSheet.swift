@@ -9,6 +9,14 @@
 import SwiftUI
 import UIKit
 
+private struct ConversationFilterBounds: PreferenceKey {
+    static var defaultValue: [Bool: Anchor<CGRect>] { [:] }
+
+    static func reduce(value: inout [Bool: Anchor<CGRect>], nextValue: () -> [Bool: Anchor<CGRect>]) {
+        value.merge(nextValue(), uniquingKeysWith: { _, latest in latest })
+    }
+}
+
 nonisolated enum IOSConversationTitlePresentationPolicy {
     static func displayTitle(
         _ title: String?,
@@ -51,20 +59,89 @@ nonisolated enum IOSConversationTitlePresentationPolicy {
     }
 }
 
+nonisolated struct IOSConversationListPreview: Sendable {
+    let lastActiveAt: Date
+    let revision: Int64
+    let checkedOnVisit: Int
+    var hasCurrentMessage = false
+    var draft: String?
+    var message = ""
+    var hasRoom = false
+    var experts: [String] = []
+    var error: String?
+
+    func matches(_ query: String) -> Bool {
+        message.localizedStandardContains(query) || draft?.localizedStandardContains(query) == true
+            || experts.contains { $0.localizedStandardContains(query) }
+    }
+
+    // Search covers the whole directory even when its rows have never appeared.
+    static func missing(in entries: [IOSConversationDirectoryEntry],
+                        cache: [UUID: Self], visit: Int) -> [IOSConversationDirectoryEntry] {
+        entries.filter { cache[$0.id]?.checkedOnVisit != visit }
+    }
+
+    static func read(_ entry: IOSConversationDirectoryEntry, runtime: IOSApplicationRuntime,
+                     previous: Self?, visit: Int) async -> Self {
+        var result = Self(lastActiveAt: entry.lastActiveAt, revision: entry.revision, checkedOnVisit: visit)
+        do {
+            if entry.canonicalID == entry.id.uuidString {
+                result.draft = try FileConversationDraftRepository.scoped(to: runtime.databaseURL).textPreview(.conversation(entry.id))
+            }
+        } catch {
+            result.draft = previous?.draft
+            result.error = error.localizedDescription
+        }
+        do {
+            let association = try IOSAgentRoomService(runtime: runtime).forConversation(entry.canonicalID)
+            result.hasRoom = association != nil
+            result.experts = association?.room.room.participants.filter(\.active).map(\.displayName) ?? []
+        } catch {
+            // A transient association read must not remove an existing disclosure.
+            result.hasRoom = previous?.hasRoom ?? false
+            result.experts = previous?.experts ?? []
+        }
+        // Drafts and room membership have independent lifetimes. The message
+        // projection can be reused only after a successful read of this revision.
+        if let previous, previous.lastActiveAt == entry.lastActiveAt,
+           previous.revision == entry.revision, previous.hasCurrentMessage {
+            result.message = previous.message
+            result.hasCurrentMessage = true
+            return result
+        }
+        do {
+            let window = try runtime.loadConversationProjectionWindowV1(id: entry.canonicalID,
+                beforeOrdinal: nil, limit: 2, contentByteLimit: 4096)
+            let text = await MainActor.run {
+                IOSConversationProjectionPresenter.messages(from: window.projection)
+                    .last { !$0.content.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }?.content ?? ""
+            }
+            result.message = text.components(separatedBy: .newlines).map { line in
+                (try? AttributedString(markdown: line)).map { String($0.characters) } ?? line
+            }.joined(separator: " ")
+            result.hasCurrentMessage = true
+        } catch {
+            result.message = previous?.message ?? ""
+            result.error = error.localizedDescription
+        }
+        return result
+    }
+}
+
 /// The Chat tab's root list. It owns search/scroll state while a conversation is pushed.
 struct ChatConversationsList: View {
     @EnvironmentObject private var container: ServiceContainer
     @Environment(\.colorScheme) private var colorScheme
+    @Environment(\.horizontalSizeClass) private var horizontalSizeClass
     @AppStorage(AppleAppearancePreference.storageKey) private var appearance = "system"
     let onSelect: (UUID) -> Void
     var onContinueExpert: (IOSExpertHistoryContinuation) -> Void = { _ in }
     @State private var expandedParents: Set<UUID> = []
-    @State private var roomParents: Set<UUID> = []
     @State private var conversations: [IOSConversationDirectoryEntry] = []
-    @State private var pageWidth: CGFloat = 390
-    @State private var previews: [UUID: String] = [:]
-    @State private var expertNames: [UUID: [String]] = [:]
-    @State private var previewDates: [UUID: Date] = [:]
+    private var pageInset: CGFloat { horizontalSizeClass == .regular ? 24 : 20 }
+    @State private var previews: [UUID: IOSConversationListPreview] = [:]
+    @State private var directorySnapshot: [IOSCanonicalConversationSummary]?
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @Binding var search: String
 
     init(search: Binding<String>, onSelect: @escaping (UUID) -> Void,
@@ -79,22 +156,29 @@ struct ChatConversationsList: View {
     @State private var renameDraft = ""
     @State private var directoryRequest: UUID?
     @State private var loadError: String?
-    @State private var previewErrors: [UUID: String] = [:]
     @State private var previewRefreshRevision = 0
-    @State private var draftTexts: [UUID: String] = [:]
     @State private var needsResponseOnly = false
+    @State private var persistedWaitingIDs: Set<UUID> = []
 
     private struct PreviewLoadIdentity: Hashable {
         let lastActiveAt: Date
         let refreshRevision: Int
+        let searching: Bool
+    }
+
+    private var query: String { search.trimmingCharacters(in: .whitespacesAndNewlines) }
+
+    private struct SearchIndexIdentity: Hashable {
+        let active: Bool
+        let revision: Int
     }
 
     private var visibleConversations: [IOSConversationDirectoryEntry] {
         let candidates = conversations.filter { !needsResponseOnly || waiting($0.id) }
-        guard !search.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return candidates }
+        let term = query
+        guard !term.isEmpty else { return candidates }
         return candidates.filter {
-            title($0).localizedStandardContains(search) || (previews[$0.id] ?? "").localizedStandardContains(search) || (draftTexts[$0.id] ?? "").localizedStandardContains(search)
-                || (expertNames[$0.id] ?? []).contains { $0.localizedStandardContains(search) }
+            title($0).localizedStandardContains(term) || previews[$0.id]?.matches(term) == true
         }
     }
 
@@ -107,17 +191,22 @@ struct ChatConversationsList: View {
             if let loadError {
                 Section {
                     Text(loadError).foregroundStyle(.secondary)
-                    Button(String(localized: "common.retry")) { refresh() }
+                    Button(String(localized: "common.retry")) { Task { await refresh() } }
                 }.accessibilityIdentifier("chat.history.error")
             }
-            if conversations.isEmpty && loadError == nil {
+            if directorySnapshot == nil && loadError == nil {
+                ProgressView().frame(maxWidth: .infinity).listRowSeparator(.hidden)
+            } else if conversations.isEmpty && query.isEmpty && !needsResponseOnly && loadError == nil {
                 VStack(alignment: .leading, spacing: 8) {
                     Text(String(localized: "chat.history.empty.title")).font(.headline)
                     Text(String(localized: "chat.history.empty.message")).foregroundStyle(.secondary)
                 }.padding(.vertical, 20).listRowSeparator(.hidden).listRowBackground(DesignTokens.backgroundColor)
-            }
-            if !conversations.isEmpty && visibleConversations.isEmpty {
-                Text(String(localized: "chat.history.no_results")).foregroundStyle(.secondary).padding(.vertical, 20).listRowBackground(DesignTokens.backgroundColor)
+            } else if loadError == nil && visibleConversations.isEmpty {
+                if !query.isEmpty && !IOSConversationListPreview.missing(in: conversations, cache: previews, visit: previewRefreshRevision).isEmpty {
+                    ProgressView().frame(maxWidth: .infinity).listRowSeparator(.hidden)
+                } else {
+                    Text(String(localized: "chat.history.no_results")).foregroundStyle(.secondary).padding(.vertical, 20).listRowBackground(DesignTokens.backgroundColor)
+                }
             }
             Section {
                 ForEach(visibleConversations, id: \.id) { conversation in
@@ -127,21 +216,30 @@ struct ChatConversationsList: View {
 
         }
         .listStyle(.plain)
+        .modifier(IOSWorkspaceTopEdge())
         .scrollContentBackground(.hidden)
         .background(DesignTokens.backgroundColor)
-        .background(IOSWorkspaceWidthObserver(width: $pageWidth))
         .accessibilityIdentifier("chat.conversations.list")
         .navigationTitle("")
-        .toolbar(.hidden, for: .navigationBar)
+        .navigationBarTitleDisplayMode(.inline)
+        .toolbar(horizontalSizeClass == .compact ? .hidden : .visible, for: .navigationBar)
+        .toolbarBackground(.hidden, for: .navigationBar)
         .scrollDismissesKeyboard(.interactively)
-        .onAppear { previewRefreshRevision += 1; refresh() }
-        .refreshable { refresh(forcePreviews: true) }
+        .task { await refresh() }
+        .refreshable { await refresh(forcePreviews: true) }
+        .task(id: SearchIndexIdentity(active: !query.isEmpty, revision: previewRefreshRevision)) {
+            guard !query.isEmpty else { return }
+            for entry in IOSConversationListPreview.missing(in: conversations, cache: previews, visit: previewRefreshRevision) {
+                guard !Task.isCancelled else { return }
+                await loadPreview(entry)
+            }
+        }
         .confirmationDialog(String(localized: "chat.history.delete.title"), isPresented: Binding(
             get: { pendingDelete != nil }, set: { if !$0 { pendingDelete = nil } }
         ), presenting: pendingDelete) { conversation in
             Button(L10n.chatClearAction, role: .destructive) {
                 pendingDelete = nil
-                Task { await container.chatManager.clearConversation(conversation.id); refresh() }
+                Task { await container.chatManager.clearConversation(conversation.id); await refresh() }
             }
             Button(L10n.cancel, role: .cancel) { pendingDelete = nil }
         }
@@ -160,7 +258,7 @@ struct ChatConversationsList: View {
                     if container.chatManager.currentConversationId == target.id {
                         NotificationCenter.default.post(name: .nolaConversationRenamed, object: target.id, userInfo: ["title": trimmed])
                     }
-                    refresh()
+                    Task { await refresh() }
                 } catch { loadError = error.localizedDescription }
             }
         }
@@ -172,32 +270,52 @@ struct ChatConversationsList: View {
                             Button {
                                 dismissSearchKeyboard()
                                 guard conversation.canonicalID == conversation.id.uuidString else {
-                                    loadError = String(localized: "expert.history.unsupportedParent"); return
+                                    NotificationCenter.default.post(name: .nolaOpenChatTab, object: conversation.canonicalID)
+                                    return
                                 }
                                 onSelect(conversation.id)
                             } label: {
                                 HStack(alignment: .top, spacing: 0) {
-                                    VStack(alignment: .leading, spacing: 5) {
-                                        HStack(alignment: .firstTextBaseline) {
-                                            Text(title(conversation)).font(.callout.weight(.medium))
-                                                .foregroundStyle(.primary).lineLimit(1)
+                                    VStack(alignment: .leading, spacing: 6) {
+                                        HStack(alignment: .firstTextBaseline, spacing: 6) {
+                                            if waiting(conversation.id) {
+                                                Circle()
+                                                    .fill(DesignTokens.actionColor)
+                                                    .frame(width: 7, height: 7)
+                                                    .accessibilityHidden(true)
+                                            }
+                                            Text(title(conversation)).font(.body.weight(.medium))
+                                                .foregroundStyle(DesignTokens.contentColor).lineLimit(1)
                                                 .layoutPriority(1)
+                                            if let experts = previews[conversation.id]?.experts, !experts.isEmpty {
+                                                HStack(spacing: 3) {
+                                                    Image(systemName: "person.2.fill")
+                                                        .font(.system(size: 9, weight: .semibold))
+                                                    Text(experts.count == 1 ? experts[0] : "\(experts.count)")
+                                                        .lineLimit(1)
+                                                }
+                                                .font(.caption2.weight(.medium))
+                                                .foregroundStyle(DesignTokens.actionColor)
+                                                .padding(.horizontal, 6)
+                                                .padding(.vertical, 2)
+                                                .background(DesignTokens.accentSubtleColor, in: Capsule())
+                                            }
                                             Spacer(minLength: 8)
                                             Text(conversation.lastActiveAt, format: Calendar.current.isDateInToday(conversation.lastActiveAt) ? .dateTime.hour().minute() : .dateTime.month().day())
                                                 .font(.caption).foregroundStyle(.secondary)
                                                 .fixedSize(horizontal: true, vertical: false)
                                         }
-                                        if let draft = draftTexts[conversation.id], !draft.isEmpty {
+                                        if let draft = previews[conversation.id]?.draft, !draft.isEmpty {
                                             (Text(String(localized: "chat.history.draft")).foregroundColor(DesignTokens.warningColor) + Text(verbatim: " · " + draft).foregroundColor(.secondary))
                                                 .font(.subheadline).lineLimit(1)
-                                        } else if let previewError = previewErrors[conversation.id] {
+                                        } else if let previewError = previews[conversation.id]?.error {
                                             Text(previewError).font(.caption).foregroundStyle(.secondary)
                                                 .lineLimit(3)
                                                 .accessibilityIdentifier("chat.conversation.previewError.\(conversation.id.uuidString.lowercased())")
                                         } else if let execution = container.chatManager.executionForConversation(conversation.id) {
-                                            ChatConversationLivePreview(execution: execution, fallback: previews[conversation.id] ?? "")
-                                        } else {
-                                            Text(previews[conversation.id].flatMap { $0.isEmpty ? nil : $0 } ?? String(localized: "chat.history.no_messages"))
+                                            ChatConversationLivePreview(execution: execution, fallback: previews[conversation.id]?.message ?? "")
+                                        } else if let preview = previews[conversation.id] {
+                                            Text(preview.message.isEmpty ? String(localized: "chat.history.no_messages") : preview.message)
                                                 .font(.subheadline).foregroundStyle(.secondary).lineLimit(1)
                                         }
 
@@ -207,20 +325,24 @@ struct ChatConversationsList: View {
                             }
                             .buttonStyle(NolaPressableButtonStyle())
                             .accessibilityIdentifier("chat.conversation.\(conversation.id.uuidString.lowercased())")
-                            .task(id: PreviewLoadIdentity(lastActiveAt: conversation.lastActiveAt, refreshRevision: previewRefreshRevision)) { loadPreview(conversation) }
-                            .contextMenu {
-                                Button(String(localized: "chat.conversations.rename", defaultValue: "Rename"),
-                                       systemImage: "pencil") {
-                                    let current = title(conversation)
-                                    renameDraft = current
-                                    renameTarget = (conversation.id, current)
-                                }
-                                let isRunning = container.chatManager.executionForConversation(conversation.id)?.processingState.blocksInput == true
-                                Button(isRunning ? String(localized: "chat.history.stop_before_delete") : L10n.chatClearAction,
-                                       systemImage: "trash", role: .destructive) { pendingDelete = conversation }
-                                    .disabled(isRunning)
+                            .task(id: PreviewLoadIdentity(lastActiveAt: conversation.lastActiveAt, refreshRevision: previewRefreshRevision, searching: !query.isEmpty)) {
+                                if query.isEmpty { await loadPreview(conversation) }
                             }
-                            if roomParents.contains(conversation.id) { Button {
+                            .contextMenu {
+                                if conversation.canonicalID == conversation.id.uuidString {
+                                    Button(String(localized: "chat.conversations.rename", defaultValue: "Rename"),
+                                           systemImage: "pencil") {
+                                        let current = title(conversation)
+                                        renameDraft = current
+                                        renameTarget = (conversation.id, current)
+                                    }
+                                    let isRunning = container.chatManager.executionForConversation(conversation.id)?.processingState.blocksInput == true
+                                    Button(isRunning ? String(localized: "chat.history.stop_before_delete") : L10n.chatClearAction,
+                                           systemImage: "trash", role: .destructive) { pendingDelete = conversation }
+                                        .disabled(isRunning)
+                                }
+                            }
+                            if previews[conversation.id]?.hasRoom == true { Button {
                                 dismissSearchKeyboard()
                                 if !expandedParents.insert(conversation.id).inserted { expandedParents.remove(conversation.id) }
                             } label: {
@@ -229,7 +351,7 @@ struct ChatConversationsList: View {
                                     .frame(width: 44, height: 44).contentShape(Rectangle())
                             }.buttonStyle(.plain)
                             .accessibilityLabel(Text("expert.history.title"))
-                            .accessibilityValue(Text(expandedParents.contains(conversation.id) ? "expert.history.expanded" : "expert.history.collapsed"))
+                            .accessibilityValue(expandedParents.contains(conversation.id) ? Text("expert.history.expanded") : Text("expert.history.collapsed"))
                             .accessibilityIdentifier("chat.children.toggle." + conversation.id.uuidString.lowercased())
                             }
                         }
@@ -241,22 +363,46 @@ struct ChatConversationsList: View {
                     }
                     .listRowSeparator(.visible, edges: .bottom)
                     .listRowBackground(DesignTokens.backgroundColor)
-                    .listRowInsets(EdgeInsets(top: 12, leading: pageWidth < 359 ? 16 : 20, bottom: 12, trailing: pageWidth < 359 ? 16 : 20))
+                    .listRowInsets(EdgeInsets(top: 12, leading: pageInset, bottom: 12, trailing: pageInset))
+                    .swipeActions(edge: .trailing, allowsFullSwipe: false) {
+                        if conversation.canonicalID == conversation.id.uuidString {
+                            let isRunning = container.chatManager.executionForConversation(conversation.id)?.processingState.blocksInput == true
+                            Button(role: .destructive) {
+                                pendingDelete = conversation
+                            } label: {
+                                Label(L10n.chatClearAction, systemImage: "trash")
+                            }
+                            .disabled(isRunning)
+
+                            Button {
+                                let current = title(conversation)
+                                renameDraft = current
+                                renameTarget = (conversation.id, current)
+                            } label: {
+                                Label(String(localized: "chat.conversations.rename", defaultValue: "Rename"), systemImage: "pencil")
+                            }
+                            .tint(DesignTokens.actionColor)
+                        }
+                    }
     }
 
     private var listHeader: some View {
-        VStack(alignment: .leading, spacing: 16) {
+        VStack(alignment: .leading, spacing: 12) {
             HStack {
                 IOSWorkspacePageHeading(title: L10n.chatTitle)
                 HStack {
                     Button {
                         dismissSearchKeyboard()
                         if let id = container.chatManager.startConversation(title: nil, language: nil) {
-                            refresh(); onSelect(id)
+                            onSelect(id)
                         } else { loadError = String(localized: "chat.history.create_failed") }
                     } label: {
                         Image("nola-edit").renderingMode(.template).resizable().scaledToFit()
-                            .frame(width: 23, height: 23).frame(width: 44, height: 44)
+                            .frame(width: 20, height: 20)
+                            .foregroundStyle(DesignTokens.actionColor)
+                            .frame(width: 38, height: 38)
+                            .background(DesignTokens.accentSubtleColor, in: Circle())
+                            .frame(width: 44, height: 44).contentShape(Rectangle())
                     }.accessibilityLabel(Text(String(localized: "chat.history.empty.action")))
                         .accessibilityIdentifier("chat.conversations.new")
                 }
@@ -264,37 +410,74 @@ struct ChatConversationsList: View {
             HStack(spacing: 10) {
                 Image("nola-search").renderingMode(.template).resizable().scaledToFit()
                     .frame(width: 19, height: 19).foregroundStyle(.secondary)
+                    .accessibilityHidden(true)
                 TextField("", text: $search, prompt: Text(String(localized: "chat.history.search")).foregroundColor(.secondary))
                     .font(.subheadline).focused($searchFocused)
                     .submitLabel(.search).autocorrectionDisabled()
+                    .onSubmit { dismissSearchKeyboard() }
                     .accessibilityIdentifier("chat.conversations.search")
+                if !search.isEmpty {
+                    Button {
+                        search = ""
+                    } label: {
+                        Image(systemName: "xmark.circle.fill")
+                            .font(.subheadline).foregroundStyle(.secondary)
+                            .frame(width: 44, height: 44).contentShape(Rectangle())
+                    }
+                    .accessibilityLabel(Text("chat.history.search.clear"))
+                    .accessibilityIdentifier("chat.conversations.search.clear")
+                }
             }
-            .padding(.horizontal, 13).frame(minHeight: 46)
+            .padding(.leading, 13).padding(.trailing, search.isEmpty ? 13 : 0)
+            .frame(minHeight: 46)
             .background(DesignTokens.elevatedColor, in: RoundedRectangle(cornerRadius: 12))
-            HStack(spacing: 18) {
-                filterButton("activity.all", selected: !needsResponseOnly) { needsResponseOnly = false }
-                filterButton("workspace.today.needsResponse", selected: needsResponseOnly) { needsResponseOnly = true }
-                Spacer()
+            .contentShape(Rectangle())
+            .onTapGesture { searchFocused = true }
+            HStack(spacing: 2) {
+                filterButton("activity.all", waitingOnly: false)
+                filterButton("workspace.today.needsResponse", waitingOnly: true)
+                Spacer(minLength: 0)
+            }
+            .backgroundPreferenceValue(ConversationFilterBounds.self) { anchors in
+                GeometryReader { proxy in
+                    if let anchor = anchors[needsResponseOnly] {
+                        let target = proxy[anchor]
+                        Capsule()
+                            .fill(DesignTokens.accentSubtleColor)
+                            .frame(width: target.width, height: target.height)
+                            .position(x: target.midX, y: target.midY)
+                            .animation(reduceMotion ? nil : DesignTokens.disclosureAnimation, value: needsResponseOnly)
+                    }
+                }
+                .allowsHitTesting(false)
+                .accessibilityHidden(true)
             }
         }
         .buttonStyle(.plain)
-        .padding(.horizontal, pageWidth < 359 ? 16 : 20)
+        .padding(.horizontal, pageInset)
         .padding(.top, 4).padding(.bottom, 16)
         .background(DesignTokens.backgroundColor)
     }
 
     private func waiting(_ id: UUID) -> Bool {
+        if persistedWaitingIDs.contains(id) { return true }
         guard let execution = container.chatManager.executionForConversation(id) else { return false }
-        return execution.pendingHostPermissionRequest != nil || execution.localAgentPermissionRequest != nil
+        return execution.pendingHostPermissionRequest != nil
+            || execution.localAgentPermissionRequest != nil
+            || execution.remoteRunNeedsResume
+            || execution.unknownEffectRecovery != nil
     }
-    private func filterButton(_ key: String, selected: Bool, action: @escaping () -> Void) -> some View {
-        Button(action: action) {
+    private func filterButton(_ key: String, waitingOnly: Bool) -> some View {
+        let selected = needsResponseOnly == waitingOnly
+        return Button { needsResponseOnly = waitingOnly } label: {
             Text(LocalizedStringKey(key)).font(.subheadline.weight(selected ? .semibold : .regular))
                 .foregroundStyle(selected ? DesignTokens.actionColor : .secondary)
-                .padding(.horizontal, 14)
+                .padding(.horizontal, 14).padding(.vertical, 6)
+                .anchorPreference(key: ConversationFilterBounds.self, value: .bounds) { [waitingOnly: $0] }
                 .frame(minHeight: 44)
-                .background(selected ? DesignTokens.rowFillColor : Color.clear, in: Capsule())
+                .contentShape(Rectangle())
         }
+        .accessibilityAddTraits(selected ? .isSelected : [])
     }
 
     private func dismissSearchKeyboard() {
@@ -307,57 +490,50 @@ struct ChatConversationsList: View {
             conversationID: conversation.id.uuidString, fallback: L10n.chatConversationDefaultTitle)
     }
 
-    private func loadPreview(_ conversation: IOSConversationDirectoryEntry) {
-        do { draftTexts[conversation.id] = try FileConversationDraftRepository.application().textPreview(.conversation(conversation.id)) }
-        catch { previewErrors[conversation.id] = error.localizedDescription; return }
-        // Read the existing association only; opening history must never create a room.
-        do {
-            let association = try IOSAgentRoomService(runtime: container.applicationRuntime)
-                .forConversation(conversation.canonicalID)
-            if association != nil { roomParents.insert(conversation.id) } else { roomParents.remove(conversation.id) }
-            expertNames[conversation.id] = association?.room.room.participants
-                .filter(\.active).map(\.displayName) ?? []
-        } catch {
-            // Keep an already confirmed disclosure operable through a transient
-            // association read failure; detail opening revalidates the owner.
-            expertNames.removeValue(forKey: conversation.id)
-        }
-        guard previewDates[conversation.id] != conversation.lastActiveAt else { return }
-        do {
-            let window = try container.applicationRuntime.loadConversationProjectionWindowV1(
-                id: conversation.id.uuidString, beforeOrdinal: nil, limit: 2, contentByteLimit: 4096)
-            let source = IOSConversationProjectionPresenter.messages(from: window.projection)
-                .last(where: { !$0.content.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty })?.content ?? ""
-            previews[conversation.id] = source.components(separatedBy: .newlines).map { line in
-                (try? AttributedString(markdown: line)).map { String($0.characters) } ?? line
-            }.joined(separator: " ")
-            previewDates[conversation.id] = conversation.lastActiveAt
-            previewErrors.removeValue(forKey: conversation.id)
-        } catch { previewErrors[conversation.id] = error.localizedDescription }
+    private func loadPreview(_ entry: IOSConversationDirectoryEntry) async {
+        let previous = previews[entry.id]
+        guard previous?.checkedOnVisit != previewRefreshRevision else { return }
+        let runtime = container.applicationRuntime
+        let revision = previewRefreshRevision
+        let preview = await Task.detached(priority: .utility) {
+            await IOSConversationListPreview.read(entry, runtime: runtime, previous: previous, visit: revision)
+        }.value
+        guard !Task.isCancelled, previewRefreshRevision == revision else { return }
+        previews[entry.id] = preview
     }
 
-    private func refresh(forcePreviews: Bool = false) {
+    private func refresh(forcePreviews: Bool = false) async {
         let runtime = container.applicationRuntime, request = UUID()
         directoryRequest = request
-        Task { @MainActor in
-            do {
-                let loaded = try await Task.detached { try IOSWorkspaceReadFacts.conversationDirectory(runtime: runtime) }.value
-                guard directoryRequest == request else { return }
-                if forcePreviews {
-                    previewDates.removeAll(); previewErrors.removeAll(); expertNames.removeAll()
-                    previewRefreshRevision += 1
+        do {
+            let previous = directorySnapshot
+            let (snapshot, directory, waitingIDs) = try await Task.detached {
+                let snapshot = try runtime.listRootConversations()
+                let changed = forcePreviews || snapshot != previous
+                let directory = changed ? try IOSWorkspaceReadFacts.conversationDirectory(runtime: runtime, summaries: snapshot) : nil
+                let waitingIDs: Set<UUID>? = (try? IOSWorkspaceReadFacts.snapshot(runtime: runtime)).map { facts in
+                    Set(facts.conversations.filter(\.needs_response).compactMap { UUID(uuidString: $0.conversation_id) })
                 }
-                let ids = Set(loaded.map(\.id))
+                return (snapshot, directory, waitingIDs)
+            }.value
+            guard !Task.isCancelled, directoryRequest == request else { return }
+            if let waitingIDs {
+                persistedWaitingIDs = waitingIDs
+            }
+            if let directory {
+                let ids = Set(directory.map(\.id))
                 previews = previews.filter { ids.contains($0.key) }
-                previewDates = previewDates.filter { ids.contains($0.key) }
-                expertNames = expertNames.filter { ids.contains($0.key) }
-                previewErrors = previewErrors.filter { ids.contains($0.key) }
-                draftTexts = draftTexts.filter { ids.contains($0.key) }
-                roomParents.formIntersection(ids)
+                if forcePreviews {
+                    for id in previews.keys { previews[id]?.hasCurrentMessage = false }
+                }
                 expandedParents.formIntersection(ids)
-                conversations = loaded
-                loadError = nil
-            } catch { if directoryRequest == request { loadError = error.localizedDescription } }
+                conversations = directory
+                directorySnapshot = snapshot
+            }
+            previewRefreshRevision += 1
+            loadError = nil
+        } catch {
+            if !Task.isCancelled && directoryRequest == request { loadError = error.localizedDescription }
         }
     }
 }

@@ -674,6 +674,7 @@ public struct WebAgentProvider: LLMClient, LLMRemoteAuxiliaryInvocationProviding
         public let content: String
         public let description: String?
         public let enabled: Bool?
+        public let packageReference: String?
 
         private enum CodingKeys: String, CodingKey {
             case name
@@ -681,6 +682,7 @@ public struct WebAgentProvider: LLMClient, LLMRemoteAuxiliaryInvocationProviding
             case text
             case description
             case enabled
+            case instructionsRef = "instructions_ref"
         }
 
         public init(from decoder: Decoder) throws {
@@ -690,6 +692,8 @@ public struct WebAgentProvider: LLMClient, LLMRemoteAuxiliaryInvocationProviding
             self.content = decodeFirstNonBlankString(container, .content, .text) ?? ""
             self.description = decodeString(container, .description)
             self.enabled = decodeBoolish(container, .enabled)
+            let reference = decodeString(container, .instructionsRef)
+            self.packageReference = IOSGitHubSkillPackages.sourceURL(reference: reference) == nil ? nil : reference
         }
     }
 
@@ -922,6 +926,13 @@ public struct WebAgentProvider: LLMClient, LLMRemoteAuxiliaryInvocationProviding
                 public let supports_permission_bridge: Bool
             }
 
+            public struct Model: Decodable, Equatable {
+                public let id: String
+                public let display_name: String
+                public let provider_id: String?
+            }
+
+            public var models: [Model]? = nil
             public let id: String
             public let display_name: String
             public let availability: String
@@ -1083,12 +1094,18 @@ public struct WebAgentProvider: LLMClient, LLMRemoteAuxiliaryInvocationProviding
         }
     }
 
-    public static func fetchHostAgentSettings(baseURL: URL, token: String, pinnedCertificateSHA256: String? = nil) async throws -> HostAgentSettings {
+    private static func hostSettingsURL(baseURL: URL, modelsOnly: Bool) -> URL {
+        let url = mobileURL(baseURL: baseURL, path: "agent/settings")
+        return modelsOnly ? url.appending(queryItems: [.init(name: "view", value: "models")]) : url
+    }
+
+    public static func fetchHostAgentSettings(baseURL: URL, token: String, pinnedCertificateSHA256: String? = nil,
+                                              modelsOnly: Bool = false) async throws -> HostAgentSettings {
         NolaTailcatTransport.register(baseURL: baseURL, token: token, hostID: ModelSelectionManager.pairedWebHostIdentity(for: baseURL), certificatePin: pinnedCertificateSHA256)
         guard MobileHostTransportPolicy.allows(baseURL) else {
             throw NolaError.llm(.invalidResponse(reason: "Public Web Host addresses require HTTPS. HTTP is limited to this device or a private local network."))
         }
-        let url = mobileURL(baseURL: baseURL, path: "agent/settings")
+        let url = hostSettingsURL(baseURL: baseURL, modelsOnly: modelsOnly)
         var request = URLRequest(url: url)
         request.httpMethod = "GET"
         request.timeoutInterval = 15
@@ -1129,6 +1146,7 @@ public struct WebAgentProvider: LLMClient, LLMRemoteAuxiliaryInvocationProviding
         guard MobileHostTransportPolicy.allows(baseURL) else {
             throw NolaError.llm(.invalidResponse(reason: "Public Web Host addresses require HTTPS. HTTP is limited to this device or a private local network."))
         }
+        NolaTailcatTransport.register(baseURL: baseURL, token: token, hostID: ModelSelectionManager.pairedWebHostIdentity(for: baseURL), certificatePin: pinnedCertificateSHA256)
         let url = mobileURL(baseURL: baseURL, path: "web-handoff")
         var request = URLRequest(url: url)
         request.httpMethod = "POST"
@@ -1476,6 +1494,12 @@ public struct WebAgentProvider: LLMClient, LLMRemoteAuxiliaryInvocationProviding
 
     public func chat(message: String, systemPrompt: String?, enableThinking: Bool, timeout: TimeInterval?) async throws -> String {
         var userPrefs = ["message": message]
+        if let systemPrompt, !systemPrompt.isEmpty {
+            userPrefs["custom_system_prompt"] = systemPrompt
+        }
+        if let timeout, timeout > 0 {
+            userPrefs["request_timeout_seconds"] = String(timeout)
+        }
         if !enableThinking {
             userPrefs["enable_thinking"] = "false"
         }
@@ -1907,7 +1931,10 @@ public struct WebAgentProvider: LLMClient, LLMRemoteAuxiliaryInvocationProviding
                     if let http = response as? HTTPURLResponse,
                        !(200 ... 299).contains(http.statusCode) {
                         var body = Data()
-                        for try await byte in bytes { body.append(byte) }
+                        for try await byte in bytes {
+                            body.append(byte)
+                            if body.count >= Self.errorResponseByteLimit { break }
+                        }
                         try Self.validateHTTP(response: http, data: body)
                     }
 
@@ -2455,7 +2482,7 @@ public struct WebAgentProvider: LLMClient, LLMRemoteAuxiliaryInvocationProviding
         return try await collect(bytes, response: response)
     }
 
-    private func prepareStandaloneSubmission(_ original: [String: Any]) async throws
+    func prepareStandaloneSubmission(_ original: [String: Any], previous: IOSRemoteSubmissionIdentity? = nil) async throws
         -> (identity: IOSRemoteSubmissionIdentity, digest: String, request: AgentCoreJSONValue) {
         var payload = original
         // Standalone summary/model-test calls still own a new explicit
@@ -2463,15 +2490,25 @@ public struct WebAgentProvider: LLMClient, LLMRemoteAuxiliaryInvocationProviding
         if payload["conversationId"] == nil { payload["conversationId"] = UUID().uuidString }
         if payload["submission_id"] == nil { payload["submission_id"] = UUID().uuidString }
         if payload["user_message_id"] == nil { payload["user_message_id"] = UUID().uuidString }
-        if payload["assistant_message_id"] == nil { payload["assistant_message_id"] = "\(payload["submission_id"] as! String):assistant" }
         guard let host = config.expectedHostId, let conversation = payload["conversationId"] as? String,
-              let submission = payload["submission_id"] as? String, let user = payload["user_message_id"] as? String,
-              let assistant = payload["assistant_message_id"] as? String else {
+              let submission = payload["submission_id"] as? String, let user = payload["user_message_id"] as? String else {
+            throw IOSApplicationRuntimeError.rejected("Submission requires explicit conversation and message identity")
+        }
+        if payload["assistant_message_id"] == nil { payload["assistant_message_id"] = "\(submission):assistant" }
+        guard let assistant = payload["assistant_message_id"] as? String else {
             throw IOSApplicationRuntimeError.rejected("Submission requires explicit conversation and message identity")
         }
         let identity = IOSRemoteSubmissionIdentity(source_host_id: host, client_id: config.clientId,
             conversation_id: conversation, submission_id: submission, user_message_id: user, assistant_message_id: assistant)
-        payload = try await prepareHostToolPlan(payload)
+        if let previous {
+            guard previous.source_host_id == host, previous.client_id == config.clientId,
+                  previous.conversation_id == conversation,
+                  previous.assistant_message_id == payload["expected_parent_message_id"] as? String else {
+                throw IOSApplicationRuntimeError.rejected("Previous submission belongs to a different source or parent")
+            }
+        }
+        payload = try await prepareHostToolPlan(payload, sourceRunID: previous?.submission_id,
+            sourceAssistantMessageID: previous?.assistant_message_id)
         struct Query: Encodable { let operation = "prepare"; let identity: IOSRemoteSubmissionIdentity; let request: AgentCoreJSONValue }
         nonisolated struct Prepared: Decodable, Sendable { let identity: IOSRemoteSubmissionIdentity; let request_digest: String }
         let prepared: Prepared = try await pairedReadRequest(Query(identity: identity,
@@ -2492,7 +2529,12 @@ public struct WebAgentProvider: LLMClient, LLMRemoteAuxiliaryInvocationProviding
         }
         var request = URLRequest(url: Self.mobileURL(baseURL: config.baseURL, path: "chat/agent/v2/stream"))
         request.httpMethod = "POST"
-        request.timeoutInterval = 60
+        if let rawTimeout = input.userPrefs["request_timeout_seconds"],
+           let parsedTimeout = TimeInterval(rawTimeout), parsedTimeout > 0 {
+            request.timeoutInterval = parsedTimeout
+        } else {
+            request.timeoutInterval = 60
+        }
         var payload: [String: Any]
         if let frozenPayload {
             guard let frozen = try JSONSerialization.jsonObject(with: JSONEncoder().encode(frozenPayload)) as? [String: Any] else {
@@ -2504,7 +2546,10 @@ public struct WebAgentProvider: LLMClient, LLMRemoteAuxiliaryInvocationProviding
         if let boundRequestDigest { digest = boundRequestDigest }
         else {
             let prepared = try await prepareStandaloneSubmission(payload)
-            payload = try JSONSerialization.jsonObject(with: JSONEncoder().encode(prepared.request)) as! [String: Any]
+            guard let preparedPayload = try JSONSerialization.jsonObject(with: JSONEncoder().encode(prepared.request)) as? [String: Any] else {
+                throw IOSApplicationRuntimeError.rejected("Invalid prepared submission request")
+            }
+            payload = preparedPayload
             digest = prepared.digest
         }
         payload["request_digest"] = digest
@@ -2528,6 +2573,11 @@ public struct WebAgentProvider: LLMClient, LLMRemoteAuxiliaryInvocationProviding
         let session = Self.makeURLSession(
             pinnedCertificateSHA256: config.pinnedCertificateSHA256
         )
+        defer {
+            if session !== URLSession.shared {
+                session.finishTasksAndInvalidate()
+            }
+        }
         let (bytes, response) = try await session.bytes(for: request)
         try await consumeEvents(
             bytes: bytes,
@@ -2535,6 +2585,8 @@ public struct WebAgentProvider: LLMClient, LLMRemoteAuxiliaryInvocationProviding
             continuation: continuation
         )
     }
+
+    private static let errorResponseByteLimit = 64 * 1024
 
     private func consumeEvents<Bytes: AsyncSequence>(
         bytes: Bytes,
@@ -2547,6 +2599,7 @@ public struct WebAgentProvider: LLMClient, LLMRemoteAuxiliaryInvocationProviding
             var iterator = bytes.makeAsyncIterator()
             while let byte = try await IOSHTTPByteIterator.next(&iterator) {
                 body.append(byte)
+                if body.count >= Self.errorResponseByteLimit { break }
             }
             try Self.validateHTTP(response: http, data: body)
         }
@@ -2650,11 +2703,12 @@ public struct WebAgentProvider: LLMClient, LLMRemoteAuxiliaryInvocationProviding
         }
     }
 
-    private func hostModelSettings() async throws -> [String: Any] {
+    private func hostModelSettings(modelsOnly: Bool = false) async throws -> [String: Any] {
         guard MobileHostTransportPolicy.allows(config.baseURL) else {
             throw IOSApplicationRuntimeError.rejected("Host transport is not permitted")
         }
-        var request = URLRequest(url: Self.mobileURL(baseURL: config.baseURL, path: "agent/settings"))
+        let url = Self.hostSettingsURL(baseURL: config.baseURL, modelsOnly: modelsOnly)
+        var request = URLRequest(url: url)
         request.httpMethod = "GET"
         request.timeoutInterval = 15
         request.setValue("application/json", forHTTPHeaderField: "Accept")
@@ -2734,7 +2788,7 @@ public struct WebAgentProvider: LLMClient, LLMRemoteAuxiliaryInvocationProviding
                 throw IOSApplicationRuntimeError.rejected("Model intent is already frozen")
             }
             frozenModel = try AppleRemoteHostModelCatalog.freezeDefault(
-                settings: await hostModelSettings(), expectedHostID: host)
+                settings: await hostModelSettings(modelsOnly: true), expectedHostID: host)
         } else { frozenModel = nil }
         struct Query: Encodable { let expected_host_id: String; let client_id: String; let session_id: String }
         let plan: IOSRemoteHostToolPlan = try await pairedReadRequest(
@@ -2743,7 +2797,7 @@ public struct WebAgentProvider: LLMClient, LLMRemoteAuxiliaryInvocationProviding
         payload["expected_configuration_revision"] = frontier.configuration_revision.map { $0 as Any } ?? NSNull()
         payload["expected_parent_message_id"] = frontier.parent_message_id.map { $0 as Any } ?? NSNull()
         if let frozenModel {
-            try AppleRemoteHostModelCatalog.validateUnchanged(frozenModel, settings: await hostModelSettings())
+            try AppleRemoteHostModelCatalog.validateUnchanged(frozenModel, settings: await hostModelSettings(modelsOnly: true))
             // Prompt voice is independent of the model's reasoning tier.
             payload["model_intent"] = try frozenModel.payload(tier: "balanced")
         }
@@ -2860,6 +2914,13 @@ public struct WebAgentProvider: LLMClient, LLMRemoteAuxiliaryInvocationProviding
             "language": Locale.current.identifier,
         ]
         if let selected = input.selectedExperts, !selected.isEmpty {
+            if let mentions = input.expertMentions {
+                payload["expert_mentions"] = ["version": mentions.version, "segments": mentions.segments.map { segment in
+                    var value = ["text": segment.text]
+                    value["agent_id"] = segment.agentID
+                    return value
+                }] as [String: Any]
+            }
             payload["expected_source_store_epoch"] = input.expertSelectionSourceEpoch
             payload["selected_experts"] = selected.map { entry -> [String: Any] in
                 ["agent_id": entry.agentID, "agent_revision": entry.agentRevision,
@@ -3295,9 +3356,13 @@ public struct WebAgentProvider: LLMClient, LLMRemoteAuxiliaryInvocationProviding
     }
 
     private static func makeURLSession(pinnedCertificateSHA256: String?) -> URLSession {
-        guard let pinnedCertificateSHA256 else { return URLSession(configuration: NolaTailcatTransport.sessionConfiguration()) }
+        let configuration = NolaTailcatTransport.sessionConfiguration()
+        guard let pinnedCertificateSHA256 else { return URLSession(configuration: configuration) }
+        configuration.urlCache = nil
+        configuration.httpCookieStorage = nil
+        configuration.urlCredentialStorage = nil
         let delegate = PinnedCertificateDelegate(expectedSHA256: pinnedCertificateSHA256)
-        return URLSession(configuration: .ephemeral, delegate: delegate, delegateQueue: nil)
+        return URLSession(configuration: configuration, delegate: delegate, delegateQueue: nil)
     }
 
     public static func fetchHostResource(from url: URL, pinnedCertificateSHA256: String? = nil) async throws -> Data {

@@ -177,7 +177,7 @@ pub fn permission_name_for_tool(tool_name: &str) -> String {
     // before Core can apply the recommended confirmation policy.
     if matches!(
         name.as_str(),
-        "delete_file" | "workspace_checkpoint" | "notebook_edit"
+        "delete_file" | "workspace_checkpoint" | "notebook_edit" | "github_skill_install" | "device_github_skill_install"
     ) {
         return name;
     }
@@ -394,7 +394,7 @@ fn is_background_tool(name: &str) -> bool {
 fn is_network_tool(name: &str) -> bool {
     matches!(
         name,
-        "web" | "web_search" | "web_fetch" | "fetch_url" | "arxiv_search"
+        "web" | "web_search" | "web_fetch" | "device_github_skill_find" | "device_github_skill_install" | "github_skill_find" | "github_skill_install" | "fetch_url" | "arxiv_search"
     ) || is_browser_tool(name)
 }
 

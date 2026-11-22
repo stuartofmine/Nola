@@ -36,7 +36,7 @@ fn requires_initialization(connection: &Connection) -> StoreResult<bool> {
     }
     let objects: i64 = connection.query_row(
         "SELECT COUNT(*) FROM sqlite_master
-         WHERE name NOT LIKE 'sqlite_%' AND type IN ('table','index','trigger','view')",
+         WHERE name NOT GLOB 'sqlite_*' AND type IN ('table','index','trigger','view')",
         [],
         |row| row.get(0),
     )?;
@@ -118,6 +118,18 @@ fn create_current_schema(connection: &Connection) -> StoreResult<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn existing_user_objects_with_sqlite_prefix_are_not_an_empty_database() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("foreign.db");
+        let db = Connection::open(&path).unwrap();
+        db.execute_batch("CREATE TABLE sqliteBackup(note TEXT); INSERT INTO sqliteBackup VALUES('keep');").unwrap();
+        drop(db);
+        let before = std::fs::read(&path).unwrap();
+        assert!(NolaStore::open(&path).unwrap_err().is_schema_incompatible());
+        assert_eq!(std::fs::read(path).unwrap(), before);
+    }
 
     #[test]
     fn freshly_created_schema_has_the_exact_runtime_epoch_and_reopens() {

@@ -107,6 +107,8 @@ pub(crate) fn configured_skill_context_entries(
     skill_dirs: &[PathBuf],
 ) -> Result<Vec<(PathBuf, Value)>, String> {
     let mut by_id = BTreeMap::<String, (PathBuf, Value)>::new();
+    let mut registry = None;
+    let managed = crate::builtin_skills::managed_custom_root().ok().and_then(|root| root.canonicalize().ok());
     for root in skill_dirs {
         let metadata = fs::metadata(root).map_err(|error| {
             format!(
@@ -146,7 +148,29 @@ pub(crate) fn configured_skill_context_entries(
             }
             let content = read_configured_skill_index_file(&canonical_path)
                 .map_err(|error| format!("Unable to read {}: {error}", canonical_path.display()))?;
-            let id = skill_title(&canonical_path, &content).trim().to_string();
+            let registered = managed.as_deref()
+                .and_then(|root| crate::github_skills::registered_metadata(root, &directory));
+            if let Some(metadata) = &registered {
+                if registry.is_none() {
+                    registry = Some(crate::application_port::CliApplicationPort::persistent_default()?);
+                }
+                let editor: Value = registry.as_mut().expect("opened registry").execute(
+                    nola_application::ApplicationCommand::Skill {
+                        command: nola_application::SkillCommand::GetEditor {
+                            id: metadata["id"].as_str().unwrap_or_default().to_owned(),
+                        },
+                    },
+                )?;
+                if editor["record"]["enabled"] != true || editor["record"]["source"] != "user"
+                    || !editor["record"]["deleted_at_ms"].is_null()
+                    || editor["record"]["instructions_ref"].as_str().and_then(crate::github_skills::source_url).as_deref()
+                        != metadata["source_url"].as_str() {
+                    continue;
+                }
+            }
+            let inferred_title = skill_title(&canonical_path, &content);
+            let id = registered.as_ref().and_then(|meta|meta["id"].as_str())
+                .unwrap_or(&inferred_title).trim().to_owned();
             if id.is_empty() {
                 continue;
             }
@@ -166,8 +190,8 @@ pub(crate) fn configured_skill_context_entries(
                     directory.clone(),
                     json!({
                         "id": id,
-                        "name": skill_title(&canonical_path, &content),
-                        "description": skill_description(&content),
+                        "name": registered.as_ref().and_then(|meta|meta["name"].as_str()).unwrap_or(&inferred_title),
+                        "description": registered.as_ref().and_then(|meta|meta["description"].as_str()).map(str::to_owned).unwrap_or_else(||skill_description(&content)),
                         "enabled": true,
                         "source": "host_configured",
                         "base_directory": directory.to_string_lossy(),
@@ -227,7 +251,7 @@ fn discover_configured_skill_files(canonical_root: &Path) -> Result<Vec<PathBuf>
             })?;
             let name = entry.file_name();
             if metadata.is_dir() {
-                if !should_skip_dir(&name.to_string_lossy()) {
+                if name != crate::github_skills::RESOURCE_TREE && !should_skip_dir(&name.to_string_lossy()) {
                     stack.push(path);
                 }
             } else if metadata.is_file() && name == "SKILL.md" {
@@ -2668,6 +2692,14 @@ fn required_tool_argument_error(spec: &ToolSpec, request: &ToolRequest) -> Optio
             request.name,
             missing.join(", ")
         ));
+    }
+    if request.name == "write_file" {
+        if let Err(failure) = expected_sha256(&request.args) {
+            return Some(format!(
+                "{}. For replacement, copy expected_sha256 from a complete read_file result.",
+                failure.display
+            ));
+        }
     }
     let alternatives = spec.parameters.get("oneOf").and_then(Value::as_array);
     if let Some(alternatives) = alternatives {

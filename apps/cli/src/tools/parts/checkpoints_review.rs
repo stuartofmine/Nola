@@ -425,6 +425,20 @@ fn write_file(args: &Map<String, Value>, ctx: &ToolContext) -> ToolOutcome {
     if content.len() > MAX_WRITE_BYTES {
         return file_payload_capacity_error("write_payload_too_large", content.len());
     }
+    match args.get("content_format").and_then(Value::as_str) {
+        Some("json") => {
+            if let Err(parse) = serde_json::from_str::<Value>(&content) {
+                return error_data(json!({
+                    "code":"invalid_json_file_content", "tool_execution_skipped":true,
+                    "message":format!("Invalid JSON: {parse}"),
+                    "next_action":"Correct the literal JSON content and retry the same write with content_format=json. No file or directory was changed."
+                }));
+            }
+        }
+        Some("text") => {}
+        None if !args.contains_key("content_format") => {}
+        _ => return invalid_write_payload("content_format must be text or json"),
+    }
     let dry_run = tool_try!(bool_arg(args, "dry_run", false));
     let target = tool_try!(resolve_allowed(&path, &ctx.allowed_dirs, false));
     let before = tool_try!(observe_file_mutation_target(&target));
@@ -436,9 +450,11 @@ fn write_file(args: &Map<String, Value>, ctx: &ToolContext) -> ToolOutcome {
         }).unwrap_or(Some(""));
         let diff = old_text.map(|old| format_unified_diff(&target, old, &content, MAX_DIFF_CHARS))
             .unwrap_or_else(|| "Old content is binary or exceeds the bounded preview; no old text was synthesized.".into());
+        let version = before.as_ref().map(|snapshot| format!("expected_sha256: {}\n", snapshot.version.sha256))
+            .unwrap_or_default();
         return ok(
             format!(
-                "# Write preview: {}\ndry_run: true\nexists: {}\nbytes: {}\n\n## Diff\n{diff}",
+                "# Write preview: {}\ndry_run: true\nexists: {}\nbytes: {}\n{version}\n## Diff\n{diff}",
                 target.display(),
                 before.is_some(),
                 content.len()
@@ -452,7 +468,7 @@ fn write_file(args: &Map<String, Value>, ctx: &ToolContext) -> ToolOutcome {
             "code":"existing_file_version_required", "path":target,
             "tool_execution_skipped":true,
             "message":"The target already exists; this is replacement, not file creation.",
-            "next_action":"If only new files are authorized, choose a new path. Otherwise inspect the existing file and provide its expected_sha256 for an authorized replacement. A digest is not permission to overwrite."
+            "next_action":"If only new files are authorized, choose a new path. For an authorized replacement, use expected_sha256 from a complete read_file result or preview this exact write with dry_run=true. A digest is not permission to overwrite."
         }));
     }
     if ctx.cancellation.is_requested() {

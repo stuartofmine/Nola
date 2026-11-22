@@ -2,6 +2,8 @@
 
 # 软件更新与发布架构
 
+简体中文 · [English](SOFTWARE_UPDATE_ARCHITECTURE.en.md)
+
 核对日期：2026-11-08。此设计描述当前落地的手动检查、可信下载、GitHub 分发和平台安装交接。实际发布目标及验证结果见本轮验收记录；尚无自动后台检查或静默安装。
 
 ## 边界与状态所有者
@@ -84,4 +86,4 @@ CLI 更新入口在模型配置解析前；`--source` 仅用于用户明确指�
 
 ## 平台依据
 
-商店应用的可执行代码更新遵守 [Apple 审核规则 2.5.2](https://developer.apple.com/app-store/review/guidelines/#software-requirements)。Android 直装授权遵循 [PackageManager.canRequestPackageInstalls](https://developer.android.com/reference/android/content/pm/PackageManager#canRequestPackageInstalls())，商店构建不携带该安装权限。Windows 下载交接使用 [Electron downloadURL](https://www.electronjs.org/docs/latest/api/web-contents#contentsdownloadurlurl-options) 与 [DownloadItem](https://www.electronjs.org/docs/latest/api/download-item)，没有把浏览器里的链接直接当成本地可执行命令。
+商店应用的可执行代码更新遵守 [Apple 审核规则 2.5.2](https://developer.apple.com/app-store/review/guidelines/#software-requirements)。Android 直装授权遵循 [PackageManager.canRequestPackageInstalls](https://developer.android.com/reference/android/content/pm/PackageManager#canRequestPackageInstalls())，商店构建不携带该安装权限。Windows 桌面由 Tauri 承载 WebView2。用户在设置中确认后，通过同源 Host 下载已校验的安装器，再手动运行。

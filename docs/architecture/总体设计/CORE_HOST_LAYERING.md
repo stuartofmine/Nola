@@ -2,19 +2,21 @@
 
 # 分层与对象协作
 
+简体中文 · [English](CORE_HOST_LAYERING.en.md)
+
 核对：2026-11-08；分层约束与当前部署分开说明。术语统一见[软件架构总纲](SOFTWARE_DESIGN.md)，职责详见[Core/Application/Host](CORE_HOST_ARCHITECTURE.md)。
 
 ## 封装原则
 
 ### Agent reducer、checkpoint 与 trace 实现所有权
 
-`nola_agent_engine` 是运行状态机的唯一实现 owner，不依赖 `nola_core`、Store、Application 或平台 Host。它持有 Agent 状态、权限续体、效果重放判定、checkpoint 和 trace 游标；输入是显式时间的 submission/Host observation 与冻结配置，输出是 typed transition、待提交效果及 checkpoint。Application 负责持久准入、事务提交与恢复证据核对，不能在 Host 中另建 reducer。Runtime Driver 消费已提交工作与控制协议，并包含 Goal/任务执行适配；不取得 Store 业务写权。
+`nola_agent_engine` 是运行状态机的唯一实现 owner，不依赖 `nola_core`、Store、Application 或平台 Host。它持有 Agent 状态、权限续体、效果重放判定、checkpoint 和 trace 游标；输入是显式时间的 submission/Host observation 与冻结配置，输出是 typed transition、待提交效果及 checkpoint。Application 负责持久准入、事务提交与恢复证据核对，不能在 Host 中另建 reducer。Runtime Driver 消费已提交工作与控制协议，并提供任务 worker 适配；不取得 Store 业务写权。
 
 Agent engine 的 context/memory/tool-policy/prompt/hook 模块仅做确定性计算。Application C ABI、embedded runtime/数据库句柄及其序列化位于 `nola_mobile_bindings`。`nola_core` 仍提供若干纯辅助 ABI 的函数实现，bindings 通过 force-link 保留这些符号；Core facade 引用 engine 同一类型，不保存第二份运行模型。生产 Application 不依赖 Core 或 legacy adapter。Trace 协议及 reducer 随运行内核拥有，Application 仅负责 journal 持久化。
 
 此步骤消除对历史 god crate 的宽重导出依赖，但 engine 内部的协议/parts/context 仍是同一运行聚合，进一步缩小投影读取能力需独立列出，不能据此宣称全部模块已完成细粒度端口化。
 
-实现入口：`nola-agent-engine/src/reducer_port.rs` 的 `AgentReducerPort` 提供消费式候选 reduction、恢复及 checkpoint 端口；`AgentCore` 的运行私有状态仍不可直接改写。Application 提交链通过此端口接收候选，只有 Store 事务成功后才接纳为热状态。Core 原生适配的类型等同性由 `core/tests/agent_engine_type_identity.rs` 回归源码约束；依赖门禁禁止 engine 回连 Core/Application/Store，当前依赖图仍有 Driver→engine（Goal 适配）及 Application→Driver 的生产声明边，不能将目标隔离描述成已经禁止这些实际边。原生 ABI 测试位于 `core/tests/agent_engine_native_abi.rs` 并调用真实 Core adapter；engine 测试只验证纯计算，不导入 Core 源码。
+实现入口：`nola-agent-engine/src/reducer_port.rs` 的 `AgentReducerPort` 提供消费式候选 reduction、恢复及 checkpoint 端口；`AgentCore` 的运行私有状态仍不可直接改写。Application 提交链通过此端口接收候选，只有 Store 事务成功后才接纳为热状态。Core 原生适配的类型等同性由 `core/tests/agent_engine_type_identity.rs` 回归源码约束；依赖门禁禁止 engine 回连 Core/Application/Store，Goal 用例协调归属 Application。Driver 的生产依赖只有 Domain 与 Host Protocol，engine 仅用于 Driver 测试。Application 通过 Store Port 提交，生产依赖中没有 Driver。原生 ABI 测试位于 `core/tests/agent_engine_native_abi.rs` 并调用真实 Core adapter；engine 测试只验证纯计算，不导入 Core 源码。
 
 对象封装自己拥有的可变状态和合法操作；值对象构造后不可变。
 公开端口按使用者需要提供能力，不传递可任意改写的整个 Workspace、Config 或数据库对象。

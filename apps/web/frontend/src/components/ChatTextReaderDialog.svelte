@@ -6,8 +6,13 @@
     let dialog:HTMLDialogElement;
     let back:HTMLButtonElement;
     let copyState=$state<'idle'|'copying'|'copied'|'failed'>('idle');
+    let opener: HTMLElement | null = null;
     let alive=true;
-    onMount(()=>{dialog.showModal();back.focus();});
+    onMount(()=>{
+        opener=document.activeElement instanceof HTMLElement?document.activeElement:null;
+        dialog.showModal();
+        back.focus();
+    });
     function close(){onclose();}
     async function copy(){
         if(copyState==='copying')return;
@@ -15,7 +20,13 @@
         try{await navigator.clipboard.writeText(snapshot.text);if(alive&&dialog.open)copyState='copied';}
         catch{if(alive&&dialog.open)copyState='failed';}
     }
-    onDestroy(()=>{alive=false;if(dialog?.open)dialog.close();});
+    onDestroy(()=>{
+        alive=false;
+        if(dialog?.open)dialog.close();
+        const target=opener;
+        opener=null;
+        if(target?.isConnected)target.focus({preventScroll:true});
+    });
 </script>
 
 <dialog class="text-reader" bind:this={dialog} aria-label={snapshot.title} oncancel={event => { event.preventDefault(); close(); }}>

@@ -32,7 +32,21 @@ internal class ConversationComposerDraft(
     changed: () -> Unit = {},
 ) {
     enum class PersistenceStatus { Loading, Ready, Conflict, Error }
-    val text: MutableState<String> = PersistedDraftState(saved.text, changed)
+    private val content = PersistedDraftState(saved.text to saved.mentions, changed)
+    val mentions get() = content.value.second
+    fun setContent(value: String, mentions: List<InlineExpertMention>) {
+        if (content.value != (value to mentions)) content.value = value to mentions
+    }
+    val text: MutableState<String> = object : MutableState<String> {
+        override var value: String
+            get() = content.value.first
+            set(value) { content.value = value to emptyList() }
+        override fun component1() = value
+        override fun component2(): (String) -> Unit = { value = it }
+    }
+    val textEdited get() = content.edited
+    fun restoreText(text: String, mentions: List<InlineExpertMention>) = content.restoreIfUnedited(text to mentions)
+    var caret: Int? = null
     val attachments: MutableState<List<AndroidChatAttachment>> = PersistedDraftState(saved.attachments, changed)
     val configuration: MutableState<ConversationDraftRepository.Configuration?> = PersistedDraftState(saved.configuration, changed)
     val notice = mutableStateOf<String?>(null)
@@ -82,7 +96,7 @@ internal class ConversationComposerDrafts(private val repository: ConversationDr
     fun close() {
         for ((owner, job) in loads) {
             val draft = drafts[owner]
-            val edited = (draft?.text as? PersistedDraftState<*>)?.edited == true ||
+            val edited = draft?.textEdited == true ||
                 (draft?.attachments as? PersistedDraftState<*>)?.edited == true ||
                 (draft?.configuration as? PersistedDraftState<*>)?.edited == true
             if (!edited) job.cancel()
@@ -156,50 +170,51 @@ internal class ConversationComposerDrafts(private val repository: ConversationDr
         val original=capture.draft?:return false
         val current=forConversation(conversationId)
         if(current.text.value.isNotEmpty()||current.attachments.value.isNotEmpty())return false
-        current.text.value=original.text.value;current.attachments.value=original.attachments.value
+        current.setContent(original.text.value, original.mentions);current.attachments.value=original.attachments.value
         return true
     }
     fun forConversation(id: String?): ConversationComposerDraft {
         val owner = key(id)
-        return drafts.getOrPut(owner) {
-            lateinit var draft: ConversationComposerDraft
-            draft = ConversationComposerDraft() {
-                editRevisions[owner] = (editRevisions[owner] ?: 0) + 1
-                if (repository != null && owner !in retired && drafts[owner] === draft) {
-                    // A read must finish before edits can acquire the observed
-                    // CAS revision. Never save an empty loading placeholder.
-                    if (draft.loading.value) return@ConversationComposerDraft
-                    val snapshot = ConversationDraftRepository.Snapshot(draft.text.value, draft.attachments.value,
-                        configuration = draft.configuration.value.takeIf { owner.startsWith("draft:") })
-                    val save = saves.async {
-                        try {
-                            val revision = repository.conditionalSave(owner, snapshot)
-                            if (owner !in retired && drafts[owner] === draft) {
-                                draft.persistenceStatus.value = ConversationComposerDraft.PersistenceStatus.Ready
-                                draft.persistenceError.value = null
-                            }
-                            revision
+        drafts[owner]?.let { return it }
+        lateinit var draft: ConversationComposerDraft
+        draft = ConversationComposerDraft() {
+            editRevisions[owner] = (editRevisions[owner] ?: 0) + 1
+            if (repository != null && owner !in retired && drafts[owner] === draft) {
+                // A read must finish before edits can acquire the observed
+                // CAS revision. Never save an empty loading placeholder.
+                if (draft.loading.value) return@ConversationComposerDraft
+                val snapshot = ConversationDraftRepository.Snapshot(draft.text.value, draft.attachments.value,
+                    mentions = draft.mentions, configuration = draft.configuration.value.takeIf { owner.startsWith("draft:") })
+                val save = saves.async {
+                    try {
+                        val revision = repository.conditionalSave(owner, snapshot)
+                        if (owner !in retired && drafts[owner] === draft) {
+                            draft.persistenceStatus.value = ConversationComposerDraft.PersistenceStatus.Ready
+                            draft.persistenceError.value = null
                         }
-                        catch (cancelled: kotlinx.coroutines.CancellationException) { throw cancelled }
-                        catch (error: Exception) {
-                            if (owner !in retired && drafts[owner] === draft) {
-                                draft.persistenceError.value = error.localizedMessage
-                                draft.persistenceStatus.value = if (error is ConversationDraftRepository.Conflict)
-                                    ConversationComposerDraft.PersistenceStatus.Conflict else ConversationComposerDraft.PersistenceStatus.Error
-                            }
-                            throw error
-                        }
+                        revision
                     }
-                    lastSaves[owner] = save
-                    pendingSaves.add(save)
-                    save.invokeOnCompletion { pendingSaves.remove(save) }
+                    catch (cancelled: kotlinx.coroutines.CancellationException) { throw cancelled }
+                    catch (error: Exception) {
+                        if (owner !in retired && drafts[owner] === draft) {
+                            draft.persistenceError.value = error.localizedMessage
+                            draft.persistenceStatus.value = if (error is ConversationDraftRepository.Conflict)
+                                ConversationComposerDraft.PersistenceStatus.Conflict else ConversationComposerDraft.PersistenceStatus.Error
+                        }
+                        throw error
+                    }
                 }
+                lastSaves[owner] = save
+                pendingSaves.add(save)
+                save.invokeOnCompletion { pendingSaves.remove(save) }
             }
-            draft.loading.value = repository != null
-            if (repository != null) draft.persistenceStatus.value = ConversationComposerDraft.PersistenceStatus.Loading
-            if (repository != null) loads[owner] = callbacks.launch { loadDraft(owner, draft) }
-            draft
         }
+        draft.loading.value = repository != null
+        if (repository != null) draft.persistenceStatus.value = ConversationComposerDraft.PersistenceStatus.Loading
+        // An immediately resumed load must already see this owner and draft.
+        drafts[owner] = draft
+        if (repository != null) loads[owner] = callbacks.launch { loadDraft(owner, draft) }
+        return draft
     }
 
     private suspend fun loadDraft(owner: String, draft: ConversationComposerDraft) {
@@ -210,15 +225,15 @@ internal class ConversationComposerDrafts(private val repository: ConversationDr
             if (owner in retired || drafts[owner] !== draft) return
             // Inputs entered while IO was pending win over the restored text.
             // They remain local until this read establishes the CAS revision.
-            val text = draft.text as PersistedDraftState<String>
+            val text = draft.text
             val attachments = draft.attachments as PersistedDraftState<List<AndroidChatAttachment>>
             val configuration = draft.configuration as PersistedDraftState<ConversationDraftRepository.Configuration?>
-            text.restoreIfUnedited(saved?.text.orEmpty())
+            draft.restoreText(saved?.text.orEmpty(), saved?.mentions.orEmpty())
             attachments.restoreIfUnedited(saved?.attachments.orEmpty())
             configuration.restoreIfUnedited(saved?.configuration)
-            if (text.edited || attachments.edited || configuration.edited) observedRevision = repository.conditionalSave(owner,
+            if (draft.textEdited || attachments.edited || configuration.edited) observedRevision = repository.conditionalSave(owner,
                 ConversationDraftRepository.Snapshot(text.value, attachments.value,
-                    configuration = configuration.value.takeIf { owner.startsWith("draft:") }))
+                    mentions = draft.mentions, configuration = configuration.value.takeIf { owner.startsWith("draft:") }))
             loadedRevisions[owner] = observedRevision
             if ((saved?.missingAttachments ?: 0) > 0) draft.notice.value = "Some attachments could not be restored. Please attach them again."
             draft.persistenceStatus.value = ConversationComposerDraft.PersistenceStatus.Ready

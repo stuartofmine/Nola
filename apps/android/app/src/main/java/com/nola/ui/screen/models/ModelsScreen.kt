@@ -1,7 +1,13 @@
 package com.nola.ui.screen.models
 
+import com.nola.ui.components.dismissImeOnBlankTap
+import com.nola.ui.components.ForgetHostPairingDialog
+import androidx.compose.foundation.selection.selectable
+import androidx.compose.foundation.selection.selectableGroup
 import androidx.compose.foundation.selection.toggleable
 import androidx.compose.ui.semantics.Role
+import androidx.compose.foundation.layout.width
+import androidx.compose.ui.semantics.liveRegion
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.stateDescription
@@ -18,6 +24,7 @@ import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.rememberScrollState
@@ -26,6 +33,8 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.ExperimentalLayoutApi
+import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxHeight
@@ -43,6 +52,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.automirrored.filled.List
+import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Cloud
@@ -50,14 +60,20 @@ import androidx.compose.material.icons.filled.Download
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.ErrorOutline
 import androidx.compose.material.icons.filled.Memory
+import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.Security
 import androidx.compose.material.icons.filled.Tune
+import androidx.compose.material.icons.filled.Visibility
+import androidx.compose.material.icons.filled.VisibilityOff
 import androidx.compose.material3.Button
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.FilterChip
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -100,6 +116,8 @@ import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.PasswordVisualTransformation
+import androidx.compose.ui.text.input.VisualTransformation
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -111,7 +129,10 @@ import com.nola.domain.model.ModelInfo
 import com.nola.domain.model.ModelExecutionCapabilities
 import com.nola.domain.model.ChatOutputTokenField
 import com.nola.domain.model.ModelWireProtocol
+import com.nola.llm.local.DeviceModelCatalog
 import com.nola.llm.local.DeviceModelCatalogEntry
+import com.nola.llm.local.DeviceModelFit
+import com.nola.llm.local.LocalModelDownloadSource
 import com.nola.ui.components.NolaBadge
 import com.nola.ui.components.ModelParametersSheet
 import com.nola.ui.components.SmoothStreamingMarkdownRenderer
@@ -143,17 +164,20 @@ internal const val MODEL_HOST_CONNECTION_TEST_TAG = "models.connection.host"
 @Composable
 fun ModelsScreen(
     viewModel: ModelsViewModel = hiltViewModel(),
-    initialShowEndpointSheet: Boolean = false,
-    endpointSheetRequestKey: String = "",
     onBack: (() -> Unit)? = null,
 ) {
     val context = LocalContext.current
+    val manageHostModels = {
+        viewModel.openHostMessagingManagement("/models?tab=api") { target ->
+            runCatching { context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(target))) }
+                .onFailure { viewModel.reportHostManagementLaunchFailure(it) }
+        }
+    }
     val reduceMotion = rememberReduceMotionEnabled()
     val state by viewModel.uiState.collectAsStateWithLifecycle()
-    var sourceTab by remember { mutableStateOf(0) }
-    val setupDraft = remember { EndpointConfigDraft("", "", "", ModelWireProtocol.ChatCompletions) }
-    var showEndpointSheet by remember { mutableStateOf(false) }
-    var showWebHostSheet by remember { mutableStateOf(false) }
+    var sourceTab by rememberSaveable { mutableStateOf(0) }
+    var confirmDisconnectAddress by rememberSaveable { mutableStateOf<String?>(null) }
+    var showWebHostSheet by rememberSaveable { mutableStateOf(false) }
     var capabilityTarget by remember { mutableStateOf<ModelInfo?>(null) }
     var capabilityError by remember { mutableStateOf<String?>(null) }
     var savingCapabilities by remember { mutableStateOf(false) }
@@ -173,38 +197,15 @@ fun ModelsScreen(
         )
     }
 
-    LaunchedEffect(initialShowEndpointSheet, endpointSheetRequestKey) {
-        if (initialShowEndpointSheet) {
-            sourceTab = 0
-        }
-    }
-
-    if (showEndpointSheet) {
-        EndpointConfigSheet(
-            currentEndpoint = state.apiEndpoint,
-            currentApiKey = state.apiKey,
-            currentModel = state.apiModel,
-            currentWireProtocol = state.apiWireProtocol,
-            saving = state.savingEndpoint,
-            error = state.endpointSaveError,
-            onSave = { ep, key, model, protocol ->
-                viewModel.saveApiEndpoint(ep, key, model, protocol) { showEndpointSheet = false }
-            },
-            onDismiss = { showEndpointSheet = false }
+    if (confirmDisconnectAddress != null && confirmDisconnectAddress == state.webHostUrl) {
+        ForgetHostPairingDialog(
+            onConfirm = { confirmDisconnectAddress = null; viewModel.disconnectWebHost() },
+            onDismiss = { confirmDisconnectAddress = null }
         )
     }
 
     if (showWebHostSheet) {
-        WebHostConfigSheet(
-            currentUrl = state.webHostUrl,
-            currentToken = state.webHostToken,
-            currentCertificateSha256 = state.webHostCertificateSha256,
-            onSave = { url, token, certificateSha256, importedIdentity, completion ->
-                viewModel.saveWebHostConfig(url, token, certificateSha256, importedIdentity, completion)
-            },
-            onCancelConnection = viewModel::cancelWebHostConnection,
-            onDismiss = { showWebHostSheet = false }
-        )
+        HostPairingSheet(onDismiss = { showWebHostSheet = false }, viewModel = viewModel)
     }
 
     capabilityTarget?.let { target ->
@@ -298,75 +299,105 @@ fun ModelsScreen(
         }
 
 
-        Row(Modifier.fillMaxWidth().background(MaterialTheme.colorScheme.surfaceContainer, RoundedCornerShape(10.dp)).padding(3.dp), horizontalArrangement = Arrangement.spacedBy(2.dp)) {
+        val tabHaptics = rememberNolaHaptics()
+        val isDark = NolaColors.isDark
+        Row(
+            Modifier.fillMaxWidth().selectableGroup()
+                .background(NolaColors.segmentTrack, RoundedCornerShape(10.dp))
+                .then(if (isDark) Modifier.border(0.75.dp, NolaColors.hairlineBorder, RoundedCornerShape(10.dp)) else Modifier)
+                .padding(3.dp),
+            horizontalArrangement = Arrangement.spacedBy(2.dp)
+        ) {
             listOf(R.string.models_service_tab, R.string.models_local_models, R.string.models_web_host).forEachIndexed { index, title ->
-                TextButton(onClick = { sourceTab = index }, modifier = Modifier.weight(1f).heightIn(min = 44.dp)
-                    .background(if (sourceTab == index) MaterialTheme.colorScheme.surface else Color.Transparent, RoundedCornerShape(8.dp)),
-                    contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 6.dp)) {
-                    Text(stringResource(title), fontSize = 13.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                val selected = sourceTab == index
+                val tabBg by animateColorAsState(
+                    targetValue = if (selected) NolaColors.segmentSelected else Color.Transparent,
+                    animationSpec = com.nola.ui.components.nolaTween(NolaMotion.fast, reduceMotion),
+                    label = "models-source-tab-bg",
+                )
+                val tabFg by animateColorAsState(
+                    targetValue = if (selected) MaterialTheme.colorScheme.onSurface else MaterialTheme.colorScheme.onSurfaceVariant,
+                    animationSpec = com.nola.ui.components.nolaTween(NolaMotion.fast, reduceMotion),
+                    label = "models-source-tab-fg",
+                )
+                Box(
+                    modifier = Modifier.weight(1f).heightIn(min = 48.dp).clip(RoundedCornerShape(8.dp))
+                        .background(tabBg)
+                        .selectable(selected = selected, role = Role.Tab, onClick = {
+                            if (!selected) {
+                                tabHaptics.selection()
+                                viewModel.clearConnectionStatus()
+                            }
+                            sourceTab = index
+                        })
+                        .padding(horizontal = 6.dp),
+                    contentAlignment = Alignment.Center,
+                ) {
+                    Text(stringResource(title), style = MaterialTheme.typography.labelLarge,
+                        color = tabFg,
+                        textAlign = TextAlign.Center)
                 }
             }
         }
-        if (sourceTab == 0) {
-        EndpointConfigFields(
-            initialEndpoint = "", initialApiKey = "", initialModel = "",
-            initialWireProtocol = ModelWireProtocol.ChatCompletions,
-            saving = state.savingEndpoint, error = state.endpointSaveError, draft = setupDraft,
-            onSave = { endpoint, key, model, protocol -> viewModel.saveApiEndpoint(endpoint, key, model, protocol) }
-        )
-
-            AnimatedVisibility(
-                visible = state.connectionTestResult?.isNotEmpty() == true,
-                enter = nolaDisclosureEnter(reduceMotion),
-                exit = nolaDisclosureExit(reduceMotion),
-            ) {
-                state.connectionTestResult?.takeIf { it.isNotEmpty() }?.let { result ->
-                    val success = state.connectionTestSucceeded != false
-                    val statusTint = if (success) NolaColors.success else MaterialTheme.colorScheme.error
-                    Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .clip(RoundedCornerShape(NolaRadius.lg))
-                        .background(
-                            statusTint.copy(alpha = 0.08f)
-                        )
-                        .padding(horizontal = NolaSpacing.md, vertical = NolaSpacing.sm),
-                    horizontalArrangement = Arrangement.spacedBy(NolaSpacing.sm),
-                    verticalAlignment = Alignment.CenterVertically
-                    ) {
+        AnimatedVisibility(
+            visible = state.connectionTestResult?.isNotEmpty() == true,
+            enter = nolaDisclosureEnter(reduceMotion),
+            exit = nolaDisclosureExit(reduceMotion),
+        ) {
+            state.connectionTestResult?.takeIf { it.isNotEmpty() }?.let { result ->
+                val success = state.connectionTestSucceeded != false
+                val statusTint = if (success) NolaColors.success else MaterialTheme.colorScheme.error
+                Row(
+                modifier = Modifier
+                    .fillMaxWidth().semantics { liveRegion = androidx.compose.ui.semantics.LiveRegionMode.Polite }
+                    .clip(RoundedCornerShape(NolaRadius.lg))
+                    .background(
+                        statusTint.copy(alpha = 0.08f)
+                    )
+                    .padding(horizontal = NolaSpacing.md, vertical = NolaSpacing.sm),
+                horizontalArrangement = Arrangement.spacedBy(NolaSpacing.sm),
+                verticalAlignment = Alignment.CenterVertically
+                ) {
+                Icon(
+                    imageVector = if (success) Icons.Filled.Check else Icons.Filled.ErrorOutline,
+                    contentDescription = null,
+                    tint = statusTint,
+                    modifier = Modifier.size(18.dp)
+                )
+                Text(
+                    result,
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurface,
+                    modifier = Modifier.weight(1f)
+                )
+                IconButton(
+                    onClick = viewModel::clearConnectionStatus,
+                    modifier = Modifier.size(48.dp)
+                ) {
                     Icon(
-                        imageVector = if (success) Icons.Filled.Check else Icons.Filled.ErrorOutline,
-                        contentDescription = null,
-                        tint = statusTint,
-                        modifier = Modifier.size(18.dp)
+                        Icons.Filled.Close,
+                        contentDescription = stringResource(R.string.common_close),
+                        tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.size(17.dp)
                     )
-                    Text(
-                        result,
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurface,
-                        modifier = Modifier.weight(1f)
-                    )
-                    IconButton(
-                        onClick = viewModel::clearConnectionStatus,
-                        modifier = Modifier.size(48.dp)
-                    ) {
-                        Icon(
-                            Icons.Filled.Close,
-                            contentDescription = stringResource(R.string.common_close),
-                            tint = MaterialTheme.colorScheme.onSurfaceVariant,
-                            modifier = Modifier.size(17.dp)
-                        )
-                    }
-                    }
+                }
                 }
             }
+        }
 
-            ModelConnectionsSection(state, viewModel::loadConnectionInventory) {
-                viewModel.openHostMessagingManagement("/models?tab=api") { target ->
-                    context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(target)))
-                }
-            }
-
+        AnimatedContent(
+            targetState = sourceTab,
+            transitionSpec = {
+                fadeIn(com.nola.ui.components.nolaTween(NolaMotion.controlState, reduceMotion)) togetherWith
+                    fadeOut(com.nola.ui.components.nolaTween(NolaMotion.fast, reduceMotion))
+            },
+            label = "models-source-tab-body",
+        ) { activeTab ->
+            Column(
+                modifier = Modifier.fillMaxWidth(),
+                verticalArrangement = Arrangement.spacedBy(NolaSpacing.xl),
+            ) {
+        if (activeTab == 0) {
             if (state.officialModels.isNotEmpty()) {
                 ModelListCard(
                     title = stringResource(R.string.models_api_models),
@@ -397,8 +428,45 @@ fun ModelsScreen(
                 )
             }
 
+            val hasConfiguredApiModels = state.officialModels.isNotEmpty() || state.configuredApiModels.isNotEmpty()
+            var showAddApiForm by rememberSaveable(hasConfiguredApiModels) { mutableStateOf(!hasConfiguredApiModels) }
+            NolaCard {
+                if (hasConfiguredApiModels) {
+                    NolaDisclosureBar(
+                        title = stringResource(R.string.models_add_api_model),
+                        expanded = showAddApiForm,
+                        onToggle = { showAddApiForm = !showAddApiForm },
+                        modifier = Modifier.testTag(MODEL_API_CONNECTION_TEST_TAG),
+                    )
+                    AnimatedVisibility(
+                        visible = showAddApiForm,
+                        enter = nolaDisclosureEnter(reduceMotion),
+                        exit = nolaDisclosureExit(reduceMotion),
+                    ) {
+                        EndpointConfigFields(
+                            initialEndpoint = "", initialApiKey = "", initialModel = "",
+                            initialWireProtocol = ModelWireProtocol.ChatCompletions,
+                            saving = state.savingEndpoint, error = state.endpointSaveError, draft = viewModel.connectionDraft,
+                            onSave = { endpoint, key, model, protocol -> viewModel.saveApiEndpoint(endpoint, key, model, protocol) }
+                        )
+                    }
+                } else {
+                    NolaSectionTitle(icon = Icons.Filled.Add, title = stringResource(R.string.models_add_api_model))
+                    EndpointConfigFields(
+                        initialEndpoint = "", initialApiKey = "", initialModel = "",
+                        initialWireProtocol = ModelWireProtocol.ChatCompletions,
+                        saving = state.savingEndpoint, error = state.endpointSaveError, draft = viewModel.connectionDraft,
+                        onSave = { endpoint, key, model, protocol -> viewModel.saveApiEndpoint(endpoint, key, model, protocol) }
+                    )
+                }
+            }
+
+            ModelConnectionsSection(state, viewModel::loadConnectionInventory, connectHost = {
+                sourceTab = 2
+                showWebHostSheet = true
+            }, manageHost = manageHostModels)
         }
-        if (sourceTab == 1) {
+        if (activeTab == 1) {
             if (state.installedLocalModels.isNotEmpty()) {
                 ModelListCard(
                     title = stringResource(R.string.models_local_models),
@@ -419,27 +487,67 @@ fun ModelsScreen(
                 )
             }
 
+            val deviceRamBytes = remember(context) { DeviceModelCatalog.deviceTotalRamBytes(context) }
             NolaCard {
                 NolaSectionTitle(icon = Icons.Filled.Download, title = stringResource(R.string.models_download_models))
+                Row(
+                    Modifier.fillMaxWidth().selectableGroup()
+                        .background(NolaColors.segmentTrack, RoundedCornerShape(10.dp))
+                        .then(if (isDark) Modifier.border(0.75.dp, NolaColors.hairlineBorder, RoundedCornerShape(10.dp)) else Modifier)
+                        .padding(3.dp),
+                    horizontalArrangement = Arrangement.spacedBy(2.dp),
+                ) {
+                    LocalModelDownloadSource.entries.forEach { source ->
+                        val selected = state.downloadSource == source
+                        Box(
+                            modifier = Modifier.weight(1f).heightIn(min = 40.dp).clip(RoundedCornerShape(8.dp))
+                                .background(if (selected) NolaColors.segmentSelected else Color.Transparent)
+                                .selectable(selected = selected, role = Role.Tab, onClick = {
+                                    if (!selected) tabHaptics.selection()
+                                    viewModel.setDownloadSource(source)
+                                })
+                                .padding(horizontal = 8.dp),
+                            contentAlignment = Alignment.Center,
+                        ) {
+                            Text(
+                                source.label,
+                                style = MaterialTheme.typography.labelMedium,
+                                color = if (selected) MaterialTheme.colorScheme.onSurface else MaterialTheme.colorScheme.onSurfaceVariant,
+                                textAlign = TextAlign.Center,
+                            )
+                        }
+                    }
+                }
                 state.deviceCatalog.forEach { entry ->
                     DeviceModelCatalogRow(
                         entry = entry,
+                        deviceRamBytes = deviceRamBytes,
                         installed = state.installedLocalModels.any { it.id == entry.id },
                         downloading = state.downloadingModelId == entry.id,
                         progress = state.downloadProgress,
                         downloadsBlocked = state.downloadingModelId != null,
                         onDownload = { viewModel.downloadLocalModel(entry) },
+                        onCancelDownload = { viewModel.cancelLocalModelDownload() },
                     )
                 }
             }
 
         }
-        if (sourceTab == 2) {
+        if (activeTab == 2) {
             ModelActionTile(title = stringResource(R.string.models_web_host),
+                modifier = Modifier.testTag(MODEL_HOST_CONNECTION_TEST_TAG),
                 subtitle = state.webHostUrl.ifBlank { stringResource(R.string.models_desktop_bridge) },
                 icon = Icons.Filled.Security, tint = MaterialTheme.colorScheme.primary,
-                isActive = state.selectedModelSource == ModelInfo.ModelSource.WebHost,
                 onClick = { showWebHostSheet = true })
+            state.verifiedHostTransport?.let { route ->
+                Text(
+                    stringResource(if (route == com.nola.data.remote.dto.VerifiedHostTransport.Tailcat)
+                        R.string.models_verified_via_tailcat else R.string.models_verified_via_direct),
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.testTag("models.host.verified-transport"),
+                )
+            }
             state.webHostModel?.let { webHostModel ->
                 ModelListCard(
                     title = stringResource(R.string.models_web_host),
@@ -451,8 +559,12 @@ fun ModelsScreen(
                     onSelect = { viewModel.selectModel(it) },
                     onParams = { viewModel.openParameters(it) }
                 )
+                TextButton(enabled = !state.openingHostManagement, onClick = manageHostModels,
+                    modifier = Modifier.fillMaxWidth().testTag("models.web_host.manage")) {
+                    Text(stringResource(R.string.model_connections_host_manage))
+                }
                 TextButton(
-                    onClick = viewModel::disconnectWebHost,
+                    onClick = { confirmDisconnectAddress = state.webHostUrl },
                     modifier = Modifier.fillMaxWidth().testTag("models.web_host.disconnect")
                 ) {
                     Text(
@@ -462,6 +574,8 @@ fun ModelsScreen(
                 }
             }
 
+        }
+            }
         }
 
         }
@@ -485,11 +599,13 @@ fun ModelListCard(
 ) {
     NolaCard {
         NolaSectionTitle(icon = Icons.AutoMirrored.Filled.List, title = title)
+        val anyActivating = activatingModelId != null
         models.forEachIndexed { index, model ->
             ModelRow(
                 model = model,
                 isSelected = model.selectionId == selectedModelId && model.source == selectedModelSource,
                 isActivating = model.selectionId == activatingModelId && model.source == activatingModelSource,
+                isAnyActivating = anyActivating,
                 isRunning = model.id == runningLocalModelId,
                 onClick = { onSelect(model) },
                 onStartLocal = onStartLocal?.let { action -> { action(model) } },
@@ -499,7 +615,7 @@ fun ModelListCard(
                 onParams = { onParams(model) }
             )
             if (index != models.lastIndex) {
-                HorizontalDivider(color = MaterialTheme.colorScheme.outline.copy(alpha = 0.18f))
+                HorizontalDivider(color = NolaColors.hairlineBorder)
             }
         }
     }
@@ -523,7 +639,11 @@ private fun ModelExecutionCapabilitiesSheet(
     val dirty = toolCalls != initial.toolCalls || imageInput != initial.imageInput ||
         samplingParameters != initial.samplingParameters || outputField != initial.chatOutputTokenField
     val requestDismiss = { if (!saving) { if (dirty) showDiscardDialog = true else onDismiss() } }
-    ModalBottomSheet(onDismissRequest = requestDismiss, sheetState = com.nola.ui.components.rememberGuardedEditorSheetState(saving, dirty) { showDiscardDialog = true }) {
+    ModalBottomSheet(
+        modifier = Modifier.dismissImeOnBlankTap(),
+        onDismissRequest = requestDismiss,
+        contentWindowInsets = { androidx.compose.foundation.layout.WindowInsets(0) },
+        sheetState = com.nola.ui.components.rememberGuardedEditorSheetState(saving, dirty) { showDiscardDialog = true }) {
         Column(
             modifier = Modifier.fillMaxWidth().verticalScroll(rememberScrollState()).navigationBarsPadding().padding(horizontal = 24.dp, vertical = 20.dp),
             verticalArrangement = Arrangement.spacedBy(12.dp),
@@ -537,7 +657,7 @@ private fun ModelExecutionCapabilitiesSheet(
                 Triple(R.string.models_execution_images, imageInput, { value: Boolean -> imageInput = value }),
                 Triple(R.string.models_execution_sampling, samplingParameters, { value: Boolean -> samplingParameters = value }),
             ).forEach { (label, checked, update) ->
-                Row(Modifier.fillMaxWidth().toggleable(value = checked, enabled = !saving, role = Role.Switch, onValueChange = update).heightIn(min = 48.dp), verticalAlignment = Alignment.CenterVertically) {
+                Row(Modifier.fillMaxWidth().clip(RoundedCornerShape(8.dp)).toggleable(value = checked, enabled = !saving, role = Role.Switch, onValueChange = update).heightIn(min = 48.dp), verticalAlignment = Alignment.CenterVertically) {
                     Text(stringResource(label), modifier = Modifier.weight(1f))
                     NolaSwitch(checked = checked, onCheckedChange = null, enabled = !saving)
                 }
@@ -545,8 +665,8 @@ private fun ModelExecutionCapabilitiesSheet(
             Text(stringResource(R.string.models_execution_output_field), style = MaterialTheme.typography.titleSmall)
             listOf(
                 ChatOutputTokenField.Auto to stringResource(R.string.models_execution_output_auto),
-                ChatOutputTokenField.MaxTokens to "max_tokens",
-                ChatOutputTokenField.MaxCompletionTokens to "max_completion_tokens",
+                ChatOutputTokenField.MaxTokens to stringResource(R.string.models_execution_output_standard),
+                ChatOutputTokenField.MaxCompletionTokens to stringResource(R.string.models_execution_output_completion),
             ).forEach { (value, label) ->
                 NolaRadioOption(label = label, selected = outputField == value, enabled = !saving) {
                     outputField = value
@@ -570,27 +690,41 @@ private fun ModelExecutionCapabilitiesSheet(
 @Composable
 private fun DeviceModelCatalogRow(
     entry: DeviceModelCatalogEntry,
+    deviceRamBytes: Long,
     installed: Boolean,
     downloading: Boolean,
     progress: Float?,
     downloadsBlocked: Boolean,
     onDownload: () -> Unit,
+    onCancelDownload: () -> Unit,
 ) {
+    val fit = entry.fitForRam(deviceRamBytes)
+    val isZh = java.util.Locale.getDefault().language.equals("zh", ignoreCase = true)
+    val fitLabel = when (fit) {
+        DeviceModelFit.Best -> if (isZh) "最适合本机" else "Best fit"
+        DeviceModelFit.Light -> if (isZh) "轻量流畅" else "Fast & light"
+        DeviceModelFit.Large -> if (isZh) "大参数" else "Large"
+    }
+    val fitTint = when (fit) {
+        DeviceModelFit.Best -> MaterialTheme.colorScheme.primary
+        DeviceModelFit.Light -> NolaColors.success
+        DeviceModelFit.Large -> MaterialTheme.colorScheme.onSurfaceVariant
+    }
     Row(
         modifier = Modifier.fillMaxWidth().padding(vertical = 8.dp),
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(10.dp),
     ) {
-        Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
-            Text(entry.displayName, style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.SemiBold)
+        Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(6.dp),
+            ) {
+                Text(entry.displayName, style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.SemiBold)
+                NolaBadge(text = fitLabel, tint = fitTint)
+            }
             Text(
-                stringResource(
-                    R.string.models_device_model_detail,
-                    entry.quantization,
-                    entry.byteSize.toDouble() / (1024.0 * 1024.0 * 1024.0),
-                    entry.recommendedRamBytes / (1024 * 1024 * 1024),
-                    entry.contextWindow / 1024,
-                ),
+                "${DeviceModelCatalog.formatGb(entry.byteSize)} · ${entry.quantization} · ${entry.contextWindow / 1024}K",
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
@@ -603,7 +737,9 @@ private fun DeviceModelCatalogRow(
         }
         when {
             installed -> NolaBadge(stringResource(R.string.models_installed), icon = Icons.Filled.Check)
-            downloading -> Text(stringResource(R.string.models_downloading), style = MaterialTheme.typography.labelMedium)
+            downloading -> TextButton(onClick = onCancelDownload) {
+                Text(stringResource(R.string.common_cancel))
+            }
             else -> TextButton(onClick = onDownload, enabled = !downloadsBlocked) {
                 Text(stringResource(R.string.models_download))
             }
@@ -674,6 +810,7 @@ fun ModelRow(
     model: ModelInfo,
     isSelected: Boolean,
     isActivating: Boolean,
+    isAnyActivating: Boolean = isActivating,
     isRunning: Boolean = false,
     onClick: () -> Unit,
     onStartLocal: (() -> Unit)? = null,
@@ -692,13 +829,14 @@ fun ModelRow(
         ModelInfo.ModelSource.Local -> MaterialTheme.colorScheme.tertiary
         ModelInfo.ModelSource.WebHost -> NolaColors.success
     }
+    val reduceMotion = rememberReduceMotionEnabled()
     val rowBackground by animateColorAsState(
         targetValue = if (isSelected) {
             MaterialTheme.colorScheme.primary.copy(alpha = 0.07f)
         } else {
             Color.Transparent
         },
-        animationSpec = tween(NolaMotion.base, easing = NolaMotion.emphasizedEasing),
+        animationSpec = com.nola.ui.components.nolaTween(NolaMotion.base, reduceMotion),
         label = "model-row-selection"
     )
 
@@ -711,6 +849,7 @@ fun ModelRow(
                 .heightIn(min = 62.dp)
                 .clip(RoundedCornerShape(NolaRadius.md))
                 .background(rowBackground)
+                .clickable(enabled = !isAnyActivating) { onClick() }
                 .padding(horizontal = 10.dp, vertical = 9.dp),
             verticalArrangement = Arrangement.spacedBy(if (compact) 6.dp else 0.dp)
         ) {
@@ -736,8 +875,6 @@ fun ModelRow(
                 Column(
                     modifier = Modifier
                         .weight(1f)
-                        .clip(RoundedCornerShape(NolaRadius.md))
-                        .clickable(enabled = !isActivating) { onClick() }
                         .padding(horizontal = 4.dp, vertical = 2.dp)
                         .testTag(MODEL_ROW_COPY_TEST_TAG_PREFIX + model.id)
                 ) {
@@ -766,6 +903,7 @@ fun ModelRow(
                         model = model,
                         isSelected = isSelected,
                         isActivating = isActivating,
+                        isAnyActivating = isAnyActivating,
                         isRunning = isRunning,
                         onClick = onClick,
                         onStartLocal = onStartLocal,
@@ -786,6 +924,7 @@ fun ModelRow(
                         model = model,
                         isSelected = isSelected,
                         isActivating = isActivating,
+                        isAnyActivating = isAnyActivating,
                         isRunning = isRunning,
                         onClick = onClick,
                         onStartLocal = onStartLocal,
@@ -800,11 +939,13 @@ fun ModelRow(
     }
 }
 
+@OptIn(ExperimentalLayoutApi::class)
 @Composable
 private fun ModelRowActions(
     model: ModelInfo,
     isSelected: Boolean,
     isActivating: Boolean,
+    isAnyActivating: Boolean,
     isRunning: Boolean,
     onClick: () -> Unit,
     onStartLocal: (() -> Unit)?,
@@ -814,31 +955,23 @@ private fun ModelRowActions(
     onParams: () -> Unit
 ) {
     val haptics = rememberNolaHaptics()
-    Row(
+    var overflowExpanded by remember(model.id) { mutableStateOf(false) }
+    val hasOverflowActions = model.source != ModelInfo.ModelSource.WebHost && (
+        true || onTest != null || onCapabilities != null || onDeleteLocal != null
+    )
+    FlowRow(
         modifier = Modifier
             .testTag(MODEL_ROW_ACTIONS_TEST_TAG_PREFIX + model.id)
-            .widthIn(min = 142.dp),
-        horizontalArrangement = Arrangement.End,
-        verticalAlignment = Alignment.CenterVertically
+            .widthIn(min = 120.dp),
+        horizontalArrangement = Arrangement.spacedBy(4.dp, Alignment.End),
+        verticalArrangement = Arrangement.spacedBy(4.dp)
     ) {
         if (model.source == ModelInfo.ModelSource.Local && onStartLocal != null) {
             TextButton(onClick = {
                 if (isRunning) haptics.warning() else haptics.primaryAction()
                 onStartLocal()
-            }, enabled = !isActivating) {
+            }, enabled = !isAnyActivating) {
                 Text(stringResource(if (isRunning) R.string.models_stop else R.string.models_start))
-            }
-        }
-        if (model.source != ModelInfo.ModelSource.WebHost && onDeleteLocal != null) {
-            IconButton(
-                onClick = {
-                    haptics.warning()
-                    onDeleteLocal()
-                },
-                enabled = !isActivating && !isRunning,
-                modifier = Modifier.alpha(if (isRunning) 0.38f else 1f)
-            ) {
-                Icon(Icons.Filled.Delete, contentDescription = stringResource(R.string.common_delete))
             }
         }
         val actionState = when {
@@ -846,28 +979,31 @@ private fun ModelRowActions(
             isSelected -> 1
             else -> 2
         }
+        val reduceMotion = rememberReduceMotionEnabled()
         AnimatedContent(
             targetState = actionState,
             transitionSpec = {
-                fadeIn(tween(NolaMotion.base, easing = NolaMotion.emphasizedEasing)) togetherWith
-                    fadeOut(tween(NolaMotion.fast))
+                fadeIn(com.nola.ui.components.nolaTween(NolaMotion.base, reduceMotion)) togetherWith
+                    fadeOut(com.nola.ui.components.nolaTween(NolaMotion.fast, reduceMotion))
             },
             contentAlignment = Alignment.CenterEnd,
             label = "model-row-action"
         ) { state ->
             when (state) {
             0 -> {
-                CircularProgressIndicator(
-                    modifier = Modifier.size(15.dp),
-                    strokeWidth = 2.dp,
-                    color = MaterialTheme.colorScheme.primary
-                )
-                Spacer(Modifier.size(6.dp))
-                Text(
-                    stringResource(R.string.models_activating),
-                    style = MaterialTheme.typography.labelMedium,
-                    color = MaterialTheme.colorScheme.primary
-                )
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    CircularProgressIndicator(
+                        modifier = Modifier.size(15.dp),
+                        strokeWidth = 2.dp,
+                        color = MaterialTheme.colorScheme.primary
+                    )
+                    Spacer(Modifier.size(6.dp))
+                    Text(
+                        stringResource(R.string.models_activating),
+                        style = MaterialTheme.typography.labelMedium,
+                        color = MaterialTheme.colorScheme.primary
+                    )
+                }
             }
             1 -> {
                 NolaBadge(
@@ -877,7 +1013,7 @@ private fun ModelRowActions(
                 )
             }
             else -> {
-                TextButton(onClick = onClick) {
+                TextButton(onClick = onClick, enabled = !isAnyActivating) {
                     Icon(Icons.Filled.Check, contentDescription = null, modifier = Modifier.size(16.dp))
                     Spacer(Modifier.size(4.dp))
                     Text(stringResource(R.string.models_use))
@@ -885,25 +1021,96 @@ private fun ModelRowActions(
             }
         }
         }
-        if (model.source != ModelInfo.ModelSource.WebHost) {
-            if (onCapabilities != null) {
-                IconButton(onClick = onCapabilities, enabled = !isActivating) {
-                    Icon(Icons.Filled.Security, contentDescription = stringResource(R.string.models_execution_capabilities))
+        if (hasOverflowActions) {
+            Box {
+                IconButton(
+                    onClick = { overflowExpanded = true },
+                    enabled = !isAnyActivating,
+                    modifier = Modifier.size(48.dp)
+                ) {
+                    Icon(
+                        Icons.Filled.MoreVert,
+                        contentDescription = stringResource(R.string.intelligence_more),
+                        tint = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
                 }
-            }
-            NolaIconButton(label = stringResource(R.string.models_inference_test), onClick = { onTest?.invoke() }, enabled = !isActivating && onTest != null) {
-                Icon(
-                    painterResource(R.drawable.nola_execution),
-                    contentDescription = stringResource(R.string.models_inference_test),
-                    tint = MaterialTheme.colorScheme.onSurfaceVariant,
-                )
-            }
-            NolaIconButton(label = stringResource(R.string.common_parameters), onClick = onParams, enabled = !isActivating) {
-                Icon(
-                    painterResource(R.drawable.nola_settings),
-                    contentDescription = stringResource(R.string.common_parameters),
-                    tint = MaterialTheme.colorScheme.onSurfaceVariant
-                )
+                DropdownMenu(
+                    expanded = overflowExpanded,
+                    onDismissRequest = { overflowExpanded = false }
+                ) {
+                    DropdownMenuItem(
+                        text = { Text(stringResource(R.string.common_parameters)) },
+                        leadingIcon = {
+                            Icon(
+                                painterResource(R.drawable.nola_settings),
+                                contentDescription = null,
+                                modifier = Modifier.size(18.dp)
+                            )
+                        },
+                        onClick = {
+                            overflowExpanded = false
+                            onParams()
+                        }
+                    )
+                    if (onTest != null) {
+                        DropdownMenuItem(
+                            text = { Text(stringResource(R.string.models_inference_test)) },
+                            leadingIcon = {
+                                Icon(
+                                    painterResource(R.drawable.nola_execution),
+                                    contentDescription = null,
+                                    modifier = Modifier.size(18.dp)
+                                )
+                            },
+                            onClick = {
+                                overflowExpanded = false
+                                onTest()
+                            }
+                        )
+                    }
+                    if (onCapabilities != null) {
+                        DropdownMenuItem(
+                            text = { Text(stringResource(R.string.models_execution_capabilities)) },
+                            leadingIcon = {
+                                Icon(
+                                    Icons.Filled.Security,
+                                    contentDescription = null,
+                                    modifier = Modifier.size(18.dp)
+                                )
+                            },
+                            onClick = {
+                                overflowExpanded = false
+                                onCapabilities()
+                            }
+                        )
+                    }
+                    if (onDeleteLocal != null) {
+                        DropdownMenuItem(
+                            text = {
+                                Text(
+                                    stringResource(R.string.common_delete),
+                                    color = if (!isRunning) MaterialTheme.colorScheme.error
+                                    else MaterialTheme.colorScheme.error.copy(alpha = 0.38f)
+                                )
+                            },
+                            leadingIcon = {
+                                Icon(
+                                    Icons.Filled.Delete,
+                                    contentDescription = null,
+                                    tint = if (!isRunning) MaterialTheme.colorScheme.error
+                                    else MaterialTheme.colorScheme.error.copy(alpha = 0.38f),
+                                    modifier = Modifier.size(18.dp)
+                                )
+                            },
+                            enabled = !isRunning,
+                            onClick = {
+                                overflowExpanded = false
+                                haptics.warning()
+                                onDeleteLocal()
+                            }
+                        )
+                    }
+                }
             }
         }
     }
@@ -925,6 +1132,7 @@ internal fun ModelInferenceTestSheet(
     onDismiss: () -> Unit,
 ) {
     ModalBottomSheet(
+        modifier = Modifier.dismissImeOnBlankTap(),
         onDismissRequest = onDismiss,
         sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true),
     ) {
@@ -954,7 +1162,11 @@ internal fun ModelInferenceTestSheet(
             )
             Button(onClick = if (running) onStop else onRun, enabled = running || prompt.isNotBlank()) {
                 if (running) {
-                    CircularProgressIndicator(modifier = Modifier.size(16.dp), strokeWidth = 2.dp)
+                    CircularProgressIndicator(
+                        modifier = Modifier.size(16.dp),
+                        strokeWidth = 2.dp,
+                        color = MaterialTheme.colorScheme.onPrimary,
+                    )
                     Spacer(Modifier.size(8.dp))
                 }
                 Text(stringResource(if (running) R.string.models_stop else R.string.models_inference_test_run))
@@ -1018,15 +1230,15 @@ private fun ConnectionTestRow(
             modifier = Modifier.heightIn(min = 48.dp),
             shape = RoundedCornerShape(12.dp),
             colors = androidx.compose.material3.ButtonDefaults.buttonColors(
-                containerColor = MaterialTheme.colorScheme.onSurface,
-                contentColor = MaterialTheme.colorScheme.surface
+                containerColor = MaterialTheme.colorScheme.primary,
+                contentColor = MaterialTheme.colorScheme.onPrimary
             )
         ) {
             if (testing) {
                 CircularProgressIndicator(
                     modifier = Modifier.size(16.dp),
                     strokeWidth = 2.dp,
-                    color = MaterialTheme.colorScheme.surface
+                    color = MaterialTheme.colorScheme.onPrimary
                 )
                 Spacer(Modifier.size(7.dp))
             } else {
@@ -1050,54 +1262,47 @@ fun ModelActionTile(
     tint: Color,
     modifier: Modifier = Modifier,
     enabled: Boolean = true,
-    isActive: Boolean = false,
     onClick: () -> Unit
 ) {
-    val shape = RoundedCornerShape(NolaRadius.lg)
-    Row(
-        modifier = modifier
-            .fillMaxWidth()
-            .clip(shape)
-            .background(if (isActive) MaterialTheme.colorScheme.primaryContainer else Color.Transparent, shape)
-            .clickable(enabled = enabled, onClick = onClick)
-            .heightIn(min = 58.dp)
-            .padding(horizontal = NolaSpacing.md, vertical = NolaSpacing.sm),
-        horizontalArrangement = Arrangement.spacedBy(NolaSpacing.sm),
-        verticalAlignment = Alignment.CenterVertically
-    ) {
-        Box(
-            modifier = Modifier
-                .size(34.dp)
-                .clip(RoundedCornerShape(NolaRadius.md))
-                .background(tint.copy(alpha = 0.12f)),
-            contentAlignment = Alignment.Center
+    NolaCard(modifier = modifier.clickable(enabled = enabled, onClick = onClick)) {
+        Row(
+            modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp),
+            horizontalArrangement = Arrangement.spacedBy(NolaSpacing.sm),
+            verticalAlignment = Alignment.CenterVertically
         ) {
-            Icon(icon, contentDescription = null, tint = tint, modifier = Modifier.size(18.dp))
-        }
-          Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(3.dp)) {
-            Text(
-                title,
-                style = MaterialTheme.typography.bodyMedium,
-                fontWeight = FontWeight.SemiBold,
-                color = MaterialTheme.colorScheme.onSurface,
-                softWrap = true
+            Box(
+                modifier = Modifier
+                    .size(34.dp)
+                    .clip(RoundedCornerShape(NolaRadius.md))
+                    .background(tint.copy(alpha = 0.12f)),
+                contentAlignment = Alignment.Center
+            ) {
+                Icon(icon, contentDescription = null, tint = tint, modifier = Modifier.size(18.dp))
+            }
+            Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(3.dp)) {
+                Text(
+                    title,
+                    style = MaterialTheme.typography.bodyMedium,
+                    fontWeight = FontWeight.SemiBold,
+                    color = MaterialTheme.colorScheme.onSurface,
+                    softWrap = true
+                )
+                Text(
+                    subtitle,
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    softWrap = true
+                )
+            }
+            Icon(
+                painterResource(R.drawable.nola_chevron),
+                contentDescription = null,
+                modifier = Modifier.size(16.dp),
+                tint = MaterialTheme.colorScheme.onSurfaceVariant
             )
-            Text(
-                subtitle,
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                softWrap = true
-              )
-          }
-          if (isActive) {
-              NolaBadge(
-                  stringResource(R.string.models_selected),
-                  icon = Icons.Filled.Check,
-                  tint = tint
-              )
-          }
-      }
-  }
+        }
+    }
+}
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -1117,7 +1322,9 @@ fun EndpointConfigSheet(
     val requestDismiss = { if (!saving) { if (dirty) showDiscardDialog = true else onDismiss() } }
     val sheetState = com.nola.ui.components.rememberGuardedEditorSheetState(saving, dirty) { showDiscardDialog = true }
 
-    ModalBottomSheet(onDismissRequest = requestDismiss, sheetState = sheetState) {
+    ModalBottomSheet(
+        modifier = Modifier.dismissImeOnBlankTap(),
+        onDismissRequest = requestDismiss, sheetState = sheetState) {
         Column(Modifier.fillMaxWidth().imePadding().navigationBarsPadding().padding(24.dp)
             .verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(16.dp)) {
             Text(stringResource(R.string.models_endpoint_sheet_title), style = MaterialTheme.typography.titleLarge)
@@ -1136,12 +1343,29 @@ fun EndpointConfigSheet(
     }
 }
 
-private class EndpointConfigDraft(endpoint: String, key: String, model: String, protocol: ModelWireProtocol) {
+internal class EndpointConfigDraft(endpoint: String, key: String, model: String, protocol: ModelWireProtocol) {
     var endpoint by mutableStateOf(endpoint)
     var key by mutableStateOf(key)
     var model by mutableStateOf(model)
     var protocol by mutableStateOf(protocol)
 }
+
+private data class ApiProviderPreset(
+    val id: String,
+    val label: String?,
+    val baseUrl: String,
+    val defaultModel: String,
+    val protocol: ModelWireProtocol,
+)
+
+private val API_PROVIDER_PRESETS = listOf(
+    ApiProviderPreset("openai", "OpenAI", "https://api.openai.com/v1", "gpt-4o-mini", ModelWireProtocol.Responses),
+    ApiProviderPreset("anthropic", "Anthropic", "https://api.anthropic.com/v1", "claude-sonnet-4-20250514", ModelWireProtocol.ChatCompletions),
+    ApiProviderPreset("deepseek", "DeepSeek", "https://api.deepseek.com/v1", "deepseek-chat", ModelWireProtocol.ChatCompletions),
+    ApiProviderPreset("openrouter", "OpenRouter", "https://openrouter.ai/api/v1", "openai/gpt-4o-mini", ModelWireProtocol.ChatCompletions),
+    ApiProviderPreset("ollama", "Ollama", "http://127.0.0.1:11434/v1", "llama3.2", ModelWireProtocol.ChatCompletions),
+    ApiProviderPreset("custom", null, "", "", ModelWireProtocol.ChatCompletions),
+)
 
 @Composable
 private fun EndpointConfigFields(
@@ -1153,38 +1377,124 @@ private fun EndpointConfigFields(
 ) {
     val focusManager = LocalFocusManager.current
     val keyboard = LocalSoftwareKeyboardController.current
+    val reduceMotion = rememberReduceMotionEnabled()
     var endpoint by draft::endpoint
     var key by draft::key
     var model by draft::model
     var protocol by draft::protocol
+    var showApiKey by remember { mutableStateOf(false) }
+    var showAdvanced by remember { mutableStateOf(false) }
+    val endpointInvalid = endpoint.isNotBlank() && !RemoteModelEndpointURL.isValid(endpoint)
+    val selectedPresetId = remember(endpoint) {
+        val trimmed = endpoint.trim().trimEnd('/')
+        API_PROVIDER_PRESETS.firstOrNull { preset ->
+            preset.baseUrl.isNotEmpty() && trimmed.equals(preset.baseUrl.trimEnd('/'), ignoreCase = true)
+        }?.id ?: "custom"
+    }
     LaunchedEffect(endpoint, key, model, protocol) {
         onDirtyChange(endpoint != initialEndpoint || key != initialApiKey || model != initialModel || protocol != initialWireProtocol)
     }
-    Column(Modifier.widthIn(max = 560.dp).fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(18.dp)) {
-        OutlinedTextField(endpoint, { endpoint = it }, label = { Text(stringResource(R.string.models_base_url)) },
-            placeholder = { Text("https://api.example.com/v1") }, singleLine = true, enabled = !saving,
+    Column(Modifier.widthIn(max = 560.dp).fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(14.dp)) {
+        Text(
+            stringResource(R.string.models_provider_presets),
+            style = MaterialTheme.typography.labelMedium,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+        Row(
+            modifier = Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+        ) {
+            API_PROVIDER_PRESETS.forEach { preset ->
+                val label = preset.label ?: stringResource(R.string.models_provider_custom)
+                FilterChip(
+                    selected = selectedPresetId == preset.id,
+                    enabled = !saving,
+                    onClick = {
+                        if (preset.id != "custom") {
+                            endpoint = preset.baseUrl
+                            if (model.isBlank() || API_PROVIDER_PRESETS.any { it.defaultModel == model }) {
+                                model = preset.defaultModel
+                            }
+                            protocol = preset.protocol
+                        } else {
+                            endpoint = ""
+                        }
+                    },
+                    label = { Text(label) },
+                )
+            }
+        }
+        OutlinedTextField(
+            endpoint,
+            { endpoint = it },
+            label = { Text(stringResource(R.string.models_base_url)) },
+            placeholder = { Text("https://api.example.com/v1") },
+            singleLine = true,
+            enabled = !saving,
+            isError = endpointInvalid,
+            supportingText = if (endpointInvalid) {
+                { Text(stringResource(R.string.models_endpoint_invalid_url)) }
+            } else null,
             keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Uri, autoCorrect = false, imeAction = ImeAction.Next),
             keyboardActions = KeyboardActions(onNext = { focusManager.moveFocus(FocusDirection.Next) }),
-            modifier = Modifier.fillMaxWidth().testTag("model.setup.endpoint"))
-        OutlinedTextField(key, { key = it }, label = { Text(stringResource(R.string.models_api_key)) },
-            visualTransformation = PasswordVisualTransformation(), singleLine = true, enabled = !saving,
+            modifier = Modifier.fillMaxWidth().testTag("model.setup.endpoint")
+        )
+        OutlinedTextField(
+            key,
+            { key = it },
+            label = { Text(stringResource(R.string.models_api_key)) },
+            visualTransformation = if (showApiKey) VisualTransformation.None else PasswordVisualTransformation(),
+            trailingIcon = {
+                IconButton(onClick = { showApiKey = !showApiKey }, enabled = !saving) {
+                    Icon(
+                        imageVector = if (showApiKey) Icons.Filled.VisibilityOff else Icons.Filled.Visibility,
+                        contentDescription = stringResource(if (showApiKey) R.string.models_hide_secret else R.string.models_show_secret),
+                    )
+                }
+            },
+            singleLine = true,
+            enabled = !saving,
             keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password, autoCorrect = false, imeAction = ImeAction.Next),
             keyboardActions = KeyboardActions(onNext = { focusManager.moveFocus(FocusDirection.Next) }),
-            modifier = Modifier.fillMaxWidth().testTag("model.setup.key"))
-        OutlinedTextField(model, { model = it }, label = { Text(stringResource(R.string.models_default_model_id)) },
-            singleLine = true, enabled = !saving,
+            modifier = Modifier.fillMaxWidth().testTag("model.setup.key")
+        )
+        OutlinedTextField(
+            model,
+            { model = it },
+            label = { Text(stringResource(R.string.models_default_model_id)) },
+            singleLine = true,
+            enabled = !saving,
             keyboardOptions = KeyboardOptions(autoCorrect = false, imeAction = ImeAction.Done),
             keyboardActions = KeyboardActions(onDone = { focusManager.clearFocus(); keyboard?.hide() }),
-            modifier = Modifier.fillMaxWidth().testTag("model.setup.modelID"))
-        ModelWireProtocol.entries.forEach { value ->
-            NolaRadioOption(
-                label = stringResource(
-                    if (value == ModelWireProtocol.Responses) R.string.models_protocol_responses
-                    else R.string.models_protocol_chat_completions
-                ),
-                selected = protocol == value,
-                enabled = !saving
-            ) { protocol = value }
+            modifier = Modifier.fillMaxWidth().testTag("model.setup.modelID")
+        )
+        NolaDisclosureBar(
+            title = stringResource(R.string.models_advanced_settings),
+            subtitle = stringResource(
+                if (protocol == ModelWireProtocol.Responses) R.string.models_protocol_responses
+                else R.string.models_protocol_chat_completions
+            ),
+            expanded = showAdvanced,
+            onToggle = { showAdvanced = !showAdvanced },
+            enabled = !saving,
+        )
+        AnimatedVisibility(
+            visible = showAdvanced,
+            enter = nolaDisclosureEnter(reduceMotion),
+            exit = nolaDisclosureExit(reduceMotion),
+        ) {
+            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                ModelWireProtocol.entries.forEach { value ->
+                    NolaRadioOption(
+                        label = stringResource(
+                            if (value == ModelWireProtocol.Responses) R.string.models_protocol_responses
+                            else R.string.models_protocol_chat_completions
+                        ),
+                        selected = protocol == value,
+                        enabled = !saving
+                    ) { protocol = value }
+                }
+            }
         }
         Text(stringResource(R.string.models_manual_setup_summary), style = MaterialTheme.typography.bodySmall,
             color = MaterialTheme.colorScheme.onSurfaceVariant)
@@ -1201,6 +1511,24 @@ private fun EndpointConfigFields(
     }
 }
 
+@Composable
+internal fun HostPairingSheet(
+    onDismiss: () -> Unit,
+    onVerified: (String) -> Unit = { onDismiss() },
+    viewModel: ModelsViewModel = hiltViewModel()
+) {
+    val state by viewModel.uiState.collectAsStateWithLifecycle()
+    WebHostConfigSheet(
+        currentUrl = state.webHostUrl,
+        currentToken = state.webHostToken,
+        currentCertificateSha256 = state.webHostCertificateSha256,
+        onSave = viewModel::saveWebHostConfig,
+        onCancelConnection = viewModel::cancelWebHostConnection,
+        onVerified = onVerified,
+        onDismiss = onDismiss
+    )
+}
+
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun WebHostConfigSheet(
@@ -1209,7 +1537,8 @@ fun WebHostConfigSheet(
     currentCertificateSha256: String,
     onSave: (String, String, String, String?, (Boolean, String) -> Unit) -> Unit,
     onDismiss: () -> Unit,
-    onCancelConnection: () -> Unit = {}
+    onCancelConnection: () -> Unit = {},
+    onVerified: (String) -> Unit = { onDismiss() }
 ) {
     var url by remember { mutableStateOf(currentUrl) }
     var token by remember { mutableStateOf("") }
@@ -1221,6 +1550,7 @@ fun WebHostConfigSheet(
     var importedSetup by remember { mutableStateOf<WebHostConnectionSetup?>(null) }
     val clipboard = androidx.compose.ui.platform.LocalClipboardManager.current
     val context = androidx.compose.ui.platform.LocalContext.current
+    val showCertificate = certificateSha256.isNotBlank() || Uri.parse(url.trim()).scheme.equals("https", ignoreCase = true)
     val dirty = url != currentUrl || token.isNotBlank() || certificateSha256 != currentCertificateSha256
     val canUseSavedToken = currentToken.isNotBlank() && sameWebHostDestination(currentUrl, url)
     val sheetState = com.nola.ui.components.rememberGuardedEditorSheetState(isConnecting, dirty) { showDiscardDialog = true }
@@ -1228,9 +1558,28 @@ fun WebHostConfigSheet(
     val requestDismiss = { if (dirty) showDiscardDialog = true else onDismiss() }
 
     ModalBottomSheet(
+        modifier = Modifier.dismissImeOnBlankTap(),
         onDismissRequest = { if (!isConnecting) requestDismiss() },
         sheetState = sheetState
     ) {
+        val focus = LocalFocusManager.current
+        val keyboard = LocalSoftwareKeyboardController.current
+        val canSubmit = !isConnecting && url.isNotBlank() && (token.isNotBlank() || canUseSavedToken)
+        fun submit() {
+            if (isConnecting || !canSubmit) return
+            focus.clearFocus()
+            keyboard?.hide()
+            inlineError = null
+            isConnecting = true
+            val generation = ++connectionGeneration
+            val expectedIdentity = importedSetup?.takeIf { sameWebHostOrigin(it.origin, url) }?.hostId
+            onSave(url.trim(), webHostConnectionToken(currentUrl, currentToken, url, token), certificateSha256.trim(), expectedIdentity) { succeeded, message ->
+                if (generation == connectionGeneration) {
+                    isConnecting = false
+                    if (succeeded) onVerified(url.trim()) else inlineError = message
+                }
+            }
+        }
         Column(
             modifier = Modifier
                 .fillMaxWidth()
@@ -1240,35 +1589,33 @@ fun WebHostConfigSheet(
                 .padding(horizontal = 24.dp)
         ) {
             Spacer(Modifier.height(20.dp))
-            Text(stringResource(R.string.models_web_host), style = MaterialTheme.typography.titleLarge)
+            Text(stringResource(R.string.models_web_host), Modifier.testTag("models.host.heading"), style = MaterialTheme.typography.titleLarge)
             Spacer(Modifier.height(16.dp))
 
             Column(
                 modifier = Modifier
                     .weight(1f)
-                    .verticalScroll(rememberScrollState()),
+                    .verticalScroll(rememberScrollState()).testTag("models.host.fields"),
                 verticalArrangement = Arrangement.spacedBy(10.dp)
             ) {
-                Column(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .clip(RoundedCornerShape(NolaRadius.lg))
-                        .background(MaterialTheme.colorScheme.primary.copy(alpha = 0.07f))
-                        .padding(NolaSpacing.md),
-                    verticalArrangement = Arrangement.spacedBy(NolaSpacing.sm)
-                ) {
-                    Text(
-                        stringResource(R.string.models_web_host_setup_title),
-                        style = MaterialTheme.typography.titleSmall
-                    )
-                    if (!hasExistingConnection) {
+                if (!hasExistingConnection) {
+                    Column(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clip(RoundedCornerShape(NolaRadius.lg))
+                            .background(MaterialTheme.colorScheme.primary.copy(alpha = 0.07f))
+                            .padding(NolaSpacing.md),
+                        verticalArrangement = Arrangement.spacedBy(NolaSpacing.sm)
+                    ) {
+                        Text(
+                            stringResource(R.string.models_web_host_setup_title),
+                            style = MaterialTheme.typography.titleSmall
+                        )
                         Text(
                             stringResource(R.string.models_web_host_setup_start),
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
-                    }
-                    if (!hasExistingConnection) {
                         Text(
                             stringResource(R.string.models_web_host_setup_copy),
                             style = MaterialTheme.typography.bodySmall,
@@ -1289,28 +1636,6 @@ fun WebHostConfigSheet(
                     }
                 }) { Text(stringResource(R.string.models_web_host_paste_setup)) }
 
-                if (isConnecting) {
-                    Row(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .clip(RoundedCornerShape(NolaRadius.lg))
-                            .background(MaterialTheme.colorScheme.secondaryContainer.copy(alpha = 0.55f))
-                            .padding(NolaSpacing.md),
-                        horizontalArrangement = Arrangement.spacedBy(NolaSpacing.md),
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        CircularProgressIndicator(modifier = Modifier.size(22.dp), strokeWidth = 2.dp)
-                        Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
-                            Text(stringResource(R.string.models_web_host_checking), style = MaterialTheme.typography.titleSmall)
-                            Text(
-                                stringResource(R.string.models_web_host_checking_detail),
-                                style = MaterialTheme.typography.bodySmall,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant
-                            )
-                        }
-                    }
-                }
-
                 OutlinedTextField(
                     value = url,
                     enabled = !isConnecting,
@@ -1321,32 +1646,66 @@ fun WebHostConfigSheet(
                             importedSetup = null
                         }
                         url = it
+                        inlineError = null
                     },
                     label = { Text(stringResource(R.string.models_host_url)) },
                     placeholder = { Text(stringResource(R.string.models_web_host_url_placeholder)) },
-                    modifier = Modifier.fillMaxWidth(),
+                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Uri, autoCorrect = false, imeAction = ImeAction.Next),
+                    keyboardActions = KeyboardActions(onNext = { focus.moveFocus(FocusDirection.Next) }),
+                    modifier = Modifier.fillMaxWidth().testTag("models.host.url"),
                     singleLine = true
                 )
+                var showToken by remember { mutableStateOf(false) }
+                var showAdvancedTls by remember { mutableStateOf(certificateSha256.isNotBlank()) }
+                val tlsReduceMotion = rememberReduceMotionEnabled()
                 OutlinedTextField(
                     value = token,
                     enabled = !isConnecting,
-                    onValueChange = { token = it },
+                    onValueChange = { token = it; inlineError = null },
                     label = { Text(stringResource(R.string.models_access_token)) },
-                    supportingText = { Text(stringResource(if (canUseSavedToken)
-                        R.string.models_host_token_keep else R.string.models_host_token_new)) },
-                    modifier = Modifier.fillMaxWidth(),
+                    supportingText = if (token.isBlank()) {
+                        { Text(stringResource(if (canUseSavedToken) R.string.models_host_token_keep else R.string.models_host_token_new)) }
+                    } else null,
+                    trailingIcon = {
+                        IconButton(onClick = { showToken = !showToken }, enabled = !isConnecting) {
+                            Icon(
+                                imageVector = if (showToken) Icons.Filled.VisibilityOff else Icons.Filled.Visibility,
+                                contentDescription = stringResource(if (showToken) R.string.models_hide_secret else R.string.models_show_secret),
+                            )
+                        }
+                    },
+                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password, autoCorrect = false,
+                        imeAction = if (showCertificate && showAdvancedTls) ImeAction.Next else ImeAction.Done),
+                    keyboardActions = KeyboardActions(onNext = { focus.moveFocus(FocusDirection.Next) }, onDone = { submit() }),
+                    modifier = Modifier.fillMaxWidth().testTag("models.host.token"),
                     singleLine = true,
-                    visualTransformation = PasswordVisualTransformation()
+                    visualTransformation = if (showToken) VisualTransformation.None else PasswordVisualTransformation()
                 )
-                OutlinedTextField(
-                    value = certificateSha256,
-                    enabled = !isConnecting,
-                    onValueChange = { certificateSha256 = it },
-                    label = { Text(stringResource(R.string.models_certificate_sha256_optional)) },
-                    supportingText = { Text(stringResource(R.string.models_certificate_sha256_help)) },
-                    modifier = Modifier.fillMaxWidth(),
-                    singleLine = true
-                )
+                if (showCertificate) {
+                    NolaDisclosureBar(
+                        title = stringResource(R.string.models_advanced_tls),
+                        expanded = showAdvancedTls,
+                        onToggle = { showAdvancedTls = !showAdvancedTls },
+                        enabled = !isConnecting,
+                    )
+                    AnimatedVisibility(
+                        visible = showAdvancedTls,
+                        enter = nolaDisclosureEnter(tlsReduceMotion),
+                        exit = nolaDisclosureExit(tlsReduceMotion),
+                    ) {
+                        OutlinedTextField(
+                            value = certificateSha256,
+                            enabled = !isConnecting,
+                            onValueChange = { certificateSha256 = it; inlineError = null },
+                            label = { Text(stringResource(R.string.models_certificate_sha256_optional)) },
+                            supportingText = { Text(stringResource(R.string.models_certificate_sha256_help)) },
+                            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Ascii, autoCorrect = false, imeAction = ImeAction.Done),
+                            keyboardActions = KeyboardActions(onDone = { submit() }),
+                            modifier = Modifier.fillMaxWidth().testTag("models.host.certificateSha256"),
+                            singleLine = true
+                        )
+                    }
+                }
                 Row(
                     modifier = Modifier
                         .fillMaxWidth()
@@ -1369,65 +1728,79 @@ fun WebHostConfigSheet(
                         modifier = Modifier.weight(1f)
                     )
                 }
-                inlineError?.let { message ->
-                    Row(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .clip(RoundedCornerShape(NolaRadius.lg))
-                            .background(MaterialTheme.colorScheme.errorContainer.copy(alpha = 0.62f))
-                            .padding(NolaSpacing.md),
-                        horizontalArrangement = Arrangement.spacedBy(NolaSpacing.sm),
-                        verticalAlignment = Alignment.Top
-                    ) {
-                        Icon(
-                            Icons.Filled.Security,
-                            contentDescription = null,
-                            tint = MaterialTheme.colorScheme.error,
-                            modifier = Modifier.size(20.dp)
-                        )
-                        Text(
-                            message,
-                            style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.onErrorContainer,
-                            modifier = Modifier.weight(1f)
-                        )
-                    }
-                }
                 Spacer(Modifier.height(6.dp))
             }
 
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.spacedBy(10.dp),
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                TextButton(
-                    onClick = {
-                        if (isConnecting) {
-                            connectionGeneration++
-                            onCancelConnection()
-                            isConnecting = false
-                        } else requestDismiss()
-                    },
-                    modifier = Modifier.weight(1f)
-                ) { Text(stringResource(R.string.common_cancel)) }
-                Button(
-                    onClick = {
-                        inlineError = null
-                        isConnecting = true
-                        val generation = ++connectionGeneration
-                        val expectedIdentity = importedSetup?.takeIf { sameWebHostOrigin(it.origin, url) }?.hostId
-                        onSave(url.trim(), webHostConnectionToken(currentUrl, currentToken, url, token), certificateSha256.trim(), expectedIdentity) { succeeded, message ->
-                            if (generation == connectionGeneration) {
-                                isConnecting = false
-                                if (succeeded) onDismiss() else inlineError = message
+            val reduceMotion = rememberReduceMotionEnabled()
+            AnimatedVisibility(visible = inlineError != null, enter = nolaDisclosureEnter(reduceMotion), exit = nolaDisclosureExit(reduceMotion)) {
+                inlineError?.let { message ->
+                    Text(
+                        message,
+                        modifier = Modifier.fillMaxWidth().heightIn(max = 96.dp).verticalScroll(rememberScrollState())
+                            .semantics { liveRegion = androidx.compose.ui.semantics.LiveRegionMode.Polite }
+                            .padding(vertical = NolaSpacing.sm).testTag("models.host.feedback"),
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.error,
+                    )
+                }
+            }
+
+            val actionRes = when {
+                isConnecting -> R.string.models_web_host_checking
+                !dirty && canUseSavedToken -> R.string.models_verify_again
+                else -> R.string.models_save_and_verify
+            }
+            val onCancelClick: () -> Unit = {
+                if (isConnecting) {
+                    connectionGeneration++
+                    onCancelConnection()
+                    isConnecting = false
+                } else requestDismiss()
+            }
+            BoxWithConstraints(modifier = Modifier.fillMaxWidth()) {
+                if (maxWidth < 340.dp) {
+                    Column(
+                        modifier = Modifier.fillMaxWidth(),
+                        verticalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        Button(
+                            onClick = ::submit,
+                            enabled = canSubmit,
+                            modifier = Modifier.fillMaxWidth()
+                        ) {
+                            if (isConnecting) {
+                                CircularProgressIndicator(modifier = Modifier.size(16.dp), strokeWidth = 2.dp)
+                                Spacer(Modifier.width(6.dp))
                             }
+                            Text(stringResource(actionRes), maxLines = 1, overflow = TextOverflow.Ellipsis)
                         }
-                    },
-                    enabled = !isConnecting && url.isNotBlank() && (token.isNotBlank() || canUseSavedToken),
-                    modifier = Modifier.weight(1f)
-                ) {
-                    Text(stringResource(if (dirty) R.string.models_save_and_verify else R.string.models_verify_again))
+                        TextButton(
+                            onClick = onCancelClick,
+                            modifier = Modifier.fillMaxWidth()
+                        ) { Text(stringResource(R.string.common_cancel), maxLines = 1, overflow = TextOverflow.Ellipsis) }
+                    }
+                } else {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(10.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        TextButton(
+                            onClick = onCancelClick,
+                            modifier = Modifier.weight(1f)
+                        ) { Text(stringResource(R.string.common_cancel), maxLines = 1, overflow = TextOverflow.Ellipsis) }
+                        Button(
+                            onClick = ::submit,
+                            enabled = canSubmit,
+                            modifier = Modifier.weight(1f)
+                        ) {
+                            if (isConnecting) {
+                                CircularProgressIndicator(modifier = Modifier.size(16.dp), strokeWidth = 2.dp)
+                                Spacer(Modifier.width(6.dp))
+                            }
+                            Text(stringResource(actionRes), maxLines = 1, overflow = TextOverflow.Ellipsis)
+                        }
+                    }
                 }
             }
             Spacer(Modifier.height(12.dp))

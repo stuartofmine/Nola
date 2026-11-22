@@ -505,7 +505,7 @@ struct ModelSelectionCanonicalEndToEndTests {
         var styleWrites: [PromptResponseStyle] = []
         let settings = ChatMoreSettingsSheet(
             selectedModel: ModelInfo(id: "scope-fixture", name: "Fixture", source: "local", isLocal: true),
-            contextUsage: nil, hostUploadedSkills: [], hostUploadedDocuments: [], hostMCPServers: [],
+            contextUsage: nil,
             hostComputerUseStatus: nil, hostNativeBrowserStatus: nil, pairedHostIdentity: nil,
             conversationGenerationOverride: .init(), onSaveGenerationOverride: { _ in },
             hybridDeviceToolsEnabled: .constant(false), hybridFilesEnabled: .constant(false),
@@ -513,8 +513,6 @@ struct ModelSelectionCanonicalEndToEndTests {
             hybridCalendarEnabled: .constant(false), enableRetrieval: .constant(false),
             permissionMode: .constant(.cautious), autoCompactTriggerPercent: .constant(80),
             responseStyle: Binding(get: { .playful }, set: { if let style = $0 { styleWrites.append(style) } }),
-            sessionMemory: .constant(""), longTermMemory: .constant(""), userPreferences: .constant(""),
-            uploadedSkills: .constant([]), onSaveMemoryProfile: {}, onSetSkillEnabled: { _, _ in },
             onOpenContextSettings: {}, onOpenSkillLibrary: {}, onForgetHostPairing: {}
         )
         let controller = UIHostingController(rootView: NavigationStack { settings })
@@ -953,5 +951,38 @@ struct ModelServiceConfigurationInstallationTests {
             XCTAssertEqual(try IOSConversationSettingsObject.decode(settings)["unrelated"] as? Bool, true)
             XCTAssertEqual(try ConversationParameterSnapshot.applyingOverrides(settings, modelKey: "configured:fixture", to: .webAlignedCloudDefaults).reasoningPreference, effort)
         }
+    }
+
+    func testLocalModelSourceDefaultAndRAMCalibration() {
+        let shanghaiTZ = TimeZone(identifier: "Asia/Shanghai")!
+        let utcTZ = TimeZone(secondsFromGMT: 0)!
+        let zhLocale = Locale(identifier: "zh_Hans_CN")
+        let enUSLocale = Locale(identifier: "en_US")
+
+        XCTAssertEqual(
+            ModelDownloader.ModelSource.defaultSource(timeZone: shanghaiTZ, locale: enUSLocale, preferredLanguages: ["en-US"]),
+            .modelscope
+        )
+        XCTAssertEqual(
+            ModelDownloader.ModelSource.defaultSource(timeZone: utcTZ, locale: zhLocale, preferredLanguages: ["zh-Hans-CN"]),
+            .modelscope
+        )
+        XCTAssertEqual(
+            ModelDownloader.ModelSource.defaultSource(timeZone: utcTZ, locale: enUSLocale, preferredLanguages: ["en-US"]),
+            .huggingface
+        )
+
+        // 6 GB iOS device recommends 0.8B; 8 GB+ device recommends 4B
+        let sixGB: UInt64 = 6_000_000_000
+        let eightGB: UInt64 = 8_000_000_000
+        XCTAssertTrue(ModelDownloader.ModelType.qwen3_5_0_8b.isRecommended(forPhysicalMemoryBytes: sixGB))
+        XCTAssertFalse(ModelDownloader.ModelType.qwen3_5_4b.isRecommended(forPhysicalMemoryBytes: sixGB))
+        XCTAssertFalse(ModelDownloader.ModelType.qwen3_5_0_8b.isRecommended(forPhysicalMemoryBytes: eightGB))
+        XCTAssertTrue(ModelDownloader.ModelType.qwen3_5_4b.isRecommended(forPhysicalMemoryBytes: eightGB))
+
+        // Unified GB formatting and Activity bell icon
+        XCTAssertEqual(DisplayFormatters.gigabyteSize(652_000_000), "0.65 GB")
+        XCTAssertEqual(DisplayFormatters.gigabyteSize(3_060_000_000), "3.06 GB")
+        XCTAssertEqual(NolaTab.activity.icon, "nola-bell")
     }
 }

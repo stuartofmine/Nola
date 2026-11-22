@@ -9,6 +9,10 @@ use std::path::PathBuf;
 pub(crate) struct ViewState {
     pub draft: String,
     pub cursor: usize,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub expert_mentions: Vec<crate::cli_expert_mentions::Occurrence>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub edit: Option<crate::cli_expert_mentions::EditTarget>,
     pub viewport: crate::terminal_ui::ViewportBookmark,
 }
 
@@ -56,6 +60,12 @@ impl ViewStore {
             record.state
         } else { ViewState::default() };
         Ok((Self(std::sync::Arc::new(std::sync::Mutex::new(ViewFile { path, last_bytes: bytes.unwrap_or_default() }))), state))
+    }
+
+    pub fn mentions_for(&self, draft: &str) -> Vec<crate::cli_expert_mentions::Occurrence> {
+        let Ok(file) = self.0.lock() else { return vec![]; };
+        serde_json::from_slice::<Record>(&file.last_bytes).ok()
+            .filter(|r| r.state.draft == draft).map(|r| r.state.expert_mentions).unwrap_or_default()
     }
 
     pub fn save(&mut self, state: ViewState) -> Result<(), String> {

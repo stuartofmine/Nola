@@ -65,7 +65,7 @@
         <summary onkeydown={navigate} aria-label={`${t($locale, 'chatSession.reasoning')}: ${label(preference)}`} aria-disabled={disabled} aria-busy={reasoning.busy}
             onclick={event => { if (disabled) event.preventDefault(); }}>
             <svg aria-hidden="true" viewBox="0 0 24 24"><path d="M6 18v-6m6 6V8m6 10V4" /></svg>
-            <span>{label(preference)}</span><small aria-hidden="true">⌄</small>
+            <span>{label(preference)}</span><svg class="chevron" aria-hidden="true" viewBox="0 0 24 24"><path d="m6 9 6 6 6-6" /></svg>
         </summary>
         <div class="choices" style:translate={`${choiceShift}px 0`} aria-label={t($locale, 'chatSession.reasoning')}>
             {#each ['inherit', 'automatic', ...reasoning.options] as effort (effort)}
@@ -83,9 +83,15 @@
     summary::-webkit-details-marker { display: none; }
     summary[aria-disabled="true"] { opacity: .5; cursor: default; }
     summary span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-    svg { width: 14px; height: 14px; flex: none; fill: none; stroke: currentColor; stroke-width: 1.7; stroke-linecap: round; }
-    .choices { position: absolute; bottom: calc(100% + 8px); inset-inline-end: 0; width: min(240px, calc(100vw - 80px)); max-height: min(50dvh, 360px); overflow: auto; overscroll-behavior: contain; z-index: 50; padding: 6px; background: var(--surface-gradient); border: 1px solid var(--border); border-radius: 14px; box-shadow: var(--surface-shadow); }
-    button { display: flex; width: 100%; align-items: center; justify-content: space-between; gap: 12px; min-height: 44px; padding: 8px 12px; text-align: start; border: 0; background: transparent; box-shadow: none; color: var(--content); }
-    button[aria-pressed="true"], button:hover:not(:disabled) { background: var(--accent-subtle); }
+    svg { width: 14px; height: 14px; flex: none; fill: none; stroke: currentColor; stroke-width: 1.6; stroke-linecap: round; stroke-linejoin: round; }
+    .chevron { width: 12px; height: 12px; transition: transform var(--motion-base) ease-out; }
+    details[open] .chevron { transform: rotate(180deg); }
+    details[open] .choices { animation: reveal-up var(--motion-base) ease-out; }
+    @keyframes reveal-up { from { opacity: 0; transform: translateY(4px); } to { opacity: 1; transform: translateY(0); } }
+    @media (prefers-reduced-motion: reduce) { details[open] .choices { animation: none; } .chevron { transition: none; } }
+    .choices { position: absolute; bottom: calc(100% + 8px); inset-inline-end: 0; width: min(240px, calc(100vw - 80px)); max-height: min(50dvh, 360px); overflow: auto; overscroll-behavior: contain; z-index: 50; padding: 6px; background: var(--surface-elevated, var(--surface)); border: 1px solid var(--dialog-border); border-radius: 14px; box-shadow: 0 8px 32px rgb(0 0 0 / .18); }
+    button { display: flex; width: 100%; align-items: center; justify-content: space-between; gap: 12px; min-height: 44px; padding: 8px 12px; text-align: start; border: 1px solid transparent; background: transparent; box-shadow: none; color: var(--content); }
+    button:hover:not(:disabled) { background: var(--composer-pill-hover-bg); border-color: transparent; }
+    button[aria-pressed="true"] { background: var(--glass-pill-bg); border-color: var(--glass-pill-border); }
     p { padding: 8px; font-size: 12px; }
 </style>

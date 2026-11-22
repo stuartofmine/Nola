@@ -55,6 +55,7 @@ internal class RemoteTaskObservation {
                 } catch (cancelled: kotlinx.coroutines.CancellationException) {
                     throw cancelled
                 } catch (_: Exception) {
+                    if (!shouldReconnect()) break
                     delay(retryDelayMillis)
                     retryDelayMillis = (retryDelayMillis * 2).coerceAtMost(MAX_RETRY_DELAY_MILLIS)
                 }

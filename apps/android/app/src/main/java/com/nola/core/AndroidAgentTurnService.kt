@@ -596,10 +596,56 @@ class AndroidAgentTurnService @Inject constructor(
         return selected.copy(client = guarded)
     }
 
-    internal suspend fun goalModelAdmission(model: com.nola.domain.model.ModelInfo,
-        parameters: com.nola.domain.model.ModelParameters, thinking: Boolean): JsonObject {
-        val invocation=prepareInvocation(captureModel(model, parameters), thinking)
-        return buildJsonObject { for (key in listOf("primary","generation","output_admission")) put(key,invocation.getValue(key)) }
+    internal data class GoalModelAdmission(val selection: JsonObject, val startConfiguration: JsonObject?)
+
+    internal suspend fun goalModelAdmission(
+        owner: String,
+        model: com.nola.domain.model.ModelInfo,
+        parameters: com.nola.domain.model.ModelParameters,
+        thinking: Boolean,
+        responseStyle: String,
+        start: Boolean,
+        agentMode: Boolean,
+        permissionMode: AndroidAgentPermissionMode,
+    ): GoalModelAdmission {
+        val captured = captureModel(model, parameters)
+        val invocation = prepareInvocation(captured, thinking)
+        val selection = buildJsonObject {
+            for (key in listOf("primary", "generation", "output_admission")) put(key, invocation.getValue(key))
+        }
+        if (!start) return GoalModelAdmission(selection, null)
+
+        // A terminal checkpoint intentionally omits discovery data. Admit a new Goal
+        // using today's device permissions, tool descriptors and model policy.
+        val hasCheckpoint = applicationRuntime.executeQuery(buildJsonObject {
+            put("type", "load_session_goal_projection")
+            put("conversation_id", owner)
+        }) != JsonNull
+        val session = if (hasCheckpoint) applicationRuntime.executeQuery(buildJsonObject {
+            put("type", "load_host_execution_state")
+            put("conversation_id", owner)
+        }).jsonObject.getValue("control").jsonObject.getValue("session_id").jsonPrimitive.content else owner
+        val plan = toolPlan(session, agentMode, permissionMode)
+        val descriptor = AndroidCanonicalTurnDescriptor(owner, "", "", "", "", null, "")
+        val application = AndroidCanonicalAgentRuntime(applicationRuntime, descriptor)
+        val coordinator = DeviceAgentCoordinator(
+            TextAgentModelClient(captured.client, thinking), permissionBroker, hostExecutor, application,
+            androidModelCapabilityProfile(model, parameters, captured.client.supportsNativeEventStream),
+            childToolPlan = { child -> toolPlan(child, agentMode, permissionMode) },
+            prepareChildExecutor = { child -> prepareEmbeddedChild(child, owner) },
+            expertExchange = { request -> executeExpertExchange(application, request) },
+            expertDelegationEnabled = localMainContext(owner),
+            captureDelegation = agentMode,
+        )
+        val prompt = CoreAgentPromptComposer.compose(AndroidSystemPrompt.agentFragments(
+            applicationContext, responseStyle, "",
+        ))
+        val configuration = coordinator.buildRuntimeConfig(session, emptyList(), captured.modelFacingTools(plan.tools), plan,
+            AgentCoreRuntimeConfig(model = model.id, preparedHostInvocation = invocation,
+                contextWindowTokens = parameters.maxContextTokens, reservedOutputTokens = parameters.maxCompletionTokens,
+                grantedCapabilities = plan.grantedCapabilities, stablePromptDigest = prompt.stablePrefixSha256,
+                promptFragmentIds = prompt.fragmentIds, stablePromptFragmentDigests = prompt.stableFragmentSha256))
+        return GoalModelAdmission(selection, coordinator.admissionConfiguration(configuration))
     }
 
     private fun prepareInvocation(model: AndroidTurnModelSnapshot, thinking: Boolean): JsonObject {

@@ -8,6 +8,20 @@ import XCTest
 
 @MainActor
 final class MacWebSourceE2ETests: XCTestCase {
+    func testUnreadableSourceFileIsPreservedAndReported() throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let url = root.appendingPathComponent("sources.json")
+        let original = Data("unexpected source format".utf8)
+        try original.write(to: url)
+        let registry = MacDataSourceRegistry(storeURL: root.appendingPathComponent("registry.json"))
+        let store = MacWebSourceStore(storeURL: url, registry: registry)
+        XCTAssertNotNil(store.errorMessage)
+        XCTAssertEqual(try Data(contentsOf: url), original)
+        XCTAssertTrue(registry.canonicalWebSources().isEmpty)
+    }
+
     func testCancelledValidationDoesNotCreateSourceOrFailureContract() async throws {
         let root = FileManager.default.temporaryDirectory
             .appendingPathComponent("nola-cancelled-source-\(UUID().uuidString)", isDirectory: true)

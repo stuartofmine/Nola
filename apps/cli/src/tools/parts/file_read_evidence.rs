@@ -64,6 +64,7 @@ struct FileReadSnapshot {
     file_bytes: u64,
     total_lines: usize,
     byte_truncated: bool,
+    first_line_offset: u64,
 }
 
 struct ObservedFileText {
@@ -73,12 +74,50 @@ struct ObservedFileText {
     observation: Option<FileReadObservation>,
     next_start_line: Option<usize>,
     presentation_exhausted: bool,
+    oversized_line_offset: Option<u64>,
 }
 
 #[derive(Clone, Copy)]
 struct FileReadPresentationBudget {
     chars: usize,
     bytes: usize,
+}
+
+/// Deliver a bounded UTF-8 page even when one source line exceeds the model
+/// display budget. A byte page never grants line-based edit coverage.
+fn read_file_bytes(file: &mut fs::File, offset: u64, max_bytes: usize, target: &Path) -> ToolOutcome {
+    use std::io::{Seek, SeekFrom};
+    let metadata = tool_try!(file.metadata().map_err(|e| error(format!("Read failed: {e}"))));
+    if offset > metadata.len() { return error("start_byte is beyond the end of the file".into()); }
+    tool_try!(file.seek(SeekFrom::Start(offset)).map_err(|e| error(format!("Read failed: {e}"))));
+    let limit = max_bytes.min(MAX_TOOL_RESULT_CHARS);
+    let mut bytes = Vec::with_capacity(limit);
+    tool_try!(file.take(limit as u64).read_to_end(&mut bytes).map_err(|e| error(format!("Read failed: {e}"))));
+    let after = tool_try!(file.metadata().map_err(|e| error(format!("Read failed: {e}"))));
+    if !file_read_metadata_matches(&metadata, &after) {
+        return error("File changed during the byte-range read. Restart the read.".into());
+    }
+    let text = match std::str::from_utf8(&bytes) {
+        Ok(text) => text,
+        Err(e) if e.error_len().is_none() && offset + (bytes.len() as u64) < metadata.len() =>
+            std::str::from_utf8(&bytes[..e.valid_up_to()]).expect("validated prefix"),
+        Err(_) => return error("Byte range is not UTF-8. Use the exact next_start_byte returned by the previous page.".into()),
+    };
+    // JSON escaping can expand each source byte. Size the actual serialized
+    // content so the downstream envelope never discards the continuation.
+    let mut end = text.len();
+    while serde_json::to_string(&text[..end]).expect("string serialize").len() > MAX_TOOL_RESULT_CHARS - 768 {
+        end = end * 3 / 4;
+        while !text.is_char_boundary(end) { end -= 1; }
+    }
+    let content = &text[..end];
+    let next = offset + end as u64;
+    let eof = next == metadata.len();
+    let data = json!({"content":content,"content_kind":"utf8_source","start_byte":offset,
+        "next_start_byte":(!eof).then_some(next),"eof":eof,"complete":offset == 0 && eof});
+    let display = format!("{} {}", tr(Message::DisplayReadPrefix), target.display());
+    let body = if eof { content.to_owned() } else { format!("{content}\nnext_start_byte: {next}") };
+    ok(body, display).with_data(data)
 }
 
 impl FileReadPresentationBudget {
@@ -130,6 +169,7 @@ fn read_file_snapshot(target: &Path, selection: FileReadSelection) -> Result<Fil
     let mut buffer = [0u8; 65_536];
     let mut file_bytes = 0u64;
     let mut eligible_bytes = 0u64;
+    let mut first_line_offset = 0u64;
     let mut line = 1usize;
     let mut newlines = 0usize;
     let mut ends_with_newline = false;
@@ -144,12 +184,13 @@ fn read_file_snapshot(target: &Path, selection: FileReadSelection) -> Result<Fil
             // raw-text observation. Do not hash an arbitrarily large binary
             // before that reader can enforce its size limit.
             return Ok(FileReadSnapshot { text: None, observation: None,
-                file_bytes: before.len(), total_lines: 0, byte_truncated: false });
+                file_bytes: before.len(), total_lines: 0, byte_truncated: false, first_line_offset: 0 });
         }
         digest.update(bytes);
         file_bytes = file_bytes.saturating_add(read as u64);
         ends_with_newline = bytes.last() == Some(&b'\n');
         for segment in bytes.split_inclusive(|byte| *byte == b'\n') {
+            if line < selection.first_line { first_line_offset += segment.len() as u64; }
             if line >= selection.first_line && line <= last_line {
                 eligible_bytes = eligible_bytes.saturating_add(segment.len() as u64);
                 let take = selection.max_bytes.saturating_sub(data.len()).min(segment.len());
@@ -195,7 +236,7 @@ fn read_file_snapshot(target: &Path, selection: FileReadSelection) -> Result<Fil
             sha256: format!("{:x}", digest.finalize()), modified, total_lines,
         }, coverage }
     });
-    Ok(FileReadSnapshot { text, observation, file_bytes, total_lines, byte_truncated })
+    Ok(FileReadSnapshot { text, observation, file_bytes, total_lines, byte_truncated, first_line_offset })
 }
 
 /// Render complete raw lines within the actual model-output budget, before
@@ -236,7 +277,7 @@ fn render_file_read_snapshot(
             if kept == 0 {
                 text.push_str(&format!("\nline_not_returned: {next}; complete line exceeds raw/display budget; no line coverage. Use bounded source inspection; do not skip this line or treat it as read."));
             }
-            text.push_str(&format!("\nnext_start_line: {next}\nnext_action: read_file on the same original path with start_line={next} and a focused line_count; do not follow full_output_ref for file-read coverage."));
+            if kept == 0 { text.push_str(&format!("\nnext_action: read_file on the original path with start_byte={}.", snapshot.first_line_offset)); } else { text.push_str(&format!("\nnext_start_line: {next}\nnext_action: read_file on the same original path with start_line={next} and a focused line_count; do not follow full_output_ref for file-read coverage.")); }
         }
         text
     };
@@ -248,7 +289,7 @@ fn render_file_read_snapshot(
         let empty = render(0);
         if !budget.fits(&empty) {
             return Ok(ObservedFileText { text: String::new(), raw_content: None, observation: None,
-                next_start_line: next_line(0), presentation_exhausted: true });
+                next_start_line: next_line(0), presentation_exhausted: true, oversized_line_offset: None });
         }
         let mut kept = 0;
         let mut text = empty;
@@ -275,7 +316,8 @@ fn render_file_read_snapshot(
         })
     };
     Ok(ObservedFileText { text, raw_content: Some(lines[..kept].concat()), observation,
-        next_start_line, presentation_exhausted: false })
+        next_start_line, presentation_exhausted: false,
+        oversized_line_offset: (kept == 0 && next_start_line.is_some()).then_some(snapshot.first_line_offset) })
 }
 
 fn record_file_read_observation(observation: FileReadObservation) {

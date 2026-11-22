@@ -44,6 +44,7 @@ nonisolated public struct IOSAgentSkillSnapshot: Sendable {
     public let version: String?
     public let requiredTools: [String]
     public let validationSteps: [String]
+    public let packageReference: String?
 
     public init(
         id: String,
@@ -52,7 +53,8 @@ nonisolated public struct IOSAgentSkillSnapshot: Sendable {
         instructions: String,
         version: String?,
         requiredTools: [String],
-        validationSteps: [String]
+        validationSteps: [String],
+        packageReference: String? = nil
     ) {
         self.id = id
         self.name = name
@@ -61,12 +63,15 @@ nonisolated public struct IOSAgentSkillSnapshot: Sendable {
         self.version = version
         self.requiredTools = requiredTools
         self.validationSteps = validationSteps
+        self.packageReference = packageReference
     }
 }
 
 public actor IOSAgentHostExecutor {
     private static let maxFileBytes = 1_000_000
     private static let maxNetworkBytes = 2_000_000
+    private let packageRuntime: IOSApplicationRuntime?
+    private var activePackageSkills: [String: Set<String>] = [:]
     private let session: URLSession
     private let eventStore = EKEventStore()
     private var activeAgentSessions: Set<String> = []
@@ -75,8 +80,18 @@ public actor IOSAgentHostExecutor {
 
     public init(session: URLSession = .shared) {
         self.session = session
+        self.packageRuntime = nil
     }
 
+    init(applicationRuntime: IOSApplicationRuntime, session: URLSession = .shared) {
+        self.session = session
+        self.packageRuntime = applicationRuntime
+    }
+
+    private func githubRuntime() throws -> IOSApplicationRuntime {
+        if let packageRuntime { return packageRuntime }
+        return try IOSApplicationRuntime.requireShared()
+    }
 
     /// Acquires the single-writer lease for a Core Session. Every foreground
     /// Turn and background worker must hold this lease from checkpoint restore
@@ -89,6 +104,7 @@ public actor IOSAgentHostExecutor {
     }
 
     public func releaseAgentSession(sessionId: String) {
+        activePackageSkills.removeValue(forKey: sessionId)
         guard var waiters = agentSessionWaiters[sessionId], !waiters.isEmpty else {
             activeAgentSessions.remove(sessionId)
             agentSessionWaiters.removeValue(forKey: sessionId)
@@ -108,6 +124,7 @@ public actor IOSAgentHostExecutor {
         _ skills: [IOSAgentSkillSnapshot],
         sessionId: String
     ) {
+        activePackageSkills.removeValue(forKey: sessionId)
         skillSnapshotsBySession[sessionId] = skills
     }
 
@@ -124,7 +141,9 @@ public actor IOSAgentHostExecutor {
             case .none:
                 switch toolName {
                 case "skill_invoke":
-                    output = try invokeSkill(request)
+                    output = try await invokeSkill(request)
+                case "device_skill_read_resource":
+                    output = try await readSkillResource(request)
                 case "memory_search":
                     output = try searchMemory(request)
                 default:
@@ -135,7 +154,22 @@ public actor IOSAgentHostExecutor {
             case .filesWrite:
                 output = try writeScopedFile(request)
             case .network:
-                output = try await fetchNetworkResource(request)
+                switch toolName {
+                case "device_github_skill_find":
+                    guard let query = request.arguments.objectValue?["query"]?.stringValue else {
+                        throw HostExecutorError.missingArgument("query")
+                    }
+                    output = try await IOSGitHubSkillPackages.request(["operation": "find", "query": query], runtime: githubRuntime())
+                case "device_github_skill_install":
+                    guard let url = request.arguments.objectValue?["url"]?.stringValue else {
+                        throw HostExecutorError.missingArgument("url")
+                    }
+                    let runtime = try githubRuntime()
+                    let package = try await IOSGitHubSkillPackages.request(["operation": "prepare", "url": url], runtime: runtime)
+                    output = try await IOSGitHubSkillPackages.shared.register(package, runtime: runtime, permit: request.executionPermit)
+                default:
+                    output = try await fetchNetworkResource(request)
+                }
             case .clipboard:
                 output = try await accessClipboard(request)
             case .location:
@@ -198,7 +232,7 @@ public actor IOSAgentHostExecutor {
         )
     }
 
-    private func invokeSkill(_ request: IOSAgentHostCall) throws -> AgentCoreJSONValue {
+    private func invokeSkill(_ request: IOSAgentHostCall) async throws -> AgentCoreJSONValue {
         guard let sessionId = request.sessionId,
               let object = request.arguments.objectValue,
               let requestedName = object["skill"]?.stringValue?.trimmingCharacters(in: .whitespacesAndNewlines),
@@ -212,13 +246,13 @@ public actor IOSAgentHostExecutor {
             throw HostExecutorError.unsupported(matches.isEmpty ? "unknown or disabled Skill" : "ambiguous Skill name")
         }
         let instructionsData = Data(skill.instructions.utf8)
-        guard instructionsData.count <= 256 * 1_024 else {
+        guard instructionsData.count <= (skill.packageReference == nil ? 256 * 1_024 : 800_000) else {
             throw HostExecutorError.outputTooLarge
         }
         let activation = object["activation"]?.stringValue == "session" ? "session" : "turn"
         let declaredVersion = skill.version?.trimmingCharacters(in: .whitespacesAndNewlines)
         let version = declaredVersion?.isEmpty == false ? declaredVersion! : "local"
-        return .object([
+        var payload: [String: AgentCoreJSONValue] = [
             "type": .string("invoked_skill"),
             "skill_id": .string(skill.id),
             "name": .string(skill.name),
@@ -243,7 +277,46 @@ public actor IOSAgentHostExecutor {
                 ])
             }),
             "validation_steps": .array(skill.validationSteps.map(AgentCoreJSONValue.string))
-        ])
+        ]
+        if let reference = skill.packageReference {
+            let runtime = try githubRuntime()
+            try checkPackageSkill(skill, reference: reference, runtime: runtime)
+            _ = try await IOSGitHubSkillPackages.request(["operation": "resolve", "instructions_ref": reference], runtime: runtime)
+            try checkPackageSkill(skill, reference: reference, runtime: runtime)
+            try request.executionPermit?.checkAdmission()
+            activePackageSkills[sessionId, default: []].insert(skill.id)
+            payload["instructions_ref"] = .string(reference)
+            payload["_nola_execution_context"] = .object([
+                "resource_reader": .string("device_skill_read_resource"),
+                "skill": .string(skill.name),
+                "path_base": .string("Pass paths relative to this Skill directory, including shared files referenced by its manifest.")
+            ])
+        }
+        return .object(payload)
+    }
+
+    private func checkPackageSkill(_ skill: IOSAgentSkillSnapshot, reference: String, runtime: IOSApplicationRuntime) throws {
+        guard let record = try runtime.skillEditor(id: skill.id.lowercased())?.record,
+              record.enabled, record.deletedAtMs == nil, record.instructionsRef == reference,
+              record.version == skill.version else {
+            throw HostExecutorError.unsupported("Skill is disabled or has changed")
+        }
+    }
+
+    private func readSkillResource(_ request: IOSAgentHostCall) async throws -> AgentCoreJSONValue {
+        guard let session = request.sessionId, let args = request.arguments.objectValue,
+              let name = args["skill"]?.stringValue, let path = args["path"]?.stringValue,
+              let skill = skillSnapshotsBySession[session]?.first(where: { $0.name == name }),
+              let reference = skill.packageReference, activePackageSkills[session]?.contains(skill.id) == true else {
+            throw HostExecutorError.unsupported("Invoke the enabled Skill before reading its resources")
+        }
+        let runtime = try githubRuntime()
+        try checkPackageSkill(skill, reference: reference, runtime: runtime)
+        let result = try await IOSGitHubSkillPackages.request(["operation": "read", "instructions_ref": reference, "path": path], runtime: runtime)
+        try request.executionPermit?.checkAdmission()
+        try checkPackageSkill(skill, reference: reference, runtime: runtime)
+        guard activePackageSkills[session]?.contains(skill.id) == true else { throw CancellationError() }
+        return result
     }
 
     private func searchMemory(_ request: IOSAgentHostCall) throws -> AgentCoreJSONValue {

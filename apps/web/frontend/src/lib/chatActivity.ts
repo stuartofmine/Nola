@@ -1,4 +1,5 @@
 import { conversationUrl } from './chatConversations.ts';
+import { randomId } from './randomId.ts';
 
 export interface ChatTraceSummary {
     traceId: string;
@@ -19,6 +20,7 @@ export interface ChatGoalSummary {
     revision: number;
     objective: string;
     status: string;
+    constraintsOutsideRequirements: string[];
     completedRequirements: number;
     totalRequirements: number;
     requirements: { id: string; description: string; status: string }[];
@@ -86,6 +88,9 @@ export function parseChatGoal(value: unknown, conversationId: string): ChatGoalS
     if (typeof goal.id !== 'string' || !goal.id.trim() || typeof goal.objective !== 'string' || !goal.objective.trim() || typeof goal.status !== 'string' || !goal.status.trim()
         || !object(goal.requirements) || !(goal.next_wake_at_epoch_ms === null || goal.next_wake_at_epoch_ms === undefined
             || Number.isSafeInteger(goal.next_wake_at_epoch_ms))) throw new Error('chatActivity.invalidResponse');
+    const constraints = goal.constraints === undefined ? [] : goal.constraints;
+    if (!Array.isArray(constraints) || !constraints.every(item => typeof item === 'string'))
+        throw new Error('chatActivity.invalidResponse');
     const blocker = goal.execution_blocker;
     if (blocker !== null && (!object(blocker) || blocker.code !== 'configuration_unavailable' || typeof blocker.message !== 'string'))
         throw new Error('chatActivity.invalidResponse');
@@ -94,8 +99,10 @@ export function parseChatGoal(value: unknown, conversationId: string): ChatGoalS
             || typeof item.status !== 'string') throw new Error('chatActivity.invalidResponse');
         return { id, description: item.description, status: item.status };
     });
+    const requirementDescriptions = new Set(requirements.map(item => item.description));
     return { controlToken: projection.control_token, canSubmit: projection.can_submit as boolean,
         canPause: projection.can_pause as boolean, canResume: projection.can_resume as boolean, canCancel: projection.can_cancel as boolean, id: goal.id, executionBlocker: blocker === null ? null : 'configuration_unavailable', revision: projection.revision, objective: goal.objective, status: goal.status,
+        constraintsOutsideRequirements: constraints.filter(item => !requirementDescriptions.has(item)),
         totalRequirements: requirements.length, completedRequirements: requirements.filter(item => item.status === 'completed').length, requirements,
         nextWakeAtEpochMs: typeof goal.next_wake_at_epoch_ms === 'number' ? goal.next_wake_at_epoch_ms : null };
 }
@@ -108,7 +115,7 @@ export function validateGoalOperationId(operationId: string): void {
     if (typeof operationId !== 'string' || !operationId || operationId.trim() !== operationId || operationId.length > 256 || /[\u0000-\u001f\u007f]/.test(operationId))
         throw new Error('chatActivity.invalidResponse');
 }
-export function goalActionRequest(action: ChatGoalAction, objective = '', goal?: ChatGoalSummary | null, operationId: string = crypto.randomUUID()): ChatGoalRequest {
+export function goalActionRequest(action: ChatGoalAction, objective = '', goal?: ChatGoalSummary | null, operationId: string = randomId()): ChatGoalRequest {
     validateGoalOperationId(operationId);
     if (action === 'start') {
         const text = objective.trim();

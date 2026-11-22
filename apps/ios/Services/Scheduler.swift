@@ -14,6 +14,7 @@
 //
 
 import Foundation
+import CryptoKit
 
 nonisolated struct MemoryWorkerWakeSchedulingPolicy {
     static let minimumLeadTime: TimeInterval = 60
@@ -1129,7 +1130,11 @@ public final class Scheduler {
                 if processed.isEmpty, let explain = llmOutput.explain, !explain.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
                     container.logger.log(.info, "Scheduler", "LLM returned explain-only summary; creating summary notification")
                     let day = DateFormatter.dayFormatter.string(from: Date())
-                    let dedupeKey = "summary:\(day):\(abs(explain.hashValue))"
+                    let digestPrefix = SHA256.hash(data: Data(explain.utf8))
+                        .prefix(8)
+                        .map { String(format: "%02x", $0) }
+                        .joined()
+                    let dedupeKey = "summary:\(day):\(digestPrefix)"
 
                     let summaryEvent = ProcessedEvent(
                         id: UUID().uuidString,
@@ -1434,6 +1439,39 @@ public final class Scheduler {
                     // Scheduling diagnostics never write an alternate result/status.
                     _ = try automationStore.reconcileAutomationExecution(occurrenceID: enqueuedRun.id,
                         reconciledAtMs: epochMilliseconds(finishedAt))
+                    if let storage = container.localJSONStorage {
+                        let metadataRecord = LocalJSONStorage.ScheduledActionRunRecord(
+                            id: enqueuedRun.id,
+                            createdAt: runStartedAt,
+                            startedAt: runStartedAt,
+                            finishedAt: finishedAt,
+                            isBackground: isBackground,
+                            actionType: "scheduled_url_report",
+                            actionId: actionId,
+                            actionName: source.name,
+                            actionUrl: source.url,
+                            dedupeKey: dedupeKey,
+                            status: status,
+                            reason: reason,
+                            failureReason: failureReason,
+                            resultEventId: resultEventId,
+                            notificationSent: notificationSent,
+                            notificationError: notificationError,
+                            modelUsed: modelUsed,
+                            tokensUsed: tokensUsed,
+                            processingDurationSec: processingDurationSec,
+                            details: details,
+                            errorMessage: errorMessage,
+                            eventsCount: eventsCount,
+                            resultJournalId: resultJournalId,
+                            nextEligibleAt: nextEligibleAt,
+                            shouldRetry: shouldRetry,
+                            retryCount: retryCount,
+                            trigger: enqueuedRun.trigger,
+                            executionPath: "local"
+                        )
+                        try? storage.saveScheduledActionRunMetadata(metadataRecord)
+                    }
                     NotificationCenter.default.post(name: .nolaScheduledActionRunsUpdated, object: nil)
                 } catch {
                     container.logger.log(.warn, "Scheduler", "Automation observation/reconciliation failed",
@@ -1504,7 +1542,7 @@ public final class Scheduler {
                         due: ev.due,
                         relation: ev.metadata["relation"],
                         notesTag: ev.tags?.first,
-                        durationMin: ev.metadata["duration"].flatMap { Int(Double($0) ?? 0.0 / 60.0) }
+                        durationMin: ev.metadata["duration"].flatMap { Int((Double($0) ?? 0.0) / 60.0) }
                     )
                 }
 
@@ -1610,7 +1648,7 @@ public final class Scheduler {
                         priority: priority,
                         tags: nil,
                         dedupeKey: dedupeKey,
-                        provenance: ["explain": .string(reportText)],
+                        provenance: ["explain": .string(reportText), "summary": .string(reportText)],
                         metadata: [
                             "generatedBy": "scheduler_scheduled_action",
                             "url": source.url,
@@ -1646,6 +1684,13 @@ public final class Scheduler {
 
                 // Send one notification
                 let candidate = NotificationCandidate(event: reportEvent, dedupeKey: dedupeKey, text: reportText, actionType: .openCalendar)
+                    if let nm = container.notificationManager {
+                        do {
+                            _ = try nm.post(candidate: candidate)
+                        } catch {
+                            container.logger.log(.warn, "Scheduler", "Failed to persist scheduled URL notification candidate", metadata: ["error": error.localizedDescription])
+                        }
+                    }
                     let delivered = await container.unifiedNotificationService.scheduleNotification(for: candidate.event, at: nil)
                     if delivered {
                         _ = try automationStore.ackAutomationNotification(occurrenceID: enqueuedRun.id, notificationID: executionReceipt.notificationID, deliveredAtMs: epochMilliseconds(Date()))

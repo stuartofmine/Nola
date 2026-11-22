@@ -63,6 +63,7 @@ struct MacMessageView: View {
     let isSearchMatch: Bool
     let onSendTaskGuidance: (String, String) -> Void
     let onRequestTaskCancellation: (String) -> Void
+    var canControlTasks = true
     var userDisplayName: String? = nil
     var showsAnimatedStatusLight = true
     var showsRoleAvatar = true
@@ -127,7 +128,7 @@ struct MacMessageView: View {
     }
 
     private var assistantFailureColor: Color {
-        message.deliveryState == .failed ? .red : .secondary
+        message.deliveryState == .failed ? MacDesignColor.danger : .secondary
     }
 
     private var assistantFailureDetail: String? {
@@ -174,12 +175,16 @@ struct MacMessageView: View {
                     }, presentationOwner: journalPresentationOwner)
                     .frame(maxWidth: .infinity, alignment: .leading)
             } else if let canonical = message.canonicalPresentation {
+                if let text = message.scopedJournalText {
+                    MacMarkdownView(markdown: text, isStreaming: false, animatesAppends: false)
+                }
                 MacCanonicalPartFlowView(conversationID: conversationID, canonical: canonical.message,
                     historicalDetails: message.historicalDetails ?? [],
                     isStreaming: isStreaming,
                     guidance: message.presentation?.renderedTaskGuidance ?? [:],
+                    canControlTasks: canControlTasks,
                     onSendGuidance: onSendTaskGuidance, onRequestCancellation: onRequestTaskCancellation,
-                    onOpenAttachment: { openAttachments([$0]) })
+                    onOpenAttachment: { openAttachmentURI($0) })
                     .id(MacCanonicalReadingOwner(conversationID: conversationID, messageID: canonical.message.messageID, source: canonical.source))
             } else if assistantOutputIsComplete,
                !message.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
@@ -289,6 +294,7 @@ struct MacMessageView: View {
                             MacAssistantTaskList(
                                 tasks: tasks,
                                 guidance: message.presentation?.renderedTaskGuidance ?? [:],
+                                canControlTasks: canControlTasks,
                                 onSendGuidance: onSendTaskGuidance,
                                 onRequestCancellation: onRequestTaskCancellation
                             )
@@ -370,7 +376,7 @@ struct MacMessageView: View {
                     .accessibilityValue(message.canonicalPresentation == nil && message.journalReference == nil ? message.text : "")
                 } else {
                     if !message.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-                        Text(message.text)
+                        ExpertMentionText(text: message.text, mentions: message.expertMentions)
                             .font(.system(size: MacMarkdownTypography.bodySize))
                             .textSelection(.enabled)
                             .lineSpacing(MacMarkdownTypography.lineSpacing)
@@ -429,11 +435,6 @@ struct MacMessageView: View {
                                 .padding(.horizontal, 11)
                                 .padding(.vertical, 8)
                                 .frame(width: 280, alignment: .leading)
-                                .background(Color.primary.opacity(0.055), in: RoundedRectangle(cornerRadius: 11, style: .continuous))
-                                .overlay {
-                                    RoundedRectangle(cornerRadius: 11, style: .continuous)
-                                        .stroke(Color.primary.opacity(0.09), lineWidth: 0.5)
-                                }
                             }
                             .buttonStyle(MacActionButtonStyle(contentInsets: .init()))
                             .disabled(index >= message.attachmentURLs.count)
@@ -463,13 +464,15 @@ struct MacMessageView: View {
                                 copyMessage()
                             } label: {
                                 Image(systemName: copied ? "checkmark" : "doc.on.doc")
+                                    .contentTransition(reduceMotion ? .identity : .symbolEffect(.replace))
                                     .frame(width: 32, height: 32)
                                     .contentShape(Rectangle())
                             }
                             .buttonStyle(MacMessageActionButtonStyle())
+                            .foregroundStyle(copied ? MacDesignColor.success : .secondary)
                             .help(copied ? String(localized: "Copied") : String(localized: "Copy"))
                             .accessibilityLabel(copied ? String(localized: "Copied") : String(localized: "Copy"))
-                            if message.role == .user && !transcriptReadOnly {
+                            if message.role == .user && !transcriptReadOnly && editMessage.sourceAllowsEditing {
                                 Button { editMessage.open(conversationID, message) } label: {
                                     Image(systemName: "square.and.pencil").frame(width: 32, height: 32).contentShape(Rectangle())
                                 }.buttonStyle(MacMessageActionButtonStyle()).disabled(!editMessage.enabled)
@@ -483,8 +486,8 @@ struct MacMessageView: View {
                         .foregroundStyle(.secondary)
                         // Keep the completed-message action reachable while
                         // the pointer crosses the gap below the bubble. Hover
-                        // raises emphasis; it no longer controls hit testing.
-                        .opacity(1)
+                        // raises emphasis; it never disables hit testing.
+                        .opacity(isHovering || copied ? 1.0 : 0.72)
                     }
                     .frame(minHeight: 32)
                     .frame(maxWidth: .infinity, alignment: message.role == .assistant ? .leading : .trailing)
@@ -494,26 +497,18 @@ struct MacMessageView: View {
                     .accessibilityHidden(!showsMessageMetadata)
                 }
             }
-
-            if message.role != .user {
-                Spacer(minLength: 32)
-            }
         }
         .frame(maxWidth: .infinity)
         .padding(.horizontal, 8)
         .padding(.vertical, 6)
-        .background(
-            isSearchMatch
-                ? Color.yellow.opacity(0.10)
-                : Color.clear,
-            in: RoundedRectangle(cornerRadius: 12, style: .continuous)
-        )
+        .background(searchMatchBackground)
+        .overlay(searchMatchBorder)
         .onHover { hovering in
             guard isHovering != hovering else { return }
             if reduceMotion {
                 isHovering = hovering
             } else {
-                withAnimation(.easeOut(duration: 0.14)) {
+                withAnimation(.easeOut(duration: MacDesignTokens.Motion.hover)) {
                     isHovering = hovering
                 }
             }
@@ -599,6 +594,17 @@ struct MacMessageView: View {
         }
     }
 
+    private var searchMatchBackground: some View {
+        RoundedRectangle(cornerRadius: 12, style: .continuous)
+            .fill(isSearchMatch ? MacDesignColor.warning.opacity(0.18) : Color.clear)
+    }
+
+    private var searchMatchBorder: some View {
+        RoundedRectangle(cornerRadius: 12, style: .continuous)
+            .stroke(isSearchMatch ? MacDesignColor.warning.opacity(0.45) : Color.clear, lineWidth: 1)
+            .allowsHitTesting(false)
+    }
+
     private func copyText(_ text: String) {
         NSPasteboard.general.clearContents()
         guard NSPasteboard.general.setString(text, forType: .string) else {
@@ -612,7 +618,9 @@ struct MacMessageView: View {
             return
         }
         copyFeedbackTask?.cancel()
-        copied = true
+        withAnimation(reduceMotion ? nil : .easeOut(duration: MacDesignTokens.Motion.selection)) {
+            copied = true
+        }
         Logger.shared.log(
             "Message copied",
             level: .debug,
@@ -622,7 +630,36 @@ struct MacMessageView: View {
         copyFeedbackTask = Task { @MainActor in
             do { try await Task.sleep(for: .seconds(1.8)) }
             catch { return }
-            copied = false
+            withAnimation(reduceMotion ? nil : .easeOut(duration: MacDesignTokens.Motion.selection)) {
+                copied = false
+            }
+        }
+    }
+
+    private func openAttachmentURI(_ uri: String) {
+        let trimmed = uri.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else {
+            attachmentOpenError = MacRemoteHostError.invalidResponse.localizedDescription
+            return
+        }
+        if let url = URL(string: trimmed), url.scheme != nil {
+            openAttachments([url])
+        } else if trimmed.hasPrefix("file://") {
+            var path = String(trimmed.dropFirst("file://".count))
+            if path.hasPrefix("localhost/") {
+                path = String(path.dropFirst("localhost".count))
+            }
+            let decoded = path.removingPercentEncoding ?? path
+            guard !decoded.isEmpty else {
+                attachmentOpenError = MacRemoteHostError.invalidResponse.localizedDescription
+                return
+            }
+            openAttachments([URL(fileURLWithPath: decoded)])
+        } else if trimmed.hasPrefix("/") || trimmed.hasPrefix("~") {
+            let expanded = (trimmed as NSString).expandingTildeInPath
+            openAttachments([URL(fileURLWithPath: expanded)])
+        } else {
+            attachmentOpenError = MacRemoteHostError.invalidResponse.localizedDescription
         }
     }
 
@@ -747,6 +784,7 @@ private struct MacMessageTextSelectionView: View {
             }
         }
         .padding(20)
+        .background(MacDesignColor.canvas)
         .task(id: retry) {
             text = nil
             error = nil
@@ -767,6 +805,7 @@ private struct MacMessageTextSelectionView: View {
 private struct MacAssistantTaskList: View {
     let tasks: [MacCoreTaskHandle]
     let guidance: [String: MacCoreTaskGuidanceQueue]
+    var canControlTasks = true
     let onSendGuidance: (String, String) -> Void
     let onRequestCancellation: (String) -> Void
 
@@ -776,6 +815,7 @@ private struct MacAssistantTaskList: View {
                 MacAssistantTaskCard(
                     task: task,
                     guidance: guidance[task.id],
+                    canControlTasks: canControlTasks,
                     onSendGuidance: { onSendGuidance(task.id, $0) },
                     onRequestCancellation: { onRequestCancellation(task.id) }
                 )
@@ -787,11 +827,13 @@ private struct MacAssistantTaskList: View {
 private struct MacAssistantTaskCard: View {
     let task: MacCoreTaskHandle
     let guidance: MacCoreTaskGuidanceQueue?
+    var canControlTasks = true
     let onSendGuidance: (String) -> Void
     let onRequestCancellation: () -> Void
     @Environment(\.macTranscriptReadOnly) private var readOnly
     @State private var isExpanded = false
     @State private var guidanceDraft = ""
+    @State private var showsCancelConfirmation = false
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     private var model: MacCoreTaskUIModel { .init(task: task) }
@@ -870,7 +912,7 @@ private struct MacAssistantTaskCard: View {
                                 .textSelection(.enabled)
                         }
                     }
-                    if !readOnly, model.isActive, task.kind == .agent {
+                    if !readOnly, canControlTasks, model.isActive, task.kind == .agent {
                         HStack(spacing: 7) {
                             TextField(
                                 String(localized: "Guide this task", table: "Chat"),
@@ -893,8 +935,10 @@ private struct MacAssistantTaskCard: View {
                         .frame(height: 30)
                         .background(Color.primary.opacity(0.045), in: RoundedRectangle(cornerRadius: 8, style: .continuous))
                     }
-                    if !readOnly, model.isActive {
-                        Button(role: .destructive, action: onRequestCancellation) {
+                    if !readOnly, canControlTasks, model.isActive {
+                        Button(role: .destructive) {
+                            showsCancelConfirmation = true
+                        } label: {
                             Label(String(localized: "Cancel task", table: "Chat"), systemImage: "stop.circle")
                                 .font(.system(size: 11, weight: .medium))
                         }
@@ -910,6 +954,14 @@ private struct MacAssistantTaskCard: View {
         .overlay {
             RoundedRectangle(cornerRadius: 12, style: .continuous)
                 .stroke(Color.primary.opacity(0.07), lineWidth: 1)
+        }
+        .confirmationDialog(
+            String(localized: "Cancel this task?", table: "Chat"),
+            isPresented: $showsCancelConfirmation,
+            titleVisibility: .visible
+        ) {
+            Button(String(localized: "Cancel task", table: "Chat"), role: .destructive, action: onRequestCancellation)
+            Button(String(localized: "Keep Running", table: "Chat"), role: .cancel) {}
         }
     }
 
@@ -981,10 +1033,11 @@ private struct MacAssistantTaskCard: View {
     }
 
     private var canSendGuidance: Bool {
-        !guidanceDraft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        canControlTasks && !guidanceDraft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
     }
 
     private func sendGuidance() {
+        guard canControlTasks else { return }
         let message = guidanceDraft.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !message.isEmpty else { return }
         guidanceDraft = ""
@@ -1229,9 +1282,10 @@ private struct MacCanonicalPartFlowView: View {
     let historicalDetails: [MacHistoricalPartSelection]
     let isStreaming: Bool
     let guidance: [String: MacCoreTaskGuidanceQueue]
+    var canControlTasks = true
     let onSendGuidance: (String, String) -> Void
     let onRequestCancellation: (String) -> Void
-    let onOpenAttachment: (URL) -> Void
+    let onOpenAttachment: (String) -> Void
     @Environment(\.uiSurfaceContext) private var uiContext
     @State private var presentationOwner = MacJournalPresentationOwner()
 
@@ -1308,7 +1362,7 @@ private struct MacCanonicalPartFlowView: View {
             }
         case .attachment(let value):
             Button {
-                if let url = URL(string: value.uri) { onOpenAttachment(url) }
+                onOpenAttachment(value.uri)
             } label: {
                 Label(value.name, systemImage: "doc")
                     .font(.body).frame(maxWidth: .infinity, alignment: .leading)
@@ -1317,7 +1371,7 @@ private struct MacCanonicalPartFlowView: View {
         default:
             if let projected = presentation(part) {
                 if let tasks = projected.presentation?.renderedTaskHandles, !tasks.isEmpty {
-                    MacAssistantTaskList(tasks: tasks, guidance: guidance,
+                    MacAssistantTaskList(tasks: tasks, guidance: guidance, canControlTasks: canControlTasks,
                         onSendGuidance: onSendGuidance, onRequestCancellation: onRequestCancellation)
                 }
                 if let sources = projected.presentation?.renderedSourceReferences, !sources.isEmpty {

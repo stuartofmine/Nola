@@ -1,0 +1,5 @@
+{
+  "identifier": "startup",
+  "windows": ["main"],
+  "permissions": ["allow-startup-status", "allow-retry-startup", "allow-open-diagnostics"]
+}

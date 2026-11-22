@@ -12,6 +12,7 @@ import com.nola.data.repository.ApiModelConfig
 import com.nola.data.remote.api.normalizeCertificateSha256
 import com.nola.data.remote.api.isAllowedWebHostTransport
 import com.nola.data.remote.dto.MessagingStatusDto
+import com.nola.domain.model.ModelWireProtocol
 import com.nola.domain.model.ModelInfo
 import com.nola.domain.model.ModelInput
 import com.nola.domain.model.ModelParameters
@@ -20,6 +21,7 @@ import com.nola.llm.local.DeviceModelRecord
 import com.nola.llm.local.DeviceModelStore
 import com.nola.llm.local.DeviceModelCatalog
 import com.nola.llm.local.DeviceModelCatalogEntry
+import com.nola.llm.local.LocalModelDownloadSource
 import com.nola.llm.provider.LocalLlamaProvider
 import com.nola.llm.provider.LocalModelRuntimeState
 import com.nola.llm.provider.OpenAiProvider
@@ -31,9 +33,11 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.update
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeoutOrNull
 import javax.inject.Inject
 
@@ -45,6 +49,7 @@ data class ModelsUiState(
     val configuredApiModels: List<ModelInfo> = emptyList(),
     val installedLocalModels: List<ModelInfo> = emptyList(),
     val deviceCatalog: List<DeviceModelCatalogEntry> = DeviceModelCatalog.entries,
+    val downloadSource: LocalModelDownloadSource = DeviceModelCatalog.defaultSource(),
     val downloadingModelId: String? = null,
     val downloadProgress: Float? = null,
     val webHostModel: ModelInfo? = null,
@@ -61,11 +66,12 @@ data class ModelsUiState(
     val savingEndpoint: Boolean = false,
     val endpointSaveError: String? = null,
     val apiModel: String = "",
-    val apiWireProtocol: com.nola.domain.model.ModelWireProtocol = com.nola.domain.model.ModelWireProtocol.ChatCompletions,
+    val apiWireProtocol: ModelWireProtocol = ModelWireProtocol.ChatCompletions,
     val webHostUrl: String = "",
     val webHostToken: String = "",
     val webHostCertificateSha256: String = "",
     val hostMessaging: MessagingStatusDto? = null,
+    val verifiedHostTransport: com.nola.data.remote.dto.VerifiedHostTransport? = null,
     val openingHostManagement: Boolean = false,
     val showParameters: Boolean = false,
     val parameterTarget: ModelInfo? = null,
@@ -110,7 +116,7 @@ internal fun modelTestCloudConfiguration(
     topK = parameters.topK,
     sendTopK = false,
     maxCompletionTokens = parameters.maxCompletionTokens,
-).withParameters(parameters)
+).withParameters(parameters).withResolvedRuntime(endpoint.resolvedRuntime)
 
 @HiltViewModel
 class ModelsViewModel @Inject constructor(
@@ -124,15 +130,19 @@ class ModelsViewModel @Inject constructor(
     private val webAgentProvider: WebAgentProvider,
     private val webHostApi: com.nola.data.remote.api.WebHostApiService,
     private val applicationRuntime: com.nola.data.local.AndroidApplicationRuntime,
+    private val memoryProfileDataStore: com.nola.data.local.datastore.MemoryProfileDataStore,
     @ApplicationContext private val context: Context
 ) : ViewModel() {
     private val connections = com.nola.data.repository.ModelConnectionRepository(applicationRuntime)
 
+    // Keep credentials in memory while the user visits another tab.
+    internal val connectionDraft = EndpointConfigDraft("", "", "", ModelWireProtocol.ChatCompletions)
     private val _uiState = MutableStateFlow(ModelsUiState())
     val uiState: StateFlow<ModelsUiState> = _uiState.asStateFlow()
     private var installedLocalRecords: List<DeviceModelRecord> = emptyList()
     private var modelTestJob: Job? = null
     private var modelTestGeneration = 0L
+    private var activationGeneration = 0L
 
     init {
         loadConnectionInventory()
@@ -150,6 +160,30 @@ class ModelsViewModel @Inject constructor(
                 }
             }
         }
+        viewModelScope.launch {
+            deviceModelStore.downloadState.collect { dl ->
+                _uiState.update {
+                    it.copy(
+                        downloadingModelId = dl.downloadingModelId,
+                        downloadProgress = dl.progress,
+                    )
+                }
+                if (dl.completedModelId != null) {
+                    val name = dl.completedDisplayName ?: dl.completedModelId
+                    deviceModelStore.consumeTerminalDownloadEvent()
+                    loadModels()
+                    publishStatus(context.getString(R.string.models_download_complete_format, name), true)
+                } else if (dl.error != null) {
+                    val msg = dl.error
+                    deviceModelStore.consumeTerminalDownloadEvent()
+                    publishStatus(context.getString(R.string.models_download_failed_format, msg), false)
+                }
+            }
+        }
+    }
+
+    fun setDownloadSource(source: LocalModelDownloadSource) {
+        _uiState.update { it.copy(downloadSource = source) }
     }
 
     fun loadConnectionInventory() {
@@ -165,8 +199,11 @@ class ModelsViewModel @Inject constructor(
         }
     }
 
+    private var modelInventoryJob: Job? = null
+
     fun loadModels() {
-        viewModelScope.launch {
+        modelInventoryJob?.cancel()
+        modelInventoryJob = viewModelScope.launch {
             _uiState.update { it.copy(isLoading = true) }
 
             try {
@@ -179,10 +216,11 @@ class ModelsViewModel @Inject constructor(
                     publishStatus(error.message ?: context.getString(R.string.models_endpoint_save_failed), false)
                     null
                 }
-                val webHostUrl = prefs.webHostBaseUrl.first()
-                val webHostToken = prefs.webHostToken.first()
-                val webHostCertificateSha256 = prefs.webHostCertificateSha256.first()
-                val hasWebHostConfig = webHostUrl.isNotBlank() && webHostToken.isNotBlank()
+                val host = prefs.webHostConfiguration()
+                val webHostUrl = host?.address.orEmpty()
+                val webHostToken = host?.token.orEmpty()
+                val webHostCertificateSha256 = host?.pin.orEmpty()
+                val hasWebHostConfig = host != null
                 val hostSettings = if (hasWebHostConfig) try {
                     withTimeoutOrNull(3_000) {
                         webHostApi.getAgentSettings(
@@ -208,7 +246,7 @@ class ModelsViewModel @Inject constructor(
                         apiEndpoint = apiConfig?.endpoint.orEmpty(),
                         apiKey = apiConfig?.apiKey.orEmpty(),
                         apiModel = apiConfig?.model.orEmpty(),
-                        apiWireProtocol = apiConfig?.wireProtocol ?: com.nola.domain.model.ModelWireProtocol.ChatCompletions,
+                        apiWireProtocol = apiConfig?.wireProtocol ?: ModelWireProtocol.ChatCompletions,
                         webHostModel = if (hasWebHostConfig) {
                             ModelInfo(id = "web-host", name = "Nola Web Host", source = ModelInfo.ModelSource.WebHost)
                         } else {
@@ -218,6 +256,10 @@ class ModelsViewModel @Inject constructor(
                         webHostToken = webHostToken,
                         webHostCertificateSha256 = webHostCertificateSha256,
                         hostMessaging = hostSettings?.messaging,
+                        verifiedHostTransport = hostSettings?.verifiedTransport ?: it.verifiedHostTransport.takeIf { _ ->
+                            hasWebHostConfig && it.webHostUrl == webHostUrl && it.webHostToken == webHostToken &&
+                                it.webHostCertificateSha256 == webHostCertificateSha256
+                        },
                         selectedModelId = if (modelService.isPlaceholder) savedDefault?.selectionId else modelService.currentProfileId ?: modelService.currentModelId,
                         selectedModelSource = if (modelService.isPlaceholder) savedDefault?.source else modelService.currentModelSource.toModelSource()
                     )
@@ -238,15 +280,17 @@ class ModelsViewModel @Inject constructor(
     }
 
     fun selectModel(model: ModelInfo) {
+        if (_uiState.value.activatingModelId != null) return
+        val generation = ++activationGeneration
+        _uiState.update {
+            it.copy(
+                activatingModelId = model.selectionId,
+                activatingModelSource = model.source,
+                connectionTestResult = null,
+                connectionTestSucceeded = null
+            )
+        }
         viewModelScope.launch {
-            _uiState.update {
-                it.copy(
-                    activatingModelId = model.selectionId,
-                    activatingModelSource = model.source,
-                    connectionTestResult = null,
-                    connectionTestSucceeded = null
-                )
-            }
             try {
                 when (model.source) {
                     ModelInfo.ModelSource.Cloud -> {
@@ -260,8 +304,14 @@ class ModelsViewModel @Inject constructor(
                     ModelInfo.ModelSource.Local -> {
                         val ready = localLlamaProvider.state.value as? LocalModelRuntimeState.Ready
                         if (ready?.modelId != model.id) {
-                            publishStatus(context.getString(R.string.models_error_model_unavailable), false)
-                            return@launch
+                            val record = installedLocalRecords.firstOrNull { it.id == model.id }
+                                ?: deviceModelStore.installedModels().firstOrNull { it.id == model.id }
+                            if (record == null) {
+                                publishStatus(context.getString(R.string.models_error_model_unavailable), false)
+                                return@launch
+                            }
+                            val params = modelParametersStore.loadLocalParameters(model.id, record.contextWindow)
+                            localLlamaProvider.start(record, params)
                         }
                         modelService.reconfigure(localLlamaProvider, model.id, "local")
                     }
@@ -287,7 +337,9 @@ class ModelsViewModel @Inject constructor(
             } catch (e: Exception) {
                 publishStatus(context.getString(R.string.models_test_failed_format, e.message ?: ""), false)
             } finally {
-                _uiState.update { it.copy(activatingModelId = null, activatingModelSource = null) }
+                if (activationGeneration == generation) {
+                    _uiState.update { it.copy(activatingModelId = null, activatingModelSource = null) }
+                }
             }
         }
     }
@@ -377,7 +429,7 @@ class ModelsViewModel @Inject constructor(
                 val parameters = modelParametersStore.loadParameters(model.parameterProfileId)
                 val client = when (model.source) {
                     ModelInfo.ModelSource.Cloud -> {
-                        val config = modelRepo.getApiModelConfigFor(model)
+                        val config = modelRepo.getApiModelConfigFor(model, parameters)
                             ?: error(context.getString(R.string.models_error_configure_endpoint_before_cloud))
                         openAiProvider.clientForTurn(modelTestCloudConfiguration(config, model, parameters))
                     }
@@ -426,20 +478,22 @@ class ModelsViewModel @Inject constructor(
         }
     }
 
-    fun saveApiEndpoint(endpoint: String, apiKey: String, model: String, wireProtocol: com.nola.domain.model.ModelWireProtocol, onSaved: () -> Unit = {}) {
+    fun saveApiEndpoint(endpoint: String, apiKey: String, model: String, wireProtocol: ModelWireProtocol, onSaved: () -> Unit = {}) {
         if (_uiState.value.savingEndpoint) return
         _uiState.update { it.copy(savingEndpoint = true, endpointSaveError = null) }
         viewModelScope.launch {
             var savedModels: List<ModelInfo>? = null
             try {
-                val config = ApiModelConfig(endpoint, apiKey, model, wireProtocol)
+                val normalizedEndpoint = endpoint.trim()
+                val primaryModel = com.nola.data.local.parseModelNames(model).firstOrNull() ?: model.trim()
+                val config = ApiModelConfig(normalizedEndpoint, apiKey, model, wireProtocol)
                 modelRepo.saveApiModelConfig(config)
                 val configuredModels = modelRepo.listConfiguredModels()
                 savedModels = configuredModels
                 val configured = requireNotNull(configuredModels.firstOrNull {
-                    it.id == model && modelRepo.getApiModelConfigFor(it)?.endpoint == endpoint
+                    it.id == primaryModel && modelRepo.getApiModelConfigFor(it)?.endpoint == normalizedEndpoint
                 }) { "The saved model was not published" }
-                configureOpenAiProvider(config, configured, "cloud")
+                configureOpenAiProvider(config.copy(model = primaryModel), configured, "cloud")
                 prefs.saveDefaultModelSelection(configured)
                 _uiState.update {
                     it.copy(
@@ -496,9 +550,11 @@ class ModelsViewModel @Inject constructor(
     }
 
     fun startLocalModel(model: ModelInfo) {
+        if (_uiState.value.activatingModelId != null) return
         val record = installedLocalRecords.firstOrNull { it.id == model.id } ?: return
+        val generation = ++activationGeneration
+        _uiState.update { it.copy(activatingModelId = model.id, activatingModelSource = model.source) }
         viewModelScope.launch {
-            _uiState.update { it.copy(activatingModelId = model.id, activatingModelSource = model.source) }
             try {
                 val params = modelParametersStore.loadLocalParameters(model.id, record.contextWindow)
                 localLlamaProvider.start(record, params)
@@ -518,7 +574,9 @@ class ModelsViewModel @Inject constructor(
             } catch (error: Throwable) {
                 publishStatus(context.getString(R.string.models_test_failed_format, error.message.orEmpty()), false)
             } finally {
-                _uiState.update { it.copy(activatingModelId = null, activatingModelSource = null) }
+                if (activationGeneration == generation) {
+                    _uiState.update { it.copy(activatingModelId = null, activatingModelSource = null) }
+                }
             }
         }
     }
@@ -542,7 +600,10 @@ class ModelsViewModel @Inject constructor(
         val profileId = model.profileId ?: model.id
         viewModelScope.launch {
             try {
-                applicationRuntime.deleteModelProfile(profileId, System.currentTimeMillis())
+                withContext(Dispatchers.IO) {
+                    applicationRuntime.deleteModelProfile(profileId, System.currentTimeMillis())
+                    memoryProfileDataStore.pruneOrphanedModelSecrets()
+                }
                 val configuredModels = modelRepo.listConfiguredModels()
                 val wasSelected = _uiState.value.selectedModelId == model.selectionId &&
                     _uiState.value.selectedModelSource == ModelInfo.ModelSource.Cloud
@@ -569,6 +630,18 @@ class ModelsViewModel @Inject constructor(
         viewModelScope.launch {
             try {
                 deviceModelStore.delete(model.id, _uiState.value.runningLocalModelId)
+                val matchesDefault = prefs.defaultModelSelection(listOf(model)) != null
+                val wasSelected = _uiState.value.selectedModelId == model.selectionId &&
+                    _uiState.value.selectedModelSource == ModelInfo.ModelSource.Local
+                if (wasSelected) {
+                    modelService.usePlaceholder()
+                }
+                if (wasSelected || matchesDefault) {
+                    prefs.clearDefaultModelSelection()
+                }
+                withContext(Dispatchers.IO) {
+                    applicationRuntime.deleteModelProfile(model.profileId ?: model.id, System.currentTimeMillis())
+                }
                 loadModels()
             } catch (cancelled: CancellationException) {
                 throw cancelled
@@ -578,41 +651,14 @@ class ModelsViewModel @Inject constructor(
         }
     }
 
+    fun cancelLocalModelDownload() {
+        deviceModelStore.cancelDownload()
+    }
+
     fun downloadLocalModel(entry: DeviceModelCatalogEntry) {
         if (_uiState.value.downloadingModelId != null) return
-        viewModelScope.launch {
-            _uiState.update {
-                it.copy(
-                    downloadingModelId = entry.id,
-                    downloadProgress = 0f,
-                    connectionTestResult = null,
-                    connectionTestSucceeded = null,
-                )
-            }
-            try {
-                deviceModelStore.install(
-                    id = entry.id,
-                    displayName = entry.displayName,
-                    sourceUrl = entry.downloadUrl,
-                    expectedSha256 = entry.sha256,
-                    contextWindow = entry.contextWindow,
-                    recommendedRamBytes = entry.recommendedRamBytes,
-                ) { progress ->
-                    val total = progress.totalBytes
-                    _uiState.update { state ->
-                        state.copy(downloadProgress = total?.let { progress.downloadedBytes.toFloat() / it.toFloat() })
-                    }
-                }
-                loadModels()
-                publishStatus(context.getString(R.string.models_download_complete_format, entry.displayName), true)
-            } catch (cancelled: CancellationException) {
-                throw cancelled
-            } catch (error: Throwable) {
-                publishStatus(context.getString(R.string.models_download_failed_format, error.message.orEmpty()), false)
-            } finally {
-                _uiState.update { it.copy(downloadingModelId = null, downloadProgress = null) }
-            }
-        }
+        _uiState.update { it.copy(connectionTestResult = null, connectionTestSucceeded = null) }
+        deviceModelStore.startDownload(entry, _uiState.value.downloadSource)
     }
 
     private var webHostConnectionJob: Job? = null
@@ -622,12 +668,17 @@ class ModelsViewModel @Inject constructor(
     fun disconnectWebHost() {
         cancelWebHostConnection()
         viewModelScope.launch {
-            prefs.clearWebHostConfig()
-            val wasSelected = _uiState.value.selectedModelSource == ModelInfo.ModelSource.WebHost
-            if (wasSelected) {
-                modelService.usePlaceholder()
-                prefs.clearDefaultModelSelection()
+            try {
+                prefs.clearWebHostConfig()
+            } catch (cancelled: CancellationException) {
+                throw cancelled
+            } catch (error: Exception) {
+                publishStatus(webHostConnectionMessage(context, error), false)
+                return@launch
             }
+            modelInventoryJob?.cancel()
+            val wasSelected = _uiState.value.selectedModelSource == ModelInfo.ModelSource.WebHost
+            if (modelService.currentModelSource == "web-host") modelService.usePlaceholder()
             webAgentProvider.config = null
             _uiState.update {
                 it.copy(
@@ -636,10 +687,14 @@ class ModelsViewModel @Inject constructor(
                     webHostCertificateSha256 = "",
                     webHostModel = null,
                     hostMessaging = null,
+                    verifiedHostTransport = null,
+                    connectionTestResult = null,
+                    connectionTestSucceeded = null,
                     selectedModelId = if (wasSelected) null else it.selectedModelId,
                     selectedModelSource = if (wasSelected) null else it.selectedModelSource,
                 )
             }
+            loadModels()
         }
     }
 
@@ -678,10 +733,12 @@ class ModelsViewModel @Inject constructor(
 
         webHostConnectionJob?.cancel()
         webHostConnectionJob = viewModelScope.launch {
+            var verifyingPairedHost = false
             try {
                 val normalizedUrl = com.nola.data.remote.api.normalizeWebHostBaseUrl(url)
                 val savedOrigin = prefs.webHostBaseUrl.first()
                 val previousIdentity = if (sameWebHostDestination(savedOrigin, normalizedUrl)) prefs.webHostIdentity.first() else ""
+                verifyingPairedHost = previousIdentity.isNotEmpty()
                 val settings = kotlinx.coroutines.withTimeout(15_000) { webHostApi.getAgentSettings(
                         hostBaseUrl = normalizedUrl,
                         token = token.trim(),
@@ -689,21 +746,34 @@ class ModelsViewModel @Inject constructor(
                     ) }
                 val identity = verifyWebHostConnection(previousIdentity, importedHostIdentity) { settings }
                 prefs.saveWebHostConfig(url, token, normalizedPin, verifiedHostId = identity)
-                val savedUrl = prefs.webHostBaseUrl.first()
-                val savedToken = prefs.webHostToken.first()
-                val savedPin = prefs.webHostCertificateSha256.first()
-                val successMessage = context.getString(R.string.models_web_host_verified)
+                val saved = checkNotNull(prefs.pairedWebHost())
+                modelInventoryJob?.cancel()
+                val previous = webAgentProvider.config
+                if (previous != null && previous.expectedHostId == saved.identity &&
+                    previous.hostBaseUrl == saved.address && previous.pinnedCertificateSha256 == saved.pin) {
+                    webAgentProvider.config = previous.copy(token = saved.token)
+                } else {
+                    webAgentProvider.config = null
+                    if (modelService.currentModelSource == "web-host") modelService.usePlaceholder()
+                }
+                val hostModel = ModelInfo(id = "web-host", name = "Nola Web Host", source = ModelInfo.ModelSource.WebHost)
+                val hostIsDefault = prefs.defaultModelSelection(listOf(hostModel)) != null
+                val successMessage = context.getString(if (hostIsDefault) R.string.models_web_host_default_verified else R.string.models_web_host_verified)
                 _uiState.update {
                     it.copy(
-                        webHostUrl = savedUrl,
-                        webHostToken = savedToken,
-                        webHostCertificateSha256 = savedPin,
-                        webHostModel = ModelInfo(id = "web-host", name = "Nola Web Host", source = ModelInfo.ModelSource.WebHost),
+                        webHostUrl = saved.address,
+                        webHostToken = saved.token,
+                        webHostCertificateSha256 = saved.pin,
+                        selectedModelId = if (!hostIsDefault && it.selectedModelSource == ModelInfo.ModelSource.WebHost) null else it.selectedModelId,
+                        selectedModelSource = if (!hostIsDefault && it.selectedModelSource == ModelInfo.ModelSource.WebHost) null else it.selectedModelSource,
+                        webHostModel = hostModel,
                         hostMessaging = settings.messaging,
+                        verifiedHostTransport = settings.verifiedTransport,
                         connectionTestResult = successMessage,
                         connectionTestSucceeded = true
                     )
                 }
+                loadModels()
                 onComplete(true, successMessage)
             } catch (e: kotlinx.coroutines.TimeoutCancellationException) {
                 val message = context.getString(R.string.models_error_host_timeout)
@@ -712,7 +782,7 @@ class ModelsViewModel @Inject constructor(
             } catch (cancelled: CancellationException) {
                 throw cancelled
             } catch (e: Exception) {
-                val message = webHostConnectionMessage(context, e)
+                val message = webHostConnectionMessage(context, e, verifyingPairedHost)
                 publishStatus(message, false)
                 onComplete(false, message)
             }
@@ -751,22 +821,48 @@ class ModelsViewModel @Inject constructor(
         onReady: (String) -> Unit
     ) {
         val state = _uiState.value
-        if (state.openingHostManagement || state.webHostUrl.isBlank() || state.webHostToken.isBlank()) return
+        if (state.openingHostManagement) return
+        if (state.webHostUrl.isBlank() || state.webHostToken.isBlank()) {
+            publishStatus(context.getString(R.string.models_error_web_host_config_required), false)
+            return
+        }
+        _uiState.update { it.copy(openingHostManagement = true) }
         viewModelScope.launch {
-            _uiState.update { it.copy(openingHostManagement = true) }
             try {
-                onReady(webHostApi.requestWebManagementUrl(
-                    hostBaseUrl = state.webHostUrl,
-                    token = state.webHostToken,
+                val paired = prefs.pairedWebHost()
+                if (paired == null) {
+                    publishStatus(context.getString(R.string.models_error_web_host_config_required), false)
+                    return@launch
+                }
+                val url = webHostApi.requestWebManagementUrl(
+                    hostBaseUrl = paired.address,
+                    token = paired.token,
                     target = target,
-                    pinnedCertificateSha256 = state.webHostCertificateSha256
-                ))
+                    pinnedCertificateSha256 = paired.pin
+                )
+                val current = prefs.pairedWebHost()
+                if (current != null && paired.identity == current.identity && paired.address == current.address &&
+                    paired.pin == current.pin && paired.token == current.token) {
+                    onReady(url)
+                } else {
+                    publishStatus(context.getString(R.string.models_error_web_host_config_required), false)
+                }
+            } catch (cancelled: CancellationException) {
+                throw cancelled
             } catch (error: Exception) {
                 publishStatus(webHostConnectionMessage(context, error), false)
             } finally {
                 _uiState.update { it.copy(openingHostManagement = false) }
             }
         }
+    }
+
+    fun reportHostManagementLaunchFailure(error: Throwable) {
+        publishStatus(
+            error.localizedMessage?.takeIf { it.isNotBlank() }
+                ?: context.getString(R.string.models_error_web_host_config_required),
+            false,
+        )
     }
 
     fun closeParameters() {
@@ -828,14 +924,30 @@ class ModelsViewModel @Inject constructor(
             if (_uiState.value.parameterSnapshot !== snapshot) return@launch
             _uiState.update { it.copy(parameters = params) }
             closeParameters()
-            if (target.id == modelService.currentModelId && target.profileId == modelService.currentProfileId &&
-                target.source != ModelInfo.ModelSource.WebHost) {
-                openAiProvider.config = openAiProvider.config?.copy(
-                    temperature = params.temperature,
-                    topP = params.topP,
-                    topK = params.topK,
-                    maxCompletionTokens = params.maxCompletionTokens
-                )
+            when (target.source) {
+                ModelInfo.ModelSource.Cloud -> {
+                    if (target.id == modelService.currentModelId && target.profileId == modelService.currentProfileId) {
+                        openAiProvider.config = openAiProvider.config?.withParameters(params)
+                    }
+                }
+                ModelInfo.ModelSource.Local -> {
+                    if (_uiState.value.runningLocalModelId == target.id) {
+                        val record = installedLocalRecords.firstOrNull { it.id == target.id }
+                        if (record != null) {
+                            val clamped = params.copy(
+                                maxContextTokens = params.maxContextTokens.coerceIn(512, record.contextWindow.coerceAtLeast(512))
+                            )
+                            try {
+                                localLlamaProvider.start(record, clamped)
+                            } catch (cancelled: CancellationException) {
+                                throw cancelled
+                            } catch (error: Throwable) {
+                                publishStatus(context.getString(R.string.models_test_failed_format, error.message.orEmpty()), false)
+                            }
+                        }
+                    }
+                }
+                ModelInfo.ModelSource.WebHost -> Unit
             }
         }
     }
@@ -862,18 +974,14 @@ class ModelsViewModel @Inject constructor(
     }
 
     private suspend fun configureWebHostProvider(): Boolean {
-        val url = prefs.webHostBaseUrl.first()
-        val token = prefs.webHostToken.first()
-        val certificateSha256 = prefs.webHostCertificateSha256.first()
-        if (url.isBlank() || token.isBlank()) return false
-
+        val host = prefs.pairedWebHost() ?: return false
         webAgentProvider.config = WebAgentProvider.Config(
-            hostBaseUrl = url,
-            token = token,
+            hostBaseUrl = host.address,
+            token = host.token,
             maxIterations = 0,
-            expectedHostId = prefs.webHostIdentity.first(),
+            expectedHostId = host.identity,
             clientId = prefs.getOrCreateClientUuid(),
-            pinnedCertificateSha256 = certificateSha256
+            pinnedCertificateSha256 = host.pin
         )
         modelService.reconfigure(webAgentProvider, "web-host", "web-host")
         return true

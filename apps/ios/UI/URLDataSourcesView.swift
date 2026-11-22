@@ -40,7 +40,8 @@ struct URLDataSourcesView: View {
 
     private var baseView: some View {
         contentScroll
-            .background(DesignTokens.backgroundColor)
+            .clipped()
+            .background(DesignTokens.backgroundColor.ignoresSafeArea())
             .navigationTitle(NSLocalizedString("url_sources.navigation.title", value: "Data sources", comment: "URL sources navigation title"))
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
@@ -303,6 +304,7 @@ struct URLDataSourcesView: View {
 
     private func toggleSource(_ source: URLDataSource) {
         container.urlFetcher?.toggleSource(id: source.id)
+        container.scheduler.scheduleNextRefresh()
         refreshNonce += 1
         NotificationCenter.default.post(name: .nolaCustomSourcesUpdated, object: nil)
     }
@@ -664,10 +666,12 @@ private struct URLActionRow: View {
     }
 
     private var actionButtons: some View {
-        HStack(spacing: 16) {
+        HStack(spacing: 4) {
             Button(action: onRefresh) {
                 Image(systemName: "arrow.clockwise")
                     .foregroundColor(.secondary)
+                    .frame(width: 44, height: 44)
+                    .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
             .disabled(!source.enabled)
@@ -676,6 +680,8 @@ private struct URLActionRow: View {
             Button(action: onEdit) {
                 Image(systemName: "pencil")
                     .foregroundColor(.secondary)
+                    .frame(width: 44, height: 44)
+                    .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
             .accessibilityLabel(NSLocalizedString("common.edit", value: "Edit", comment: "Edit action"))
@@ -683,6 +689,8 @@ private struct URLActionRow: View {
             Button(action: onDelete) {
                 Image(systemName: "trash")
                     .foregroundColor(DesignTokens.dangerColor)
+                    .frame(width: 44, height: 44)
+                    .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
             .accessibilityLabel(L10n.urlSourcesDeleteConfirm)
@@ -718,25 +726,41 @@ struct AddURLDataSourceSheet: View {
     var existingSource: URLDataSource? // nil = add, non-nil = edit
     var onSaved: ((URLDataSource) -> Void)? = nil
     
-    @State private var name = ""
-    @State private var url = ""
+    private enum EditorField { case name, url }
+    @FocusState private var focusedField: EditorField?
+    @State private var name: String
+    @State private var url: String
     @State private var selectedFormat: URLDataFormat? = nil // User-selected format
-    @State private var selectedKind: DataSourceKind = .website
-    @State private var detectedFormat: URLDataFormat? = nil // Auto-detected format
+    @State private var selectedKind: DataSourceKind
+    @State private var detectedFormat: URLDataFormat? // Auto-detected format
     @State private var showFileImporter = false
     @State private var showFolderImporter = false
+    @State private var pickedLocalURL: URL? = nil
+    @State private var pickedSecurityBookmarkData: Data? = nil
     @State private var isValidating = false
     @State private var validationTask: Task<Void, Never>?
     @State private var isSaving = false
     @State private var validationResult: ValidationResult?
     @State private var errorMessage: String?
     @State private var previewEvents: [RawEvent] = []
-    @State private var sourceDescriptionText: String = ""
-    @State private var sourceID = UUID()
-    @State private var accessPolicy: URLDataSourceAccessPolicy = .conversationOptIn
+    @State private var sourceDescriptionText: String
+    @State private var sourceID: UUID
+    @State private var accessPolicy: URLDataSourceAccessPolicy
     @State private var initialEditorSnapshot = ""
     @State private var validationRevision = 0
     @State private var showsDiscardConfirmation = false
+
+    init(existingSource: URLDataSource? = nil, onSaved: ((URLDataSource) -> Void)? = nil) {
+        self.existingSource = existingSource
+        self.onSaved = onSaved
+        _name = State(initialValue: existingSource?.name ?? "")
+        _url = State(initialValue: existingSource?.url ?? "")
+        _detectedFormat = State(initialValue: existingSource?.format)
+        _selectedKind = State(initialValue: existingSource?.kind ?? .website)
+        _sourceDescriptionText = State(initialValue: existingSource?.sourceDescription ?? "")
+        _sourceID = State(initialValue: existingSource?.id ?? UUID())
+        _accessPolicy = State(initialValue: existingSource?.accessPolicy ?? .conversationOptIn)
+    }
 
     // Model selection is shared via container.chatManager
 
@@ -761,8 +785,10 @@ struct AddURLDataSourceSheet: View {
                 }
                 Section(header: Text(NSLocalizedString("url_sources.form.section_source", value: "Source", comment: "Source section title"))) {
                     TextField(L10n.commonName, text: $name)
+                        .focused($focusedField, equals: .name)
                         .accessibilityIdentifier("data.center.editor.name")
                     TextField(L10n.urlSourcesURLField, text: $url)
+                        .focused($focusedField, equals: .url)
                         .textInputAutocapitalization(.never)
                         .autocorrectionDisabled()
                         .keyboardType(.URL)
@@ -996,25 +1022,22 @@ struct AddURLDataSourceSheet: View {
                 }
             }
             .onAppear {
-                if let source = existingSource {
-                    name = source.name
-                    url = source.url
-                    detectedFormat = source.format
-                    selectedKind = source.kind
-                    sourceDescriptionText = source.sourceDescription ?? ""
-                    sourceID = source.id
-                    accessPolicy = source.accessPolicy
-                }
-                DispatchQueue.main.async {
+                if initialEditorSnapshot.isEmpty {
                     initialEditorSnapshot = editorSnapshot
                 }
             }
-            .onChange(of: url) { _, _ in
-                guard url != existingSource?.url else { return }
+            .onChange(of: url) { _, newValue in
+                if newValue != pickedLocalURL?.absoluteString {
+                    pickedLocalURL = nil
+                    pickedSecurityBookmarkData = nil
+                }
+                guard !isValidating else { return }
+                guard newValue != existingSource?.url else { return }
                 validationResult = nil
                 previewEvents = []
             }
             .onChange(of: selectedFormat) { _, _ in
+                guard !isValidating else { return }
                 validationResult = nil
                 previewEvents = []
             }
@@ -1031,7 +1054,7 @@ struct AddURLDataSourceSheet: View {
                 NSLocalizedString("url_sources.discard.title", value: "Discard changes?", comment: "Discard data source changes title"),
                 isPresented: $showsDiscardConfirmation
             ) {
-                Button(L10n.cancel, role: .cancel) {}
+                Button(String(localized: "model.setup.keep_editing"), role: .cancel) {}
                 Button(NSLocalizedString("url_sources.discard.confirm", value: "Discard", comment: "Discard data source changes"), role: .destructive) {
                     dismiss()
                 }
@@ -1075,6 +1098,7 @@ struct AddURLDataSourceSheet: View {
     }
 
     private func requestDismiss() {
+        focusedField = nil
         validationTask?.cancel()
         isValidating = false
         if isDirty {
@@ -1128,9 +1152,15 @@ struct AddURLDataSourceSheet: View {
                     return
                 }
 
+                let bookmarkData = makeSecurityScopedBookmarkIfNeeded()
+
                 // Detect format and preview first
                 // Pass the user-selected format.
-                let (fmt, preview, desc) = try await fetcher.detectFormatAndPreview(urlString: url, preferredFormat: selectedFormat)
+                let (fmt, preview, desc) = try await fetcher.detectFormatAndPreview(
+                    urlString: url,
+                    preferredFormat: selectedFormat,
+                    securityBookmarkData: bookmarkData
+                )
                 guard !Task.isCancelled else { return }
                 await MainActor.run {
                     detectedFormat = fmt
@@ -1144,6 +1174,7 @@ struct AddURLDataSourceSheet: View {
                 // Validate using detected format
                 var source = URLDataSource(id: sourceID, url: url, format: fmt, kind: selectedKind, name: name)
                 source.accessPolicy = accessPolicy
+                source.securityBookmarkData = bookmarkData
                 let result = await fetcher.validateSource(source)
                 guard !Task.isCancelled else { return }
                 await MainActor.run {
@@ -1164,6 +1195,17 @@ struct AddURLDataSourceSheet: View {
     private func importLocalSource(_ result: Result<[URL], Error>, kind: DataSourceKind) {
         do {
             guard let selectedURL = try result.get().first else { return }
+            let didAccess = selectedURL.startAccessingSecurityScopedResource()
+            let bookmark = try? selectedURL.bookmarkData(
+                options: [],
+                includingResourceValuesForKeys: nil,
+                relativeTo: nil
+            )
+            if didAccess {
+                selectedURL.stopAccessingSecurityScopedResource()
+            }
+            pickedLocalURL = selectedURL
+            pickedSecurityBookmarkData = bookmark
             selectedKind = kind
             selectedFormat = .html
             detectedFormat = .html
@@ -1247,9 +1289,32 @@ struct AddURLDataSourceSheet: View {
     // were removed as part of the data-sources -> scheduled-actions split.
 
     private func makeSecurityScopedBookmarkIfNeeded() -> Data? {
-        guard selectedKind == .file || selectedKind == .folder,
-              let localURL = URL(string: url),
-              localURL.isFileURL else {
+        guard selectedKind == .file || selectedKind == .folder else {
+            return nil
+        }
+
+        if let pickedLocalURL, pickedLocalURL.absoluteString == url {
+            if let pickedSecurityBookmarkData {
+                return pickedSecurityBookmarkData
+            }
+            let didAccess = pickedLocalURL.startAccessingSecurityScopedResource()
+            defer {
+                if didAccess {
+                    pickedLocalURL.stopAccessingSecurityScopedResource()
+                }
+            }
+            return try? pickedLocalURL.bookmarkData(
+                options: [],
+                includingResourceValuesForKeys: nil,
+                relativeTo: nil
+            )
+        }
+
+        if existingSource?.url == url, let existingBookmark = existingSource?.securityBookmarkData {
+            return existingBookmark
+        }
+
+        guard let localURL = URL(string: url), localURL.isFileURL else {
             return nil
         }
 

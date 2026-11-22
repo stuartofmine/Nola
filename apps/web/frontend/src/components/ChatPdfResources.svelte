@@ -15,6 +15,7 @@
     let previewLoading = $state(false);
     let loading = $state(false);
     let mutating = $state(false);
+    let desktop = $state(false);
     let error = $state('');
     let mounted = false;
     let disposed = false;
@@ -61,7 +62,7 @@
         conversationId; generation;
         if (mounted) untrack(() => { selected = null; clearPreview(); resources = []; mutating = false; void load(); });
     });
-    onMount(() => { mounted = true; void load(); return () => { disposed = true; controller?.abort(); clearPreview(); }; });
+    onMount(() => { desktop = 'NolaDesktop' in window; mounted = true; void load(); return () => { disposed = true; controller?.abort(); clearPreview(); }; });
 
     async function upload(event: Event) {
         const input = event.currentTarget as HTMLInputElement;
@@ -115,18 +116,18 @@
     {#if resources.length}<ul>{#each resources as resource (resource.resourceId)}<li>
         <button type="button" class:chosen={selected === resource.resourceId} onclick={() => select(resource)}>{resource.displayName}</button>
         <span class="muted">{Math.ceil(resource.byteCount / 1024).toLocaleString($locale)} KiB</span>
-        <button type="button" class="remove" onclick={() => remove(resource)} disabled={busy || mutating} aria-label={t($locale, 'chatResource.remove')}>{t($locale, 'chatResource.remove')}</button>
+        <button type="button" class="remove danger" onclick={() => remove(resource)} disabled={busy || mutating} aria-label={t($locale, 'chatResource.remove')}>{t($locale, 'chatResource.remove')}</button>
     </li>{/each}</ul>{/if}
     {#if previewLoading}<p role="status">{t($locale, 'chatResource.loadingPreview')}</p>{/if}
     {#if selectedResource && previewUrl}<div class="preview"><iframe sandbox="allow-scripts" src={previewUrl} title={t($locale, 'chatResource.previewTitle', { name: selectedResource.displayName })}></iframe>
         {#if onopen}<button type="button" onclick={() => selectedResource && onopen?.(selectedResource)}>{t($locale, 'chatResource.openTab')}</button>{/if}
-        <p class="muted">{t($locale, 'chatResource.fallback')}</p><a href={previewUrl} download={selectedResource.displayName}>{t($locale, 'chatResource.download')}</a><a href={previewUrl} target="_blank" rel="noopener noreferrer">{t($locale, 'chatResource.openSeparate')}</a></div>{/if}
+        <p class="muted">{t($locale, 'chatResource.fallback')}</p><a href={previewUrl} download={selectedResource.displayName}>{t($locale, 'chatResource.download')}</a>{#if !desktop}<a href={previewUrl} target="_blank" rel="noopener noreferrer">{t($locale, 'chatResource.openSeparate')}</a>{/if}</div>{/if}
 </section>
 
 <style>
     .pdf-resources { display: grid; gap: 10px; min-width: 0; }
     h2,p { margin: 0; } h2 { font-size: 1rem; } .muted { color: var(--muted); font-size: 12px; line-height: 1.45; }
-    .upload { position: relative; display: inline-flex; width: fit-content; max-width: 100%; padding: 5px 8px; border: 1px solid var(--border); border-radius: 7px; font-size: 12px; font-weight: 600; cursor: pointer; }
+    .upload { position: relative; display: inline-flex; align-items: center; min-height: var(--control-hit-size); width: fit-content; max-width: 100%; padding: 5px 8px; border: 1px solid var(--border); border-radius: 7px; font-size: 12px; font-weight: 600; cursor: pointer; }
     .upload.disabled { color: var(--muted); background: var(--panel); cursor: not-allowed; }
     .upload input { position: absolute; width: 1px; height: 1px; overflow: hidden; opacity: 0; }
     .upload:focus-within { outline: 2px solid var(--accent); outline-offset: 2px; }

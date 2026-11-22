@@ -17,7 +17,7 @@ const uiIndex = path.join(webRoot, 'app/static/ui/index.html');
 const EXPECTED_ROUTES = [
     'today', 'conversations', 'chat', 'activity', 'results', 'dashboard',
     'data-sources', 'scheduled-actions', 'models', 'model-test',
-    'capabilities', 'workspace-review', 'settings', 'login',
+    'capabilities', 'workspace-review', 'settings', 'login', 'plugin-page',
 ];
 
 const SETTINGS_CATEGORIES = ['general', 'providers', 'agent', 'connections', 'data', 'diagnostics'];
@@ -101,7 +101,7 @@ async function waitForUiSettled(page) {
 
 async function inspectView(page, label, scheme, width) {
     await waitForUiSettled(page);
-    const expectedBg = scheme === 'dark' ? 'rgb(19, 19, 18)' : 'rgb(247, 246, 243)';
+    const expectedBg = scheme === 'dark' ? 'rgb(11, 11, 12)' : 'rgb(250, 250, 250)';
     const metrics = await page.evaluate(() => {
         const parseColor = (raw) => {
             if (!raw || raw === 'transparent') return null;
@@ -140,7 +140,7 @@ async function inspectView(page, label, scheme, width) {
                 if (parsed && parsed[3] >= 0.999) break;
                 cur = cur.parentElement;
             }
-            const bodyParsed = parseColor(getComputedStyle(document.body).backgroundColor) || [247, 246, 243, 1];
+            const bodyParsed = parseColor(getComputedStyle(document.body).backgroundColor) || [250, 248, 244, 1];
             let bg = [bodyParsed[0], bodyParsed[1], bodyParsed[2], 1];
             for (let i = layers.length - 1; i >= 0; i--) {
                 bg = composite(layers[i], bg);
@@ -421,10 +421,10 @@ async function verifyA2uiSurface(context, origin, convId, scheme, width, hostId)
         const expandHex = (value) => /^#[0-9a-f]{3}$/i.test(value)
             ? '#' + [...value.slice(1)].map(c => c + c).join('').toLowerCase()
             : value.toLowerCase();
-        assert.equal(expandHex(tokens.rootSurface), scheme === 'dark' ? '#1b1b19' : '#ffffff');
-        assert.equal(expandHex(tokens.rootText), scheme === 'dark' ? '#f2f0eb' : '#181817');
-        assert.equal(expandHex(tokens.rootPrimary), scheme === 'dark' ? '#f2f0eb' : '#181817');
-        assert.equal(expandHex(tokens.rootDanger), scheme === 'dark' ? '#efaaa2' : '#ad3d34');
+        assert.equal(expandHex(tokens.rootSurface), scheme === 'dark' ? '#131315' : '#ffffff');
+        assert.equal(expandHex(tokens.rootText), scheme === 'dark' ? '#f5f5f7' : '#111113');
+        assert.equal(expandHex(tokens.rootPrimary), scheme === 'dark' ? '#f5f5f7' : '#18181b');
+        assert.equal(expandHex(tokens.rootDanger), scheme === 'dark' ? '#f28080' : '#dc2626');
         assert.equal(expandHex(tokens.surfBg), expandHex(tokens.rootSurface));
         await inspectView(page, 'a2ui-surface', scheme, width);
         assert.deepEqual(errors, []);
@@ -506,6 +506,29 @@ async function verifyA2uiSurface(context, origin, convId, scheme, width, hostId)
                     for (const route of EXPECTED_ROUTES) {
                         await page.goto(`${origin}/${route}`, {waitUntil: 'networkidle'});
                         await inspectView(page, `route-${route}`, scheme, viewport.width);
+                        if (route === 'model-test') {
+                            const view = page.locator('.model-test-page');
+                            const paneTabs = view.locator('.compact-panes');
+                            const compact = await view.evaluate(node => node.clientWidth <= 820);
+                            assert.equal(await paneTabs.isVisible(), compact);
+                            const targets = view.locator('.setup [role=tab]');
+                            await targets.first().press('End');
+                            assert.equal(await targets.last().getAttribute('aria-selected'), 'true');
+                            assert.ok(await targets.last().evaluate(node => node === document.activeElement));
+                            await targets.last().press('Home');
+                            assert.equal(await targets.first().getAttribute('aria-selected'), 'true');
+                            if (compact) {
+                                const tabs = paneTabs.getByRole('tab');
+                                await tabs.first().press('ArrowRight');
+                                assert.ok(await view.locator('.output').isVisible());
+                                assert.ok(await view.locator('.setup').isHidden());
+                                await tabs.last().press('ArrowLeft');
+                                assert.ok(await view.locator('.setup').isVisible());
+                                assert.ok(await tabs.first().evaluate(node => node === document.activeElement));
+                            } else {
+                                assert.ok(await view.locator('.setup').isVisible() && await view.locator('.output').isVisible());
+                            }
+                        }
                         if (route === 'login' && viewport.width === 390) {
                             await page.screenshot({path: path.join(out, `login-${scheme}-390.png`)});
                         }

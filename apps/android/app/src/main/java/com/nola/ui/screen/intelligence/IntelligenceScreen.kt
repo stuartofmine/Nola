@@ -1,7 +1,10 @@
 package com.nola.ui.screen.intelligence
 
+import com.nola.ui.components.dismissImeOnBlankTap
+import com.nola.ui.screen.models.HostPairingSheet
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
+import com.nola.ui.components.GithubSkillSourceLink
 import com.nola.ui.components.DiscardChangesDialog
 
 import androidx.compose.animation.animateColorAsState
@@ -18,12 +21,14 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.layout.imePadding
+import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.LazyColumn
@@ -45,20 +50,25 @@ import androidx.compose.material.icons.filled.Psychology
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.SnackbarHost
+import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TextField
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -82,6 +92,7 @@ import com.nola.R
 import com.nola.domain.model.McpServerConfig
 import com.nola.domain.model.UploadedContent
 import com.nola.ui.components.NolaCompactEmptyState
+import com.nola.ui.components.NolaEmptyState
 import com.nola.ui.components.NolaMotion
 import com.nola.ui.components.NolaSwitch
 import java.net.URI
@@ -107,7 +118,8 @@ enum class IntelligenceSection {
 
 private enum class CapabilitySection {
     SKILLS,
-    MCP
+    MCP,
+    PLUGINS
 }
 
 internal const val INTELLIGENCE_CAPABILITY_SKILLS_TAB_TAG = "intelligence.capabilities.skills"
@@ -119,6 +131,8 @@ fun IntelligenceScreen(
     section: IntelligenceSection? = null,
     onBack: (() -> Unit)? = null,
 ) {
+    val uriHandler = androidx.compose.ui.platform.LocalUriHandler.current
+    val pluginHost by viewModel.pluginHostAddress.collectAsStateWithLifecycle(initialValue = "")
     val state by viewModel.uiState.collectAsStateWithLifecycle()
     val profile = state.profile
     val visibleSkillIndices = profile.uploadedSkills.indices.filter {
@@ -133,6 +147,16 @@ fun IntelligenceScreen(
     val readableEnabledMcpCount = visibleMcpIndices.count { index ->
         profile.mcpServers[index].enabled && state.mcpAccess.getOrNull(index)?.canReadContent == true
     }
+    var pairingHost by androidx.compose.runtime.saveable.rememberSaveable { mutableStateOf(false) }
+    if (pairingHost) {
+        HostPairingSheet(
+            onDismiss = { pairingHost = false },
+            onVerified = { address ->
+                pairingHost = false
+                viewModel.openPlugins(address, { pairingHost = true }, uriHandler::openUri)
+            }
+        )
+    }
     val newSkillTemplate = stringResource(R.string.chat_new_skill_template)
     var editor by remember { mutableStateOf<IntelligenceEditor?>(null) }
     var skillEditor by remember { mutableStateOf<SkillEditor?>(null) }
@@ -140,13 +164,20 @@ fun IntelligenceScreen(
     var pendingDeletion by remember { mutableStateOf<CapabilityDeletion?>(null) }
     var pendingEntryDeletion by remember { mutableStateOf<IntelligenceEditor?>(null) }
     var activeSection by remember(section) { mutableStateOf(section ?: IntelligenceSection.MEMORY) }
-    var activeCapabilitySection by remember { mutableStateOf(CapabilitySection.SKILLS) }
-    var dismissedSaveRevision by remember { mutableStateOf(0L) }
+    var activeCapabilitySection by androidx.compose.runtime.saveable.rememberSaveable { mutableStateOf(CapabilitySection.SKILLS) }
+    val snackbarHostState = remember { SnackbarHostState() }
+    val savedSnackbarMessage = stringResource(R.string.intelligence_changes_saved)
+    var lastShownSaveRevision by remember { mutableStateOf(state.saveRevision) }
+    LaunchedEffect(state.saveRevision) {
+        if (state.saveRevision > lastShownSaveRevision) {
+            lastShownSaveRevision = state.saveRevision
+            snackbarHostState.showSnackbar(savedSnackbarMessage)
+        }
+    }
 
     Box(
         modifier = Modifier
-            .fillMaxSize()
-            .statusBarsPadding(),
+            .fillMaxSize(),
         contentAlignment = Alignment.TopCenter
     ) {
         LazyColumn(
@@ -177,8 +208,8 @@ fun IntelligenceScreen(
                         style = MaterialTheme.typography.headlineSmall,
                         fontWeight = FontWeight.Bold
                     )
-                    Text(
-                        text = stringResource(if (section == IntelligenceSection.EXTENSIONS) R.string.settings_capabilities_desc else R.string.intelligence_subtitle),
+                    if (section != IntelligenceSection.EXTENSIONS) Text(
+                        text = stringResource(R.string.intelligence_subtitle),
                         style = MaterialTheme.typography.bodyMedium,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
@@ -201,45 +232,11 @@ fun IntelligenceScreen(
             )
         }
 
-        if (state.profileLoadError != null) {
+        if (state.profileLoadError != null && (activeSection != IntelligenceSection.EXTENSIONS || activeCapabilitySection != CapabilitySection.PLUGINS)) {
             item {
                 Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                     Text(stringResource(R.string.intelligence_profile_load_failed), color = MaterialTheme.colorScheme.error)
                     OutlinedButton(onClick = viewModel::reloadProfile) { Text(stringResource(R.string.common_retry)) }
-                }
-            }
-        }
-
-        if (state.saveRevision > dismissedSaveRevision) {
-            item {
-                Surface(
-                    onClick = { dismissedSaveRevision = state.saveRevision },
-                    shape = RoundedCornerShape(15.dp),
-                    color = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.72f)
-                ) {
-                    Row(
-                        modifier = Modifier.padding(horizontal = 14.dp, vertical = 11.dp),
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.spacedBy(9.dp)
-                    ) {
-                        Icon(
-                            Icons.Filled.Check,
-                            contentDescription = null,
-                            modifier = Modifier.size(17.dp),
-                            tint = MaterialTheme.colorScheme.primary
-                        )
-                        Text(
-                            stringResource(R.string.intelligence_changes_saved),
-                            modifier = Modifier.weight(1f),
-                            style = MaterialTheme.typography.bodySmall,
-                            fontWeight = FontWeight.SemiBold
-                        )
-                        Text(
-                            stringResource(R.string.data_sources_action_dismiss),
-                            style = MaterialTheme.typography.labelSmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant
-                        )
-                    }
                 }
             }
         }
@@ -298,18 +295,24 @@ fun IntelligenceScreen(
             }
         } else {
             item {
-                CapabilityTypeSwitcher(
-                    showingSkills = activeCapabilitySection == CapabilitySection.SKILLS,
-                    enabledSkills = readableEnabledSkillCount,
-                    totalSkills = visibleSkillIndices.size,
-                    enabledMcp = readableEnabledMcpCount,
-                    totalMcp = visibleMcpIndices.size,
-                    onShowSkills = { activeCapabilitySection = CapabilitySection.SKILLS },
-                    onShowMcp = { activeCapabilitySection = CapabilitySection.MCP }
-                )
+                CapabilityTypeSwitcher(activeCapabilitySection) { activeCapabilitySection = it }
             }
-
             when (activeCapabilitySection) {
+                CapabilitySection.PLUGINS -> item {
+                    if (pluginHost.isBlank()) Text(stringResource(R.string.harness_device_note),
+                        style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    TextButton(
+                        enabled = !state.openingPlugins,
+                        onClick = { viewModel.openPlugins(pluginHost, { pairingHost = true }, uriHandler::openUri) },
+                        modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp).testTag("intelligence.harness.plugins")
+                    ) {
+                        Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                            Text(pluginHost.ifBlank { stringResource(R.string.harness_connect) },
+                                modifier = Modifier.weight(1f), style = MaterialTheme.typography.bodyLarge)
+                            if (state.openingPlugins) CircularProgressIndicator(modifier = Modifier.size(20.dp))
+                        }
+                    }
+                }
                 CapabilitySection.SKILLS -> item {
                     SkillLibraryCard(
                         skills = profile.uploadedSkills,
@@ -355,6 +358,10 @@ fun IntelligenceScreen(
             }
         }
         }
+        SnackbarHost(
+            hostState = snackbarHostState,
+            modifier = Modifier.align(Alignment.BottomCenter).padding(16.dp),
+        )
     }
 
     pendingEntryDeletion?.let { target ->
@@ -369,7 +376,7 @@ fun IntelligenceScreen(
                 Text(stringResource(if (unchanged) R.string.ui_delete_entry_message else R.string.ui_entry_changed))
             } },
             confirmButton = { TextButton(enabled = unchanged, onClick = {
-                if (index != null) viewModel.deleteEntry(target.kind, index)
+                if (index != null) viewModel.deleteEntry(target.kind, index, target.initialValue)
                 pendingEntryDeletion = null
             }) { Text(stringResource(R.string.common_delete), color = MaterialTheme.colorScheme.error) } },
             dismissButton = { TextButton(onClick = { pendingEntryDeletion = null }) { Text(stringResource(R.string.common_cancel)) } },
@@ -379,10 +386,13 @@ fun IntelligenceScreen(
     editor?.let { activeEditor ->
         IntelligenceEditorDialog(
             editor = activeEditor,
-            onDismiss = { editor = null },
+            isSaving = state.isSaving,
+            errorMessage = state.errorMessage,
+            onDismiss = { editor = null; viewModel.clearError() },
             onSave = { value ->
-                viewModel.saveEntry(activeEditor.kind, activeEditor.index, value)
-                editor = null
+                viewModel.saveEntry(activeEditor.kind, activeEditor.index, value) {
+                    if (editor == activeEditor) editor = null
+                }
             }
         )
     }
@@ -442,7 +452,7 @@ fun IntelligenceScreen(
         )
     }
 
-    state.errorMessage?.takeIf { skillEditor == null && mcpEditor == null }?.let { message ->
+    state.errorMessage?.takeIf { editor == null && skillEditor == null && mcpEditor == null }?.let { message ->
         AlertDialog(
             onDismissRequest = viewModel::clearError,
             title = { Text(stringResource(R.string.intelligence_save_error_title)) },
@@ -455,73 +465,39 @@ fun IntelligenceScreen(
 }
 
 @Composable
-internal fun CapabilityTypeSwitcher(
-    showingSkills: Boolean,
-    enabledSkills: Int,
-    totalSkills: Int,
-    enabledMcp: Int,
-    totalMcp: Int,
-    onShowSkills: () -> Unit,
-    onShowMcp: () -> Unit
-) {
-    Surface(
-        shape = RoundedCornerShape(16.dp),
-        color = Color.Transparent
+private fun CapabilityTypeSwitcher(selected: CapabilitySection, onSelect: (CapabilitySection) -> Unit) {
+    Row(
+        modifier = Modifier.fillMaxWidth(),
+        horizontalArrangement = Arrangement.spacedBy(4.dp)
     ) {
-        Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(4.dp),
-            horizontalArrangement = Arrangement.spacedBy(4.dp)
-        ) {
-            CapabilityTypeSegment(
-                label = stringResource(R.string.chat_skill_library),
-                count = "$enabledSkills/$totalSkills",
-                selected = showingSkills,
-                modifier = Modifier
-                    .weight(1f)
-                    .testTag(INTELLIGENCE_CAPABILITY_SKILLS_TAB_TAG),
-                onClick = onShowSkills
-            )
-            CapabilityTypeSegment(
-                label = stringResource(R.string.chat_mcp_endpoints),
-                count = "$enabledMcp/$totalMcp",
-                selected = !showingSkills,
-                modifier = Modifier
-                    .weight(1f)
-                    .testTag(INTELLIGENCE_CAPABILITY_MCP_TAB_TAG),
-                onClick = onShowMcp
-            )
-        }
-    }
-}
-
-@Composable
-private fun CapabilityTypeSegment(
-    label: String,
-    count: String,
-    selected: Boolean,
-    modifier: Modifier,
-    onClick: () -> Unit
-) {
-    Surface(
-        modifier = modifier
-            .heightIn(min = 48.dp)
-            .clip(RoundedCornerShape(12.dp))
-            .selectable(selected = selected, role = Role.Tab, onClick = onClick),
-        shape = RoundedCornerShape(12.dp),
-        color = selectionBackground(selected),
-        contentColor = if (selected) MaterialTheme.colorScheme.onSurface else MaterialTheme.colorScheme.onSurfaceVariant,
-        tonalElevation = 0.dp
-    ) {
-        Row(
-            modifier = Modifier.padding(horizontal = 12.dp, vertical = 9.dp),
-            horizontalArrangement = Arrangement.Center,
-            verticalAlignment = Alignment.CenterVertically
-        ) {
-            Text(label, style = MaterialTheme.typography.labelLarge, fontWeight = FontWeight.SemiBold)
-            Spacer(Modifier.width(7.dp))
-            Text(count, style = MaterialTheme.typography.labelSmall)
+        CapabilitySection.entries.forEach { section ->
+            val label = when (section) {
+                CapabilitySection.SKILLS -> stringResource(R.string.chat_control_skills)
+                CapabilitySection.MCP -> "MCP"
+                CapabilitySection.PLUGINS -> stringResource(R.string.harness_plugins)
+            }
+            val tag = when (section) {
+                CapabilitySection.SKILLS -> INTELLIGENCE_CAPABILITY_SKILLS_TAB_TAG
+                CapabilitySection.MCP -> INTELLIGENCE_CAPABILITY_MCP_TAB_TAG
+                CapabilitySection.PLUGINS -> "intelligence.capabilities.plugins"
+            }
+            Surface(
+                modifier = Modifier.weight(1f).heightIn(min = 48.dp).clip(RoundedCornerShape(12.dp))
+                    .testTag(tag).selectable(selected = section == selected, role = Role.Tab, onClick = { onSelect(section) }),
+                color = selectionBackground(section == selected),
+                contentColor = if (section == selected) MaterialTheme.colorScheme.onSurface else MaterialTheme.colorScheme.onSurfaceVariant
+            ) {
+                Box(Modifier.padding(horizontal = 6.dp, vertical = 9.dp), contentAlignment = Alignment.Center) {
+                    Text(
+                        label,
+                        style = MaterialTheme.typography.labelLarge,
+                        fontWeight = FontWeight.SemiBold,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                        textAlign = androidx.compose.ui.text.style.TextAlign.Center
+                    )
+                }
+            }
         }
     }
 }
@@ -603,7 +579,7 @@ private fun selectionBackground(selected: Boolean): Color {
     val reduceMotion = rememberReduceMotionEnabled()
     val color by animateColorAsState(
         targetValue = if (selected) MaterialTheme.colorScheme.primaryContainer else Color.Transparent,
-        animationSpec = tween(if (reduceMotion) 0 else NolaMotion.fast),
+        animationSpec = com.nola.ui.components.nolaTween(NolaMotion.fast, reduceMotion),
         label = "intelligence-selection-background"
     )
     return color
@@ -680,14 +656,12 @@ private fun MemorySectionCard(
     onEdit: (Int, String) -> Unit,
     onDelete: (Int) -> Unit
 ) {
+    val reduceMotion = rememberReduceMotionEnabled()
     Surface(
         shape = RoundedCornerShape(20.dp),
         color = MaterialTheme.colorScheme.surface,
         modifier = Modifier.animateContentSize(
-            animationSpec = tween(
-                durationMillis = NolaMotion.base,
-                easing = NolaMotion.emphasizedEasing
-            )
+            animationSpec = com.nola.ui.components.nolaTween(NolaMotion.base, reduceMotion)
         )
     ) {
         Column(modifier = Modifier.padding(16.dp)) {
@@ -868,11 +842,14 @@ private fun CapabilityLibraryCard(
             Text(detail, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
         }
         if (isEmpty) {
-            Column(Modifier.fillMaxWidth().padding(vertical = 12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                Text(emptyTitle, style = MaterialTheme.typography.titleMedium)
-                Text(emptyText, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                TextButton(onClick = onAdd) { Text(addLabel) }
-            }
+            NolaEmptyState(
+                icon = Icons.Filled.Extension,
+                title = emptyTitle,
+                message = emptyText,
+                action = {
+                    Button(onClick = onAdd) { Text(addLabel) }
+                },
+            )
         } else {
             content()
             TextButton(onClick = onAdd) { Text(addLabel) }
@@ -1021,70 +998,88 @@ private fun skillGalleryPreview(content: String): String = content
     .replace(Regex("\\s+"), " ")
     .trim()
 
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 internal fun SkillEditorDialog(editor: SkillEditor, isSaving: Boolean, errorMessage: String?, onDismiss: () -> Unit, onSave: (String, String, String) -> Unit) {
     var name by remember(editor) { mutableStateOf(editor.skill.name) }
     var description by remember(editor) { mutableStateOf(editor.skill.description) }
     var content by remember(editor) { mutableStateOf(editor.skill.content) }
     var discard by remember(editor) { mutableStateOf(false) }
+    val dirty = editor.isEditable && (name != editor.skill.name || description != editor.skill.description || content != editor.skill.content)
     val requestDismiss = {
         if (!isSaving) {
-            if (editor.isEditable && (name != editor.skill.name || description != editor.skill.description || content != editor.skill.content)) discard = true
+            if (dirty) discard = true
             else onDismiss()
         }
     }
     if (discard) DiscardChangesDialog(onDiscard = onDismiss, onKeepEditing = { discard = false })
-    AlertDialog(
-        modifier = Modifier
-            .fillMaxWidth()
-            .widthIn(max = 720.dp)
-            .padding(horizontal = 16.dp),
-        properties = DialogProperties(usePlatformDefaultWidth = false),
+    val sheetState = com.nola.ui.components.rememberGuardedEditorSheetState(isSaving, dirty) { discard = true }
+    ModalBottomSheet(
+        modifier = Modifier.dismissImeOnBlankTap(),
         onDismissRequest = requestDismiss,
-        title = {
+        sheetState = sheetState,
+    ) {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .fillMaxHeight(0.9f)
+                .imePadding()
+                .navigationBarsPadding()
+                .padding(horizontal = 20.dp),
+        ) {
             Text(
                 when {
                     !editor.isEditable -> stringResource(R.string.intelligence_view)
                     editor.index == null -> stringResource(R.string.chat_new_skill)
                     else -> stringResource(R.string.intelligence_edit)
-                }
+                },
+                style = MaterialTheme.typography.titleLarge,
+                modifier = Modifier.padding(bottom = 12.dp),
             )
-        },
-        text = {
-            Column(Modifier.verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(9.dp)) {
+            Column(
+                modifier = Modifier.weight(1f).verticalScroll(rememberScrollState()),
+                verticalArrangement = Arrangement.spacedBy(10.dp),
+            ) {
                 if (isSaving) androidx.compose.material3.LinearProgressIndicator(modifier = Modifier.fillMaxWidth())
                 if (errorMessage != null) Text(
-                    stringResource(R.string.intelligence_editor_save_failed),
+                    errorMessage.ifBlank { stringResource(R.string.intelligence_editor_save_failed) },
                     color = MaterialTheme.colorScheme.error,
                     style = MaterialTheme.typography.bodySmall,
                 )
-                OutlinedTextField(name, { name = it }, modifier = Modifier.fillMaxWidth(), label = { Text(stringResource(R.string.chat_skill_name)) }, singleLine = true, enabled = editor.isEditable && !isSaving)
+                GithubSkillSourceLink(editor.skill)
+                OutlinedTextField(name, { name = it }, modifier = Modifier.fillMaxWidth().testTag("skill.editor.name"), label = { Text(stringResource(R.string.chat_skill_name)) }, singleLine = true, enabled = editor.isEditable && !isSaving)
                 OutlinedTextField(description, { description = it }, modifier = Modifier.fillMaxWidth(), label = { Text(stringResource(R.string.chat_skill_description)) }, maxLines = 3, enabled = editor.isEditable && !isSaving)
                 OutlinedTextField(
                     value = content,
                     onValueChange = { content = it },
-                    modifier = Modifier.fillMaxWidth(),
+                    modifier = Modifier.fillMaxWidth().testTag("skill.editor.content"),
                     label = { Text(stringResource(R.string.chat_skill_content)) },
                     supportingText = { Text(stringResource(R.string.intelligence_skill_characters, content.length)) },
-                    minLines = 10,
-                    maxLines = 18,
+                    minLines = 6,
+                    maxLines = 14,
                     enabled = editor.isEditable && !isSaving,
                 )
             }
-        },
-        confirmButton = {
-            if (editor.isEditable) {
-                Button(onClick = { onSave(name, description, content) }, enabled = !isSaving && name.isNotBlank() && content.isNotBlank()) { Text(stringResource(R.string.common_save)) }
-            }
-        },
-        dismissButton = {
-            TextButton(onClick = requestDismiss, enabled = !isSaving) {
-                Text(stringResource(if (editor.isEditable) R.string.common_cancel else R.string.common_ok))
+            HorizontalDivider(thickness = 0.5.dp, color = MaterialTheme.colorScheme.outlineVariant)
+            Row(
+                modifier = Modifier.fillMaxWidth().padding(vertical = 12.dp),
+                horizontalArrangement = Arrangement.spacedBy(8.dp, Alignment.End),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                TextButton(onClick = requestDismiss, enabled = !isSaving) {
+                    Text(stringResource(if (editor.isEditable) R.string.common_cancel else R.string.common_ok))
+                }
+                if (editor.isEditable) {
+                    Button(onClick = { onSave(name, description, content) }, enabled = !isSaving && name.isNotBlank() && content.isNotBlank()) {
+                        Text(stringResource(R.string.common_save))
+                    }
+                }
             }
         }
-    )
+    }
 }
 
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 internal fun McpEditorDialog(
     editor: McpEditor,
@@ -1096,9 +1091,10 @@ internal fun McpEditorDialog(
     var name by remember(editor) { mutableStateOf(editor.server.name) }
     var url by remember(editor) { mutableStateOf(editor.server.url) }
     var discard by remember(editor) { mutableStateOf(false) }
+    val dirty = editor.isEditable && (name != editor.server.name || url != editor.server.url)
     val requestDismiss = {
         if (!isSaving) {
-            if (editor.isEditable && (name != editor.server.name || url != editor.server.url)) discard = true
+            if (dirty) discard = true
             else onDismiss()
         }
     }
@@ -1108,55 +1104,63 @@ internal fun McpEditorDialog(
         val parsed = runCatching { URI(normalizedUrl) }.getOrNull()
         parsed != null && parsed.scheme?.lowercase() in setOf("http", "https") && !parsed.host.isNullOrBlank()
     }
-    AlertDialog(
-        modifier = Modifier
-            .fillMaxWidth()
-            .widthIn(max = 620.dp)
-            .padding(horizontal = 16.dp),
-        properties = DialogProperties(usePlatformDefaultWidth = false),
+    val sheetState = com.nola.ui.components.rememberGuardedEditorSheetState(isSaving, dirty) { discard = true }
+    ModalBottomSheet(
+        modifier = Modifier.dismissImeOnBlankTap(),
         onDismissRequest = requestDismiss,
-        title = {
+        sheetState = sheetState,
+    ) {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .imePadding()
+                .navigationBarsPadding()
+                .verticalScroll(rememberScrollState())
+                .padding(horizontal = 20.dp, vertical = 12.dp),
+            verticalArrangement = Arrangement.spacedBy(12.dp),
+        ) {
             Text(
                 when {
                     !editor.isEditable -> stringResource(R.string.intelligence_view)
                     editor.index == null -> stringResource(R.string.chat_new_mcp_server)
                     else -> stringResource(R.string.intelligence_edit)
-                }
+                },
+                style = MaterialTheme.typography.titleLarge,
             )
-        },
-        text = {
-            Column(Modifier.verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(9.dp)) {
-                OutlinedTextField(name, { name = it }, modifier = Modifier.fillMaxWidth(), label = { Text(stringResource(R.string.scheduled_name)) }, singleLine = true, enabled = editor.isEditable && !isSaving)
-                OutlinedTextField(
-                    value = url,
-                    onValueChange = { url = it },
-                    modifier = Modifier.fillMaxWidth(),
-                    label = { Text(stringResource(R.string.chat_endpoint_url)) },
-                    placeholder = { Text(stringResource(R.string.chat_mcp_endpoint_placeholder)) },
-                    supportingText = {
-                        if (url.isNotBlank() && !isValidUrl) {
-                            Text(stringResource(R.string.chat_mcp_endpoint_invalid))
-                        }
-                    },
-                    isError = url.isNotBlank() && !isValidUrl,
-                    singleLine = true,
-                    enabled = editor.isEditable && !isSaving,
-                )
-                if (isSaving) androidx.compose.material3.LinearProgressIndicator(modifier = Modifier.fillMaxWidth())
-                errorMessage?.let { Text(it, color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall) }
-            }
-        },
-        confirmButton = {
-            if (editor.isEditable) {
-                Button(onClick = { onSave(name, normalizedUrl) }, enabled = !isSaving && name.isNotBlank() && isValidUrl) { Text(stringResource(R.string.common_save)) }
-            }
-        },
-        dismissButton = {
-            TextButton(onClick = requestDismiss, enabled = !isSaving) {
-                Text(stringResource(if (editor.isEditable) R.string.common_cancel else R.string.common_ok))
+            OutlinedTextField(name, { name = it }, modifier = Modifier.fillMaxWidth().testTag("mcp.editor.name"), label = { Text(stringResource(R.string.scheduled_name)) }, singleLine = true, enabled = editor.isEditable && !isSaving)
+            OutlinedTextField(
+                value = url,
+                onValueChange = { url = it },
+                modifier = Modifier.fillMaxWidth().testTag("mcp.editor.endpoint"),
+                label = { Text(stringResource(R.string.chat_endpoint_url)) },
+                placeholder = { Text(stringResource(R.string.chat_mcp_endpoint_placeholder)) },
+                supportingText = {
+                    if (url.isNotBlank() && !isValidUrl) {
+                        Text(stringResource(R.string.chat_mcp_endpoint_invalid))
+                    }
+                },
+                isError = url.isNotBlank() && !isValidUrl,
+                singleLine = true,
+                enabled = editor.isEditable && !isSaving,
+            )
+            if (isSaving) androidx.compose.material3.LinearProgressIndicator(modifier = Modifier.fillMaxWidth())
+            errorMessage?.let { Text(it, color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall) }
+            Row(
+                modifier = Modifier.fillMaxWidth().padding(top = 4.dp, bottom = 8.dp),
+                horizontalArrangement = Arrangement.spacedBy(8.dp, Alignment.End),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                TextButton(onClick = requestDismiss, enabled = !isSaving) {
+                    Text(stringResource(if (editor.isEditable) R.string.common_cancel else R.string.common_ok))
+                }
+                if (editor.isEditable) {
+                    Button(onClick = { onSave(name, normalizedUrl) }, enabled = !isSaving && name.isNotBlank() && isValidUrl) {
+                        Text(stringResource(R.string.common_save))
+                    }
+                }
             }
         }
-    )
+    }
 }
 
 @Composable
@@ -1186,35 +1190,53 @@ private fun HowLearningWorksCard() {
 @Composable
 private fun IntelligenceEditorDialog(
     editor: IntelligenceEditor,
+    isSaving: Boolean,
+    errorMessage: String?,
     onDismiss: () -> Unit,
     onSave: (String) -> Unit
 ) {
     var value by remember(editor) { mutableStateOf(editor.initialValue) }
     var discard by remember(editor) { mutableStateOf(false) }
-    val requestDismiss = { if (value != editor.initialValue) discard = true else onDismiss() }
+    val requestDismiss = {
+        if (!isSaving) {
+            if (value != editor.initialValue) discard = true else onDismiss()
+        }
+    }
     if (discard) DiscardChangesDialog(onDiscard = onDismiss, onKeepEditing = { discard = false })
     val title = when (editor.kind) {
         IntelligenceEntryKind.Preference -> if (editor.index == null) stringResource(R.string.intelligence_add_preference) else stringResource(R.string.intelligence_edit_preference)
         IntelligenceEntryKind.Memory -> if (editor.index == null) stringResource(R.string.intelligence_add_memory) else stringResource(R.string.intelligence_edit_memory)
     }
     AlertDialog(
+        modifier = Modifier.dismissImeOnBlankTap().imePadding(),
         onDismissRequest = requestDismiss,
         title = { Text(title) },
         text = {
-            TextField(
-                value = value,
-                onValueChange = { value = it },
-                modifier = Modifier.fillMaxWidth(),
-                placeholder = { Text(stringResource(R.string.intelligence_editor_placeholder)) },
-                minLines = 2,
-                maxLines = 5
-            )
+            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                if (isSaving) androidx.compose.material3.LinearProgressIndicator(modifier = Modifier.fillMaxWidth())
+                errorMessage?.let {
+                    Text(
+                        it.ifBlank { stringResource(R.string.intelligence_editor_save_failed) },
+                        color = MaterialTheme.colorScheme.error,
+                        style = MaterialTheme.typography.bodySmall,
+                    )
+                }
+                TextField(
+                    value = value,
+                    onValueChange = { value = it },
+                    modifier = Modifier.fillMaxWidth(),
+                    placeholder = { Text(stringResource(R.string.intelligence_editor_placeholder)) },
+                    minLines = 2,
+                    maxLines = 5,
+                    enabled = !isSaving,
+                )
+            }
         },
         dismissButton = {
-            TextButton(onClick = requestDismiss) { Text(stringResource(R.string.common_cancel)) }
+            TextButton(onClick = requestDismiss, enabled = !isSaving) { Text(stringResource(R.string.common_cancel)) }
         },
         confirmButton = {
-            Button(onClick = { onSave(value) }, enabled = value.isNotBlank()) {
+            Button(onClick = { onSave(value) }, enabled = !isSaving && value.isNotBlank()) {
                 Text(stringResource(R.string.intelligence_save))
             }
         }

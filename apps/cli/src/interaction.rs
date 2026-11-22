@@ -574,7 +574,7 @@ pub fn start_execution_cancel_listener(
                 if let Some(store) = view_store.as_mut() {
                     let snapshot = thread_cancellation.input_snapshot();
                     if let Err(error) = store.save(crate::cli_view_state::ViewState {
-                        draft: snapshot.draft, cursor: snapshot.cursor,
+                        edit: None, expert_mentions: store.mentions_for(&snapshot.draft), draft: snapshot.draft, cursor: snapshot.cursor,
                         viewport: crate::terminal_ui::capture_viewport_bookmark(),
                     }) {
                         crate::terminal_ui::commit_history(&format!("无法保存 CLI 显示状态：{error}"));
@@ -711,7 +711,7 @@ fn submit_execution_draft(cancellation: &ExecutionCancellation) {
         } else if cancellation.listen_to_terminal {
             crate::terminal_ui::commit_history(&format!("\n⚠ {}\n", ui_text(UiText::InputAdmissionFailed)));
         }
-        if cancellation.listen_to_terminal && receipt == Ok(InputReceipt::Durable) {
+        if cancellation.listen_to_terminal && matches!(receipt, Ok(InputReceipt::Durable(_))) {
             crate::agent::print_queued_follow_up(&committed);
         }
     }
@@ -810,7 +810,10 @@ fn should_suppress_popup_shortcut(elapsed: Duration, key: &crossterm::event::Key
     elapsed < MODAL_POPUP_SHORTCUT_GUARD && is_modal_quick_confirm_key(key)
 }
 
-fn modal_scroll_direction(key: &crossterm::event::KeyEvent) -> Option<bool> {
+pub(crate) fn modal_scroll_direction(key: &crossterm::event::KeyEvent) -> Option<bool> {
+    if key.kind == crossterm::event::KeyEventKind::Release {
+        return None;
+    }
     match key.code {
         KeyCode::PageUp => Some(false),
         KeyCode::PageDown => Some(true),
@@ -1407,16 +1410,9 @@ fn render_user_question_prompt(prompt: &UserQuestionPrompt, selected: Option<usi
     }
     let decline_index = prompt.options.len() + usize::from(prompt.allow_freeform);
     let decline_marker = if selected == Some(decline_index) { "›" } else { " " };
-    let decline_label = match crate::i18n::current_language() {
-        crate::i18n::Language::ZhHans => "拒绝回答此问题",
-        _ => "Decline to answer",
-    };
-    rows.push(format!("{decline_marker} {decline_label}"));
-    rows.push(localized.selection_hint.to_string());
-    rows.push(match crate::i18n::current_language() {
-        crate::i18n::Language::ZhHans => "Esc: 保留问题稍后回答 · Alt+↑↓/PgUp/PgDn: 滚动",
-        _ => "Esc: keep open for later · Alt+↑↓/PgUp/PgDn: scroll",
-    }.to_string());
+    rows.push(format!("{decline_marker} {}", ui_text(UiText::DeclineQuestion)));
+    let hint = if selected.is_some() { UiText::QuestionKeyHint } else { UiText::QuestionLineHint };
+    rows.push(ui_text(hint).to_string());
 
     let inner = adaptive_panel_inner_width(&rows, terminal_columns());
     let mut out = String::new();
@@ -1492,12 +1488,12 @@ fn render_permission_prompt_with_selection(
     plain_rows.push((choose.to_string(), Some("\x1b[2;39m")));
     if prompt.supports_instruction {
         plain_rows.push((
-            "I. Add instruction; invocation stays paused until explicitly approved".to_string(),
+            ui_text(UiText::PermissionInstructionOption).to_string(),
             None,
         ));
         if selected.is_none() {
             plain_rows.push((
-                "Type i <instruction> to save guidance without granting permission".to_string(),
+                ui_text(UiText::PermissionInstructionCommand).to_string(),
                 Some("\x1b[2;39m"),
             ));
         }
@@ -1832,6 +1828,7 @@ mod tests {
         assert!(crate::execution_context::current_execution_id().is_none());
     }
     use crate::runtime_input::RuntimeInput;
+    use crate::i18n::{interaction_text, ui_text, UiText};
     use super::{
         adaptive_panel_inner_width, append_execution_input, confirmation_answer_is_yes,
         display_width, modal_scroll_direction, render_user_question_prompt,
@@ -2230,6 +2227,11 @@ mod tests {
             allow_freeform: true,
         };
         let rendered = render_user_question_prompt(&prompt, Some(0));
+        assert!(rendered.contains(ui_text(UiText::QuestionKeyHint)));
+        assert!(!rendered.contains(interaction_text().selection_hint));
+        let line_mode = render_user_question_prompt(&prompt, None);
+        assert!(line_mode.contains("/decline"));
+        assert!(!line_mode.contains("Esc"));
         for word in [
             "Preserve",
             "every",

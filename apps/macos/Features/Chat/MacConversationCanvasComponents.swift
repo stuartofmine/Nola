@@ -196,7 +196,7 @@ struct MacUserInputCard: View {
             guard canSubmit else { return }
             submit(answers)
         }
-        .buttonStyle(.borderedProminent)
+        .buttonStyle(.nolaProminent)
         .disabled(!canSubmit)
         .accessibilityIdentifier("user-input-submit")
     }
@@ -325,25 +325,72 @@ struct MacConversationSearchBar: View {
             TextField("Find in conversation", text: $model.transcriptSearchText)
                 .textFieldStyle(.plain)
                 .focused($focused)
+                .onSubmit {
+                    model.stepTranscriptSearchMatch(by: 1)
+                }
             if !model.transcriptSearchText.isEmpty {
+                Button {
+                    model.transcriptSearchText = ""
+                } label: {
+                    Image(systemName: "xmark.circle.fill")
+                        .foregroundStyle(.tertiary)
+                }
+                .buttonStyle(MacInlineIconButtonStyle(size: 24))
+                .help(String(localized: "Clear Search"))
+                .accessibilityLabel(String(localized: "Clear Search"))
+                .accessibilityIdentifier("workspace.clearTranscriptSearch")
+
                 Text("\(model.transcriptMatchCount) found")
                     .font(.system(size: 10.5, weight: .medium))
                     .foregroundStyle(.secondary)
+                    .monospacedDigit()
+
+                HStack(spacing: 2) {
+                    Button {
+                        model.stepTranscriptSearchMatch(by: -1)
+                    } label: {
+                        Image(systemName: "chevron.up")
+                            .font(.system(size: 11, weight: .semibold))
+                    }
+                    .buttonStyle(MacInlineIconButtonStyle(size: 24))
+                    .disabled(model.transcriptMatchCount == 0)
+                    .help(String(localized: "Previous Match"))
+                    .accessibilityLabel(String(localized: "Previous Match"))
+                    .accessibilityIdentifier("workspace.previousTranscriptMatch")
+
+                    Button {
+                        model.stepTranscriptSearchMatch(by: 1)
+                    } label: {
+                        Image(systemName: "chevron.down")
+                            .font(.system(size: 11, weight: .semibold))
+                    }
+                    .buttonStyle(MacInlineIconButtonStyle(size: 24))
+                    .disabled(model.transcriptMatchCount == 0)
+                    .help(String(localized: "Next Match"))
+                    .accessibilityLabel(String(localized: "Next Match"))
+                    .accessibilityIdentifier("workspace.nextTranscriptMatch")
+                }
             }
             Button {
-                model.transcriptSearchText = ""
                 model.isTranscriptSearchVisible = false
             } label: {
                 Image(systemName: "xmark")
             }
-            .buttonStyle(.plain)
+            .buttonStyle(MacInlineIconButtonStyle(size: 28))
             .help("Close Search")
+            .accessibilityLabel("Close Search")
+            .accessibilityIdentifier("workspace.closeTranscriptSearch")
         }
         .padding(.horizontal, 14)
         .frame(height: 36)
-        .background(.bar)
+        .background(MacDesignColor.chrome)
         .overlay(alignment: .bottom) { Divider() }
-        .onAppear { focused = true }
+        .task {
+            await Task.yield()
+            guard !Task.isCancelled else { return }
+            focused = true
+        }
+        .onExitCommand { model.isTranscriptSearchVisible = false }
     }
 }
 
@@ -384,23 +431,16 @@ struct MacEmptyConversationView: View {
                 VStack(spacing: compact ? 12 : 20) {
                     Spacer(minLength: compact ? 12 : 44)
 
-                    if !compact {
-                        ZStack {
-                            Circle()
-                                .fill(Color.accentColor.opacity(0.09))
-                                .frame(width: 44, height: 44)
-                            Image(systemName: "sparkles")
-                                .font(.system(size: 17, weight: .medium))
-                                .foregroundStyle(Color.accentColor)
-                        }
-                    }
                     VStack(spacing: 8) {
                         Text("What should we work on?")
                             .accessibilityIdentifier("chat.empty-state.title")
-                            .font(.system(size: 22, weight: .semibold, design: .rounded))
+                            .font(.system(size: compact ? 23 : 29, weight: .semibold))
+                            .foregroundStyle(Color("NolaTextPrimary"))
+                            .multilineTextAlignment(.center)
                         Text("Ask a question, open a workspace, or bring in a document.")
-                            .font(.system(size: 13))
-                            .foregroundStyle(.secondary)
+                            .font(.system(size: 14))
+                            .foregroundStyle(Color("NolaTextSecondary"))
+                            .multilineTextAlignment(.center)
                     }
 
                     ViewThatFits(in: .horizontal) {
@@ -441,20 +481,12 @@ struct MacEmptyConversationView: View {
                 Text(suggestion.title)
                     .font(.system(size: 12.5, weight: .semibold))
                     .lineLimit(1)
-                Spacer(minLength: 6)
-                Image(systemName: "chevron.forward")
-                    .font(.system(size: 8, weight: .bold))
-                    .foregroundStyle(.tertiary)
             }
             .padding(.horizontal, 12)
             .frame(maxWidth: .infinity, minHeight: 42)
-            .background(Color.primary.opacity(0.045), in: RoundedRectangle(cornerRadius: 10, style: .continuous))
-            .overlay {
-                RoundedRectangle(cornerRadius: 10, style: .continuous)
-                    .stroke(Color.primary.opacity(0.06), lineWidth: 0.5)
-            }
+            .contentShape(Rectangle())
         }
-        .buttonStyle(.plain)
+        .buttonStyle(MacActionButtonStyle(contentInsets: .init()))
         .help(suggestion.prompt)
     }
 }

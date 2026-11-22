@@ -1326,20 +1326,7 @@ fn split_frontmatter_paths(value: &str) -> Vec<String> {
         .collect()
 }
 
-fn markdown_frontmatter_body(text: &str) -> Option<(&str, &str)> {
-    let rest = text
-        .strip_prefix("---\n")
-        .or_else(|| text.strip_prefix("---\r\n"))?;
-    let marker = rest.find("\n---\n").or_else(|| rest.find("\r\n---\r\n"))?;
-    let body = &rest[..marker];
-    let content_start = marker
-        + if rest[marker..].starts_with("\r\n---\r\n") {
-            7
-        } else {
-            5
-        };
-    Some((body, &rest[content_start..]))
-}
+use nola_skill_host::markdown_frontmatter_body;
 
 fn instruction_frontmatter_paths(text: &str) -> Option<Vec<String>> {
     let (body, _) = markdown_frontmatter_body(text)?;

@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # SPDX-License-Identifier: Apache-2.0
-"""Opt-in. Send one real Electron chat turn and verify its canonical result after relaunch."""
+"""Opt-in. Send one real Tauri chat turn and verify its canonical result after relaunch."""
 import argparse
 import json
 import os
@@ -78,7 +78,7 @@ def main():
     parser.add_argument('--binary', type=Path, default=os.environ.get('NOLA_WINDOWS_CLI_PATH') or default_binary)
     args = parser.parse_args()
     if args.require_windows and sys.platform != 'win32':
-        parser.error('Native Windows Electron acceptance requires Windows')
+        parser.error('Native Windows Tauri acceptance requires Windows')
     requested = os.environ.get('NOLA_DESKTOP_MODEL_EVIDENCE')
     external = Path(requested).resolve() if requested else None
     if external:
@@ -87,9 +87,9 @@ def main():
             parser.error('NOLA_DESKTOP_MODEL_EVIDENCE must be a new file')
     binary = args.binary.resolve(strict=True)
     upstream, model, credential = selected_route(args.config)
-    evidence = Path(tempfile.mkdtemp(prefix='nola-electron-real-model-'))
+    evidence = Path(tempfile.mkdtemp(prefix='nola-tauri-real-model-'))
     print('Evidence:', evidence, flush=True)
-    report = {'passed': False, 'model': model, 'client': 'windows-electron', 'hostOS': sys.platform}
+    report = {'passed': False, 'model': model, 'client': 'windows-tauri', 'hostOS': sys.platform}
     marker = 'NOLA-DESKTOP-' + uuid.uuid4().hex.upper()
     calls = {}
     read_outputs = set()
@@ -118,9 +118,9 @@ def main():
             store = evidence / 'store'
             project, env, config = fixture(store, model, endpoint, profile='cautious')
             env.update(HOME=str(store / 'home'), USERPROFILE=str(store / 'home'),
-                       NOLA_E2E_USER_DATA=str(store / 'electron'), NOLA_WINDOWS_CLI_PATH=str(binary),
-                       NOLA_ELECTRON_MODEL_EVIDENCE=str(evidence))
-            workspace = store / 'electron' / 'Nola Workspace'
+                       NOLA_E2E_USER_DATA=str(store / 'tauri'), NOLA_WINDOWS_CLI_PATH=str(binary),
+                       NOLA_TAURI_MODEL_EVIDENCE=str(evidence))
+            workspace = store / 'tauri' / 'Nola Workspace'
             workspace.mkdir(parents=True)
             note = workspace / 'handoff-note.txt'
             expected_bytes = (marker + '\n').encode('ascii')
@@ -137,12 +137,11 @@ def main():
             node = shutil.which('node', path=env['PATH'])
             if not npm or not node:
                 raise RuntimeError('Node and npm are required')
-            for cwd in [ROOT / 'apps/web/frontend', WINDOWS]:
-                subprocess.run([npm, 'run', 'build'], cwd=cwd, env=env, check=True,
-                               stdout=subprocess.DEVNULL, timeout=240)
-            apply_config(binary, project, env, config, store)
-            with (evidence / 'renderer.log').open('w') as log:
-                subprocess.run([node, 'tests/realModelAcceptance.cjs'], cwd=WINDOWS, env=env,
+            installed = os.environ.get('NOLA_INSTALLED_DESKTOP')
+            if not installed or not Path(installed).is_file():
+                raise RuntimeError('Set NOLA_INSTALLED_DESKTOP to the installed Tauri executable')
+            env['NOLA_INSTALLED_DESKTOP'] = installed
+            subprocess.run([node, 'tests/realModelAcceptance.cjs'], cwd=WINDOWS, env=env,
                                stdout=log, stderr=subprocess.STDOUT, check=True, timeout=360)
             ui = json.loads((evidence / 'renderer.json').read_text())
             if not ui['passed'] or not ui['restored']:
@@ -198,7 +197,7 @@ def main():
             if sys.platform == 'win32' and ui['os'] == 'win32' and os.environ.get('NOLA_E2E_RECEIPT_PATH'):
                 record_step('windows-model-relaunch', platforms=['windows'],
                     modules=['agent', 'core', 'provider', 'persistence', 'tools', 'ui'],
-                    boundaries=['electron-renderer', 'windows-ui', 'local-host', 'provider', 'sqlite', 'filesystem'],
+                    boundaries=['tauri-renderer', 'windows-ui', 'local-host', 'provider', 'sqlite', 'filesystem'],
                     assertions=assertions,
                     assertion_evidence={'model_reply_restored': ['renderer', 'provider', 'run-audit', 'desktop-transcript',
                                                                 'desktop-accessibility', 'desktop-screenshot', 'desktop-timeline'],

@@ -1,16 +1,10 @@
 package com.nola.ui.screen.chat
 
-import android.content.Context
 import android.database.sqlite.SQLiteDatabase
 import com.nola.data.local.*
-import com.nola.data.local.datastore.MemoryProfileDataStore
-import com.nola.data.local.security.SecureTokenStore
 import java.security.MessageDigest
-import java.util.UUID
-import kotlinx.coroutines.runBlocking
 import kotlinx.serialization.json.*
 
-/** Creates owned test data, never an authorization decision, receipt or reply. */
 internal data class RealExpertTemplateFixture(val id: String, val name: String, val body: String,
     val owner: String, val catalogRevision: Long) {
     val digest: String get() = sha(body)
@@ -18,25 +12,6 @@ internal data class RealExpertTemplateFixture(val id: String, val name: String, 
         fun sha(text: String): String = MessageDigest.getInstance("SHA-256").digest(text.encodeToByteArray())
             .joinToString("") { "%02x".format(it) }
     }
-}
-
-internal fun createRealExpertTemplateFixture(context: Context, runtime: AndroidApplicationRuntime): RealExpertTemplateFixture {
-    requireIsolatedProductTestUser(context)
-    // A malformed current catalog remains rejected, never repaired by setup.
-    runtime.readableExpertTemplates()
-    val owner = runBlocking { MemoryProfileDataStore(context, SecureTokenStore(context), runtime).getOrCreateResourcePrincipalId() }
-    val id = UUID.randomUUID().toString()
-    val name = "Real capture template " + id.take(8)
-    val body = "Keep arithmetic answers brief. Preserve the user's requested marker."
-    val record = buildJsonObject {
-        put("id", id); put("name", name); put("description", "Owned real-provider UI capture fixture")
-        put("content", body); put("isBuiltIn", false); put("accessOwnerID", owner); put("accessRevision", 1)
-        val date = System.currentTimeMillis() / 1000.0 - 978307200.0
-        put("createdAt", date); put("updatedAt", date)
-    }
-    val revision = updateRealTemplateCatalog(runtime) { templates -> templates + record }
-    check(runtime.readableExpertTemplates().templates.single { it.id == id }.name == name)
-    return RealExpertTemplateFixture(id, name, body, owner, revision)
 }
 
 /** User-owned fixture update through current checked Core CAS, with all other

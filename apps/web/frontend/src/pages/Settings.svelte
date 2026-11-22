@@ -5,6 +5,7 @@
     import { workspaceElements } from '../lib/workspacePageLocation';
     const pageElements = workspaceElements();
     import DesktopSettings from '../components/DesktopSettings.svelte';
+    import PrototypeIcon from '../components/PrototypeIcon.svelte';
     import SoftwareUpdateSettings from '../components/SoftwareUpdateSettings.svelte';
     import LanguagePreference from '../components/LanguagePreference.svelte';
     import { workspacePageLocation } from '../lib/workspacePageLocation';
@@ -34,6 +35,7 @@
     let selected = $state<Category>('general');
     let narrow = $state(window.innerWidth <= 760);
     let overview = $state(!resolveSettingsCategory(pageLocation.read().searchParams.get('section')));
+    const showMobileOverview = $derived(narrow && overview);
     let visited = $state<Set<Category>>(new Set(['general']));
     function select(category: Category) {
         selected = category; overview = false;
@@ -44,12 +46,26 @@
         revealTab(category);
     }
     function showOverview() {
+        if (narrow && !pageLocation.key && history.state?.nolaSettingsSection) {
+            history.back();
+            return;
+        }
         overview = true;
         const url = pageLocation.read(); url.searchParams.delete('section'); pageLocation.replace(url);
     }
     function openCategory(event: MouseEvent, category: Category) {
         if (event.button !== 0 || event.ctrlKey || event.metaKey || event.shiftKey || event.altKey) return;
-        event.preventDefault(); select(category);
+        event.preventDefault();
+        if (narrow && overview && !pageLocation.key) {
+            history.pushState({...history.state, nolaSettingsSection: true}, '', (event.currentTarget as HTMLAnchorElement).href);
+        }
+        select(category);
+    }
+    function restoreSection() {
+        if (pageLocation.key || location.pathname !== '/settings') return;
+        const category = resolveSettingsCategory(pageLocation.read().searchParams.get('section'));
+        if (category) select(category);
+        else overview = true;
     }
     function revealTab(category: Category) {
         if (!pageLocation.active() || !narrow) return;
@@ -110,22 +126,22 @@
             if (disposed) return;
             if (!logoutConfirmed(result)) throw new Error('Unconfirmed logout');
             session = { ...session, sessionAuthenticated: false, authenticated: session.localTrust };
-            window.location.assign('/login?logged_out=1');
+            window.location.assign('/login?logged_out=1&next=%2Fsettings%3Fsection%3Dconnections');
         } catch { if (!disposed) error = 'settings.logoutError'; }
         finally { if (!disposed) busy = false; }
     }
 </script>
 
 <svelte:head>{#if pageLocation.active()}<title>{t($locale, 'shell.settings')} — Nola</title>{/if}</svelte:head>
-<svelte:window onresize={resize} />
+<svelte:window onresize={resize} onpopstate={restoreSection} />
 <ConfirmationDialog bind:this={confirmation} />
-{#if !overview}<div class="settings-back"><button type="button" onclick={showOverview}><span aria-hidden="true">‹</span>{t($locale, 'shell.settings')}</button></div>{/if}
-<header class="page-header" class:mobile-overview={narrow && overview}><div><h1 id="settings-mobile-title">{t($locale, !overview ? `settings.category.${selected}` : 'shell.settings')}</h1></div></header>
-<div class="content management-content settings-layout" class:mobile-overview={narrow && overview} class:overview>
-    {#if overview}<nav class="settings-overview" aria-label={t($locale, 'settings.sections')}>
+{#if narrow && !overview}<div class="settings-back"><button type="button" onclick={showOverview}><PrototypeIcon name="back" size={18} />{t($locale, 'shell.settings')}</button></div>{/if}
+<header class="page-header" class:mobile-overview={showMobileOverview}><div><h1 id="settings-mobile-title">{t($locale, narrow && !overview ? `settings.category.${selected}` : 'shell.settings')}</h1></div></header>
+<div class="content management-content settings-layout" class:mobile-overview={showMobileOverview} class:overview={showMobileOverview}>
+    {#if showMobileOverview}<nav class="settings-overview" aria-label={t($locale, 'settings.sections')}>
         {#each categories as category}<a href={`/settings?section=${category}`} onclick={event => openCategory(event, category)}><span><strong>{t($locale, `settings.category.${category}`)}</strong></span></a>{/each}
     </nav>{/if}
-    <aside class="settings-sidebar" hidden={overview}>
+    <aside class="settings-sidebar" hidden={showMobileOverview}>
         <div role="tablist" aria-label={t($locale, 'settings.sections')} aria-orientation={narrow ? 'horizontal' : 'vertical'}>
             {#each categories as category}
                 <button role="tab" id={`settings-tab-${category}`} aria-controls={`settings-panel-${category}`} aria-selected={selected === category} tabindex={selected === category ? 0 : -1} onclick={() => select(category)} onkeydown={event => navigate(event, category)}>{t($locale, `settings.category.${category}`)}</button>
@@ -136,7 +152,7 @@
             <a href="/scheduled-actions">{t($locale, 'shell.nav.automation')}</a>
         </nav>
     </aside>
-    <div class="settings-panels" hidden={overview}>
+    <div class="settings-panels" hidden={showMobileOverview}>
     <div role={narrow ? "region" : "tabpanel"} id="settings-panel-general" aria-labelledby={narrow ? "settings-mobile-title" : "settings-tab-general"} hidden={selected !== 'general'}>
     <section class="card preferences-card"><LanguagePreference />
     <label>{t($locale, 'shell.appearance')}<select bind:value={$appearance}>
@@ -163,18 +179,20 @@
         </section>
     </div>
     <div role={narrow ? "region" : "tabpanel"} id="settings-panel-connections" aria-labelledby={narrow ? "settings-mobile-title" : "settings-tab-connections"} hidden={selected !== 'connections'}>
-    <section class="card" id="host-session" aria-busy={loading || busy}>
+    <section class="card host-session" id="host-session" aria-busy={loading || busy}>
         <div class="row between"><h2>{t($locale, 'settings.session')}</h2><button disabled={loading || busy} onclick={load}>{t($locale, 'models.reload')}</button></div>
         {#if loading}<p role="status">{t($locale, 'settings.loading')}</p>{/if}
         {#if error}<p role="alert" class="error">{t($locale, error)}</p>{/if}
         {#if session}
-            <dl><dt>{t($locale, 'settings.host')}</dt><dd title={session.hostId}>{session.localTrust ? t($locale, 'chatOverview.localHost') : session.hostId.slice(0, 8)}</dd><dt>{t($locale, 'settings.connection')}</dt><dd>{t($locale, session.sessionAuthenticated ? 'settings.signedIn' : session.localTrust ? 'settings.local' : 'settings.signedOut')}</dd></dl>
+            <dl><dt>{t($locale, 'settings.host')}</dt><dd title={session.hostId}>{session.localTrust ? t($locale, 'chatOverview.localHost') : session.hostId}</dd><dt>{t($locale, 'settings.connection')}</dt><dd>{t($locale, session.sessionAuthenticated ? 'settings.signedIn' : session.localTrust ? 'settings.local' : 'settings.signedOut')}</dd></dl>
             {#if session.transportIngress === "tailcat"}<p class="muted">{t($locale, 'settings.tailcatIngress')}</p>{/if}
             {#if session.localTrust}<p class="muted">{t($locale, 'settings.localHint')}</p>{/if}
-            {#if session.sessionAuthenticated}<div class="actions"><button disabled={busy || loading} onclick={logout}>{t($locale, 'settings.logout')}</button></div>
-            {:else}<a class="button" href="/login?next=%2Fsettings">{t($locale, 'settings.signIn')}</a>{/if}
+            {#if session.sessionAuthenticated}<div class="actions"><button class="danger" disabled={busy || loading} onclick={logout}>{t($locale, 'settings.logout')}</button></div>
+            {:else}
+                <p class="muted">{t($locale, 'settings.tokenAuth')}</p>
+                <a class="button" href="/login?next=%2Fsettings%3Fsection%3Dconnections">{t($locale, 'settings.signIn')}</a>
+            {/if}
         {/if}
-        <p class="muted">{t($locale, 'settings.tokenAuth')}</p>
     </section>
         {#if visited.has('connections')}<div id="messaging-settings"><MessagingSettings /></div>{/if}
     </div>
@@ -184,18 +202,19 @@
     </div>
 </div>
 <style>
-    .preferences-card :global(label){display:flex;align-items:center;justify-content:space-between;gap:24px;min-height:56px}
-    .preferences-card :global(select){width:min(260px,55%);min-width:160px}
+    .preferences-card :global(label){display:flex;flex-wrap:wrap;align-items:center;justify-content:space-between;gap:8px 24px;min-height:56px}
+    .preferences-card :global(select){width:min(260px,100%);min-width:min(160px,100%)}
     .settings-layout.overview{display:block}
     .settings-sidebar[hidden]{display:none}
     .settings-layout{display:grid;grid-template-columns:180px minmax(0,1fr);gap:40px;align-items:start}
     .settings-sidebar{position:sticky;top:20px;min-width:0}.settings-sidebar [role=tablist],.settings-links{display:flex;flex-direction:column;gap:6px}
-    .settings-sidebar button{border-color:transparent;background:transparent;box-shadow:none}
+    .settings-sidebar button{border-color:transparent;background:transparent;box-shadow:none;color:var(--muted)}
+    .settings-sidebar button:hover:not(:disabled){background:var(--composer-pill-hover-bg);border-color:transparent;color:var(--content)}
     .settings-sidebar button,.settings-links a{min-height:var(--control-hit-size);text-align:start;white-space:normal;overflow-wrap:anywhere;padding:10px 12px}
-    .settings-sidebar button[aria-selected=true]{background:var(--accent-subtle);color:var(--content);border-color:transparent}
+    .settings-sidebar button[aria-selected=true]{background:var(--glass-pill-bg);color:var(--content);border-color:var(--glass-pill-border);box-shadow:var(--glass-pill-shadow)}
     .settings-links{margin-top:18px;border-top:1px solid var(--border);padding-top:12px}.settings-links a{color:var(--muted);text-decoration:none;border-radius:8px}
-    .settings-links a:hover{background:var(--panel);color:var(--content)}.settings-panels{min-width:0}.settings-panels [role=tabpanel]{outline-offset:4px}.settings-panels > div:not([hidden]){display:grid;gap:24px}.settings-panels[hidden],.settings-panels > div[hidden]{display:none}
-    @media(max-width:760px){.settings-layout{grid-template-columns:minmax(0,1fr);gap:16px}.settings-sidebar{position:static}.settings-sidebar [role=tablist]{display:flex;flex-direction:row;overflow-x:auto;scrollbar-width:thin;gap:4px;padding:4px;scroll-padding-inline:4px}.settings-sidebar button{flex:0 0 auto;text-align:center;padding:8px 12px;white-space:nowrap}.settings-links{flex-direction:row;flex-wrap:wrap;margin-top:10px;padding-top:8px;gap:2px}.settings-links a{padding:6px 8px}}
+    .settings-links a:hover{background:var(--composer-pill-hover-bg);color:var(--content)}.settings-panels{min-width:0}.settings-panels [role=tabpanel]{outline-offset:4px}.settings-panels > div:not([hidden]){display:grid;gap:24px}.settings-panels[hidden],.settings-panels > div[hidden]{display:none}
+    @media(max-width:760px){.settings-layout{grid-template-columns:minmax(0,1fr);gap:16px}.settings-sidebar{position:static}.settings-sidebar [role=tablist]{display:flex;flex-direction:row;overflow-x:auto;scrollbar-width:thin;gap:4px;padding:4px;scroll-padding-inline:4px;background:var(--glass-track-bg);border:1px solid var(--glass-track-border);border-radius:var(--radius)}.settings-sidebar button{flex:0 0 auto;text-align:center;padding:8px 12px;white-space:nowrap}.settings-links{flex-direction:row;flex-wrap:wrap;margin-top:10px;padding-top:8px;gap:2px}.settings-links a{padding:6px 8px}}
     .settings-child-links { display: flex; flex-wrap: wrap; gap: 12px; }
     .settings-overview { display: grid; gap: 0; border-top: 1px solid var(--border); }
     .settings-overview a { display: flex; align-items: center; gap: 16px; padding: 12px; min-height: 56px; border: 0; border-bottom: 1px solid var(--border); border-radius: 0; }
@@ -204,7 +223,6 @@
     .settings-overview strong { font-size: 17px; line-height: 24px; font-weight: 600; }
     .settings-back { padding: 4px 16px 0; }
     .settings-back button { min-height: 44px; padding: 4px; background: transparent; box-shadow: none; border: 0; display: flex; gap: 8px; align-items: center; }
-    .settings-back span { font-size: 24px; }
     @media(max-width:760px) {
         .settings-sidebar { display: none; }
         .page-header.mobile-overview { padding: 4px 20px 22px; }
@@ -213,6 +231,7 @@
     }
     dl { display: grid; grid-template-columns: auto minmax(0, 1fr); gap: 8px 16px; }
     dt { color: var(--muted); } dd { margin: 0; overflow-wrap: anywhere; }
+    .host-session > dl, .host-session > p { margin-block: 0; }
     #agent-access, #messaging-settings, #host-session { scroll-margin-top: 20px; }
     .settings-panels :global([data-workspace-id="agent-access"]), .settings-panels :global([data-workspace-id="messaging-settings"]), .settings-panels :global([data-workspace-id="host-session"]) { scroll-margin-top: 20px; }
 </style>

@@ -28,6 +28,11 @@ nonisolated public final class LogFileStore: @unchecked Sendable {
     private init() {}
 
     public func logFileURL() -> URL {
+        #if os(macOS)
+        return MacAppEnvironment.shared.supportRoot
+            .appendingPathComponent("Logs", isDirectory: true)
+            .appendingPathComponent("nola.log", isDirectory: false)
+        #else
         let environment = ProcessInfo.processInfo.environment
         if let configured = environment["NOLA_MAC_APP_SUPPORT"]?
             .trimmingCharacters(in: .whitespacesAndNewlines),
@@ -58,6 +63,7 @@ nonisolated public final class LogFileStore: @unchecked Sendable {
             .appendingPathComponent("Nola", isDirectory: true)
             .appendingPathComponent("Logs", isDirectory: true)
         return dir.appendingPathComponent("nola.log", isDirectory: false)
+        #endif
     }
 
     public func appendLine(_ line: String) {

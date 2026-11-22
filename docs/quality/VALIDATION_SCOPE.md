@@ -1,5 +1,21 @@
 # 当前验收范围
 
+## 消息内的专家提及（2026-11-20）
+
+| 入口 | 已验证的行为 |
+| --- | --- |
+| 主 Agent 与 Core | 隔离会话中用 Luna 完成四轮对话、四个专家任务，共 17 次模型请求。逐条核对原文、提及位置和实际成员，确认专家能接续自己的历史，缺少信息时由主 Agent 向用户澄清。事务回归另核对伪造名字被拒、移除最后一个提及、准入失败保留原消息及回复。 |
+| Web | Chrome 生产页面里点名、移除另一个专家、发送，冷启动后从原消息换人重发；回复和历史均属于同一个主会话。真实发送与重发在 1280 px 页面验证；另用同一输入组件检查 320、400、1280 px 宽度的候选与换行。专家改名并重新引入后，冷启动打开旧提及能读到原专家的回复，当前成员目录暂不可用时也能打开。 |
+| macOS | 在 AppKit 输入框用鼠标和键盘从候选选人，核对中文句中插入、整段删除和恢复原身份，检查深浅色截图。选择候选期间，Core 未收到入会请求。 |
+| iOS | 原生模拟器实际输入、点选专家，并检查键盘和主会话标题；另从父会话打开只读专家历史并返回输入框。删除最后一个提及后重发，核对替换消息获准时旧问答已离开当前画面。远程读取使用来源校验夹具，本轮未测试 iPhone 真机或两台实际配对的 Apple 设备。 |
+| Android | 模拟器中在中文句中点选、整段退格、撤销。使用 Luna 发送给算术专家，编辑后重新请求计算，在同一主会话核对新结果和冻结身份。重开子会话并核对消息 ID，验证撤回任务的输入与回复已从当前历史移除。更新专家并重新加入后，从旧消息点开原只读历史，核对其没有继续发言入口。 |
+| 交互式 CLI | 真实 PTY 中在中文正文点名、退格和撤销；再粘贴同名文字后仍只有一次绑定。从已完成的主会话用 `/edit <消息 ID>` 恢复原文及专家，取消编辑后原记录可读。另从四轮真实对话的隔离副本编辑第三轮，核对专家子会话前两轮的四条消息继续可见、后两轮的四条消息回溯，主会话只增加一份替换输入。 |
+| Windows 与原型 | 在 macOS 的 Chromium 上验过 Tauri 桌面壳与本地 Host，原型另验桌面和手机的明暗主题。Windows 安装包及原生 WebView2 的输入法需在 Windows 上另验。 |
+
+首次真实协作运行在第二轮收到缺少原因码的流错误。新建隔离会话后四轮全部完成，首次中断的原因尚未确定。Android 候选用例有一次 15 秒等待超时，重启测试应用后重跑通过。
+
+真实协作可通过 [Host 验收脚本](../../scripts/test_real_expert_roles.py)复验，浏览器交互使用 [Web 专家用例](../../scripts/test_web_expert_mentions.py)。手机模拟器、桌面浏览器与原型的结果分别记录。
+
 ## 首次使用、会话恢复与发布验收（2026-11-19）
 
 | 验收入口 | 实际检查 |
@@ -8,7 +24,7 @@
 | Web 页面 | 浏览器从登录页输入错误和有效令牌，从设置点进选中的远程模型，再切换模型标签并刷新。页面矩阵覆盖 14 条路由、200 组视图。另在 320 px 与 1440 px 的真实会话中用键盘打开更多消息操作、取消并核对焦点返回。 |
 | Apple 客户端 | iOS 模拟器覆盖模型草稿恢复、资料保存冲突与编辑重发。macOS 使用可控事件源触发超时、重连和终态，核对恢复游标与完成事件次数。 |
 | Android | API 35 模拟器上的 WorkManager 和 Activity 使用同一运行处理授权。测试分别核对一次性计划拒绝后停用、周期计划批准后只有一次下次调度，以及等待回执期间编辑的指导草稿。模型响应由本地 HTTP 服务提供。页面矩阵另覆盖三种宽度的深浅色主题，共 7 项测试、98 张截图。 |
-| 桌面壳 | `windows-host-restart` 核对 Host 重启后恢复的草稿和附件。`windows-model-relaunch` 让模型从隔离工作区读取随机标记，核对工具调用、文件原文与回答。冷启动后逐字核对界面与持久回复，并检查只有一个已封存运行。两项平台回执都需要 Windows 执行器。macOS 上的 Electron 结果单独记录。 |
+| 桌面壳 | `windows-host-restart` 核对 Host 重启后恢复的草稿和附件。`windows-model-relaunch` 让模型从隔离工作区读取随机标记，核对工具调用、文件原文与回答。冷启动后逐字核对界面与持久回复，并检查只有一个已封存运行。两项平台回执都需要 Windows 执行器。跨平台 Chromium 渲染测试单独记录。 |
 | 消息接入与发布 | `messaging-host-channel-proxy` 经过公开源码中的 Rust Host 和隔离 HTTP 接入服务。发布测试从指定 Git 提交导出，验证未提交内容不进入快照，并校验发行包首页实际引用的脚本和样式。macOS ARM64 ZIP 解压后，已用包内启动脚本通过 14 条路由的浏览器矩阵。 |
 
 运行 `python3 scripts/run_real_system_tests.py --scenario cli-web-integrated-runtime` 可以复验 Web Host 链路。最终 Release 用例完成 27 次模型请求，验证复制会话和压缩后的追问都能找回原消息中的随机标记。手动压缩替换 11 项、保留 2 项，两项都是历史记录数。CLI 的自动压缩另用 16 个顺序文件节点、冷启动追问和 28 次模型请求验收。此次没有重跑数百步测试。手机真机、Windows 安装器与系统托盘、外部托管消息服务仍需在对应环境验收。
@@ -207,3 +223,17 @@ Web 生成路线共 236 次请求，234 次成功，两次真实上游传输错�
 ## 尚未覆盖
 
 Mac/iOS 原生同等 200 步远端任务、Windows 系统运行、物理手机后台、双设备 Wi-Fi/Bonjour/防火墙/网络切换，以及全部 provider、语言、字号、CLI 图片粘贴/权限流程，均不因上述结果关闭。[宿主机合同](../design/shared/HOST_CONNECTION_WORKFLOW.md)和[版本策略](../architecture/总体设计/VERSION_COMPATIBILITY.md)继续适用。
+
+## GitHub Skill 安装验收
+
+用隔离数据库和公开的 `Yuan1z0825/nature-skills` 验证。首次安装前检查目标不存在，安装后查设置中的启用状态和固定提交。新会话须调用已安装的 Skill，并读出 `nature-shared/core/terminology-ledger.md` 的内容。
+
+| 入口 | 复跑方式 |
+| --- | --- |
+| CLI | `python3 scripts/test_real_github_skill_install.py --entry name` 或 `--entry url`，覆盖启用、禁用、设置编辑和跨会话读取。 |
+| Web | 同一脚本加 `--entry web`，由 Chromium 在聊天中提交、审阅安装许可，并在第二个会话验证引文。 |
+| macOS | 设置 `NOLA_MAC_REAL_ONLY_TESTING=NolaMacTests/MacAgentCapabilityEndToEndTests/testRealMacChatInstallsGitHubSkillAndUsesEditedPackageInFreshConversation` 后运行 `scripts/run_real_mac_xctests.sh`。新会话还须读出用户加入说明的随机标记。 |
+| iOS | `python3 scripts/test_real_ios_github_skills.py`，需要已构建的 Host、已配置的模型和可用 iPhone 模拟器。脚本记录本机与配对 Host 的 XCTest 结果，并单独运行设置页 XCUITest。 |
+| Android 本机 | `python3 scripts/test_real_android_github_skill.py --serial <模拟器> --user <隔离用户>`，通过原生界面按名称搜索、单次批准安装、在第二个会话读取资源，并打开设置页查看来源。 |
+| Android 配对 Host | `python3 scripts/test_real_android_remote_long_task.py --serial <模拟器> --avd <AVD> --user <隔离用户> --github-skill`。独立核对 Host 写入成功、手机上的 Skill 记录和文件清单保持一致。 |
+| Windows | `npm --prefix apps/windows test` 验证桌面壳与 Web Host 集成。安装包与 WebView2 的系统级操作需要 Windows 测试机。 |

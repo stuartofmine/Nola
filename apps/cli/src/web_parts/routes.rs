@@ -473,10 +473,7 @@ pub fn run_web_server(config: &Config) -> Result<(), String> {
                 return Ok(());
             }
             let settings = load_agent_settings_from_store(&store)?;
-            builtin_skills::synchronize(
-                &settings.builtin_skill_overrides,
-                &settings.uploaded_skills,
-            )
+            builtin_skills::synchronize(&settings.builtin_skill_overrides)
             .map(|_| ())
         },
     )?;
@@ -654,6 +651,50 @@ fn route_request(
     config: &Config,
     _language: crate::i18n::Language,
 ) -> Response<Box<dyn Read + Send>> {
+    if matches!(path, "/api/harness-plugins" | "/api/desktop-plugin-pages") {
+        if method != &Method::Post { return method_not_allowed(); }
+        if !(source_management_request_allowed(request, config.tailcat_ingress)
+            || (web_session_is_authenticated(request) && web_csrf_is_valid(request))) {
+            return json_response(StatusCode(403), json!({"error":"Open plugin management from the selected Host."}));
+        }
+        #[derive(Deserialize)]
+        #[serde(deny_unknown_fields)]
+        struct PluginAction { #[serde(default)] runtime: String, #[serde(default)] profile: String, action: String, #[serde(default)] source: String }
+        let mut body = Vec::new();
+        if request.as_reader().take(4097).read_to_end(&mut body).is_err() || body.len() > 4096 {
+            return json_response(StatusCode(400), json!({"error":"Invalid plugin request"}));
+        }
+        if path == "/api/desktop-plugin-pages" {
+            #[derive(Deserialize)]
+            #[serde(deny_unknown_fields)]
+            struct PageRequest { id: Option<String> }
+            let Ok(input) = serde_json::from_slice::<PageRequest>(&body) else {
+                return json_response(StatusCode(400), json!({"error":"Invalid desktop page request"}));
+            };
+            return match crate::harness_plugin::desktop::catalog(input.id.as_deref()) {
+                Ok(value) => json_response(StatusCode(200), value),
+                Err(error) => json_response(StatusCode(if error == "Desktop plugin page is unavailable" {404} else {500}), json!({"error":error})),
+            }.with_header(Header::from_bytes("Cache-Control", "no-store").unwrap());
+        }
+        let Ok(input) = serde_json::from_slice::<PluginAction>(&body) else {
+            return json_response(StatusCode(400), json!({"error":"Invalid plugin request"}));
+        };
+        let host = request_header(request, "Host").and_then(|value| reqwest::Url::parse(&format!("http://{value}")).ok())
+            .and_then(|url| url.host_str().map(str::to_owned));
+        let Some(host) = host else {return json_response(StatusCode(400), json!({"error":"Missing Host"}));};
+        let local = source_management_request_allowed(request, config.tailcat_ingress);
+        if input.action == "library" {
+            if !input.runtime.is_empty() || !input.profile.is_empty() || !input.source.is_empty() {
+                return json_response(StatusCode(400), json!({"error":"Library lists all runtime profiles"}));
+            }
+            return json_response(StatusCode(200), crate::harness_plugin::desktop::library(&host, local))
+                .with_header(Header::from_bytes("Cache-Control", "no-store").unwrap());
+        }
+        return match crate::harness_plugin::manage(&input.runtime, &input.profile, &input.action, &input.source, &host, local) {
+            Ok(snapshot) => json_response(StatusCode(200), snapshot),
+            Err(error) => json_response(StatusCode(409), json!({"error":error})),
+        };
+    }
     if matches!(path, "/api/software-update" | "/api/software-update/check" | "/api/software-update/package") {
         return software_update_response(request, method, path)
             .with_header(Header::from_bytes("Cache-Control", "no-store").unwrap());
@@ -721,11 +762,48 @@ fn route_request(
     if matches!(path, "/api/model-import/plan" | "/api/model-import/commit") {
         return if method == &Method::Post { model_import_response(request, config, path.ends_with("/commit")) } else { method_not_allowed() };
     }
+    if path == "/api/local-models/engine-status" {
+        if !matches!(method, &Method::Get | &Method::Head) { return method_not_allowed(); }
+        let engine = query_param(url, "engine").unwrap_or_default();
+        if !matches!(engine.as_str(), "llama.cpp" | "vllm") {
+            return json_response(StatusCode(400), json!({"error":"Unknown desktop engine."}));
+        }
+        let local = source_management_peer_allowed(request.remote_addr(), config.tailcat_ingress)
+            && request_header(request, "Host").and_then(|host| reqwest::Url::parse(&format!("http://{host}")).ok())
+                .is_some_and(|url| matches!(url.host_str(), Some("localhost" | "127.0.0.1" | "[::1]")));
+        return match crate::model_acquisition::engine_status(&engine, local) {
+            Ok(value) => json_response(StatusCode(200), value),
+            Err(message) => json_response(StatusCode(400), json!({"error":message})),
+        };
+    }
+    if path == "/api/local-models/setup-engine" {
+        if method != &Method::Post { return method_not_allowed(); }
+        if !source_management_request_allowed(request, config.tailcat_ingress) {
+            return json_response(StatusCode(403), json!({"error":"Open model settings on the Host to install an engine.","code":"install_on_host"}));
+        }
+        #[derive(serde::Deserialize)]
+        #[serde(deny_unknown_fields)]
+        struct Setup { engine: String }
+        let input = match read_json::<Setup>(request) { Ok(input) => input, Err(response) => return response };
+        if !matches!(input.engine.as_str(), "llama.cpp" | "vllm") {
+            return json_response(StatusCode(400), json!({"error":"Unknown desktop engine."}));
+        }
+        return match crate::model_acquisition::setup_engine(&input.engine) {
+            Ok(value) => json_response(StatusCode(200), value),
+            Err(message) => json_response(StatusCode(409), json!({"error":message})),
+        };
+    }
+    if path == "/api/local-models/hardware" {
+        return if matches!(method, &Method::Get | &Method::Head) { json_response(StatusCode(200), crate::model_acquisition::hardware()) } else { method_not_allowed() };
+    }
+    if let Some(action) = path.strip_prefix("/api/local-models/").filter(|action| matches!(*action, "search" | "recommend" | "install" | "install-plan" | "cancel")) {
+        return if method == &Method::Post { acquisition::handle(request, action, config.tailcat_ingress) } else { method_not_allowed() };
+    }
     if path == "/api/local-models" {
         return match method {
             &Method::Get | &Method::Head => json_response(
                 StatusCode(200),
-                with_local_first(local_models::catalog_json()),
+                with_local_first(acquisition::catalog()),
             ),
             _ => method_not_allowed(),
         };
@@ -1155,14 +1233,15 @@ fn route_request(
 
     if let Some((source_id, suffix)) = data_source_route(path) {
         return match (method, suffix) {
-            (&Method::Patch, "") => update_data_source_response(request, source_id),
-            (&Method::Delete, "") => delete_data_source_response(source_id),
-            (&Method::Post, "test") => test_data_source_response(source_id),
+            (&Method::Patch, "") => update_data_source_response(request, &source_id),
+            (&Method::Delete, "") => delete_data_source_response(&source_id),
+            (&Method::Post, "test") => test_data_source_response(&source_id),
             _ => method_not_allowed(),
         };
     }
 
     if let Some((conversation_id, suffix)) = chat_conversation_route(path) {
+        let conversation_id = conversation_id.as_str();
         return match (method, suffix) {
             (&Method::Get, "") | (&Method::Head, "") => read_conversation_response(conversation_id),
             (&Method::Get, "queued-input") | (&Method::Head, "queued-input") => conversation_queued_input_response(conversation_id, url),
@@ -1212,25 +1291,39 @@ fn route_request(
             (&Method::Get, suffix) | (&Method::Head, suffix)
                 if suffix.starts_with("resources/") =>
             {
+                let Some(resource_id) = decode_path_segment(suffix.trim_start_matches("resources/")) else {
+                    return json_response(StatusCode(400), json!({"error": "invalid resource id"}));
+                };
                 read_conversation_pdf_resource_response(
                     conversation_id,
-                    suffix.trim_start_matches("resources/"),
+                    &resource_id,
                     method == &Method::Head,
                 )
             }
             (&Method::Delete, suffix) if suffix.starts_with("resources/") => {
+                let Some(resource_id) = decode_path_segment(suffix.trim_start_matches("resources/")) else {
+                    return json_response(StatusCode(400), json!({"error": "invalid resource id"}));
+                };
                 delete_conversation_resource_response(
                     conversation_id,
-                    suffix.trim_start_matches("resources/"),
+                    &resource_id,
                 )
             }
-            (&Method::Patch, suffix) if suffix.starts_with("messages/") => update_message_response(
-                request,
-                conversation_id,
-                suffix.trim_start_matches("messages/"),
-            ),
+            (&Method::Patch, suffix) if suffix.starts_with("messages/") => {
+                let Some(message_id) = decode_path_segment(suffix.trim_start_matches("messages/")) else {
+                    return json_response(StatusCode(400), json!({"error": "invalid message id"}));
+                };
+                update_message_response(
+                    request,
+                    conversation_id,
+                    &message_id,
+                )
+            }
             (&Method::Delete, suffix) if suffix.starts_with("messages/") => {
-                delete_message_response(conversation_id, suffix.trim_start_matches("messages/"))
+                let Some(message_id) = decode_path_segment(suffix.trim_start_matches("messages/")) else {
+                    return json_response(StatusCode(400), json!({"error": "invalid message id"}));
+                };
+                delete_message_response(conversation_id, &message_id)
             }
             (&Method::Post, "truncate") => {
                 truncate_conversation_response(config, request, conversation_id)
@@ -1280,10 +1373,13 @@ fn route_request(
                 memory_search_response(url, conversation_id)
             }
             (&Method::Patch, suffix) if suffix.starts_with("data-sources/") => {
+                let Some(source_id) = decode_path_segment(suffix.trim_start_matches("data-sources/")) else {
+                    return json_response(StatusCode(400), json!({"error": "invalid data source id"}));
+                };
                 update_conversation_data_source_response(
                     request,
                     conversation_id,
-                    suffix.trim_start_matches("data-sources/"),
+                    &source_id,
                 )
             }
             _ => method_not_allowed(),
@@ -1292,7 +1388,9 @@ fn route_request(
 
     if let Some(id) = path.strip_prefix("/api/memory/") {
         if method != &Method::Delete { return method_not_allowed(); }
-        let id = percent_decode(id);
+        let Some(id) = decode_path_segment(id) else {
+            return json_response(StatusCode(400), json!({"error": "Invalid memory id"}));
+        };
         let result = crate::application_port::CliApplicationPort::persistent_default()
             .and_then(|mut application| crate::memory_admin::delete_memory(&mut application, &id));
         return match result {
@@ -1302,6 +1400,7 @@ fn route_request(
     }
 
     if let Some((action_id, suffix)) = scheduled_action_route(path) {
+        let action_id = action_id.as_str();
         return match (method, suffix) {
             (&Method::Delete, "") => delete_scheduled_action_response(action_id),
             (&Method::Patch, "") => update_scheduled_action_response(request, action_id),
@@ -1313,7 +1412,7 @@ fn route_request(
 
     if let Some(result_id) = result_detail_route(path) {
         return match method {
-            &Method::Get | &Method::Head => result_detail_response(result_id),
+            &Method::Get | &Method::Head => result_detail_response(&result_id),
             _ => method_not_allowed(),
         };
     }
@@ -1331,7 +1430,7 @@ fn route_request(
     {
         return match method {
             &Method::Get | &Method::Post => {
-                model_endpoint_credential_response(request, &percent_decode(id))
+                model_endpoint_credential_response(request, &percent_decode_path(id))
             }
             _ => method_not_allowed(),
         };
@@ -1341,7 +1440,7 @@ fn route_request(
         .and_then(|value| value.strip_suffix("/discover"))
     {
         return match method {
-            &Method::Post => discover_remote_models_response(&percent_decode(id)),
+            &Method::Post => discover_remote_models_response(&percent_decode_path(id)),
             _ => method_not_allowed(),
         };
     }
@@ -1350,7 +1449,7 @@ fn route_request(
         .and_then(|value| value.strip_suffix("/configuration"))
     {
         return match method {
-            &Method::Post => update_model_endpoint_response(request, &percent_decode(id)),
+            &Method::Post => update_model_endpoint_response(request, &percent_decode_path(id)),
             _ => method_not_allowed(),
         };
     }
@@ -1359,7 +1458,7 @@ fn route_request(
         .and_then(|value| value.strip_suffix("/select"))
     {
         return match method {
-            &Method::Post => select_model_profile_response(request, &percent_decode(id)),
+            &Method::Post => select_model_profile_response(request, &percent_decode_path(id)),
             _ => method_not_allowed(),
         };
     }
@@ -1368,7 +1467,7 @@ fn route_request(
         .and_then(|value| value.strip_suffix("/parameters"))
     {
         return match method {
-            &Method::Post => update_model_parameters_response(request, &percent_decode(id)),
+            &Method::Post => update_model_parameters_response(request, &percent_decode_path(id)),
             _ => method_not_allowed(),
         };
     }
@@ -1378,6 +1477,8 @@ fn route_request(
         | (&Method::Head, "/models")
         | (&Method::Get, "/model-test")
         | (&Method::Head, "/model-test")
+        | (&Method::Get, "/plugin-page")
+        | (&Method::Head, "/plugin-page")
         | (&Method::Get, "/capabilities")
         | (&Method::Head, "/capabilities")
         | (&Method::Get, "/activity")
@@ -1392,8 +1493,6 @@ fn route_request(
         | (&Method::Head, "/settings")
         | (&Method::Get, "/scheduled-actions")
         | (&Method::Head, "/scheduled-actions")
-        | (&Method::Get, "/rooms")
-        | (&Method::Head, "/rooms")
         | (&Method::Get, "/workspace-review")
         | (&Method::Head, "/workspace-review")
         | (&Method::Get, "/today")
@@ -1419,14 +1518,16 @@ fn route_request(
             let rel = path.trim_start_matches("/ui/");
             file_response(&config.web_root, &format!("app/static/ui/{rel}"))
         }
+        (&Method::Get, "/rooms") | (&Method::Head, "/rooms") => redirect_response("/chat"),
         (&Method::Get, "/register") | (&Method::Head, "/register") => redirect_response("/login"),
         (&Method::Post, "/login") => web_form_login_response(request),
         (&Method::Post, "/register") => redirect_response("/login?error=registration_unavailable"),
         (&Method::Post, "/logout") => web_logout_response(request, true),
         (&Method::Post, "/settings/password") => redirect_response("/settings"),
-        (&Method::Get, _) | (&Method::Head, _) if path.starts_with("/auth/mobile-handoff/") => {
+        (&Method::Get, _) if path.starts_with("/auth/mobile-handoff/") => {
             web_mobile_handoff_response(request, path)
         }
+        (_, _) if path.starts_with("/auth/mobile-handoff/") => method_not_allowed(),
         (&Method::Get, _) | (&Method::Head, _) if path.starts_with("/auth/") => {
             redirect_response("/login")
         }
@@ -1573,10 +1674,7 @@ fn web_session_is_authenticated(request: &Request) -> bool {
     sessions.contains_key(&digest)
 }
 
-fn web_csrf_is_valid(request: &Request) -> bool {
-    if !web_request_is_same_origin(request) {
-        return false;
-    }
+fn web_csrf_token_matches_session(request: &Request) -> bool {
     let Some(raw_session) = request_cookie(request, WEB_SESSION_COOKIE) else {
         return false;
     };
@@ -1599,6 +1697,13 @@ fn web_csrf_is_valid(request: &Request) -> bool {
     sessions.get(&session_digest).is_some_and(|session| {
         nola_core::mobile_crypto::constant_time_secret_eq(&session.csrf_digest, &csrf_digest)
     })
+}
+
+fn web_csrf_is_valid(request: &Request) -> bool {
+    if !web_request_is_same_origin(request) {
+        return false;
+    }
+    web_csrf_token_matches_session(request)
 }
 
 fn web_request_is_same_origin(request: &Request) -> bool {
@@ -1624,7 +1729,6 @@ fn web_method_requires_csrf(method: &Method) -> bool {
 
 fn web_csrf_exempt_path(path: &str) -> bool {
     path == "/login"
-        || path == "/logout"
         || path == "/api/web/login"
         || path.starts_with("/api/mobile/")
 }
@@ -1933,12 +2037,17 @@ fn web_json_login_response(request: &mut Request) -> Response<Box<dyn Read + Sen
     )
 }
 
-fn read_urlencoded_form(request: &mut Request) -> Result<HashMap<String, String>, String> {
-    let mut body = String::new();
-    request
-        .as_reader()
-        .read_to_string(&mut body)
-        .map_err(|error| format!("failed to read login form: {error}"))?;
+fn read_urlencoded_form(
+    request: &mut Request,
+) -> Result<HashMap<String, String>, (StatusCode, String)> {
+    let body = read_bounded_utf8(request.as_reader(), MAX_URLENCODED_FORM_BODY_BYTES).map_err(
+        |error| match error {
+            BoundedBodyError::TooLarge => (StatusCode(413), "login form is too large".to_string()),
+            BoundedBodyError::Read(message) => {
+                (StatusCode(400), format!("failed to read login form: {message}"))
+            }
+        },
+    )?;
     Ok(body
         .split('&')
         .filter_map(|pair| pair.split_once('='))
@@ -1949,8 +2058,8 @@ fn read_urlencoded_form(request: &mut Request) -> Result<HashMap<String, String>
 fn web_form_login_response(request: &mut Request) -> Response<Box<dyn Read + Send>> {
     let form = match read_urlencoded_form(request) {
         Ok(value) => value,
-        Err(message) => {
-            return html_response(StatusCode(400), error_html(400, &message));
+        Err((status, message)) => {
+            return html_response(status, error_html(status.0, &message));
         }
     };
     let next = safe_web_next(form.get("next").map(String::as_str).unwrap_or("/dashboard"));
@@ -2072,12 +2181,10 @@ fn local_model_action_response(
             ),
             Err(error) => json_response(StatusCode(400), json!({"error": error})),
         },
-        (&Method::Post, "stop") => {
-            if local_models::running_model_id().as_deref() == Some(model_id) {
-                local_models::shutdown();
-            }
-            json_response(StatusCode(200), json!({"ok": true, "modelId": model_id}))
-        }
+        (&Method::Post, "stop") => match local_models::stop_model(Some(model_id)) {
+            Ok(()) => json_response(StatusCode(200), json!({"ok": true, "modelId": model_id})),
+            Err(error) => json_response(StatusCode(409), json!({"error": error})),
+        },
         (&Method::Post, "configuration") => {
             #[derive(serde::Deserialize)]
             #[serde(rename_all = "camelCase", deny_unknown_fields)]
@@ -2284,9 +2391,15 @@ fn create_conversation_response(request: &mut Request) -> Response<Box<dyn Read 
         Err(response) => return response,
     };
     let now = now_string();
-    let mut conversation = WebConversation::new(new_id("conv"),
-        normalize_title(input.title.as_deref()), now.clone(), now);
-    if input.title.as_deref().is_some_and(|title|!title.trim().is_empty()) {conversation.title_source=ConversationTitleSource::User;}
+    let user_title = input.title.as_deref().filter(|title| !title.trim().is_empty());
+    let title = match user_title {
+        Some(title) => normalize_title(Some(title)),
+        None => crate::i18n::new_conversation_title(request_language(request)).to_owned(),
+    };
+    let mut conversation = WebConversation::new(new_id("conv"), title, now.clone(), now);
+    if user_title.is_some() {
+        conversation.title_source = ConversationTitleSource::User;
+    }
     if let Err(err) = apply_model_selection(
         &mut conversation,
         input.selected_model_source.as_deref(),
@@ -2953,10 +3066,20 @@ fn branch_conversation_response(
             )
         }
     };
+    let saved_branch = match store.get_web_conversation(&branch.conversation_id) {
+        Ok(Some(saved)) => saved,
+        Ok(None) => {
+            return json_response(
+                StatusCode(500),
+                json!({"error": "Branched conversation disappeared"}),
+            )
+        }
+        Err(error) => return json_response(StatusCode(500), json!({"error": error})),
+    };
     json_response(
         StatusCode(200),
         json!({
-            "conversation": branch,
+            "conversation": saved_branch,
             "messageCount": result.message_count,
             "localFirst": true,
             "backend": "cli-rust",
@@ -3571,6 +3694,7 @@ fn dispatch_conversation_goal_control(
         "schedule" => GoalControlAction::Schedule,
         _ => return goal_control_result(StatusCode(400), json!({"error":"unsupported Goal action"})),
     };
+    let expected_goal_id = input.expected_goal_id.clone();
     let envelope = match application.prepare_goal_control_intent(PrepareGoalControlIntent {
         conversation_id: conversation_id.into(), operation_id: input.operation_id,
         action, expected_goal_id: input.expected_goal_id,
@@ -3625,7 +3749,8 @@ fn dispatch_conversation_goal_control(
             .and_then(|request| submit_agent_core_goal_command(&request, envelope))
             .map(|_| ())
     } else if input.action.trim() == "resume" {
-        new_web_goal_invocation(config, conversation_id)
+        expected_goal_id.as_deref().ok_or_else(|| "Goal resume requires the observed Goal identity".to_owned())
+            .and_then(|goal_id| web_goal_invocation_for_selection(config, conversation_id, Some(goal_id)))
             .and_then(|request| crate::core_agent_runtime::rebind_goal_execution(&request))
             .and_then(|_| apply_idle_web_goal_control(conversation_id, envelope))
     } else {
@@ -3645,6 +3770,9 @@ fn dispatch_conversation_goal_control(
             Err(error) => goal_control_result(StatusCode(500), json!({"error": error})),
             }
         },
+        Err(error) if error == GOAL_HOST_DEFAULT_UNAVAILABLE => goal_control_result(StatusCode(409), json!({
+            "code": "goal_host_default_unavailable", "conversationId": conversation_id, "operationId": operation_id, "error": error
+        })),
         Err(error) => goal_control_result(StatusCode(409), json!({"error": error})),
     }
 }
@@ -3887,11 +4015,11 @@ fn home_response() -> Response<Box<dyn Read + Send>> {
         .collect::<Vec<_>>();
     let success_count = results
         .iter()
-        .filter(|item| item.status == "success")
+        .filter(|item| matches!(item.status.as_str(), "answered" | "action_completed"))
         .count();
     let failed_count = results
         .iter()
-        .filter(|item| item.status == "failed")
+        .filter(|item| matches!(item.status.as_str(), "failed" | "incomplete" | "blocked"))
         .count();
     json_response(
         StatusCode(200),
@@ -4079,7 +4207,7 @@ fn skill_settings_review_response(expected_revision: Option<i64>) -> Response<Bo
         if let Some(revision) = expected_revision {
             confirm_core_skill_settings(&mut application, revision)?;
             let settings=load_agent_settings_from_store(&NolaStore::open_default()?)?;
-            builtin_skills::synchronize(&settings.builtin_skill_overrides, &settings.uploaded_skills)
+            builtin_skills::synchronize(&settings.builtin_skill_overrides)
                 .map_err(|error|format!("Core settings were selected and the previous settings retained, but Skill materialization failed: {error}"))?;
             return Ok(json!({"confirmed":true}));
         }
@@ -4225,20 +4353,22 @@ fn update_agent_settings_response(request: &mut Request) -> Response<Box<dyn Rea
             }
         };
     }
-    let mcp_catalog_revision =
-        crate::agent_host_driver::configured_mcp_capability_catalog_revision(&settings.mcp_servers);
-    if let Err(error) = crate::agent_host_driver::configured_mcp_capability_catalog(
-        &settings.mcp_servers,
-        mcp_catalog_revision,
-    ) {
-        return json_response(
-            StatusCode(422),
-            json!({
-                "error": error,
-                "code": "mcp_handshake_required",
-                "message": "An MCP endpoint must complete capability discovery before it can be enabled."
-            }),
-        );
+    if mcp_settings_changed {
+        let mcp_catalog_revision =
+            crate::agent_host_driver::configured_mcp_capability_catalog_revision(&settings.mcp_servers);
+        if let Err(error) = crate::agent_host_driver::configured_mcp_capability_catalog(
+            &settings.mcp_servers,
+            mcp_catalog_revision,
+        ) {
+            return json_response(
+                StatusCode(422),
+                json!({
+                    "error": error,
+                    "code": "mcp_handshake_required",
+                    "message": "An MCP endpoint must complete capability discovery before it can be enabled."
+                }),
+            );
+        }
     }
     if mcp_settings_changed {
         if let Err(err) =
@@ -4305,7 +4435,7 @@ fn update_agent_settings_response(request: &mut Request) -> Response<Box<dyn Rea
         return json_response(StatusCode(500), json!({"error": err}));
     }
     if let Err(error) =
-        builtin_skills::synchronize(&settings.builtin_skill_overrides, &settings.uploaded_skills)
+        builtin_skills::synchronize(&settings.builtin_skill_overrides)
     {
         return json_response(
             StatusCode(500),
@@ -4322,3 +4452,16 @@ fn update_agent_settings_response(request: &mut Request) -> Response<Box<dyn Rea
 #[cfg(test)]
 #[path = "routes_tests.rs"]
 mod routes_tests;
+
+#[cfg(test)]
+mod p2_route_security_tests {
+    use super::web_csrf_exempt_path;
+
+    #[test]
+    fn logout_is_not_csrf_exempt() {
+        assert!(!web_csrf_exempt_path("/logout"));
+        assert!(web_csrf_exempt_path("/login"));
+        assert!(web_csrf_exempt_path("/api/web/login"));
+        assert!(web_csrf_exempt_path("/api/mobile/ping"));
+    }
+}

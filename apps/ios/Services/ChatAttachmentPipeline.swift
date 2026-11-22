@@ -22,7 +22,8 @@ enum ChatAttachmentPipeline {
 
     static func importFiles(
         from result: Result<[URL], Error>,
-        parserHost: ChatAttachmentParserHost?
+        parserHost: ChatAttachmentParserHost?,
+        runtime: IOSApplicationRuntime? = nil
     ) async throws -> ChatAttachmentImportResult {
         let urls = try result.get()
         var attachments: [ChatAttachmentDraft] = []
@@ -34,10 +35,10 @@ enum ChatAttachmentPipeline {
                 let attachment = try await parse(url: url, parserHost: parserHost)
                 guard seenDigests.insert(attachment.contentDigest).inserted else { continue }
                 attachments.append(attachment)
-                recordImportedAttachment(attachment)
+                recordImportedAttachment(attachment, runtime: runtime)
             } catch {
                 failedCount += 1
-                recordAttachmentImportFailure(filename: url.lastPathComponent, error: error)
+                recordAttachmentImportFailure(filename: url.lastPathComponent, error: error, runtime: runtime)
                 Logger.shared.log(.warn, "ChatAttachmentPipeline", "Attachment import failed", metadata: [
                     "filename": url.lastPathComponent,
                     "error": error.localizedDescription
@@ -48,8 +49,8 @@ enum ChatAttachmentPipeline {
         return ChatAttachmentImportResult(attachments: attachments, failedCount: failedCount)
     }
 
-    private static func recordImportedAttachment(_ attachment: ChatAttachmentDraft) {
-        guard PersonalIntelligenceCore.isAvailable else { return }
+    private static func recordImportedAttachment(_ attachment: ChatAttachmentDraft, runtime: IOSApplicationRuntime?) {
+        guard let runtime else { return }
         let eventID = UUID().uuidString
         let normalizedContent = attachment.extractedContent
             .trimmingCharacters(in: .whitespacesAndNewlines)
@@ -85,15 +86,15 @@ enum ChatAttachmentPipeline {
                 tags: tags
             )]
         }
-        _ = PersonalIntelligenceCore.ingest(
+        _ = runtime.ingestIntelligence(
             IntelligenceIngestRequest(events: [event], memoryCandidates: candidates)
         )
     }
 
-    private static func recordAttachmentImportFailure(filename: String, error: Error) {
-        guard PersonalIntelligenceCore.isAvailable else { return }
+    private static func recordAttachmentImportFailure(filename: String, error: Error, runtime: IOSApplicationRuntime?) {
+        guard let runtime else { return }
         let reason = error.localizedDescription
-        _ = PersonalIntelligenceCore.ingest(IntelligenceIngestRequest(events: [
+        _ = runtime.ingestIntelligence(IntelligenceIngestRequest(events: [
             IntelligenceEvent(
                 source: "attachment",
                 kind: "document.import_failed",

@@ -114,16 +114,20 @@ nonisolated struct MacAutomation: Identifiable, Codable, Hashable, Sendable {
     }
 
     var nextRun: Date? {
-        let now=Date()
-        let input:MacCanonicalJSONValue = .object(["automation_id":.string(id.uuidString),
-            "timezone":.string(TimeZone.current.identifier),"frequency":.string(frequency.rawValue),
-            "time":.string(String(format:"%02d:%02d",hour,minute)),"weekday":.signedInteger(Int64((weekday+6)%7+1)),
-            "once_at_ms":.null,"after_ms":.signedInteger(Int64(now.timeIntervalSince1970*1000)),
-            "through_ms":.signedInteger(Int64(now.addingTimeInterval(8*86400).timeIntervalSince1970*1000)),"limit":.signedInteger(1)])
-        guard let value=try? MacApplicationPort.shared.executeAgentRoomEnvelope(.object(["type":.string("query_automation_occurrences"),"input":input])) else {return nil}
-        struct Page:Decodable {struct Item:Decodable {let scheduled_for_ms:Int64};let occurrences:[Item]}
-        guard let page=try? JSONDecoder().decode(Page.self,from:JSONEncoder().encode(value)),let item=page.occurrences.first else {return nil}
-        return Date(timeIntervalSince1970:Double(item.scheduled_for_ms)/1000)
+        computeNextRun()
+    }
+
+    func computeNextRun(using port: MacApplicationPort = .shared) -> Date? {
+        let now = Date()
+        let input: MacCanonicalJSONValue = .object(["automation_id": .string(id.uuidString),
+            "timezone": .string(TimeZone.current.identifier), "frequency": .string(frequency.rawValue),
+            "time": .string(String(format: "%02d:%02d", hour, minute)), "weekday": .signedInteger(Int64((weekday + 6) % 7 + 1)),
+            "once_at_ms": .null, "after_ms": .signedInteger(Int64(now.timeIntervalSince1970 * 1000)),
+            "through_ms": .signedInteger(Int64(now.addingTimeInterval(8 * 86400).timeIntervalSince1970 * 1000)), "limit": .signedInteger(1)])
+        guard let value = try? port.executeAgentRoomEnvelope(.object(["type": .string("query_automation_occurrences"), "input": input])) else { return nil }
+        struct Page: Decodable { struct Item: Decodable { let scheduled_for_ms: Int64 }; let occurrences: [Item] }
+        guard let page = try? JSONDecoder().decode(Page.self, from: JSONEncoder().encode(value)), let item = page.occurrences.first else { return nil }
+        return Date(timeIntervalSince1970: Double(item.scheduled_for_ms) / 1000)
     }
 
     static var weekdayNames: [String] {
@@ -149,9 +153,49 @@ final class MacAutomationStore {
     }()
 
     var automations: [MacAutomation] = []
+    var nextRunsByID: [UUID: Date] = [:]
     var errorMessage: String?
     var runningAutomationIDs: Set<UUID> = []
     var runningAutomationDetails: [UUID: String] = [:]
+    @ObservationIgnored private var nextRunRefreshTask: Task<Void, Never>?
+
+    func nextRun(for automation: MacAutomation) -> Date? {
+        nextRunsByID[automation.id]
+    }
+
+    func refreshNextRuns() {
+        nextRunRefreshTask?.cancel()
+        let snapshot = automations
+        let port = applicationPort
+        guard !snapshot.isEmpty else {
+            nextRunsByID = [:]
+            return
+        }
+        nextRunRefreshTask = Task.detached(priority: .utility) { [weak self] in
+            var computed: [UUID: Date] = [:]
+            for automation in snapshot {
+                if Task.isCancelled { return }
+                if let next = automation.computeNextRun(using: port) {
+                    computed[automation.id] = next
+                }
+            }
+            if Task.isCancelled { return }
+            await MainActor.run { [weak self] in
+                guard let self else { return }
+                self.nextRunsByID = computed
+                self.sortAutomationsByCachedNextRun(&self.automations)
+            }
+        }
+    }
+
+    private func sortAutomationsByCachedNextRun(_ list: inout [MacAutomation]) {
+        list.sort { lhs, rhs in
+            let left = nextRunsByID[lhs.id] ?? .distantFuture
+            let right = nextRunsByID[rhs.id] ?? .distantFuture
+            if left != right { return left < right }
+            return lhs.name.localizedCaseInsensitiveCompare(rhs.name) == .orderedAscending
+        }
+    }
 
     private let fileManager: FileManager
     private let supportDirectory: URL
@@ -260,6 +304,7 @@ final class MacAutomationStore {
             store: self.skillCatalogClient
         )
         try load()
+        refreshNextRuns()
         Task { @MainActor [weak self] in await self?.recoverExecutionNotifications() }
         if synchronizeSystemJobs {
             synchronizeLaunchAgents()
@@ -306,7 +351,8 @@ final class MacAutomationStore {
             } else {
                 automations.append(persisted)
             }
-            automations.sort { ($0.nextRun ?? .distantFuture) < ($1.nextRun ?? .distantFuture) }
+            sortAutomationsByCachedNextRun(&automations)
+            refreshNextRuns()
             synchronize(persisted)
             errorMessage = nil
             return MacAutomationMutationVerification(committed: committed, verificationError: nil, submittedExecutionSpecDigest: submittedDigest)
@@ -328,8 +374,9 @@ final class MacAutomationStore {
         } else {
             candidate.append(automation)
         }
-        candidate.sort { ($0.nextRun ?? .distantFuture) < ($1.nextRun ?? .distantFuture) }
+        sortAutomationsByCachedNextRun(&candidate)
         guard persist(candidate) else { return false }
+        refreshNextRuns()
         synchronize(automation)
         errorMessage = nil
         return true
@@ -345,20 +392,40 @@ final class MacAutomationStore {
 
     func delete(_ automation: MacAutomation) {
         guard persist(automations.filter { $0.id != automation.id }) else { return }
+        nextRunsByID.removeValue(forKey: automation.id)
         unload(automation)
-        try? fileManager.removeItem(at: plistURL(for: automation))
         try? fileManager.removeItem(at: externalContextURL(for: automation))
         try? fileManager.removeItem(at: runnerURL(for: automation))
         try? fileManager.removeItem(at: hostRequestURL(for: automation))
     }
 
-    func replaceAll(_ restored: [MacAutomation]) {
+    @discardableResult
+    func replaceAll(_ restored: [MacAutomation]) -> Bool {
+        do {
+            try replaceAllThrowing(restored)
+            return true
+        } catch {
+            return false
+        }
+    }
+
+    func replaceAllThrowing(_ restored: [MacAutomation]) throws {
         let previous = automations
-        let candidate = restored.sorted { ($0.nextRun ?? .distantFuture) < ($1.nextRun ?? .distantFuture) }
-        guard persist(candidate) else { return }
+        var candidate = restored
+        sortAutomationsByCachedNextRun(&candidate)
+        guard persist(candidate) else {
+            throw NSError(
+                domain: "MacAutomationStore",
+                code: 1,
+                userInfo: [
+                    NSLocalizedDescriptionKey: errorMessage
+                        ?? String(localized: "Failed to save automations."),
+                ]
+            )
+        }
+        refreshNextRuns()
         for automation in previous {
             unload(automation)
-            try? fileManager.removeItem(at: plistURL(for: automation))
             try? fileManager.removeItem(at: externalContextURL(for: automation))
             try? fileManager.removeItem(at: runnerURL(for: automation))
             try? fileManager.removeItem(at: hostRequestURL(for: automation))
@@ -462,6 +529,10 @@ final class MacAutomationStore {
 
     private func execute(_ automation: MacAutomation, claim: MacClaimedAutomationRun) {
         Task { @MainActor in
+            defer {
+                runningAutomationIDs.remove(automation.id)
+                runningAutomationDetails.removeValue(forKey: automation.id)
+            }
             let heartbeat = heartbeatTask(for: claim)
             do {
                 try await refreshExecutionSources(claim)
@@ -469,10 +540,7 @@ final class MacAutomationStore {
                 await executePrepared(automation, claim: claim)
             } catch {
                 heartbeat.cancel()
-                if persistExecutionFailure(claim, automation: automation, error: error) {
-                    runningAutomationIDs.remove(automation.id)
-                    runningAutomationDetails.removeValue(forKey: automation.id)
-                }
+                _ = persistExecutionFailure(claim, automation: automation, error: error)
             }
         }
     }
@@ -1016,16 +1084,16 @@ final class MacAutomationStore {
         }
     }
 
+    private static let launchctlQueue = DispatchQueue(label: "com.gaojc.Nola.automation.launchctl", qos: .utility)
+
     private func synchronizeLaunchAgents() {
-        for automation in automations {
-            unload(automation)
-            try? fileManager.removeItem(at: plistURL(for: automation))
-        }
+        guard synchronizeSystemJobs else { return }
+        let targets = automations.map { (label: $0.label, plistURL: plistURL(for: $0)) }
+        Self.cleanupLegacyLaunchAgents(targets)
     }
 
     private func synchronize(_ automation: MacAutomation) {
         unload(automation)
-        try? fileManager.removeItem(at: plistURL(for: automation))
         guard automation.isEnabled else {
             try? fileManager.removeItem(at: externalContextURL(for: automation))
             try? fileManager.removeItem(at: runnerURL(for: automation))
@@ -1042,11 +1110,28 @@ final class MacAutomationStore {
     }
 
     private func unload(_ automation: MacAutomation) {
-        guard synchronizeSystemJobs else { return }
-        try? launchctl(["bootout", "gui/\(getuid())/\(automation.label)"])
+        let plist = plistURL(for: automation)
+        guard synchronizeSystemJobs else {
+            try? fileManager.removeItem(at: plist)
+            return
+        }
+        Self.cleanupLegacyLaunchAgents([(label: automation.label, plistURL: plist)])
     }
 
-    private func launchctl(_ arguments: [String]) throws {
+    private nonisolated static func cleanupLegacyLaunchAgents(_ targets: [(label: String, plistURL: URL)]) {
+        guard !targets.isEmpty else { return }
+        launchctlQueue.async {
+            let fileManager = FileManager.default
+            let uid = getuid()
+            for target in targets {
+                guard fileManager.fileExists(atPath: target.plistURL.path) else { continue }
+                try? runLaunchctl(["bootout", "gui/\(uid)/\(target.label)"])
+                try? fileManager.removeItem(at: target.plistURL)
+            }
+        }
+    }
+
+    private nonisolated static func runLaunchctl(_ arguments: [String]) throws {
         let process = Process()
         process.executableURL = URL(fileURLWithPath: "/bin/launchctl")
         process.arguments = arguments
@@ -1111,19 +1196,10 @@ final class MacAutomationStore {
             }
             try? Data(now.ISO8601Format().utf8).write(to: markerURL, options: .atomic)
             try? fileManager.setAttributes([.posixPermissions: 0o600], ofItemAtPath: markerURL.path)
-            let process = Process()
-            process.executableURL = URL(fileURLWithPath: "/bin/launchctl")
-            process.arguments = [
-                "kickstart",
-                "gui/\(getuid())/\(MacBackgroundSchedulerService.label)",
-            ]
-            process.standardOutput = FileHandle.nullDevice
-            process.standardError = FileHandle.nullDevice
-            do {
-                try process.run()
-                process.waitUntilExit()
-            } catch {
-                continue
+            let uid = getuid()
+            let label = MacBackgroundSchedulerService.label
+            launchctlQueue.async {
+                try? runLaunchctl(["kickstart", "gui/\(uid)/\(label)"])
             }
         }
     }

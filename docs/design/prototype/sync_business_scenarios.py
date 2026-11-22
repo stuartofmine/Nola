@@ -55,7 +55,7 @@ def generated():
     writer.writerows(rows)
     document = '''# 全业务场景与状态目录
 
-更新：2026-11-10。主入口：[可操作场景原型](../scenarios.html)；原有完整交互原型：[index.html](../index.html)。
+更新：%s。主入口：[可操作场景原型](../scenarios.html)；原有完整交互原型：[index.html](../index.html)。
 
 ## 范围与使用方法
 
@@ -63,7 +63,7 @@ def generated():
 
 选择业务与平台，直接操作预览中的按钮；右侧可跳到任意状态。每个状态有独立 URL，浏览器前进／后退可复现。原型目录和状态面板属于评审工具，不是产品导航。字段只保存为当前页面内、当前平台及场景的草稿；取消保留已保存基线，切换场景不覆盖其他草稿，刷新重置。破坏性样例先打开可取消的确认框。没有模型、账户、Host、文件、下载或系统权限请求，不能输入真实凭据。
 
-“适用平台”表示这项设计应在哪里提供，**不是已实现或已测试的能力声明**。不适用时明确显示范围，不生成假系统入口。macOS/iOS/Android 的控件只是浏览器布局示意；Windows 表示共享 Web Host 客户端方向；CLI 为文本布局草图，下方按钮仅用于评审，不是新 CLI 命令。Web 更新安装、手机永久后台调度及跨 Host 接管不作为已支持能力。
+“适用平台”表示这项设计应在哪里提供，**不是已实现或已测试的能力声明**。不适用时明确显示范围，不生成假系统入口。macOS/iOS/Android 的控件只是浏览器布局示意；Windows 视角对应 Tauri 主窗口中的共享 Web 客户端，原生桌面命令另行校验来源；CLI 为文本布局草图，下方按钮仅用于评审，不是新 CLI 命令。Web 更新安装、手机永久后台调度及跨 Host 接管不作为已支持能力。
 
 ## 共同行为
 
@@ -80,7 +80,7 @@ def generated():
 
 | ID | 业务 / 场景 | 入口 | 状态数 | 适用设计平台 |
 | --- | --- | --- | ---: | --- |
-''' % (len(scenarios), sum(len(scene['states']) for scene in scenarios), len(routes))
+''' % (catalog['updated'], len(scenarios), sum(len(scene['states']) for scene in scenarios), len(routes))
     for row, scene in zip(rows, scenarios):
         document += f'| [{row[0]}](../{row[-1]}) | {row[1]} / {row[2]} | {row[3]} | {len(scene["states"])} | {row[4]} |\n'
     document += '\n## 路由关联\n\n| 生产 Web 路由 | 对应业务场景 |\n| --- | --- |\n'

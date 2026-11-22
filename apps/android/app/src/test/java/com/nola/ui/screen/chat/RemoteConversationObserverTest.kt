@@ -189,6 +189,49 @@ class RemoteConversationObserverTest {
         assertFalse(remoteResumeRequest("host", "client", key).containsKey("submission_id"))
     }
 
+    @Test fun hostOwnedJournalAcceptsOnlyTheBoundGoalOrReadOnlyTask() {
+        fun parse(fields: JsonObject): RemoteRunObservation {
+            val base = response()
+            val result = JsonObject(base.getValue("result").jsonObject + fields)
+            return checkNotNull(decodeRemoteRunObservation(JsonObject(base + ("result" to result)),
+                "host", "client", key.conversationId, key))
+        }
+        val goal = buildJsonObject {
+            put("goal_id", "goal"); put("contract_id", "contract"); put("control_token", "token"); put("run_id", key.runId)
+        }
+        assertEquals(goal, parse(buildJsonObject { put("goal_execution", goal) }).goalExecution)
+        for (field in listOf("goal_id","control_token","contract_id","run_id"))
+            assertFails { parse(buildJsonObject { put("goal_execution", JsonObject(goal - field)) }) }
+        assertFails { parse(buildJsonObject { put("goal_execution", JsonObject(goal + ("run_id" to JsonPrimitive("foreign")))) }) }
+        val task = buildJsonObject {
+            put("kind", "task_child"); put("parent_run_id", "main"); put("task_id", "child")
+            put("parent_conversation_id", "parent"); put("child_conversation_id", key.conversationId)
+        }
+        assertEquals(task, parse(buildJsonObject { put("task_execution",task) }).taskExecution)
+        assertFails { parse(buildJsonObject { put("task_execution",task); put("goal_execution",goal) }) }
+        assertFails { parse(buildJsonObject { put("task_execution",task); put("permissions", JsonArray(listOf(goal))) }) }
+        assertFails { parse(buildJsonObject { put("task_execution", JsonObject(task + ("child_conversation_id" to JsonPrimitive("foreign")))) }) }
+    }
+
+    @Test fun hostOwnedGoalOnlyPresentsProgressAndNeverResumesOrImportsAMobileSubmission() = runTest {
+        val observer = RemoteConversationObserver()
+        val goal = buildJsonObject {
+            put("goal_id", "goal"); put("contract_id", "contract"); put("control_token", "token"); put("run_id", key.runId)
+        }
+        val base = response("resume_required", "absent")
+        val envelope = JsonObject(base + ("result" to JsonObject(base.getValue("result").jsonObject + ("goal_execution" to goal))))
+        var presented = false
+        observer.start(this, "host-goal", "host", "client", key.conversationId, null, { !presented },
+            query = { envelope }, catchUp = { fail("Host Goal cannot be imported as mobile submission") },
+            onObservation = { _, _ -> fail("Host Goal must not receive ordinary mobile controls") },
+            onAbsent = { fail("Host Goal was present") }, onUnavailable = { throw it },
+            resume = { fail("Host Goal must not be resumed as a mobile submission") }, pause = {},
+            presentHostExecution = { assertEquals(key, it.key); presented = true })
+        runCurrent()
+        assertTrue(presented)
+        observer.reset()
+    }
+
     @Test fun originalPermissionNonceEntersExistingUiAndResolutionContractAfterColdRead() {
         val permission = Json.parseToJsonElement("""{"type":"permission_request", "allow_conversation": true,"id":"original-permission","canonical_run_id":"durable-run","tool_name":"write_file","protocol_version": 1,"nonce":"original-nonce","host_id":"host","client_id":"client","session_id":"conversation","expires_at":200,"permission_instructions":[]}""").jsonObject
         val base = response()

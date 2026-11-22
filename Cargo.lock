@@ -2398,6 +2398,15 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "cf8baf1c55e62ffcace7a9f06f4bd9cd3f0c4beb022d3b367256b91b87513d98"
 
 [[package]]
+name = "memoffset"
+version = "0.9.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "488016bfae457b036d996092f6cb448677611ce4449e970ceaf42695203f218a"
+dependencies = [
+ "autocfg",
+]
+
+[[package]]
 name = "mime"
 version = "0.3.17"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2569,6 +2578,7 @@ dependencies = [
  "nola_runtime_supervisor",
  "nola_service",
  "nola_service_client",
+ "nola_skill_host",
  "nola_store",
  "nola_store_port",
  "nola_update_host",
@@ -2581,6 +2591,7 @@ dependencies = [
  "serde",
  "serde_json",
  "sha2",
+ "shlex",
  "signal-hook",
  "symphonia",
  "tempfile",
@@ -2633,11 +2644,11 @@ name = "nola_credential_host"
 version = "0.1.0"
 dependencies = [
  "libc",
+ "nola_windows_permissions",
  "rusqlite",
  "sha2",
  "tempfile",
  "url",
- "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -2717,6 +2728,7 @@ dependencies = [
  "nola_mcp_host",
  "nola_protocol",
  "nola_runtime_driver",
+ "nola_skill_host",
  "nola_store",
  "nola_update_host",
  "rusqlite",
@@ -2797,9 +2809,12 @@ dependencies = [
  "nola_service_client",
  "nola_store",
  "nola_store_port",
+ "nola_windows_permissions",
  "rusqlite",
  "serde_json",
  "tempfile",
+ "uds_windows",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -2808,9 +2823,25 @@ version = "0.1.0"
 dependencies = [
  "libc",
  "nola_protocol",
+ "nola_windows_permissions",
  "serde",
  "serde_json",
  "socket2 0.5.10",
+ "uds_windows",
+ "windows-sys 0.61.2",
+]
+
+[[package]]
+name = "nola_skill_host"
+version = "0.1.0"
+dependencies = [
+ "reqwest",
+ "serde",
+ "serde_json",
+ "serde_yaml_ng",
+ "tempfile",
+ "url",
+ "zip",
 ]
 
 [[package]]
@@ -2854,6 +2885,14 @@ dependencies = [
  "sha2",
  "tempfile",
  "url",
+]
+
+[[package]]
+name = "nola_windows_permissions"
+version = "0.1.0"
+dependencies = [
+ "tempfile",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -3785,6 +3824,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "serde_yaml_ng"
+version = "0.10.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "7b4db627b98b36d4203a7b458cf3573730f2bb591b28871d916dfa9efabfd41f"
+dependencies = [
+ "indexmap",
+ "itoa",
+ "ryu",
+ "serde",
+ "unsafe-libyaml",
+]
+
+[[package]]
 name = "servo_arc"
 version = "0.3.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -4540,6 +4592,17 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "b6f5e870be6c3b371b77fe0ee0bafb859fa4964b4404c27de1d380043c4dda20"
 
 [[package]]
+name = "uds_windows"
+version = "1.2.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "f2f6fb2847f6742cd76af783a2a2c49e9375d0a111c7bef6f71cd9e738c72d6e"
+dependencies = [
+ "memoffset",
+ "tempfile",
+ "windows-sys 0.61.2",
+]
+
+[[package]]
 name = "unicase"
 version = "2.9.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -4599,6 +4662,12 @@ dependencies = [
  "crypto-common",
  "subtle",
 ]
+
+[[package]]
+name = "unsafe-libyaml"
+version = "0.2.11"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "673aac59facbab8a9007c7f6108d11f63b603f7cabff99fabf650fea5c32b861"
 
 [[package]]
 name = "untrusted"

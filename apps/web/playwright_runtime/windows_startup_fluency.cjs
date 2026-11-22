@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: Apache-2.0
-// The shipped Windows startup renderer, without starting Electron or its Host.
+// The shipped Windows startup renderer, without starting Tauri or its Host.
 const {chromium} = require('playwright-core');
 const assert = require('node:assert/strict');
 const fs = require('node:fs/promises');
@@ -36,8 +36,8 @@ function contrastRatio(rgbA, rgbB) {
     try {
         const detail = '<script>window.untrustedMarkup=true</script> ' + 'Long fixture path 中文 '.repeat(30);
         for (const colorScheme of ['light', 'dark']) {
-            const expectedBodyBg = colorScheme === 'dark' ? 'rgb(19, 19, 18)' : 'rgb(247, 246, 243)';
-            const expectedCardBg = colorScheme === 'dark' ? 'rgb(27, 27, 25)' : 'rgb(255, 255, 255)';
+            const expectedBodyBg = colorScheme === 'dark' ? 'rgb(11, 11, 12)' : 'rgb(250, 250, 250)';
+            const expectedCardBg = colorScheme === 'dark' ? 'rgb(34, 36, 32)' : 'rgb(255, 255, 255)';
             for (const width of [320, 1440]) {
                 const context = await browser.newContext({colorScheme, viewport: {width, height: 900}, reducedMotion: 'no-preference'});
                 await context.route('**/*', route => route.abort());
@@ -93,7 +93,7 @@ function contrastRatio(rgbA, rgbB) {
                 }
             }
         }
-        console.log(`PASS: Windows startup/failure HTML verified across ${ALL_LOCALES.length} locales, Light (#f7f6f3) / Dark (#131312), 320px/1440px, XSS escaping, keyboard focus, WCAG AA contrast, and reduced motion`);
+        console.log(`PASS: Windows startup/failure HTML verified across ${ALL_LOCALES.length} locales, Light (#fafafa) / Dark (#0b0b0c), 320px/1440px, XSS escaping, keyboard focus, WCAG AA contrast, and reduced motion`);
     } finally {
         await browser.close();
     }

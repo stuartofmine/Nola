@@ -5,8 +5,8 @@
 "room.left" = "已退出 · 历史保留";
 "room.remove" = "移除";
 "room.add" = "加入 Agent";
-"room.create_agent" = "创建 Agent";
-"room.agent_name" = "Agent 名称";
+"room.create_agent" = "创建专家";
+"room.agent_name" = "专家名称";
 "room.use_current_model" = "使用当前模型";
 "room.open" = "打开群聊";
 "room.all" = "所有群聊";
@@ -788,6 +788,9 @@
 "chat.host_tool.name.time" = "读取系统时间";
 "chat.host_tool.name.browser" = "控制浏览器";
 "chat.host_tool.name.computer" = "操作电脑";
+"chat.host_tool.name.find_skill" = "查找 GitHub 技能";
+"chat.host_tool.name.install_skill" = "安装并启用技能";
+"chat.host_tool.name.read_skill_resource" = "读取技能资源";
 "chat.host_tool.name.skill" = "使用技能";
 "chat.host_tool.name.mcp" = "调用 MCP";
 "chat.host_tool.name.background" = "后台任务";
@@ -1770,6 +1773,7 @@
 "common.frequency.weekly" = "每周";
 "common.no.zh" = "否";
 "common.retry" = "重试";
+"common.search" = "搜索";
 "common.unknown" = "未知";
 "common.yes.zh" = "是";
 "data.subtitle.local_first" = "本机数据源、定时动作与最近执行状态。";
@@ -1969,6 +1973,9 @@
 "model.web_host.security_summary" = "配对前，Nola 会验证令牌、权限协议和宿主机身份；每个宿主机或设备工具仍遵循各自的授权策略。";
 "model.web_host.error_format" = "连接错误：%@";
 "model.web_host.connect" = "连接";
+"model.web_host.cancel_verification" = "取消验证";
+"model.web_host.error.rollback" = "令牌保存失败，刚保存的宿主身份也未能移除。请忘记此配对后重试。";
+"model.web_host.recheck" = "重新验证";
 "model.web_host.connect.accessibility_hint" = "验证宿主机并绑定其身份后再保存。";
 "model.web_host.invalid_url" = "请输入有效的 HTTP 或 HTTPS 宿主机 URL。";
 "model.web_host.missing_token" = "请输入此宿主机的访问令牌。";
@@ -2409,7 +2416,7 @@
 /* macOS 设置工作区 */
 
 /* 个人智能能力 */
-"personal.capabilities.title" = "技能与 MCP";
+"personal.capabilities.title" = "能力库";
 "personal.capabilities.gateway.detail" = "管理可复用工作流和外部工具连接。";
 "personal.capabilities.gateway.count" = "已启用";
 "personal.capabilities.subtitle" = "跨会话可用的复用工作流与连接工具。";
@@ -2586,7 +2593,7 @@
 
 "chat.task.guidance.send" = "发送引导";
 "model.web_host.setup" = "连接前";
-"model.web_host.setup.start" = "在 Mac 的 Nola 中打开“设置 > 宿主机连接”，开启“共享此 Mac”。";
+"model.web_host.setup.start" = "在 Mac 的 Nola 中打开“设置 > 连接”，开启“将这台 Mac 共享为 Nola 服务器”。";
 "model.web_host.setup.copy" = "在 Mac 端点击“复制连接信息”，然后在下方粘贴。两台设备需位于可信私有网络，或使用 HTTPS。";
 "model.web_host.checking" = "正在检查宿主机";
 "model.web_host.checking.detail" = "保存前正在验证令牌、权限协议和宿主机身份。";
@@ -2858,6 +2865,7 @@
 "history.detail.open_record" = "查看历史记录";
 
 "chat.history.search" = "搜索会话";
+"chat.history.search.clear" = "清除搜索";
 
 "chat.history.no_messages" = "暂无消息";
 
@@ -2991,6 +2999,7 @@
 
 "room.pending_expert_message" = "原专家消息尚有待启动的任务。";
 "room.resume_complete_experts" = "恢复原专家消息";
+"room.retry_expert_reply" = "重试专家回复";
 
 // Expert directory management
 "experts.manage" = "管理专家";
@@ -3286,6 +3295,7 @@
 "model.web_host.invalid_setup" = "请在宿主机的 Nola 中复制连接信息，再粘贴到这里。";
 
 "model.web_host.paste_setup" = "粘贴连接信息";
+"model.web_host.setup_payload" = "连接信息";
 
 // Generated UI recovery and presentation
 "a2ui.revalidate" = "重新校验";
@@ -3329,6 +3339,7 @@
 "chat.context.import.failed_count" = "%d 个文件未能导入。请使用非空的 UTF-8 文本文件，最多 40,000 个字符（192 KB）。";
 
 /* Expert roles and revision-aware mentions */
+"experts.useModelDefaults" = "使用模型默认值";
 "experts.reasoning.inherit" = "继承模型设置";
 "experts.reasoning.unknown" = "当前模型未声明推理档位，将继承模型的默认设置。";
 "experts.role.details" = "提示词、工具与 Skill";
@@ -3411,3 +3422,23 @@
 "chat.message.pendingEdit" = "核对待确认的编辑";
 "chat.message.editSavedForReview" = "可以关闭编辑器。回到此对话后，点“核对待确认的编辑”即可查询是否已发送。";
 "chat.context.documents.blank" = "请输入 %@ 的内容，或删除该空文档。";
+
+"chat.history.otherClientReadOnly" = "只读记录。要继续此对话，请在创建它的客户端中打开。";
+"chat.history.ambiguousIDs" = "两段对话的标识仅在字母大小写上不同，请在创建它们的客户端中打开。";
+
+"Write what you want the expert to do." = "写下想请专家做的事。";
+"The expert selection changed. Remove the mention and select the expert again." = "专家来源或配置已变更。请删除这处提及，重新选择专家。";
+"Keep names as plain text" = "将名字保留为普通文字";
+"View expert history" = "查看专家会话";
+"experts.executor.requiresHost" = "请连接已安装此编程助手的宿主机，然后在宿主机会话中选择这位专家。";
+
+"harness.plugins" = "插件";
+"harness.host" = "选择桌面 Host";
+"harness.device_note" = "连接运行插件的电脑，就能在这里使用它的插件。";
+"harness.connect" = "连接桌面 Host";
+"harness.pair" = "连接其他 Host";
+
+"Icon could not be rendered" = "无法渲染图标";
+
+"model.center.selection_error.title" = "无法选择模型";
+"prompt.templates.copy_name" = "%@（副本）";

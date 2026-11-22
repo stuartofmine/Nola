@@ -135,8 +135,10 @@ fn host_run_resume_response_body(
         let canonical_run_id = input.expected_run_id.clone();
         let mut journal_notifications = None;
         let mut emitter = crate::native_runtime_output::NativeRuntimeOutput::with_event_sink(move |mut event| {
-            observe_journal_for_stream(&mut journal_notifications, &journal_owner, &event,
-                &event_tx, &event_token, &host_id);
+            if observe_journal_for_stream(&mut journal_notifications, &journal_owner, &event,
+                &event_tx, &event_token, &host_id) {
+                return;
+            }
             if !mobile_event_is_canonical(&event) {
                 return;
             }
@@ -149,10 +151,7 @@ fn host_run_resume_response_body(
             }
             if web_event_is_core_projection(&event) {
                 event["source_host_id"] = json!(host_id);
-                if event.get("type").and_then(Value::as_str) == Some("context_usage") {
-                    event["protocol_version"] = json!(1);
-                    event["session_id"] = json!(session);
-                }
+                bind_mobile_context_usage(&mut event, &session, &host_id);
             }
             // The resume helper validates this Run against Application and
             // the locked Host before publishing or dispatching any effect.
@@ -165,12 +164,14 @@ fn host_run_resume_response_body(
         ).map_err(|error| match error {
             crate::core_agent_runtime::ColdCoreAgentRecoveryError::BlockedConfiguration { reason }
             | crate::core_agent_runtime::ColdCoreAgentRecoveryError::RetryableUnavailable { reason } => reason,
-        }).and_then(|request| crate::core_agent_runtime::resume_agent_core_expected_with_cancellation(
-            &request,
-            &mut emitter,
-            cancellation,
-            &input.expected_run_id,
-        ));
+        }).and_then(|mut request| {
+            // The exact Run and its original client were checked above. Rebind
+            // the same current Host principal used at the Web admission boundary.
+            request.runtime.expert_template_authority = Some(expert_host_authority());
+            crate::core_agent_runtime::resume_agent_core_expected_with_cancellation(
+                &request, &mut emitter, cancellation, &input.expected_run_id,
+            )
+        });
         match result {
             Ok(Some(_)) => {}
             Ok(None) => {
@@ -479,8 +480,10 @@ mod host_resume_success_tests {
             )
         }));
         let mut emitter = crate::native_runtime_output::NativeRuntimeOutput::with_event_sink(|_| {});
+        let mut initial_request = config.host_invocation_request().unwrap();
+        initial_request.runtime.expert_template_authority = Some(expert_host_authority());
         let outcome =
-            crate::core_agent_runtime::run_agent_core(&config.host_invocation_request().unwrap(), "write the file", &mut emitter)
+            crate::core_agent_runtime::run_agent_core(&initial_request, "write the file", &mut emitter)
                 .unwrap();
         assert!(!outcome.is_terminal());
         drop(resolver);

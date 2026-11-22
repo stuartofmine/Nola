@@ -55,10 +55,14 @@ fn open_interactive_view_state(config: &Config) -> (
     }
 }
 
-fn persist_interactive_view_state(store: &mut Option<crate::cli_view_state::ViewStore>, draft: String, cursor: usize) {
+fn persist_interactive_view_state(store: &mut Option<crate::cli_view_state::ViewStore>, draft: String, cursor: usize, expert_mentions: Vec<crate::cli_expert_mentions::Occurrence>, edit: Option<crate::cli_expert_mentions::EditTarget>) {
     let Some(active) = store.as_mut() else { return; };
     let view = crate::cli_view_state::ViewState {
-        draft, cursor, viewport: crate::terminal_ui::capture_viewport_bookmark(),
+        draft,
+        cursor,
+        expert_mentions,
+        edit,
+        viewport: crate::terminal_ui::capture_viewport_bookmark(),
     };
     if let Err(error) = active.save(view) {
         terminal_notice!("无法保存 CLI 显示状态：{error}");
@@ -92,9 +96,11 @@ fn run_interactive_session(config: &Config, resume_pending: bool) -> Result<Inte
     let mut previous_workspace: Option<PathBuf> = None;
     let mut queued_user_inputs: VecDeque<String> = VecDeque::new();
     let mut pending_draft: Option<String> = None;
+    let mut rejected_mentions = Vec::new();
     let mut goal_entry = false;
     let mut view_session = interactive_config.session_id.clone();
     let (mut view_store, saved_view) = open_interactive_view_state(&interactive_config);
+    let mut edit_target = saved_view.as_ref().and_then(|v| v.edit.clone());
     let _active_view = crate::cli_view_state::ActiveView::bind(view_store.clone());
     if let Some(view) = &saved_view {
         if !view.draft.is_empty() { pending_draft = Some(view.draft.clone()); }
@@ -212,13 +218,15 @@ fn run_interactive_session(config: &Config, resume_pending: bool) -> Result<Inte
     }
 
     let mut offer_user_questions = true;
-    let mut include_child_questions = false;
+    let mut questions_requested = false;
     loop {
         if view_session != interactive_config.session_id {
+            rejected_mentions.clear();
             view_session = interactive_config.session_id.clone();
             interaction::select_interactive_composer(interactive_composer_key(&interactive_config)?);
             pending_draft = None;
             let (store, view) = open_interactive_view_state(&interactive_config);
+            edit_target = view.as_ref().and_then(|v| v.edit.clone());
             view_store = store;
             crate::cli_view_state::ActiveView::replace(view_store.clone());
             if let Some(view) = view {
@@ -233,10 +241,10 @@ fn run_interactive_session(config: &Config, resume_pending: bool) -> Result<Inte
         crate::conversation_invocation::refresh_unmodified(&mut interactive_config)?;
         if offer_user_questions && !goal_entry && !interactive_config.json_output {
             offer_user_questions = false;
+            let requested = std::mem::take(&mut questions_requested);
             if let Some(conversation) = interactive_config.session_id.as_deref() {
                 let child_waits = crate::user_input_wait::owned(conversation, None).unwrap_or_default();
-                let include_children =
-                    std::mem::take(&mut include_child_questions) || !child_waits.is_empty();
+                let include_children = requested || !child_waits.is_empty();
                 if !child_waits.is_empty() {
                     terminal_notice!(
                         "\n  ◆ {} ({}) — /questions",
@@ -253,15 +261,12 @@ fn run_interactive_session(config: &Config, resume_pending: bool) -> Result<Inte
                     &interaction::TerminalInteraction,
                 ) {
                     Ok(outcome) => {
+                        if requested && !outcome.had_questions {
+                            terminal_notice!("{}", ui_text(UiText::NoPendingQuestions));
+                        }
                         if let Some(error) = outcome.notice { terminal_notice!("{}", format_error(&error)); }
-                        if outcome.deferred && !child_waits.is_empty() {
-                            terminal_notice!(
-                                "  ◆ {}",
-                                match current_language() {
-                                    Language::ZhHans => "子任务问题仍处于等待中，可随时输入 /questions 回答。",
-                                    _ => "Child question remains open; run /questions anytime to answer.",
-                                }
-                            );
+                        if outcome.deferred && outcome.had_questions {
+                            terminal_notice!("{}", ui_text(UiText::QuestionDeferred));
                         }
                         if let Some(run_id) = outcome.resume_run {
                             let mut emitter = Emitter::new(false);
@@ -274,17 +279,32 @@ fn run_interactive_session(config: &Config, resume_pending: bool) -> Result<Inte
                             if let Some(draft) = emitter.take_draft_user_input() { pending_draft = Some(draft); }
                             if let Some(usage) = emitter.take_context_usage() { last_context_usage = Some(usage); }
                             match result {
-                                Ok(_) => { offer_user_questions = !outcome.deferred; continue; }
+                                Ok(resumed) => {
+                                    // A resumed answer may already be sealed by its owner. The
+                                    // new terminal emitter then has no live text events to replay.
+                                    if resumed.as_ref().is_none_or(|run| run.is_terminal()) {
+                                        match session::load_interactive_session_snapshot(conversation) {
+                                            Ok(snapshot) => replace_interactive_session_replay(&snapshot.saved, &interactive_config),
+                                            Err(error) => terminal_notice!("{}", format_error(&error)),
+                                        }
+                                    }
+                                    offer_user_questions = !outcome.deferred;
+                                    continue;
+                                }
                                 Err(error) => terminal_notice!("{}", format_error(&error)),
                             }
                         }
                     }
                     Err(error) => terminal_notice!("{}", format_error(&error)),
                 }
+            } else if requested {
+                terminal_notice!("{}", ui_text(UiText::NoPendingQuestions));
             }
         }
         queued_user_inputs.extend(interaction::take_interactive_queued_inputs());
-        let prompt_footer = if goal_entry {
+        let prompt_footer = if edit_target.is_some() {
+            Some(ui_text(UiText::EditInputHint).to_string())
+        } else if goal_entry {
             Some(ui_text(UiText::GoalInputHint).to_string())
         } else if !interactive_config.json_output {
             interactive_prompt_footer_line(
@@ -295,7 +315,10 @@ fn run_interactive_session(config: &Config, resume_pending: bool) -> Result<Inte
         } else {
             None
         };
-        let maybe_prompt = if let Some(queued) = (!goal_entry).then(|| queued_user_inputs.pop_front()).flatten() {
+        let maybe_prompt = if let Some(queued) = (!goal_entry && edit_target.is_none())
+            .then(|| queued_user_inputs.pop_front())
+            .flatten()
+        {
             if !interactive_config.json_output {
                 commit_interactive_user_history_line(&queued);
             }
@@ -310,10 +333,12 @@ fn run_interactive_session(config: &Config, resume_pending: bool) -> Result<Inte
                 &interactive_config,
                 pending_draft.take().as_deref(),
                 if goal_entry { &mut goal_view_store } else { &mut view_store },
-                goal_entry,
+                std::mem::take(&mut rejected_mentions), edit_target.as_ref(), goal_entry,
             )
             .map_err(|err| format!("{} {err}", tr(Message::FailedReadPromptPrefix)))?
         };
+        let mut selected_experts = None;
+        let mut submitted_mentions = Vec::new();
         let prompt = match maybe_prompt {
             None => break,
             Some(InteractivePromptInput::CancelGoal) => {
@@ -322,24 +347,73 @@ fn run_interactive_session(config: &Config, resume_pending: bool) -> Result<Inte
                 interaction::clear_interactive_execution_draft();
                 continue;
             }
+            Some(InteractivePromptInput::CancelEdit) => {
+                edit_target = None;
+                interaction::clear_interactive_execution_draft();
+                persist_interactive_view_state(&mut view_store, String::new(), 0, vec![], None);
+                continue;
+            }
             Some(InteractivePromptInput::Submitted(prompt)) => prompt,
+            Some(InteractivePromptInput::Mentioned(prompt, selection, mentions)) => {
+                selected_experts = Some(selection);
+                submitted_mentions = mentions;
+                prompt
+            }
         };
+        if (goal_entry || edit_target.is_some()) && !interactive_config.json_output {
+            let footer = interactive_prompt_footer_line(
+                &interactive_config,
+                interactive_config.session_id.as_deref(),
+                last_context_usage,
+            );
+            crate::terminal_ui::set_footer(footer.as_deref().unwrap_or_default());
+        }
+        let chat_commands = !goal_entry && edit_target.is_none();
+        if !goal_entry && prompt == "/cancel-edit" {
+            if edit_target.is_none() {
+                terminal_notice!("{}", ui_text(UiText::NoActiveEdit));
+                continue;
+            }
+            edit_target = None;
+            rejected_mentions.clear();
+            persist_interactive_view_state(&mut view_store, String::new(), 0, vec![], None);
+            continue;
+        }
+        if chat_commands && (prompt == "/edit" || prompt.starts_with("/edit ")) {
+            let Some(conversation) = interactive_config.session_id.as_deref() else {
+                terminal_notice!("{}", ui_text(UiText::NoMessageToEdit));
+                continue;
+            };
+            let id = prompt.strip_prefix("/edit").unwrap().trim();
+            match crate::cli_expert_mentions::EditTarget::load(
+                conversation,
+                (!id.is_empty()).then_some(id),
+            ) {
+                Ok((target, text, runs)) => {
+                    edit_target = Some(target);
+                    pending_draft = Some(text);
+                    rejected_mentions = runs;
+                }
+                Err(error) => terminal_notice!("{}", error),
+            }
+            continue;
+        }
         if prompt.is_empty() {
             continue;
         }
-        if !goal_entry && prompt == "/questions" {
+        if chat_commands && prompt == "/questions" {
             offer_user_questions = true;
-            include_child_questions = true;
+            questions_requested = true;
             continue;
         }
-        if !goal_entry && is_exit_command(prompt.as_str()) {
+        if chat_commands && is_exit_command(prompt.as_str()) {
             if !interactive_config.json_output {
                 clear_interactive_prompt_area(prompt_footer.as_deref())
                     .map_err(|err| format!("{} {err}", tr(Message::FailedFlushPromptPrefix)))?;
             }
             break;
         }
-        if !goal_entry {
+        if chat_commands {
             if let Some(target) = resume_command_target(prompt.as_str()) {
                 match target {
                     Some(id) => {
@@ -369,16 +443,16 @@ fn run_interactive_session(config: &Config, resume_pending: bool) -> Result<Inte
                 continue;
             }
         }
-        if recovery_blocked && !prompt.starts_with('/') {
+        if recovery_blocked && (!chat_commands || !prompt.starts_with('/')) {
             terminal_notice!("恢复尚未完成，未发送此消息。请用 /resume 重试或选择其他会话。");
             pending_draft = Some(prompt);
             continue;
         }
-        if !goal_entry && prompt == "/" {
-            print_interactive_help();
+        if chat_commands && prompt == "/" {
+            print_interactive_help("");
             continue;
         }
-        if !prompt.starts_with('/') && interactive_config.save_session {
+        if (!chat_commands || !prompt.starts_with('/')) && interactive_config.save_session {
             if let Some(session)=interactive_config.session_id.as_deref() {
                 if let Err(error)=crate::boundary_input_intent::ensure_no_pending(session) {
                     terminal_notice!("{}",format_error(&error));
@@ -389,6 +463,8 @@ fn run_interactive_session(config: &Config, resume_pending: bool) -> Result<Inte
         }
         let submitted_command = if goal_entry {
             begin_interactive_goal_input(&prompt, &interactive_config, &mut goal_target, &mut goal_constraints)
+        } else if edit_target.is_some() {
+            Ok(SlashCommandResult::PassThrough)
         } else { handle_interactive_slash_command(
             &prompt,
             &mut interactive_config,
@@ -471,6 +547,7 @@ fn run_interactive_session(config: &Config, resume_pending: bool) -> Result<Inte
             SlashCommandResult::Draft(draft) => { pending_draft = Some(draft); continue; }
             SlashCommandResult::Handled => continue,
             SlashCommandResult::WorkspaceChanged | SlashCommandResult::SessionReset => {
+                edit_target = None;
                 interaction::select_interactive_composer(interactive_composer_key(&interactive_config)?);
                 pending_draft = None;
                 recovery_blocked = false;
@@ -491,14 +568,47 @@ fn run_interactive_session(config: &Config, resume_pending: bool) -> Result<Inte
         // cycle. Every ordinary composer submission remains one visible user
         // Turn, even while a Goal is paused, running in the background, or
         // awaiting user input.
+        let mut turn_config = interactive_config.clone();
+        turn_config.main_expert_selection = selected_experts;
+        if turn_config.main_expert_selection.is_some() || edit_target.is_some() {
+            let id = uuid::Uuid::new_v4().to_string();
+            if let Some(target) = &edit_target {
+                if let Err(error) =
+                    target.prepare(&id, &prompt, turn_config.main_expert_selection.as_ref())
+                {
+                    terminal_notice!("{}", error);
+                    pending_draft = Some(prompt);
+                    rejected_mentions = submitted_mentions;
+                    continue;
+                }
+            }
+            turn_config.host_user_message_id = Some(format!("{id}:user"));
+            turn_config.host_assistant_message_id = Some(format!("{id}:assistant"));
+            turn_config.host_submission_id = Some(id);
+        }
+        let editing = edit_target.is_some();
+        let mut replay_edited_history = false;
         let run_result = match run_single_prompt_with_cancellation(
-            &interactive_config,
+            &turn_config,
             prompt.as_str(),
         ) {
             Ok(result) => {
+                replay_edited_history = editing;
+                if (!submitted_mentions.is_empty() || edit_target.is_some())
+                    && result.draft_user_input.is_none()
+                {
+                    persist_interactive_view_state(&mut view_store, String::new(), 0, vec![], None);
+                }
+                edit_target = None;
                 offer_user_questions = true;
-                if !result.run_outcome.is_terminal() {
-                    eprintln!("Run remains pending ({:?}); no completion or permission decision was recorded.", result.run_outcome.turn_status);
+                let opens_question = !interactive_config.json_output
+                    && (interactive_config.session_id.is_some() || result.session_id.is_some())
+                    && result.run_outcome.turn_status == nola_core::agent::AgentTurnStatus::AwaitingInput;
+                if !result.run_outcome.is_terminal() && !opens_question {
+                    terminal_notice!(
+                        "Run remains pending ({:?}); no completion or permission decision was recorded.",
+                        result.run_outcome.turn_status
+                    );
                 }
                 if interactive_config.session_id.is_none() {
                     interactive_config.session_id = result.session_id.clone();
@@ -515,6 +625,53 @@ fn run_interactive_session(config: &Config, resume_pending: bool) -> Result<Inte
         };
         if let Err(err) = run_result {
             terminal_notice!("{}", format_error(&err));
+            if !submitted_mentions.is_empty() || edit_target.is_some() {
+                let admitted = turn_config.session_id.as_ref().map(|conversation| {
+                    crate::application_port::CliApplicationPort::persistent_default().and_then(
+                        |mut app| {
+                            app.execute::<Option<nola_application::ExactRunInvocation>>(
+                                nola_application::ApplicationCommand::LoadExactRunInvocation {
+                                    conversation_id: conversation.clone(),
+                                    expected_run_id: turn_config
+                                        .host_submission_id
+                                        .clone()
+                                        .unwrap(),
+                                    assistant_message_id: turn_config
+                                        .host_assistant_message_id
+                                        .clone()
+                                        .unwrap(),
+                                },
+                            )
+                        },
+                    )
+                });
+                if matches!(admitted, None | Some(Ok(None))) {
+                    pending_draft = Some(prompt.clone());
+                    rejected_mentions = submitted_mentions;
+                    persist_interactive_view_state(
+                        &mut view_store,
+                        prompt.clone(),
+                        prompt.len(),
+                        rejected_mentions.clone(),
+                        edit_target.clone(),
+                    );
+                } else {
+                    replay_edited_history = editing && matches!(admitted, Some(Ok(Some(_))));
+                    edit_target = None;
+                }
+            }
+        }
+        if replay_edited_history && !interactive_config.json_output {
+            if let Some(saved) = restore_interactive_session_messages(
+                &interactive_config,
+                &mut started,
+                &mut turn,
+                &mut input_history,
+            )? {
+                replace_interactive_session_replay(&saved, &interactive_config);
+                history_cursor = None;
+                continue;
+            }
         }
         if input_history
             .last()
@@ -747,11 +904,45 @@ fn print_interactive_welcome(config: &Config) -> Result<(), String> {
     Ok(())
 }
 
-enum InteractivePromptInput { Submitted(String), CancelGoal }
-thread_local! { static GOAL_COMPOSER_ACTIVE: Cell<bool> = const { Cell::new(false) }; }
-struct GoalComposerScope(bool);
-impl Drop for GoalComposerScope {
-    fn drop(&mut self) { GOAL_COMPOSER_ACTIVE.with(|active| active.set(self.0)); }
+enum InteractivePromptInput {
+    Submitted(String),
+    Mentioned(
+        String,
+        nola_domain::expert_task_target::MainExpertSelectionContextV1,
+        Vec<crate::cli_expert_mentions::Occurrence>,
+    ),
+    CancelGoal,
+    CancelEdit,
+}
+thread_local! {
+    static MENTION_MENU: std::cell::RefCell<(String, usize, Option<usize>)> = Default::default();
+}
+fn mention_menu_focus(line: &str, cursor: usize) -> Option<usize> {
+    MENTION_MENU.with(|m| {
+        let m = m.borrow();
+        if m.0 == line && m.1 == cursor {
+            m.2
+        } else {
+            Some(0)
+        }
+    })
+}
+fn set_mention_focus(line: &str, cursor: usize, index: Option<usize>) {
+    MENTION_MENU.with(|m| *m.borrow_mut() = (line.into(), cursor, index));
+}
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum ComposerPurpose {
+    Chat,
+    Goal,
+    Edit,
+}
+
+thread_local! { static COMPOSER_PURPOSE: Cell<ComposerPurpose> = const { Cell::new(ComposerPurpose::Chat) }; }
+struct ComposerScope(ComposerPurpose);
+impl Drop for ComposerScope {
+    fn drop(&mut self) {
+        COMPOSER_PURPOSE.with(|active| active.set(self.0));
+    }
 }
 
 fn read_interactive_prompt_line(
@@ -762,10 +953,19 @@ fn read_interactive_prompt_line(
     config: &Config,
     initial_draft: Option<&str>,
     view_store: &mut Option<crate::cli_view_state::ViewStore>,
+    recovered_mentions: Vec<crate::cli_expert_mentions::Occurrence>,
+    edit_target: Option<&crate::cli_expert_mentions::EditTarget>,
     goal_entry: bool,
 ) -> io::Result<Option<InteractivePromptInput>> {
     crate::cli_expert_mentions::begin_composer();
-    let _purpose = GoalComposerScope(GOAL_COMPOSER_ACTIVE.with(|active| active.replace(goal_entry)));
+    let purpose = if goal_entry {
+        ComposerPurpose::Goal
+    } else if edit_target.is_some() {
+        ComposerPurpose::Edit
+    } else {
+        ComposerPurpose::Chat
+    };
+    let _scope = ComposerScope(COMPOSER_PURPOSE.with(|active| active.replace(purpose)));
     if !io::stdin().is_terminal() {
         let mut raw_line = String::new();
         let read = io::stdin().read_line(&mut raw_line)?;
@@ -798,7 +998,27 @@ fn read_interactive_prompt_line(
     let snapshot = interaction::interactive_composer_snapshot();
     let mut line = initial_draft.unwrap_or(&snapshot.draft).to_string();
     let mut cursor = if snapshot.draft == line { snapshot.cursor } else { line.len() };
+    let mut mentions = if recovered_mentions.is_empty() {
+        view_store
+            .as_ref()
+            .map(|s| s.mentions_for(&line))
+            .unwrap_or_default()
+    } else {
+        recovered_mentions
+    };
+    mentions.retain(|r| line.get(r.start..r.end) == Some(r.text.as_str()));
+    let mut undo_mention: Option<(
+        String,
+        usize,
+        Vec<crate::cli_expert_mentions::Occurrence>,
+        Vec<InteractivePastedContent>,
+        String,
+    )> = None;
+    SLASH_MENU.with(|menu| *menu.borrow_mut() = SlashMenu::default());
+    set_mention_focus(&line, cursor, Some(0));
     let mut pasted_contents: Vec<InteractivePastedContent> = Vec::new();
+    *history_cursor = None;
+    let mut history_draft = None;
     let mut esc_pending_clear = false;
     let mut completion_cycle: Option<ComposerCompletionCycle> = None;
     INTERACTIVE_COMPOSER_CURSOR_ROW.with(|row| row.set(0));
@@ -814,7 +1034,18 @@ fn read_interactive_prompt_line(
         let effective_footer = interactive_effective_footer(prompt_footer, esc_pending_clear);
         let expanded = expand_interactive_pasted_content(&line, &pasted_contents);
         let expanded_cursor = expand_interactive_pasted_content(&line[..cursor], &pasted_contents).len();
-        persist_interactive_view_state(view_store, expanded, expanded_cursor);
+        let mut expanded_mentions = mentions.clone();
+        for r in &mut expanded_mentions {
+            r.start = expand_interactive_pasted_content(&line[..r.start], &pasted_contents).len();
+            r.end = r.start + r.text.len();
+        }
+        persist_interactive_view_state(
+            view_store,
+            expanded.clone(),
+            expanded_cursor,
+            expanded_mentions.clone(),
+            edit_target.cloned(),
+        );
         if show_prompt && background_notification_pending {
             // Snapshot before reconciliation. Events appended concurrently
             // after this read remain above the consumed cursor and cause the
@@ -961,12 +1192,95 @@ fn read_interactive_prompt_line(
             if key.kind != KeyEventKind::Release && key.code != KeyCode::Esc {
                 esc_pending_clear = false;
             }
-            if !matches!(key.code, KeyCode::Tab | KeyCode::BackTab) && key.kind != KeyEventKind::Release {
+            if key.kind == KeyEventKind::Release {
+                continue;
+            }
+            let query = active_at_file_token(&line, cursor).filter(|_| {
+                !goal_entry
+                    && mention_menu_focus(&line, cursor).is_some()
+                    && !line.trim_start().starts_with('/')
+                    && !mentions.iter().any(|r| r.start < cursor && cursor <= r.end)
+            });
+            let query_open = query.is_some();
+            if key.code == KeyCode::Esc && query_open {
+                set_mention_focus(&line, cursor, None);
+                completion_cycle = None;
+                draw_composer_frame(&line, cursor, prompt_footer, None)?;
+                continue;
+            }
+            if key.code == KeyCode::Char('z') && key.modifiers == KeyModifiers::CONTROL {
+                if let Some((previous, at, old_mentions, old_pastes, after)) = undo_mention.take() {
+                    if line == after {
+                        line = previous;
+                        cursor = at;
+                        mentions = old_mentions;
+                        pasted_contents = old_pastes;
+                        redraw_interactive_prompt_line(&line, cursor, prompt_footer, config)?;
+                        continue;
+                    }
+                }
+            }
+            if let Some((start, end, prefix)) = query.filter(|_| {
+                is_interactive_submit_event(&key) || matches!(key.code, KeyCode::Down | KeyCode::Up)
+            }) {
+                let candidates = interactive_mention_candidates(config, prefix);
+                if !candidates.is_empty() {
+                    let index = mention_menu_focus(&line, cursor).unwrap_or(0) % candidates.len();
+                    if is_interactive_submit_event(&key) {
+                        let previous = (line.clone(), cursor, mentions.clone(), pasted_contents.clone());
+                        cursor = insert_composer_candidate(&mut line, start, end, &candidates[index].0, &mut mentions, &mut pasted_contents);
+                        undo_mention = Some((previous.0, previous.1, previous.2, previous.3, line.clone()));
+                        set_mention_focus(&line, cursor, None);
+                    } else {
+                        let offset = if key.code == KeyCode::Up { candidates.len() - 1 } else { 1 };
+                        set_mention_focus(&line, cursor, Some((index + offset) % candidates.len()));
+                    }
+                    redraw_interactive_prompt_line(&line, cursor, prompt_footer, config)?;
+                    continue;
+                }
+            }
+            let mut submit_command = None;
+            let menu_handled = SLASH_MENU.with(|menu| {
+                let mut menu = menu.borrow_mut();
+                menu.sync(&line, cursor, config);
+                if !menu.is_open() { return false; }
+                match (key.code, key.modifiers) {
+                    (KeyCode::Esc, KeyModifiers::NONE) => menu.dismissed = true,
+                    (KeyCode::Up, KeyModifiers::NONE) | (KeyCode::Char('p'), KeyModifiers::CONTROL)
+                        | (KeyCode::BackTab, _) => menu.step(true),
+                    (KeyCode::Down, KeyModifiers::NONE) | (KeyCode::Char('n'), KeyModifiers::CONTROL) => menu.step(false),
+                    (KeyCode::Tab, KeyModifiers::NONE) => {
+                        let command = &menu.entries[menu.selected.unwrap_or(0)].name;
+                        line = format!("{command} ");
+                        cursor = line.len();
+                        mentions.clear();
+                        pasted_contents.clear();
+                        completion_cycle = None;
+                        // Subcommand suggestions, if any, belong to the newly inserted text.
+                    }
+                    _ if is_interactive_submit_event(&key) => {
+                        submit_command = menu.selected.map(|index| menu.entries[index].name.clone());
+                        return false;
+                    }
+                    _ => return false,
+                }
+                true
+            });
+            if menu_handled {
+                redraw_interactive_prompt_line(&line, cursor, prompt_footer, config)?;
+                continue;
+            }
+            if !matches!(key.code, KeyCode::Tab | KeyCode::BackTab) {
                 completion_cycle = None;
             }
             if crate::composer_media::paste_key(&key) {
                 match crate::composer_media::paste_image() {
-                    Ok(marker) => { line.insert_str(cursor, &marker); cursor += marker.len(); }
+                    Ok(marker) => {
+                        adjust_pasted_ranges(&mut pasted_contents, cursor, cursor, marker.len());
+                        crate::cli_expert_mentions::replace(&mut mentions, cursor, cursor, marker.len());
+                        line.insert_str(cursor, &marker);
+                        cursor += marker.len();
+                    }
                     Err(error) => terminal_notice!("{}", crate::composer_media::paste_error(&error)),
                 }
                 redraw_interactive_prompt_line(&line, cursor, prompt_footer, config)?;
@@ -977,31 +1291,92 @@ fn read_interactive_prompt_line(
                 continue;
             }
             if is_interactive_submit_event(&key) {
-                persist_interactive_view_state(view_store, String::new(), 0);
+                let (expanded, expanded_mentions) = if let Some(command) = submit_command {
+                    line.clone_from(&command);
+                    (command, Vec::new())
+                } else {
+                    (expanded, expanded_mentions)
+                };
+                let selection =
+                    match crate::cli_expert_mentions::bind(&expanded, &expanded_mentions) {
+                        Ok(value) => value,
+                        Err(error) => {
+                            terminal_notice!("{}", error);
+                            continue;
+                        }
+                    };
+                if selection.is_none() && edit_target.is_none() {
+                    persist_interactive_view_state(view_store, String::new(), 0, vec![], None);
+                }
                 finish_interactive_prompt_line(&line, prompt_footer)?;
                 interaction::clear_interactive_execution_draft();
                 if line.is_empty() {
                     return Ok(Some(InteractivePromptInput::Submitted(String::new())));
                 }
-                let prompt = expand_interactive_pasted_content(&line, &pasted_contents)
-                    .trim()
-                    .to_string();
+                if let Some(selection) = selection {
+                    return Ok(Some(InteractivePromptInput::Mentioned(
+                        expanded,
+                        selection,
+                        expanded_mentions,
+                    )));
+                }
+                let prompt = expanded.trim().to_string();
                 return Ok(Some(InteractivePromptInput::Submitted(prompt)));
             }
             if key.kind != KeyEventKind::Press {
                 continue;
             }
-            if try_delete_pasted_placeholder(&mut line, &mut cursor, &mut pasted_contents, &key) {
+            let old_cursor = cursor;
+            let old_len = line.len();
+            if let Some(r) = mentions
+                .iter()
+                .find(|r| match key.code {
+                    KeyCode::Backspace | KeyCode::Left => r.start < cursor && cursor <= r.end,
+                    KeyCode::Delete | KeyCode::Right => r.start <= cursor && cursor < r.end,
+                    _ => false,
+                })
+                .cloned()
+                .filter(|_| key.modifiers.is_empty())
+            {
+                match key.code {
+                    KeyCode::Left => cursor = r.start,
+                    KeyCode::Right => cursor = r.end,
+                    _ => {
+                        let old = (line.clone(), cursor, mentions.clone(), pasted_contents.clone());
+                        line.replace_range(r.start..r.end, "");
+                        adjust_pasted_ranges(&mut pasted_contents, r.start, r.end, 0);
+                        cursor = r.start;
+                        crate::cli_expert_mentions::replace(&mut mentions, r.start, r.end, 0);
+                        undo_mention = Some((old.0, old.1, old.2, old.3, line.clone()));
+                    }
+                }
                 redraw_interactive_prompt_line(&line, cursor, prompt_footer, config)?;
                 continue;
             }
-            if crate::composer::edit(&mut line, &mut cursor, &key) {
-                retain_present_pasted_contents(&line, &mut pasted_contents);
+            // Move inside a multiline recall until the caret reaches its outer row.
+            let recall_boundary = history_cursor.is_some() && key.modifiers.is_empty() && match key.code {
+                KeyCode::Up => !line[..cursor].contains('\n'),
+                KeyCode::Down => !line[cursor..].contains('\n'),
+                _ => false,
+            };
+            if !recall_boundary && edit_with_paste_blocks(&mut line, &mut cursor, &mut pasted_contents, &key) {
+                if old_len != line.len() {
+                    let start = cursor.min(old_cursor);
+                    crate::cli_expert_mentions::replace(
+                        &mut mentions,
+                        start,
+                        start + old_len.saturating_sub(line.len()),
+                        line.len().saturating_sub(old_len),
+                    );
+                }
                 redraw_interactive_prompt_line(&line, cursor, prompt_footer, config)?;
                 continue;
             }
             match key.code {
                 KeyCode::Esc => {
+                    if edit_target.is_some() {
+                        return Ok(Some(InteractivePromptInput::CancelEdit));
+                    }
                     if goal_entry {
                         clear_interactive_composer_frame();
                         return Ok(Some(InteractivePromptInput::CancelGoal));
@@ -1014,6 +1389,9 @@ fn read_interactive_prompt_line(
                             continue;
                         }
                         line.clear();
+                        *history_cursor = None;
+                        history_draft = None;
+                        mentions.clear();
                         cursor = 0;
                         pasted_contents.clear();
                         esc_pending_clear = false;
@@ -1029,47 +1407,56 @@ fn read_interactive_prompt_line(
                             config,
                             &mut completion_cycle,
                             key.code == KeyCode::BackTab,
+                            &mut mentions,
+                            &mut pasted_contents,
                         )
                     {
-                        retain_present_pasted_contents(&line, &mut pasted_contents);
+                        set_mention_focus(&line, cursor, None);
                         redraw_interactive_prompt_line(&line, cursor, prompt_footer, config)?;
                     }
                 }
-                KeyCode::Up if !goal_entry => {
-                    if let Some(history) =
-                        interactive_history_prompt("\x1b[A", input_history, history_cursor)
-                    {
+                KeyCode::Up | KeyCode::Down if purpose == ComposerPurpose::Chat => {
+                    let browsing = history_cursor.is_some();
+                    let direction = if key.code == KeyCode::Up { "\x1b[A" } else { "\x1b[B" };
+                    if let Some(history) = interactive_history_prompt(direction, input_history, history_cursor) {
+                        if !browsing {
+                            history_draft = Some((std::mem::take(&mut line), cursor,
+                                std::mem::take(&mut mentions), std::mem::take(&mut pasted_contents)));
+                        }
                         line = history;
                         cursor = line.len();
+                        mentions.clear();
                         pasted_contents.clear();
-                        redraw_interactive_prompt_line(&line, cursor, prompt_footer, config)?;
-                    }
-                }
-                KeyCode::Down if !goal_entry => {
-                    if let Some(history) =
-                        interactive_history_prompt("\x1b[B", input_history, history_cursor)
-                    {
-                        line = history;
-                        cursor = line.len();
-                        pasted_contents.clear();
-                        redraw_interactive_prompt_line(&line, cursor, prompt_footer, config)?;
+                    } else if browsing {
+                        if let Some(draft) = history_draft.take() {
+                            (line, cursor, mentions, pasted_contents) = draft;
+                        }
                     } else {
-                        line.clear();
-                        cursor = 0;
-                        pasted_contents.clear();
-                        redraw_interactive_prompt_line(&line, cursor, prompt_footer, config)?;
+                        continue;
                     }
+                    undo_mention = None;
+                    if history_cursor.is_some() {
+                        SLASH_MENU.with(|menu| {
+                            let mut menu = menu.borrow_mut();
+                            menu.sync(&line, cursor, config);
+                            menu.dismissed = true;
+                        });
+                    }
+                    set_mention_focus(&line, cursor, None);
+                    redraw_interactive_prompt_line(&line, cursor, prompt_footer, config)?;
                 }
                 KeyCode::Char('c' | 'C') if key.modifiers.contains(KeyModifiers::CONTROL) => {
                     interaction::clear_interactive_execution_draft();
                     if goal_entry { return Ok(Some(InteractivePromptInput::CancelGoal)); }
                     if !line.is_empty() {
                         line.clear();
+                        *history_cursor = None;
+                        history_draft = None;
+                        mentions.clear();
                         cursor = 0;
                         pasted_contents.clear();
                         esc_pending_clear = false;
                         completion_cycle = None;
-                        *history_cursor = None;
                         redraw_interactive_prompt_line(&line, cursor, prompt_footer, config)?;
                         continue;
                     }
@@ -1087,6 +1474,8 @@ fn read_interactive_prompt_line(
             completion_cycle = None;
             match crate::composer_media::paste_path(&text) {
                 Ok(Some(marker)) => {
+                    adjust_pasted_ranges(&mut pasted_contents, cursor, cursor, marker.len());
+                    crate::cli_expert_mentions::replace(&mut mentions,cursor,cursor,marker.len());
                     line.insert_str(cursor, &marker); cursor += marker.len();
                     redraw_interactive_prompt_line(&line, cursor, prompt_footer, config)?;
                     continue;
@@ -1099,19 +1488,34 @@ fn read_interactive_prompt_line(
                 Ok(None) => {}
             }
             let sanitized = normalize_interactive_paste(&text);
-            if sanitized.chars().any(|ch| !ch.is_whitespace()) {
+            if !sanitized.is_empty() {
                 if should_collapse_pasted_content(&sanitized) {
-                    let placeholder = format!("[Pasted Content {} chars]", sanitized.chars().count());
+                    let chars = sanitized.chars().count();
+                    let mut placeholder = format!("[Pasted Content {chars} chars]");
+                    let mut number = 1;
+                    while pasted_contents.iter().any(|block| block.placeholder == placeholder) {
+                        number += 1;
+                        placeholder = format!("[Pasted Content {chars} chars #{number}]");
+                    }
+                    adjust_pasted_ranges(&mut pasted_contents, cursor, cursor, placeholder.len());
+                    crate::cli_expert_mentions::replace(&mut mentions, cursor, cursor, placeholder.len());
                     line.insert_str(cursor, &placeholder);
+                    let start = cursor;
                     cursor += placeholder.len();
-                    pasted_contents.push(InteractivePastedContent {
-                        placeholder,
-                        content: sanitized,
-                    });
+                    let index = pasted_contents.partition_point(|block| block.start < start);
+                    pasted_contents.insert(index, InteractivePastedContent { start, placeholder, content: sanitized.into() });
                 } else {
+                    adjust_pasted_ranges(&mut pasted_contents, cursor, cursor, sanitized.len());
+                    crate::cli_expert_mentions::replace(
+                        &mut mentions,
+                        cursor,
+                        cursor,
+                        sanitized.len(),
+                    );
                     line.insert_str(cursor, &sanitized);
                     cursor += sanitized.len();
                 }
+                set_mention_focus(&line, cursor, None);
                 redraw_interactive_prompt_line(&line, cursor, prompt_footer, config)?;
             }
         }
@@ -1190,38 +1594,55 @@ fn handle_backslash_enter_continuation(
     }
 }
 
-fn try_delete_pasted_placeholder(
-    line: &mut String,
-    cursor: &mut usize,
-    pasted_contents: &mut Vec<InteractivePastedContent>,
-    key: &KeyEvent,
+/// Keep the original positional identity of each folded paste as the draft changes.
+fn adjust_pasted_ranges(blocks: &mut Vec<InteractivePastedContent>, start: usize, end: usize, inserted: usize) {
+    blocks.retain_mut(|block| {
+        if block.start >= end {
+            block.start = block.start - (end - start) + inserted;
+            true
+        } else {
+            block.start + block.placeholder.len() <= start
+        }
+    });
+}
+
+fn edit_with_paste_blocks(
+    line: &mut String, cursor: &mut usize, blocks: &mut Vec<InteractivePastedContent>, key: &KeyEvent,
 ) -> bool {
-    if !key.modifiers.is_empty() || !matches!(key.code, KeyCode::Backspace | KeyCode::Delete) {
-        return false;
-    }
-    let idx = (*cursor).min(line.len());
-    for pos in 0..pasted_contents.len() {
-        let placeholder = &pasted_contents[pos].placeholder;
-        if let Some(start) = line.find(placeholder.as_str()) {
-            let end = start + placeholder.len();
-            let hit = match key.code {
-                KeyCode::Backspace => idx > start && idx <= end,
-                KeyCode::Delete => idx >= start && idx < end,
-                _ => false,
-            };
-            if hit {
-                line.replace_range(start..end, "");
-                *cursor = start;
-                pasted_contents.remove(pos);
-                return true;
+    let old_len = line.len();
+    let old_cursor = *cursor;
+    if !crate::composer::edit(line, cursor, key) { return false; }
+    if blocks.is_empty() { return true; }
+    if line.len() < old_len {
+        // Word deletion and Cut can end inside the displayed label. Extend the
+        // deletion to the whole block, in the coordinates before the edit.
+        let removed = old_len - line.len();
+        let start = old_cursor.min(*cursor);
+        let end = start + removed;
+        let mut left = start;
+        let mut right = end;
+        for block in blocks.iter() {
+            let block_end = block.start + block.placeholder.len();
+            if block.start < end && block_end > start {
+                left = left.min(block.start);
+                right = right.max(block_end);
+            }
+        }
+        line.replace_range(left..right - removed, "");
+        *cursor = left;
+        adjust_pasted_ranges(blocks, left, right, 0);
+    } else if line.len() > old_len {
+        adjust_pasted_ranges(blocks, old_cursor, old_cursor, line.len() - old_len);
+    } else if *cursor != old_cursor {
+        for block in blocks.iter() {
+            let end = block.start + block.placeholder.len();
+            if block.start < *cursor && *cursor < end {
+                *cursor = if *cursor < old_cursor { block.start } else { end };
+                break;
             }
         }
     }
-    false
-}
-
-fn retain_present_pasted_contents(line: &str, pasted_contents: &mut Vec<InteractivePastedContent>) {
-    pasted_contents.retain(|item| line.contains(item.placeholder.as_str()));
+    true
 }
 
 fn interactive_effective_footer(base_footer: Option<&str>, esc_pending_clear: bool) -> Option<String> {
@@ -1242,13 +1663,18 @@ fn expand_interactive_pasted_content(
     input: &str,
     pasted_contents: &[InteractivePastedContent],
 ) -> String {
-    let mut expanded = input.to_string();
-    for pasted in pasted_contents {
-        if let Some(start) = expanded.find(&pasted.placeholder) {
-            let end = start + pasted.placeholder.len();
-            expanded.replace_range(start..end, &pasted.content);
+    let mut expanded = String::new();
+    let mut offset = 0;
+    for block in pasted_contents {
+        let end = block.start + block.placeholder.len();
+        if end > input.len() { break; }
+        if input.get(block.start..end) == Some(block.placeholder.as_str()) {
+            expanded.push_str(&input[offset..block.start]);
+            expanded.push_str(&block.content);
+            offset = end;
         }
     }
+    expanded.push_str(&input[offset..]);
     expanded
 }
 
@@ -1526,7 +1952,7 @@ fn draw_interactive_prompt_area(
     footer: Option<&str>,
     config: &Config,
 ) -> io::Result<()> {
-    let completion_line = if GOAL_COMPOSER_ACTIVE.with(Cell::get) {
+    let completion_line = if COMPOSER_PURPOSE.with(Cell::get) == ComposerPurpose::Goal {
         None
     } else {
         composer_completion_line(line, cursor, config)
@@ -1754,7 +2180,7 @@ fn interactive_input_bar_line_with_color(
         truncate_display_width_tail(text, line_width.saturating_sub(display_width(prefix)));
     let use_placeholder = is_placeholder && visible_line.is_empty();
     let visible = if use_placeholder {
-        if GOAL_COMPOSER_ACTIVE.with(Cell::get) { ui_text(UiText::GoalPlaceholder) }
+        if COMPOSER_PURPOSE.with(Cell::get) == ComposerPurpose::Goal { ui_text(UiText::GoalPlaceholder) }
         else { tr(Message::InteractiveInputPlaceholder) }
     } else {
         visible_line.as_str()
@@ -1863,13 +2289,26 @@ fn composer_prompt_footer_line(footer: &str) -> String {
 
 fn composer_completion_line(line: &str, cursor: usize, config: &Config) -> Option<String> {
     let trimmed = line.trim_start();
-    let mut parts = if trimmed.starts_with('/') {
-        matching_slash_commands_with_config(line, config)
+    let slash = SLASH_MENU.with(|menu| {
+        let mut menu = menu.borrow_mut();
+        menu.sync(line, cursor, config);
+        let (width, height) = crossterm::terminal::size().unwrap_or((80, 24));
+        menu.render(usize::from(width.saturating_sub(1)), usize::from(height))
+    });
+    if trimmed.starts_with('/') || COMPOSER_PURPOSE.with(Cell::get) == ComposerPurpose::Goal {
+        return slash;
+    }
+    let mut parts = if let Some((_, _, prefix)) = active_at_file_token(line, cursor) {
+        let selected = mention_menu_focus(line, cursor)?;
+        let mut items = interactive_mention_candidates(config, prefix)
             .into_iter()
-            .map(|item| interactive_room_completion_label(&item.name).unwrap_or(item.name))
-            .collect::<Vec<_>>()
-    } else if let Some((_, _, prefix)) = active_at_file_token(line, cursor) {
-        interactive_mention_candidates(config, prefix).into_iter().map(|(_, label)| label).collect()
+            .map(|(_, label)| label)
+            .collect::<Vec<_>>();
+        if selected < items.len() {
+            items[selected].insert_str(0, "› ");
+            items.drain(..selected.saturating_sub(2));
+        }
+        items
     } else {
         return None;
     };
@@ -1880,7 +2319,8 @@ fn composer_completion_line(line: &str, cursor: usize, config: &Config) -> Optio
     if parts.len() > 4 {
         parts.truncate(4);
     }
-    let text = format!("tab {}", parts.join("   "));
+    let hint = ui_text(UiText::MentionPickKeys);
+    let text = format!("{hint}  {}", parts.join("   "));
     let text = truncate_display_width(&text, width);
     if interactive_color_enabled() {
         Some(format!(
@@ -2543,6 +2983,10 @@ const INTERACTIVE_SLASH_COMMANDS: &[SlashCommand] = &[
     SlashCommand { name: "/permissions" },
     SlashCommand { name: "/sources" },
     SlashCommand { name: "/resources" },
+    SlashCommand { name: "/edit" },
+    SlashCommand {
+        name: "/cancel-edit",
+    },
     SlashCommand { name: "/goal" },
     SlashCommand { name: "/init" },
     SlashCommand { name: "/cd" },
@@ -2563,6 +3007,7 @@ const INTERACTIVE_SLASH_COMMANDS: &[SlashCommand] = &[
     SlashCommand { name: "/mcp" },
     SlashCommand { name: "/memory" },
     SlashCommand { name: "/guide" },
+    SlashCommand { name: "/config" },
     SlashCommand { name: "/resume" },
     SlashCommand { name: "/continue" },
     SlashCommand { name: "/history" },
@@ -2603,6 +3048,7 @@ fn normalize_interactive_command(command: &str) -> Option<&'static str> {
         "/mcp" => "/mcp",
         "/memory" | "/mem" => "/memory",
         "/guide" => "/guide",
+        "/config" => "/config",
         "/resume" | "/r" => "/resume",
         "/continue" | "/c" => "/continue",
         "/history" | "/hist" => "/history",
@@ -2865,6 +3311,28 @@ fn interactive_init_usage() -> String {
     "usage: /init [--dry-run] [--force] [--output PATH]".to_string()
 }
 
+fn apply_workspace_runtime(config: &mut Config, mut new_runtime: runtime_config::RuntimeConfig) {
+    new_runtime.endpoint = config.runtime.endpoint.clone();
+    new_runtime.api_key = config.runtime.api_key.clone();
+    new_runtime.model = config.runtime.model.clone();
+    new_runtime.provider = config.runtime.provider.clone();
+    new_runtime.siwc = config.runtime.siwc.clone();
+    new_runtime.selected_profile = config.runtime.selected_profile.clone();
+    new_runtime.model_binding = config.runtime.model_binding.clone();
+    new_runtime.native_model_route = config.runtime.native_model_route.clone();
+    new_runtime.model_capabilities = config.runtime.model_capabilities.clone();
+    new_runtime.llm_fallbacks = config.runtime.llm_fallbacks.clone();
+    new_runtime.reasoning_selection = config.runtime.reasoning_selection.clone();
+    new_runtime.reasoning_tier = config.runtime.reasoning_tier.clone();
+    new_runtime.chat_output_token_field = config.runtime.chat_output_token_field.clone();
+    new_runtime.generation_options = config.runtime.generation_options.clone();
+    new_runtime.temperature = config.runtime.temperature;
+    new_runtime.top_p = config.runtime.top_p;
+    new_runtime.max_output_tokens = config.runtime.max_output_tokens;
+    new_runtime.compaction.context_window_tokens = config.runtime.compaction.context_window_tokens;
+    config.runtime = new_runtime;
+}
+
 fn resolve_interactive_workspace_path(
     raw: &str,
     current: &Path,
@@ -2915,304 +3383,14 @@ fn select_interactive_session_restore(config: &Config, continue_last: bool) -> R
     Ok(Some(selected))
 }
 
-fn interactive_toggle_option_labels() -> [(&'static str, &'static str); 2] {
-    [
-        ("on", tr(Message::InteractiveStatusOn)),
-        ("off", tr(Message::InteractiveStatusOff)),
-    ]
-}
-
-fn interactive_toggle_matches<'a>(query: &'a str, include_empty: bool) -> Vec<&'static str> {
-    let query = query.trim();
-    let ascii_query = query.to_ascii_lowercase();
-    let mut result = Vec::new();
-
-    if include_empty && query.is_empty() {
-        return interactive_toggle_option_labels()
-            .iter()
-            .map(|(_, label)| *label)
-            .collect();
-    }
-
-    for (canonical, label) in interactive_toggle_option_labels() {
-        if canonical.starts_with(&ascii_query) || label.starts_with(query) {
-            result.push(label);
-        }
-    }
-
-    result
-}
-
-struct SlashCompletion {
-    name: String,
-}
-
-fn matching_slash_commands_with_config(input: &str, config: &Config) -> Vec<SlashCompletion> {
-    matching_slash_commands_inner(input, Some(config))
-}
-
-fn matching_slash_commands_inner(input: &str, config: Option<&Config>) -> Vec<SlashCompletion> {
-    let trimmed = input.trim_start();
-    if !trimmed.starts_with('/') {
-        return Vec::new();
-    }
-    let mut segments = trimmed.splitn(2, char::is_whitespace);
-    let raw_command = segments.next().unwrap_or("");
-    let rest = segments.next().unwrap_or("").trim();
-    let command = normalize_interactive_command(raw_command).unwrap_or(raw_command);
-
-    if command == "/room" && !rest.is_empty() {
-        return interactive_room_completions(rest);
-    }
-
-    if command == "/model" {
-        let (prefix, query) = interactive_model_completion_parts(rest);
-        return available_interactive_models(config, query)
-            .into_iter()
-            .map(|model| SlashCompletion {
-                name: format!("{prefix}{model}"),
-            })
-            .take(4)
-            .collect();
-    }
-    if command == "/executor" {
-        let query = rest.to_ascii_lowercase();
-        // Completion is display-only. Discovery probes versions, authentication
-        // and model catalogs by starting external processes; never do it for a
-        // keystroke. The explicit picker/submission still checks availability.
-        return nola_domain::execution_backend::ExecutionBackendKind::ALL
-            .into_iter()
-            .filter(|backend| query.is_empty() || backend.id().starts_with(&query))
-            .map(|backend| SlashCompletion {
-                name: format!("/executor {}", backend.id()),
-            })
-            .take(4)
-            .collect();
-    }
-    if command == "/goal" && rest.is_empty() {
-        return interactive_goal_subcommand_matches(rest);
-    }
-    if command == "/goal" {
-        return interactive_goal_subcommand_matches(rest);
-    }
-    if command == "/debug" {
-        return interactive_toggle_matches(rest, true)
-            .into_iter()
-            .map(|value| SlashCompletion {
-                name: format!("/debug {value}"),
-            })
-            .collect();
-    }
-    if command == "/skills" {
-        return ["list", "enable", "disable"]
-            .into_iter()
-            .filter(|sub| rest.is_empty() || sub.starts_with(&rest.to_ascii_lowercase()))
-            .map(|sub| SlashCompletion {
-                name: format!("/skills {sub}"),
-            })
-            .collect();
-    }
-    if command == "/mcp" {
-        return ["list", "enable", "disable"]
-            .into_iter()
-            .filter(|sub| rest.is_empty() || sub.starts_with(&rest.to_ascii_lowercase()))
-            .map(|sub| SlashCompletion {
-                name: format!("/mcp {sub}"),
-            })
-            .collect();
-    }
-    if command == "/memory" {
-        return ["list", "search", "add"]
-            .into_iter()
-            .filter(|sub| rest.is_empty() || sub.starts_with(&rest.to_ascii_lowercase()))
-            .map(|sub| SlashCompletion {
-                name: format!("/memory {sub}"),
-            })
-            .collect();
-    }
-    if command == "/allow" {
-        return Vec::new();
-    }
-
-    let command = if command == raw_command {
-        trimmed
-    } else {
-        command
-    };
-
-    INTERACTIVE_SLASH_COMMANDS
-        .iter()
-        .filter(|item| item.name.starts_with(command))
-        .map(|command| SlashCompletion {
-            name: command.name.to_string(),
-        })
-        .collect()
-}
-
-fn first_matching_slash_completion(input: &str, config: &Config) -> Option<SlashCompletion> {
-    // The visible candidate list and Tab must use the same contract; independent
-    // resolvers previously showed /executor candidates that Tab could not insert.
-    matching_slash_commands_with_config(input, config).into_iter().next()
-}
-
-#[derive(Clone)]
-struct ComposerCompletionCycle {
-    span_start: usize,
-    candidates: Vec<String>,
-    index: usize,
-    last_inserted_end: usize,
-}
-
-fn active_at_file_token(line: &str, cursor: usize) -> Option<(usize, usize, &str)> {
-    let idx = cursor.min(line.len());
-    if !line.is_char_boundary(idx) {
-        return None;
-    }
-    let before = &line[..idx];
-    let token_start = before
-        .char_indices()
-        .rev()
-        .find(|(_, ch)| ch.is_whitespace())
-        .map(|(i, ch)| i + ch.len_utf8())
-        .unwrap_or(0);
-    let token = &before[token_start..];
-    let rest = token.strip_prefix('@')?;
-    if rest.contains('@') {
-        return None;
-    }
-    Some((token_start, idx, rest))
-}
-
-fn interactive_mention_candidates(config: &Config, prefix: &str) -> Vec<(String, String)> {
-    let experts = if config.save_session && config.tools_enabled {
-        crate::cli_expert_mentions::completions(prefix, config.session_id.as_deref())
-    } else {
-        Vec::new()
-    };
-    let mut candidates = experts.into_iter().map(|e| (e.token, e.label)).collect::<Vec<_>>();
-    candidates.extend(workspace_file_completions(&config.project_root, prefix).into_iter().map(|file| {
-        let token = if file.starts_with("expert[") { format!("@./{file}") } else { format!("@{file}") };
-        (token.clone(), token)
-    }));
-    candidates
-}
-
-fn workspace_file_completions(project_root: &std::path::Path, prefix: &str) -> Vec<String> {
-    let mut stack = vec![project_root.to_path_buf()];
-    let mut collected = Vec::new();
-    let max_entries = 400usize;
-    let query = prefix.trim().to_ascii_lowercase();
-    while let Some(dir) = stack.pop() {
-        let Ok(entries) = std::fs::read_dir(&dir) else {
-            continue;
-        };
-        for entry in entries.flatten() {
-            if collected.len() >= max_entries {
-                break;
-            }
-            let path = entry.path();
-            let name = entry.file_name();
-            let name_str = name.to_string_lossy();
-            if name_str.starts_with('.')
-                || matches!(
-                    name_str.as_ref(),
-                    "target" | "node_modules" | "dist" | "build" | ".git"
-                )
-            {
-                continue;
-            }
-            let Ok(rel) = path.strip_prefix(project_root) else {
-                continue;
-            };
-            let rel_str = rel.to_string_lossy().replace('\\', "/");
-            if path.is_dir() {
-                stack.push(path);
-                let dir_entry = format!("{rel_str}/");
-                if query.is_empty() || dir_entry.to_ascii_lowercase().contains(&query) {
-                    collected.push(dir_entry);
-                }
-            } else if query.is_empty() || rel_str.to_ascii_lowercase().contains(&query) {
-                collected.push(rel_str);
-            }
-        }
-        if collected.len() >= max_entries {
-            break;
-        }
-    }
-    collected.sort_by(|a, b| {
-        let a_pref = !query.is_empty() && a.to_ascii_lowercase().starts_with(&query);
-        let b_pref = !query.is_empty() && b.to_ascii_lowercase().starts_with(&query);
-        b_pref
-            .cmp(&a_pref)
-            .then_with(|| a.len().cmp(&b.len()))
-            .then_with(|| a.cmp(b))
-    });
-    collected.truncate(12);
-    collected
-}
-
-fn apply_composer_completion_cycle(
-    line: &mut String,
-    cursor: &mut usize,
-    config: &Config,
-    cycle: &mut Option<ComposerCompletionCycle>,
-    reverse: bool,
-) -> bool {
-    if let Some(existing) = cycle.as_mut() {
-        if *cursor == existing.last_inserted_end
-            && existing.span_start <= existing.last_inserted_end
-            && existing.last_inserted_end <= line.len()
-            && !existing.candidates.is_empty()
-        {
-            if reverse {
-                existing.index = (existing.index + existing.candidates.len() - 1)
-                    % existing.candidates.len();
-            } else {
-                existing.index = (existing.index + 1) % existing.candidates.len();
-            }
-            let next = existing.candidates[existing.index].clone();
-            line.replace_range(existing.span_start..existing.last_inserted_end, &next);
-            let new_end = existing.span_start + next.len();
-            existing.last_inserted_end = new_end;
-            *cursor = new_end;
-            return true;
-        }
-    }
-
-    let trimmed = line.trim_start();
-    let (span_start, span_end, candidates) = if trimmed.starts_with('/') {
-        let items: Vec<String> = matching_slash_commands_with_config(line, config)
-            .into_iter()
-            .map(|c| c.name)
-            .collect();
-        (0usize, line.len(), items)
-    } else if let Some((start, end, prefix)) = active_at_file_token(line, *cursor) {
-        let items = interactive_mention_candidates(config, prefix).into_iter().map(|(token, _)| token).collect();
-        (start, end, items)
-    } else {
-        return false;
-    };
-    if candidates.is_empty() {
-        return false;
-    }
-    let idx = if reverse { candidates.len() - 1 } else { 0 };
-    let replacement = candidates[idx].clone();
-    line.replace_range(span_start..span_end, &replacement);
-    let new_end = span_start + replacement.len();
-    *cursor = new_end;
-    *cycle = Some(ComposerCompletionCycle {
-        span_start,
-        candidates,
-        index: idx,
-        last_inserted_end: new_end,
-    });
-    true
-}
+include!("composer_completion.rs");
 
 fn available_interactive_models(config: Option<&Config>, query: &str) -> Vec<String> {
-    let mut models: Vec<String> = Vec::new();
-    let mut profile_names: std::collections::HashMap<String, String> =
-        std::collections::HashMap::new();
+    interactive_model_candidates(config, query).into_iter().map(|item| item.name).collect()
+}
+
+fn interactive_model_candidates(config: Option<&Config>, query: &str) -> Vec<SlashCompletion> {
+    let mut models = Vec::new();
     if config.is_some() {
         if let Ok(profiles) =
             crate::store::NolaStore::open_default().and_then(|store| store.model_profiles())
@@ -3222,11 +3400,15 @@ fn available_interactive_models(config: Option<&Config>, query: &str) -> Vec<Str
                 .filter(|p| p.enabled && p.deleted_at_ms.is_none() && p.runtime == "remote")
             {
                 let key = format!("configured:{}", profile.id);
-                profile_names.insert(
-                    key.clone(),
-                    format!("{} {} {}", profile.model_name, profile.provider, profile.id),
-                );
-                models.push(key);
+                let source: serde_json::Value = serde_json::from_str(&profile.source_json).unwrap_or_default();
+                let connection = source["connectionID"].as_str().filter(|value| !value.trim().is_empty())
+                    .unwrap_or(&profile.provider);
+                let mut label = format!("{} · {}", profile.model_name, connection);
+                if connection != profile.provider && !profile.provider.is_empty() {
+                    label.push_str(" · ");
+                    label.push_str(&profile.provider);
+                }
+                models.push(SlashCompletion { name: key, label: Some(label) });
             }
         }
     }
@@ -3236,19 +3418,19 @@ fn available_interactive_models(config: Option<&Config>, query: &str) -> Vec<Str
             config.runtime.model.as_ref().unwrap_or(&config.model),
         ] {
             let item = item.trim();
-            if !item.is_empty() && !models.iter().any(|model: &String| model.as_str() == item) {
-                models.push(item.to_string());
+            if !item.is_empty() && !models.iter().any(|model| model.name == item) {
+                models.push(SlashCompletion::plain(item));
             }
         }
     }
     if let Some(previous_model) = interactive_previous_provider_model() {
-        if !models.iter().any(|model| model == &previous_model) {
-            models.push(previous_model);
+        if !models.iter().any(|model| model.name == previous_model) {
+            models.push(SlashCompletion::plain(previous_model));
         }
     }
     for model in local_models::model_ids() {
-        if !models.iter().any(|candidate| candidate == model.as_str()) {
-            models.push(model.to_string());
+        if !models.iter().any(|candidate| candidate.name == model.as_str()) {
+            models.push(SlashCompletion::plain(model));
         }
     }
     let query = query.trim().to_ascii_lowercase();
@@ -3258,11 +3440,10 @@ fn available_interactive_models(config: Option<&Config>, query: &str) -> Vec<Str
     models
         .into_iter()
         .filter(|model| {
-            model.to_ascii_lowercase().contains(&query)
-                || profile_names
-                    .get(model)
+            model.name.to_ascii_lowercase().contains(&query)
+                || model.label.as_ref()
                     .is_some_and(|label| label.to_ascii_lowercase().contains(&query))
-                || local_models::profile(model)
+                || local_models::profile(&model.name)
                     .is_some_and(|p| p.name.to_ascii_lowercase().contains(&query))
         })
         .collect()
@@ -3312,9 +3493,7 @@ fn interactive_goal_subcommand_matches(query: &str) -> Vec<SlashCompletion> {
     ["status", "resume", "pause", "off", "start"]
         .into_iter()
         .filter(|subcommand| query.is_empty() || subcommand.starts_with(&query))
-        .map(|subcommand| SlashCompletion {
-            name: format!("/goal {subcommand}"),
-        })
+        .map(|subcommand| SlashCompletion::plain(format!("/goal {subcommand}")))
         .collect()
 }
 
@@ -3600,7 +3779,7 @@ fn handle_interactive_slash_command(
             Ok(SlashCommandResult::Handled)
         }
         "/help" => {
-            print_interactive_help();
+            print_interactive_help(trimmed.split_once(char::is_whitespace).map_or("", |(_, query)| query));
             Ok(SlashCommandResult::Handled)
         }
         "/status" => {
@@ -3767,8 +3946,23 @@ fn handle_interactive_slash_command(
             Ok(SlashCommandResult::Handled)
         }
         "/allow" => {
-            if let Err(e) = interactive_permission_panel(config) {
-                terminal_notice!("  {} {e}", tr(Message::InteractiveAllowPanelErrorPrefix));
+            let previous_profile = config.permission_profile;
+            let previous_auto_approve = config.auto_approve;
+            match interactive_permission_panel(config) {
+                Ok(()) => {
+                    if (config.permission_profile != previous_profile
+                        || config.auto_approve != previous_auto_approve)
+                        && config.save_session
+                        && config.session_id.is_some()
+                    {
+                        if let Err(e) = crate::conversation_invocation::persist(config) {
+                            terminal_notice!("  {} {e}", tr(Message::InteractiveAllowPanelErrorPrefix));
+                        }
+                    }
+                }
+                Err(e) => {
+                    terminal_notice!("  {} {e}", tr(Message::InteractiveAllowPanelErrorPrefix));
+                }
             }
             return Ok(SlashCommandResult::Handled);
         }
@@ -3920,6 +4114,17 @@ fn handle_interactive_slash_command(
             }
             Ok(SlashCommandResult::Handled)
         }
+        "/config" => {
+            if trimmed.split_whitespace().count() > 1 {
+                terminal_notice!("{}", crate::config_files::usage());
+                return Ok(SlashCommandResult::Handled);
+            }
+            match crate::config_files::overview(&config.project_root, false) {
+                Ok(output) => terminal_notice!("{}", output),
+                Err(error) => terminal_notice!("{}", format_error(&error)),
+            }
+            Ok(SlashCommandResult::Handled)
+        }
         "/guide" => {
             terminal_notice!("  {} {}", tr(Message::InteractiveModelLabel), config.model);
             terminal_notice!("  {} {}", tr(Message::InteractiveWorkspaceLabel), config.project_root.display());
@@ -3979,7 +4184,7 @@ fn handle_interactive_slash_command(
             config.project_root = target.clone();
             config.allowed_dirs = allowed_dirs;
             config.bash_prefixes = bash_prefixes;
-            config.runtime = runtime;
+            apply_workspace_runtime(config, runtime);
             config.session_id = None;
             config.continue_last = false;
             config.resume_session = false;
@@ -4234,31 +4439,27 @@ fn handle_interactive_slash_command(
                         )));
                         return Ok(SlashCommandResult::Handled);
                     };
-                    if control == "rerun" && item.is_sop() {
-                        let rerun = work::rerun_sop(config, work_id)?;
-                        format!(
-                            "  {} · `{}`",
-                            ui_text(UiText::WorkRerunStarted),
-                            rerun.record.run_id
-                        )
+                    if control == "rerun" {
+                        if item.is_sop() {
+                            let rerun = work::rerun_sop(config, work_id)?;
+                            format!(
+                                "  {} · `{}`",
+                                ui_text(UiText::WorkRerunStarted),
+                                rerun.record.run_id
+                            )
+                        } else {
+                            format!("  {}", ui_text(UiText::WorkControlUnsupported))
+                        }
                     } else if item.is_goal() {
                         let session_id = config
                             .session_id
                             .as_deref()
                             .ok_or_else(|| "Goal control requires an active session".to_string())?;
-                        let command = match control {
-                            "pause" => GoalRuntimeCommand::Pause {
-                                status: GoalStatus::Paused,
-                                wake_at_epoch_ms: None,
-                                now_epoch_ms: goal_now_epoch_ms(),
-                            },
-                            "resume" => GoalRuntimeCommand::Resume {
-                                now_epoch_ms: goal_now_epoch_ms(),
-                            },
-                            "stop" | "cancel" => GoalRuntimeCommand::Cancel {
-                                now_epoch_ms: goal_now_epoch_ms(),
-                            },
-                            _ => unreachable!(),
+                        let Some(command) =
+                            goal_work_control_command(control, goal_now_epoch_ms())
+                        else {
+                            emit_work(format!("  {}", ui_text(UiText::WorkControlUnsupported)));
+                            return Ok(SlashCommandResult::Handled);
                         };
                         if control == "resume"
                             && session::load_session_goal_projection(session_id)?
@@ -4419,7 +4620,7 @@ fn handle_interactive_slash_command(
             if action.eq_ignore_ascii_case("list") {
                 terminal_notice!("{}", interactive_layer_rule(Some("skills")));
                 if baseline.is_empty() {
-                    terminal_notice!("  (none)");
+                    terminal_notice!("  {}", ui_text(UiText::NoAvailableSkills));
                 } else {
                     for skill in &baseline {
                         let id = skill["id"].as_str().unwrap_or("");
@@ -4445,8 +4646,12 @@ fn handle_interactive_slash_command(
                 }) else {
                     return Err(format!("Skill not found: {target}"));
                 };
+                let id = entry["id"].as_str().ok_or("Missing Skill ID")?.to_owned();
                 entry["enabled"] = json!(desired);
                 crate::skill_catalog_port::save_web_uploaded_skills(&baseline, &updated)?;
+                crate::builtin_skills::sync_registered_custom(
+                    &mut crate::application_port::CliApplicationPort::persistent_default()?, Some(&id),
+                )?;
                 terminal_notice!(
                     "  {} -> {}",
                     target,
@@ -4463,7 +4668,7 @@ fn handle_interactive_slash_command(
             if action.eq_ignore_ascii_case("list") {
                 terminal_notice!("{}", interactive_layer_rule(Some("mcp")));
                 if baseline.is_empty() {
-                    terminal_notice!("  (none)");
+                    terminal_notice!("  {}", ui_text(UiText::NoConfiguredMcp));
                 } else {
                     for server in &baseline {
                         let id = server["server_id"].as_str().unwrap_or("");
@@ -4507,9 +4712,9 @@ fn handle_interactive_slash_command(
             let binding = crate::memory_admin::workspace_memory_binding(&config.host_invocation_request()?)?;
             if action.eq_ignore_ascii_case("list") {
                 let records = crate::memory_admin::visible_memories(&mut app, &binding, None, 30)?;
-                terminal_notice!("{}", interactive_layer_rule(Some("memory")));
+                terminal_notice!("{}", interactive_layer_rule(Some(ui_text(UiText::MemoryHeading))));
                 if records.is_empty() {
-                    terminal_notice!("  (none)");
+                    terminal_notice!("  {}", ui_text(UiText::NoSavedMemory));
                 } else {
                     for item in records {
                         let id = item["id"].as_str().unwrap_or("");
@@ -4521,23 +4726,23 @@ fn handle_interactive_slash_command(
             } else if action.eq_ignore_ascii_case("search") {
                 let query = parts.collect::<Vec<_>>().join(" ");
                 if query.trim().is_empty() {
-                    terminal_notice!("  Usage: /memory search <query>");
+                    terminal_notice!("  {}  /memory search <query>", ui_text(UiText::DataSourcesUsage));
                     return Ok(SlashCommandResult::Handled);
                 }
                 let records = crate::memory_admin::visible_memories(&mut app, &binding, Some(query.trim()), 20)?;
-                terminal_notice!("{}", interactive_layer_rule(Some("memory search")));
+                terminal_notice!("{}", interactive_layer_rule(Some(ui_text(UiText::MemorySearchHeading))));
+                if records.is_empty() {
+                    terminal_notice!("  {}", ui_text(UiText::NoMatchingMemory));
+                }
                 for item in &records {
                     let id = item["id"].as_str().unwrap_or("");
                     let content = item["content"].as_str().unwrap_or("");
                     terminal_notice!("  {id} · {}", preview(content, 72));
                 }
-                if records.is_empty() {
-                    terminal_notice!("  (no matches)");
-                }
             } else if action.eq_ignore_ascii_case("add") {
                 let text = parts.collect::<Vec<_>>().join(" ");
                 if text.trim().is_empty() {
-                    terminal_notice!("  Usage: /memory add <text>");
+                    terminal_notice!("  {}  /memory add <text>", ui_text(UiText::DataSourcesUsage));
                     return Ok(SlashCommandResult::Handled);
                 }
                 let draft: crate::memory_admin::MemoryDraft = serde_json::from_value(json!({
@@ -4548,9 +4753,9 @@ fn handle_interactive_slash_command(
                 .map_err(|e| e.to_string())?;
                 let saved = crate::memory_admin::add_workspace_memory(&mut app, &binding, &draft)?;
                 let id = saved["id"].as_str().unwrap_or("");
-                terminal_notice!("  Saved memory {id}");
+                terminal_notice!("  {} {id}", ui_text(UiText::MemorySaved));
             } else {
-                terminal_notice!("  Usage: /memory [list|search <query>|add <text>]");
+                terminal_notice!("  {}  /memory [list|search <query>|add <text>]", ui_text(UiText::DataSourcesUsage));
             }
             Ok(SlashCommandResult::Handled)
         }
@@ -4618,7 +4823,8 @@ fn print_interactive_shortcuts_guide() {
             terminal_notice!("  换行：Shift+Enter · Alt+Enter · Ctrl+J · 行尾 \\+Enter");
             terminal_notice!("  跳转：Option/Alt+←/→ 或 Alt+B/F 按词跳转 · Ctrl+A/E 行首/行尾 · Ctrl+Home/End 全文首尾");
             terminal_notice!("  滚动：PgUp/PgDn · Alt+↑/↓ · Ctrl+↑/↓ · Ctrl+Home/End");
-            terminal_notice!("  补全：Tab / Shift+Tab 循环补全 /命令 与 @工作区文件");
+            terminal_notice!("  选专家：输入 @，上下键选择，回车插入名字。/edit 编辑已发送消息。");
+            terminal_notice!("  补全：↑↓ 浏览 /命令，Tab 补全，Enter 执行，Esc 收起；在 @ 候选中 Enter 插入");
             terminal_notice!("  草稿：连按两次 Esc 清空输入 · /stop 停止当前运行 · /resume <id> 直接切换会话");
             terminal_notice!("  扩展：/model · /experts · /skills · /mcp · /memory · /questions · /plan");
         }
@@ -4626,7 +4832,8 @@ fn print_interactive_shortcuts_guide() {
             terminal_notice!("  Newline: Shift+Enter · Alt+Enter · Ctrl+J · trailing \\+Enter");
             terminal_notice!("  Word nav: Option/Alt+Left/Right or Alt+B/F · Ctrl+A/E line · Ctrl+Home/End buffer");
             terminal_notice!("  Scroll: PgUp/PgDn · Alt+Up/Down · Ctrl+Up/Down · Ctrl+Home/End");
-            terminal_notice!("  Complete: Tab / Shift+Tab cycles /commands and @workspace files");
+            terminal_notice!("  Experts: type @, choose with Up/Down, press Enter to insert. /edit reopens a sent message.");
+            terminal_notice!("  Complete: Up/Down browses /commands, Tab completes, Enter runs, Esc closes. In @ suggestions, Enter inserts.");
             terminal_notice!("  Control: Esc x2 clears draft · /stop cancels active run · /resume <id> switches session");
             terminal_notice!("  Catalog: /model · /experts · /skills · /mcp · /memory · /questions · /plan");
         }
@@ -4650,12 +4857,13 @@ fn resume_selected_session_before_composer(config: &Config, emitter: &mut Emitte
     }
     let cancellation = if config.json_output { interaction::ExecutionCancellation::default() }
         else { interaction::ExecutionCancellation::interactive() };
-    match with_cli_execution_control(config, cancellation, emitter, |control, emitter|
-        resume_cli_core_pending(config, emitter, control))? {
+    let resumed = with_cli_execution_control(config, cancellation.clone(), emitter, |control, emitter|
+        resume_cli_core_pending(config, emitter, control))?;
+    match resumed.map(|outcome| finish_cli_foreground(config, cancellation, emitter, outcome)).transpose()? {
         Some(outcome) if outcome.turn_status == nola_core::agent::AgentTurnStatus::AwaitingInput => Ok(true),
         Some(outcome) if !outcome.is_terminal() => {
             if !config.json_output {
-                eprintln!("{}", match current_language() {
+                terminal_notice!("{}", match current_language() {
                     Language::ZhHans => "操作仍在等待恢复。可再次运行 --resume；原请求已保留。",
                     _ => "The run is still waiting. Use --resume to retry; the original request is preserved.",
                 });
@@ -4672,5 +4880,46 @@ fn resume_selected_session_before_composer(config: &Config, emitter: &mut Emitte
             }
         }
         Some(_) => Ok(true),
+    }
+}
+
+fn goal_work_control_command(control: &str, now_epoch_ms: i64) -> Option<GoalRuntimeCommand> {
+    match control {
+        "pause" => Some(GoalRuntimeCommand::Pause {
+            status: GoalStatus::Paused,
+            wake_at_epoch_ms: None,
+            now_epoch_ms,
+        }),
+        "resume" => Some(GoalRuntimeCommand::Resume { now_epoch_ms }),
+        "stop" | "cancel" => Some(GoalRuntimeCommand::Cancel { now_epoch_ms }),
+        _ => None,
+    }
+}
+
+#[cfg(test)]
+mod goal_work_control_tests {
+    use super::goal_work_control_command;
+    use nola_core::agent::GoalRuntimeCommand;
+
+    #[test]
+    fn goal_work_control_rejects_rerun_without_panicking() {
+        assert!(goal_work_control_command("rerun", 42).is_none());
+        assert!(goal_work_control_command("unknown", 42).is_none());
+        assert!(matches!(
+            goal_work_control_command("pause", 42),
+            Some(GoalRuntimeCommand::Pause { now_epoch_ms: 42, .. })
+        ));
+        assert!(matches!(
+            goal_work_control_command("resume", 42),
+            Some(GoalRuntimeCommand::Resume { now_epoch_ms: 42 })
+        ));
+        assert!(matches!(
+            goal_work_control_command("stop", 42),
+            Some(GoalRuntimeCommand::Cancel { now_epoch_ms: 42 })
+        ));
+        assert!(matches!(
+            goal_work_control_command("cancel", 42),
+            Some(GoalRuntimeCommand::Cancel { now_epoch_ms: 42 })
+        ));
     }
 }

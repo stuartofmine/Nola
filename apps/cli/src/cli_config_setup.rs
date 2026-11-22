@@ -1,11 +1,8 @@
 // SPDX-License-Identifier: Apache-2.0
 //! Terminal-only first-run setup adapter. Never selected implicitly by Host configuration.
-use std::fs::{self, OpenOptions};
+use std::fs;
 use std::io::{self, IsTerminal, Write};
 use std::path::{Path, PathBuf};
-use std::time::{SystemTime, UNIX_EPOCH};
-#[cfg(unix)]
-use std::os::unix::fs::OpenOptionsExt;
 use crossterm::event::{Event, KeyCode, KeyEventKind, KeyModifiers};
 use crossterm::terminal::{disable_raw_mode, enable_raw_mode};
 use crate::terminal_input::read;
@@ -16,7 +13,7 @@ use serde_json::{Map, Value};
 pub(crate) struct TerminalConfigurationSetup;
 impl ConfigurationSetup for TerminalConfigurationSetup {
     fn configure_missing_model(&self) -> Result<Option<GeneratedConfiguration>, String> {
-        if !io::stdin().is_terminal() || global_config_path().is_none_or(|path| path.exists()) {
+        if !io::stdin().is_terminal() || global_config_path().is_none_or(|path| path.exists() || path.with_extension("jsonc").exists()) {
             return Ok(None);
         }
         prompt_create_global_config()
@@ -237,36 +234,13 @@ fn write_global_config(
     );
     let text = serde_json::to_string_pretty(&Value::Object(root))
         .map_err(|err| format!("serialize config failed: {err}"))?;
-    let nonce = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map(|duration| duration.as_nanos())
-        .unwrap_or(0);
-    let temp_path = path.with_extension(format!("tmp-{}-{nonce}", std::process::id()));
-    let mut options = OpenOptions::new();
-    options.write(true).create_new(true);
-    #[cfg(unix)]
-    options.mode(0o600);
-    let write_result = (|| -> Result<(), String> {
-        let mut file = options
-            .open(&temp_path)
-            .map_err(|err| format!("create {} failed: {err}", temp_path.display()))?;
-        file.write_all(format!("{text}\n").as_bytes())
-            .map_err(|err| format!("write {} failed: {err}", temp_path.display()))?;
-        file.sync_all()
-            .map_err(|err| format!("sync {} failed: {err}", temp_path.display()))?;
-        fs::rename(&temp_path, path).map_err(|err| {
-            format!(
-                "replace {} with {} failed: {err}",
-                path.display(),
-                temp_path.display()
-            )
-        })?;
-        Ok(())
-    })();
-    if write_result.is_err() {
-        let _ = fs::remove_file(&temp_path);
-    }
-    write_result
+    let directory = path.parent().ok_or("configuration needs a parent directory")?;
+    let mut file = tempfile::NamedTempFile::new_in(directory)
+        .map_err(|error| format!("{}: {error}", directory.display()))?;
+    writeln!(file, "{text}").and_then(|()| file.as_file().sync_all())
+        .map_err(|error| format!("{}: {error}", path.display()))?;
+    file.persist_noclobber(path).map_err(|error| format!("{}: {}", path.display(), error.error))?;
+    Ok(())
 }
 
 fn global_config_path() -> Option<PathBuf> {
@@ -276,6 +250,17 @@ fn global_config_path() -> Option<PathBuf> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn first_run_creation_preserves_concurrently_created_configuration() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("config.json");
+        write_global_config(&path, "https://fixture.invalid", "", "first").unwrap();
+        let original = fs::read(&path).unwrap();
+        assert!(write_global_config(&path, "https://different.invalid", "", "second").is_err());
+        assert_eq!(fs::read(path).unwrap(), original);
+        assert_eq!(std::fs::read_dir(directory.path()).unwrap().count(), 1);
+    }
 
     #[test]
     fn endpoint_url_validation_requires_http_or_https_with_host() {

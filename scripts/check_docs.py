@@ -10,8 +10,30 @@ from urllib.parse import unquote, urlsplit
 ROOT = Path(__file__).resolve().parents[1]
 
 
+def check_architecture_languages(errors):
+    architecture = ROOT / 'docs/architecture'
+    indexes = {suffix: (architecture / f'README{suffix}.md').read_text()
+               for suffix in ('', '.en')}
+    for directory in sorted((architecture / '模块').glob('[0-9][0-9]-*')):
+        for suffix, index in indexes.items():
+            page = directory / f'README{suffix}.md'
+            if not page.is_file() or f']({page.relative_to(architecture)})' not in index:
+                errors.append(f'Missing module guide or index entry: {page.relative_to(ROOT)}')
+    for english in sorted(architecture.rglob('*.en.md')):
+        switch = re.search(r'\[简体中文\]\(([^)]+)\)', english.read_text())
+        chinese = english.parent / switch.group(1) if switch else None
+        if not chinese or not chinese.is_file() or f'[English]({english.name})' not in chinese.read_text():
+            errors.append(f'Missing reciprocal language link: {english.relative_to(ROOT)}')
+    requirements = architecture / '总体设计'
+    identifiers = [set(re.findall(r'REQ-(?:ARCH|RUN)-\d+', (requirements / filename).read_text()))
+                   for filename in ('REQUIREMENTS.md', 'REQUIREMENTS.en.md')]
+    if identifiers[0] != identifiers[1]:
+        errors.append(f'Architecture requirement IDs differ by language: {sorted(identifiers[0] ^ identifiers[1])}')
+
+
 def main():
     errors = []
+    check_architecture_languages(errors)
     links = 0
     documents = sorted((ROOT / 'docs').rglob('*.md'))
     documents += [ROOT / path for path in ['README.md', 'README.zh-CN.md', 'AGENTS.md', 'apps/README.md', 'shared/README.md', 'tests/apple/README.md', 'apps/cli/README.md', 'release/README.md']]

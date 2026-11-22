@@ -12,26 +12,19 @@ struct PrivacyDisclosureView: View {
     var body: some View {
         Form {
             Group {
-            Section {
-                Text(NSLocalizedString(
-                    "privacy.disclosure.intro",
-                    value: "Nola is open-source and local-first. Data is stored on this device by default.",
-                    comment: "Privacy disclosure intro"
-                ))
-                .font(.subheadline)
-                .foregroundColor(.secondary)
-            } header: {
-                Text(NSLocalizedString("privacy.disclosure.header", value: "Privacy", comment: "Privacy disclosure header"))
+                Section {
+                    Text("privacy.disclosure.intro")
+                }
+                Section {
+                    Text("privacy.disclosure.principle.1")
+                    Text("privacy.disclosure.principle.2")
+                    Text("privacy.disclosure.principle.3")
+                } header: {
+                    Text("privacy.disclosure.principles.header")
+                }
             }
-
-            Section {
-                bullet(NSLocalizedString("privacy.disclosure.principle.1", value: "Chat history and settings stay local by default.", comment: ""))
-                bullet(NSLocalizedString("privacy.disclosure.principle.2", value: "Only the API requests you explicitly configure are sent to your chosen endpoint.", comment: ""))
-                bullet(NSLocalizedString("privacy.disclosure.principle.3", value: "You can clear local data at any time from Settings.", comment: ""))
-            } header: {
-                Text(NSLocalizedString("privacy.disclosure.principles.header", value: "Principles", comment: ""))
-            }
-            }
+            .font(.body)
+            .foregroundStyle(DesignTokens.contentColor)
             .listRowBackground(DesignTokens.surfaceColor)
             .listRowSeparatorTint(DesignTokens.borderColor)
         }
@@ -40,13 +33,6 @@ struct PrivacyDisclosureView: View {
         .navigationBarTitleDisplayMode(.inline)
     }
 
-    @ViewBuilder
-    private func bullet(_ text: String) -> some View {
-        HStack(alignment: .top, spacing: 8) {
-            Text("•").foregroundColor(.secondary)
-            Text(text).font(.footnote).foregroundColor(.secondary)
-        }
-    }
 }
 
 #Preview {

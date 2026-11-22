@@ -25,15 +25,15 @@ enum XCUIElementPixelAssertions {
     }
 
     private static let lightSurfaceTargets: [RGBPixel] = [
-        RGBPixel(r: 247, g: 246, b: 243), // #F7F6F3
+        RGBPixel(r: 250, g: 248, b: 244), // #FAFAFA
         RGBPixel(r: 255, g: 255, b: 255), // #FFFFFF
-        RGBPixel(r: 241, g: 240, b: 236)  // #F1F0EC
+        RGBPixel(r: 241, g: 239, b: 232)  // #F2F2F4
     ]
 
     private static let darkSurfaceTargets: [RGBPixel] = [
-        RGBPixel(r: 19, g: 19, b: 18), // #131312
-        RGBPixel(r: 27, g: 27, b: 25), // #1B1B19
-        RGBPixel(r: 35, g: 35, b: 32)  // #232320
+        RGBPixel(r: 27, g: 28, b: 26), // #0b0b0c
+        RGBPixel(r: 34, g: 36, b: 32), // #131315
+        RGBPixel(r: 41, g: 44, b: 39)  // #1a1a1d
     ]
 
     @discardableResult

@@ -1,5 +1,6 @@
 <script lang="ts">
     import { onMount, tick, type Snippet } from 'svelte';
+    import PrototypeIcon from './PrototypeIcon.svelte';
     import { isDialogBackdrop } from '../lib/dialogBackdrop';
     import { completesPanelSwipe, panelOutwardSign, type PanelSide, type SwipePoint } from '../lib/panelSwipe';
 
@@ -123,7 +124,7 @@
 <dialog bind:this={dialog} class:compact class:dragging class:start={side === 'start'} style:--panel-drag-x={`${dragX}px`} role={compact ? 'dialog' : 'complementary'}
     onpointerdown={backdropStart} onpointerup={backdropEnd} onpointercancel={() => { backdropPointer = undefined; }}
     aria-label={label} oncancel={event => { event.preventDefault(); closePanel(); }}>
-    {#if compact}<div class="panel-toolbar" onpointerdown={startDrag} onpointermove={moveDrag} onpointerup={finishDrag} onpointercancel={cancelDrag} role="presentation">{#if toolbar}{@render toolbar()}{:else}<strong>{label}</strong>{/if}<button bind:this={closeButton} onclick={closePanel} aria-label={closeLabel}>×</button></div>{/if}
+    {#if compact}<div class="panel-toolbar" onpointerdown={startDrag} onpointermove={moveDrag} onpointerup={finishDrag} onpointercancel={cancelDrag} role="presentation">{#if toolbar}{@render toolbar()}{:else}<strong>{label}</strong>{/if}<button type="button" bind:this={closeButton} onclick={closePanel} aria-label={closeLabel}><PrototypeIcon name="close" size={18} /></button></div>{/if}
     {@render children()}
 </dialog>
 
@@ -141,10 +142,10 @@
     dialog.compact.dragging { transition:none; }
     dialog.compact:not([open]) { display: none; }
     dialog.compact[open] { opacity: 1; transform: translateX(var(--panel-drag-x, 0px)); }
-    dialog.compact::backdrop { background: rgb(0 0 0 / 0); transition: background-color var(--motion-slow) ease; }
+    dialog.compact::backdrop { background: rgb(0 0 0 / 0); transition: background-color var(--motion-slow) ease, overlay var(--motion-slow) allow-discrete, display var(--motion-slow) allow-discrete; }
     dialog.compact[open]::backdrop { background: rgb(0 0 0 / .4); }
     @starting-style { dialog.compact[open] { opacity: 0; transform: translateX(var(--panel-entry-x)); } dialog.compact[open]::backdrop { background: rgb(0 0 0 / 0); } }
     @media (prefers-reduced-motion: reduce) { dialog.compact, dialog.compact::backdrop { transition-duration: 0ms; } }
     .panel-toolbar { touch-action:pan-y; user-select:none; display: flex; align-items: center; justify-content: space-between; gap: 16px; position: sticky; top: 0; padding: max(8px, env(safe-area-inset-top)) 12px 8px; background: var(--canvas); z-index: 1; border-bottom: 1px solid var(--border); }
-    .panel-toolbar button { min-width: 44px; min-height: 44px; font-size: 20px; }
+    .panel-toolbar button { display: inline-flex; align-items: center; justify-content: center; padding: 0; border: 0; background: transparent; box-shadow: none; color: var(--muted); min-width: 44px; min-height: 44px; }
 </style>

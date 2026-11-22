@@ -20,7 +20,7 @@ export async function apiResponse(path: string, options: RequestInit = {}): Prom
     if (!path.startsWith('/api/') || path.includes('\\')) throw new Error('Invalid API path');
     const headers = new Headers(options.headers);
     if (!headers.has('Accept-Language')) headers.set('Accept-Language', get(locale));
-    if (options.body) headers.set('Content-Type', 'application/json');
+    if (typeof options.body === 'string' && !headers.has('Content-Type')) headers.set('Content-Type', 'application/json');
     const token = csrfToken(document.cookie);
     if (token && options.method && !['GET', 'HEAD'].includes(options.method.toUpperCase())) headers.set('X-Nola-CSRF', token);
     return fetch(path, { ...options, headers, credentials: 'same-origin' });
@@ -29,7 +29,7 @@ export async function apiResponse(path: string, options: RequestInit = {}): Prom
 export async function api<T>(path: string, options: RequestInit = {}): Promise<T> {
     const response = await apiResponse(path, options);
     const value = await response.json().catch(() => ({}));
-    if (!response.ok) throw new ApiError(response.status, value.error || value.detail || `HTTP ${response.status}`, value.code);
+    if (!response.ok) throw new ApiError(response.status, value.error || value.detail || `HTTP ${response.status}`, value.code ?? value.errorCode);
     return value as T;
 }
 

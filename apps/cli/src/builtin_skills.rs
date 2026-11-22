@@ -1,4 +1,5 @@
 use serde_json::{json, Value};
+use nola_host_protocol::valid_custom_skill_id;
 use std::collections::HashSet;
 use std::fs;
 use std::path::{Component, Path, PathBuf};
@@ -430,12 +431,11 @@ pub(crate) fn split_payload(items: &[Value]) -> (Vec<Value>, Vec<Value>) {
     (overrides, uploaded)
 }
 
-pub(crate) fn synchronize(overrides: &[Value], uploaded: &[Value]) -> Result<Vec<PathBuf>, String> {
+pub(crate) fn synchronize(overrides: &[Value]) -> Result<Vec<PathBuf>, String> {
     let roots = runtime_roots()?;
     let root = roots[0].clone();
-    let custom_root = roots[1].clone();
     materialize_enabled_at(&root, overrides)?;
-    materialize_custom_at(&custom_root, uploaded)?;
+    sync_registered_custom(&mut crate::application_port::CliApplicationPort::persistent_default()?, None)?;
     Ok(roots)
 }
 
@@ -540,13 +540,6 @@ fn stable_custom_skill_id(object: &serde_json::Map<String, Value>) -> String {
     format!("web-skill-{slug}-{:016x}", stable_hash(seed.as_bytes()))
 }
 
-fn valid_custom_skill_id(id: &str) -> bool {
-    !id.is_empty()
-        && id.len() <= 128
-        && id
-            .bytes()
-            .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'.' | b'_' | b'-'))
-}
 
 fn stable_hash(bytes: &[u8]) -> u64 {
     let mut value = 0xcbf29ce484222325_u64;
@@ -557,17 +550,38 @@ fn stable_hash(bytes: &[u8]) -> u64 {
     value
 }
 
+#[cfg(test)]
 fn materialize_custom_at(root: &Path, uploaded: &[Value]) -> Result<(), String> {
-    fs::create_dir_all(root).map_err(|error| {
-        format!(
-            "create custom Skill root {} failed: {error}",
-            root.display()
-        )
-    })?;
+    let _lock = lock_custom_skills(root)?;
+    materialize_custom_selection(root, uploaded, None)
+}
+
+pub(crate) fn sync_registered_custom(
+    app: &mut crate::application_port::CliApplicationPort,
+    only: Option<&str>,
+) -> Result<(), String> {
+    let root = managed_custom_root()?;
+    let _lock = lock_custom_skills(&root)?;
+    // A settings save and an install may commit on different connections.
+    // Read the current selection after taking the filesystem publication lock.
+    let uploaded = crate::skill_catalog_port::load_web_uploaded_skills_with(app)?;
+    materialize_custom_selection(&root, &uploaded, only)
+}
+
+fn lock_custom_skills(root: &Path) -> Result<fs::File, String> {
+    fs::create_dir_all(root).map_err(|e| e.to_string())?;
+    let lock = fs::OpenOptions::new().create(true).write(true).truncate(false)
+        .open(root.with_extension("lock")).map_err(|e| e.to_string())?;
+    lock.lock().map_err(|e| e.to_string())?;
+    Ok(lock)
+}
+
+fn materialize_custom_selection(root: &Path, uploaded: &[Value], only: Option<&str>) -> Result<(), String> {
     let normalized = uploaded
         .iter()
         .cloned()
         .map(normalize_uploaded_skill)
+        .filter(|item| only.is_none_or(|id| item["id"] == id))
         .filter(|item| {
             crate::resource_access::allows(
                 item,
@@ -594,7 +608,7 @@ fn materialize_custom_at(root: &Path, uploaded: &[Value]) -> Result<(), String> 
     {
         let entry = entry.map_err(|error| format!("read custom Skill entry failed: {error}"))?;
         let name = entry.file_name().to_string_lossy().to_string();
-        if entry.path().is_dir() && !desired.contains(&name) {
+        if only.is_none_or(|id| name == id) && entry.path().is_dir() && !desired.contains(&name) {
             fs::remove_dir_all(entry.path()).map_err(|error| {
                 format!(
                     "remove disabled custom Skill {} failed: {error}",
@@ -627,7 +641,14 @@ fn materialize_custom_at(root: &Path, uploaded: &[Value]) -> Result<(), String> 
                 staging.display()
             )
         })?;
-        if target.is_dir() {
+        let reference = item["instructions_ref"].as_str().unwrap_or_default();
+        let github_package = crate::github_skills::package_for_reference(reference)?;
+        if let Some((package, relative)) = &github_package {
+            let resources = staging.join(crate::github_skills::RESOURCE_TREE);
+            fs::create_dir(&resources).map_err(|e|e.to_string())?;
+            copy_dir_preserving_companion_files_all(package, &resources)?;
+            fs::write(resources.join(relative).join("SKILL.md"),content).map_err(|e|e.to_string())?;
+        } else if target.is_dir() {
             copy_dir_preserving_companion_files(&target, &staging)?;
         }
         fs::write(staging.join("SKILL.md"), content.as_bytes()).map_err(|error| {
@@ -641,6 +662,11 @@ fn materialize_custom_at(root: &Path, uploaded: &[Value]) -> Result<(), String> 
             .and_then(|raw| serde_json::from_str::<Value>(&raw).ok())
             .and_then(|value| value.as_object().cloned())
             .unwrap_or_default();
+        if github_package.is_some() {
+            manifest_obj.clear();
+            manifest_obj.insert("source_url".into(), item["source_url"].clone());
+            manifest_obj.insert("version".into(), item["version"].clone());
+        }
         manifest_obj.insert("id".to_string(), Value::String(id.to_string()));
         manifest_obj.insert(
             "name".to_string(),

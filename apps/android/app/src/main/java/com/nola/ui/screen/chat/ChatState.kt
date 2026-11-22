@@ -50,6 +50,7 @@ data class ChatUiState(
     val unknownEffectRecovery: UnknownEffectRecoveryPresentation? = null,
     val resolvingUnknownEffects: Boolean = false,
     val processingState: ProcessingState = ProcessingState.Idle,
+    val hostGoalInProgress: Boolean = false,
     val executionTeardownPending: Boolean = false,
     val currentResponse: String = "",
     val journalResponse: ConversationMessage? = null,
@@ -250,6 +251,20 @@ internal fun ChatUiState.beginAssistantTurn(
     checkingExpertHostAdmission = false,
 )
 
+/** Goal rounds can be admitted by Core before the visible chat has an assistant placeholder. */
+internal fun ChatUiState.bindRecoveredAssistant(descriptor: com.nola.core.AndroidCanonicalTurnDescriptor): ChatUiState {
+    require(conversationId == descriptor.conversationId)
+    val response = descriptor.assistantMessageId
+    val restored = if (activeResponseId == response) this else {
+        val committed = messages.singleOrNull {
+            it.id == response && it.conversationId == conversationId && it.role == ChatRole.assistant
+        }
+        beginAssistantTurn(response, committed?.createdAt ?: descriptor.createdAtMs)
+            .copy(journalResponse = committed, currentResponse = committed?.text.orEmpty())
+    }
+    return restored.copy(activeTurnId = descriptor.submissionId, processingState = ProcessingState.Streaming)
+}
+
 internal fun ChatUiState.activeAssistantMessage(): ConversationMessage? {
     val responseId = activeResponseId ?: return null
     journalResponse?.takeIf { it.id == responseId && it.conversationId == conversationId }?.let { return it }
@@ -336,7 +351,7 @@ internal fun ChatUiState.applyCanonicalContextUsage(
 
 /** Absence of a Run does not erase a committed rejection of its submission. */
 internal fun ChatUiState.withRemoteOwnerAbsent(preserveSubmissionOutcome: Boolean): ChatUiState = copy(
-    processingState = ProcessingState.Idle, permissionRequest = null,
+    processingState = ProcessingState.Idle, hostGoalInProgress = false, permissionRequest = null,
     activeResponseId = null, activeResponseStartedAt = null,
     error = if (preserveSubmissionOutcome) error else null,
     permissionConfigurationOwner = com.nola.data.local.PermissionConfigurationOwner.Inactive,

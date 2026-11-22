@@ -40,6 +40,26 @@ final class ChatStreamingRevealTokenizerTests: XCTestCase {
         // reveal rather than being forced fully opaque on the first frame.
         await settleRuntimeUI(AppleStreamingRevealTiming.duration + 0.05)
         XCTAssertTrue(try renderedText().contains(initial))
+        var growing = initial
+        for addition in [" FIRST", " SECOND", " THIRD"] {
+            growing += addition
+            controller.rootView = ChatSmoothStreamingMarkdownView(content: growing, isStreaming: true)
+            var visible = ""
+            for _ in 0..<20 {
+                await settleRuntimeUI(0.1)
+                visible = try renderedText()
+                if visible.contains(addition.trimmingCharacters(in: .whitespaces)) { break }
+            }
+            XCTAssertTrue(visible.contains(initial))
+            XCTAssertTrue(visible.contains(addition.trimmingCharacters(in: .whitespaces)), visible)
+            let image = UIGraphicsImageRenderer(bounds: controller.view.bounds).image { _ in
+                controller.view.drawHierarchy(in: controller.view.bounds, afterScreenUpdates: true)
+            }
+            let attachment = XCTAttachment(image: image)
+            attachment.name = "Live Markdown growing\(addition.lowercased())"
+            attachment.lifetime = .keepAlways
+            add(attachment)
+        }
         controller.rootView = ChatSmoothStreamingMarkdownView(content: "OBSOLETE INTERMEDIATE", isStreaming: true)
         controller.view.layoutIfNeeded()
         let final = "Clouds drift gently across the open sky. The wind carries them in every direction."

@@ -199,11 +199,11 @@ nonisolated public enum PersonalIntelligenceCore {
     }
 
     public nonisolated static func ingest(_ request: IntelligenceIngestRequest) -> [String: AgentCoreJSONValue]? {
-        call(request, function: nola_core_intelligence_ingest)
+        IOSApplicationRuntime.shared?.ingestIntelligence(request)
     }
 
     public nonisolated static func recall(_ request: IntelligenceRecallRequest) -> [String: AgentCoreJSONValue]? {
-        call(request, function: nola_core_intelligence_recall)
+        IOSApplicationRuntime.shared?.recallIntelligence(request)
     }
 
     public nonisolated static func recallContext(for query: String, limit: Int = 6) -> String {
@@ -215,25 +215,22 @@ nonisolated public enum PersonalIntelligenceCore {
     }
 
     public nonisolated static func snapshot() -> [String: AgentCoreJSONValue]? {
-#if canImport(NolaCore)
-        guard isAvailable, let pointer = nola_core_intelligence_snapshot() else { return nil }
-        defer { nola_core_free_c_string(pointer) }
-        return decode(pointer)
-#else
-        return nil
-#endif
+        IOSApplicationRuntime.shared?.intelligenceSnapshot()
+    }
+
+    nonisolated static func decodeSnapshot(_ pointer: UnsafePointer<CChar>) -> [String: AgentCoreJSONValue]? {
+        guard let snapshot = decode(pointer), snapshot["schema_version"] == .number(1),
+              case .array? = snapshot["events"], case .array? = snapshot["memories"],
+              case .array? = snapshot["strategies"], case .array? = snapshot["outcomes"] else { return nil }
+        return snapshot
     }
 
     @discardableResult
     public nonisolated static func clear() -> Bool {
-#if canImport(NolaCore)
-        return isAvailable && nola_core_intelligence_clear()
-#else
-        return false
-#endif
+        IOSApplicationRuntime.shared?.clearIntelligence() ?? false
     }
 
-    private nonisolated static func call<T: Encodable>(
+    fileprivate nonisolated static func call<T: Encodable>(
         _ input: T,
         function: (UnsafePointer<UInt8>?, Int) -> UnsafeMutablePointer<CChar>?
     ) -> [String: AgentCoreJSONValue]? {
@@ -260,5 +257,48 @@ nonisolated public enum PersonalIntelligenceCore {
             return nil
         }
         return object
+    }
+}
+
+extension IOSApplicationRuntime {
+    func ingestIntelligence(_ request: IntelligenceIngestRequest) -> [String: AgentCoreJSONValue]? {
+        #if canImport(NolaCore)
+        withIntelligenceHandle { handle in
+            PersonalIntelligenceCore.call(request) { nola_core_application_intelligence_ingest(handle, $0, $1) }
+        }
+        #else
+        nil
+        #endif
+    }
+
+    func recallIntelligence(_ request: IntelligenceRecallRequest) -> [String: AgentCoreJSONValue]? {
+        #if canImport(NolaCore)
+        withIntelligenceHandle { handle in
+            PersonalIntelligenceCore.call(request) { nola_core_application_intelligence_recall(handle, $0, $1) }
+        }
+        #else
+        nil
+        #endif
+    }
+
+    func intelligenceSnapshot() -> [String: AgentCoreJSONValue]? {
+        #if canImport(NolaCore)
+        withIntelligenceHandle { handle in
+            guard let pointer = nola_core_application_intelligence_snapshot(handle) else { return nil }
+            defer { nola_core_free_c_string(pointer) }
+            return PersonalIntelligenceCore.decodeSnapshot(pointer)
+        }
+        #else
+        nil
+        #endif
+    }
+
+    @discardableResult
+    func clearIntelligence() -> Bool {
+        #if canImport(NolaCore)
+        withIntelligenceHandle { nola_core_application_intelligence_clear($0) } ?? false
+        #else
+        false
+        #endif
     }
 }

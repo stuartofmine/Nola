@@ -31,12 +31,6 @@ class ExpertMentionSelectionTest {
             assertThrows(ExpertSelectionChanged::class.java) { rejoinedExpertParticipant(before, malformed, agent) }
         }
     }
-    @Test fun expertOnlySubmissionDoesNotRequireAnUnrelatedPrimaryModel() {
-        assertTrue(requiresPrimaryModelForComposer(false, emptySet()))
-        assertFalse(requiresPrimaryModelForComposer(false, setOf(agent.id)))
-        assertFalse(requiresPrimaryModelForComposer(true, emptySet()))
-        assertFalse(requiresPrimaryModelForComposer(true, setOf(agent.id)))
-    }
     @Test fun joinedOldSnapshotContinuesWithoutFreshDirectoryButNeverChangesItsContextSilently() {
         // Directory agent is revision 2; the already-joined revision 1 remains authoritative.
         assertEquals(old, selectedExpertParticipant(before, agent.id, 1, old))
@@ -45,12 +39,4 @@ class ExpertMentionSelectionTest {
         assertThrows(ExpertSelectionChanged::class.java) { selectedExpertParticipant(before.copy(room = before.room.copy(participants = emptyList())), agent.id, 1, old) }
         assertNull(selectedExpertParticipant(before.copy(room = before.room.copy(participants = emptyList())), agent.id, 2, null))
     }
-    @Test fun selectedChipUsesPinnedNameWithoutDirectoryAndNeverDisappearsDuringLoading() {
-        assertEquals("Old name", selectedExpertLabel(agent.id, old, null, "Expert"))
-        assertEquals("Old name", selectedExpertLabel(agent.id, old, AgentDirectory(3, listOf(agent)), "Expert"))
-        assertEquals(agent.name, selectedExpertLabel(agent.id, null, AgentDirectory(3, listOf(agent)), "Expert"))
-        assertEquals("Expert", selectedExpertLabel(agent.id, null, null, "Expert"))
-        assertEquals("Expert", selectedExpertLabel("other", old, null, "Expert"))
-    }
-
 }

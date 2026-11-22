@@ -8,7 +8,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     if manifest.version != source.version || manifest.build != source.build {
         return Err("Publisher source and manifest release identities differ".into());
     }
-    if manifest.store_schema != nola_store::STORE_SCHEMA_VERSION || manifest.store_epoch != nola_store::STORE_SCHEMA_EPOCH {
+    if manifest.store_schema != nola_domain::STORE_SCHEMA_VERSION || manifest.store_epoch != nola_domain::STORE_SCHEMA_EPOCH {
         return Err("Published data format does not match this release's Store contract".into());
     }
     if !manifest.targets.iter().any(|target|target.target==args[2]) {return Err("Required release target missing".into());}

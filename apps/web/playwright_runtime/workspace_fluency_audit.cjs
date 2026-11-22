@@ -19,11 +19,13 @@ const {spawn}=require('node:child_process');
     });
     await new Promise(resolve=>server.listen(0,'127.0.0.1',resolve));
     try{
-        const status=await new Promise((resolve,reject)=>{
-            const child=spawn(process.execPath,[path.join(__dirname,'page_matrix_regression.cjs')],{stdio:'inherit',env:{...process.env,
-                UI_FIXTURE_URL:`http://127.0.0.1:${server.address().port}`,UI_AUDIT_MOTION:'1'}});
-            child.on('error',reject);child.on('exit',resolve);
-        });
-        if(status!==0)throw new Error(`Workspace page matrix failed: ${status}`);
+        for (const test of ['page_matrix_regression.cjs', 'information_navigation_regression.cjs']) {
+            const status=await new Promise((resolve,reject)=>{
+                const child=spawn(process.execPath,[path.join(__dirname,test)],{stdio:'inherit',env:{...process.env,
+                    UI_FIXTURE_URL:`http://127.0.0.1:${server.address().port}`,UI_AUDIT_MOTION:'1'}});
+                child.on('error',reject);child.on('exit',resolve);
+            });
+            if(status!==0)throw new Error(`${test} failed: ${status}`);
+        }
     }finally{await new Promise(resolve=>server.close(resolve));}
 })().catch(error=>{console.error(error);process.exitCode=1;});

@@ -152,6 +152,14 @@ struct MacConversationPresentationOverlay: Hashable, Sendable {
         self.pendingSubmission = nil
     }
 
+    mutating func reconcileAfterRewind(_ canonical: [MacChatMessage]) {
+        let committed = Set(canonical.map(\.id))
+        messageOverrides = messageOverrides.filter { committed.contains($0.key) }
+        if let pendingSubmission, !pendingSubmission.messages.allSatisfy({ committed.contains($0.id) }) {
+            self.pendingSubmission = nil
+        }
+    }
+
     mutating func discardTransientMessage(_ messageID: UUID) {
         messageOverrides[messageID] = nil
     }

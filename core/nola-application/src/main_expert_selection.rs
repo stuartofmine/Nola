@@ -11,6 +11,12 @@ pub(crate) fn admit<S: AssistantAdmissionRepositories + ?Sized>(
     store: &mut S,
     command: &mut BeginAssistantTurn,
 ) -> Result<(), String> {
+    // Display metadata is issued here, after the asserted references are resolved.
+    let mut metadata: Option<serde_json::Value> = command.user_content_json.as_deref()
+        .map(serde_json::from_str).transpose().map_err(|_| "invalid_user_content_json")?;
+    if metadata.as_ref().is_some_and(|value| value.get("expert_mentions").is_some()) {
+        return Err("expert_mentions_require_admission".into());
+    }
     let turn_context_components = match &mut command.submission {
         AgentSubmission::UserInput {
             turn_context_components,
@@ -59,6 +65,9 @@ pub(crate) fn admit<S: AssistantAdmissionRepositories + ?Sized>(
     if input.version != 1 || input.selected_experts.is_empty() || input.selected_experts.len() > 32
     {
         return Err("main_expert_selection_unsupported_or_empty".into());
+    }
+    if let Some(mentions) = &input.expert_mentions {
+        mentions.validate(&command.user_text, &input.selected_experts)?;
     }
     if let Some(expected) = &input.expected_source_store_epoch {
         let epoch = store.assistant_source_epoch().map_err(|e| e.to_string())?;
@@ -181,5 +190,24 @@ pub(crate) fn admit<S: AssistantAdmissionRepositories + ?Sized>(
     }
     component.content = json!({"version":1,"selected_experts":input.selected_experts,"room_id":association.room_id,"members":members,
         "guidance":"These are the user's selected experts. You remain the only agent communicating with the user. When useful, delegate bounded work using delegate_expert and integrate canonical Task results into your reply. A selection does not force a tool call or grant permissions."});
+    if let Some(mentions) = input.expert_mentions {
+        for segment in &mentions.segments {
+            if let Some(id) = &segment.agent_id {
+                let member = members.iter().find(|m| m["agent_id"].as_str() == Some(id))
+                    .ok_or("expert_mentions_selection_changed")?;
+                if segment.text.strip_prefix('@') != member["display_name"].as_str() {
+                    return Err("expert_mentions_name_changed".into());
+                }
+            }
+        }
+        component.content["expert_mentions"] = serde_json::to_value(&mentions).map_err(|e| e.to_string())?;
+        let frozen = nola_domain::expert_task_target::FrozenExpertMentions {
+            version: mentions.version, segments: mentions.segments, selected_experts: input.selected_experts,
+        };
+        let fields = metadata.get_or_insert_with(|| json!({})).as_object_mut()
+            .ok_or("invalid_expert_mentions_user_metadata")?;
+        fields.insert("expert_mentions".into(), serde_json::to_value(frozen).map_err(|e| e.to_string())?);
+        command.user_content_json = Some(serde_json::to_string(&metadata).map_err(|e| e.to_string())?);
+    }
     Ok(())
 }

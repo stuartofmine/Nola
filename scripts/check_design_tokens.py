@@ -602,7 +602,7 @@ def check_android_theme(root: Path, light: dict[str, str], dark: dict[str, str],
 def check_windows_shell(root: Path, light: dict[str, str], dark: dict[str, str], errors: list[str]) -> None:
     windows_src = root / "apps/windows/src"
     tokens_path = windows_src / "themeTokens.ts"
-    main_path = windows_src / "main.ts"
+    desktop_export = root / "apps/windows/scripts/export-shell-strings.mjs"
     startup_path = windows_src / "startupPage.ts"
     if not tokens_path.is_file():
         errors.append("apps/windows/src/themeTokens.ts: missing file")
@@ -634,14 +634,8 @@ def check_windows_shell(root: Path, light: dict[str, str], dark: dict[str, str],
         errors,
     )
 
-    if not main_path.is_file():
-        errors.append("apps/windows/src/main.ts: missing file")
-    else:
-        main_ts = main_path.read_text(encoding="utf-8")
-        if "DARK_THEME_TOKENS.canvas" not in main_ts or "LIGHT_THEME_TOKENS.canvas" not in main_ts:
-            errors.append(
-                "apps/windows/src/main.ts: BrowserWindow backgroundColor must use DARK_THEME_TOKENS.canvas / LIGHT_THEME_TOKENS.canvas"
-            )
+    if not desktop_export.is_file() or "startupPageHtml(" not in desktop_export.read_text(encoding="utf-8"):
+        errors.append("Tauri startup resources must render the themed Windows startup page")
 
     if not startup_path.is_file():
         errors.append("apps/windows/src/startupPage.ts: missing file")
@@ -653,6 +647,9 @@ def check_windows_shell(root: Path, light: dict[str, str], dark: dict[str, str],
             )
 
     scan_forbidden_hex_literals(root, sorted(windows_src.rglob("*.ts")), errors)
+    tauri_src = root / "apps/windows/src-tauri/src"
+    if tauri_src.is_dir():
+        scan_forbidden_hex_literals(root, sorted(tauri_src.rglob("*.rs")), errors)
 
 
 def check_apple_fallbacks(root: Path, light: dict[str, str], dark: dict[str, str], errors: list[str]) -> None:
@@ -672,7 +669,7 @@ def check_apple_fallbacks(root: Path, light: dict[str, str], dark: dict[str, str
             "backgroundColor": (light["canvas"], dark["canvas"]),
             "chatBackgroundColor": (light["canvas"], dark["canvas"]),
             "surfaceColor": (light["surface"], dark["surface"]),
-            "elevatedColor": (light["surfaceSubtle"], dark["surfaceSubtle"]),
+            "elevatedColor": (light["surfaceElevated"], dark["surfaceElevated"]),
             "rowFillColor": (light["surfaceSubtle"], dark["surfaceSubtle"]),
             "primaryColor": (light["ink"], dark["ink"]),
             "secondaryContentColor": (light["inkSecondary"], dark["inkSecondary"]),
@@ -735,6 +732,10 @@ def check_apple_fallbacks(root: Path, light: dict[str, str], dark: dict[str, str
                         f"{path.relative_to(root)}:{line_number}: uses forbidden UIKit system background {match.group(0)}"
                     )
         scan_forbidden_hex_literals(root, ios_swift_files, errors)
+
+    shared_apple_root = root / "shared/apple"
+    if shared_apple_root.is_dir():
+        scan_forbidden_hex_literals(root, sorted(shared_apple_root.rglob("*.swift")), errors)
 
 
 def check_apple_colorsets(root: Path, light: dict[str, str], dark: dict[str, str], errors: list[str]) -> None:

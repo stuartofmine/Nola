@@ -142,7 +142,7 @@ def stop_scenario(process: subprocess.Popen, *, force: bool) -> None:
     if process.poll() is not None:
         return
     if sys.platform == "win32":
-        # A scenario can own npm, Electron and Host descendants.
+        # A scenario can own npm, Tauri and Host descendants.
         command = ["taskkill.exe", "/T", "/PID", str(process.pid)]
         if force:
             command.append("/F")

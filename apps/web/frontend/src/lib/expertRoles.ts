@@ -36,6 +36,9 @@ export function expertDefaultProfileId(value: unknown): string | null {
 }
 
 /** Additive capability: old Hosts may still edit/read roles, but cannot consume Main selections. */
+export function supportsExpertExecutors(value: unknown): boolean {
+    return object(value) && value.version === 1 && object(value.features) && value.features.external_expert_executors === true;
+}
 export function supportsMainExpertDelegation(value:unknown):boolean {
     return object(value)&&value.version===1&&object(value.features)&&value.features.main_agent_delegation===true;
 }

@@ -3,6 +3,7 @@
     import { locale, t } from '../lib/i18n';
     import { sourceAccountStateKey } from '../lib/locales/sourceAccounts';
     import { api, ApiError } from '../lib/api';
+    import { randomId } from '../lib/randomId';
     import {sourceLoginSnapshot, type SourceLoginSnapshot as Snapshot} from '../lib/sourceLoginState';
     let executable = $state(''), home = $state(''), name = $state('Codex');
     let consent = $state(false), busy = $state(false), failed = $state(false);
@@ -36,7 +37,7 @@
         clearTimeout(timer); pollOwner = null; checking = false;
         busy = true; failed = false;
         const previous = snapshot?.account ?? accounts.find(item => item.account.id === accountID);
-        handle = {request_id: crypto.randomUUID(), account_id: previous?.account.id ?? crypto.randomUUID(), expected_revision: previous?.revision ?? null};
+        handle = {request_id: randomId(), account_id: previous?.account.id ?? randomId(), expected_revision: previous?.revision ?? null};
         const captured = handle, serial = ++generation;
         // A lost start response is uncertain, not permission to start another login.
         snapshot = {request_id: captured.request_id, state: 'starting', authorization_url: null,

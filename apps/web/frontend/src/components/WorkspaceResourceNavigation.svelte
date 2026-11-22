@@ -22,8 +22,8 @@
     {#each entries as [path, title]}<a href={path} aria-current={selectedEntry === path ? 'page' : undefined} onclick={event => open(event, path)}>{t($locale, title)}</a>{/each}
 </nav>
 <style>
-    .resource-navigation { display: grid; padding: 8px 0; }
-    a { display: flex; align-items: center; min-height: 44px; padding: 8px 12px; border-radius: 0; border-bottom: 1px solid var(--border); }
-    .resource-navigation a[aria-current], .resource-navigation a[aria-current]:hover { background: var(--panel); border-bottom-color: var(--border); }
-    a:hover { background: var(--panel); }
+    .resource-navigation { display: grid; gap: 4px; padding: 8px 0; }
+    a { display: flex; align-items: center; min-height: 44px; padding: 8px 12px; border-radius: 8px; border: 1px solid transparent; color: var(--muted); }
+    .resource-navigation a[aria-current], .resource-navigation a[aria-current]:hover { background: var(--glass-pill-bg); border-color: var(--glass-pill-border); box-shadow: var(--glass-pill-shadow); color: var(--content); }
+    a:hover { background: var(--composer-pill-hover-bg); color: var(--content); }
 </style>

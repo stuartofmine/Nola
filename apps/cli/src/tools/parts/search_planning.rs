@@ -1689,12 +1689,18 @@ fn tool_search(args: &Map<String, Value>, skills: &SkillRuntimeContext) -> ToolO
             }
         }
     }
-    tool_search_with_catalog(args, skills, catalog.as_ref())
+    tool_search_with_catalog(args, skills, catalog.as_ref(), DiscoverySchemaDelivery::Inline)
 }
 
-fn tool_search_with_catalog(args: &Map<String, Value>, skills: &SkillRuntimeContext, catalog: Option<&ToolDiscoveryCatalog>) -> ToolOutcome {
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum DiscoverySchemaDelivery {
+    Inline,
+    NextModelStep,
+}
+
+fn tool_search_with_catalog(args: &Map<String, Value>, skills: &SkillRuntimeContext, catalog: Option<&ToolDiscoveryCatalog>, delivery: DiscoverySchemaDelivery) -> ToolOutcome {
     let started = std::time::Instant::now();
-    let mut outcome = tool_search_from_snapshot(args, skills, catalog);
+    let mut outcome = tool_search_from_snapshot(args, skills, catalog, delivery);
     let mut data = outcome.data.take().unwrap_or_else(||json!({}));
     let mut metrics = data.get("tool_discovery_metrics").cloned().unwrap_or_else(||json!({}));
     metrics["duration_us"] = json!(started.elapsed().as_micros().min(u64::MAX as u128) as u64);
@@ -1703,15 +1709,26 @@ fn tool_search_with_catalog(args: &Map<String, Value>, skills: &SkillRuntimeCont
     metrics["catalog_source"] = json!(if catalog.is_some() { "host_snapshot" } else { "standalone" });
     if let Some(catalog) = catalog { metrics["available_tool_count"] = json!(catalog.available.len()); }
     data["tool_discovery_metrics"] = metrics;
+    if delivery == DiscoverySchemaDelivery::NextModelStep && catalog.is_some() {
+        // Core projects business data in preference to presentation. Include
+        // matches and recovery guidance before applying the ordinary output limit.
+        data["text"] = json!(outcome.text);
+    }
     outcome.data = Some(data);
     outcome
 }
 
-fn tool_search_from_snapshot(args: &Map<String, Value>, skills: &SkillRuntimeContext, catalog: Option<&ToolDiscoveryCatalog>) -> ToolOutcome {
+fn tool_search_from_snapshot(args: &Map<String, Value>, skills: &SkillRuntimeContext, catalog: Option<&ToolDiscoveryCatalog>, delivery: DiscoverySchemaDelivery) -> ToolOutcome {
     let Some(query) = arg_string(args, "query") else {
         return error("query is required".to_string());
     };
-    let max_results = args.get("max_results").and_then(Value::as_i64).unwrap_or(5);
+    let max_results = match args.get("max_results") {
+        None => 5,
+        Some(value) => match value.as_i64() {
+            Some(n) => n,
+            None => return error(format!("max_results must be an integer between 1 and {MAX_TOOL_SEARCH_RESULTS}")),
+        },
+    };
     if !(1..=MAX_TOOL_SEARCH_RESULTS).contains(&max_results) {
         return error(format!(
             "max_results must be between 1 and {MAX_TOOL_SEARCH_RESULTS}"
@@ -1910,6 +1927,12 @@ fn tool_search_from_snapshot(args: &Map<String, Value>, skills: &SkillRuntimeCon
         .map(|spec| spec.name)
         .collect::<Vec<_>>()
         .join(", ");
+    let via_activation = delivery == DiscoverySchemaDelivery::NextModelStep && catalog.is_some();
+    let guidance = if via_activation {
+        "Discovery only: call a matched tool using its function definition in the next model request."
+    } else {
+        "Discovery only: call a returned tool directly in the next step with its arguments. Do not repeat this search to execute it."
+    };
     let mut lines = vec![
         format!("query: {query}"),
         format!("mode: {mode}"),
@@ -1923,7 +1946,7 @@ fn tool_search_from_snapshot(args: &Map<String, Value>, skills: &SkillRuntimeCon
         ),
         format!("available_tool_count: {available_tool_count}"),
         format!("matches: {names}"),
-        "Discovery only: call a returned tool directly in the next step with its arguments. Do not repeat this search to execute it.".to_string(),
+        guidance.to_string(),
     ];
     if mode == "select" && !missing.is_empty() {
         lines.push(format!("missing: {}", missing.join(", ")));
@@ -1939,27 +1962,62 @@ fn tool_search_from_snapshot(args: &Map<String, Value>, skills: &SkillRuntimeCon
         .iter()
         .map(|spec| spec.name.to_string())
         .collect::<Vec<_>>();
-    lines.push(String::new());
-    lines.push("<functions>".to_string());
     let match_count = matches.len();
     let mut schema_bytes = 0usize;
-    for spec in matches {
-        let function = json!({
-            "name": spec.name,
-            "description": spec.description,
-            "parameters": spec.parameters.clone(),
-        });
-        let serialized = function.to_string();
-        schema_bytes += serialized.len();
-        lines.push(format!("<function>{serialized}</function>"));
+    // When Core promotes the frozen descriptors, repeating their definitions here
+    // can spill an otherwise small receipt to disk.
+    if !via_activation {
+        lines.push(String::new());
+        lines.push("<functions>".to_string());
+        for spec in matches {
+            let function = json!({
+                "name": spec.name,
+                "description": spec.description,
+                "parameters": spec.parameters,
+            });
+            let serialized = function.to_string();
+            schema_bytes += serialized.len();
+            lines.push(format!("<function>{serialized}</function>"));
+        }
+        lines.push("</functions>".to_string());
     }
-    lines.push("</functions>".to_string());
     let mut outcome = ok(lines.join("\n"), format!("{match_count} tool match(es)"))
         .with_capability_activation(activated_capability_ids);
     outcome.data = Some(json!({"tool_discovery_metrics":{
-        "available_tool_count":available_tool_count,"matched_tool_count":match_count,"returned_schema_utf8_bytes":schema_bytes
+        "available_tool_count":available_tool_count,"matched_tool_count":match_count,"returned_schema_utf8_bytes":schema_bytes,
+        "schema_delivery":if via_activation { "next_model_request" } else { "inline" }
     }}));
     outcome
+}
+
+#[cfg(test)]
+#[test]
+fn tool_search_promoted_schema_keeps_activation_and_recovery_without_spilling() {
+    let skills = SkillRuntimeContext::default();
+    let name = "host_tool";
+    let schema = json!({"name":name,"description":"frozen model contract ".repeat(480),
+        "parameters":{"type":"object","properties":{"path":{"type":"string"}},"required":["path"]}});
+    let catalog = ToolDiscoveryCatalog {
+        available: [name.to_owned()].into_iter().collect(), ranked: vec![name.to_owned()], schemas: vec![schema],
+    };
+    let lookup = |args, delivery| tool_search_with_catalog(&args, &skills, Some(&catalog), delivery);
+    let args: Map<String, Value> = serde_json::from_value(json!({"query":"select:host_tool"})).unwrap();
+    let inline = lookup(args.clone(), DiscoverySchemaDelivery::Inline);
+    assert!(inline.text.contains("<function>") && inline.text.len() > 9000);
+    let compact = lookup(args, DiscoverySchemaDelivery::NextModelStep);
+    assert_eq!(compact.activation, inline.activation);
+    assert!(!compact.error && compact.text.contains("matches: host_tool") && compact.text.len() < 1024);
+    assert!(!compact.text.contains("<function>"));
+    let metrics = &compact.data.as_ref().unwrap()["tool_discovery_metrics"];
+    assert_eq!(metrics["returned_schema_utf8_bytes"], 0);
+    assert_eq!(metrics["schema_delivery"], "next_model_request");
+
+    let absent = lookup(serde_json::from_value(json!({"query":"select:absent"})).unwrap(), DiscoverySchemaDelivery::NextModelStep);
+    assert!(absent.activation.is_none() && absent.text.contains("missing_tools"));
+    for bad in [json!({"query":""}), json!({"query":"select:host_tool","max_results":"1"}), json!({"query":"select:host_tool","max_results":0})] {
+        let rejected = lookup(serde_json::from_value(bad).unwrap(), DiscoverySchemaDelivery::NextModelStep);
+        assert!(rejected.error && rejected.activation.is_none());
+    }
 }
 
 #[cfg(test)]
@@ -2007,10 +2065,10 @@ fn tool_search_discovers_an_injected_mcp_schema_by_stable_id() {
 #[test]
 fn discovery_metrics_distinguish_miss_from_invalid_request() {
     let skills = SkillRuntimeContext::default();
-    let invalid = tool_search_with_catalog(&Map::new(), &skills, None);
+    let invalid = tool_search_with_catalog(&Map::new(), &skills, None, DiscoverySchemaDelivery::Inline);
     assert_eq!(invalid.data.unwrap()["tool_discovery_metrics"]["failed"], true);
     let args = json!({"query":"select:definitely_absent_tool_723"}).as_object().unwrap().clone();
-    let absent = tool_search_with_catalog(&args, &skills, None);
+    let absent = tool_search_with_catalog(&args, &skills, None, DiscoverySchemaDelivery::Inline);
     let metrics = &absent.data.as_ref().unwrap()["tool_discovery_metrics"];
     assert_eq!(metrics["failed"], false);
     assert_eq!(metrics["matched_tool_count"], 0);
@@ -2029,14 +2087,14 @@ fn discovery_rejects_incomplete_or_ambiguous_frozen_catalogs() {
         let catalog = ToolDiscoveryCatalog {
             available: ["read_file".into()].into_iter().collect(), ranked: vec![], schemas,
         };
-        let outcome = tool_search_with_catalog(&args, &skills, Some(&catalog));
+        let outcome = tool_search_with_catalog(&args, &skills, Some(&catalog), DiscoverySchemaDelivery::Inline);
         assert!(outcome.error, "{}", outcome.text);
         assert!(outcome.activation.is_none());
     }
     let catalog = ToolDiscoveryCatalog {
         available: ["read_file".into()].into_iter().collect(), ranked: vec![], schemas: vec![schema],
     };
-    let outcome = tool_search_with_catalog(&args, &skills, Some(&catalog));
+    let outcome = tool_search_with_catalog(&args, &skills, Some(&catalog), DiscoverySchemaDelivery::Inline);
     assert!(!outcome.error, "{}", outcome.text);
     assert!(outcome.text.contains("Frozen version"));
     assert!(outcome.text.contains("frozen_path"));
@@ -2055,7 +2113,7 @@ fn discovery_read_only_filter_uses_snapshot_not_builtin_name() {
             available: [name.into()].into_iter().collect(), ranked: vec![], schemas: vec![schema],
         };
         let args = serde_json::from_value(json!({"query":format!("read_only:true select:{name}")})).unwrap();
-        let outcome = tool_search_with_catalog(&args, &skills, Some(&catalog));
+        let outcome = tool_search_with_catalog(&args, &skills, Some(&catalog), DiscoverySchemaDelivery::Inline);
         assert!(!outcome.error, "{}", outcome.text);
         assert_eq!(outcome.activation.is_some(), expected, "{}", outcome.text);
     }

@@ -167,6 +167,7 @@ struct ChatContextSheet: View {
     let onUseSkill: (String) -> Void
     let onSearchMemory: (String) async throws -> [ContextMemorySearchHit]
     var initialContextPane: ContextPane = .overview
+    var embeddedInNavigationStack: Bool = false
 
     @State private var errorMessage: String? = nil
     @State private var noticeMessage: String? = nil
@@ -180,13 +181,87 @@ struct ChatContextSheet: View {
     @State private var documentImportOwner: ContextFileImportOwner?
     @State private var memorySearchQuery = ""
     @State private var memorySearchResults: [ContextMemorySearchHit] = []
-    @State private var selectedContextPane: ContextPane = .overview
+    @State private var selectedContextPane: ContextPane
     @State private var selectedSkillID: UUID?
     @State private var selectedMCPServerID: UUID?
     @State private var pendingSkillDeletionID: UUID?
     @State private var pendingMCPDeletionID: UUID?
     @State private var initialDocuments: [UserUploadedContextItem]?
     @State private var initialMemoryText: [String]?
+    @State private var showContextDiagnostics = false
+
+    init(
+        displayMode: DisplayMode,
+        conversationID: UUID?,
+        conversationTitle: String,
+        contextUsage: ConversationContextUsage?,
+        sessionMemory: Binding<String>,
+        knowledgePoints: Binding<String>,
+        conversationWiki: Binding<String>,
+        longTermMemory: Binding<String>,
+        userPreferences: Binding<String>,
+        mcpServers: Binding<[UserMCPServer]>,
+        uploadedSkills: Binding<[UserUploadedContextItem]>,
+        hostUploadedSkills: [UserUploadedContextItem],
+        hostUploadedDocuments: [UserUploadedContextItem],
+        hostMCPServers: [UserMCPServer],
+        uploadedDocuments: Binding<[UserUploadedContextItem]>,
+        documentsReadable: Bool = true,
+        dataSources: [URLDataSource],
+        selectedDataSourceIDs: Binding<Set<UUID>>,
+        selectedSystemDataSourceTypes: Binding<Set<DataSourceType>>,
+        onSave: @escaping () throws -> Void,
+        onSaveMemoryProfile: @escaping () async throws -> Void,
+        onSaveUploadedDocuments: (([UserUploadedContextItem]) throws -> [UserUploadedContextItem])? = nil,
+        onSaveConversationKnowledge: @escaping (ConversationKnowledgeSaveSnapshot) async throws -> Void,
+        onCompact: @escaping () async throws -> String,
+        onReload: @escaping () async throws -> String?,
+        onDiscard: @escaping () -> Void,
+        onUseSkill: @escaping (String) -> Void,
+        onSearchMemory: @escaping (String) async throws -> [ContextMemorySearchHit],
+        initialContextPane: ContextPane = .overview,
+        embeddedInNavigationStack: Bool = false
+    ) {
+        self.displayMode = displayMode
+        self.conversationID = conversationID
+        self.conversationTitle = conversationTitle
+        self.contextUsage = contextUsage
+        _sessionMemory = sessionMemory
+        _knowledgePoints = knowledgePoints
+        _conversationWiki = conversationWiki
+        _longTermMemory = longTermMemory
+        _userPreferences = userPreferences
+        _mcpServers = mcpServers
+        _uploadedSkills = uploadedSkills
+        self.hostUploadedSkills = hostUploadedSkills
+        self.hostUploadedDocuments = hostUploadedDocuments
+        self.hostMCPServers = hostMCPServers
+        _uploadedDocuments = uploadedDocuments
+        self.documentsReadable = documentsReadable
+        self.dataSources = dataSources
+        _selectedDataSourceIDs = selectedDataSourceIDs
+        _selectedSystemDataSourceTypes = selectedSystemDataSourceTypes
+        self.onSave = onSave
+        self.onSaveMemoryProfile = onSaveMemoryProfile
+        self.onSaveUploadedDocuments = onSaveUploadedDocuments
+        self.onSaveConversationKnowledge = onSaveConversationKnowledge
+        self.onCompact = onCompact
+        self.onReload = onReload
+        self.onDiscard = onDiscard
+        self.onUseSkill = onUseSkill
+        self.onSearchMemory = onSearchMemory
+        self.initialContextPane = initialContextPane
+        self.embeddedInNavigationStack = embeddedInNavigationStack
+        _selectedContextPane = State(initialValue: initialContextPane)
+        _initialDocuments = State(initialValue: uploadedDocuments.wrappedValue)
+        _initialMemoryText = State(initialValue: [sessionMemory.wrappedValue, longTermMemory.wrappedValue, userPreferences.wrappedValue])
+    }
+
+    private var hasUnsavedChanges: Bool {
+        let memoryChanged = initialMemoryText.map { $0 != [sessionMemory, longTermMemory, userPreferences] } ?? false
+        let documentsChanged = initialDocuments.map { $0 != uploadedDocuments } ?? false
+        return memoryChanged || documentsChanged
+    }
 
     var body: some View {
         Form {
@@ -250,63 +325,73 @@ struct ChatContextSheet: View {
                                     .foregroundStyle(.secondary)
                             }
 
-                            LazyVGrid(
-                                columns: [GridItem(.adaptive(minimum: 112), alignment: .leading)],
-                                alignment: .leading,
-                                spacing: 12
-                            ) {
-                                contextMetric(title: tr("chat.context.metric.measurement", "上下文", "Context"),
-                                    value: contextUsage.contextIsEstimated
-                                        ? tr("chat.context.metric.estimated_request", "预计下次请求", "Estimated next request")
-                                        : tr("chat.context.metric.measured_request", "请求实测上下文", "Measured request context"))
-                                if let request = contextUsage.cacheDiagnosticRequestID {
-                                    contextMetric(title: tr("chat.context.metric.cache_request", "缓存诊断请求", "Cache diagnostic request"), value: request)
-                                }
-                                if let attempt = contextUsage.cacheDiagnosticAttemptID {
-                                    contextMetric(title: tr("chat.context.metric.cache_attempt", "物理尝试", "Physical attempt"), value: attempt)
-                                }
-                                if contextUsage.hasEstimatedBreakdown {
-                                    contextMetric(title: tr("chat.context.metric.active", "当前消息", "Active"), value: "\(contextUsage.activeMessageTokens)")
-                                    contextMetric(title: tr("chat.context.metric.memory", "记忆", "Memory"), value: "\(contextUsage.longTermMemoryTokens)")
-                                    contextMetric(title: tr("chat.context.metric.preferences", "偏好", "Preferences"), value: "\(contextUsage.userPreferencesTokens)")
-                                    contextMetric(title: tr("chat.context.metric.mcp", "MCP", "MCP"), value: "\(contextUsage.mcpServersTokens)")
-                                    contextMetric(title: tr("chat.context.metric.skills", "Skills", "Skills"), value: "\(contextUsage.uploadedSkillsTokens)")
-                                    contextMetric(title: tr("chat.context.metric.documents", "文档", "Documents"), value: "\(contextUsage.uploadedDocumentsTokens)")
-                                }
-                                if let status = contextUsage.promptCacheStatus {
+                            DisclosureGroup(isExpanded: $showContextDiagnostics) {
+                                LazyVGrid(
+                                    columns: [GridItem(.adaptive(minimum: 112), alignment: .leading)],
+                                    alignment: .leading,
+                                    spacing: 12
+                                ) {
+                                    contextMetric(title: tr("chat.context.metric.measurement", "上下文", "Context"),
+                                        value: contextUsage.contextIsEstimated
+                                            ? tr("chat.context.metric.estimated_request", "预计下次请求", "Estimated next request")
+                                            : tr("chat.context.metric.measured_request", "请求实测上下文", "Measured request context"))
+                                    if let request = contextUsage.cacheDiagnosticRequestID {
+                                        contextMetric(title: tr("chat.context.metric.cache_request", "缓存诊断请求", "Cache diagnostic request"), value: request)
+                                    }
+                                    if let attempt = contextUsage.cacheDiagnosticAttemptID {
+                                        contextMetric(title: tr("chat.context.metric.cache_attempt", "物理尝试", "Physical attempt"), value: attempt)
+                                    }
+                                    if contextUsage.hasEstimatedBreakdown {
+                                        contextMetric(title: tr("chat.context.metric.active", "当前消息", "Active"), value: "\(contextUsage.activeMessageTokens)")
+                                        contextMetric(title: tr("chat.context.metric.memory", "记忆", "Memory"), value: "\(contextUsage.longTermMemoryTokens)")
+                                        contextMetric(title: tr("chat.context.metric.preferences", "偏好", "Preferences"), value: "\(contextUsage.userPreferencesTokens)")
+                                        contextMetric(title: tr("chat.context.metric.mcp", "MCP", "MCP"), value: "\(contextUsage.mcpServersTokens)")
+                                        contextMetric(title: tr("chat.context.metric.skills", "Skills", "Skills"), value: "\(contextUsage.uploadedSkillsTokens)")
+                                        contextMetric(title: tr("chat.context.metric.documents", "文档", "Documents"), value: "\(contextUsage.uploadedDocumentsTokens)")
+                                    }
+                                    if let status = contextUsage.promptCacheStatus {
+                                        contextMetric(
+                                            title: tr("chat.context.metric.prompt_cache", "提示缓存", "Prompt cache"),
+                                            value: promptCacheStatusLabel(status)
+                                        )
+                                    }
                                     contextMetric(
-                                        title: tr("chat.context.metric.prompt_cache", "提示缓存", "Prompt cache"),
-                                        value: promptCacheStatusLabel(status)
+                                        title: tr("chat.context.metric.cache_hit_rate", "会话缓存命中率", "Conversation cache hit rate"),
+                                        value: contextUsage.cacheHitRateBps.map { (Double($0) / 10_000).formatted(.percent.precision(.fractionLength(1))) }
+                                            ?? tr("chat.context.metric.cache_unknown", "未知", "Unknown")
                                     )
+                                    if let value = contextUsage.cacheReportedRequests {
+                                        contextMetric(title: tr("chat.context.metric.cache_reported", "已报告请求", "Reported requests"), value: value.formatted())
+                                    }
+                                    if let value = contextUsage.cacheUnreportedRequests, value > 0 {
+                                        contextMetric(title: tr("chat.context.metric.cache_unreported", "缓存用量未知的请求", "Requests with unknown cache usage"), value: value.formatted())
+                                    }
+                                    if let value = contextUsage.cachedInputTokens {
+                                        contextMetric(
+                                            title: tr("chat.context.metric.cache_read", "缓存读取", "Cache read"),
+                                            value: formattedTokenCount(value)
+                                        )
+                                    }
+                                    if let value = contextUsage.cacheWriteInputTokens {
+                                        contextMetric(
+                                            title: tr("chat.context.metric.cache_write", "缓存写入", "Cache write"),
+                                            value: formattedTokenCount(value)
+                                        )
+                                    }
+                                    if contextUsage.hasEstimatedBreakdown {
+                                        contextMetric(title: tr("chat.context.metric.supplemental", "附加", "Supplemental"), value: "\(contextUsage.supplementalTokens)")
+                                        contextMetric(title: tr("chat.context.metric.archived", "已折叠", "Archived"), value: "\(contextUsage.archivedMessageCount)")
+                                    }
                                 }
-                                contextMetric(
-                                    title: tr("chat.context.metric.cache_hit_rate", "会话缓存命中率", "Conversation cache hit rate"),
-                                    value: contextUsage.cacheHitRateBps.map { (Double($0) / 10_000).formatted(.percent.precision(.fractionLength(1))) }
-                                        ?? tr("chat.context.metric.cache_unknown", "未知", "Unknown")
-                                )
-                                if let value = contextUsage.cacheReportedRequests {
-                                    contextMetric(title: tr("chat.context.metric.cache_reported", "已报告请求", "Reported requests"), value: value.formatted())
-                                }
-                                if let value = contextUsage.cacheUnreportedRequests, value > 0 {
-                                    contextMetric(title: tr("chat.context.metric.cache_unreported", "缓存用量未知的请求", "Requests with unknown cache usage"), value: value.formatted())
-                                }
-                                if let value = contextUsage.cachedInputTokens {
-                                    contextMetric(
-                                        title: tr("chat.context.metric.cache_read", "缓存读取", "Cache read"),
-                                        value: formattedTokenCount(value)
-                                    )
-                                }
-                                if let value = contextUsage.cacheWriteInputTokens {
-                                    contextMetric(
-                                        title: tr("chat.context.metric.cache_write", "缓存写入", "Cache write"),
-                                        value: formattedTokenCount(value)
-                                    )
-                                }
-                                if contextUsage.hasEstimatedBreakdown {
-                                    contextMetric(title: tr("chat.context.metric.supplemental", "附加", "Supplemental"), value: "\(contextUsage.supplementalTokens)")
-                                    contextMetric(title: tr("chat.context.metric.archived", "已折叠", "Archived"), value: "\(contextUsage.archivedMessageCount)")
-                                }
+                                .padding(.top, 8)
+                            } label: {
+                                Text(tr("chat.context.diagnostics.header", "诊断详情", "Diagnostics"))
+                                    .font(.subheadline.weight(.medium))
+                                    .foregroundStyle(DesignTokens.secondaryContentColor)
+                                    .frame(minHeight: 40)
                             }
+                            .disclosureGroupStyle(NolaRowDisclosureStyle(isPlain: true))
+                            .accessibilityIdentifier("chat.context.diagnostics")
 
                             if let lastCompactedAt = contextUsage.lastCompactedAt {
                                 Text("\(tr("chat.context.last_compact.prefix", "上次 compact：", "Last compact: "))\(lastCompactedAt.formatted(date: .abbreviated, time: .shortened))")
@@ -495,6 +580,7 @@ struct ChatContextSheet: View {
                             .frame(maxWidth: .infinity)
                         }
                         .buttonStyle(.borderedProminent)
+                        .foregroundStyle(DesignTokens.onActionColor)
                         .disabled(isSavingMemoryProfile || isCompacting)
                     }
                 }
@@ -806,13 +892,15 @@ struct ChatContextSheet: View {
             importUploadedFiles(result, into: $uploadedDocuments)
         }
         .toolbar {
-            ToolbarItem(placement: .cancellationAction) {
-                Button(L10n.cancel) {
-                    onDiscard()
-                    dismiss()
+            if !embeddedInNavigationStack {
+                ToolbarItem(placement: .cancellationAction) {
+                    Button(L10n.cancel) {
+                        onDiscard()
+                        dismiss()
+                    }
+                    .disabled(isSavingMemoryProfile || isCompacting)
+                    .accessibilityIdentifier("chat.context.cancel")
                 }
-                .disabled(isSavingMemoryProfile || isCompacting)
-                .accessibilityIdentifier("chat.context.cancel")
             }
             ToolbarItem(placement: .confirmationAction) {
                 Button(L10n.commonSave) {
@@ -822,14 +910,7 @@ struct ChatContextSheet: View {
             }
         }
         .disabled(isSavingMemoryProfile || isCompacting)
-        .interactiveDismissDisabled(true)
-        .onAppear {
-            if initialMemoryText == nil {
-                initialDocuments = uploadedDocuments
-                initialMemoryText = [sessionMemory, longTermMemory, userPreferences]
-                selectedContextPane = initialContextPane
-            }
-        }
+        .interactiveDismissDisabled(isSavingMemoryProfile || isCompacting || hasUnsavedChanges)
         .onChange(of: conversationID) { _, _ in
             skillImportOwner = nil
             documentImportOwner = nil
@@ -1236,6 +1317,7 @@ struct ChatContextSheet: View {
                 }
             }
             Section {
+                GitHubSkillSourceLink(reference: item.wrappedValue.packageReference)
                 TextField(tr("chat.context.skills.name", "Skill 名称", "Skill name"), text: item.name)
                 TextField(tr("chat.context.skills.description", "说明：什么时候使用这个 Skill", "Description: when to use this Skill"), text: item.description, axis: .vertical)
                     .lineLimit(2...5)
@@ -1302,6 +1384,7 @@ struct ChatContextSheet: View {
                             .foregroundStyle(.secondary)
                     }
                 }
+                GitHubSkillSourceLink(reference: item.packageReference)
             }
             if !item.description.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
                 Section(tr("chat.context.skills.purpose", "适用场景", "When to use")) {
@@ -1731,4 +1814,16 @@ struct ChatContextSheet: View {
     }
 
 
+}
+
+struct GitHubSkillSourceLink: View {
+    let reference: String?
+
+    var body: some View {
+        if let source = IOSGitHubSkillPackages.sourceURL(reference: reference) {
+            Link(destination: source) {
+                Label("GitHub · " + source.pathComponents.dropFirst().prefix(2).joined(separator: "/"), systemImage: "link")
+            }
+        }
+    }
 }

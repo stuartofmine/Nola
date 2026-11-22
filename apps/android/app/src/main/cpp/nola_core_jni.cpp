@@ -3,6 +3,7 @@
 
 #include <cstdint>
 #include <cstring>
+#include <string>
 
 #include "nola_core.h"
 
@@ -369,6 +370,40 @@ Java_com_nola_core_AgentCoreNative_nativeIntelligenceClear(JNIEnv*, jobject) {
     return nola_core_intelligence_clear() ? JNI_TRUE : JNI_FALSE;
 }
 
+extern "C" JNIEXPORT jbyteArray JNICALL
+Java_com_nola_core_AgentCoreNative_nativeApplicationIntelligenceIngest(JNIEnv* env, jobject, jlong handle, jbyteArray input) {
+    jbyte* pinned = nullptr;
+    jsize length = 0;
+    const unsigned char* bytes = pin_bytes(env, input, &pinned, &length);
+    auto* application = reinterpret_cast<NolaCoreApplication*>(static_cast<std::intptr_t>(handle));
+    char* result = nola_core_application_intelligence_ingest(application, bytes, static_cast<size_t>(length));
+    release_bytes(env, input, pinned);
+    return consume_json(env, result);
+}
+
+extern "C" JNIEXPORT jbyteArray JNICALL
+Java_com_nola_core_AgentCoreNative_nativeApplicationIntelligenceRecall(JNIEnv* env, jobject, jlong handle, jbyteArray input) {
+    jbyte* pinned = nullptr;
+    jsize length = 0;
+    const unsigned char* bytes = pin_bytes(env, input, &pinned, &length);
+    auto* application = reinterpret_cast<NolaCoreApplication*>(static_cast<std::intptr_t>(handle));
+    char* result = nola_core_application_intelligence_recall(application, bytes, static_cast<size_t>(length));
+    release_bytes(env, input, pinned);
+    return consume_json(env, result);
+}
+
+extern "C" JNIEXPORT jbyteArray JNICALL
+Java_com_nola_core_AgentCoreNative_nativeApplicationIntelligenceSnapshot(JNIEnv* env, jobject, jlong handle) {
+    auto* application = reinterpret_cast<NolaCoreApplication*>(static_cast<std::intptr_t>(handle));
+    return consume_json(env, nola_core_application_intelligence_snapshot(application));
+}
+
+extern "C" JNIEXPORT jboolean JNICALL
+Java_com_nola_core_AgentCoreNative_nativeApplicationIntelligenceClear(JNIEnv*, jobject, jlong handle) {
+    auto* application = reinterpret_cast<NolaCoreApplication*>(static_cast<std::intptr_t>(handle));
+    return nola_core_application_intelligence_clear(application) ? JNI_TRUE : JNI_FALSE;
+}
+
 extern "C" JNIEXPORT jlong JNICALL
 Java_com_nola_core_AgentCoreNative_nativeChildPumpStart(JNIEnv* env, jobject, jlong handle, jbyteArray input) {
     jbyte* pinned=nullptr; jsize length=0;
@@ -407,6 +442,20 @@ extern "C" JNIEXPORT jlong JNICALL
 Java_com_nola_core_AgentCoreNative_nativeMobileMcpRetain(JNIEnv*,jobject,jlong handle) {
     return reinterpret_cast<std::intptr_t>(nola_core_mobile_mcp_retain(reinterpret_cast<NolaCoreApplication*>(static_cast<std::intptr_t>(handle))));
 }
+extern "C" JNIEXPORT jbyteArray JNICALL
+Java_com_nola_core_AgentCoreNative_nativeGithubSkillPackage(
+    JNIEnv* env, jobject, jbyteArray root, jbyteArray request
+) {
+    if (!root || !request) return nullptr;
+    std::string path(env->GetArrayLength(root), '\0');
+    std::string body(env->GetArrayLength(request), '\0');
+    env->GetByteArrayRegion(root, 0, path.size(), reinterpret_cast<jbyte*>(path.data()));
+    env->GetByteArrayRegion(request, 0, body.size(), reinterpret_cast<jbyte*>(body.data()));
+    if (env->ExceptionCheck() || path.find('\0') != std::string::npos || body.find('\0') != std::string::npos)
+        return nullptr;
+    return consume_json(env, nola_mobile_github_skill_package_json(path.c_str(), body.c_str()));
+}
+
 extern "C" JNIEXPORT jbyteArray JNICALL
 Java_com_nola_core_AgentCoreNative_nativeMobileMcpHost(JNIEnv* env,jobject,jlong handle,jbyteArray input) {
     jbyte* pinned=nullptr;jsize length=0;const unsigned char* bytes=pin_bytes(env,input,&pinned,&length);

@@ -2,6 +2,8 @@
 
 # Core、Application 与 Host 边界
 
+简体中文 · [English](CORE_HOST_ARCHITECTURE.en.md)
+
 状态：现行所有权约束；2026-11-08 核对实现分层及物理部署。总定义见[软件架构总纲](SOFTWARE_DESIGN.md)。
 
 ## 输入输出与唯一写权
@@ -24,7 +26,7 @@ Driver/Supervisor 领取已提交工作、处理资源和取消，Host 执行实
 | facade | `nola_core` rlib，重导出 engine 类型及纯辅助函数 | 由 nola_core 直接产出全部移动原生库 |
 | 原生绑定 | `nola_mobile_bindings` staticlib/cdylib/rlib | 每个 Swift/Kotlin wrapper 自建运行循环 |
 | 持久装配 | `nola_application_bootstrap` 选择具体 NolaStore，Service/embedded owner 持锁 | 薄客户端自己选择第二个业务数据库 |
-| Driver | 通用 committed Host 循环，加 Goal/任务适配 | 整个 crate 已没有 engine 依赖 |
+| Driver | 已提交的 Host 执行循环与任务 worker 适配；Goal 协调归 Application | 将 Driver 测试依赖 engine 误读为生产依赖 |
 
 依赖事实以[生成图](DEPENDENCIES.md)为准，已发现差距见[源码核对](ARCHITECTURE_SOURCE_AUDIT_20261108.md)。
 

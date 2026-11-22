@@ -12,11 +12,13 @@ CLI 可以通过带认证的本地 HTTP 服务，为 Web 和远程客户端提�
 
 原生与 Web 专家设置提供代码编写、代码审查、测试、私人秘书、画师、PPT 制作和论文写作七个起始角色，包含提示词、推荐工具包及关联 Skill。专家可独立选择模型声明的推理档位；在图形客户端输入框用 `@` 选择专家。已有会话保留加入时配置，明确确认更新后才切换。主 Agent 统一与用户交互并调度专家；专家复用 subagent 的 Task 执行链路，保留独立模型、工具和持久子会话历史，不递归调用其他专家。详见[专家交互设计](docs/design/shared/MULTI_AGENT_NAVIGATION.md)。
 
+专家可以使用桌面宿主机上安装的 Antigravity、Codex、Claude Code 或 OpenCode。例如，把「代码实现」绑定到 Antigravity，把「代码审查」绑定到 Codex，再在同一条消息中提及两位专家。主 Agent 可以让审查者检查实现者交回的提交，并在该版本运行测试。模型选项来自宿主机，包含 Antigravity 提供的推理档位。[专家配置与提及](docs/design/shared/EXPERT_MENTIONS.md)
+
 ## 下载
 
-1.0.0 开发预览提供 **macOS Apple Silicon 完整 CLI 包**。请保留 CLI、Agent Host、服务、Web 资源和浏览器运行时的完整目录结构。此包尚未进行 Apple Developer ID 公证。其他平台暂未发布安装包，可从源码构建。
+从 [1.0.0 发行页](https://github.com/stuartofmine/Nola/releases/tag/v1.0.0-build.3) 选择安装包或压缩包。发行页列出了可下载的平台、签名状态和校验值。
 
-只下载[发行页](https://github.com/stuartofmine/Nola/releases)列出的制品。解压后在目录中运行：
+使用 Linux CLI 和 Web 客户端时，请完整解压，在解压后的目录中运行以下命令。
 
 ```sh
 ./nola --version
@@ -28,18 +30,20 @@ CLI 可以通过带认证的本地 HTTP 服务，为 Web 和远程客户端提�
 
 ## 架构
 
+[中文架构指南](docs/architecture/README.md) · [English architecture guide](docs/architecture/README.en.md)
+
 | 组件 | 实现 | 职责 |
 | --- | --- | --- |
 | macOS · `apps/macos/` | SwiftUI / AppKit | 原生桌面客户端与平台 Host 集成 |
 | iOS · `apps/ios/` | SwiftUI | 移动客户端与 iOS 系统能力 |
 | Android · `apps/android/` | Kotlin / Compose | 移动客户端、JNI 集成与 Android 系统能力 |
-| Windows · `apps/windows/` | 桌面原生壳 + Web UI | 桌面客户端与受控本地 Host 集成 |
+| Windows · `apps/windows/` | Tauri 2 / WebView2 / Svelte | 桌面客户端与受控本地 Host 集成 |
 | Web · `apps/web/frontend/` | Svelte / TypeScript | 由 Rust Host 提供服务的浏览器界面 |
 | CLI · `apps/cli/` | Rust | 终端客户端、Agent Host 与本地 HTTP 服务 |
 | Core · `core/` | Rust、C ABI / JNI | 领域契约、Agent 执行、Application Service、持久化与 Host 接口 |
 | Apple 共享代码 · `shared/apple/` | Swift | 共用展示组件与协议代码 |
 
-各原生客户端拥有自己的界面；macOS App 不是 CLI 的外壳。对话和持久运行状态由本地 Application Service 与 Store 管理。远程 Host 访问需要认证和明确授权。
+各原生客户端拥有自己的界面；macOS App 不是 CLI 的外壳。桌面 Service 与移动端嵌入式 Application 共用业务命令和存储契约。远程 Host 访问需要认证和明确授权。
 
 ## 从源码运行
 
@@ -57,7 +61,7 @@ cargo build --locked -p nola_cli -p nola_service --bins
 
 也可运行 `./dev.sh` 执行上述本地构建与启动，使用 `WEB_HOST`、`WEB_PORT` 设置监听地址。
 
-模型可在 Web/原生客户端设置中配置，也可使用 `nola model apply-config`。`llm.default_model` 必须引用同一份配置中声明的连接和模型。
+模型可在 Web/原生客户端设置中配置，也可运行 `nola config` 查看文件来源和宿主已保存的默认模型。保存文件后，下次启动会自动校验并应用连接、模型与默认选择。配置有误时，Nola 提示出错文件并保留已保存的模型目录。`llm.default_model` 必须引用同一份配置中声明的连接和模型。
 
 CLI 交互中，按 `Ctrl+V` 添加剪贴板图片，也可粘贴图片的绝对路径。图片分析需要模型声明图片输入能力。权限拒绝后，用 `/allow` 查看会话权限；配置中的显式拒绝规则和操作系统权限需要在各自来源处修改，然后明确要求重试。
 

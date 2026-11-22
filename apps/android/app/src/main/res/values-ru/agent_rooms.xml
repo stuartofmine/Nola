@@ -2,8 +2,8 @@
 <resources>
     <string name="room_sent_to">Вы → %1$s</string>
     <string name="room_stop">Остановить</string>
-    <string name="room_agent_name">Имя агента</string>
-    <string name="room_create_agent">Создать агента</string>
+    <string name="room_agent_name">Имя эксперта</string>
+    <string name="room_create_agent">Создать эксперта</string>
     <string name="room_controls">Модель и разрешения</string>
     <string name="room_send">Отправить</string>
     <string name="room_title">Чаты агентов</string>

@@ -1,6 +1,6 @@
 import {test} from 'node:test';
 import assert from 'node:assert/strict';
-import {parseExpertChildPage,currentExpertChildMember,expertChildContinuationUrl,expertChildHistoryPayload,expertChildExchangeSenders} from './expertChildConversations.ts';
+import {referencedExpertChild,parseExpertChildPage,currentExpertChildMember,expertChildContinuationUrl,expertChildHistoryPayload,expertChildExchangeSenders} from './expertChildConversations.ts';
 const child={conversation_id:'child-old',revision:2,title:'Frozen name',participant_id:'member-old',agent_id:'agent',agent_revision:1,is_current:true,active:true,created_at_ms:1,updated_at_ms:2,message_count:3};
 const page={version:1,conversation_id:'parent',room_id:'room',room_revision:1,children:[child],has_more:false,next_offset:null};
 const member={id:'member-old',agent_id:'agent',agent_revision:1,display_name:'Frozen',context_conversation_id:'child-old',active:true,description:''};
@@ -38,4 +38,17 @@ test('Main task provenance is bound to the actual parent and old expert authors 
     assert.deepEqual(expertChildExchangeSenders([peer],child,'parent'),{'exchange-main:user':{name:'Nola',agentId:'parent'}});
     assert.throws(()=>expertChildExchangeSenders([{...peer,source:{...peer.source,context_conversation_id:'foreign'}}],child,'parent'));
     assert.throws(()=>expertChildExchangeSenders([{...peer,source:{kind:'unknown',agent_id:'guessed'}}],child,'parent'));
+});
+
+test('a frozen message reference reopens exactly its archived child while the current roster has a replacement',()=>{
+    const target={agent_id:child.agent_id,agent_revision:child.agent_revision,participant_id:child.participant_id,context_conversation_id:child.conversation_id};
+    const archived={...child,is_current:false,active:false,agent_revision:null};
+    const newer={...child,conversation_id:'new-child',participant_id:'new-member',agent_revision:2};
+    assert.deepEqual([newer,archived].filter(c=>referencedExpertChild(c,target)),[archived]);
+    assert.equal(referencedExpertChild({...archived,agent_id:'different'},target),false);
+    assert.equal(referencedExpertChild({...archived,participant_id:'different'},target),false);
+    assert.equal(referencedExpertChild({...archived,conversation_id:'different'},target),false);
+    assert.equal(referencedExpertChild({...child,agent_revision:null},target),false);
+    assert.equal(referencedExpertChild({...child,agent_revision:2},target),false);
+    assert.throws(()=>expertChildContinuationUrl('parent','host',archived));
 });

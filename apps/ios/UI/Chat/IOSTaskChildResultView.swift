@@ -58,6 +58,7 @@ struct IOSTaskChildResultView: View {
                 }
             }.padding(20).textSelection(.enabled)
         }
+        .background(DesignTokens.backgroundColor)
         .navigationTitle(title.isEmpty ? String(localized: "Task result") : title)
         .navigationBarTitleDisplayMode(.inline)
         .accessibilityIdentifier("chat.task.result.readOnly")
@@ -87,7 +88,7 @@ struct IOSTaskChildResultView: View {
             } else if let recovery {
                 Text(String(localized: "chat.recovery.confirm_block"))
                 TextField(String(localized: "chat.recovery.reason"), text: $recoveryReason, axis: .vertical)
-                    .textFieldStyle(.roundedBorder).lineLimit(2...4)
+                    .nolaInputFieldSurface().lineLimit(2...4)
                 Button(String(localized: "chat.recovery.keep_blocked")) { confirmingRecovery = true }
                     .frame(minHeight: 44)
                     .disabled(recovery.independent_pending_effects != 0 || recovery.targets.isEmpty

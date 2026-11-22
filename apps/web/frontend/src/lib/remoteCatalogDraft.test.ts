@@ -9,6 +9,15 @@ const model = (id: string, order: number): RemoteProfile => ({ id, provider: 'op
     endpoint, capabilities: ['chat'], reasoning: null, executionCapabilities: importExecutionCapabilities(),
     parameters: { temperature: 0.7, maxOutputTokens: 16384, topK: 40, customSystemPrompt: 'private local setting' } });
 
+test('replacing the manual catalog leaves connection-owned models outside the draft and its revision scope', () => {
+    const managed = {...model('managed',0), connectionId:'origin'};
+    const manual = model('manual',1);
+    assert.deepEqual(copyRemoteCatalog([managed,manual]).map(p=>p.id),['manual']);
+    const request = catalogReplacement([managed],[managed,manual]);
+    assert.deepEqual(request.expectedRevisions,{});
+    assert.deepEqual(request.endpoints.flatMap(e=>e.models.map(m=>m.id)),['manual']);
+});
+
 test('whole-catalog draft is isolated and serializes only owned fields', () => {
     const saved = [model('first', 0), model('second', 1)];
     const draft = stageModel(stageEndpoint(copyRemoteCatalog(saved), 'endpoint', { enabled: false }), 'first', { priority: 80 });

@@ -48,14 +48,18 @@ struct IOSCompactTabContainer<Tab: Hashable>: UIViewControllerRepresentable {
             }
             selected = tab
             addChild(host)
+            // Pin the child view controller to the container's full edges so safe
+            // areas flow naturally into SwiftUI navigation stacks and bottom bars.
+            host.view.frame = view.bounds
             host.view.translatesAutoresizingMaskIntoConstraints = false
             view.addSubview(host.view)
             NSLayoutConstraint.activate([
-                host.view.leadingAnchor.constraint(equalTo: view.safeAreaLayoutGuide.leadingAnchor),
-                host.view.trailingAnchor.constraint(equalTo: view.safeAreaLayoutGuide.trailingAnchor),
-                host.view.topAnchor.constraint(equalTo: view.safeAreaLayoutGuide.topAnchor),
-                host.view.bottomAnchor.constraint(equalTo: view.safeAreaLayoutGuide.bottomAnchor),
+                host.view.leadingAnchor.constraint(equalTo: view.leadingAnchor),
+                host.view.trailingAnchor.constraint(equalTo: view.trailingAnchor),
+                host.view.topAnchor.constraint(equalTo: view.topAnchor),
+                host.view.bottomAnchor.constraint(equalTo: view.bottomAnchor),
             ])
+            view.layoutIfNeeded()
             host.didMove(toParent: self)
         }
     }

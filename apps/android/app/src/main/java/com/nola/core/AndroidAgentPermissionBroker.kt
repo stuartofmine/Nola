@@ -161,6 +161,7 @@ class AndroidAgentPermissionBroker(private val context: Context) {
             authorizations = mapOf(
                 "none" to "granted",
                 "skill_context" to "granted",
+                "network" to "granted",
                 "files_read" to "ask",
                 "files_write" to "ask",
                 "clipboard" to if (permissionMode == AndroidAgentPermissionMode.Cautious) "ask" else "granted",
@@ -204,7 +205,7 @@ class AndroidAgentPermissionBroker(private val context: Context) {
         if (!userApproved) return AndroidAgentPermissionAction.Immediate(requestId, allow = false)
 
         return when (request.capability) {
-            "none", "clipboard" -> AndroidAgentPermissionAction.Immediate(requestId, allow = true)
+            "none", "clipboard", "network" -> AndroidAgentPermissionAction.Immediate(requestId, allow = true)
             "files_read" -> AndroidAgentPermissionAction.OpenDocument(requestId, write = false)
             "files_write" -> AndroidAgentPermissionAction.OpenDocument(requestId, write = true)
             "location" -> runtimeAction(

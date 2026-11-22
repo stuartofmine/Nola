@@ -40,7 +40,10 @@ function contrast(a,b) {
                 for (const state of scene.states) {
                     await page.locator(`button[data-state="${state.id}"]`).click();
                     assert.equal(await page.locator('#device').getAttribute('data-state'),state.id);
-                    assert.equal(await page.locator('#device h3').first().innerText(),state.title);
+                    const heading = await page.locator('#device h3').first().innerText();
+                    if (scene.id === 'share-host') assert.equal(heading,'连接');
+                    else if (scene.id === 'host-pair') assert.equal(heading,state.id === 'manage' ? '宿主机管理' : '连接宿主机');
+                    else assert.equal(heading,state.title);
                     const overflow=await page.evaluate(()=>({document:document.documentElement.scrollWidth>innerWidth+1,device:document.querySelector('#device').scrollWidth>document.querySelector('#device').clientWidth+1}));
                     assert.deepEqual(overflow,{document:false,device:false},`${platform}/${theme}/${scene.id}/${state.id} overflow`);
                     const targets=await page.locator('#device .actions button').evaluateAll(elements=>elements.map(e=>({height:e.getBoundingClientRect().height,padding:parseFloat(getComputedStyle(e).paddingLeft)})));
@@ -59,7 +62,31 @@ function contrast(a,b) {
                 if (platform===scene.platforms[0] && theme==='light') {
                     for (const state of scene.states) for (let index=0;index<state.actions.length;index++) {
                         await page.locator(`button[data-state="${state.id}"]`).click();
-                        await page.locator(`[data-transition="${index}"]`).click();
+                        const action = state.actions[index];
+                        if (action.requires_pairing) {
+                            await page.locator('button[data-state="2"]').click();
+                            await page.locator(`button[data-state="${state.id}"]`).click();
+                        }
+                        if (action.platforms && !action.platforms.includes(platform)) continue;
+                        if (scene.id === 'host-pair' && action.to === 'checking' && await page.locator('[data-host-field="token"]').isVisible()) {
+                            await page.locator('[data-host-field="address"]').fill('http://studio-mac.local:5001');
+                            await page.locator('[data-host-field="token"]').fill('demo-pairing-token');
+                        }
+                        if (state.actions[index].preview_only) {
+                            await page.locator(`button[data-state="${state.actions[index].to}"]`).click();
+                            assert.equal(await page.locator('#device').getAttribute('data-state'),state.actions[index].to);
+                            continue;
+                        }
+                        const locationPicker = page.locator(`#device select[data-plugin-location="${index}"]`);
+                        if (await locationPicker.count()) {
+                            await locationPicker.selectOption({index:1});
+                            assert.equal(await page.locator('#device').getAttribute('data-state'),state.actions[index].to);
+                            continue;
+                        }
+                        const control = page.locator(`#device [data-transition="${index}"]`).first();
+                        const disclosure = control.locator('xpath=ancestor::details[not(@open)]');
+                        if (await disclosure.count()) await disclosure.locator('summary').click();
+                        await control.click();
                         if (state.actions[index].confirm) {
                             await page.locator('#confirm[open]').waitFor();
                             await page.locator('#confirm-cancel').click();

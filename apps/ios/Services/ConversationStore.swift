@@ -503,6 +503,34 @@ nonisolated final class LocalConversationStore: ConversationPermissionStore, Con
         try FileConversationDraftRepository.scoped(to: applicationRuntime.databaseURL).remove(.conversation(conversationId))
     }
 
+    /// A user rename owns its title even when it equals the current first message.
+    /// Read the source after the revision so a concurrent rename invalidates our write.
+    func refreshFirstMessageTitle(conversationId: UUID) throws -> String? {
+        try queue.sync {
+            let id = conversationId.uuidString
+            var page = try applicationRuntime.loadConversationTitlePage(id: id, offset: 0)
+            let revision = page.revision
+            let source = try applicationRuntime.conversationTitleSource(id: id)
+            guard source == "automatic" || source == "first_message" || (source == nil && page.title.isEmpty) else { return nil }
+            var offset = 0
+            while let first = page.messages.first {
+                if first.role == .user, let message = domainMessage(first, conversationID: conversationId) {
+                    let title = ChatTextPolicy.normalizedConversationTitle(from: message.text)
+                    if !title.isEmpty {
+                        guard page.title != title || source != "first_message" else { return nil }
+                        try applicationRuntime.renameConversation(id: id, title: title,
+                            updatedAtMs: Date().millisecondsSince1970, firstMessageAtRevision: revision)
+                        return title
+                    }
+                }
+                offset += 1
+                page = try applicationRuntime.loadConversationTitlePage(id: id, offset: offset)
+                guard page.revision == revision else { return nil }
+            }
+            return nil
+        }
+    }
+
     public func updateConversationTitle(conversationId: UUID, title: String) throws {
         try queue.sync {
             guard try applicationRuntime.loadConversation(id: conversationId.uuidString) != nil else {
@@ -751,6 +779,9 @@ nonisolated final class LocalConversationStore: ConversationPermissionStore, Con
         merged.merge(own) { _, new in new }
         // Import/create may carry a canonical identity. Existing records retain
         // their stored identity; only the explicit configuration command changes it.
+        if existingJSON == nil {
+            merged["titleSource"] = (conversation.title ?? "").isEmpty ? "automatic" : "user"
+        }
         if existingJSON == nil, let identity = conversation.modelSelectionID {
             merged["modelSelectionID"] = identity
         }

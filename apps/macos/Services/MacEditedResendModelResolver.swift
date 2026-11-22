@@ -38,13 +38,14 @@ enum MacEditedResendModelResolver {
         }
 
         if primary["kind"] == .string("native") {
-            guard primary["adapter"] == .string("mlx"), primary["adapter_contract_revision"] == .number(1),
+            guard primary["adapter_contract_revision"] == .number(1),
                   case .string(let id) = primary["model_id"], case .object(let reference) = primary["profile_ref"],
                   reference["profile_id"] == .string(id),
                   let wire = try JSONSerialization.jsonObject(with: JSONEncoder().encode(reference["admitted_revision"]), options: [.fragmentsAllowed]) as? NSNumber,
                   wire.int64Value > 0, Double(wire.int64Value) == wire.doubleValue,
                   let current = try application.modelProfile(id), current.revision == wire.int64Value,
-                  current.enabled, current.deletedAtMs == nil, MacLocalModelProfile.resolve(id) != nil,
+                  current.enabled, current.deletedAtMs == nil, let profile = MacLocalModelProfile.resolve(id),
+                  current.runtime == profile.runtime, let adapter = profile.engine?.adapter, primary["adapter"] == .string(adapter),
                   model.fallbacks == .array([]) else { throw MacEditedResendError.modelUnavailable }
             return .init(profileID: id, nativeRevision: wire.int64Value, fallbacks: [], frozen: model)
         }

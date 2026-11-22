@@ -10,9 +10,13 @@
 .topbar-chat-title:hover{background:var(--hover);border-color:var(--edge)}
 .topbar-right{display:flex;align-items:center;gap:6px;padding-right:10px;flex:none}
 .app-topbar .context-tools{background:transparent;height:48px;min-width:0;padding:0 0 0 8px;gap:4px;border:0;border-left:1px solid var(--line)}
-.app-topbar .tool-group{padding:0;width:36px;height:36px;min-width:36px;border-radius:6px;display:grid;place-items:center}
-.app-topbar .tool-group>svg{width:18px;height:18px}
-.app-topbar .strip-entry.selected{background:var(--bg);color:var(--fg)}
+.app-topbar .tool-group{padding:0 9px;width:auto;height:32px;min-width:32px;border-radius:7px;display:inline-flex;align-items:center;justify-content:center;gap:5px;font-size:12.5px;color:var(--muted)}
+.app-topbar .tool-group>svg{width:16px;height:16px;flex:none}
+.app-topbar .tool-group-label{white-space:nowrap;line-height:1}
+@media(max-width:899px){.app-topbar .tool-group{padding:0;width:36px;height:36px}.app-topbar .tool-group-label{display:none}}
+@media(min-width:900px){.app-topbar .tool-group .entry-tooltip{display:none}}
+.app-topbar .strip-entry.selected{background:var(--bg);color:var(--fg);box-shadow:inset 0 0 0 1px var(--line)}
+:root[data-theme=dark] .app-topbar .strip-entry.selected{background:rgba(255,255,255,.13);color:var(--fg);box-shadow:inset 0 0 0 1px rgba(255,255,255,.15)}
 .topbar-add{width:36px;height:36px;display:grid;place-items:center;flex:none;border-radius:6px;color:var(--muted)}
 .topbar-add:hover{background:var(--hover);color:var(--fg)}
 .topbar-add svg{width:17px;height:17px}
@@ -20,7 +24,8 @@
 .shell>main{min-height:calc(100dvh - 48px)}
 .studio{height:calc(100dvh - 48px)}
 .studio-body{height:100%;min-height:0}
-.studio-inspector .panel-caption{height:44px;min-height:44px}
+.studio-inspector .panel-caption{height:34px;min-height:34px;padding:0 12px;border-bottom:1px solid var(--line)}
+.studio-inspector .panel-caption strong{font-size:12px;font-weight:500;color:var(--muted)}
 .app-topbar .entry-tooltip{top:42px}
 .rail-search{display:flex;align-items:center;gap:8px;background:var(--soft);border-radius:8px;padding:0 10px;min-height:34px;margin:2px 0 8px;color:var(--muted);flex-shrink:0}
 .rail-search>svg{width:14px;height:14px;flex:none}

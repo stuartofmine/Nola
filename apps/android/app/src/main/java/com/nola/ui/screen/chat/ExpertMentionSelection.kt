@@ -27,10 +27,6 @@ internal fun rejoinedExpertParticipant(previous: AgentRoomSnapshot, next: AgentR
     return member
 }
 
-/** Choosing a parent model is unnecessary for an explicit expert-only submission. */
-internal fun requiresPrimaryModelForComposer(hasPrimaryModel: Boolean, selectedExpertIds: Set<String>): Boolean =
-    !hasPrimaryModel && selectedExpertIds.isEmpty()
-
 /** Existing room snapshots stay usable after directory edits. A changed child
  * owner still requires a fresh explicit selection; never silently swap context. */
 internal fun selectedExpertParticipant(room: AgentRoomSnapshot, agentId: String, observedRevision: Long?,
@@ -41,10 +37,3 @@ internal fun selectedExpertParticipant(room: AgentRoomSnapshot, agentId: String,
     if (member != null && observedRevision != null && member.agentRevision != observedRevision) throw ExpertSelectionChanged()
     return member
 }
-
-/** Chips belong to the pinned member snapshot; directory availability is independent. */
-internal fun selectedExpertLabel(agentId: String, member: com.nola.data.repository.RoomParticipant?,
-    directory: AgentDirectory?, fallback: String): String =
-    member?.takeIf { it.agentId == agentId }?.displayName?.takeIf { it.isNotBlank() }
-        ?: directory?.agents?.singleOrNull { it.id == agentId }?.name?.takeIf { it.isNotBlank() }
-        ?: fallback

@@ -24,6 +24,7 @@ from test_real_cli_long_tasks import (
     apply_config, command, fixture, observed_provider, require_completed, selected_route,
 )
 from canonical_run_audit import audit_runs
+from provider_stream_acceptance import completed_stream
 
 
 def write_json(path, value):
@@ -136,6 +137,10 @@ class EventObserver:
             "completed_tools": len(self.finished), "failed_tools": len(self.failed_calls)}
 
 
+def successful_provider_request(row):
+    return row.get("status") == 200 and not row.get("error") and (not row.get("stream") or completed_stream(row))
+
+
 def provider_totals(path):
     rows = []
     if path.exists():
@@ -147,7 +152,8 @@ def provider_totals(path):
             if row.get("forwarded") is not False:
                 rows.append(row)
     usage = [row.get("responseUsage") or {} for row in rows]
-    return {"requests": len(rows), "successful_requests": sum(row.get("status") == 200 for row in rows),
+    successful = sum(successful_provider_request(row) for row in rows)
+    return {"requests": len(rows), "successful_requests": successful,
         "input_tokens": sum(row.get("input_tokens", 0) for row in usage),
         "output_tokens": sum(row.get("output_tokens", 0) for row in usage),
         "cached_input_tokens": sum((row.get("input_tokens_details") or {}).get("cached_tokens", 0) for row in usage),
@@ -164,16 +170,17 @@ def verified_provider_recoveries(path):
     for index, row in enumerate(rows):
         assert not any(row.get(key) for key in (
             "injectedInterruption", "injectedHttpError", "injectedCompactionTruncation")), "provider response injection"
-        if row.get("status") == 200 and not row.get("error"):
+        if successful_provider_request(row):
             assert row["requestSha256"] == row["upstreamRequestSha256"], "relay changed provider request"
             continue
         digest = row.get("requestSha256")
-        assert digest and row.get("error"), "unclassified unsuccessful provider request"
+        reason = row.get("error") or (row.get("responseFailureCodes") or [None])[0]
+        assert digest and reason, "unclassified unsuccessful provider request"
         following = next((later for later in rows[index + 1:]
-            if later.get("status") == 200 and not later.get("error")
+            if successful_provider_request(later)
             and later.get("requestSha256") == digest), None)
         assert following is not None, "failed provider request has no observed successful retry of the same input"
-        recovered.append({"request_sha256": digest, "status": row.get("status"), "error": row["error"],
+        recovered.append({"request_sha256": digest, "status": row.get("status"), "error": reason,
             "recovered_request_id": following.get("requestId")})
     return recovered
 
@@ -181,7 +188,7 @@ def verified_provider_recoveries(path):
 def provider_window_audit(path, window=65536, prompt_limit=54068):
     rows = [json.loads(line) for line in path.read_text().splitlines()]
     rows = [row for row in rows if row.get("forwarded") is not False
-        and row.get("status") == 200 and not row.get("error")]
+        and successful_provider_request(row)]
     assert rows, "no successful provider usage to audit"
     inputs, allocations = [], []
     for row in rows:

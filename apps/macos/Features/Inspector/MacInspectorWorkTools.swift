@@ -166,9 +166,14 @@ struct MacInspectorReviewView: View {
             if model.executionHost != .local {
                 Text("Workspace review requires the source Host's Git reader.").font(.callout).foregroundStyle(.secondary)
             } else {
-                HStack {
+                HStack(spacing: 8) {
                     if let snapshot { Label(snapshot.branch, systemImage: "arrow.triangle.branch").lineLimit(1) }
                     Spacer()
+                    if let snapshot {
+                        Button(String(localized: "Open Full Review")) { openReview(snapshot.repositoryURL) }
+                            .buttonStyle(MacActionButtonStyle())
+                            .controlSize(.small)
+                    }
                     Button { retry += 1 } label: { Image(systemName: "arrow.clockwise").frame(width: 32, height: 32) }
                         .buttonStyle(MacPressFeedbackButtonStyle()).help(String(localized: "Refresh")).accessibilityLabel(String(localized: "Refresh"))
                 }
@@ -177,7 +182,7 @@ struct MacInspectorReviewView: View {
                     Label(String(localized: "The selected workspace is not a Git repository."), systemImage: "folder")
                         .font(.callout).foregroundStyle(.secondary)
                         .fixedSize(horizontal: false, vertical: true)
-                    Button(String(localized: "Choose Folder…")) { model.chooseWorkspace() }
+                    Button(String(localized: "Choose Folder…")) { Task { await model.chooseWorkspace() } }
                         .buttonStyle(MacActionButtonStyle())
                 }
                 if let error { Text(error).font(.caption).foregroundStyle(.red).textSelection(.enabled) }
@@ -203,7 +208,8 @@ struct MacInspectorReviewView: View {
             loadRequestID = requestID; loading = true
             defer { if loadRequestID == requestID { loading = false } }
             do {
-                let result = try await MacWorkspaceGitService.shared.snapshot(at: url)
+                let result = try await MacWorkspaceGitService.shared.snapshot(
+                    at: url, allowEnclosingRepository: !model.usesSessionSandbox)
                 guard !Task.isCancelled, owner == requestedOwner, loadRequestID == requestID else { return }
                 snapshot = result
             } catch MacWorkspaceGitError.notRepository {
@@ -285,14 +291,8 @@ struct MacInspectorGitChangesView: View {
                             Text("No textual diff is available for this file.", tableName: "ConversationInspector")
                                 .font(.caption).foregroundStyle(.secondary)
                         }
-                        Button("Open in Tab") { openReview(snapshot.repositoryURL) }
-                            .buttonStyle(MacActionButtonStyle())
                     }
                 }
-            }
-            if selected == nil {
-                Button("Open in Tab") { openReview(snapshot.repositoryURL) }
-                    .buttonStyle(MacActionButtonStyle())
             }
         }
     }
@@ -316,19 +316,43 @@ struct MacInspectorDiffPreview: View {
         return result
     }
 
+    private func lineForeground(_ line: Substring) -> Color {
+        if line.hasPrefix("+") && !line.hasPrefix("+++") { return MacDesignColor.success }
+        if line.hasPrefix("-") && !line.hasPrefix("---") { return MacDesignColor.danger }
+        if line.hasPrefix("@@") { return MacDesignColor.brand }
+        return .primary
+    }
+
+    private func lineBackground(_ line: Substring) -> Color {
+        if line.hasPrefix("+") && !line.hasPrefix("+++") { return MacDesignColor.success.opacity(0.10) }
+        if line.hasPrefix("-") && !line.hasPrefix("---") { return MacDesignColor.danger.opacity(0.10) }
+        return .clear
+    }
+
     var body: some View {
         let lines = Self.lines(diff)
-        let preview = lines.prefix(Self.lineLimit).joined(separator: "\n")
+        let visibleLines = Array(lines.prefix(Self.lineLimit))
         VStack(alignment: .leading, spacing: 6) {
             ScrollView(.horizontal) {
-                Text(preview).font(.system(size: MacDesignTokens.Typography.inspectorDetail, design: .monospaced))
-                    .lineSpacing(2).fixedSize(horizontal: true, vertical: true)
-                    .textSelection(.enabled).padding(8)
+                VStack(alignment: .leading, spacing: 1) {
+                    ForEach(Array(visibleLines.enumerated()), id: \.offset) { _, line in
+                        Text(String(line))
+                            .font(.system(size: MacDesignTokens.Typography.inspectorDetail, design: .monospaced))
+                            .foregroundStyle(lineForeground(line))
+                            .padding(.horizontal, 6)
+                            .padding(.vertical, 1)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .background(lineBackground(line))
+                    }
+                }
+                .textSelection(.enabled)
+                .padding(.vertical, 6)
             }
-            .frame(height: CGFloat(min(lines.count, Self.lineLimit)) * 17 + 16)
+            .frame(height: CGFloat(min(lines.count, Self.lineLimit)) * 18 + 16)
             .frame(maxWidth: .infinity, alignment: .leading)
+            .background(MacDesignColor.subtleFill.opacity(0.55), in: RoundedRectangle(cornerRadius: 8, style: .continuous))
             if lines.count > Self.lineLimit {
-                Text("Diff preview is shortened. Open in a tab to review the full changes.", tableName: "ConversationInspector")
+                Text("Diff preview is shortened. Open full review to inspect all changes.", tableName: "ConversationInspector")
                     .font(.caption).foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
             }

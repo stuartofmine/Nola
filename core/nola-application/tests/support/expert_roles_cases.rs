@@ -19,6 +19,28 @@ fn patch_expert_context(store: &mut NolaStore, context: &str, patch: serde_json:
 }
 
 #[test]
+fn external_expert_keeps_its_native_route_on_capture_and_replay() {
+    let (mut store, input) = setup();
+    let selected = &input.selected_participants[0];
+    let executor = json!({"backend":"antigravity","model":"fixture-variant"});
+    patch_expert_context(&mut store, &selected.context_conversation_id, json!({"expertExecutor":executor}));
+    let preview = expert_message::preview_capture(&mut store, &input, &authority()).unwrap();
+    let mut host = host_context(&store, &input);
+    let declared = &preview.participants[0].model_declaration;
+    host.selections[0].model_profile = nola_host_protocol::HostModelProfileReference {
+        profile_id: declared.profile_id.clone(),
+        admitted_revision: declared.profile_revision,
+    };
+    let manifest = admit_with_host(&mut store, input.clone(), &host).unwrap();
+    let entry = &manifest.entries[0];
+    assert_eq!(entry.model_declaration.runtime, "external");
+    assert_eq!(entry.model_declaration.model_name, "fixture-variant");
+    assert_eq!(entry.model_declaration.profile_revision, selected.agent_revision);
+    assert_eq!(entry.defaults.conversation_configuration()["expertExecutor"], executor);
+    assert_eq!(admit_with_host(&mut store, input, &host).unwrap(), manifest);
+}
+
+#[test]
 fn every_core_role_is_captured_without_client_builtin_claims_and_survives_replay() {
     for role in &nola_application::expert_roles::catalog().templates {
         let (mut store, input) = setup();

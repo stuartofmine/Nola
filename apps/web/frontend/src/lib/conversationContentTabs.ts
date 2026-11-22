@@ -5,7 +5,8 @@ export type PageContentTab = {key: string; kind: 'page'; path: string; titleKey:
 export type ContentTab = PdfContentTab | PageContentTab;
 export type ConversationContentTabs = { selected: string; items: readonly ContentTab[] };
 const pageTitles: Record<string, string> = {
-    '/today': 'chatInspector.today', '/conversations': 'chatInspector.list.conversations',
+    '/plugin-page': 'plugin.pages',
+    '/today': 'chatInspector.today', '/conversations': 'chatConversations.listTitle',
     '/workspace-review': 'chatInspector.review',
     '/models': 'shell.nav.models', '/model-test': 'shell.nav.models', '/capabilities': 'shell.nav.capabilities',
     '/activity': 'chatInspector.list.activity', '/results': 'activity.results', '/dashboard': 'activity.overview', '/data-sources': 'shell.information',
@@ -18,7 +19,7 @@ export function managementContentPath(href: string, origin: string): {path: stri
         const dataTitles: Record<string, string> = {knowledge: 'chatKnowledge.knowledgePoints',
             sources: 'data_sources.tab.sources', memory: 'data_sources.tab.memory', plans: 'data_sources.tab.plans',
             activity: 'shell.informationActivity', usage: 'data_sources.tab.usage'};
-        const titleKey = url.pathname === '/data-sources' ? dataTitles[url.searchParams.get('tab') ?? ''] ?? pageTitles[url.pathname] : pageTitles[url.pathname];
+        const titleKey = url.pathname === '/capabilities' && url.searchParams.get('tab') === 'plugins' ? 'plugin.title' : url.pathname === '/data-sources' ? dataTitles[url.searchParams.get('tab') ?? ''] ?? pageTitles[url.pathname] : pageTitles[url.pathname];
         return {path: url.pathname + url.search + url.hash, titleKey};
     } catch { return null; }
 }

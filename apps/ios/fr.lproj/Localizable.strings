@@ -5,8 +5,8 @@
 "room.left" = "Parti · historique conservé";
 "room.remove" = "Retirer";
 "room.add" = "Ajouter un agent";
-"room.create_agent" = "Créer un agent";
-"room.agent_name" = "Nom de l’agent";
+"room.create_agent" = "Créer un expert";
+"room.agent_name" = "Nom de l’expert";
 "room.use_current_model" = "Utiliser le modèle actuel";
 "room.open" = "Ouvrir la discussion";
 "room.all" = "Toutes les discussions";
@@ -264,6 +264,9 @@
 "chat.host_tool.name.time" = "Lire l’heure système";
 "chat.host_tool.name.browser" = "Contrôler le navigateur";
 "chat.host_tool.name.computer" = "Contrôler l’ordinateur";
+"chat.host_tool.name.find_skill" = "Rechercher un skill sur GitHub";
+"chat.host_tool.name.install_skill" = "Installer et activer le skill";
+"chat.host_tool.name.read_skill_resource" = "Lire une ressource du skill";
 "chat.host_tool.name.skill" = "Utiliser le skill";
 "chat.host_tool.name.mcp" = "Appeler MCP";
 "chat.host_tool.name.background" = "Tâche en arrière-plan";
@@ -1671,6 +1674,7 @@
 "common.frequency.weekly" = "Hebdomadaire";
 "common.no.zh" = "Non";
 "common.retry" = "Réessayer";
+"common.search" = "Rechercher";
 "common.unknown" = "Inconnu";
 "common.yes.zh" = "Oui";
 "data.subtitle.local_first" = "Sources sur l’appareil, actions planifiées et état d’exécution récent.";
@@ -1998,6 +2002,12 @@
 "chat.permission.action.create_calendar" = "Créer un événement";
 "chat.hybrid.clipboard" = "Presse-papiers";
 "model.web_host.connect" = "Connecter";
+"model.web_host.setup_payload" = "Configuration de connexion";
+"model.web_host.paste_setup" = "Coller la configuration de connexion";
+"model.web_host.invalid_setup" = "Copiez la configuration de connexion dans Nola sur l’hôte, puis collez-la ici.";
+"model.web_host.cancel_verification" = "Annuler la vérification";
+"model.web_host.error.rollback" = "Le jeton n’a pas pu être enregistré et la nouvelle identité de l’hôte n’a pas pu être supprimée. Oubliez ce jumelage et réessayez.";
+"model.web_host.recheck" = "Vérifier à nouveau";
 "chat.model.not_configured" = "Non configuré";
 "chat.permission.action.write_clipboard" = "Mettre à jour le presse-papiers";
 "chat.model.group.cloud" = "Cloud";
@@ -2296,7 +2306,7 @@
 /* macOS Settings workspace */
 
 /* Personal intelligence capabilities */
-"personal.capabilities.title" = "Compétences et MCP";
+"personal.capabilities.title" = "Bibliothèque de capacités";
 "personal.capabilities.gateway.detail" = "Gérez les flux réutilisables et les connexions aux outils externes.";
 "personal.capabilities.gateway.count" = "activés";
 "personal.capabilities.subtitle" = "Flux réutilisables et outils connectés disponibles entre les conversations.";
@@ -2475,7 +2485,7 @@
 
 "chat.task.guidance.send" = "Envoyer les instructions";
 "model.web_host.setup" = "Avant la connexion";
-"model.web_host.setup.start" = "Sur le Mac, ouvrez « Réglages > Connexion à l’hôte » dans Nola et autorisez les connexions d’appareils.";
+"model.web_host.setup.start" = "Sur le Mac, ouvrez « Réglages > Connexions » dans Nola et activez « Partager ce Mac comme Nola Server ».";
 "model.web_host.setup.copy" = "Copiez l’adresse et le jeton de jumelage affichés par Nola sur le Mac. Utilisez un réseau privé de confiance ou HTTPS.";
 "model.web_host.checking" = "Vérification de l’hôte";
 "model.web_host.checking.detail" = "Vérification du jeton, du protocole d’autorisation et de l’identité de l’hôte avant l’enregistrement.";
@@ -2790,6 +2800,7 @@
 "history.detail.open_attachment" = "Lire les détails de la pièce jointe";
 "history.detail.open_record" = "Lire l’enregistrement historique";
 "chat.history.search" = "Rechercher dans les conversations";
+"chat.history.search.clear" = "Effacer la recherche";
 "chat.history.no_messages" = "Aucun message pour le moment";
 "chat.history.running" = "En cours";
 "chat.history.awaiting_permission" = "En attente d’approbation";
@@ -2890,6 +2901,7 @@
 
 "room.pending_expert_message" = "La demande aux experts attend de démarrer.";
 "room.resume_complete_experts" = "Reprendre le message initial aux experts";
+"room.retry_expert_reply" = "Réessayer la réponse de l’expert";
 
 // Expert directory management
 "experts.manage" = "Gérer les experts";
@@ -3207,6 +3219,7 @@
 "chat.context.import.failed_count" = "%d fichiers n’ont pas pu être importés. Utilisez des fichiers texte UTF-8 non vides de 40 000 caractères maximum (192 Ko).";
 
 /* Expert roles and revision-aware mentions */
+"experts.useModelDefaults" = "Utiliser les réglages par défaut du modèle";
 "experts.reasoning.inherit" = "Hériter du réglage du modèle";
 "experts.reasoning.unknown" = "Ce modèle ne déclare aucun niveau de raisonnement. Son réglage par défaut est conservé.";
 "experts.role.details" = "Prompt, outils et Skills";
@@ -3289,3 +3302,22 @@
 "chat.message.pendingEdit" = "Vérifier la modification en attente";
 "chat.message.editSavedForReview" = "Vous pouvez fermer cet éditeur. Rouvrez la modification en attente dans cette conversation pour vérifier son envoi.";
 "chat.context.documents.blank" = "Saisissez du texte pour %@ ou supprimez le document vide.";
+
+"chat.history.otherClientReadOnly" = "Lecture seule. Pour poursuivre cette conversation, ouvre-la dans le client où elle a été créée.";
+"chat.history.ambiguousIDs" = "Deux identifiants de conversation diffèrent uniquement par la casse. Ouvre ces conversations dans leur client d’origine.";
+"experts.executor.requiresHost" = "Connectez-vous à l’hôte qui exécute cet agent de programmation, puis sélectionnez l’expert dans une conversation de cet hôte.";
+
+"harness.plugins" = "Extensions";
+"harness.host" = "Choisir un hôte";
+"harness.device_note" = "Connectez l’ordinateur qui exécute vos extensions pour les utiliser ici.";
+"harness.connect" = "Connecter un hôte de bureau";
+"harness.pair" = "Connecter un autre hôte";
+
+"Keep names as plain text" = "Conserver les noms en texte brut";
+"The expert selection changed. Remove the mention and select the expert again." = "La sélection d’experts a changé. Supprimez la mention et sélectionnez à nouveau l’expert.";
+"Write what you want the expert to do." = "Écrivez ce que vous voulez que l’expert fasse.";
+"View expert history" = "Voir l’historique de l’expert";
+"Icon could not be rendered" = "Impossible d’afficher l’icône";
+
+"model.center.selection_error.title" = "Impossible de sélectionner le modèle";
+"prompt.templates.copy_name" = "%@ (copie)";

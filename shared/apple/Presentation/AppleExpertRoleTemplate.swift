@@ -7,19 +7,25 @@ nonisolated struct AppleExpertRoleTemplateCatalog: Codable, Equatable, Sendable 
         let reasoningEffort: Bool
         let explicitGenerationReasoning: Bool
         let rejoin: Bool
+        let externalExpertExecutors: Bool
+        let inlineExpertMentions: Bool
         let mainAgentDelegation: Bool
-        init(reasoningEffort: Bool = false, explicitGenerationReasoning: Bool = false, rejoin: Bool = false, mainAgentDelegation: Bool = false) {
+        init(reasoningEffort: Bool = false, explicitGenerationReasoning: Bool = false, rejoin: Bool = false, mainAgentDelegation: Bool = false, inlineExpertMentions: Bool = false, externalExpertExecutors: Bool = false) {
+            self.externalExpertExecutors = externalExpertExecutors
+            self.inlineExpertMentions = inlineExpertMentions
             self.reasoningEffort = reasoningEffort
             self.explicitGenerationReasoning = explicitGenerationReasoning
             self.rejoin = rejoin
             self.mainAgentDelegation = mainAgentDelegation
         }
-        enum CodingKeys: String, CodingKey { case reasoningEffort = "reasoning_effort", explicitGenerationReasoning = "explicit_generation_reasoning", rejoin; case mainAgentDelegation = "main_agent_delegation" }
+        enum CodingKeys: String, CodingKey { case reasoningEffort = "reasoning_effort", explicitGenerationReasoning = "explicit_generation_reasoning", rejoin; case mainAgentDelegation = "main_agent_delegation"; case externalExpertExecutors = "external_expert_executors"; case inlineExpertMentions = "inline_expert_mentions" }
         init(from decoder: Decoder) throws {
             let values = try decoder.container(keyedBy: CodingKeys.self)
             reasoningEffort = try values.decodeIfPresent(Bool.self, forKey: .reasoningEffort) ?? false
             explicitGenerationReasoning = try values.decodeIfPresent(Bool.self, forKey: .explicitGenerationReasoning) ?? false
             rejoin = try values.decodeIfPresent(Bool.self, forKey: .rejoin) ?? false
+            externalExpertExecutors = try values.decodeIfPresent(Bool.self, forKey: .externalExpertExecutors) ?? false
+            inlineExpertMentions = try values.decodeIfPresent(Bool.self, forKey: .inlineExpertMentions) ?? false
             mainAgentDelegation = try values.decodeIfPresent(Bool.self, forKey: .mainAgentDelegation) ?? false
         }
     }

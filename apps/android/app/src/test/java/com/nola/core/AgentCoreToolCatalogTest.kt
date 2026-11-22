@@ -33,6 +33,9 @@ class AgentCoreToolCatalogTest {
                 "device_search_calendar_events",
                 "device_create_calendar_event",
                 "memory_search",
+                "device_github_skill_find",
+                "device_github_skill_install",
+                "device_skill_read_resource",
                 "skill_invoke"
             ),
             AndroidAgentToolRegistry.candidates.map { it.toolId }
@@ -45,7 +48,8 @@ class AgentCoreToolCatalogTest {
             "device_clipboard_read" to "sensitive_read", "device_clipboard_write" to "overwrite",
             "device_get_location" to "sensitive_read", "device_search_calendar_events" to "sensitive_read",
             "device_create_calendar_event" to "new_file", "memory_search" to "ordinary_read",
-            "skill_invoke" to "ordinary_read",
+            "device_github_skill_find" to "ordinary_read", "device_github_skill_install" to "overwrite",
+            "device_skill_read_resource" to "ordinary_read", "skill_invoke" to "ordinary_read",
         )
         for (candidate in AndroidAgentToolRegistry.candidates) {
             val metadata = (candidate.schema as JsonObject).getValue("x_nola").jsonObject

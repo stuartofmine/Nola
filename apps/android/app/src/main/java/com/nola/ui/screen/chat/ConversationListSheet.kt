@@ -1,13 +1,20 @@
 package com.nola.ui.screen.chat
 
+import com.nola.ui.components.dismissImeOnBlankTap
+import com.nola.ui.components.NolaRootPageTitle
 import androidx.compose.animation.Crossfade
 import androidx.compose.animation.animateColorAsState
 import androidx.compose.animation.core.tween
+import androidx.compose.foundation.background
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.ExperimentalFoundationApi
+import androidx.compose.material3.FilterChip
+import androidx.compose.material3.FilterChipDefaults
 import androidx.compose.material3.FloatingActionButton
+import androidx.compose.material.icons.filled.Close
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.ui.text.buildAnnotatedString
 import androidx.compose.ui.text.SpanStyle
@@ -15,8 +22,10 @@ import androidx.compose.ui.text.withStyle
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
@@ -83,7 +92,6 @@ import com.nola.ui.components.NolaIconBadge
 import com.nola.ui.components.NolaMotion
 import com.nola.ui.components.NolaRadius
 import com.nola.ui.components.NolaSpacing
-import com.nola.ui.components.NolaTopAppBar
 import java.text.DateFormat
 import java.util.Date
 import java.util.Locale
@@ -115,13 +123,14 @@ fun ConversationListScreen(
     var menuTargetId by remember { mutableStateOf<String?>(null) }
     var renameTarget by remember { mutableStateOf<Pair<String, String>?>(null) }
     var renameDraft by remember { mutableStateOf("") }
-    var needsResponseOnly by remember { mutableStateOf(false) }
+    var needsResponseOnly by rememberSaveable { mutableStateOf(false) }
     val timeFmt = remember(Locale.getDefault()) { DateFormat.getTimeInstance(DateFormat.SHORT, Locale.getDefault()) }
     val dayFmt = remember(Locale.getDefault()) { DateFormat.getDateInstance(DateFormat.SHORT, Locale.getDefault()) }
 
 
     renameTarget?.let { (targetId, _) ->
         AlertDialog(
+            modifier = Modifier.dismissImeOnBlankTap(),
             onDismissRequest = { renameTarget = null },
             title = { Text(stringResource(R.string.chat_rename_conversation)) },
             text = {
@@ -185,10 +194,10 @@ fun ConversationListScreen(
     }
 
     Scaffold(
-        containerColor = MaterialTheme.colorScheme.surface,
+        containerColor = MaterialTheme.colorScheme.background,
+        contentWindowInsets = WindowInsets(0),
         topBar = {
-            NolaTopAppBar(title = stringResource(R.string.conversations_title),
-                titleStyle = MaterialTheme.typography.headlineSmall.copy(fontSize = 28.sp, lineHeight = 36.sp)) {}
+            NolaRootPageTitle(stringResource(R.string.conversations_title), Modifier.padding(horizontal = nolaPageGutter()))
         },
         floatingActionButton = {
             FloatingActionButton(onClick = onNewConversation, containerColor = MaterialTheme.colorScheme.primary,
@@ -201,6 +210,11 @@ fun ConversationListScreen(
             OutlinedTextField(value = search, onValueChange = onSearchChange,
                 placeholder = { Text(stringResource(R.string.conversations_search_title)) }, singleLine = true,
                 leadingIcon = { Icon(painterResource(R.drawable.nola_search), contentDescription = null, modifier = Modifier.size(20.dp)) },
+                trailingIcon = if (search.isNotEmpty()) { {
+                    IconButton(onClick = { onSearchChange("") }) {
+                        Icon(Icons.Filled.Close, contentDescription = stringResource(R.string.notifications_clear_search))
+                    }
+                } } else null,
                 shape = RoundedCornerShape(12.dp),
                 colors = OutlinedTextFieldDefaults.colors(unfocusedContainerColor = MaterialTheme.colorScheme.surfaceContainer, focusedContainerColor = MaterialTheme.colorScheme.surfaceContainer, unfocusedBorderColor = Color.Transparent, focusedBorderColor = MaterialTheme.colorScheme.primary),
                 keyboardOptions = KeyboardOptions(imeAction = ImeAction.Search),
@@ -210,22 +224,50 @@ fun ConversationListScreen(
                 Text(error, Modifier.padding(horizontal = nolaPageGutter(), vertical = 8.dp), color = MaterialTheme.colorScheme.error)
                 TextButton(onClick = onRetry) { Text(stringResource(R.string.common_retry)) }
             }
-            Row(Modifier.fillMaxWidth().padding(horizontal = nolaPageGutter()), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                listOf(false to R.string.activity_all, true to R.string.conversations_waiting).forEach { (waiting, label) ->
-                    TextButton(onClick = { needsResponseOnly = waiting }) {
-                        Text(stringResource(label), fontWeight = if (needsResponseOnly == waiting) FontWeight.SemiBold else FontWeight.Normal,
-                            color = if (needsResponseOnly == waiting) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant)
-                    }
-                }
+            val waitingCount = conversations.count { activity[it.id]?.permissionRequest != null }
+            val chipColors = FilterChipDefaults.filterChipColors(
+                selectedContainerColor = MaterialTheme.colorScheme.primaryContainer,
+                selectedLabelColor = MaterialTheme.colorScheme.onPrimaryContainer,
+            )
+            Row(
+                Modifier.widthIn(max = 720.dp).fillMaxWidth().padding(horizontal = nolaPageGutter(), vertical = 4.dp),
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
+                FilterChip(
+                    selected = !needsResponseOnly,
+                    onClick = { needsResponseOnly = false },
+                    colors = chipColors,
+                    border = null,
+                    shape = MaterialTheme.shapes.extraLarge,
+                    label = { Text(stringResource(R.string.activity_all)) },
+                )
+                FilterChip(
+                    selected = needsResponseOnly,
+                    onClick = { needsResponseOnly = true },
+                    colors = chipColors,
+                    border = null,
+                    shape = MaterialTheme.shapes.extraLarge,
+                    label = {
+                        val base = stringResource(R.string.conversations_waiting)
+                        Text(if (waitingCount > 0) "$base ($waitingCount)" else base)
+                    },
+                )
             }
             val visible = conversations.filter {
                 (!needsResponseOnly || activity[it.id]?.permissionRequest != null) &&
                     (search.isBlank() || it.title.orEmpty().contains(search.trim(), true) || drafts[it.id].orEmpty().contains(search.trim(), true))
             }
-            LazyColumn(state = listState, modifier = Modifier.widthIn(max = 720.dp).fillMaxSize().testTag("chat.conversations.list")) {
+            LazyColumn(
+                state = listState,
+                contentPadding = PaddingValues(bottom = 88.dp),
+                modifier = Modifier.widthIn(max = 720.dp).fillMaxSize().testTag("chat.conversations.list")
+            ) {
                 if (visible.isEmpty()) item {
-                    Text(stringResource(if (conversations.isEmpty()) R.string.conversations_empty_message else R.string.conversations_no_results),
-                        modifier = Modifier.padding(24.dp), color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    val unfiltered = search.isBlank() && !needsResponseOnly
+                    NolaEmptyState(
+                        icon = if (unfiltered) Icons.AutoMirrored.Filled.Chat else Icons.Filled.Search,
+                        title = stringResource(if (unfiltered) R.string.conversations_empty_message else R.string.conversations_no_results),
+                    )
                 }
                 items(visible, key = { it.id }) { conv ->
                     LaunchedEffect(conv.id, conv.lastActiveAt) { onLoadPreview(conv.id) }
@@ -235,7 +277,10 @@ fun ConversationListScreen(
                         stringResource(R.string.chat_new_chat)
                     )
                     val isBusy = activity[conv.id]?.processingState?.blocksInput == true
-                    Row(Modifier.fillMaxWidth().combinedClickable(onClick = { onConversationSelected(conv.id) }, onLongClick = { if (!isBusy) deleteTarget = conv })
+                    val isCurrent = currentConversationId != null && conv.id == currentConversationId
+                    Row(Modifier.fillMaxWidth()
+                        .background(if (isCurrent) MaterialTheme.colorScheme.primary.copy(alpha = 0.08f) else Color.Transparent)
+                        .combinedClickable(onClick = { onConversationSelected(conv.id) }, onLongClick = { menuTargetId = conv.id })
                         .testTag("chat.conversation.${conv.id}").padding(start = nolaPageGutter(), top = 15.dp, bottom = 16.dp, end = nolaPageGutter()),
                         verticalAlignment = Alignment.Top) {
                         Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
@@ -270,7 +315,7 @@ fun ConversationListScreen(
                             IconButton(onClick = { menuTargetId = conv.id }) {
                                 Icon(
                                     Icons.Filled.MoreVert,
-                                    contentDescription = displayedTitle,
+                                    contentDescription = stringResource(R.string.conversation_more_options, displayedTitle),
                                     tint = MaterialTheme.colorScheme.onSurfaceVariant
                                 )
                             }
@@ -288,7 +333,12 @@ fun ConversationListScreen(
                                     }
                                 )
                                 DropdownMenuItem(
-                                    text = { Text(stringResource(R.string.common_delete), color = NolaColors.danger) },
+                                    text = {
+                                        Text(
+                                            stringResource(R.string.common_delete),
+                                            color = if (!isBusy) NolaColors.danger else NolaColors.danger.copy(alpha = 0.38f)
+                                        )
+                                    },
                                     enabled = !isBusy,
                                     onClick = {
                                         menuTargetId = null

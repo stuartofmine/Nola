@@ -146,6 +146,21 @@ where S: ExpertMessageRepository + ConversationProjectionRepository + RoomPresen
         }
         let snapshot = defaults(context.settings_json.as_deref().unwrap_or("{}"))?;
         let frozen_configuration = snapshot.conversation_configuration();
+        if let Some(executor) = snapshot.expert_executor() {
+            participants.push(CaptureParticipant {
+                preview: ExpertTemplateCapturePreviewEntry {
+                    participant: reference.clone(), context_configuration_revision: context.configuration_revision,
+                    defaults: snapshot,
+                    client_model_presentation: serde_json::Value::Null,
+                    effective_parameters: crate::effective_model_parameters::EffectiveModelResolution::Unavailable {
+                        reason: crate::effective_model_parameters::EffectiveModelUnavailableReason::SourceHostRequired,
+                    },
+                    model_declaration: nola_domain::expert_message::expert_executor_declaration(reference,&executor),
+                },
+                display_name: member.display_name.clone(), description: member.description.clone(),
+            });
+            continue;
+        }
         let original_selection = frozen_configuration
             .get("modelSelectionID")
             .and_then(|v| v.as_str());

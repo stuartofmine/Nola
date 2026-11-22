@@ -2,10 +2,20 @@
 
 package com.nola.ui.screen.chat
 
+import com.nola.ui.components.dismissImeOnBlankTap
+import kotlinx.serialization.json.jsonArray
+import kotlinx.serialization.json.jsonObject
+import kotlinx.serialization.json.jsonPrimitive
+import androidx.compose.ui.text.TextRange
+import androidx.compose.ui.text.input.TextFieldValue
+import androidx.compose.ui.text.input.VisualTransformation
+import androidx.compose.ui.text.input.TransformedText
+import androidx.compose.ui.text.input.OffsetMapping
+import androidx.compose.ui.text.SpanStyle
+import androidx.compose.ui.text.buildAnnotatedString
 import com.nola.ui.components.NolaIconButton
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.PredictiveBackHandler
-import androidx.compose.animation.SizeTransform
 import androidx.compose.animation.core.FastOutSlowInEasing
 import androidx.compose.animation.core.SeekableTransitionState
 import androidx.compose.animation.core.rememberTransition
@@ -48,7 +58,12 @@ import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
-import androidx.compose.foundation.combinedClickable
+import androidx.compose.foundation.gestures.awaitEachGesture
+import androidx.compose.foundation.gestures.awaitFirstDown
+import androidx.compose.foundation.gestures.awaitLongPressOrCancellation
+import androidx.compose.foundation.gestures.waitForUpOrCancellation
+import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.semantics.onLongClick
 import androidx.compose.foundation.content.ReceiveContentListener
 import androidx.compose.foundation.content.TransferableContent
 import androidx.compose.foundation.content.contentReceiver
@@ -210,7 +225,6 @@ import com.nola.ui.components.PermissionDialog
 import com.nola.ui.components.hostToolDisplayName
 import com.nola.ui.components.SmoothStreamingMarkdownRenderer
 import com.nola.ui.components.ThinkingBlock
-import com.nola.ui.components.NolaDisclosureChevron
 import com.nola.ui.components.nolaDisclosureEnter
 import com.nola.ui.components.nolaDisclosureExit
 import com.nola.ui.components.rememberReduceMotionEnabled
@@ -245,8 +259,10 @@ internal fun ChatScreen(
 ) {
     val state by viewModel.uiState.collectAsStateWithLifecycle()
     val editDraft by viewModel.messageEditDraft.collectAsStateWithLifecycle()
+    val availableExperts by viewModel.conversationAgentDirectory.collectAsStateWithLifecycle()
     editDraft?.let { MessageEditDialog(it, viewModel::updateMessageEditText,
-        viewModel::submitMessageEdit, viewModel::cancelMessageEdit) }
+        viewModel::submitMessageEdit, viewModel::cancelMessageEdit, availableExperts?.agents.orEmpty(),
+        viewModel::prepareExpertPicker, viewModel::inlineMentionCandidate) }
 
     val expertReplyProjections by viewModel.conversationExpertReplies.collectAsStateWithLifecycle()
     val expertReplies = remember(state.conversationId, expertReplyProjections) {
@@ -312,24 +328,38 @@ internal fun ChatScreen(
     var showModelMenu by remember { mutableStateOf(false) }
     var showIMSearch by rememberSaveable { mutableStateOf(false) }
     var imSearch by rememberSaveable { mutableStateOf("") }
+    var pendingScrollToMessageId by remember(state.conversationId) { mutableStateOf<String?>(null) }
     var showActions by remember { mutableStateOf(false) }
     var renameTarget by remember { mutableStateOf<Pair<String, String>?>(null) }
     var renameDraft by remember { mutableStateOf("") }
     var showExecutionBackendMenu by remember { mutableStateOf(false) }
-    var inspector by rememberSaveable(state.conversationId, state.executionHostBinding) { mutableStateOf<ConversationInspector?>(null) }
+    // Opening an inspector is navigation within this conversation. Its panel reloads
+    // the authoritative content when the asynchronous Host binding becomes available.
+    var inspector by rememberSaveable(state.conversationId) { mutableStateOf<ConversationInspector?>(null) }
     val showMoreSettings = inspector == ConversationInspector.Settings
     var showContextSheet by rememberSaveable { mutableStateOf(ContextDisplayMode.Context) }
     var showContextSheetOpen by rememberSaveable(state.conversationId, state.executionHostBinding) { mutableStateOf(false) }
     var showConversations by rememberSaveable { mutableStateOf(true) }
+    fun setShowConversations(show: Boolean) {
+        showConversations = show
+        onDetailVisibilityChanged(!show)
+    }
+    var mentionDetails by remember(state.conversationId) { mutableStateOf<InlineExpertMention?>(null) }
     var expertHistoryTarget by remember { mutableStateOf<ExpertHistoryTarget?>(null) }
     expertHistoryTarget?.let { target ->
         androidx.compose.runtime.key(target) { ExpertChildHistoryDialog(target,
             load = { before -> viewModel.loadExpertChildHistory(target, before) },
-            onContinue = { viewModel.continueExpertChildHistory(target.parentId, target.child); showConversations = false },
+            onContinue = {
+                viewModel.continueExpertChildHistory(target.parentId, target.child)
+                inspector = null
+                mentionDetails = null
+                setShowConversations(false)
+            },
             onClose = { expertHistoryTarget = null }) }
     }
     renameTarget?.let { (targetId, _) ->
         androidx.compose.material3.AlertDialog(
+            modifier = Modifier.dismissImeOnBlankTap(),
             onDismissRequest = { renameTarget = null },
             title = { Text(stringResource(R.string.chat_rename_conversation)) },
             text = {
@@ -363,12 +393,12 @@ internal fun ChatScreen(
         if (requestedNewConversation) {
             dismissNavigationKeyboard()
             viewModel.newConversation()
-            showConversations = false
+            setShowConversations(false)
             onRequestedConversationConsumed()
         } else requestedConversationId?.let { owner ->
             dismissNavigationKeyboard()
             viewModel.loadConversation(owner)
-            showConversations = false
+            setShowConversations(false)
             onRequestedConversationConsumed()
         }
     }
@@ -382,29 +412,62 @@ internal fun ChatScreen(
     val conversationActivity by viewModel.conversationActivity.collectAsStateWithLifecycle()
     val scope = rememberCoroutineScope()
     val preparingExpertPicker by viewModel.preparingExpertPicker.collectAsStateWithLifecycle()
+    mentionDetails?.let { ref ->
+        val owner = state.conversationId
+        var target by remember(owner, ref) { mutableStateOf<ExpertHistoryTarget?>(null) }
+        var description by remember(owner, ref) { mutableStateOf(ref.member?.description.orEmpty()) }
+        LaunchedEffect(owner, ref) {
+            if (owner != null && ref.member != null) {
+                val result = try { viewModel.namedExpertHistory(owner, ref) }
+                catch (cancelled: kotlinx.coroutines.CancellationException) { throw cancelled }
+                catch (_: Exception) { null }
+                target = result?.first
+                description = result?.second.orEmpty()
+            }
+        }
+        androidx.compose.material3.AlertDialog(onDismissRequest = { mentionDetails = null }, title = { Text(ref.label) },
+            text = if (description.isBlank()) null else ({ Text(description) }),
+            confirmButton = { target?.let { item -> TextButton(onClick = {
+                expertHistoryTarget = item
+            }) { Text(stringResource(R.string.expert_child_history)) } } },
+            dismissButton = { TextButton(onClick = { mentionDetails = null }) { Text(stringResource(R.string.common_done)) } })
+    }
     var expertSourceAvailable by remember(state.conversationId) { mutableStateOf(false) }
     var showExpertPicker by rememberSaveable { mutableStateOf(false) }
     var showExpertManagement by rememberSaveable { mutableStateOf(false) }
     var colorEditingExpertId by rememberSaveable { mutableStateOf<String?>(null) }
-    val availableExperts by viewModel.conversationAgentDirectory.collectAsStateWithLifecycle()
-    val selectedExpertIds by viewModel.selectedConversationAgentIds.collectAsStateWithLifecycle()
+    val inlineMentions = composerDraft.mentions
+    val selectedExpertIds = inlineMentions.map { it.agentId }.toSet()
+    val pickerMembers by viewModel.pickerMembers.collectAsStateWithLifecycle()
+    var editor by remember(composerDraft) { mutableStateOf(TextFieldValue(inputText, TextRange(composerDraft.caret ?: inputText.length))) }
+    val editorValue = if (editor.text == inputText) editor else TextFieldValue(inputText, TextRange((composerDraft.caret ?: inputText.length).coerceIn(0, inputText.length)))
+    fun applyEdit(edit: MentionEdit) {
+        editor = edit.value
+        composerDraft.caret = edit.value.selection.end
+        composerDraft.setContent(edit.value.text, edit.mentions)
+    }
+    var undoMention by remember(composerDraft) { mutableStateOf<Pair<MentionEdit, MentionEdit>?>(null) }
     val resumableExpertMessages by viewModel.resumableExpertMessages.collectAsState()
     val resumingExpertMessage by viewModel.resumingExpertMessage.collectAsState()
     var mentionFocused by remember(state.conversationId) { mutableStateOf(false) }
     var mentionDismissed by remember(state.conversationId) { mutableStateOf<String?>(null) }
     var mentionIndex by remember(state.conversationId) { mutableIntStateOf(0) }
-    val mentionQuery = roomMentionQuery(inputText)
+    val queryRange = expertQuery(editorValue, inlineMentions)
+    val mentionQuery = queryRange?.text
+    var mentionDirectoryReady by remember(composerDraft) { mutableStateOf(false) }
     val mentionCandidates = availableExperts?.agents.orEmpty().filter {
-        expertSourceAvailable &&
-        it.availability == "active" && it.id !in selectedExpertIds &&
-            it.name.contains(mentionQuery.orEmpty(), ignoreCase = true)
-    }
-    val mentionsVisible = mentionFocused && mentionQuery != null && mentionDismissed != inputText
+        expertSourceAvailable && mentionDirectoryReady &&
+        it.availability == "active" && (it.name.contains(mentionQuery.orEmpty(), ignoreCase = true) ||
+            it.description.contains(mentionQuery.orEmpty(), ignoreCase = true))
+    }.sortedByDescending { it.id in pickerMembers }
+    val mentionDetailsById = remember(availableExperts) { mentionDescriptions(availableExperts?.agents.orEmpty()) }
+    val mentionsVisible = mentionFocused && mentionQuery != null && mentionDismissed != inputText &&
+        (' ' !in mentionQuery || mentionCandidates.isNotEmpty())
     val context = LocalContext.current
     var commandError by remember(state.conversationId) { mutableStateOf<String?>(null) }
     var commandDismissed by remember(state.conversationId) { mutableStateOf<String?>(null) }
-    var commandIndex by remember(state.conversationId) { mutableIntStateOf(0) }
     val commandQuery = ComposerCommand.query(inputText)
+    var commandIndex by remember(state.conversationId, commandQuery) { mutableIntStateOf(0) }
     val commandCandidates = ComposerCommand.entries.filter { commandQuery != null &&
         (it.name.startsWith(commandQuery) || context.getString(it.label).contains(commandQuery, ignoreCase = true)) }
     val commandsVisible = mentionFocused && commandQuery != null && commandDismissed != inputText
@@ -422,7 +485,13 @@ internal fun ChatScreen(
         catch (_: Exception) { false }
         if (!expertSourceAvailable && !showExpertManagement) showExpertPicker = false
     }
-    fun completeCommand(command: ComposerCommand) { if (!canMutateDraft()) return; inputText = "/${command.name} "; commandError = null; commandIndex = 0 }
+    fun completeCommand(command: ComposerCommand) {
+        if (!canMutateDraft()) return
+        val completed = "/${command.name} "
+        applyEdit(MentionEdit(TextFieldValue(completed, TextRange(completed.length)), emptyList()))
+        undoMention = null
+        commandError = null
+    }
     fun executeCommand(): Boolean {
         if (!canMutateDraft()) return false
         val parsed = ComposerCommand.parse(inputText) ?: return false
@@ -431,7 +500,9 @@ internal fun ChatScreen(
         if (command == ComposerCommand.stop && !state.processingState.isGenerating) {
             commandError = context.getString(R.string.composer_command_no_run); return true
         }
-        if (command == ComposerCommand.permissions && !viewModel.beginParameterEditing()) return true
+        if (command == ComposerCommand.permissions) {
+            viewModel.beginParameterEditing()
+        }
         inputText = ""; commandError = null
         when (command) {
             ComposerCommand.model -> showModelMenu = true
@@ -440,7 +511,7 @@ internal fun ChatScreen(
             ComposerCommand.permissions -> inspector = ConversationInspector.Settings
             ComposerCommand.plan -> onOpenPlans()
             ComposerCommand.search -> { conversationSearch = parsed.second; showConversations = true; dismissNavigationKeyboard() }
-            ComposerCommand.stop -> viewModel.cancelGeneration(viewModel.composerDrafts.ownerKey(state.conversationId), state.activeResponseId)
+            ComposerCommand.stop -> if (state.hostGoalInProgress) inspector = ConversationInspector.Progress else viewModel.cancelGeneration(viewModel.composerDrafts.ownerKey(state.conversationId), state.activeResponseId)
             ComposerCommand.help -> inputText = "/"
         }
         return true
@@ -450,23 +521,18 @@ internal fun ChatScreen(
     LaunchedEffect(mentionIndex, mentionsVisible) {
         if (mentionsVisible && mentionCandidates.isNotEmpty()) mentionListState.animateScrollToItem(mentionIndex.coerceIn(mentionCandidates.indices))
     }
-    LaunchedEffect(mentionQuery != null, state.conversationId) {
-        if (mentionQuery != null) {
-            if (state.conversationId == null) scope.launch { viewModel.prepareExpertPicker() }
-            else if (expertSourceAvailable) viewModel.refreshConversationExperts(restoreSelection = false)
-        }
+    LaunchedEffect(mentionQuery != null, composerDraft) {
+        mentionDirectoryReady = mentionQuery != null && viewModel.prepareExpertPicker()
     }
-    fun selectMention(id: String) {
-        if (!canMutateDraft()) return
-        if (mentionCandidates.none { it.id == id }) return
-        val original = inputText
-        val owner = state.conversationId
-        viewModel.toggleConversationExpert(id) {
-            if (viewModel.uiState.value.conversationId == owner && inputText == original && canMutateDraft()) {
-                inputText = removeRoomMentionQuery(original)
-                mentionIndex = 0
-            }
-        }
+    fun selectMention(id: String, range: TextRange = queryRange?.let { TextRange(it.start, it.end) } ?: editorValue.selection) {
+        if (!canMutateDraft() || preparingExpertPicker) return
+        val candidate = viewModel.inlineMentionCandidate(id) ?: return
+        val chosen = inlineMentions.firstOrNull { it.agentId == id } ?: candidate
+        val before = MentionEdit(editorValue, inlineMentions)
+        val inserted = insertExpert(editorValue, inlineMentions, range, chosen)
+        applyEdit(inserted)
+        undoMention = before to inserted
+        mentionIndex = 0
     }
 
     var attachments by composerDraft.attachments
@@ -641,7 +707,7 @@ internal fun ChatScreen(
             showContextSheetOpen -> showContextSheetOpen = false
             inspector != null -> inspector = null
             showExpertPicker -> if (showExpertManagement && expertSourceAvailable) showExpertManagement = false else { showExpertManagement = false; showExpertPicker = false }
-            else -> { dismissNavigationKeyboard(); viewModel.loadConversations(); showConversations = true }
+            else -> { dismissNavigationKeyboard(); viewModel.loadConversations(); setShowConversations(true) }
         }
     }
 
@@ -650,14 +716,16 @@ internal fun ChatScreen(
     }
 
     if (showExpertPicker) {
-        ModalBottomSheet(onDismissRequest = { showExpertPicker = false; showExpertManagement = false },
+        ModalBottomSheet(
+            modifier = Modifier.dismissImeOnBlankTap(),
+            onDismissRequest = { showExpertPicker = false; showExpertManagement = false },
             sheetState = androidx.compose.material3.rememberModalBottomSheetState(skipPartiallyExpanded = true)) {
             if (showExpertManagement) {
                 ExpertManagementPanel(viewModel, onBack = {
                     showExpertManagement = false
                     if (expertSourceAvailable) viewModel.refreshConversationExperts(restoreSelection = false) else showExpertPicker = false
                 })
-            } else Column(Modifier.fillMaxWidth().navigationBarsPadding().padding(horizontal = 20.dp, vertical = 12.dp)) {
+            } else Column(Modifier.fillMaxWidth().imePadding().navigationBarsPadding().padding(horizontal = 20.dp, vertical = 12.dp)) {
                 TextButton(onClick = { showExpertManagement = true }, modifier = Modifier.testTag("chat.experts.manage").heightIn(min = 48.dp)) { Text(stringResource(R.string.expert_manage)) }
                 Text(stringResource(R.string.chat_experts), style = MaterialTheme.typography.titleLarge)
                 Text(stringResource(R.string.chat_experts_hint), style = MaterialTheme.typography.bodySmall,
@@ -666,22 +734,34 @@ internal fun ChatScreen(
                 if (agents.isEmpty()) {
                     Text(stringResource(R.string.chat_experts_empty), modifier = Modifier.padding(vertical = 20.dp))
                 } else {
-                    LazyColumn(Modifier.heightIn(max = 420.dp).testTag("chat.experts.list")) {
+                    LazyColumn(Modifier.weight(1f, fill = false).testTag("chat.experts.list")) {
                         items(agents, key = { it.id }) { agent ->
-                            Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-                            FilterChip(
-                                selected = agent.id in selectedExpertIds,
-                                onClick = { viewModel.toggleConversationExpert(agent.id) },
-                                label = { Column {
-                                    Text(agent.name, style = MaterialTheme.typography.bodyLarge)
-                                    if (agent.description.isNotBlank()) Text(agent.description, style = MaterialTheme.typography.bodySmall,
-                                        color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 2, overflow = TextOverflow.Ellipsis)
-                                } },
-                                leadingIcon = { Text(agent.name.take(1).uppercase(), fontWeight = FontWeight.Bold) },
-                                modifier = Modifier.weight(1f).padding(vertical = 4.dp).heightIn(min = 56.dp)
-                            )
-                                TextButton(onClick = { colorEditingExpertId = agent.id }, modifier = Modifier.heightIn(min = 48.dp)) {
-                                    Text(stringResource(R.string.expert_color_action))
+                            Column(Modifier.fillMaxWidth().padding(vertical = 4.dp)) {
+                                FilterChip(
+                                    selected = agent.id in selectedExpertIds,
+                                    onClick = { selectMention(agent.id, editorValue.selection); showExpertPicker = false },
+                                    label = { Column {
+                                        Text(agent.name, style = MaterialTheme.typography.bodyLarge, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                                        if (!mentionDetailsById[agent.id].isNullOrBlank()) Text(mentionDetailsById[agent.id].orEmpty(), style = MaterialTheme.typography.bodySmall,
+                                            color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 2, overflow = TextOverflow.Ellipsis)
+                                    } },
+                                    leadingIcon = { Text(agent.name.take(1).uppercase(), fontWeight = FontWeight.Bold) },
+                                    modifier = Modifier.fillMaxWidth().heightIn(min = 56.dp)
+                                )
+                                @OptIn(androidx.compose.foundation.layout.ExperimentalLayoutApi::class)
+                                androidx.compose.foundation.layout.FlowRow(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    horizontalArrangement = Arrangement.spacedBy(8.dp, Alignment.End),
+                                    verticalArrangement = Arrangement.spacedBy(4.dp)
+                                ) {
+                                    if (pickerMembers[agent.id]?.let { it.agentRevision != agent.revision } == true) {
+                                        TextButton(onClick = { viewModel.requestLatestExpert(agent.id) }, modifier = Modifier.heightIn(min = 48.dp)) {
+                                            Text(stringResource(R.string.expert_rejoin_action))
+                                        }
+                                    }
+                                    TextButton(onClick = { colorEditingExpertId = agent.id }, modifier = Modifier.heightIn(min = 48.dp)) {
+                                        Text(stringResource(R.string.expert_color_action))
+                                    }
                                 }
                             }
                         }
@@ -695,151 +775,230 @@ internal fun ChatScreen(
     }
 
     if (inspector != null || showContextSheetOpen) {
-        ModalBottomSheet(onDismissRequest = { inspector = null; showContextSheetOpen = false }, sheetState = androidx.compose.material3.rememberModalBottomSheetState(skipPartiallyExpanded = true)) {
-        Box(Modifier.fillMaxWidth().fillMaxHeight(0.92f).navigationBarsPadding()) {
-        if (inspector == ConversationInspector.Progress) {
-            ConversationProgressPanel(
-                state = state,
-                load = viewModel::loadConversationProgress,
-                pendingControl = viewModel::pendingGoalControl,
-                submitControl = viewModel::submitGoalControl,
-                onClose = { inspector = null },
-                discardControl = viewModel::discardPendingGoalControl,
-                expertChildren = { convId ->
-                    androidx.compose.runtime.key(convId, state.executionHostBinding) {
-                        ExpertChildTree(
-                            convId,
-                            load = { viewModel.loadExpertChildren(convId, it) },
-                            onOpen = {
-                                inspector = null
-                                expertHistoryTarget = it
-                            }
-                        )
-                    }
+        var sheetSaving by remember { mutableStateOf(false) }
+        var sheetDirty by remember { mutableStateOf(false) }
+        var sheetDismissTick by remember { mutableIntStateOf(0) }
+        val requestSheetDismiss = {
+            when (com.nola.ui.components.editorDismissDecision(sheetSaving, sheetDirty)) {
+                com.nola.ui.components.EditorDismissDecision.Allow -> {
+                    inspector = null
+                    showContextSheetOpen = false
                 }
-            )
+                com.nola.ui.components.EditorDismissDecision.Busy -> Unit
+                com.nola.ui.components.EditorDismissDecision.ConfirmDiscard -> {
+                    sheetDismissTick += 1
+                }
+            }
         }
-        if (inspector == ConversationInspector.Resources) {
-            ConversationResourcesPanel(state, onClose = { inspector = null })
+        val inspectorSheetState = com.nola.ui.components.rememberGuardedEditorSheetState(
+            saving = sheetSaving,
+            dirty = sheetDirty,
+            onDiscardRequested = { sheetDismissTick += 1 },
+        )
+        ModalBottomSheet(
+            modifier = Modifier.dismissImeOnBlankTap(),
+            onDismissRequest = requestSheetDismiss,
+            sheetState = inspectorSheetState,
+        ) {
+        Box(Modifier.fillMaxWidth().fillMaxHeight(0.92f).imePadding().navigationBarsPadding()) {
+        when {
+            showContextSheetOpen -> {
+                LaunchedEffect(showContextSheetOpen, showContextSheet) {
+                    viewModel.refreshDataSourceCatalog()
+                }
+                val conversation = state.conversations.find { it.id == state.conversationId }
+                val convTitle = ConversationTitlePresentationPolicy.displayTitle(
+                    conversation?.title,
+                    conversation?.id ?: state.conversationId,
+                    stringResource(R.string.chat_new_chat),
+                )
+                ChatContextScreen(
+                    displayMode = showContextSheet,
+                    conversationId = state.conversationId.orEmpty(),
+                    conversationTitle = convTitle,
+                    contextUsage = state.contextUsageDetail,
+                    sessionMemory = state.sessionMemory,
+                    knowledgePoints = state.knowledgePoints,
+                    conversationWiki = state.conversationWiki,
+                    longTermMemory = state.longTermMemory,
+                    userPreferences = state.userPreferences,
+                    mcpServers = state.mcpServers,
+                    uploadedSkills = state.uploadedSkills,
+                    hostUploadedSkills = state.hostUploadedSkills,
+                    hostUploadedDocuments = state.hostUploadedDocuments,
+                    hostMcpServers = state.hostMcpServers,
+                    uploadedDocuments = state.uploadedDocuments,
+                    dataSources = state.dataSources,
+                    selectedDataSourceIds = state.selectedDataSourceIds,
+                    onDataSourceEnabledChange = viewModel::setConversationDataSourceEnabled,
+                    onDataSourceRestoreDefault = viewModel::restoreConversationDataSourceDefault,
+                    onSessionMemoryChange = { viewModel.updateSessionMemory(it) },
+                    onConversationKnowledgeChange = { knowledgePoints, wiki ->
+                        viewModel.updateConversationKnowledge(knowledgePoints, wiki)
+                    },
+                    onLongTermMemoryChange = { viewModel.updateLongTermMemory(it) },
+                    onUserPreferencesChange = { viewModel.updateUserPreferences(it) },
+                    onSkillToggle = { skill, enabled -> viewModel.toggleSkill(skill, enabled) },
+                    onSaveSkill = { original, name, description, content -> viewModel.saveSkill(original, name, description, content) },
+                    onSkillDelete = { viewModel.deleteSkill(it) },
+                    onDocumentAdd = { viewModel.addDocument(it) },
+                    onDocumentDelete = { viewModel.deleteDocument(it) },
+                    onSaveMemoryProfile = { viewModel.saveMemoryProfile() },
+                    onCompact = { viewModel.compactNow() },
+                    onReload = { viewModel.reloadContextState() },
+                    onSearchMemory = { query -> viewModel.searchMemoryForContext(query) },
+                    onDismissGuardStateChange = { saving, dirty ->
+                        sheetSaving = saving
+                        sheetDirty = dirty
+                    },
+                    dismissAttemptTick = sheetDismissTick,
+                    onBack = { showContextSheetOpen = false }
+                )
+            }
+            inspector == ConversationInspector.Progress -> {
+                ConversationProgressPanel(
+                    state = state,
+                    load = viewModel::loadConversationProgress,
+                    pendingControl = viewModel::pendingGoalControl,
+                    submitControl = viewModel::submitGoalControl,
+                    onClose = { inspector = null },
+                    discardControl = viewModel::discardPendingGoalControl,
+                    expertChildren = { convId ->
+                        androidx.compose.runtime.key(convId, state.executionHostBinding) {
+                            ExpertChildTree(
+                                convId,
+                                load = { viewModel.loadExpertChildren(convId, it) },
+                                onOpen = {
+                                    expertHistoryTarget = it
+                                }
+                            )
+                        }
+                    }
+                )
+            }
+            inspector == ConversationInspector.Resources -> {
+                ConversationResourcesPanel(state, onClose = { inspector = null })
+            }
+            showMoreSettings -> {
+                ChatMoreSettingsScreen(
+                    selectedModel = state.currentModel,
+                    contextUsage = state.contextUsageDetail,
+                    agentModeEnabled = state.agentMode,
+                    permissionMode = state.permissionMode,
+                    hybridDeviceToolsEnabled = state.hybridDeviceToolsEnabled,
+                    hybridDeviceCapabilities = state.hybridDeviceCapabilities,
+                    pairedHostIdentity = state.pairedHostIdentity,
+                    autoCompactTriggerPercent = state.autoCompactTriggerPercent,
+                    responseStyleOverride = state.responseStyleOverride,
+                    sessionMemory = state.sessionMemory,
+                    longTermMemory = state.longTermMemory,
+                    userPreferences = state.userPreferences,
+                    uploadedSkills = state.uploadedSkills,
+                    hostUploadedSkills = state.hostUploadedSkills,
+                    hostUploadedDocuments = state.hostUploadedDocuments,
+                    hostMcpServers = state.hostMcpServers,
+                    hostComputerUseStatus = state.hostComputerUseStatus,
+                    hostNativeBrowserStatus = state.hostNativeBrowserStatus,
+                    draftParameters = state.currentParameters,
+                    reasoningEfforts = remember(state.currentModel) { state.currentModel?.let(viewModel::reasoningEfforts).orEmpty() },
+                    conversationId = state.conversationId,
+                    generationOverride = state.generationOverride,
+                    onAgentModeChange = { viewModel.setAgentMode(it) },
+                    onPermissionModeChange = { viewModel.savePermissionMode(it) },
+                    onHybridDeviceToolsChange = { viewModel.setHybridDeviceToolsEnabled(it) },
+                    onHybridDeviceCapabilityChange = { capability, enabled ->
+                        viewModel.setHybridDeviceCapability(capability, enabled)
+                    },
+                    onForgetHostPairing = { viewModel.forgetHostPairing() },
+                    onAutoCompactPercentChange = { viewModel.setAutoCompactPercent(it) },
+                    onResponseStyleChange = { viewModel.saveResponseStyle(it) },
+                    onSessionMemoryChange = { viewModel.updateSessionMemory(it) },
+                    onLongTermMemoryChange = { viewModel.updateLongTermMemory(it) },
+                    onUserPreferencesChange = { viewModel.updateUserPreferences(it) },
+                    onSkillToggle = { skill, enabled -> viewModel.toggleSkill(skill, enabled) },
+                    onSaveParameters = { viewModel.saveModelParameters(it) },
+                    onSaveGenerationOverride = { viewModel.saveGenerationOverride(it) },
+                    onReloadParameters = viewModel::beginParameterEditing,
+                    onSaveMemoryProfile = { viewModel.saveMemoryProfile() },
+                    onOpenContextSettings = {
+                        viewModel.refreshDataSourceCatalog()
+                        showContextSheet = ContextDisplayMode.Context
+                        showContextSheetOpen = true
+                    },
+                    onOpenSkillLibrary = {
+                        showContextSheet = ContextDisplayMode.Skills
+                        showContextSheetOpen = true
+                    },
+                    onDismissGuardStateChange = { saving, dirty ->
+                        sheetSaving = saving
+                        sheetDirty = dirty
+                    },
+                    dismissAttemptTick = sheetDismissTick,
+                    onBack = {
+                        viewModel.clearPermissionSaveFailed()
+                        inspector = null
+                    }
+                )
+            }
         }
-    if (showMoreSettings && !showContextSheetOpen) {
-        ChatMoreSettingsScreen(
-            selectedModel = state.currentModel,
-            contextUsage = state.contextUsageDetail,
-            agentModeEnabled = state.agentMode,
-            permissionMode = state.permissionMode,
-            hybridDeviceToolsEnabled = state.hybridDeviceToolsEnabled,
-            hybridDeviceCapabilities = state.hybridDeviceCapabilities,
-            pairedHostIdentity = state.pairedHostIdentity,
-            autoCompactTriggerPercent = state.autoCompactTriggerPercent,
-            responseStyleOverride = state.responseStyleOverride,
-            sessionMemory = state.sessionMemory,
-            longTermMemory = state.longTermMemory,
-            userPreferences = state.userPreferences,
-            uploadedSkills = state.uploadedSkills,
-            hostUploadedSkills = state.hostUploadedSkills,
-            hostUploadedDocuments = state.hostUploadedDocuments,
-            hostMcpServers = state.hostMcpServers,
-            hostComputerUseStatus = state.hostComputerUseStatus,
-            hostNativeBrowserStatus = state.hostNativeBrowserStatus,
-            draftParameters = state.currentParameters,
-            reasoningEfforts = remember(state.currentModel) { state.currentModel?.let(viewModel::reasoningEfforts).orEmpty() },
-            conversationId = state.conversationId,
-            generationOverride = state.generationOverride,
-            onAgentModeChange = { viewModel.setAgentMode(it) },
-            onPermissionModeChange = { viewModel.savePermissionMode(it) },
-            onHybridDeviceToolsChange = { viewModel.setHybridDeviceToolsEnabled(it) },
-            onHybridDeviceCapabilityChange = { capability, enabled ->
-                viewModel.setHybridDeviceCapability(capability, enabled)
-            },
-            onForgetHostPairing = { viewModel.forgetHostPairing() },
-            onAutoCompactPercentChange = { viewModel.setAutoCompactPercent(it) },
-            onResponseStyleChange = { viewModel.saveResponseStyle(it) },
-            onSessionMemoryChange = { viewModel.updateSessionMemory(it) },
-            onLongTermMemoryChange = { viewModel.updateLongTermMemory(it) },
-            onUserPreferencesChange = { viewModel.updateUserPreferences(it) },
-            onSkillToggle = { skill, enabled -> viewModel.toggleSkill(skill, enabled) },
-            onSaveParameters = { viewModel.saveModelParameters(it) },
-            onSaveGenerationOverride = { viewModel.saveGenerationOverride(it) },
-            onReloadParameters = viewModel::beginParameterEditing,
-            onSaveMemoryProfile = { viewModel.saveMemoryProfile() },
-            onOpenContextSettings = {
-                viewModel.refreshDataSourceCatalog()
-                showContextSheet = ContextDisplayMode.Context
-                showContextSheetOpen = true
-            },
-            onOpenSkillLibrary = {
-                showContextSheet = ContextDisplayMode.Skills
-                showContextSheetOpen = true
-            },
-            onBack = { inspector = null }
-        )
-    }
-
-    if (showContextSheetOpen) {
-        LaunchedEffect(showContextSheetOpen, showContextSheet) {
-            viewModel.refreshDataSourceCatalog()
-        }
-        val conversation = state.conversations.find { it.id == state.conversationId }
-        val convTitle = ConversationTitlePresentationPolicy.displayTitle(
-            conversation?.title,
-            conversation?.id ?: state.conversationId,
-            stringResource(R.string.chat_new_chat),
-        )
-        ChatContextScreen(
-            displayMode = showContextSheet,
-            conversationId = state.conversationId.orEmpty(),
-            conversationTitle = convTitle,
-            contextUsage = state.contextUsageDetail,
-            sessionMemory = state.sessionMemory,
-            knowledgePoints = state.knowledgePoints,
-            conversationWiki = state.conversationWiki,
-            longTermMemory = state.longTermMemory,
-            userPreferences = state.userPreferences,
-            mcpServers = state.mcpServers,
-            uploadedSkills = state.uploadedSkills,
-            hostUploadedSkills = state.hostUploadedSkills,
-            hostUploadedDocuments = state.hostUploadedDocuments,
-            hostMcpServers = state.hostMcpServers,
-            uploadedDocuments = state.uploadedDocuments,
-            dataSources = state.dataSources,
-            selectedDataSourceIds = state.selectedDataSourceIds,
-            onDataSourceEnabledChange = viewModel::setConversationDataSourceEnabled,
-            onDataSourceRestoreDefault = viewModel::restoreConversationDataSourceDefault,
-            onSessionMemoryChange = { viewModel.updateSessionMemory(it) },
-            onConversationKnowledgeChange = { knowledgePoints, wiki ->
-                viewModel.updateConversationKnowledge(knowledgePoints, wiki)
-            },
-            onLongTermMemoryChange = { viewModel.updateLongTermMemory(it) },
-            onUserPreferencesChange = { viewModel.updateUserPreferences(it) },
-            onSkillToggle = { skill, enabled -> viewModel.toggleSkill(skill, enabled) },
-            onSaveSkill = { original, name, description, content -> viewModel.saveSkill(original, name, description, content) },
-            onSkillDelete = { viewModel.deleteSkill(it) },
-            onDocumentAdd = { viewModel.addDocument(it) },
-            onDocumentDelete = { viewModel.deleteDocument(it) },
-            onSaveMemoryProfile = { viewModel.saveMemoryProfile() },
-            onCompact = { viewModel.compactNow() },
-            onReload = { viewModel.reloadContextState() },
-            onSearchMemory = { query -> viewModel.searchMemoryForContext(query) },
-            onBack = { showContextSheetOpen = false }
-        )
-    }
         }
         }
     }
 
 
     if (showIMSearch) {
-        ModalBottomSheet(onDismissRequest = { showIMSearch = false },
+        ModalBottomSheet(
+            modifier = Modifier.dismissImeOnBlankTap(),
+            onDismissRequest = { showIMSearch = false },
             sheetState = androidx.compose.material3.rememberModalBottomSheetState(skipPartiallyExpanded = true)) {
             Column(Modifier.fillMaxWidth().fillMaxHeight(.92f).imePadding().navigationBarsPadding().padding(16.dp)) {
-                androidx.compose.material3.OutlinedTextField(value = imSearch, onValueChange = { imSearch = it },
-                    label = { Text(stringResource(R.string.chat_search_loaded_title)) }, modifier = Modifier.fillMaxWidth())
+                val query = imSearch.trim()
+                val matches = remember(surfaceMessages, query) {
+                    if (query.isEmpty()) emptyList()
+                    else surfaceMessages.filter { it.text.contains(query, ignoreCase = true) }
+                }
+                androidx.compose.material3.OutlinedTextField(
+                    value = imSearch,
+                    onValueChange = { imSearch = it },
+                    label = { Text(stringResource(R.string.chat_search_loaded_title)) },
+                    singleLine = true,
+                    trailingIcon = if (imSearch.isNotEmpty()) {
+                        {
+                            IconButton(onClick = { imSearch = "" }) {
+                                Icon(Icons.Filled.Close, contentDescription = stringResource(R.string.common_dismiss))
+                            }
+                        }
+                    } else null,
+                    modifier = Modifier.fillMaxWidth()
+                )
                 Text(stringResource(R.string.chat_search_loaded_scope), style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.padding(vertical = 12.dp))
-                LazyColumn(Modifier.weight(1f, fill = false).heightIn(max = 480.dp)) {
-                    items(surfaceMessages.filter { imSearch.isNotEmpty() && it.text.contains(imSearch, ignoreCase = true) }, key = { it.id }) {
-                        Text(it.text, modifier = Modifier.padding(vertical = 12.dp), style = MaterialTheme.typography.bodyLarge)
+                if (query.isNotEmpty() && matches.isEmpty()) {
+                    Text(
+                        stringResource(R.string.chat_no_search_results),
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.padding(vertical = 12.dp)
+                    )
+                } else {
+                    LazyColumn(Modifier.weight(1f, fill = false).heightIn(max = 480.dp)) {
+                        items(matches, key = { it.id }) { matched ->
+                            Text(
+                                matched.text,
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .clip(RoundedCornerShape(8.dp))
+                                    .clickable(role = Role.Button) {
+                                        pendingScrollToMessageId = matched.id
+                                        showIMSearch = false
+                                    }
+                                    .heightIn(min = 48.dp)
+                                    .padding(horizontal = 8.dp, vertical = 12.dp),
+                                style = MaterialTheme.typography.bodyLarge,
+                                maxLines = 4,
+                                overflow = TextOverflow.Ellipsis,
+                            )
+                        }
                     }
                 }
             }
@@ -854,32 +1013,25 @@ internal fun ChatScreen(
         if (navigationReduceMotion) navigationState.snapTo(showConversations)
         else navigationState.animateTo(showConversations)
     }
-    val keyboardVisible = WindowInsets.ime.getBottom(LocalDensity.current) > 0
-    PredictiveBackHandler(enabled = !showConversations && !keyboardVisible && inspector == null &&
-        !showExpertPicker && !showContextSheetOpen && !showActions && !showIMSearch) { events ->
-        try {
-            events.collect { event ->
-                if (!navigationReduceMotion) navigationState.seekTo(event.progress, true)
-            }
+    ConversationBackGestureHandler(
+        canHandleBack = !showConversations && inspector == null &&
+            !showExpertPicker && !showContextSheetOpen && !showActions && !showIMSearch,
+        reduceMotion = navigationReduceMotion,
+        navigationState = navigationState,
+        onNavigateBack = {
             dismissNavigationKeyboard()
             viewModel.loadConversations()
-            showConversations = true
-        } catch (cancelled: kotlinx.coroutines.CancellationException) {
-            // Cancelling the system gesture keeps the same chat and draft.
-            kotlinx.coroutines.withContext(kotlinx.coroutines.NonCancellable) {
-                if (navigationReduceMotion) navigationState.snapTo(false) else navigationState.animateTo(false)
-            }
-            throw cancelled
-        }
-    }
-    navigationTransition.AnimatedContent(transitionSpec = {
+            setShowConversations(true)
+        },
+    )
+    navigationTransition.AnimatedContent(modifier = Modifier.fillMaxSize(), transitionSpec = {
         val movement = tween<androidx.compose.ui.unit.IntOffset>(260, easing = FastOutSlowInEasing)
         val transition = if (navigationReduceMotion) fadeIn(tween(0)) togetherWith fadeOut(tween(0))
         else if (targetState) (slideInHorizontally(movement, initialOffsetX = { -it * navigationDirection / 8 }) + fadeIn(tween(160))) togetherWith
             slideOutHorizontally(movement, targetOffsetX = { it * navigationDirection })
         else slideInHorizontally(movement, initialOffsetX = { it * navigationDirection }) togetherWith
             (slideOutHorizontally(movement, targetOffsetX = { -it * navigationDirection / 8 }) + fadeOut(tween(160)))
-        transition.using(SizeTransform(clip = false))
+        transition.using(null)
     }) { showingList ->
     if (showingList) {
         ConversationListScreen(
@@ -888,12 +1040,12 @@ internal fun ChatScreen(
             onConversationSelected = {
                 dismissNavigationKeyboard()
                 viewModel.loadConversation(it)
-                showConversations = false
+                setShowConversations(false)
             },
             onNewConversation = {
                 dismissNavigationKeyboard()
                 viewModel.newConversation()
-                showConversations = false
+                setShowConversations(false)
             },
             onDeleteConversation = { viewModel.deleteConversation(it) },
             onRenameConversation = viewModel::renameConversation,
@@ -927,74 +1079,57 @@ internal fun ChatScreen(
                 .padding(horizontal = NolaSpacing.sm, vertical = 6.dp),
             verticalAlignment = Alignment.CenterVertically
         ) {
-            Row(
-                modifier = Modifier.widthIn(min = 96.dp),
-                horizontalArrangement = Arrangement.Start,
-                verticalAlignment = Alignment.CenterVertically
+            NolaIconButton(
+                label = stringResource(R.string.common_back),
+                onClick = { dismissNavigationKeyboard(); viewModel.loadConversations(); setShowConversations(true) },
+                modifier = Modifier.testTag("chat.conversation.back")
             ) {
-                NolaIconButton(
-                    label = stringResource(R.string.common_back),
-                    onClick = { dismissNavigationKeyboard(); viewModel.loadConversations(); showConversations = true },
-                    modifier = Modifier.testTag("chat.conversation.back")
-                ) {
-                    Icon(painterResource(R.drawable.nola_back), contentDescription = stringResource(R.string.common_back))
-                }
+                Icon(painterResource(R.drawable.nola_back), contentDescription = stringResource(R.string.common_back))
             }
-            Box(
+            Column(
                 modifier = Modifier
                     .weight(1f)
-                    .padding(horizontal = 6.dp),
-                contentAlignment = Alignment.Center
+                    .heightIn(min = 48.dp)
+                    .testTag("chat.topbar.title")
+                    .clip(RoundedCornerShape(8.dp))
+                    .clickable { showActions = true }
+                    .padding(horizontal = NolaSpacing.sm),
+                verticalArrangement = Arrangement.Center
             ) {
                 Row(
-                    modifier = Modifier
-                        .widthIn(max = 260.dp)
-                        .heightIn(min = 44.dp)
-                        .nolaSurface(
-                            radius = NolaRadius.lg,
-                            raised = false,
-                            fill = MaterialTheme.colorScheme.surfaceContainer,
-                            border = MaterialTheme.colorScheme.outlineVariant
-                        )
-                        .testTag("chat.topbar.title")
-                        .clickable { showActions = true }
-                        .padding(horizontal = 12.dp, vertical = 4.dp),
                     verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(6.dp)
+                    horizontalArrangement = Arrangement.spacedBy(2.dp)
                 ) {
-                    Column(
-                        horizontalAlignment = Alignment.CenterHorizontally,
+                    Text(
+                        conversationTitle,
+                        style = MaterialTheme.typography.titleMedium,
+                        fontWeight = FontWeight.SemiBold,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
                         modifier = Modifier.weight(1f, fill = false)
-                    ) {
-                        Text(
-                            conversationTitle,
-                            style = MaterialTheme.typography.bodyMedium,
-                            fontWeight = FontWeight.SemiBold,
-                            maxLines = 1,
-                            overflow = TextOverflow.Ellipsis,
-                            textAlign = TextAlign.Center
-                        )
-                        Text(
-                            when {
-                                !presentationReady && state.processingState == ProcessingState.BuildingContext -> stringResource(R.string.chat_loading_conversation)
-                                state.permissionRequest != null -> stringResource(R.string.conversations_waiting)
-                                state.processingState == ProcessingState.AwaitingRecovery -> stringResource(R.string.chat_awaiting_recovery)
-                                state.processingState.blocksInput -> stringResource(R.string.conversations_running)
-                                else -> state.currentModel?.name ?: stringResource(R.string.app_name)
-                            },
-                            style = MaterialTheme.typography.labelSmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                            maxLines = 1,
-                            overflow = TextOverflow.Ellipsis,
-                            textAlign = TextAlign.Center
-                        )
-                    }
-                    NolaDisclosureChevron(expanded = showActions, reduceMotion = rememberReduceMotionEnabled())
+                    )
+                    Text(
+                        "›",
+                        style = MaterialTheme.typography.titleMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
                 }
+                Text(
+                    when {
+                        !presentationReady && state.processingState == ProcessingState.BuildingContext -> stringResource(R.string.chat_loading_conversation)
+                        state.permissionRequest != null -> stringResource(R.string.conversations_waiting)
+                        state.processingState == ProcessingState.AwaitingRecovery -> stringResource(R.string.chat_awaiting_recovery)
+                        state.processingState.blocksInput -> stringResource(R.string.conversations_running)
+                        else -> state.currentModel?.name ?: stringResource(R.string.app_name)
+                    },
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis
+                )
             }
 
             Row(
-                modifier = Modifier.widthIn(min = 96.dp),
                 horizontalArrangement = Arrangement.End,
                 verticalAlignment = Alignment.CenterVertically
             ) {
@@ -1013,17 +1148,10 @@ internal fun ChatScreen(
                     ) {
                         Icon(painterResource(R.drawable.nola_more), contentDescription = stringResource(R.string.common_more))
                     }
-                    if (showActions) ModalBottomSheet(
-                        onDismissRequest = { showActions = false },
-                        sheetState = androidx.compose.material3.rememberModalBottomSheetState(skipPartiallyExpanded = true)
+                    DropdownMenu(
+                        expanded = showActions,
+                        onDismissRequest = { showActions = false }
                     ) {
-                        Column(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .verticalScroll(rememberScrollState())
-                                .navigationBarsPadding()
-                                .padding(bottom = 32.dp)
-                        ) {
                         state.conversationId?.let { activeConversationId ->
                             DropdownMenuItem(
                                 text = { Text(stringResource(R.string.chat_rename_conversation)) },
@@ -1054,13 +1182,13 @@ internal fun ChatScreen(
                         ConversationInspector.entries.forEach { target ->
                             DropdownMenuItem(text = { Text(stringResource(target.label)) }, onClick = {
                                 showActions = false
-                                if (target != ConversationInspector.Settings || inspector == target || viewModel.beginParameterEditing()) {
-                                    if (target == ConversationInspector.Resources) showContextSheet = ContextDisplayMode.Context
-                                    showContextSheetOpen = false
-                                    inspector = toggleInspector(inspector, target)
+                                if (target == ConversationInspector.Settings && inspector != target) {
+                                    viewModel.beginParameterEditing()
                                 }
+                                if (target == ConversationInspector.Resources) showContextSheet = ContextDisplayMode.Context
+                                showContextSheetOpen = false
+                                inspector = toggleInspector(inspector, target)
                             })
-                        }
                         }
                     }
                 }
@@ -1096,7 +1224,8 @@ internal fun ChatScreen(
             transcriptStates.SaveableStateProvider(state.conversationId ?: "new-conversation") {
             ChatTranscript(
             state = state,
-            onResendEditedMessage = if (state.expertContextOwner == null) viewModel::beginMessageEdit else null,
+            onExpertMention = { mentionDetails = it },
+            onResendEditedMessage = if (state.expertContextOwner == null && state.currentModel?.source != ModelInfo.ModelSource.WebHost) viewModel::beginMessageEdit else null,
             expertReplies = expertReplies,
             resumableExpertMessages = resumableExpertMessages,
             resumingExpertMessage = resumingExpertMessage,
@@ -1134,8 +1263,10 @@ internal fun ChatScreen(
             onCompactionSourceConsumed = viewModel::consumeCompactionSourceTarget,
             onCancelTask = { taskId -> viewModel.cancelAgentTask(viewModel.composerDrafts.ownerKey(state.conversationId), taskId) },
             loadTaskDetail = viewModel::loadTaskChildDetail,
-            taskRecovery = viewModel::taskRecovery,
-            onSendTaskGuidance = { taskId, message -> viewModel.sendAgentTaskGuidance(viewModel.composerDrafts.ownerKey(state.conversationId), taskId, message).await() }
+            taskRecovery = if (state.executionHostBinding == null) viewModel::taskRecovery else null,
+            onSendTaskGuidance = { taskId, message -> viewModel.sendAgentTaskGuidance(viewModel.composerDrafts.ownerKey(state.conversationId), taskId, message).await() },
+            scrollToMessageId = pendingScrollToMessageId,
+            onScrollToMessageConsumed = { pendingScrollToMessageId = null },
         )
             }
         }
@@ -1151,45 +1282,124 @@ internal fun ChatScreen(
                 color = MaterialTheme.colorScheme.outline.copy(alpha = 0.18f)
             )
             commandError?.let { Text(it, color = MaterialTheme.colorScheme.error, modifier = Modifier.padding(horizontal = 16.dp)) }
+            val permissionStatus = state.permissionApplicationStatus
+            val hasTask = state.conversationId != null || state.processingState != ProcessingState.Idle
+            if (permissionStatus in setOf("saving", "pending", "failed") || (permissionStatus == "checking" && hasTask)) {
+                TextButton(
+                    onClick = {
+                        viewModel.beginParameterEditing()
+                        inspector = ConversationInspector.Settings
+                    },
+                    modifier = Modifier
+                        .padding(horizontal = NolaSpacing.lg)
+                        .heightIn(min = 48.dp)
+                        .testTag("chat.controls.permission")
+                ) {
+                    Text(stringResource(R.string.chat_permission_mode) + ": " + stringResource(
+                        when (state.permissionMode) {
+                            com.nola.core.AndroidAgentPermissionMode.Cautious -> R.string.chat_permission_mode_cautious
+                            com.nola.core.AndroidAgentPermissionMode.AllowAll -> R.string.chat_permission_mode_allow_all
+                        }
+                    ))
+                }
+                Text(stringResource(when (permissionStatus) {
+                    "saving" -> R.string.chat_permission_state_saving
+                    "checking" -> R.string.chat_permission_state_checking
+                    "failed" -> R.string.chat_permission_state_failed
+                    else -> R.string.chat_permission_state_pending
+                }), style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.padding(horizontal = NolaSpacing.lg).testTag("chat.controls.permission.status"))
+            }
             if (commandsVisible) {
-                LazyColumn(Modifier.fillMaxWidth().heightIn(max = 224.dp).padding(horizontal = 16.dp)
-                    .border(1.dp, MaterialTheme.colorScheme.outlineVariant, RoundedCornerShape(14.dp))) {
+                LazyColumn(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .heightIn(max = 180.dp)
+                        .padding(horizontal = 16.dp, vertical = 4.dp)
+                        .clip(RoundedCornerShape(14.dp))
+                        .background(MaterialTheme.colorScheme.surface)
+                        .border(1.dp, MaterialTheme.colorScheme.outlineVariant, RoundedCornerShape(14.dp)),
+                    contentPadding = PaddingValues(6.dp)
+                ) {
                     items(commandCandidates, key = { it.name }) { command ->
-                        Row(Modifier.fillMaxWidth().heightIn(min = 52.dp).testTag("chat.command.${command.name}")
-                            .background(if (commandCandidates.getOrNull(commandIndex) == command) MaterialTheme.colorScheme.primaryContainer else androidx.compose.ui.graphics.Color.Transparent, RoundedCornerShape(10.dp))
-                            .clickable { completeCommand(command) }.padding(12.dp), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                            Text("/${command.name}"); Text(stringResource(command.label), color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .heightIn(min = 52.dp)
+                                .testTag("chat.command.${command.name}")
+                                .clip(RoundedCornerShape(10.dp))
+                                .background(if (commandCandidates.getOrNull(commandIndex) == command) MaterialTheme.colorScheme.primaryContainer else androidx.compose.ui.graphics.Color.Transparent)
+                                .clickable { completeCommand(command) }
+                                .padding(horizontal = 12.dp, vertical = 8.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(12.dp)
+                        ) {
+                            Text("/${command.name}", fontWeight = FontWeight.Medium)
+                            Text(
+                                stringResource(command.label),
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis,
+                                modifier = Modifier.weight(1f)
+                            )
                         }
                     }
                     if (commandCandidates.isEmpty()) item { Text(stringResource(R.string.composer_command_invalid), Modifier.padding(12.dp)) }
                 }
             }
             if (mentionsVisible) {
-                LazyColumn(Modifier.fillMaxWidth().heightIn(max = 224.dp).padding(horizontal = 16.dp)
-                    .border(1.dp, MaterialTheme.colorScheme.outlineVariant, RoundedCornerShape(14.dp)),
-                    state = mentionListState, contentPadding = PaddingValues(6.dp)) {
+                LazyColumn(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .heightIn(max = 180.dp)
+                        .padding(horizontal = 16.dp, vertical = 4.dp)
+                        .clip(RoundedCornerShape(14.dp))
+                        .background(MaterialTheme.colorScheme.surface)
+                        .border(1.dp, MaterialTheme.colorScheme.outlineVariant, RoundedCornerShape(14.dp)),
+                    state = mentionListState,
+                    contentPadding = PaddingValues(6.dp)
+                ) {
                     if (mentionCandidates.isEmpty()) item { Text(stringResource(R.string.chat_no_matching_experts), Modifier.padding(12.dp)) }
                     items(mentionCandidates, key = { it.id }) { expert ->
-                        Row(Modifier.fillMaxWidth().heightIn(min = 52.dp)
-                            .background(if (mentionCandidates.getOrNull(mentionIndex)?.id == expert.id)
-                                MaterialTheme.colorScheme.primaryContainer else androidx.compose.ui.graphics.Color.Transparent, RoundedCornerShape(10.dp))
-                            .clickable { selectMention(expert.id) }.padding(horizontal = 12.dp, vertical = 8.dp),
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .heightIn(min = 52.dp)
+                                .clip(RoundedCornerShape(10.dp))
+                                .background(if (mentionCandidates.getOrNull(mentionIndex)?.id == expert.id)
+                                    MaterialTheme.colorScheme.primaryContainer else androidx.compose.ui.graphics.Color.Transparent)
+                                .clickable { selectMention(expert.id) }
+                                .padding(horizontal = 12.dp, vertical = 8.dp),
                             verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                            Text(expert.name.take(1), Modifier.background(MaterialTheme.colorScheme.surfaceContainer, CircleShape).padding(8.dp))
-                            Column {
+                            horizontalArrangement = Arrangement.spacedBy(12.dp)
+                        ) {
+                            Box(
+                                modifier = Modifier
+                                    .size(32.dp)
+                                    .clip(CircleShape)
+                                    .background(MaterialTheme.colorScheme.surfaceContainer),
+                                contentAlignment = Alignment.Center
+                            ) {
+                                Text(
+                                    expert.name.take(1).uppercase(),
+                                    style = MaterialTheme.typography.labelMedium,
+                                    fontWeight = FontWeight.SemiBold
+                                )
+                            }
+                            Column(Modifier.weight(1f)) {
                                 Text(expert.name, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                                if (expert.description.isNotBlank()) Text(expert.description, style = MaterialTheme.typography.bodySmall,
+                                if (!mentionDetailsById[expert.id].isNullOrBlank()) Text(mentionDetailsById[expert.id].orEmpty(), style = MaterialTheme.typography.bodySmall,
                                     color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1, overflow = TextOverflow.Ellipsis)
                             }
                         }
                     }
                 }
             }
-            if (selectedExpertIds.isNotEmpty()) Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()).padding(horizontal = 16.dp)) {
-                selectedExpertIds.forEach { agentId ->
-                    TextButton(onClick = { viewModel.toggleConversationExpert(agentId) }) { Text("${viewModel.conversationExpertLabel(agentId)} ×") }
-                }
+            if (inlineMentions.isNotEmpty() && (state.error != null || !attachmentMessage.isNullOrEmpty())) {
+                TextButton(onClick = { if (canMutateDraft()) {
+                    composerDraft.setContent(inputText, emptyList()); attachmentMessage = null
+                } }) { Text(stringResource(R.string.expert_mention_plain)) }
             }
             state.expertHostConfirmationStatus?.let { status ->
                 Column(Modifier.fillMaxWidth().padding(horizontal = 16.dp).testTag("chat.expert.host.pending")) {
@@ -1219,7 +1429,14 @@ internal fun ChatScreen(
                     val savingReasoning by viewModel.savingReasoningPreference.collectAsState()
                     Row(verticalAlignment = Alignment.CenterVertically) {
                         Box(Modifier.weight(1f)) {
-                            TextButton(onClick = { showModelMenu = true }, modifier = Modifier.testTag("chat.modelPicker")) {
+                            TextButton(
+                                onClick = { showModelMenu = true },
+                                colors = androidx.compose.material3.ButtonDefaults.textButtonColors(
+                                    contentColor = MaterialTheme.colorScheme.onSurfaceVariant,
+                                ),
+                                contentPadding = PaddingValues(horizontal = 10.dp, vertical = 6.dp),
+                                modifier = Modifier.testTag("chat.modelPicker"),
+                            ) {
                                 Text(state.currentModel?.name ?: stringResource(R.string.chat_no_model_configured), maxLines = 1,
                                     modifier = Modifier.weight(1f, fill = false), style = MaterialTheme.typography.labelMedium, overflow = TextOverflow.Ellipsis)
                                 Spacer(Modifier.width(4.dp))
@@ -1322,18 +1539,36 @@ internal fun ChatScreen(
                 },
                 inputText = inputText,
                 draftWritable = draftWritable,
-                onInputChange = { if (canMutateDraft()) { inputText = it; mentionDismissed = null; commandDismissed = null; commandIndex = 0; commandError = null } },
+                onInputChange = {},
+                controlledEditor = editorValue,
+                inlineMentions = inlineMentions,
+                onEditorChange = { next ->
+                    if (canMutateDraft()) {
+                        val updated = editExpertText(editorValue, next, inlineMentions)
+                        if (editorValue.text != next.text) {
+                            undoMention = if (updated.mentions != inlineMentions) MentionEdit(editorValue, inlineMentions) to updated else null
+                            mentionDismissed = null; commandDismissed = null; commandError = null
+                        }
+                        applyEdit(updated)
+                    }
+                },
+                undoMention = {
+                    val step = undoMention
+                    if (step != null && canMutateDraft() && step.second.value.text == inputText && step.second.mentions == inlineMentions) {
+                        applyEdit(step.first); undoMention = null; true
+                    } else false
+                },
                 onFocusChange = { mentionFocused = it },
                 onMentionKey = { key ->
-                    if (!canMutateDraft()) false else if (commandsVisible) when (key) {
+                    if (!canMutateDraft()) false else if (commandsVisible && (commandCandidates.isNotEmpty() || key == Key.Escape)) when (key) {
                         Key.Escape -> { commandDismissed = inputText; true }
                         Key.Enter, Key.Tab -> { commandCandidates.getOrNull(commandIndex)?.let(::completeCommand); true }
                         Key.DirectionUp, Key.DirectionDown -> {
-                            if (commandCandidates.isNotEmpty()) commandIndex = (commandIndex + (if (key == Key.DirectionUp) -1 else 1) + commandCandidates.size) % commandCandidates.size
+                            commandIndex = (commandIndex + (if (key == Key.DirectionUp) -1 else 1) + commandCandidates.size) % commandCandidates.size
                             true
                         }
                         else -> false
-                    } else if (!mentionsVisible) false else when (key) {
+                    } else if (!mentionsVisible || (mentionCandidates.isEmpty() && key != Key.Escape)) false else when (key) {
                         Key.Escape -> { mentionDismissed = inputText; true }
                         Key.Enter, Key.Tab -> { mentionCandidates.getOrNull(mentionIndex)?.let { selectMention(it.id) }; true }
                         Key.DirectionUp, Key.DirectionDown -> {
@@ -1346,10 +1581,10 @@ internal fun ChatScreen(
                 },
                 attachments = attachments,
                 attachmentMessage = composerDrafts.initializationError.value ?: composerDraft.persistenceError.value
-                    ?: if (state.executionTeardownPending && !state.processingState.isGenerating)
-                        context.getString(R.string.chat_previous_turn_settling) else attachmentMessage,
+                    ?: attachmentMessage,
                 isImportingAttachments = isImportingAttachments || composerDraft.loading.value || composerDrafts.initializing.value,
                 enabled = !preparingExpertPicker && !state.processingState.blocksInput && !state.executionTeardownPending && !state.permissionSaving && !state.permissionSaveFailed && !composerDrafts.initializing.value,
+                showGoalProgress = state.hostGoalInProgress,
                 isGenerating = presentationReady && state.processingState.isGenerating && !inputText.startsWith("/"),
                 onAttach = {
                     if (canMutateDraft() && !isImportingAttachments) {
@@ -1369,12 +1604,29 @@ internal fun ChatScreen(
                     if (!canMutateDraft()) return@pasteAttachments false
                     val clipboard = context.getSystemService(android.content.Context.CLIPBOARD_SERVICE)
                         as android.content.ClipboardManager
-                    val uris = attachmentUrisFromClip(clip ?: clipboard.primaryClip)
-                    if (uris.isNotEmpty()) importAttachmentUris(uris)
-                    uris.isNotEmpty()
+                    val contents = clip ?: clipboard.primaryClip
+                    val uris = attachmentUrisFromClip(contents)
+                    if (uris.isNotEmpty()) {
+                        importAttachmentUris(uris); true
+                    } else if (contents != null && contents.itemCount > 0 && (0 until contents.itemCount).all { contents.getItemAt(it).text != null }) {
+                        val pasted = (0 until contents.itemCount).joinToString("\n") { contents.getItemAt(it).text.toString() }
+                        val start = editorValue.selection.min
+                        val end = editorValue.selection.max
+                        val text = inputText.replaceRange(start, end, pasted)
+                        val kept = inlineMentions.mapNotNull { ref -> when {
+                            ref.end <= start -> ref
+                            ref.start >= end -> ref.copy(start = ref.start + pasted.length - (end - start))
+                            else -> null
+                        } }
+                        applyEdit(MentionEdit(TextFieldValue(text, TextRange(start + pasted.length)), kept))
+                        mentionDismissed = text
+                        undoMention = null
+                        true
+                    } else false
                 },
                 onRemoveAttachment = { id -> if (canMutateDraft()) attachments = attachments.filterNot { it.id == id } },
                 onSendOrStop = sendOrStop@ {
+                    if (state.hostGoalInProgress) { inspector = ConversationInspector.Progress; return@sendOrStop }
                     if (!hasCurrentDraftScope()) return@sendOrStop
                     // Stopping an exact active owner must remain available even
                     // when a separate draft cannot currently be persisted.
@@ -1385,14 +1637,16 @@ internal fun ChatScreen(
                     if (executeCommand()) { /* Local command consumed before any admission. */ }
                     else if (state.processingState.isGenerating) {
                         viewModel.cancelGeneration(viewModel.composerDrafts.ownerKey(state.conversationId), state.activeResponseId)
-                    } else if (requiresPrimaryModelForComposer(state.currentModel != null, selectedExpertIds)) {
+                    } else if (attachments.isEmpty() && mentionOnly(inputText, inlineMentions)) {
+                        attachmentMessage = context.getString(R.string.expert_mention_needs_text)
+                    } else if (state.currentModel == null) {
                         showModelMenu = true
                     } else if (!state.processingState.blocksInput && !state.permissionSaving && !state.permissionSaveFailed) {
-                        val trimmed = inputText.trim()
+                        val trimmed = if (inlineMentions.isEmpty()) inputText.trim() else inputText
                         if (!isImportingAttachments && (trimmed.isNotBlank() || attachments.isNotEmpty())) {
                             viewModel.sendMessage(
                                 composeAttachmentPrompt(trimmed, attachments),
-                                expertParticipantAgentIds = selectedExpertIds,
+                                expertParticipantAgentIds = selectedExpertIds, inlineMentions = inlineMentions,
                                 messageMeta = attachmentMessageMeta(trimmed, attachments),
                                 attachments = attachments.mapNotNull { attachment ->
                                     attachment.base64Data?.let { data ->
@@ -1410,56 +1664,10 @@ internal fun ChatScreen(
                     }
                 }
             ) }
-            if (state.permissionApplicationStatus in setOf("saving", "pending", "failed")) {
-            if (state.permissionApplicationStatus !in setOf("saved", "active")) {
-            TextButton(
-                onClick = { if (viewModel.beginParameterEditing()) inspector = ConversationInspector.Settings },
-                modifier = Modifier
-                    .padding(horizontal = NolaSpacing.lg)
-                    .heightIn(min = 48.dp)
-                    .testTag("chat.controls.permission")
-            ) {
-                Text(stringResource(R.string.chat_permission_mode) + ": " + stringResource(
-                    when (state.permissionMode) {
-                        com.nola.core.AndroidAgentPermissionMode.Cautious -> R.string.chat_permission_mode_cautious
-                        com.nola.core.AndroidAgentPermissionMode.AllowAll -> R.string.chat_permission_mode_allow_all
-                    }
-                ))
-            }
-            Text(stringResource(when (state.permissionApplicationStatus) {
-                "saving" -> R.string.chat_permission_state_saving
-                "checking" -> R.string.chat_permission_state_checking
-                "failed" -> R.string.chat_permission_state_failed
-                "pending" -> R.string.chat_permission_state_pending
-                "active" -> R.string.chat_permission_state_active
-                else -> R.string.chat_permission_state_saved
-            }), style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                modifier = Modifier.padding(horizontal = NolaSpacing.lg).testTag("chat.controls.permission.status"))
-            }
-            }
         }
     }
 
     }
-    }
-
-    learningMessage?.let { message ->
-        ChatLearningFeedbackSheet(
-            message = message,
-            onDismiss = { learningMessage = null },
-            onSave = { statement, appliesToFuture ->
-                recordLearningFeedback(message, statement, appliesToFuture)
-                if (appliesToFuture) {
-                    intelligenceViewModel.saveEntry(
-                        kind = IntelligenceEntryKind.Preference,
-                        index = null,
-                        value = statement
-                    )
-                }
-                learningMessage = null
-            }
-        )
     }
 
     actionMessage?.let { message ->
@@ -1474,10 +1682,22 @@ internal fun ChatScreen(
                 )
                 actionMessage = null
             },
-            onTeach = if (message.role == ChatRole.assistant && !state.processingState.isGenerating) {
-                {
+            onSaveLearning = if (message.role == ChatRole.assistant && !state.processingState.isGenerating) {
+                { statement, appliesToFuture ->
+                    val appContext = context.applicationContext
+                    scope.launch(kotlinx.coroutines.Dispatchers.IO) {
+                        runCatching {
+                            recordLearningFeedback(PersonalIntelligenceCore.from(appContext), message, statement, appliesToFuture)
+                        }
+                    }
+                    if (appliesToFuture) {
+                        intelligenceViewModel.saveEntry(
+                            kind = IntelligenceEntryKind.Preference,
+                            index = null,
+                            value = statement
+                        )
+                    }
                     actionMessage = null
-                    learningMessage = message
                 }
             } else {
                 null
@@ -1496,9 +1716,7 @@ internal fun ChatTranscript(
     onResumeExpertMessage: (String) -> Unit = {},
     uiSurfaces: List<com.nola.data.local.UiSnapshot> = emptyList(),
     uiSurfaceFailure: String? = null,
-    onUiSubmit: suspend (com.nola.data.local.UiSubmission) -> com.nola.ui.generative.UiSubmissionOutcome = {
-        com.nola.ui.generative.UiSubmissionOutcome.Rejected("交互入口不可用。")
-    },
+    onUiSubmit: (suspend (com.nola.data.local.UiSubmission) -> com.nola.ui.generative.UiSubmissionOutcome)? = null,
     onCancelQueuedUiAction: () -> Unit = {},
     onUiAccepted: (com.nola.data.local.UiInteractionReceipt) -> Unit = {},
     onUiRestore: suspend (com.nola.data.local.UiSurfaceIdentity) -> com.nola.data.local.UiSubmission? = { null },
@@ -1525,7 +1743,13 @@ internal fun ChatTranscript(
     taskRecovery: (suspend (AgentCoreTaskHandle, String, com.nola.data.local.UnknownEffectRecoveryDecision?, Boolean) -> Pair<UnknownEffectRecoveryPresentation?, Boolean>)? = null,
     onSendTaskGuidance: suspend (String, String) -> Boolean = { _, _ -> false },
     onResendEditedMessage: ((ConversationMessage) -> Unit)? = null,
+    onExpertMention: ((InlineExpertMention) -> Unit)? = null,
+    scrollToMessageId: String? = null,
+    onScrollToMessageConsumed: () -> Unit = {},
 ) {
+    val uiEntryUnavailable = stringResource(R.string.chat_ui_entry_unavailable)
+    val effectiveOnUiSubmit: suspend (com.nola.data.local.UiSubmission) -> com.nola.ui.generative.UiSubmissionOutcome =
+        onUiSubmit ?: { com.nola.ui.generative.UiSubmissionOutcome.Rejected(uiEntryUnavailable) }
     val timelineMessages = state.timelineMessages()
     val currentTimelineIds = remember(timelineMessages) { timelineMessages.map { it.id } }
     val expertFollowSignal = remember(expertReplies) {
@@ -1535,7 +1759,7 @@ internal fun ChatTranscript(
     }
     var knownTimelineIds by remember(state.conversationId) { mutableStateOf<List<String>?>(null) }
     val appendedMessageIds = ChatTimelineMotionPolicy.appendedMessageIds(knownTimelineIds, currentTimelineIds)
-    SideEffect {
+    LaunchedEffect(currentTimelineIds) {
         if (knownTimelineIds != currentTimelineIds) knownTimelineIds = currentTimelineIds
     }
     // orderedRuns/orderedTasks materialize their full projection. Build the
@@ -1569,8 +1793,25 @@ internal fun ChatTranscript(
         }
     }
 
+    val transcriptHeaderCount =
+        (if (state.compactionSourceStatus != CompactionSourceStatus.Idle) 1 else 0) +
+        (if (state.rejectedQueuedUiAction?.takeIf { it.identity.conversationId == state.conversationId } != null) 1 else 0) +
+        (if (uiSurfaceFailure != null) 1 else 0)
+
     // Drag events cannot be conflated with a layout snapshot. Stop following
     // as soon as the pointer takes ownership, before its first scroll delta.
+    LaunchedEffect(scrollToMessageId) {
+        val targetId = scrollToMessageId ?: return@LaunchedEffect
+        val resolvedId = if (timelineMessages.any { it.id == targetId }) targetId
+        else expertReplies.entries.firstOrNull { (_, replies) -> replies.any { it.message?.id == targetId } }?.key
+        val msgIndex = resolvedId?.let { id -> timelineMessages.indexOfFirst { it.id == id } } ?: -1
+        if (msgIndex >= 0) {
+            followsLatest = false
+            val targetIndex = transcriptHeaderCount + msgIndex
+            if (currentReduceMotion) listState.scrollToItem(targetIndex) else listState.animateScrollToItem(targetIndex)
+        }
+        onScrollToMessageConsumed()
+    }
     LaunchedEffect(listState.interactionSource) {
         listState.interactionSource.interactions.collect { interaction ->
             if (interaction is androidx.compose.foundation.interaction.DragInteraction.Start) {
@@ -1624,7 +1865,8 @@ internal fun ChatTranscript(
         val index = timelineMessages.indexOfFirst { it.id == target }
         if (index < 0) return@LaunchedEffect
         followsLatest = false
-        if (reduceMotion) listState.scrollToItem(index) else listState.animateScrollToItem(index)
+        val targetIndex = transcriptHeaderCount + index
+        if (reduceMotion) listState.scrollToItem(targetIndex) else listState.animateScrollToItem(targetIndex)
         onCompactionSourceConsumed(state.compactionSourceRequest)
     }
 
@@ -1654,7 +1896,13 @@ internal fun ChatTranscript(
                 if (listState.canScrollForward && !listState.isScrollInProgress) {
                     // Input may cancel an individual scroll, not the persistent
                     // request consumer that must resume after the gesture.
-                    kotlinx.coroutines.coroutineScope { launch { scrollToLatestContent(animated = false) } }
+                    try {
+                        scrollToLatestContent(animated = false)
+                    } catch (cancelled: kotlinx.coroutines.CancellationException) {
+                        if (!kotlinx.coroutines.currentCoroutineContext()[kotlinx.coroutines.Job]?.isActive.let { it == true }) {
+                            throw cancelled
+                        }
+                    }
                 }
             } while (android.os.SystemClock.uptimeMillis() < deadline)
         }
@@ -1789,7 +2037,7 @@ internal fun ChatTranscript(
                     Column(Modifier.widthIn(max = 860.dp)) {
                     MessageBubble(
                         message = message,
-                        isConversationGenerating = state.processingState.blocksInput,
+                        isConversationGenerating = state.processingState.blocksInput || state.executionTeardownPending,
                         modifier = Modifier.widthIn(max = 860.dp),
                         isActiveResponse = isActiveResponse,
                         revealOnFirstComposition = isActiveResponse || message.id == state.revealResponseId,
@@ -1832,14 +2080,14 @@ internal fun ChatTranscript(
                         onSendTaskGuidance = onSendTaskGuidance,
                         onCompactionSourceRequested = onCompactionSourceRequested,
                         onLongPress = { onLongPress(message) },
-                        onResendEditedMessage = onResendEditedMessage,
-                        uiPartContent = { part -> CanonicalUiReference(part, uiSurfaces, onUiReadHistory, onUiSubmit, onUiAccepted, onUiRestore, onUiPreview) },
+                        onResendEditedMessage = onResendEditedMessage, onExpertMention = onExpertMention,
+                        uiPartContent = { part -> CanonicalUiReference(part, uiSurfaces, onUiReadHistory, effectiveOnUiSubmit, onUiAccepted, onUiRestore, onUiPreview) },
                     )
                     if (message.role == com.nola.domain.model.ChatRole.user) {
                         expertReplies[message.id].orEmpty().forEach { reply ->
                             ConversationExpertReplyBubble(reply, Modifier.padding(top = 6.dp), onResolveHostPermission,
                                 onResolveLocalPermission, onHostPermissionInstruction, onLocalPermissionInstruction,
-                                uiPartContent = { part -> CanonicalUiReference(part, uiSurfaces, onUiReadHistory, onUiSubmit, onUiAccepted, onUiRestore, onUiPreview) })
+                                uiPartContent = { part -> CanonicalUiReference(part, uiSurfaces, onUiReadHistory, effectiveOnUiSubmit, onUiAccepted, onUiRestore, onUiPreview) })
                         }
                         if (message.id in resumableExpertMessages) TextButton(onClick = { onResumeExpertMessage(message.id) },
                             enabled = resumingExpertMessage == null) { Text(stringResource(R.string.chat_resume_expert_message)) }
@@ -1896,10 +2144,20 @@ internal fun ChatTranscript(
         androidx.compose.animation.AnimatedVisibility(
             visible = !followsLatest && timelineMessages.isNotEmpty(),
             modifier = Modifier.align(Alignment.BottomCenter).padding(bottom = 12.dp),
-            enter = androidx.compose.animation.fadeIn(tween(if (reduceMotion) 0 else NolaMotion.fast)),
-            exit = androidx.compose.animation.fadeOut(tween(if (reduceMotion) 0 else NolaMotion.fast)),
+            enter = fadeIn(com.nola.ui.components.nolaTween(NolaMotion.base, reduceMotion)) +
+                androidx.compose.animation.slideInVertically(
+                    animationSpec = com.nola.ui.components.nolaTween(NolaMotion.base, reduceMotion),
+                    initialOffsetY = { it / 3 },
+                ),
+            exit = fadeOut(com.nola.ui.components.nolaTween(NolaMotion.fast, reduceMotion)) +
+                androidx.compose.animation.slideOutVertically(
+                    animationSpec = com.nola.ui.components.nolaTween(NolaMotion.fast, reduceMotion),
+                    targetOffsetY = { it / 3 },
+                ),
         ) {
+            val fabHaptics = rememberNolaHaptics()
             IconButton(onClick = {
+                fabHaptics.selection()
                 reviewingPermission = false
                 followsLatest = true
                 userScrollSession = false
@@ -1993,7 +2251,7 @@ internal fun ChatErrorRecoveryCard(
                     Icon(
                         Icons.Filled.Close,
                         contentDescription = stringResource(R.string.chat_error_dismiss),
-                        tint = MaterialTheme.colorScheme.onErrorContainer,
+                        tint = MaterialTheme.colorScheme.onSurfaceVariant,
                         modifier = Modifier.size(15.dp)
                     )
                 }
@@ -2101,7 +2359,7 @@ private fun composeAttachmentPrompt(text: String, attachments: List<AndroidChatA
         appendLine()
         appendLine("[User Attachments]")
         append(attachmentBlock)
-    }.trim()
+    }
 }
 
 private const val MESSAGE_ATTACHMENTS_META_KEY = "nola.attachments"
@@ -2225,6 +2483,19 @@ private fun escapeAttachmentAttribute(value: String): String =
 
 
 @Composable
+internal fun expertMentionStyle(mentions: List<InlineExpertMention>): VisualTransformation {
+    val color = MaterialTheme.colorScheme.primary
+    return remember(mentions, color) { VisualTransformation { input ->
+        TransformedText(buildAnnotatedString {
+            append(input)
+            mentions.forEach { ref ->
+                if (input.text.startsWith(ref.label, ref.start)) addStyle(SpanStyle(color = color, fontWeight = FontWeight.SemiBold), ref.start, ref.end)
+            }
+        }, OffsetMapping.Identity)
+    } }
+}
+
+@Composable
 internal fun ChatComposerBar(
     modifier: Modifier = Modifier,
     inputText: String,
@@ -2240,14 +2511,19 @@ internal fun ChatComposerBar(
     onPasteAttachments: (ClipData?) -> Boolean,
     onRemoveAttachment: (String) -> Unit,
     onSendOrStop: () -> Unit,
+    showGoalProgress: Boolean = false,
     onFocusChange: (Boolean) -> Unit = {},
-    onMentionKey: (Key) -> Boolean = { false }
+    onMentionKey: (Key) -> Boolean = { false },
+    controlledEditor: TextFieldValue? = null,
+    inlineMentions: List<InlineExpertMention> = emptyList(),
+    onEditorChange: ((TextFieldValue) -> Unit)? = null,
+    undoMention: () -> Boolean = { false }
 ) {
     val haptics = rememberNolaHaptics()
     var inputFocused by remember { mutableStateOf(false) }
     var editorValue by remember { mutableStateOf(androidx.compose.ui.text.input.TextFieldValue(inputText)) }
     // Keep IME composition local; programmatic mention selection updates only the text/caret.
-    val currentEditor = if (editorValue.text == inputText) editorValue else
+    val currentEditor = controlledEditor ?: if (editorValue.text == inputText) editorValue else
         androidx.compose.ui.text.input.TextFieldValue(inputText, androidx.compose.ui.text.TextRange(inputText.length))
     val attachmentContentReceiver = remember(onPasteAttachments) {
         object : ReceiveContentListener {
@@ -2294,20 +2570,39 @@ internal fun ChatComposerBar(
             )
         }
 
+        val composerReduceMotion = rememberReduceMotionEnabled()
+        val composerBorder by animateColorAsState(
+            targetValue = if (inputFocused) NolaColors.composerBorderFocused else NolaColors.composerBorderUnfocused,
+            animationSpec = tween(
+                durationMillis = if (composerReduceMotion) 0 else NolaMotion.controlState,
+                easing = NolaMotion.disclosureEasing,
+            ),
+            label = "chat-composer-border",
+        )
         Column(Modifier.fillMaxWidth().nolaSurface(radius = 25.dp, raised = false,
-            border = if (inputFocused) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.outlineVariant).padding(4.dp)) {
+            fill = MaterialTheme.colorScheme.surface,
+            border = composerBorder).padding(4.dp)) {
             BasicTextField(
                 value = currentEditor,
-                onValueChange = { value -> if (draftWritable) { editorValue = value; onInputChange(value.text) } },
+                onValueChange = { value -> if (draftWritable) {
+                    if (onEditorChange != null) onEditorChange(value) else { editorValue = value; onInputChange(value.text) }
+                } },
+                visualTransformation = expertMentionStyle(inlineMentions),
                 modifier = Modifier
                     .testTag("chat.composer.input")
                     .onFocusChanged { inputFocused = it.isFocused; onFocusChange(it.isFocused) }
                     .fillMaxWidth()
-                    .heightIn(min = 44.dp, max = 132.dp)
-                    .padding(horizontal = 12.dp, vertical = 10.dp)
+                    .heightIn(min = 44.dp, max = 192.dp)
                     .contentReceiver(attachmentContentReceiver)
                     .onPreviewKeyEvent { event ->
-                        if (event.type == KeyEventType.KeyDown && !event.isCtrlPressed && !event.isMetaPressed && !event.isShiftPressed && !event.isAltPressed && currentEditor.composition == null && onMentionKey(event.key)) true
+                        if (event.type == KeyEventType.KeyDown && event.key == Key.Z && (event.isCtrlPressed || event.isMetaPressed) && !event.isShiftPressed && currentEditor.composition == null && undoMention()) true
+                        else if (event.type == KeyEventType.KeyDown && event.key in setOf(Key.DirectionLeft, Key.DirectionRight) &&
+                            !event.isCtrlPressed && !event.isAltPressed && !event.isMetaPressed && !event.isShiftPressed &&
+                            currentEditor.selection.collapsed && currentEditor.composition == null && onEditorChange != null &&
+                            inlineMentions.any { if (event.key == Key.DirectionLeft) it.end == currentEditor.selection.start else it.start == currentEditor.selection.start }) {
+                            val ref = inlineMentions.first { if (event.key == Key.DirectionLeft) it.end == currentEditor.selection.start else it.start == currentEditor.selection.start }
+                            onEditorChange(currentEditor.copy(selection = TextRange(if (event.key == Key.DirectionLeft) ref.start else ref.end))); true
+                        } else if (event.type == KeyEventType.KeyDown && !event.isCtrlPressed && !event.isMetaPressed && !event.isShiftPressed && !event.isAltPressed && currentEditor.composition == null && onMentionKey(event.key)) true
                         else event.type == KeyEventType.KeyDown &&
                             event.key == Key.V &&
                             (event.isCtrlPressed || event.isMetaPressed) &&
@@ -2324,7 +2619,7 @@ internal fun ChatComposerBar(
                 maxLines = 6,
                 decorationBox = { innerTextField ->
                     Box(
-                        modifier = Modifier.fillMaxWidth(),
+                        modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 10.dp),
                         contentAlignment = Alignment.CenterStart
                     ) {
                         if (inputText.isEmpty()) {
@@ -2350,7 +2645,7 @@ internal fun ChatComposerBar(
                 ComposerCircleButton(
                     enabled = enabled && !isImportingAttachments,
                     background = Color.Transparent,
-                    contentColor = MaterialTheme.colorScheme.primary,
+                    contentColor = if (enabled && !isImportingAttachments) MaterialTheme.colorScheme.onSurfaceVariant else MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.45f),
                     onClick = onAttach
                 ) {
                     if (isImportingAttachments) {
@@ -2363,17 +2658,9 @@ internal fun ChatComposerBar(
                 Box(Modifier.weight(1f)) { modelControl() }
 
                 val canSend = inputText.trim().isNotEmpty() || attachments.isNotEmpty()
-                val sendEnabled = isGenerating || (draftWritable && (inputText.startsWith("/") || (enabled && !isImportingAttachments && canSend)))
-                val sendBackground = when {
-                    isGenerating -> MaterialTheme.colorScheme.primary
-                    sendEnabled -> MaterialTheme.colorScheme.primary
-                    else -> MaterialTheme.colorScheme.onSurface.copy(alpha = 0.09f)
-                }
-                val sendContent = if (sendEnabled) {
-                    MaterialTheme.colorScheme.onPrimary
-                } else {
-                    MaterialTheme.colorScheme.onSurfaceVariant
-                }
+                val sendEnabled = showGoalProgress || isGenerating || (draftWritable && (inputText.startsWith("/") || (enabled && !isImportingAttachments && canSend)))
+                val sendBackground = if (sendEnabled) MaterialTheme.colorScheme.primary else NolaColors.composerDisabledFill
+                val sendContent = if (sendEnabled) MaterialTheme.colorScheme.onPrimary else MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.65f)
                 ComposerCircleButton(
                     enabled = sendEnabled,
                     background = sendBackground,
@@ -2383,12 +2670,26 @@ internal fun ChatComposerBar(
                         onSendOrStop()
                     }
                 ) {
+                    val iconState = when {
+                        showGoalProgress -> 0
+                        isGenerating -> 1
+                        else -> 2
+                    }
                     Box(modifier = Modifier.testTag("chat.composer.send")) {
-                        Icon(
-                            painterResource(if (isGenerating) R.drawable.nola_stop else R.drawable.nola_arrow),
-                            contentDescription = if (isGenerating) stringResource(R.string.chat_stop) else stringResource(R.string.chat_send),
-                            modifier = Modifier.size(19.dp)
-                        )
+                        AnimatedContent(
+                            targetState = iconState,
+                            transitionSpec = {
+                                fadeIn(com.nola.ui.components.nolaTween(NolaMotion.fast, composerReduceMotion)) togetherWith
+                                    fadeOut(com.nola.ui.components.nolaTween(NolaMotion.fast, composerReduceMotion))
+                            },
+                            label = "chat-composer-action-icon",
+                        ) { target ->
+                            Icon(
+                                painterResource(when (target) { 0 -> R.drawable.nola_goal; 1 -> R.drawable.nola_stop; else -> R.drawable.nola_arrow }),
+                                contentDescription = stringResource(when (target) { 0 -> R.string.inspector_progress; 1 -> R.string.chat_stop; else -> R.string.chat_send }),
+                                modifier = Modifier.size(19.dp)
+                            )
+                        }
                     }
                 }
             }
@@ -2481,14 +2782,21 @@ private fun ComposerCircleButton(
         modifier = Modifier
             .size(48.dp)
             .clip(CircleShape)
-            .background(animatedBackground)
             .clickable(enabled = enabled, onClick = onClick),
         contentAlignment = Alignment.Center
     ) {
-        androidx.compose.runtime.CompositionLocalProvider(
-            androidx.compose.material3.LocalContentColor provides animatedContentColor
+        Box(
+            modifier = Modifier
+                .size(38.dp)
+                .clip(CircleShape)
+                .background(animatedBackground),
+            contentAlignment = Alignment.Center
         ) {
-            content()
+            androidx.compose.runtime.CompositionLocalProvider(
+                androidx.compose.material3.LocalContentColor provides animatedContentColor
+            ) {
+                content()
+            }
         }
     }
 }
@@ -2664,7 +2972,7 @@ private fun HostPermissionCard(request: com.nola.domain.model.HostAgentPermissio
             stringResource(R.string.permission_guidance_recorded) + "\n" + request.permissionInstructions.joinToString("\n") { it.instruction }
         ).filter { it.isNotBlank() }.joinToString("\n\n"),
         executionLocation = if (request.deviceBridge) stringResource(R.string.permission_location_device)
-            else stringResource(R.string.permission_location_host, request.hostId?.take(18) ?: stringResource(R.string.permission_connected_host)),
+            else stringResource(R.string.permission_location_host, stringResource(R.string.permission_connected_host)),
         dataBoundary = stringResource(if (request.deviceBridge) R.string.permission_data_device else R.string.permission_data_host),
         validity = stringResource(if (request.deviceBridge) R.string.permission_valid_once else R.string.permission_valid_choice),
         allowLabel = permissionAllowLabel(request.toolName),
@@ -2679,8 +2987,16 @@ private fun HostPermissionCard(request: com.nola.domain.model.HostAgentPermissio
 @Composable
 private fun LocalPermissionCard(request: com.nola.core.AndroidAgentPermissionRequest,
     onDecision: (String, Boolean, Boolean) -> Unit, onInstruction: (String, String) -> Unit) {
+    val packageUrl = remember(request.toolName, request.scope) {
+        if (request.toolName == "device_github_skill_install") {
+            request.scope?.let { scope -> runCatching { JSONObject(scope).optString("url") }.getOrNull() }
+                ?.takeIf { it.startsWith("https://github.com/") }
+        } else null
+    }
+    val message = if (packageUrl != null) stringResource(R.string.chat_permission_install_github_skill, packageUrl)
+        else request.rationale.ifBlank { request.scope.orEmpty() }
     PermissionDialog(toolName = request.toolName,
-        message = listOf(request.rationale.ifBlank { request.scope.orEmpty() }, if (request.permissionInstructions.isEmpty()) "" else
+        message = listOf(message, if (request.permissionInstructions.isEmpty()) "" else
             stringResource(R.string.permission_guidance_recorded) + "\n" + request.permissionInstructions.joinToString("\n") { it.instruction }
         ).filter { it.isNotBlank() }.joinToString("\n\n"),
         executionLocation = stringResource(if(request.originKind=="mcp") R.string.mcp_permission_http_server else R.string.permission_location_device),
@@ -2717,13 +3033,15 @@ fun MessageBubble(
     taskRecovery: (suspend (AgentCoreTaskHandle, String, com.nola.data.local.UnknownEffectRecoveryDecision?, Boolean) -> Pair<UnknownEffectRecoveryPresentation?, Boolean>)? = null,
     onSendTaskGuidance: suspend (String, String) -> Boolean = { _, _ -> false },
     onCompactionSourceRequested: (CompactionSourceNavigator.Request) -> Unit = {},
-    onLongPress: () -> Unit = {},
+    onLongPress: (() -> Unit)? = null,
     contentPadding: PaddingValues = PaddingValues(horizontal = nolaPageGutter(), vertical = 6.dp),
     isConversationGenerating: Boolean = false,
     assistantContainerColor: Color? = null,
     onResendEditedMessage: ((ConversationMessage) -> Unit)? = null,
+    onExpertMention: ((InlineExpertMention) -> Unit)? = null,
     uiPartContent: (@Composable (com.nola.data.local.UiReferencePresentation) -> Unit)? = null,
     readOnlyHistory: Boolean = false,
+    historyAuthor: String? = null,
 ) {
     var activityChoices by remember(message.conversationId, message.id) { mutableStateOf(CanonicalActivityDisclosureChoices()) }
     val isUser = message.role == ChatRole.user
@@ -2775,7 +3093,8 @@ fun MessageBubble(
     val messageLongPress = remember(hapticFeedback) {
         {
             hapticFeedback.performHapticFeedback(HapticFeedbackType.LongPress)
-            latestLongPress()
+            latestLongPress?.invoke()
+            Unit
         }
     }
     val context = LocalContext.current
@@ -2786,13 +3105,23 @@ fun MessageBubble(
         modifier = modifier
             .weight(1f)
             .testTag(CHAT_MESSAGE_TEST_TAG_PREFIX + message.id)
-            .combinedClickable(
-                onClick = {},
-                onLongClick = messageLongPress
-            ),
+            .then(if (readOnlyHistory || onLongPress == null) Modifier else Modifier
+                .pointerInput(message.id) {
+                    awaitEachGesture {
+                        val down = awaitFirstDown()
+                        val held = awaitLongPressOrCancellation(down.id) ?: return@awaitEachGesture
+                        held.consume()
+                        messageLongPress()
+                        waitForUpOrCancellation()?.consume()
+                    }
+                }
+                .semantics { onLongClick { messageLongPress(); true } }),
         horizontalAlignment = alignment
     ) {
-        if (!isUser && assistantContainerColor == null) {
+        if (readOnlyHistory && historyAuthor != null) {
+            Text(historyAuthor, Modifier.testTag("chat.history.author.${message.id}").padding(bottom = 4.dp),
+                style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        } else if (!isUser && assistantContainerColor == null) {
             Row(Modifier.padding(bottom = 10.dp), verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                 val markSize = with(LocalDensity.current) { 12.sp.toDp() } + 6.dp
@@ -2804,7 +3133,11 @@ fun MessageBubble(
             }
         }
         if (isUser) {
-            HistoricalPartActions(message.historicalParts)
+            HistoricalPartActions(message.historicalParts.filterNot { part ->
+                val history = part.projection
+                history.canonicalKind == "text" && history.expertMentions != null &&
+                    history.canonicalText?.let { text -> text.toByteArray(Charsets.UTF_8).size.toLong() == history.canonicalTextUTF8Bytes } == true
+            })
             if (!readOnlyHistory) CompactionSourceActions(conversationId, message.canonicalParts, onCompactionSourceRequested)
             ModelAttemptDisclosures(message.canonicalParts)
         }
@@ -2819,7 +3152,16 @@ fun MessageBubble(
                     shape = userBubbleShape
                 ) {
                     Text(
-                        text = visibleText,
+                        text = buildAnnotatedString {
+                            append(visibleText)
+                            val refs = remember(message) { runCatching { historyMentions(message.text, message.expertMentionHistory()) }.getOrDefault(emptyList()) }
+                            for (ref in refs) {
+                                if (!visibleText.startsWith(ref.label, ref.start)) continue
+                                addStyle(SpanStyle(color = MaterialTheme.colorScheme.primary, fontWeight = FontWeight.SemiBold), ref.start, ref.end)
+                                if (onExpertMention != null) addLink(androidx.compose.ui.text.LinkAnnotation.Clickable(
+                                    ref.agentId, linkInteractionListener = { onExpertMention(ref) }), ref.start, ref.end)
+                            }
+                        },
                         modifier = Modifier.padding(horizontal = 14.dp, vertical = 11.dp),
                         style = MaterialTheme.typography.bodyLarge
                     )
@@ -2920,8 +3262,6 @@ fun MessageBubble(
                     val blocks = canonicalMessageBlocks(message.canonicalParts.filterNot { it is ConversationProjectionV1.Part.Source || it is ConversationProjectionV1.Part.Citation })
                     val latestActivityKey = blocks.lastOrNull { it is CanonicalMessageBlock.Activity }?.key
                     blocks.forEach { block ->
-                        if (block is CanonicalMessageBlock.Part && block.part is ConversationProjectionV1.Part.Text &&
-                            block.part.disclosedMarkdown.isEmpty()) return@forEach
                         if (block is CanonicalMessageBlock.Activity && block.parts.none { part ->
                             part is ConversationProjectionV1.Part.Tool || (thinkingEnabled && part is ConversationProjectionV1.Part.Reasoning &&
                                 (!part.summary.isNullOrBlank() || part.partId == visibleReasoningPlaceholderId(block.parts, isStreaming)))
@@ -2993,7 +3333,9 @@ fun MessageBubble(
             verticalArrangement = Arrangement.spacedBy(2.dp)
         ) {
             MessageCopyAction(copyText, compact = isUser)
-            if (isUser) MessageEditAction(message, generating = isConversationGenerating, onResend = onResendEditedMessage)
+            if (isUser && !readOnlyHistory && onResendEditedMessage != null) {
+                MessageEditAction(message, generating = isConversationGenerating, onResend = onResendEditedMessage)
+            }
         }
     }
     }
@@ -3011,19 +3353,19 @@ private fun CompactionSourceActions(
             return@forEach
         }
         Card(
+            onClick = {
+                onRequested(
+                    CompactionSourceNavigator.Request(
+                        conversationId = conversationId,
+                        compactionPartId = compaction.partId,
+                        sourceItemIds = compaction.sourceItemIds,
+                        sourceFingerprint = compaction.sourceFingerprint,
+                    )
+                )
+            },
             modifier = Modifier
                 .fillMaxWidth()
-                .padding(bottom = 6.dp)
-                .clickable {
-                    onRequested(
-                        CompactionSourceNavigator.Request(
-                            conversationId = conversationId,
-                            compactionPartId = compaction.partId,
-                            sourceItemIds = compaction.sourceItemIds,
-                            sourceFingerprint = compaction.sourceFingerprint,
-                        )
-                    )
-                },
+                .padding(bottom = 6.dp),
             colors = CardDefaults.cardColors(
                 containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.32f),
             ),
@@ -3190,12 +3532,16 @@ internal fun AgentCoreTaskCard(
         modifier = Modifier
             .fillMaxWidth()
             .clip(RoundedCornerShape(NolaRadius.md))
-            .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.34f))
-            .testTag("chat.task.card.${task.id}")
-            .combinedClickable(onClick = { expanded = !expanded }, onLongClick = {}),
+            .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.34f)),
     ) {
+        val toggleLabel = stringResource(if (expanded) R.string.common_collapse else R.string.common_expand)
         Row(
-            modifier = Modifier.padding(horizontal = 11.dp, vertical = 10.dp),
+            modifier = Modifier
+                .fillMaxWidth()
+                .heightIn(min = 48.dp)
+                .testTag("chat.task.card.${task.id}")
+                .clickable(role = Role.Button, onClickLabel = toggleLabel) { expanded = !expanded }
+                .padding(horizontal = 11.dp, vertical = 10.dp),
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.spacedBy(10.dp),
         ) {
@@ -3319,59 +3665,264 @@ internal fun openAnswerSource(context: android.content.Context, source: AnswerSo
     }
 }
 
+private enum class MessageActionSheetStep { Actions, TeachFeedback }
+
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 private fun ChatMessageActionSheet(
     message: ConversationMessage,
     onDismiss: () -> Unit,
     onCopy: () -> Unit,
-    onTeach: (() -> Unit)?
+    onSaveLearning: ((String, Boolean) -> Unit)?
 ) {
-    ModalBottomSheet(onDismissRequest = onDismiss,
-        sheetState = androidx.compose.material3.rememberModalBottomSheetState(skipPartiallyExpanded = true)) {
-        Column(
-            modifier = Modifier
-                .fillMaxWidth()
-                .navigationBarsPadding()
-                .padding(horizontal = 18.dp)
-                .padding(bottom = 24.dp),
-            verticalArrangement = Arrangement.spacedBy(10.dp)
-        ) {
-            Text(
-                stringResource(R.string.chat_message_actions_title),
-                style = MaterialTheme.typography.titleMedium,
-                fontWeight = FontWeight.SemiBold,
-                modifier = Modifier.padding(horizontal = 4.dp)
-            )
-            Text(stringResource(R.string.canonical_reader_snapshot),
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant)
-            SelectionContainer {
-                Text(
-                    message.text,
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .heightIn(max = 320.dp)
-                        .verticalScroll(rememberScrollState())
-                        .clip(RoundedCornerShape(NolaRadius.md))
-                        .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.46f))
-                        .padding(horizontal = 13.dp, vertical = 11.dp),
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                )
-            }
-            ChatMessageActionRow(
-                icon = Icons.Filled.ContentCopy,
-                title = stringResource(R.string.chat_message_action_copy),
-                onClick = onCopy
-            )
-            if (onTeach != null) {
-                ChatMessageActionRow(
-                    icon = Icons.Filled.AutoAwesome,
-                    title = stringResource(R.string.chat_message_action_teach),
-                    tint = MaterialTheme.colorScheme.primary,
-                    onClick = onTeach
-                )
+    val reduceMotion = rememberReduceMotionEnabled()
+    var step by remember(message.id) { mutableStateOf(MessageActionSheetStep.Actions) }
+    var focus by remember(message.id) { mutableStateOf(ChatLearningFocus.Concise) }
+    var note by rememberSaveable(message.id) { mutableStateOf("") }
+    var appliesToFuture by rememberSaveable(message.id) { mutableStateOf(true) }
+    var discard by remember { mutableStateOf(false) }
+    var discardToActions by remember { mutableStateOf(false) }
+    val dirty = step == MessageActionSheetStep.TeachFeedback &&
+        (note.isNotEmpty() || !appliesToFuture || focus != ChatLearningFocus.Concise)
+    val requestDismiss = {
+        if (dirty) {
+            discardToActions = false
+            discard = true
+        } else {
+            onDismiss()
+        }
+    }
+    val requestBackToActions = {
+        if (dirty) {
+            discardToActions = true
+            discard = true
+        } else {
+            step = MessageActionSheetStep.Actions
+        }
+    }
+    if (discard) {
+        com.nola.ui.components.DiscardChangesDialog(
+            onDiscard = {
+                discard = false
+                if (discardToActions) {
+                    note = ""
+                    appliesToFuture = true
+                    focus = ChatLearningFocus.Concise
+                    step = MessageActionSheetStep.Actions
+                } else {
+                    onDismiss()
+                }
+            },
+            onKeepEditing = { discard = false }
+        )
+    }
+    val defaultStatement = stringResource(focus.statementRes)
+
+    ModalBottomSheet(
+        modifier = Modifier.dismissImeOnBlankTap(),
+        onDismissRequest = requestDismiss,
+        sheetState = com.nola.ui.components.rememberGuardedEditorSheetState(false, dirty) {
+            discardToActions = false
+            discard = true
+        }
+    ) {
+        AnimatedContent(
+            targetState = step,
+            transitionSpec = {
+                fadeIn(tween(if (reduceMotion) 0 else NolaMotion.controlState)) togetherWith
+                    fadeOut(tween(if (reduceMotion) 0 else NolaMotion.fast))
+            },
+            label = "chat-message-action-sheet-step"
+        ) { currentStep ->
+            when (currentStep) {
+                MessageActionSheetStep.Actions -> {
+                    Column(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .verticalScroll(rememberScrollState())
+                            .navigationBarsPadding()
+                            .padding(horizontal = 18.dp)
+                            .padding(bottom = 24.dp),
+                        verticalArrangement = Arrangement.spacedBy(10.dp)
+                    ) {
+                        Text(
+                            stringResource(R.string.chat_message_actions_title),
+                            style = MaterialTheme.typography.titleMedium,
+                            fontWeight = FontWeight.SemiBold,
+                            modifier = Modifier.padding(horizontal = 4.dp)
+                        )
+                        Text(stringResource(R.string.canonical_reader_snapshot),
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        SelectionContainer {
+                            Text(
+                                message.text,
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .heightIn(max = 260.dp)
+                                    .verticalScroll(rememberScrollState())
+                                    .clip(RoundedCornerShape(NolaRadius.md))
+                                    .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.46f))
+                                    .padding(horizontal = 13.dp, vertical = 11.dp),
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
+                        }
+                        ChatMessageActionRow(
+                            icon = Icons.Filled.ContentCopy,
+                            title = stringResource(R.string.chat_message_action_copy),
+                            onClick = onCopy
+                        )
+                        if (onSaveLearning != null) {
+                            ChatMessageActionRow(
+                                icon = Icons.Filled.AutoAwesome,
+                                title = stringResource(R.string.chat_message_action_teach),
+                                tint = MaterialTheme.colorScheme.primary,
+                                onClick = { step = MessageActionSheetStep.TeachFeedback }
+                            )
+                        }
+                    }
+                }
+                MessageActionSheetStep.TeachFeedback -> {
+                    Column(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .verticalScroll(rememberScrollState())
+                            .imePadding()
+                            .navigationBarsPadding()
+                            .padding(horizontal = 20.dp)
+                            .padding(bottom = 28.dp),
+                        verticalArrangement = Arrangement.spacedBy(18.dp)
+                    ) {
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(4.dp)
+                        ) {
+                            NolaIconButton(
+                                label = stringResource(R.string.common_back),
+                                onClick = requestBackToActions
+                            ) {
+                                Icon(painterResource(R.drawable.nola_back), contentDescription = stringResource(R.string.common_back))
+                            }
+                            Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                                Text(
+                                    stringResource(R.string.chat_learning_title),
+                                    style = MaterialTheme.typography.titleLarge,
+                                    fontWeight = FontWeight.SemiBold
+                                )
+                                Text(
+                                    stringResource(R.string.chat_learning_subtitle),
+                                    style = MaterialTheme.typography.bodyMedium,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                            }
+                        }
+
+                        Column(verticalArrangement = Arrangement.spacedBy(7.dp)) {
+                            Text(
+                                stringResource(R.string.chat_learning_preview),
+                                style = MaterialTheme.typography.labelSmall,
+                                fontWeight = FontWeight.SemiBold,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                            Text(
+                                message.text,
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .clip(RoundedCornerShape(NolaRadius.md))
+                                    .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.52f))
+                                    .padding(12.dp),
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                maxLines = 3,
+                                overflow = TextOverflow.Ellipsis
+                            )
+                        }
+
+                        Row(
+                            modifier = Modifier.horizontalScroll(rememberScrollState()),
+                            horizontalArrangement = Arrangement.spacedBy(8.dp)
+                        ) {
+                            ChatLearningFocus.entries.forEach { item ->
+                                FilterChip(
+                                    selected = focus == item,
+                                    onClick = { focus = item },
+                                    label = { Text(stringResource(item.titleRes)) }
+                                )
+                            }
+                        }
+
+                        Column(verticalArrangement = Arrangement.spacedBy(7.dp)) {
+                            Text(
+                                stringResource(R.string.chat_learning_note),
+                                style = MaterialTheme.typography.labelLarge,
+                                fontWeight = FontWeight.SemiBold
+                            )
+                            Box(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .heightIn(min = 92.dp)
+                                    .clip(RoundedCornerShape(NolaRadius.md))
+                                    .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.48f))
+                                    .padding(12.dp)
+                            ) {
+                                BasicTextField(
+                                    value = note,
+                                    onValueChange = { note = it },
+                                    modifier = Modifier.fillMaxWidth(),
+                                    textStyle = MaterialTheme.typography.bodyMedium.copy(color = MaterialTheme.colorScheme.onSurface),
+                                    cursorBrush = SolidColor(MaterialTheme.colorScheme.primary)
+                                )
+                                if (note.isEmpty()) {
+                                    Text(
+                                        stringResource(R.string.chat_learning_note_placeholder),
+                                        style = MaterialTheme.typography.bodyMedium,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.72f)
+                                    )
+                                }
+                            }
+                        }
+
+                        Row(
+                            modifier = Modifier.fillMaxWidth().clip(RoundedCornerShape(8.dp)).toggleable(value = appliesToFuture, role = Role.Switch, onValueChange = { appliesToFuture = it }),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(12.dp)
+                        ) {
+                            Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                                Text(
+                                    stringResource(R.string.chat_learning_future),
+                                    style = MaterialTheme.typography.bodyMedium,
+                                    fontWeight = FontWeight.SemiBold
+                                )
+                                Text(
+                                    stringResource(R.string.chat_learning_future_detail),
+                                    style = MaterialTheme.typography.labelSmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                            }
+                            NolaSwitch(checked = appliesToFuture, onCheckedChange = null)
+                        }
+
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.End,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            TextButton(onClick = requestBackToActions) {
+                                Text(stringResource(R.string.chat_learning_cancel))
+                            }
+                            TextButton(
+                                onClick = {
+                                    val detail = note.trim()
+                                    onSaveLearning?.invoke(if (detail.isEmpty()) defaultStatement else "$defaultStatement $detail", appliesToFuture)
+                                }
+                            ) {
+                                Text(stringResource(R.string.chat_learning_save), fontWeight = FontWeight.SemiBold)
+                            }
+                        }
+                    }
+                }
             }
         }
     }
@@ -3423,160 +3974,15 @@ private enum class ChatLearningFocus(
     Correction(R.string.chat_learning_focus_correction, R.string.chat_learning_statement_correction)
 }
 
-@OptIn(ExperimentalMaterial3Api::class)
-@Composable
-private fun ChatLearningFeedbackSheet(
-    message: ConversationMessage,
-    onDismiss: () -> Unit,
-    onSave: (String, Boolean) -> Unit
-) {
-    var focus by remember { mutableStateOf(ChatLearningFocus.Concise) }
-    var note by rememberSaveable(message.id) { mutableStateOf("") }
-    var appliesToFuture by rememberSaveable(message.id) { mutableStateOf(true) }
-    var discard by remember { mutableStateOf(false) }
-    val dirty = note.isNotEmpty() || !appliesToFuture || focus != ChatLearningFocus.Concise
-    val requestDismiss = { if (dirty) discard = true else onDismiss() }
-    if (discard) com.nola.ui.components.DiscardChangesDialog(onDiscard = onDismiss, onKeepEditing = { discard = false })
-    val defaultStatement = stringResource(focus.statementRes)
-
-    ModalBottomSheet(onDismissRequest = requestDismiss, sheetState = com.nola.ui.components.rememberGuardedEditorSheetState(false, dirty) { discard = true }) {
-        Column(
-            modifier = Modifier
-                .fillMaxWidth()
-                .verticalScroll(rememberScrollState())
-                .imePadding()
-                .navigationBarsPadding()
-                .padding(horizontal = 20.dp)
-                .padding(bottom = 28.dp),
-            verticalArrangement = Arrangement.spacedBy(18.dp)
-        ) {
-            Column(verticalArrangement = Arrangement.spacedBy(5.dp)) {
-                Text(
-                    stringResource(R.string.chat_learning_title),
-                    style = MaterialTheme.typography.titleLarge,
-                    fontWeight = FontWeight.SemiBold
-                )
-                Text(
-                    stringResource(R.string.chat_learning_subtitle),
-                    style = MaterialTheme.typography.bodyMedium,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                )
-            }
-
-            Column(verticalArrangement = Arrangement.spacedBy(7.dp)) {
-                Text(
-                    stringResource(R.string.chat_learning_preview),
-                    style = MaterialTheme.typography.labelSmall,
-                    fontWeight = FontWeight.SemiBold,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                )
-                Text(
-                    message.text,
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .clip(RoundedCornerShape(NolaRadius.md))
-                        .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.52f))
-                        .padding(12.dp),
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    maxLines = 3,
-                    overflow = TextOverflow.Ellipsis
-                )
-            }
-
-            Row(
-                modifier = Modifier.horizontalScroll(rememberScrollState()),
-                horizontalArrangement = Arrangement.spacedBy(8.dp)
-            ) {
-                ChatLearningFocus.entries.forEach { item ->
-                    FilterChip(
-                        selected = focus == item,
-                        onClick = { focus = item },
-                        label = { Text(stringResource(item.titleRes)) }
-                    )
-                }
-            }
-
-            Column(verticalArrangement = Arrangement.spacedBy(7.dp)) {
-                Text(
-                    stringResource(R.string.chat_learning_note),
-                    style = MaterialTheme.typography.labelLarge,
-                    fontWeight = FontWeight.SemiBold
-                )
-                Box(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .heightIn(min = 92.dp)
-                        .clip(RoundedCornerShape(NolaRadius.md))
-                        .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.48f))
-                        .padding(12.dp)
-                ) {
-                    BasicTextField(
-                        value = note,
-                        onValueChange = { note = it },
-                        modifier = Modifier.fillMaxWidth(),
-                        textStyle = MaterialTheme.typography.bodyMedium.copy(color = MaterialTheme.colorScheme.onSurface),
-                        cursorBrush = SolidColor(MaterialTheme.colorScheme.primary)
-                    )
-                    if (note.isEmpty()) {
-                        Text(
-                            stringResource(R.string.chat_learning_note_placeholder),
-                            style = MaterialTheme.typography.bodyMedium,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.72f)
-                        )
-                    }
-                }
-            }
-
-            Row(
-                modifier = Modifier.fillMaxWidth().toggleable(value = appliesToFuture, role = Role.Switch, onValueChange = { appliesToFuture = it }),
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(12.dp)
-            ) {
-                Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
-                    Text(
-                        stringResource(R.string.chat_learning_future),
-                        style = MaterialTheme.typography.bodyMedium,
-                        fontWeight = FontWeight.SemiBold
-                    )
-                    Text(
-                        stringResource(R.string.chat_learning_future_detail),
-                        style = MaterialTheme.typography.labelSmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                    )
-                }
-                NolaSwitch(checked = appliesToFuture, onCheckedChange = null)
-            }
-
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.End,
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                TextButton(onClick = requestDismiss) {
-                    Text(stringResource(R.string.chat_learning_cancel))
-                }
-                TextButton(
-                    onClick = {
-                        val detail = note.trim()
-                        onSave(if (detail.isEmpty()) defaultStatement else "$defaultStatement $detail", appliesToFuture)
-                    }
-                ) {
-                    Text(stringResource(R.string.chat_learning_save), fontWeight = FontWeight.SemiBold)
-                }
-            }
-        }
-    }
-}
-
 private fun recordLearningFeedback(
+    intelligence: PersonalIntelligenceCore,
     message: ConversationMessage,
     statement: String,
     appliesToFuture: Boolean
 ) {
     val eventID = UUID.randomUUID().toString()
     val semanticKey = "user-preference-${statement.lowercase().hashCode()}"
-    PersonalIntelligenceCore.ingest(
+    intelligence.ingest(
         IntelligenceIngestRequest(
             events = listOf(
                 IntelligenceEvent(
@@ -3638,7 +4044,11 @@ private fun AnswerContextFooter(message: ConversationMessage) {
     )
 
     Column(modifier = Modifier.fillMaxWidth().padding(horizontal = 4.dp, vertical = 4.dp)) {
-        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+        @OptIn(androidx.compose.foundation.layout.ExperimentalLayoutApi::class)
+        androidx.compose.foundation.layout.FlowRow(
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+            verticalArrangement = Arrangement.spacedBy(6.dp)
+        ) {
             if (sourceLabels.isNotEmpty()) {
                 Row(
                     modifier = Modifier
@@ -3689,18 +4099,8 @@ private fun AnswerContextFooter(message: ConversationMessage) {
         }
         AnimatedVisibility(
             visible = expanded,
-            enter = androidx.compose.animation.fadeIn(
-                tween(if (reduceMotion) 0 else NolaMotion.disclosure, easing = NolaMotion.disclosureEasing)
-            ) + androidx.compose.animation.expandVertically(
-                tween(if (reduceMotion) 0 else NolaMotion.disclosure, easing = NolaMotion.disclosureEasing),
-                expandFrom = Alignment.Top,
-            ),
-            exit = androidx.compose.animation.fadeOut(
-                tween(if (reduceMotion) 0 else NolaMotion.disclosure, easing = NolaMotion.disclosureEasing)
-            ) + androidx.compose.animation.shrinkVertically(
-                tween(if (reduceMotion) 0 else NolaMotion.disclosure, easing = NolaMotion.disclosureEasing),
-                shrinkTowards = Alignment.Top,
-            ),
+            enter = nolaDisclosureEnter(reduceMotion),
+            exit = nolaDisclosureExit(reduceMotion),
         ) {
             Column(
                 modifier = Modifier
@@ -3760,6 +4160,7 @@ private fun HostToolTimeline(
         Row(
             modifier = Modifier
                 .fillMaxWidth()
+                .clip(RoundedCornerShape(8.dp))
                 .clickable(role = Role.Button) { userExpanded = !userExpanded }
                 .heightIn(min = 48.dp)
                 .padding(horizontal = 2.dp, vertical = 7.dp),
@@ -3807,18 +4208,8 @@ private fun HostToolTimeline(
 
         AnimatedVisibility(
             visible = expanded,
-            enter = androidx.compose.animation.fadeIn(
-                tween(if (reduceMotion) 0 else NolaMotion.disclosure, easing = NolaMotion.disclosureEasing)
-            ) + androidx.compose.animation.expandVertically(
-                tween(if (reduceMotion) 0 else NolaMotion.disclosure, easing = NolaMotion.disclosureEasing),
-                expandFrom = Alignment.Top,
-            ),
-            exit = androidx.compose.animation.fadeOut(
-                tween(if (reduceMotion) 0 else NolaMotion.disclosure, easing = NolaMotion.disclosureEasing)
-            ) + androidx.compose.animation.shrinkVertically(
-                tween(if (reduceMotion) 0 else NolaMotion.disclosure, easing = NolaMotion.disclosureEasing),
-                shrinkTowards = Alignment.Top,
-            ),
+            enter = nolaDisclosureEnter(reduceMotion),
+            exit = nolaDisclosureExit(reduceMotion),
         ) {
             Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
                 events.forEach { tool ->
@@ -3877,8 +4268,10 @@ fun StreamingText(
 
 @Composable
 private fun ProcessingBreathingDot() {
-    val transition = rememberInfiniteTransition(label = "processing-breath")
-    val pulse by transition.animateFloat(
+    val reduceMotion = rememberReduceMotionEnabled()
+    val animated = com.nola.ui.components.continuousStatusAnimationEnabled(active = true, reduceMotion = reduceMotion)
+    val transition = if (animated) rememberInfiniteTransition(label = "processing-breath") else null
+    val pulseState = transition?.animateFloat(
         initialValue = 0.78f,
         targetValue = 1.16f,
         animationSpec = infiniteRepeatable(
@@ -3887,7 +4280,7 @@ private fun ProcessingBreathingDot() {
         ),
         label = "processing-scale"
     )
-    val haloAlpha by transition.animateFloat(
+    val haloAlphaState = transition?.animateFloat(
         initialValue = 0.20f,
         targetValue = 0.06f,
         animationSpec = infiniteRepeatable(
@@ -3902,9 +4295,10 @@ private fun ProcessingBreathingDot() {
             modifier = Modifier
                 .size(17.dp)
                 .graphicsLayer {
-                    scaleX = pulse
-                    scaleY = pulse
-                    alpha = haloAlpha
+                    val scale = pulseState?.value ?: 1f
+                    scaleX = scale
+                    scaleY = scale
+                    alpha = haloAlphaState?.value ?: 0.14f
                 }
                 .clip(CircleShape)
                 .background(MaterialTheme.colorScheme.primary)
@@ -3920,28 +4314,60 @@ private fun ProcessingBreathingDot() {
 
 @Composable
 private fun StreamingActivityIndicator() {
-    var activeDot by remember { mutableStateOf(0) }
-    LaunchedEffect(Unit) {
-        while (true) {
-            kotlinx.coroutines.delay(240)
-            activeDot = (activeDot + 1) % 3
-        }
+    val reduceMotion = rememberReduceMotionEnabled()
+    val animated = com.nola.ui.components.continuousStatusAnimationEnabled(active = true, reduceMotion = reduceMotion)
+    val transition = if (animated) rememberInfiniteTransition(label = "streaming-activity") else null
+    val dotAlphas = List(3) { index ->
+        transition?.animateFloat(
+            initialValue = 0.20f,
+            targetValue = 0.74f,
+            animationSpec = infiniteRepeatable(
+                animation = tween(durationMillis = 480, easing = FastOutSlowInEasing),
+                repeatMode = RepeatMode.Reverse,
+                initialStartOffset = androidx.compose.animation.core.StartOffset(index * 160),
+            ),
+            label = "streaming-dot-$index",
+        )
     }
     Row(
         modifier = Modifier.padding(top = 5.dp, bottom = 2.dp),
         horizontalArrangement = Arrangement.spacedBy(4.dp)
     ) {
+        val dotColor = MaterialTheme.colorScheme.onSurfaceVariant
         repeat(3) { index ->
+            val alphaState = dotAlphas[index]
             Box(
                 modifier = Modifier
                     .size(4.dp)
+                    .graphicsLayer { alpha = alphaState?.value ?: 0.36f }
                     .clip(CircleShape)
-                    .background(
-                        MaterialTheme.colorScheme.onSurfaceVariant.copy(
-                            alpha = if (index == activeDot) 0.72f else 0.20f
-                        )
-                    )
+                    .background(dotColor)
             )
+        }
+    }
+}
+
+@Composable
+private fun ConversationBackGestureHandler(
+    canHandleBack: Boolean,
+    reduceMotion: Boolean,
+    navigationState: SeekableTransitionState<Boolean>,
+    onNavigateBack: () -> Unit,
+) {
+    // Isolate WindowInsets.ime read in a zero-UI composable so keyboard
+    // animations do not trigger full-screen ChatScreen recomposition.
+    val keyboardVisible = WindowInsets.ime.getBottom(LocalDensity.current) > 0
+    PredictiveBackHandler(enabled = canHandleBack && !keyboardVisible) { events ->
+        try {
+            events.collect { event ->
+                if (!reduceMotion) navigationState.seekTo(event.progress, true)
+            }
+            onNavigateBack()
+        } catch (cancelled: kotlinx.coroutines.CancellationException) {
+            kotlinx.coroutines.withContext(kotlinx.coroutines.NonCancellable) {
+                if (reduceMotion) navigationState.snapTo(false) else navigationState.animateTo(false)
+            }
+            throw cancelled
         }
     }
 }

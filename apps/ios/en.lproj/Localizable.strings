@@ -5,8 +5,8 @@
 "room.left" = "Left · history retained";
 "room.remove" = "Remove";
 "room.add" = "Add an agent";
-"room.create_agent" = "Create agent";
-"room.agent_name" = "Agent name";
+"room.create_agent" = "Create expert";
+"room.agent_name" = "Expert name";
 "room.use_current_model" = "Use current model";
 "room.open" = "Open chat";
 "room.all" = "All agent chats";
@@ -515,6 +515,9 @@
 "chat.host_tool.name.time" = "Read system time";
 "chat.host_tool.name.browser" = "Control browser";
 "chat.host_tool.name.computer" = "Control computer";
+"chat.host_tool.name.find_skill" = "Find a GitHub skill";
+"chat.host_tool.name.install_skill" = "Install and enable skill";
+"chat.host_tool.name.read_skill_resource" = "Read skill resource";
 "chat.host_tool.name.skill" = "Use skill";
 "chat.host_tool.name.mcp" = "Call MCP";
 "chat.host_tool.name.background" = "Background task";
@@ -1782,6 +1785,7 @@
 "common.frequency.weekly" = "Weekly";
 "common.no.zh" = "No";
 "common.retry" = "Retry";
+"common.search" = "Search";
 "common.unknown" = "Unknown";
 "common.yes.zh" = "Yes";
 "data.subtitle.local_first" = "On-device data sources, scheduled actions, and recent execution status.";
@@ -1981,6 +1985,9 @@
 "model.web_host.security_summary" = "Nola verifies the token, permission protocol, and host identity before pairing. Every host or device tool still follows its own approval policy.";
 "model.web_host.error_format" = "Connection error: %@";
 "model.web_host.connect" = "Connect";
+"model.web_host.cancel_verification" = "Cancel verification";
+"model.web_host.error.rollback" = "The token could not be saved and the new host identity could not be removed. Forget this pairing and try again.";
+"model.web_host.recheck" = "Verify again";
 "model.web_host.connect.accessibility_hint" = "Validates this host and pairs its identity before saving.";
 "model.web_host.invalid_url" = "Enter a valid HTTP or HTTPS Host URL.";
 "model.web_host.missing_token" = "Enter the access token for this host.";
@@ -2428,7 +2435,7 @@
 /* macOS Settings workspace */
 
 /* Personal intelligence capabilities */
-"personal.capabilities.title" = "Skills & MCP";
+"personal.capabilities.title" = "Capability library";
 "personal.capabilities.gateway.detail" = "Manage reusable workflows and external tool connections.";
 "personal.capabilities.gateway.count" = "enabled";
 "personal.capabilities.subtitle" = "Reusable workflows and connected tools available across conversations.";
@@ -2596,7 +2603,7 @@
 
 "chat.task.guidance.send" = "Send guidance";
 "model.web_host.setup" = "Before connecting";
-"model.web_host.setup.start" = "On the Mac, open Nola Settings > Host connection and enable Share This Mac.";
+"model.web_host.setup.start" = "On the Mac, open Nola Settings > Connections and enable “Share this Mac as a Nola Server”.";
 "model.web_host.setup.copy" = "Choose Copy Connection Setup on the Mac, then paste it below. Keep both devices on a trusted private network, or use HTTPS.";
 "model.web_host.checking" = "Checking host";
 "model.web_host.checking.detail" = "Verifying the token, permission protocol, and host identity before saving.";
@@ -2869,6 +2876,7 @@
 "history.detail.open_record" = "Read historical record";
 
 "chat.history.search" = "Search conversations";
+"chat.history.search.clear" = "Clear search";
 
 "chat.history.no_messages" = "No messages yet";
 
@@ -2999,6 +3007,7 @@
 
 "room.pending_expert_message" = "Expert delivery is waiting to start.";
 "room.resume_complete_experts" = "Resume original expert message";
+"room.retry_expert_reply" = "Retry expert reply";
 
 // Expert directory management
 "experts.manage" = "Manage experts";
@@ -3296,6 +3305,7 @@
 "model.web_host.invalid_setup" = "Copy Connection Setup from Nola on the host, then paste it here.";
 
 "model.web_host.paste_setup" = "Paste Connection Setup";
+"model.web_host.setup_payload" = "Connection setup";
 
 // Generated UI recovery and presentation
 "a2ui.revalidate" = "Validate again";
@@ -3339,6 +3349,7 @@
 "chat.context.import.failed_count" = "%d files could not be imported. Use nonempty UTF-8 text files with at most 40,000 characters (192 KB).";
 
 /* Expert roles and revision-aware mentions */
+"experts.useModelDefaults" = "Use model defaults";
 "experts.reasoning.inherit" = "Inherit model setting";
 "experts.reasoning.unknown" = "This model does not declare reasoning levels. Its default setting is inherited.";
 "experts.role.details" = "Prompt, tools and Skills";
@@ -3421,3 +3432,22 @@
 "chat.message.pendingEdit" = "Review pending message edit";
 "chat.message.editSavedForReview" = "You can close this editor. Reopen the pending edit in this conversation to check whether it was sent.";
 "chat.context.documents.blank" = "Enter text for %@ or delete the empty document.";
+
+"chat.history.otherClientReadOnly" = "Read-only. To continue this conversation, open it in the client where it was created.";
+"chat.history.ambiguousIDs" = "Two conversations have identifiers that differ only in letter case. Open them in their original client.";
+"experts.executor.requiresHost" = "Connect to the host that runs this coding agent, then select the expert in a host conversation.";
+
+"harness.plugins" = "Plugins";
+"harness.host" = "Choose a desktop Host";
+"harness.device_note" = "Connect the computer that runs your plugins to use them here.";
+"harness.connect" = "Connect a desktop Host";
+"harness.pair" = "Connect another Host";
+
+"Keep names as plain text" = "Keep names as plain text";
+"The expert selection changed. Remove the mention and select the expert again." = "The expert selection changed. Remove the mention and select the expert again.";
+"Write what you want the expert to do." = "Write what you want the expert to do.";
+"View expert history" = "View expert history";
+"Icon could not be rendered" = "Icon could not be rendered";
+
+"model.center.selection_error.title" = "Could not select model";
+"prompt.templates.copy_name" = "%@ (copy)";

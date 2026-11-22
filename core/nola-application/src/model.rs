@@ -79,9 +79,26 @@ pub struct ModelRuntime {
     pub updated_at_ms: i64,
 }
 
+/// One validated model-file declaration. Secrets remain in the Host vault.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct FileCatalogConnection {
+    pub input: nola_domain::model_connection::ModelConnection,
+    pub expected_revision: Option<i64>,
+    pub account: Option<nola_domain::model_connection::ModelAccount>,
+    pub expected_account_revision: Option<i64>,
+    pub models: Vec<nola_domain::model_connection::CatalogModel>,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case", deny_unknown_fields)]
 pub enum ModelCommand {
+    ApplyFileCatalog {
+        connections: Vec<FileCatalogConnection>,
+        default_connection: String,
+        default_model: String,
+        updated_at_ms: i64,
+    },
     RecordGatewayAttempt {
         input: nola_domain::model_connection::GatewayAttemptRecord,
         expected_revision: Option<i64>,
@@ -276,10 +293,41 @@ impl From<ModelRuntime> for StoredModelRuntime {
 
 pub(crate) fn execute_model_command(
     store: &mut impl ModelRepository,
-    command: ModelCommand,
+    mut command: ModelCommand,
 ) -> Result<Value, String> {
     // Managed connections own their source metadata and enabled selections.
     // Parameter edits remain on the existing profile command path.
+    if let ModelCommand::ReplaceProfiles { provider, runtime, profiles, expected_revisions, .. } = &mut command {
+        let mut draft_endpoints = std::collections::HashSet::new();
+        let mut draft_ids = std::collections::HashSet::new();
+        for draft in profiles.iter() {
+            let source: Value = serde_json::from_str(&draft.source_json).map_err(|_| "invalid model source")?;
+            if !source["connectionID"].is_null() {
+                return Err("managed connection profiles require a connection command".into());
+            }
+            if let Some(endpoint) = source["endpointID"].as_str() { draft_endpoints.insert(endpoint.to_owned()); }
+            draft_ids.insert(draft.id.clone());
+        }
+        let mut protected = Vec::new();
+        for existing in store.list_model_profiles().map_err(|error| error.to_string())? {
+            if existing.provider != *provider || existing.runtime != *runtime { continue; }
+            let source: Value = serde_json::from_str(&existing.source_json).map_err(|_| "invalid stored model source")?;
+            if source["connectionID"].is_null() { continue; }
+            if expected_revisions.contains_key(&existing.id) || draft_ids.contains(&existing.id)
+                || existing.deleted_at_ms.is_none() && source["endpointID"].as_str().is_some_and(|id| draft_endpoints.contains(id)) {
+                return Err("managed connection profiles require a connection command".into());
+            }
+            if existing.deleted_at_ms.is_none() { protected.push(existing); }
+        }
+        if protected.iter().any(|profile| profile.selected) {
+            for profile in profiles.iter_mut() { profile.selected = false; }
+        }
+        // The repository atomically checks the combined membership and revisions.
+        for profile in protected {
+            expected_revisions.insert(profile.id.clone(), profile.revision);
+            profiles.push(profile.into());
+        }
+    }
     let mutation_ids: Vec<&str> = match &command {
         ModelCommand::UpsertProfile { input } => vec![input.id.as_str()],
         ModelCommand::DeleteProfile { id, .. } => vec![id.as_str()],
@@ -293,7 +341,7 @@ pub(crate) fn execute_model_command(
     if !mutation_ids.is_empty()
         || matches!(
             &command,
-            ModelCommand::ConfigureEndpoint { .. } | ModelCommand::ReplaceProfiles { .. }
+            ModelCommand::ConfigureEndpoint { .. }
         )
     {
         for profile in store
@@ -309,9 +357,6 @@ pub(crate) fn execute_model_command(
                     ModelCommand::ConfigureEndpoint { endpoint_id, .. } => {
                         source["endpointID"].as_str() == Some(endpoint_id.as_str())
                     }
-                    ModelCommand::ReplaceProfiles {
-                        provider, runtime, ..
-                    } => profile.provider == *provider && profile.runtime == *runtime,
                     _ => false,
                 };
             if overlaps {
@@ -320,6 +365,7 @@ pub(crate) fn execute_model_command(
         }
     }
     match command {
+        ModelCommand::ApplyFileCatalog { .. } => Err("file catalog requires a publication transaction".into()),
         ModelCommand::ImportConnection { input, expected_revision, account, expected_account_revision,
             models, enable_models, updated_at_ms } => crate::model_connection::import_connection(
                 store, input, expected_revision, account, expected_account_revision, models, enable_models, updated_at_ms),

@@ -5,29 +5,41 @@ import kotlinx.serialization.json.*
 
 /** Complete configure_agent payload, preserving preferences the editor did not change.
  * An explicit default removes the selected ID; it never invents a None value. */
+internal fun expertExecutorBinding(backendID: String, model: com.nola.data.remote.dto.ExecutionBackendModelDto? = null): JsonObject =
+    buildJsonObject {
+        put("backend", if (backendID == "opencode") "open_code" else backendID)
+        model?.let {
+            put("model", it.id)
+            if (backendID == "codex") it.providerId?.let { provider -> put("model_provider", provider) }
+        }
+    }
+
 internal fun mergeExpertEditorDefaults(
     original: JsonObject,
     changeModel: Boolean,
     selectedModel: JsonObject?,
     changeTemplate: Boolean,
     selectedTemplateId: String?,
-    initializeModelParameters: Boolean = false,
     reasoningEffort: String? = null,
+    resetModelParameters: String? = null,
+    changeExecutor: Boolean = false,
+    executor: JsonObject? = null,
 ): JsonObject {
-    if (!changeModel && !changeTemplate && reasoningEffort == null) return original
+    if (!changeExecutor && !changeModel && !changeTemplate && reasoningEffort == null && resetModelParameters == null) return original
     val fields = original.toMutableMap()
+    if (changeExecutor) {
+        if (executor == null) fields.remove("expertExecutor") else fields["expertExecutor"] = executor
+    }
     if (changeModel) {
         if (selectedModel == null) fields.remove("modelSelectionID") else {
-            require(selectedModel.keys == if (initializeModelParameters) setOf("modelSelectionID", "modelOverrides") else setOf("modelSelectionID"))
+            require(selectedModel.keys == setOf("modelSelectionID"))
             fields["modelSelectionID"] = selectedModel.getValue("modelSelectionID")
-            if (initializeModelParameters) {
-                val existing = fields["modelOverrides"]
-                require(existing == null || existing == JsonNull || existing is JsonObject)
-                val overrides = (existing as? JsonObject)?.toMutableMap() ?: mutableMapOf()
-                selectedModel.getValue("modelOverrides").jsonObject.forEach { (key, value) -> overrides.putIfAbsent(key, value) }
-                fields["modelOverrides"] = JsonObject(overrides)
-            }
         }
+    }
+    if (resetModelParameters != null) {
+        require(fields["modelSelectionID"] == JsonPrimitive(resetModelParameters))
+        val overrides = (fields["modelOverrides"] as? JsonObject).orEmpty() - resetModelParameters
+        if (overrides.isEmpty()) fields.remove("modelOverrides") else fields["modelOverrides"] = JsonObject(overrides)
     }
     if (changeTemplate) {
         if (selectedTemplateId == null) fields.remove("selectedPromptTemplateID")
@@ -38,5 +50,6 @@ internal fun mergeExpertEditorDefaults(
         if (reasoningEffort == "automatic") fields.remove("expertReasoningEffort")
         else fields["expertReasoningEffort"] = JsonPrimitive(reasoningEffort)
     }
+    if (fields["expertExecutor"] is JsonObject) fields.remove("expertReasoningEffort")
     return JsonObject(fields)
 }

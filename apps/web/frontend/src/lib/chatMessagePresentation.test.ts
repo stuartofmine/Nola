@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createServer } from 'vite';
-import { messagePresentation, messageFlowPresentation, isExecutionPart, executionProcessExpanded, executionProcessChoice, liveReasoningParts } from './chatMessagePresentation.ts';
+import { messagePresentation, messageFlowPresentation, isExecutionPart, executionProcessExpanded, executionProcessChoice, liveReasoningParts, modelFailureHelpKey } from './chatMessagePresentation.ts';
 import type { TimelinePart } from './chatTimeline.ts';
 const text = (id: string, markdown: string): TimelinePart => ({source: 'canonical', id, value: {kind: 'text', part_id: id, revision: 1, markdown}});
 const tool = (id: string, state = 'completed'): TimelinePart => ({source: 'canonical', id, value: {kind: 'tool', execution_source: {kind: 'model'}, part_id: id, revision: 1, title: id, state}});
@@ -366,4 +366,15 @@ test('failed tool then successful retry stays compact with a neutral process hea
             assert.match(opened, /<details[^>]*\bopen\b/);
         }
     } finally { await server.close(); }
+});
+
+test('only the terminal failed attempt supplies model service guidance', () => {
+    const attempt = (data: Record<string, unknown>): TimelinePart => ({source:'canonical',id:'attempt',value:{
+        kind:'model_attempt',part_id:'attempt',revision:1,state:'failed',failure_code:'provider_unavailable',...data
+    }});
+    assert.equal(modelFailureHelpKey([attempt({})]), 'chatPage.modelUnavailableHelp');
+    assert.equal(modelFailureHelpKey([attempt({failure_code:undefined,failure:{code:'rate_limited'}})]), 'chatPage.modelRateLimitHelp');
+    assert.equal(modelFailureHelpKey([attempt({fallback_attempt_id:'next'})]), null);
+    assert.equal(modelFailureHelpKey([attempt({}),attempt({state:'completed'})]), null);
+    assert.equal(modelFailureHelpKey([attempt({failure_code:'unknown'})]), null);
 });

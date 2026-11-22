@@ -229,7 +229,7 @@ struct HealthDashboardView: View {
             VStack(alignment: .leading, spacing: 2) {
                 Text(value)
                     .font(.system(.title2, design: .rounded, weight: .semibold))
-                    .contentTransition(.numericText())
+                    .contentTransition(reduceMotion ? .identity : .numericText())
                 Text("\(title) · \(unit)")
                     .font(.caption)
                     .foregroundStyle(.secondary)

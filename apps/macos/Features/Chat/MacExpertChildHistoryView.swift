@@ -6,13 +6,16 @@ struct MacExpertChildPresentation: Identifiable {
     let parentID: String
     let child: AppleExpertChildConversation
     let sourceID: ObjectIdentifier
-    var id: String { parentID + ":" + child.id + ":" + String(describing: sourceID) }
+    var remoteIdentity: String? = nil
+    var id: String { parentID + ":" + child.id + ":" + (remoteIdentity ?? String(describing: sourceID)) }
 }
 
 /// The existing canonical transcript reader, without a composer or execution actions.
 struct MacExpertChildHistoryView: View {
     let presentation: MacExpertChildPresentation
     let execution: MacRoomExecutionService?
+    var remoteRead: ((Int64?) async throws -> MacExpertChildHistoryReader.Page)? = nil
+    var remoteText: ((MacAssistantJournalCursor) async throws -> String?)? = nil
     let continueInParent: () async throws -> Void
     @Environment(\.dismiss) private var dismiss
     @State private var reader: MacExpertChildHistoryReader?
@@ -46,7 +49,7 @@ struct MacExpertChildHistoryView: View {
                         guard let source = reader.sourceOwner, let execution else { throw MacApplicationPortError.invalidResponse }
                         return try await execution.readHistoryUIRevision(childID: presentation.child.id, source: source, reference: reference)
                     },
-                    readLocalSource: { reader.sourceOwner == .local }, permitsFollowupUIActions: false,
+                    readLocalSource: { presentation.remoteIdentity == nil && reader.sourceOwner == .local }, permitsFollowupUIActions: false,
                     sourceAuthors: reader.sourceAuthors)
                     .environment(\.macTranscriptReadOnly, true)
                     .overlay {
@@ -65,7 +68,7 @@ struct MacExpertChildHistoryView: View {
                 }
             } else if error == nil { ProgressView().frame(maxWidth: .infinity, maxHeight: .infinity) }
             if let error { Text(error).font(.callout).foregroundStyle(.red).textSelection(.enabled).padding() }
-            if presentation.child.isCurrent && presentation.child.active {
+            if presentation.remoteIdentity == nil && presentation.child.isCurrent && presentation.child.active {
                 Divider()
                 HStack {
                     Spacer()
@@ -80,8 +83,14 @@ struct MacExpertChildHistoryView: View {
                         .accessibilityIdentifier("expert.child.continue")
                 }.padding(12)
             }
-        }.background(MacDesignColor.canvas).frame(minWidth: 560, minHeight: 480)
+        }.frame(minWidth: 560, minHeight: 480).background(MacDesignColor.canvas)
             .task(id: presentation.id) {
+                if presentation.remoteIdentity != nil, let remoteRead {
+                    let value = MacExpertChildHistoryReader(parentID: presentation.parentID, childID: presentation.child.id, readJournal: remoteText, read: remoteRead)
+                    reader = value
+                    await value.load()
+                    return
+                }
                 guard let execution else { error = String(localized: "Expert history is unavailable"); return }
                 let database = execution.historyDatabaseURL
                 let parent = presentation.parentID, child = presentation.child.id
@@ -105,6 +114,7 @@ struct MacExpertChildHistoryView: View {
     private let parentID: String
     private let childID: String
     private let databaseURL: URL?
+    private let readJournal: ((MacAssistantJournalCursor) async throws -> String?)?
     private let read: (Int64?) async throws -> Page
     private var generation = UUID()
     private var room: (id: String, revision: Int64)?
@@ -115,8 +125,8 @@ struct MacExpertChildHistoryView: View {
     private(set) var hasMore = false
     private(set) var isLoading = false
     private(set) var error: String?
-    init(parentID: String, childID: String, databaseURL: URL? = nil, read: @escaping (Int64?) async throws -> Page) {
-        self.parentID = parentID; self.childID = childID; self.databaseURL = databaseURL; self.read = read
+    init(parentID: String, childID: String, databaseURL: URL? = nil, readJournal: ((MacAssistantJournalCursor) async throws -> String?)? = nil, read: @escaping (Int64?) async throws -> Page) {
+        self.parentID = parentID; self.childID = childID; self.databaseURL = databaseURL; self.read = read; self.readJournal = readJournal
     }
     func invalidate() { generation = UUID(); isLoading = false }
     func load(earlier: Bool = false) async {
@@ -134,9 +144,24 @@ struct MacExpertChildHistoryView: View {
                   !page.window.hasMore || (page.window.beforeOrdinal != nil && !page.window.projection.messages.isEmpty),
                   cursor == nil || !page.window.hasMore || page.window.beforeOrdinal! < cursor! else { throw MacApplicationPortError.invalidResponse }
             let database = databaseURL
-            let projected = try await Task.detached {
-                try MacCanonicalConversationRepository.projectMessages(page.window, databaseURL: database, sourceOwner: page.sourceOwner)
-            }.value
+            let projected: [MacChatMessage]
+            if let readJournal {
+                let assistants = Set(page.window.projection.messages.filter { $0.role == .assistant }.map(\.messageID))
+                var journal: [String: String] = [:]
+                for cursor in page.window.assistantJournalHeads {
+                    let key = cursor.identity.assistant_message_id
+                    guard cursor.identity.conversation_id == childID, assistants.contains(key), journal[key] == nil else { throw MacApplicationPortError.invalidResponse }
+                    journal[key] = try await readJournal(cursor) ?? ""
+                }
+                let text = journal
+                projected = try await Task.detached {
+                    try MacCanonicalConversationRepository.projectMessages(page.window, disclosedJournalText: text)
+                }.value
+            } else {
+                projected = try await Task.detached {
+                    try MacCanonicalConversationRepository.projectMessages(page.window, databaseURL: database, sourceOwner: page.sourceOwner)
+                }.value
+            }
             guard generation == token, !Task.isCancelled else { return }
             let authors = try Self.authors(page.expertExchanges, parentID: parentID, childID: childID,
                 userMessageIDs: Set(page.window.projection.messages.filter { $0.role == .user }.map(\.messageID)))

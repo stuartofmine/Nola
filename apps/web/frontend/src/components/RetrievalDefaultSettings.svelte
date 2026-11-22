@@ -45,12 +45,12 @@
     <p class="muted">{t($locale, 'settings.retrieval.scope')}</p>
     <p class="muted">{t($locale, 'chatSession.retrievalScope')}</p>
     {#if loading}<p role="status">{t($locale, 'chatPage.loading')}</p>{/if}
-    {#if error}<p role="alert">{t($locale, error)}</p>{/if}
+    {#if error}<p role="alert" class="error">{t($locale, error)}</p>{/if}
     {#if snapshot}
         <label><input type="checkbox" role="switch" checked={draft} onchange={change} disabled={loading || saving || uncertain} />{t($locale, 'settings.retrieval.enabled')}</label>
         {#if saving}<p role="status">{t($locale, 'agentAccess.saving')}</p>{/if}
     {/if}
 </section>
 <style>
-    section{display:grid;gap:14px;margin-bottom:20px}header{display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap}h2,p{margin:0}label{display:flex;align-items:center;gap:8px}input{width:auto;flex-shrink:0}
+    section{display:grid;gap:14px}header{display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap}h2,p{margin:0}label{display:flex;align-items:center;gap:8px}input{width:auto;flex-shrink:0}
 </style>

@@ -143,15 +143,6 @@ struct HomeScheduleItem: Identifiable {
         case .localReminder: return .orange
         }
     }
-
-    static func placeholder(kind: Kind) -> HomeScheduleItem {
-        HomeScheduleItem(
-            id: UUID().uuidString,
-            title: " ",
-            date: Date(),
-            kind: kind
-        )
-    }
 }
 
 struct HomeCustomSourceEntry: Identifiable {
@@ -347,10 +338,7 @@ private struct HomeHealthMetricTile: View {
 // MARK: - Section 2: Phone Schedule
 
 struct HomePhoneScheduleCard: View {
-    let birthdayLeadDays: Int
-    let scheduleLeadDays: Int
     let items: [HomeScheduleItem]
-    let isLoading: Bool
     let error: String?
     let onTapManage: () -> Void
     let onTapItem: (HomeScheduleItem) -> Void
@@ -370,36 +358,15 @@ struct HomePhoneScheduleCard: View {
                     .foregroundColor(DesignTokens.dangerColor)
             }
 
-            VStack(alignment: .leading, spacing: 12) {
-                let rows: [HomeScheduleItem] = {
-                    if items.isEmpty && isLoading {
-                        return [
-                            HomeScheduleItem.placeholder(kind: .calendar),
-                            HomeScheduleItem.placeholder(kind: .reminder),
-                            HomeScheduleItem.placeholder(kind: .birthday)
-                        ]
+            if items.isEmpty {
+                Text(L10n.settingsCalendarRangeDescription)
+                    .font(.caption)
+                    .foregroundColor(.secondary)
+            } else {
+                VStack(spacing: 10) {
+                    ForEach(Array(items.prefix(8).enumerated()), id: \.offset) { _, item in
+                        HomeScheduleRow(item: item, onTap: { onTapItem(item) })
                     }
-                    return Array(items.prefix(8))
-                }()
-
-                if rows.isEmpty {
-                    Text(L10n.settingsCalendarRangeDescription)
-                        .font(.caption)
-                        .foregroundColor(.secondary)
-                } else {
-                    VStack(spacing: 10) {
-                        ForEach(Array(rows.enumerated()), id: \.offset) { _, item in
-                            HomeScheduleRow(item: item, onTap: { onTapItem(item) })
-                                .redacted(reason: (items.isEmpty && isLoading) ? .placeholder : [])
-                        }
-                    }
-                }
-            }
-
-            if isLoading {
-                HStack {
-                    ProgressView().scaleEffect(0.9)
-                    Spacer()
                 }
             }
         }

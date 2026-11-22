@@ -296,10 +296,15 @@ nonisolated enum MacProcessRuntimePolicy {
 
     static var isRunningTests: Bool {
         let environment = ProcessInfo.processInfo.environment
-        return environment[explicitTestModeKey] == "1"
+        return isTestHostBundle(Bundle.main.bundleIdentifier)
+            || environment[explicitTestModeKey] == "1"
             || environment["XCTestConfigurationFilePath"] != nil
             || environment["XCTestBundlePath"] != nil
             || NSClassFromString("XCTestCase") != nil
+    }
+
+    static func isTestHostBundle(_ identifier: String?) -> Bool {
+        identifier == "com.gaojc.Nola.mac.tests-host"
     }
 
     static var allowsSystemPermissionPrompts: Bool {

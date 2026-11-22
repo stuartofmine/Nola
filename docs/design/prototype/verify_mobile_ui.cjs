@@ -20,6 +20,21 @@ const out=process.env.PROTOTYPE_OUT||env.artifactPath('nola-mobile-ui-20261111')
             if(os==='android'){await click('im:nav:settings');await page.locator('.im-preview-tools>summary').click();await click('im:platform');await click('im:nav:conversations');}
             assert.equal(await page.locator('[data-action="im:new"]:visible').count(),1);
             assert.ok(await page.locator('.im-heading h1').evaluate(e=>parseFloat(getComputedStyle(e).fontSize)>=24));
+            if (width === 390 && os === 'ios' && theme === 'light') {
+                for (const [motion, filter] of [['no-preference', 'waiting'], ['reduce', 'all']]) {
+                    await page.emulateMedia({reducedMotion: motion});
+                    const state = await page.locator(`[data-action="im:filter:${filter}"]`).evaluate(button => {
+                        button.click();
+                        const pill = document.querySelector('.im-stage .im-filter-selection');
+                        return {
+                            animated: pill.getAnimations().length > 0,
+                            focused: pill.parentElement === document.activeElement,
+                            selected: pill.parentElement.getAttribute('aria-pressed')
+                        };
+                    });
+                    assert.deepEqual(state, {animated: motion === 'no-preference', focused: true, selected: 'true'});
+                }
+            }
             await shot('conversations');
             await page.getByRole('button',{name:/周末，去山里走走/}).click();
             assert.equal(await page.locator('.im-title-avatar:visible').count(),0);
@@ -30,7 +45,10 @@ const out=process.env.PROTOTYPE_OUT||env.artifactPath('nola-mobile-ui-20261111')
                 const rect=await button.boundingBox();assert.ok(rect&&rect.width>=min-.5&&rect.height>=min-.5,'Composer/header hit size');
             }
             const composer=await page.locator('.im-composer').boundingBox();assert.ok(composer.height<=132,'Initial composer must stay compact');
-            await page.locator('#compose').fill('草稿在详情与设置之间保留');await shot('chat');
+            assert.ok(await page.locator('.im-send').isDisabled(), 'Empty message cannot be sent');
+            await page.locator('#compose').fill('草稿在详情与设置之间保留');
+            assert.ok(await page.locator('.im-send').isEnabled(), 'Typing enables send');
+            await shot('chat');
             await click('im:nav:im-details');await shot('conversation-details');await click('im:back:chat');
             assert.equal(await page.locator('#compose').inputValue(),'草稿在详情与设置之间保留');
             await click('im:back:conversations');await click('im:nav:settings');

@@ -16,9 +16,9 @@ window.sidebarNavigation = (() => {
         ['memory', '记忆与数据源', 'brain']
     ];
     const toolAreas = [
-        ['任务', 'task', 'progress'],
+        ['任务', 'task', 'goal'],
         ['产物', 'artifacts', 'artifacts'],
-        ['上下文', 'context', 'file']
+        ['上下文', 'context', 'brain']
     ];
     const areaTitles = {task: '任务', artifacts: '产物', context: '上下文'};
 
@@ -37,11 +37,11 @@ window.sidebarNavigation = (() => {
     }
 
     function tools(selectedArea) {
-        return `<nav class="icon-strip context-tools grouped-tools" aria-label="对话工具">${toolAreas.map(([label, area, ic]) => `<button class="strip-entry tool-group ${selectedArea === area ? 'selected' : ''}" data-action="sn-group:${label}" aria-label="${label}" title="${label}" aria-pressed="${selectedArea === area}">${icon(ic)}<span class="entry-tooltip" role="tooltip">${label}</span></button>`).join('')}</nav>`;
+        return `<nav class="icon-strip context-tools grouped-tools" aria-label="对话工具">${toolAreas.map(([label, area, ic]) => `<button class="strip-entry tool-group ${selectedArea === area ? 'selected' : ''}" data-action="sn-group:${label}" aria-label="${label}" title="${label}" aria-pressed="${selectedArea === area}">${icon(ic)}<span class="tool-group-label">${label}</span><span class="entry-tooltip" role="tooltip">${label}</span></button>`).join('')}</nav>`;
     }
 
     function right(selectedArea) {
-        return `<div class="panel-caption"><strong data-inspector-area-title>${esc(areaTitles[selectedArea] || '任务')}</strong><button class="strip-close" aria-label="关闭工作面板" title="关闭工作面板" data-action="dk-inspector">${svg('close')}</button></div>`;
+        return `<div class="panel-caption panel-caption-compact"><strong data-inspector-area-title>${esc(areaTitles[selectedArea] || '任务')}</strong><button class="strip-close" aria-label="关闭工作面板" title="关闭工作面板" data-action="dk-inspector">${svg('close')}</button></div>`;
     }
 
     function handle(a) {

@@ -49,7 +49,15 @@ class RealEmbeddedChildPermissionUiTest {
             compose.onNodeWithContentDescription(context.getString(R.string.tab_settings)).performClick()
             compose.onNodeWithText(context.getString(R.string.models_title)).performClick()
             compose.waitUntil(30_000) { compose.onAllNodesWithTag(MODEL_ROW_TEST_TAG_PREFIX + config.getString("model")).fetchSemanticsNodes().isNotEmpty() }
-            compose.onNodeWithText(context.getString(R.string.models_use)).performScrollTo().performClick()
+            val modelId = config.getString("model")
+            compose.confirmFixtureCapabilities(modelId)
+            val modelRow = hasAnyAncestor(hasTestTag(MODEL_ROW_TEST_TAG_PREFIX + modelId))
+            val use = compose.onAllNodes(hasText(context.getString(R.string.models_use)) and modelRow, useUnmergedTree = true)
+            if (use.fetchSemanticsNodes().isNotEmpty()) use.onFirst().performScrollTo().performClick()
+            compose.waitUntil(15_000) {
+                compose.onAllNodes(hasText(context.getString(R.string.models_selected)) and modelRow, useUnmergedTree = true)
+                    .fetchSemanticsNodes().isNotEmpty()
+            }
             compose.onNodeWithContentDescription(context.getString(R.string.tab_chat)).performClick()
             compose.onNodeWithTag("chat.conversations.new").performClick()
             compose.waitUntil(15_000) { compose.onAllNodesWithTag("chat.composer.input").fetchSemanticsNodes().isNotEmpty() }

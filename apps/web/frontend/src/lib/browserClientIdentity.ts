@@ -1,3 +1,4 @@
+import { randomId } from './randomId.ts';
 /** Durable, Host-scoped browser authority. A tab must never invent an ephemeral owner. */
 export const browserIdentityKey = (hostId: string) => `nola.web.chat.client.${JSON.stringify(hostId)}`;
 const valid = (value: string) => /^[A-Za-z0-9-]{8,100}$/.test(value);
@@ -12,7 +13,7 @@ export async function ensureBrowserClientId(hostId: string): Promise<string> {
     try {
         return await navigator.locks.request(browserIdentityKey(hostId), () => {
             const saved = readBrowserClientId(hostId);
-            const value = saved ?? `web-${crypto.randomUUID()}`;
+            const value = saved ?? `web-${randomId()}`;
             // Rewriting the same value verifies that intents can also be retained.
             localStorage.setItem(browserIdentityKey(hostId), value);
             if (readBrowserClientId(hostId) !== value) throw new Error('storage verification failed');

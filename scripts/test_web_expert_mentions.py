@@ -4,7 +4,7 @@
 
 Requires active Arithmetic QA and Language QA experts with working model defaults.
 No mocked requests or replies. Supply the token file of the disposable Host;
-this creates conversations and makes one real provider request.
+this creates a conversation, sends a real turn, and edits it in place for a second turn.
 """
 import argparse
 from pathlib import Path
@@ -30,9 +30,8 @@ def main():
             errors = []
             page.on('pageerror', lambda error: errors.append(str(error)))
             page.goto(args.url + '/chat', wait_until='domcontentloaded')
-            page.locator('#chat-composer').wait_for()
             previous = page.url
-            page.get_by_role('button', name='New conversation', exact=True).click()
+            page.get_by_role('button', name='New conversation', exact=True).first.click()
             page.wait_for_url(lambda url: str(url) != previous)
             page.get_by_text('Loading conversation…', exact=True).wait_for(state='hidden')
             composer = page.locator('#chat-composer')
@@ -40,28 +39,57 @@ def main():
             page.get_by_role('option', name='Arithmetic QA').wait_for()
             page.screenshot(path=str(args.output / 'candidates.png'))
             page.get_by_role('option', name='Arithmetic QA').click()
-            expect(composer).to_have_value('')
+            expect(composer).to_have_value('@Arithmetic QA')
             assert composer.evaluate('el => document.activeElement === el'), 'Selection lost keyboard focus'
-            selected = page.locator('.selected-mentions button')
-            expect(selected).to_have_count(1)
-            composer.fill('@Lang')
+            composer.press('End')
+            composer.press_sequentially(' @Lang')
             page.get_by_role('option', name='Language QA').wait_for()
             composer.press('Enter')
-            expect(selected).to_have_count(2)
-            selected.filter(has_text='Language QA').click()
-            expect(selected).to_have_count(1)
-            composer.fill('Compute 29 times 13. Reply with WEB_EXPERT_RESULT= followed by the result. Do not use tools.')
+            expect(composer).to_have_value('@Arithmetic QA @Language QA')
+            composer.press('Backspace')
+            expect(composer).to_have_value('@Arithmetic QA ')
+            page.screenshot(path=str(args.output / 'inline-mentions.png'))
+            composer.press_sequentially('Compute 29 times 13. Reply with WEB_EXPERT_RESULT= followed by the result.')
             page.get_by_role('button', name='Send', exact=True).click()
-            page.get_by_text('WEB_EXPERT_RESULT=377', exact=True).wait_for(timeout=180_000)
+            page.wait_for_function("document.querySelector('[data-message-id]') || document.querySelector('.composer [role=alert]')", timeout=15_000)
+            assert not errors, errors
+            page.get_by_text('WEB_EXPERT_RESULT=377', exact=True).first.wait_for(timeout=180_000)
             page.screenshot(path=str(args.output / 'real-reply.png'))
             page.reload(wait_until='domcontentloaded')
-            page.get_by_text('WEB_EXPERT_RESULT=377', exact=True).wait_for(timeout=15_000)
+            page.get_by_text('WEB_EXPERT_RESULT=377', exact=True).first.wait_for(timeout=15_000)
+            saved = page.locator('button.inline-name').filter(has_text='@Arithmetic QA')
+            expect(saved).to_have_count(1)
+            saved.click()
+            expect(page.get_by_role('dialog').get_by_text('@Arithmetic QA')).to_be_visible()
+            page.get_by_role('dialog').get_by_role('button', name='Close', exact=True).click()
+            original_url = page.url
+            page.get_by_role('button', name='Edit and resend', exact=True).first.click()
+            edited = page.locator('#edit-expert-message')
+            assert '@Arithmetic QA' in edited.input_value()
+            expect(page.locator('dialog .highlight strong')).to_have_text('@Arithmetic QA')
+            edited.fill('@Lang')
+            page.get_by_role('option', name='Language QA').click()
+            edited.press('End')
+            edited.press_sequentially(' Reply with exactly WEB_EDIT_OK.')
+            page.screenshot(path=str(args.output / 'edit-with-replacement.png'))
+            page.get_by_role('button', name='Save and resend', exact=True).click()
+            page.get_by_text('WEB_EDIT_OK', exact=True).first.wait_for(timeout=180_000)
+            expect(page.locator('button.inline-name').filter(has_text='Language QA')).to_have_count(1)
+            expect(saved).to_have_count(0)
+            assert page.url == original_url
+            page.screenshot(path=str(args.output / 'edited-result.png'))
             previous = page.url
-            page.get_by_role('button', name='New conversation', exact=True).click()
+            page.get_by_role('button', name='New conversation', exact=True).first.click()
             page.wait_for_url(lambda url: str(url) != previous)
-            expect(selected).to_have_count(0)
+            expect(composer).to_have_value('')
+            expect(page.locator('.inline-editor .highlight')).to_have_count(0)
             assert not errors, errors
-            print('PASS: selection, focus, Enter selection, removal, real reply, reload, conversation isolation')
+            print('PASS inline selection, real reply, reload, expert replacement, same-conversation rewind and next-draft isolation')
+        except Exception:
+            if 'page' in locals():
+                page.screenshot(path=str(args.output / 'failure.png'))
+                print('Visible page:',page.locator('body').inner_text()[:1200], 'Errors:', errors[:3], flush=True)
+            raise
         finally:
             browser.close()
 

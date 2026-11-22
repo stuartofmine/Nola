@@ -10,7 +10,7 @@ const panel = readFileSync(new URL('../components/ChatResponsivePanel.svelte', i
 test('compact presentation keeps a single conversation manager and settings owner', () => {
     assert.equal((chat.match(/<ChatConversationManager\b/g) ?? []).length, 1);
     assert.equal((chat.match(/<ChatSessionSettings\s+bind:this=/g) ?? []).length, 1);
-    assert.match(chat, /bind:this=\{navigationPanel\} breakpoint=\{700\}/);
+    assert.match(chat, /bind:this=\{navigationPanel\} breakpoint=\{760\}/);
     assert.match(chat, /bind:this=\{inspectorPanel\} breakpoint=\{1250\}/);
     assert.equal((panel.match(/\{@render children\(\)\}/g) ?? []).length, 1);
     assert.match(panel, /dialog\.showModal\(\)/);
@@ -19,7 +19,8 @@ test('compact presentation keeps a single conversation manager and settings owne
 });
 
 test('composer keeps focus indication and grouped work tools share one collapsible inspector', () => {
-    assert.match(chat, /\.composer:focus-within\s*\{[^}]*outline: 2px solid var\(--primary\)/);
+    assert.match(chat, /\.composer:focus-within\s*\{[^}]*border-color: var\(--accent\)/);
+    assert.match(chat, /forced-colors:\s*active\)\s*\{\s*\.composer:focus-within\s*\{[^}]*outline:/);
     for (const tabs of ["['overview', 'progress', 'goal']", "['review', 'artifacts']", "['resources', 'execution', 'participants', 'settings']"]) assert.ok(chat.includes(tabs));
     assert.ok(chat.includes('aria-controls="chat-details"'));
     assert.ok(chat.includes('aria-expanded={selected}'));

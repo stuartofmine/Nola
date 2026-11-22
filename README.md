@@ -12,11 +12,13 @@ The CLI can expose its local Host through an authenticated HTTP service for the 
 
 Native and Web expert settings provide seven starting roles: code writing, code review, testing, personal assistance, visual art, presentations and academic writing. Each includes instructions, a suggested tool pack and associated Skills. Experts have their own model-declared reasoning effort; use `@` in graphical conversation composers to select an expert. Existing conversations retain their joined configuration until an explicit update. A single main agent interacts with the user and delegates to experts through the shared subagent Task runtime. Experts keep their own model, tools and persistent child history and do not recursively delegate. See the [expert interaction design](docs/design/shared/MULTI_AGENT_NAVIGATION.md).
 
+Experts can also run through an installed Antigravity, Codex, Claude Code or OpenCode on the connected desktop Host. Bind the implementation and review roles to their preferred executors, then mention both in a conversation. The main agent can send the implementation commit to a second agent for review and verification. Model choices come from the Host, including the native Antigravity reasoning variants. [Expert configuration and mentions](docs/design/shared/EXPERT_MENTIONS.md)
+
 ## Downloads
 
-The 1.0.0 development preview provides a complete **macOS Apple Silicon CLI** bundle. Keep its CLI, Agent Host, service, Web assets and browser runtime together. It is not Apple Developer ID notarized. Other platform installers have not been published; their source is included.
+Choose an installer or archive from the [1.0.0 release](https://github.com/stuartofmine/Nola/releases/tag/v1.0.0-build.3). The release page lists the available platforms, signing status and checksums.
 
-Download only assets listed on the [release page](https://github.com/stuartofmine/Nola/releases). In the extracted folder:
+For the Linux CLI and Web client, extract the complete archive and run the following commands from its directory.
 
 ```sh
 ./nola --version
@@ -28,18 +30,20 @@ Configure a model connection and select a declared model before starting a conve
 
 ## Architecture
 
+[Architecture guide](docs/architecture/README.en.md) · [中文架构指南](docs/architecture/README.md)
+
 | Component | Implementation | Responsibility |
 | --- | --- | --- |
 | macOS · `apps/macos/` | SwiftUI / AppKit | Native desktop client and platform Host integration |
 | iOS · `apps/ios/` | SwiftUI | Mobile client and iOS capabilities |
 | Android · `apps/android/` | Kotlin / Compose | Mobile client, JNI integration and Android capabilities |
-| Windows · `apps/windows/` | Native desktop shell + Web UI | Desktop client and owned local Host integration |
+| Windows · `apps/windows/` | Tauri 2 / WebView2 / Svelte | Desktop client and owned local Host integration |
 | Web · `apps/web/frontend/` | Svelte / TypeScript | Browser interface served by the Rust Host |
 | CLI · `apps/cli/` | Rust | Terminal client, Agent Host and local HTTP service |
 | Core · `core/` | Rust, C ABI / JNI | Domain contracts, Agent execution, Application Service, persistence and Host interfaces |
 | Shared Apple code · `shared/apple/` | Swift | Shared presentation and protocol code |
 
-Native clients have their own UI; the macOS client is not a CLI wrapper. Conversations and durable runtime state are managed by the local Application Service and Store. Remote Host access requires authentication and explicit authorization.
+Native clients have their own UI; the macOS client is not a CLI wrapper. The desktop Service and embedded mobile Application use the same business commands and Store contracts. Remote Host access requires authentication and explicit authorization.
 
 See [source layout](docs/engineering/SOURCE_LAYOUT.md) for platform roots, shared modules and test locations.
 
@@ -59,7 +63,7 @@ cargo build --locked -p nola_cli -p nola_service --bins
 
 The same local build/start sequence is available as `./dev.sh`; `WEB_HOST` and `WEB_PORT` configure the listener.
 
-For model configuration, use the Web/native settings or `nola model apply-config`. `llm.default_model` must name a connection and model declared in the same configuration.
+For model configuration, use the Web/native settings or run `nola config` to inspect file sources and the saved Host default. Save your changes and start Nola. Startup validates the catalog and applies its connections, models and default together. If validation fails, Nola reports the file and keeps the saved catalog. `llm.default_model` must name a connection and model declared in the same configuration.
 
 In the interactive CLI, `Ctrl+V` attaches a clipboard image; an absolute image path can also be pasted. Image analysis requires declared image-input support. After a permission denial, `/allow` opens conversation permissions. Explicit configuration denials and operating-system permissions must be changed at their source; request a retry afterward.
 
@@ -88,7 +92,7 @@ Prototype replays, native UI checks, and real-model execution have separate scop
 
 The reissued **1.0.0 is the first supported baseline**. All Nola-owned protocol, ABI and database format/epoch versions start at **1**. Earlier development formats are unsupported. Application version/build numbers are separate from contract versions; external standards retain their own version identifiers.
 
-Subsequent releases must preserve published interfaces and stored data, with explicit negotiation for protocol changes and tested, recoverable migrations for data changes. Unsupported formats are rejected without automatically deleting or rebuilding user data. See the [compatibility policy](docs/architecture/总体设计/VERSION_COMPATIBILITY.md).
+Subsequent releases must preserve published interfaces and stored data, with explicit negotiation for protocol changes and tested, recoverable migrations for data changes. Unsupported formats are rejected without automatically deleting or rebuilding user data. See the [compatibility policy](docs/architecture/总体设计/VERSION_COMPATIBILITY.en.md).
 
 ## Updates and releases
 

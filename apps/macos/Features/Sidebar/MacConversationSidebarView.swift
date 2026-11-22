@@ -10,12 +10,17 @@ struct MacConversationSidebar: View {
     @Binding var selectedSection: MacWorkspaceSection
     let selectConversation: (String) -> Void
     let loadParticipantNames: (String) async throws -> [String]
+    var pluginPages: [MacDesktopPluginPage] = []
+    var selectedPluginID: String?
+    var openPluginPage: (MacDesktopPluginPage) -> Void = { _ in }
     var onOpenSettings: (() -> Void)? = nil
     @Environment(\.openWindow) private var openWindow
     @Environment(\.openSettings) private var openSettings
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var isSearchHovering = false
+    @FocusState private var isSearchFocused: Bool
     @State private var deletionTarget: MacConversation?
+    @State private var isCancellingRename = false
     @FocusState private var focusedRenameID: String?
 
     private var pinned: [MacConversation] {
@@ -29,25 +34,54 @@ struct MacConversationSidebar: View {
 
     var body: some View {
         VStack(spacing: 0) {
-            VStack(spacing: 3) {
-                ForEach(MacWorkspaceSection.allCases) { section in
+            VStack(spacing: 2) {
+                ForEach(MacWorkspaceSection.sidebarSections) { section in
                     let isSelected = selectedSection == section
                     Button {
                         selectedSection = section
                     } label: {
                         Label(section.title, systemImage: section.symbol)
-                            .font(.system(size: 13, weight: isSelected ? .semibold : .medium))
+                            .font(.system(size: 13.5, weight: isSelected ? .semibold : .regular))
+                            .foregroundStyle(isSelected ? MacDesignColor.brand : Color("NolaTextPrimary"))
                             .frame(maxWidth: .infinity, minHeight: 34, alignment: .leading)
-                            .padding(.horizontal, 8)
+                            .padding(.horizontal, 11)
                             .contentShape(Rectangle())
                     }
-                    .buttonStyle(MacSidebarNavigationButtonStyle(isSelected: isSelected))
+                    .buttonStyle(MacSidebarNavigationButtonStyle(isSelected: isSelected && (section != .chat || model.selectedConversationID == nil)))
+                    .accessibilityAddTraits(isSelected ? .isSelected : [])
                     .accessibilityIdentifier("workspace.nav." + section.rawValue)
                 }
             }
-            .padding(.horizontal, 9)
-            .padding(.top, 10)
-            .padding(.bottom, 8)
+            .padding(.horizontal, 10)
+            .padding(.top, 12)
+            if !pluginPages.isEmpty {
+                ScrollView {
+                    LazyVStack(spacing: 2) {
+                        ForEach(pluginPages) { page in
+                            let selected = selectedSection == .pluginPage && selectedPluginID == page.id
+                            Button { openPluginPage(page) } label: {
+                                Label {
+                                    Text(verbatim: page.title).lineLimit(1)
+                                } icon: {
+                                    Image(systemName: MacWorkspaceSection.pluginPage.symbol)
+                                }
+                                .font(.system(size: 13.5, weight: selected ? .semibold : .regular))
+                                .foregroundStyle(selected ? MacDesignColor.brand : Color("NolaTextPrimary"))
+                                .frame(maxWidth: .infinity, minHeight: 34, alignment: .leading)
+                                .padding(.horizontal, 11)
+                                .contentShape(Rectangle())
+                            }
+                            .buttonStyle(MacSidebarNavigationButtonStyle(isSelected: selected))
+                            .help(page.package)
+                            .accessibilityAddTraits(selected ? .isSelected : [])
+                            .accessibilityIdentifier("workspace.nav.plugin." + page.id)
+                        }
+                    }
+                }
+                .frame(height: CGFloat(min(4, pluginPages.count)) * 36 + CGFloat(max(0, min(4, pluginPages.count) - 1)) * 2)
+                .padding(.horizontal, 10)
+            }
+            Spacer().frame(height: 12)
 
             Divider()
                 .opacity(0.55)
@@ -61,6 +95,7 @@ struct MacConversationSidebar: View {
                     TextField(String(localized: "Search conversations"), text: $model.searchText)
                         .textFieldStyle(.plain)
                         .font(.system(size: 12.5))
+                        .focused($isSearchFocused)
                     if !model.searchText.isEmpty {
                         Button {
                             model.searchText = ""
@@ -76,22 +111,26 @@ struct MacConversationSidebar: View {
                 .padding(.horizontal, 10)
                 .frame(height: 36)
                 .background(
-                    Color.primary.opacity(isSearchHovering ? 0.072 : 0.055),
+                    isSearchFocused ? MacDesignColor.panel : (isSearchHovering ? MacDesignColor.hover : MacDesignColor.panel),
                     in: RoundedRectangle(cornerRadius: MacDesignTokens.Radius.field, style: .continuous)
                 )
                 .overlay {
                     RoundedRectangle(cornerRadius: MacDesignTokens.Radius.field, style: .continuous)
-                        .stroke(Color.primary.opacity(isSearchHovering ? 0.085 : 0), lineWidth: 0.5)
+                        .strokeBorder(
+                            isSearchFocused ? MacDesignColor.brand : MacDesignColor.borderSubtle,
+                            lineWidth: isSearchFocused ? 1.5 : 1
+                        )
                 }
                 .contentShape(RoundedRectangle(cornerRadius: MacDesignTokens.Radius.field, style: .continuous))
                 .onHover { isSearchHovering = $0 }
                 .animation(reduceMotion ? nil : .easeOut(duration: 0.16), value: isSearchHovering)
+                .animation(reduceMotion ? nil : .easeOut(duration: 0.16), value: isSearchFocused)
 
 
             }
             .padding(.horizontal, 10)
             .padding(.top, 10)
-            .padding(.bottom, 10)
+            .padding(.bottom, 12)
 
             ScrollView {
                 LazyVStack(alignment: .leading, spacing: 3) {
@@ -137,13 +176,17 @@ struct MacConversationSidebar: View {
             .padding(.vertical, 7)
         }
         .onChange(of: model.renamingConversationID) { _, conversationID in
+            if conversationID != nil {
+                isCancellingRename = false
+            }
             Task { @MainActor in
                 await Task.yield()
                 focusedRenameID = conversationID
             }
         }
         .onChange(of: focusedRenameID) { previousID, focusedID in
-            guard previousID != nil,
+            guard !isCancellingRename,
+                  previousID != nil,
                   focusedID == nil,
                   model.renamingConversationID == previousID else { return }
             model.commitRename()
@@ -184,7 +227,7 @@ struct MacConversationSidebar: View {
     }
 
     private func sidebarSectionLabel(_ title: String) -> some View {
-        Text(String(localized: String.LocalizationValue(title)))
+        Text(title)
             .font(.system(size: 12, weight: .semibold))
             .foregroundStyle(.secondary)
     }
@@ -202,6 +245,7 @@ struct MacConversationSidebar: View {
                 } label: {
                     MacConversationRow(
                         conversation: conversation,
+                        isSelected: isSelected,
                         loadParticipantNames: loadParticipantNames
                     )
                 }
@@ -276,6 +320,7 @@ struct MacConversationSidebar: View {
     }
 
     private func cancelRename() {
+        isCancellingRename = true
         model.renamingConversationID = nil
         model.renameDraft = ""
         focusedRenameID = nil

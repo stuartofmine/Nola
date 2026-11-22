@@ -1,6 +1,8 @@
 # 当前实现与模块映射
 
-核对：2026-11-08 本地工作树；2026-11-10 更正现行部署及远端链路索引。覆盖总体 manifest 图、15 个模块的实现/端口入口和明确陈旧的状态描述，不声称逐行验证全仓库或重新运行所有验收。原设计目标、当前调用接线和历史证据分别维护；实际差距见[源码核对](ARCHITECTURE_SOURCE_AUDIT_20261108.md)。
+简体中文 · [English](CURRENT_IMPLEMENTATION_MAP.en.md)
+
+本页记录当前工作树的部署和源码入口。模块是职责边界，多个模块可共用一个进程。源代码核对与运行验收分别记录。
 
 | 模块 | 当前源码入口 | 实际边界与限制 |
 | --- | --- | --- |
@@ -8,7 +10,7 @@
 | 02-Core与状态机 | [reducer_port.rs](../../../core/nola-agent-engine/src/reducer_port.rs) / [submission.rs](../../../core/nola-agent-engine/src/agent/runtime/submission.rs) / [lib.rs](../../../core/src/lib.rs) | 状态机实现已在 agent engine，不能再把 core/src/agent 说成待抽取的另一份实现。facade 仍有纯辅助函数，但最终原生产物属于 mobile_bindings；整个包装 crate 的存在不证明所有路径无 I/O。 |
 | 03-Application与事务 | [application_command.rs](../../../core/nola-application/src/application_command.rs) / [lib.rs](../../../core/nola-application/src/lib.rs) / [runtime_owner.rs](../../../core/nola-application-bootstrap/src/runtime_owner.rs) | Service 是本地进程接入，embedded 是移动部署；两者复用 Application 用例。bootstrap 负责具体 Store 装配，不是可绕过命令边界的客户端 SDK。查询不应为读取制造业务回执。 |
 | 04-存储与索引 | [schema_store.rs](../../../core/nola-store/src/schema_store.rs) / [canonical_text_store.rs](../../../core/nola-store/src/canonical_text_store.rs) / [assistant_journal.rs](../../../core/nola-store-port/src/assistant_journal.rs) | 同 schema 不等于所有平台共享同一个文件路径；大文本已含 SQLite canonical 对象、分块、stream head/manifest，不能统称 ~/.nola/blobs。schema.sql 是组合 DDL 的一个入口，不是唯一文件。 |
-| 05-执行与恢复 | [lib.rs](../../../core/nola-runtime-driver/src/lib.rs) / [task_execution_authority.rs](../../../core/nola-runtime-driver/src/task_execution_authority.rs) / [native_host_entry.rs](../../../apps/cli/src/native_host_entry.rs) | 通用 Driver 循环与同 crate 的 Goal/任务适配要分开描述；当前 Goal 模块仍依赖 engine。进程内 lease handle 只是对已提交授权的引用，重启不能据此恢复执行权。 |
+| 05-执行与恢复 | [lib.rs](../../../core/nola-runtime-driver/src/lib.rs) / [task_execution_authority.rs](../../../core/nola-runtime-driver/src/task_execution_authority.rs) / [native_host_entry.rs](../../../apps/cli/src/native_host_entry.rs) | Driver 只处理执行传输与任务 worker 适配。Goal 用例协调位于 Application 的 goal_coordinator。进程内 lease handle 只是对已提交授权的引用，重启不能据此恢复执行权。 |
 | 06-工具与证据 | [tool_source.rs](../../../core/nola-application/src/tool_source.rs) / [tool_source.rs](../../../core/nola-store/src/tool_source.rs) / [execution_evidence.rs](../../../core/nola-domain/src/execution_evidence.rs) | 归档 validator/installer 和当前来源端口已有实现，旧“未实现、暂停 Apple 编译”不是本次工作限制；是否可跨 replica 导入工具来源须读当前 installer，不能从普通 journal 复制推断。 |
 | 07-权限与平台 | [permission_policy.rs](../../../core/nola-agent-engine/src/agent/runtime/permission_policy.rs) / [permission_source.rs](../../../core/nola-store/src/permission_source.rs) / [platform_catalog_contract_tests.rs](../../../apps/cli/src/tools/platform_catalog_contract_tests.rs) | 平台工具目录、政策判断、持久等待/决定、OS 授权和结果披露是不同边界。已注册 handler 不等于当前 Run 已准入；不得按自然语言关键词修补路由或授予权限。 |
 | 08-模型配置与调用 | [model.rs](../../../core/nola-application/src/model.rs) / [model_profile_resolution.rs](../../../core/nola-application/src/model_profile_resolution.rs) / [lib.rs](../../../core/nola-credential-host/src/lib.rs) | 有效调用并非一个已完成统一的抽象 DTO：当前代码有 ResolvedRemoteModelProfile/ResolvedModelRuntime、Host 绑定与 PreparedModelRequest。它们的解析和冻结时点须分开记录。 |
@@ -33,6 +35,15 @@
 | Store schema/epoch | [Store constants](../../../core/nola-store/src/lib.rs) 与 [gate](../../../core/nola-store/src/schema_store.rs) |
 | checkpoint/reducer/trace | [agent engine](../../../core/nola-agent-engine/src/lib.rs) 与相应格式类型 |
 | 配对/源提交/journal/终态 seal | 各自 Domain/Protocol/Host 类型，不能复用 Service 数字或 UI 标签代替 |
+
+| 客户端 | 部署 | 实现 |
+| --- | --- | --- |
+| macOS | SwiftUI/AppKit，使用本地 Service 与独立 nola-agent-host 执行平台工作。 | [apps/macos](../../../apps/macos) · [apps/cli/src/native_host_entry.rs](../../../apps/cli/src/native_host_entry.rs) |
+| iOS / iPadOS | SwiftUI 通过 C ABI 使用嵌入式 Application，也可认证后观察和控制源 Host 上的运行。 | [apps/ios](../../../apps/ios) · [core/nola-mobile-bindings/src/lib.rs](../../../core/nola-mobile-bindings/src/lib.rs) |
+| Android | Compose 通过 JNI 使用嵌入式 Application。手机本地模型、文件与权限归设备；远程执行归配对宿主。 | [apps/android](../../../apps/android) · [core/nola-mobile-bindings](../../../core/nola-mobile-bindings) |
+| CLI | Rust 终端使用本地 Application。交互 CLI 与以 stdin 接单的原生 agent-host 有不同入口。 | [apps/cli/src/main_parts/bootstrap.rs](../../../apps/cli/src/main_parts/bootstrap.rs) · [apps/cli/src/application_port.rs](../../../apps/cli/src/application_port.rs) |
+| Web | Svelte 客户端连接 Rust HTTP Host，通过提交回执与 journal 增量更新页面。 | [apps/web/frontend](../../../apps/web/frontend) · [apps/cli/src/web_parts/routes.rs](../../../apps/cli/src/web_parts/routes.rs) |
+| Windows | Tauri 2 用 WebView2 承载共享 Web UI，桌面壳管理本机 Rust Host 及其生命周期。 | [apps/windows/src-tauri](../../../apps/windows/src-tauri) · [apps/windows/src](../../../apps/windows/src) |
 
 ## 如何核对
 

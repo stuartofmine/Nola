@@ -33,4 +33,15 @@ function browserOptions(environment = process.env) {
         : {channel: 'chrome'};
 }
 
-module.exports = {artifactPath, temporaryPrefix, browserOptions};
+function isolatedHostOrigin() {
+    const statePath = process.env.NOLA_BUTTON_AUDIT_HOST_STATE;
+    if (!statePath) throw new Error('Set NOLA_BUTTON_AUDIT_HOST_STATE to the isolated Host state file.');
+    const state = JSON.parse(fs.readFileSync(statePath, 'utf8'));
+    const origin = new URL(state.url);
+    if (origin.protocol !== 'http:' || origin.hostname !== '127.0.0.1'
+        || !path.basename(state.root).startsWith('nola-a2ui-real-')) {
+        throw new Error('Expected an isolated loopback test Host.');
+    }
+    return origin;
+}
+module.exports = {artifactPath, temporaryPrefix, browserOptions, isolatedHostOrigin};

@@ -16,10 +16,12 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -56,6 +58,7 @@ import androidx.compose.material3.SingleChoiceSegmentedButtonRow
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -88,6 +91,9 @@ import com.nola.ui.components.NolaSectionTitle
 import com.nola.ui.components.NolaSpacing
 import com.nola.ui.components.NolaSwitch
 import com.nola.ui.components.NolaTopAppBar
+import com.nola.ui.components.nolaDisclosureEnter
+import com.nola.ui.components.nolaDisclosureExit
+import com.nola.ui.components.rememberNolaHaptics
 import com.nola.ui.components.rememberReduceMotionEnabled
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
@@ -173,21 +179,25 @@ fun ChatContextScreen(
     onSkillToggle: (UploadedContent, Boolean) -> Unit,
     onSaveSkill: suspend (UploadedContent?, String, String, String) -> Unit,
     onSkillDelete: (UploadedContent) -> Unit,
-    onDocumentAdd: (UploadedContent) -> Unit,
+    onDocumentAdd: suspend (UploadedContent) -> Unit,
     onDocumentDelete: (UploadedContent) -> Unit,
     onSaveMemoryProfile: suspend () -> Unit,
     onCompact: suspend () -> Unit,
     onReload: () -> Unit,
     onSearchMemory: suspend (String) -> List<MemorySearchHit>,
+    onDismissGuardStateChange: (saving: Boolean, dirty: Boolean) -> Unit = { _, _ -> },
+    dismissAttemptTick: Int = 0,
     onBack: () -> Unit
 ) {
     val reduceMotion = rememberReduceMotionEnabled()
+    val haptics = rememberNolaHaptics()
     var localSessionMemory by remember(conversationId, sessionMemory) { mutableStateOf(sessionMemory) }
     var localKnowledgePoints by remember(conversationId, knowledgePoints) { mutableStateOf(knowledgePoints) }
     var localConversationWiki by remember(conversationId, conversationWiki) { mutableStateOf(conversationWiki) }
     var localLongTermMemory by remember(longTermMemory) { mutableStateOf(longTermMemory) }
     var localUserPreferences by remember(userPreferences) { mutableStateOf(userPreferences) }
     var searchQuery by remember(conversationId) { mutableStateOf("") }
+    var lastSearchedQuery by remember(conversationId) { mutableStateOf<String?>(null) }
     var searchResults by remember(conversationId) { mutableStateOf<List<MemorySearchHit>>(emptyList()) }
     var isSearching by remember { mutableStateOf(false) }
     var isSaving by remember { mutableStateOf(false) }
@@ -198,6 +208,7 @@ fun ChatContextScreen(
     var expandedSkillKey by remember { mutableStateOf<String?>(null) }
     var expandedMcpServerIds by remember { mutableStateOf<Set<String>>(emptySet()) }
     var pendingSkillDeletion by remember { mutableStateOf<UploadedContent?>(null) }
+    var pendingDocumentDeletion by remember { mutableStateOf<UploadedContent?>(null) }
     var showSkillEditor by remember { mutableStateOf(false) }
     var skillEditorOriginal by remember { mutableStateOf<UploadedContent?>(null) }
     var discard by remember(conversationId) { mutableStateOf(false) }
@@ -210,6 +221,15 @@ fun ChatContextScreen(
         onBack()
     }
     val requestBack = { if (!isSaving && !isCompacting) { if (memoryDirty) discard = true else leave() } }
+    LaunchedEffect(isSaving, isCompacting, memoryDirty) {
+        onDismissGuardStateChange(isSaving || isCompacting, memoryDirty)
+    }
+    DisposableEffect(Unit) {
+        onDispose { onDismissGuardStateChange(false, false) }
+    }
+    LaunchedEffect(dismissAttemptTick) {
+        if (dismissAttemptTick > 0) requestBack()
+    }
     BackHandler { requestBack() }
     if (discard) DiscardChangesDialog(onDiscard = leave, onKeepEditing = { discard = false })
     if (showSkillEditor) {
@@ -253,6 +273,36 @@ fun ChatContextScreen(
             }
         )
     }
+    pendingDocumentDeletion?.let { doc ->
+        val displayName = doc.name.ifBlank { stringResource(R.string.chat_imported_document) }
+        AlertDialog(
+            onDismissRequest = { pendingDocumentDeletion = null },
+            title = { Text(stringResource(R.string.chat_document_delete_title)) },
+            text = {
+                Text(
+                    stringResource(
+                        R.string.chat_document_delete_message,
+                        displayName
+                    )
+                )
+            },
+            confirmButton = {
+                TextButton(
+                    onClick = {
+                        onDocumentDelete(doc)
+                        pendingDocumentDeletion = null
+                    }
+                ) {
+                    Text(stringResource(R.string.common_delete), color = NolaColors.danger)
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { pendingDocumentDeletion = null }) {
+                    Text(stringResource(R.string.common_cancel))
+                }
+            }
+        )
+    }
     LaunchedEffect(localKnowledgePoints, localConversationWiki, conversationId) {
         if (localKnowledgePoints == knowledgePoints && localConversationWiki == conversationWiki) {
             return@LaunchedEffect
@@ -278,14 +328,18 @@ fun ChatContextScreen(
         scope.launch {
             errorMessage = null
             try {
-                val bytes = context.contentResolver.openInputStream(uri)?.use { input ->
-                    input.readBytes()
-                } ?: ByteArray(0)
-                val content = bytes.toString(Charsets.UTF_8).take(MAX_DOCUMENT_CHARS)
-                val name = context.contentResolver.query(uri, null, null, null, null)?.use { cursor ->
-                    val index = cursor.getColumnIndex(OpenableColumns.DISPLAY_NAME)
-                    if (index >= 0 && cursor.moveToFirst()) cursor.getString(index) else null
-                } ?: uri.lastPathSegment ?: context.getString(R.string.chat_imported_document)
+                val (name, content) = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+                    val maxBytes = MAX_DOCUMENT_CHARS * 4
+                    val bytes = context.contentResolver.openInputStream(uri)?.use { input ->
+                        readBoundedBytes(input, maxBytes)
+                    } ?: ByteArray(0)
+                    val text = bytes.toString(Charsets.UTF_8).take(MAX_DOCUMENT_CHARS)
+                    val displayName = context.contentResolver.query(uri, null, null, null, null)?.use { cursor ->
+                        val index = cursor.getColumnIndex(OpenableColumns.DISPLAY_NAME)
+                        if (index >= 0 && cursor.moveToFirst()) cursor.getString(index) else null
+                    } ?: uri.lastPathSegment ?: context.getString(R.string.chat_imported_document)
+                    displayName to text
+                }
                 onDocumentAdd(
                     UploadedContent(
                         name = name,
@@ -294,6 +348,8 @@ fun ChatContextScreen(
                     )
                 )
                 noticeMessage = context.getString(R.string.chat_document_imported)
+            } catch (cancelled: kotlinx.coroutines.CancellationException) {
+                throw cancelled
             } catch (e: Exception) {
                 errorMessage = e.message ?: context.getString(R.string.chat_document_import_failed)
             }
@@ -303,6 +359,7 @@ fun ChatContextScreen(
     Scaffold(
         modifier = Modifier.testTag("chat.context.sheet"),
         containerColor = MaterialTheme.colorScheme.background,
+        contentWindowInsets = WindowInsets(0),
         topBar = {
             NolaTopAppBar(
                 title = if (displayMode == ContextDisplayMode.Context) stringResource(R.string.context) else stringResource(R.string.chat_skills_title),
@@ -315,6 +372,7 @@ fun ChatContextScreen(
             modifier = Modifier
                 .fillMaxSize()
                 .padding(padding)
+                .imePadding()
                 .verticalScroll(rememberScrollState())
                 .padding(NolaSpacing.lg)
         ) {
@@ -353,7 +411,11 @@ fun ChatContextScreen(
             }
 
             val statusMessage = errorMessage ?: noticeMessage
-            AnimatedVisibility(visible = statusMessage != null) {
+            AnimatedVisibility(
+                visible = statusMessage != null,
+                enter = nolaDisclosureEnter(reduceMotion),
+                exit = nolaDisclosureExit(reduceMotion),
+            ) {
                 Row(
                     modifier = Modifier
                         .fillMaxWidth()
@@ -400,7 +462,10 @@ fun ChatContextScreen(
                         }
                         SegmentedButton(
                             selected = selectedContextPane == pane,
-                            onClick = { selectedContextPane = pane },
+                            onClick = {
+                                if (selectedContextPane != pane) haptics.selection()
+                                selectedContextPane = pane
+                            },
                             shape = SegmentedButtonDefaults.itemShape(index, ContextPane.entries.size),
                             modifier = if (pane == ContextPane.Knowledge) {
                                 Modifier.testTag(CHAT_CONTEXT_KNOWLEDGE_PANE_TEST_TAG)
@@ -539,9 +604,15 @@ fun ChatContextScreen(
                                     Column(modifier = Modifier.padding(12.dp)) {
                                         Row(
                                             modifier = Modifier.fillMaxWidth(),
-                                            horizontalArrangement = Arrangement.SpaceBetween
+                                            horizontalArrangement = Arrangement.spacedBy(8.dp),
+                                            verticalAlignment = Alignment.CenterVertically
                                         ) {
-                                            Text(suggestion.title, style = MaterialTheme.typography.labelMedium, fontWeight = FontWeight.SemiBold)
+                                            Text(
+                                                suggestion.title,
+                                                modifier = Modifier.weight(1f),
+                                                style = MaterialTheme.typography.labelMedium,
+                                                fontWeight = FontWeight.SemiBold
+                                            )
                                             if (suggestion.estimatedSavingsTokens > 0) {
                                                 Text(
                                                     stringResource(R.string.chat_tokens_estimate_format, suggestion.estimatedSavingsTokens),
@@ -592,7 +663,9 @@ fun ChatContextScreen(
                                     isSearching = true
                                     errorMessage = null
                                     try {
-                                        searchResults = onSearchMemory(searchQuery)
+                                        val submittedQuery = searchQuery
+                                        searchResults = onSearchMemory(submittedQuery)
+                                        lastSearchedQuery = submittedQuery
                                     } catch (e: kotlinx.coroutines.CancellationException) {
                                         throw e
                                     } catch (e: Exception) {
@@ -602,17 +675,12 @@ fun ChatContextScreen(
                                 }
                             },
                             enabled = searchQuery.isNotBlank() && !isSearching,
-                            modifier = Modifier.width(88.dp)
+                            modifier = Modifier.heightIn(min = 48.dp)
                         ) {
-                            Box(
-                                modifier = Modifier.size(width = 64.dp, height = 20.dp),
-                                contentAlignment = Alignment.Center
-                            ) {
-                                if (isSearching) {
-                                    CircularProgressIndicator(Modifier.size(16.dp), strokeWidth = 2.dp, color = MaterialTheme.colorScheme.onPrimary)
-                                } else {
-                                    Text(stringResource(R.string.common_search))
-                                }
+                            if (isSearching) {
+                                CircularProgressIndicator(Modifier.size(16.dp), strokeWidth = 2.dp, color = MaterialTheme.colorScheme.onPrimary)
+                            } else {
+                                Text(stringResource(R.string.common_search))
                             }
                         }
                     }
@@ -627,9 +695,15 @@ fun ChatContextScreen(
                                 Column(modifier = Modifier.padding(NolaSpacing.sm)) {
                                     Row(
                                         modifier = Modifier.fillMaxWidth(),
-                                        horizontalArrangement = Arrangement.SpaceBetween
+                                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                                        verticalAlignment = Alignment.CenterVertically
                                     ) {
-                                        Text(hit.source, style = MaterialTheme.typography.labelSmall, fontWeight = FontWeight.SemiBold)
+                                        Text(
+                                            hit.source,
+                                            modifier = Modifier.weight(1f),
+                                            style = MaterialTheme.typography.labelSmall,
+                                            fontWeight = FontWeight.SemiBold
+                                        )
                                         if (hit.score > 0) {
                                             Text(stringResource(R.string.chat_score_format, hit.score), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                                         }
@@ -639,7 +713,7 @@ fun ChatContextScreen(
                                 }
                             }
                         }
-                    } else if (searchQuery.isNotEmpty() && !isSearching) {
+                    } else if (lastSearchedQuery == searchQuery && searchQuery.isNotEmpty() && !isSearching) {
                         Spacer(Modifier.height(NolaSpacing.sm))
                         Text(stringResource(R.string.chat_no_search_results), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                     }
@@ -872,6 +946,7 @@ fun ChatContextScreen(
                         Column(
                             modifier = Modifier
                                 .fillMaxWidth()
+                                .clip(RoundedCornerShape(8.dp))
                                 .clickable(role = Role.Button) {
                                     expandedMcpServerIds = if (expanded) {
                                         expandedMcpServerIds - identity
@@ -965,7 +1040,7 @@ fun ChatContextScreen(
                                 Text(doc.name, style = MaterialTheme.typography.bodyMedium)
                                 Text(stringResource(R.string.chat_characters_format, doc.content.length), style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                             }
-                            IconButton(onClick = { onDocumentDelete(doc) }) {
+                            IconButton(onClick = { pendingDocumentDeletion = doc }) {
                                 Icon(Icons.Filled.Delete, stringResource(R.string.common_delete), Modifier.size(18.dp), tint = NolaColors.danger)
                             }
                         }
@@ -1071,18 +1146,8 @@ fun ChatContextScreen(
                             }
                             AnimatedVisibility(
                                 visible = isExpanded,
-                                enter = androidx.compose.animation.fadeIn(
-                                    androidx.compose.animation.core.tween(if (reduceMotion) 0 else NolaMotion.disclosure, easing = NolaMotion.disclosureEasing)
-                                ) + androidx.compose.animation.expandVertically(
-                                    androidx.compose.animation.core.tween(if (reduceMotion) 0 else NolaMotion.disclosure, easing = NolaMotion.disclosureEasing),
-                                    expandFrom = Alignment.Top,
-                                ),
-                                exit = androidx.compose.animation.fadeOut(
-                                    androidx.compose.animation.core.tween(if (reduceMotion) 0 else NolaMotion.disclosure, easing = NolaMotion.disclosureEasing)
-                                ) + androidx.compose.animation.shrinkVertically(
-                                    androidx.compose.animation.core.tween(if (reduceMotion) 0 else NolaMotion.disclosure, easing = NolaMotion.disclosureEasing),
-                                    shrinkTowards = Alignment.Top,
-                                ),
+                                enter = nolaDisclosureEnter(reduceMotion),
+                                exit = nolaDisclosureExit(reduceMotion),
                             ) {
                                 Column {
                                     Spacer(Modifier.height(NolaSpacing.sm))
@@ -1197,6 +1262,7 @@ internal fun DataSourceCatalogRow(
         source.connectionState == UnifiedDataSourceConnectionState.Ready)
     val selectionModifier = if (accessPolicy != null) Modifier
         .testTag("chat.data-source.$selectionId")
+        .clip(RoundedCornerShape(8.dp))
         .toggleable(value = toggleChecked, enabled = canToggle, role = Role.Switch) {
             onEnabledChange(selectionId, it)
         }
@@ -1311,3 +1377,17 @@ private fun dataSourcePolicyLabel(policy: DataSourceAccessPolicy): String = when
 }
 
 private const val MAX_DOCUMENT_CHARS = 200_000
+
+internal fun readBoundedBytes(input: java.io.InputStream, maxBytes: Int): ByteArray {
+    if (maxBytes <= 0) return ByteArray(0)
+    val out = java.io.ByteArrayOutputStream()
+    val buffer = ByteArray(minOf(8_192, maxBytes))
+    var remaining = maxBytes
+    while (remaining > 0) {
+        val read = input.read(buffer, 0, minOf(buffer.size, remaining))
+        if (read <= 0) break
+        out.write(buffer, 0, read)
+        remaining -= read
+    }
+    return out.toByteArray()
+}

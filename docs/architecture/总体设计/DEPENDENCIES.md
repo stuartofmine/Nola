@@ -2,7 +2,9 @@
 
 # Rust 生产依赖与边界门禁
 
-核对：2026-11-09，依据当前 `cargo metadata --offline --no-deps --format-version 1`。下表是 normal/build 声明依赖，包含 optional/target 条件边，不包含 dev-dependency；不是运行调用图、实际链接闭包或安全证明。
+简体中文 · [English](DEPENDENCIES.en.md)
+
+2026-11-22 按工作区 manifest 重新生成下表，依据 `cargo metadata --offline --no-deps --format-version 1`。下表是 normal/build 声明依赖，包含 optional/target 条件边，不包含 dev-dependency；不是运行调用图、实际链接闭包或安全证明。
 
 ## 生产声明图
 
@@ -12,32 +14,35 @@
 | `nola_agent_engine` | `nola_domain`、`nola_host_protocol`、`nola_kernel` |
 | `nola_application` | `nola_agent_engine`、`nola_domain`、`nola_host_protocol`、`nola_kernel`、`nola_measurement`、`nola_protocol`、`nola_store_port` |
 | `nola_application_bootstrap` | `nola_application`、`nola_store` |
-| `nola_cli` | `nola-code-memory`、`nola_application`、`nola_application_bootstrap`、`nola_code_mode_host`、`nola_core`、`nola_credential_host`、`nola_domain`、`nola_host_protocol`、`nola_mcp_host`、`nola_measurement`、`nola_plugin_host`、`nola_protocol`、`nola_runtime_driver`、`nola_runtime_supervisor`、`nola_service`、`nola_service_client`、`nola_store_port`、`nola_update_host` |
+| `nola_cli` | `nola-code-memory`、`nola_application`、`nola_application_bootstrap`、`nola_code_mode_host`、`nola_core`、`nola_credential_host`、`nola_domain`、`nola_host_protocol`、`nola_mcp_host`、`nola_measurement`、`nola_plugin_host`、`nola_protocol`、`nola_runtime_driver`、`nola_runtime_supervisor`、`nola_service`、`nola_service_client`、`nola_skill_host`、`nola_store_port`、`nola_update_host` |
 | `nola_code_mode_host` | `nola_domain` |
 | `nola_core` | `nola_agent_engine`、`nola_domain`、`nola_host_protocol`、`nola_kernel` |
-| `nola_credential_host` | 无 |
+| `nola_credential_host` | `nola_windows_permissions` |
 | `nola_domain` | 无 |
 | `nola_host_protocol` | `nola_domain` |
 | `nola_kernel` | `nola_domain` |
 | `nola_mcp_host` | `nola_core` |
 | `nola_measurement` | 无 |
-| `nola_mobile_bindings` | `nola_application`、`nola_application_bootstrap`、`nola_core`、`nola_domain`、`nola_host_protocol`、`nola_kernel`、`nola_mcp_host`、`nola_protocol`、`nola_runtime_driver`、`nola_update_host` |
+| `nola_mobile_bindings` | `nola_application`、`nola_application_bootstrap`、`nola_core`、`nola_domain`、`nola_host_protocol`、`nola_kernel`、`nola_mcp_host`、`nola_protocol`、`nola_runtime_driver`、`nola_skill_host`、`nola_update_host` |
 | `nola_model_runtime_host` | 无 |
 | `nola_plugin_host` | `nola_domain` |
 | `nola_protocol` | `nola_domain` |
 | `nola_runtime_driver` | `nola_domain`、`nola_host_protocol` |
 | `nola_runtime_supervisor` | `nola_domain`、`nola_protocol`、`nola_service_client` |
-| `nola_service` | `nola_application`、`nola_application_bootstrap`、`nola_domain`、`nola_protocol` |
-| `nola_service_client` | `nola_protocol` |
+| `nola_service` | `nola_application`、`nola_application_bootstrap`、`nola_domain`、`nola_protocol`、`nola_windows_permissions` |
+| `nola_service_client` | `nola_protocol`、`nola_windows_permissions` |
+| `nola_skill_host` | 无 |
 | `nola_store` | `nola_domain`、`nola_kernel`、`nola_measurement`、`nola_store_port` |
 | `nola_store_port` | `nola_domain` |
 | `nola_update_host` | `nola_domain` |
+| `nola_windows_permissions` | 无 |
 
 ## 所有权规则与待删除的实现耦合
 
 - Domain 值类型、Kernel 决策不依赖应用/存储/Host。当前纯层外部依赖只允许已审阅的序列化、
   URL 值与摘要库；新增网络、数据库或执行库必须失败，不能因为改了依赖别名而绕过。
 - Protocol、Host Protocol、Store Port 只引用 Domain；接口不能反向依赖具体实现。
+- `nola_windows_permissions` 仅在 Windows 上提供文件和注册表 ACL 原语，生产依赖仅有 `windows-sys`。Service、SDK 和凭据存储分别引用该库，SDK 可保护本地启动锁目录而无需链接凭据库或 SQLite。
 - Store 可使用 Domain/Kernel/Store Port 进行持久化规则校验，不依赖 Application，避免双向所有权。
 - Measurement 是非权威诊断接收端，不依赖任何业务模块；Store/CLI 可以发送有界测量记录，
   但诊断失败不得改变业务提交结果。Domain/Kernel 不依赖诊断库；测量不能成为决策输入。

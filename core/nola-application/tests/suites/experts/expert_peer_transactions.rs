@@ -1409,3 +1409,55 @@ fn selected_experts_require_actual_main_tool_capability_and_available_dispatch()
     let(mut store,_)=setup();let run=uuid::Uuid::new_v4().to_string();let mut cfg=config("parent");cfg.turn_identity.model_capability.native_tool_calls=false;
     assert!(begin_real_child(&mut store,"parent",&run,"Ordinary chat without selected experts",cfg,vec![]).is_ok());
 }
+
+#[test]
+fn inline_mentions_preserve_occurrences_in_history_and_reject_forged_labels() {
+    let (mut store, initial) = setup();
+    let selected = &initial.selected_participants[1];
+    let label = format!("@{}", selected.agent_id.as_str());
+    let text = format!("请{label}检查，{label}看结果。");
+    let mention = json!({"agent_id":selected.agent_id,"text":label});
+    let selection = json!({"version":1,"selected_experts":[selected],
+        "expert_mentions":{"version":1,"segments":[{"text":"请"},mention,{"text":"检查，"},mention,{"text":"看结果。"}]}});
+    let run = uuid::Uuid::new_v4().to_string();
+    let before = store.load_conversation("parent").unwrap().unwrap();
+    let mut wrong = selection.clone();
+    wrong["expert_mentions"]["segments"][1]["text"] = json!("@wrong");
+    assert!(begin_real_child(&mut store, "parent", &run, &text.replacen(&label, "@wrong", 1),
+        main_selection_config("parent"), vec![selection_component(wrong)]).unwrap_err().contains("name_changed"));
+    assert_eq!(store.load_conversation("parent").unwrap().unwrap(), before);
+    let accepted = begin_real_child(&mut store, "parent", &run, &text, main_selection_config("parent"),
+        vec![selection_component(selection.clone())]).unwrap();
+    finish_target(&mut store, "parent", accepted);
+    let projection = nola_application::load_conversation_projection_v1(&store, "parent").unwrap();
+    let user = projection.messages.iter().find(|m| m.message_id.0 == format!("{run}:user")).unwrap();
+    let nola_domain::MessagePartView::Historical { projection, .. } = &user.parts[0] else {panic!("missing frozen user text")};
+    let nola_domain::SemanticValue::Complete { value } = &projection.fields["expert_mentions"] else {panic!("missing frozen identities")};
+    let frozen: nola_domain::expert_task_target::FrozenExpertMentions = serde_json::from_value(serde_json::to_value(value).unwrap()).unwrap();
+    assert_eq!(frozen.selected_experts.len(), 1);
+    assert_eq!(frozen.segments.len(), 5);
+    assert_eq!(frozen.selected_experts[0].participant_id.as_deref(), Some(selected.participant_id.as_str()));
+    assert_eq!(projection.canonical_text.as_ref().unwrap().text, text);
+
+    // Removing the final mention still leaves the old answer visible until a new turn commits.
+    let operation_id = uuid::Uuid::new_v4().to_string();
+    let expected = store.load_conversation("parent").unwrap().unwrap();
+    let input = nola_domain::edited_resend::PrepareInPlaceResend {
+        defer_until_admission: false, selected_experts: vec![], expert_mentions: None, expected_source_store_epoch: None,
+        operation_id: operation_id.clone(), conversation_id: "parent".into(), message_id: user.message_id.0.clone(),
+        expected_revision: expected.revision, expected_message_revision: user.revision,
+        edited_text: "New request".into(), created_at_ms: 2200,
+    };
+    let prepared: nola_domain::edited_resend::PreparedInPlaceResend = serde_json::from_value(
+        nola_application::execute_application_command(&mut store, nola_application::ApplicationCommand::PrepareInPlaceResend { input }).unwrap()
+    ).unwrap();
+    assert!(prepared.deferred_rewind);
+    assert_eq!(store.load_conversation("parent").unwrap().unwrap(), expected);
+    assert!(begin_real_child(&mut store, "parent", &operation_id, "Changed in transit",
+        main_selection_config("parent"), vec![]).unwrap_err().contains("request_changed"));
+    assert_eq!(store.load_conversation("parent").unwrap().unwrap(), expected);
+    begin_real_child(&mut store,"parent",&operation_id,"New request",main_selection_config("parent"),vec![]).unwrap();
+    let view = nola_application::load_conversation_projection_v1(&store,"parent").unwrap();
+    assert!(view.messages.iter().any(|m| m.message_id.0 == prepared.user_message_id));
+    assert!(view.messages.iter().all(|m| m.message_id.0 != user.message_id.0 && m.message_id.0 != format!("{run}:assistant")));
+}

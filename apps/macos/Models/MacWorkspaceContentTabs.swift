@@ -6,7 +6,8 @@ extension MacWorkspaceSection {
     var titleKey: String {
         switch self {
         case .chat: "Conversations"
-        case .extensions: "Experts & Skills"
+        case .pluginPage: "Runtime plugins"
+        case .extensions: "Capability library"
         case .memory: "Memory & Sources"
         case .automations: "Automations"
         }

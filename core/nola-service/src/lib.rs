@@ -24,21 +24,27 @@ impl From<String> for ServiceFailure {
 
 #[cfg(unix)]
 mod projection_wakeup;
+#[cfg(windows)]
+#[path = "projection_wakeup_windows.rs"]
+mod projection_wakeup;
 
-#[cfg(unix)]
+#[cfg(any(unix, windows))]
 mod transport_deadline;
 
-#[cfg(unix)]
+#[cfg(any(unix, windows))]
 mod connection_budget;
 
-#[cfg(unix)]
-mod unix {
+#[cfg(any(unix, windows))]
+mod local {
     use super::projection_wakeup::{ProjectionWakeReceiver, ProjectionWakeSender};
     use super::ServiceFailure;
     use std::fs;
     use std::io::{BufRead, BufReader, BufWriter, Read, Write};
+    #[cfg(unix)]
     use std::os::fd::AsRawFd;
+    #[cfg(unix)]
     use std::os::unix::fs::{OpenOptionsExt, PermissionsExt};
+    #[cfg(unix)]
     use std::os::unix::net::{UnixListener, UnixStream};
     use std::path::{Path, PathBuf};
     use std::sync::{Arc, Mutex, Weak};
@@ -60,6 +66,9 @@ mod unix {
     };
     use serde_json::{json, Map, Value};
 
+    #[cfg(windows)]
+    use uds_windows::{UnixListener, UnixStream};
+
     struct SocketGuard(PathBuf);
 
     fn acquire_database_service_lock(database: &Path) -> Result<fs::File, String> {
@@ -80,20 +89,14 @@ mod unix {
         lock_path.push(".service.lock");
         // Keep the lock inode after release. Unlinking it can let a new process
         // lock a different inode while a waiter still owns the original file.
-        let file = fs::OpenOptions::new()
-            .read(true)
-            .write(true)
-            .create(true)
-            .mode(0o600)
-            .custom_flags(libc::O_NOFOLLOW | libc::O_CLOEXEC)
-            .open(PathBuf::from(lock_path))
+        let mut options = fs::OpenOptions::new();
+        options.read(true).write(true).create(true);
+        #[cfg(unix)]
+        options.mode(0o600).custom_flags(libc::O_NOFOLLOW | libc::O_CLOEXEC);
+        let file = options.open(PathBuf::from(lock_path))
             .map_err(|error| format!("open database service lock failed: {error}"))?;
-        if unsafe { libc::flock(file.as_raw_fd(), libc::LOCK_EX | libc::LOCK_NB) } != 0 {
-            return Err(format!(
-                "cannot acquire exclusive Application Service database ownership: {}",
-                std::io::Error::last_os_error()
-            ));
-        }
+        file.try_lock().map_err(|error|
+            format!("cannot acquire exclusive Application Service database ownership: {error}"))?;
         Ok(file)
     }
 
@@ -371,6 +374,10 @@ mod unix {
             fs::create_dir_all(parent)
                 .map_err(|error| format!("create service socket directory failed: {error}"))?;
         }
+        #[cfg(windows)]
+        nola_windows_permissions::protect_private_path(
+            socket_path.parent().ok_or_else(|| "service socket must have a private directory".to_string())?
+        )?;
         if socket_path.exists() {
             if UnixStream::connect(socket_path).is_ok() {
                 return Err(format!(
@@ -390,6 +397,7 @@ mod unix {
                 format!("configure application service listener failed: {error}")
             })?;
         }
+        #[cfg(unix)]
         fs::set_permissions(socket_path, fs::Permissions::from_mode(0o600))
             .map_err(|error| format!("restrict application service socket failed: {error}"))?;
         let _socket_guard = SocketGuard(socket_path.to_path_buf());
@@ -426,16 +434,33 @@ mod unix {
             database_path.to_path_buf(),
         ));
         let connections = super::connection_budget::ConnectionBudget::for_process();
+        #[cfg(windows)]
+        let parent_handle = parent_pid.map(windows_parent_handle).transpose()?;
         let mut retiring = false;
         loop {
-            if !retiring && parent_pid.is_some_and(|pid| !parent_process_is_alive(pid)) {
+            #[cfg(unix)]
+            let parent_gone = parent_pid.is_some_and(|pid| !parent_process_is_alive(pid));
+            #[cfg(windows)]
+            let parent_gone = parent_handle.as_ref().is_some_and(|handle| {
+                use std::os::windows::io::AsRawHandle;
+                unsafe { windows_sys::Win32::System::Threading::WaitForSingleObject(handle.as_raw_handle(), 0) == 0 }
+            });
+            if !retiring && parent_gone {
                 // Stop new connects before relinquishing database ownership,
                 // but settle every connection already accepted or queued. The
                 // launcher is not the only client: exiting immediately here
                 // tears down another process's potentially committed request.
+                #[cfg(unix)]
                 fs::remove_file(socket_path)
                     .map_err(|error| format!("retire service socket failed: {error}"))?;
-                retiring = true;
+                #[cfg(windows)]
+                {
+                    drop(listener);
+                    while !connections.is_idle() { thread::sleep(Duration::from_millis(5)); }
+                    return Ok(());
+                }
+                #[cfg(unix)]
+                { retiring = true; }
             }
             if !retiring && parent_pid.is_some() && !listener_is_ready(&listener)? {
                 continue;
@@ -486,6 +511,7 @@ mod unix {
                     }
                     continue;
                 }
+                #[cfg(unix)]
                 Err(error)
                     if matches!(
                         error.raw_os_error(),
@@ -504,11 +530,13 @@ mod unix {
         }
     }
 
+    #[cfg(unix)]
     fn process_is_alive(pid: u32) -> bool {
         let result = unsafe { libc::kill(pid as libc::pid_t, 0) };
         result == 0 || std::io::Error::last_os_error().raw_os_error() == Some(libc::EPERM)
     }
 
+    #[cfg(unix)]
     fn parent_process_is_alive(expected_pid: u32) -> bool {
         let current_parent = unsafe { libc::getppid() };
         current_parent > 0
@@ -516,7 +544,7 @@ mod unix {
             && process_is_alive(expected_pid)
     }
 
-    #[cfg(test)]
+    #[cfg(all(test, unix))]
     mod tests {
         #[test]
         fn absent_owner_cannot_turn_an_original_mutation_into_a_rejection() {
@@ -1205,6 +1233,7 @@ mod unix {
     /// to observe parent death. A fixed sleep loop adds up to one polling
     /// interval to every short-lived IPC connection and turns a resume path
     /// with several typed reads into seconds of artificial latency.
+    #[cfg(unix)]
     fn listener_is_ready(listener: &UnixListener) -> Result<bool, String> {
         let mut descriptor = libc::pollfd {
             fd: listener.as_raw_fd(),
@@ -1223,6 +1252,25 @@ mod unix {
             return Ok(false);
         }
         Err(format!("poll application service listener failed: {error}"))
+    }
+
+    #[cfg(windows)]
+    fn windows_parent_handle(pid: u32) -> Result<std::os::windows::io::OwnedHandle, String> {
+        use std::os::windows::io::{OwnedHandle, FromRawHandle};
+        use windows_sys::Win32::System::Threading::{OpenProcess, PROCESS_SYNCHRONIZE};
+        let handle = unsafe { OpenProcess(PROCESS_SYNCHRONIZE, 0, pid) };
+        if handle.is_null() { return Err(format!("open service parent: {}", std::io::Error::last_os_error())); }
+        Ok(unsafe { OwnedHandle::from_raw_handle(handle) })
+    }
+
+    #[cfg(windows)]
+    fn listener_is_ready(listener: &UnixListener) -> Result<bool, String> {
+        use std::os::windows::io::AsRawSocket;
+        use windows_sys::Win32::Networking::WinSock::{WSAPoll, WSAPOLLFD, POLLRDNORM, WSAGetLastError};
+        let mut descriptor = WSAPOLLFD { fd: listener.as_raw_socket() as _, events: POLLRDNORM, revents: 0 };
+        let ready = unsafe { WSAPoll(&mut descriptor, 1, 500) };
+        if ready < 0 { return Err(format!("poll service listener failed: {}", unsafe { WSAGetLastError() })); }
+        Ok(ready > 0)
     }
 
     fn handle_connection(
@@ -2593,16 +2641,16 @@ mod unix {
     }
 }
 
-#[cfg(unix)]
-pub use unix::serve;
-#[cfg(unix)]
-pub use unix::serve_with_options;
-#[cfg(unix)]
-pub use unix::{
+#[cfg(any(unix, windows))]
+pub use local::serve;
+#[cfg(any(unix, windows))]
+pub use local::serve_with_options;
+#[cfg(any(unix, windows))]
+pub use local::{
     serve_with_options_and_parent, serve_with_recovery_and_parent,
 };
 
-#[cfg(not(unix))]
+#[cfg(not(any(unix, windows)))]
 pub fn serve(
     _database_path: &std::path::Path,
     _socket_path: &std::path::Path,
@@ -2610,7 +2658,7 @@ pub fn serve(
     Err("nola-service local transport is not implemented for this platform".to_string())
 }
 
-#[cfg(not(unix))]
+#[cfg(not(any(unix, windows)))]
 pub fn serve_with_options_and_parent(
     _database_path: &std::path::Path,
     _socket_path: &std::path::Path,
@@ -2620,7 +2668,7 @@ pub fn serve_with_options_and_parent(
     Err("nola-service local transport is not implemented for this platform".to_string())
 }
 
-#[cfg(not(unix))]
+#[cfg(not(any(unix, windows)))]
 pub fn serve_with_recovery_and_parent(
     _database_path: &std::path::Path,
     _socket_path: &std::path::Path,

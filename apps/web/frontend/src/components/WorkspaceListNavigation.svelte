@@ -22,8 +22,9 @@
     {/each}
 </nav>
 <style>
-    .list-categories { display: flex; flex: none; flex-direction: row; gap: 4px; }
-    button { display: grid; place-items: center; width: 36px; height: 36px; padding: 0; background: transparent; border-color: transparent; border-radius: 8px; color: var(--muted); }
-    button[aria-pressed='true'] { color:var(--content); background:var(--accent-subtle); border-color:transparent; position:relative; }
+    .list-categories { display: flex; flex: none; flex-direction: row; gap: 4px; padding: 2px; background: var(--glass-track-bg); border: 1px solid var(--glass-track-border); border-radius: 10px; }
+    button { display: grid; place-items: center; width: 32px; height: 32px; min-width: 32px; min-height: 32px; padding: 0; background: transparent; border: 1px solid transparent; border-radius: 7px; color: var(--muted); }
+    button:hover:not(:disabled) { background: var(--composer-pill-hover-bg); border-color: transparent; color: var(--content); }
+    button[aria-pressed='true'] { color: var(--content); background: var(--glass-pill-bg); border-color: var(--glass-pill-border); box-shadow: var(--glass-pill-shadow); position: relative; }
     @media (pointer: coarse) { button { width: 44px; height: 44px; } }
 </style>

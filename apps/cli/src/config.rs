@@ -16,6 +16,9 @@ use serde_json::Value;
 
 pub use crate::external_execution_settings::HostAttachment;
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum ConfigFileAction { Show, Edit, Check, Apply, Example }
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum CommandMode {
     Run,
@@ -27,6 +30,7 @@ pub enum CommandMode {
     Room { action: String, value: Option<String>, agent_id: Option<String>, text: Option<String> },
     ModelConnections,
     ModelManage,
+    ConfigFile { action: ConfigFileAction, path: Option<String> },
     ModelApplyConfig { path: Option<String> },
     ModelChatgpt { operation: String, account_id: Option<String>, revision: Option<i64>, label: Option<String> },
     ModelDiscover { connection_id: String, revision: i64 },
@@ -36,6 +40,7 @@ pub enum CommandMode {
         capabilities: Option<nola_application::ModelExecutionCapabilities> },
     ModelImport { source: String, path: String, credential_path: Option<String>, include_credentials: bool, allow_environment: bool },
     Plugin(PluginCommandMode),
+    HarnessPlugin(crate::harness_plugin::HarnessPluginCommand),
     SessionShow(String),
     SessionPart {
         conversation_id: String,
@@ -184,6 +189,24 @@ pub struct Config {
     pub web_root: PathBuf,
 }
 
+#[derive(Debug)]
+pub(crate) enum ConfigStartError {
+    Usage(String),
+    Runtime(String),
+}
+
+impl From<String> for ConfigStartError {
+    fn from(message: String) -> Self { Self::Usage(message) }
+}
+impl From<&str> for ConfigStartError {
+    fn from(message: &str) -> Self { Self::Usage(message.to_owned()) }
+}
+impl ConfigStartError {
+    fn into_message(self) -> String {
+        match self { Self::Usage(message) | Self::Runtime(message) => message }
+    }
+}
+
 impl Config {
     pub(crate) fn host_invocation_request(&self) -> Result<crate::host_invocation_request::HostInvocationRequest, String> {
         use crate::host_invocation_request::*;
@@ -315,10 +338,16 @@ impl Config {
     pub(crate) fn from_args_with_setup<I>(args: I, setup: &dyn ConfigurationSetup) -> Result<Self, String>
     where I: IntoIterator<Item = String>,
     {
+        Self::from_entry_args(args, setup).map_err(ConfigStartError::into_message)
+    }
+
+    pub(crate) fn from_entry_args<I>(args: I, setup: &dyn ConfigurationSetup) -> Result<Self, ConfigStartError>
+    where I: IntoIterator<Item = String>,
+    {
         Self::from_args_with_runtime(args, setup, None)
     }
 
-    fn from_args_with_runtime<I>(args: I, setup: &dyn ConfigurationSetup, runtime: Option<RuntimeConfig>) -> Result<Self, String>
+    fn from_args_with_runtime<I>(args: I, setup: &dyn ConfigurationSetup, runtime: Option<RuntimeConfig>) -> Result<Self, ConfigStartError>
     where I: IntoIterator<Item = String>,
     {
         let raw_args: Vec<String> = args.into_iter().collect();
@@ -330,10 +359,10 @@ impl Config {
             .iter()
             .any(|arg| arg == "-h" || arg == "--help")
         {
-            return Self::for_help_args(&raw_args[..pre_double_dash_end], runtime);
+            return Self::for_help_args(&raw_args[..pre_double_dash_end], runtime).map_err(Into::into);
         }
 
-        let mut permission_profile = permission_profile_from_environment(env::var("NOLA_PERMISSION_PROFILE"))?;
+        let mut permission_profile = permission_profile_from_environment(env::var("NOLA_PERMISSION_PROFILE")).map_err(ConfigStartError::Runtime)?;
         let mut permission_profile_explicit = false;
         let mut args = raw_args.into_iter().peekable();
         let mut command = None;
@@ -461,6 +490,7 @@ impl Config {
                     "web" => command = Some(CommandMode::Web),
                     "server" | "serve" => command = Some(CommandMode::Server),
                     "sessions" => command = Some(CommandMode::Sessions),
+                    "config" => command = Some(CommandMode::ConfigFile { action: ConfigFileAction::Show, path: None }),
                     "model" => {
                         command = Some(match args.next().as_deref() {
                             Some("connections") => CommandMode::ModelConnections,
@@ -472,14 +502,14 @@ impl Config {
                                     .transpose()?,
                             },
                             Some("chatgpt") => {
-                                let operation = args.next().ok_or("model chatgpt requires sign-in, reauthorize, status, models, refresh or sign-out")?;
+                                let operation = next_command_value(&mut args).ok_or("model chatgpt requires sign-in, reauthorize, status, models, refresh or sign-out")?;
                                 if operation == "sign-in" {
-                                    let label = args.next().ok_or("model chatgpt sign-in requires an account label")?;
+                                    let label = next_command_value(&mut args).ok_or("model chatgpt sign-in requires an account label")?;
                                     if label.trim().is_empty() || label.len() > 256 || label.chars().any(char::is_control) { return Err("invalid account label".into()); }
                                     CommandMode::ModelChatgpt { operation, account_id:None, revision:None, label:Some(label) }
                                 } else {
                                     if !matches!(operation.as_str(), "reauthorize" | "status" | "models" | "refresh" | "sign-out") { return Err("unsupported model chatgpt operation".into()); }
-                                    let account_id = args.next().ok_or("model chatgpt operation requires account ID")?;
+                                    let account_id = next_command_value(&mut args).ok_or("model chatgpt operation requires account ID")?;
                                     let parsed = uuid::Uuid::parse_str(&account_id).map_err(|_| "account ID must be a UUID")?;
                                     if parsed.to_string() != account_id { return Err("account ID must use canonical UUID form".into()); }
                                     let revision = if operation == "status" {
@@ -487,29 +517,29 @@ impl Config {
                                     } else if operation == "sign-out" {
                                         match args.next_if(|arg| !arg.starts_with('-')) {
                                             Some(value) => Some(parse_positive_revision(&value, "account revision")?),
-                                            None => resolve_latest_chatgpt_account_revision(&account_id)?,
+                                            None => resolve_latest_chatgpt_account_revision(&account_id).map_err(ConfigStartError::Runtime)?,
                                         }
                                     } else {
-                                        let raw = args.next().ok_or("model chatgpt operation requires Core account revision")?;
+                                        let raw = next_command_value(&mut args).ok_or("model chatgpt operation requires Core account revision")?;
                                         Some(parse_positive_revision(&raw, "account revision")?)
                                     };
                                     CommandMode::ModelChatgpt { operation, account_id:Some(account_id), revision, label:None }
                                 }
                             },
                             Some(operation @ ("discover" | "configure")) => {
-                                let connection_id = args.next().ok_or("model operation requires connection ID")?;
+                                let connection_id = next_command_value(&mut args).ok_or("model operation requires connection ID")?;
                                 if operation == "discover" {
                                     let revision = match args.next_if(|arg| !arg.starts_with('-')) {
                                         Some(raw) => parse_positive_revision(&raw, "connection revision")?,
-                                        None => resolve_latest_connection_revision(&connection_id)?,
+                                        None => resolve_latest_connection_revision(&connection_id).map_err(ConfigStartError::Runtime)?,
                                     };
                                     CommandMode::ModelDiscover { connection_id, revision }
                                 } else {
-                                    let raw_rev = args.next().ok_or("model operation requires connection revision")?;
+                                    let raw_rev = next_command_value(&mut args).ok_or("model operation requires connection revision")?;
                                     let revision = parse_positive_revision(&raw_rev, "connection revision")?;
-                                    let selected = args.next().ok_or("model configure requires selected catalog key or none")?;
+                                    let selected = next_command_value(&mut args).ok_or("model configure requires selected catalog key or none")?;
                                     let selected_model_id = if selected == "none" { None } else { Some(selected) };
-                                    let raw_keys = args.next().ok_or("model configure requires enabled catalog keys as a JSON array or comma-separated list")?;
+                                    let raw_keys = next_command_value(&mut args).ok_or("model configure requires enabled catalog keys as a JSON array or comma-separated list")?;
                                     let enabled_model_ids = parse_configure_enabled_keys(&raw_keys)?;
                                     if enabled_model_ids.iter().any(|key| key.trim().is_empty()) || enabled_model_ids.iter().collect::<std::collections::HashSet<_>>().len() != enabled_model_ids.len() {
                                         return Err("enabled catalog keys must be nonempty and unique".into());
@@ -537,7 +567,7 @@ impl Config {
                                     ),
                                     [conn, model_id, protocol] => (
                                         conn.clone(),
-                                        resolve_latest_connection_revision(conn)?,
+                                        resolve_latest_connection_revision(conn).map_err(ConfigStartError::Runtime)?,
                                         model_id.clone(),
                                         protocol.clone(),
                                     ),
@@ -549,12 +579,12 @@ impl Config {
                                 CommandMode::ModelProbe { connection_id, revision, model_id, protocol }
                             },
                             Some("override") => {
-                                let connection_id = args.next().ok_or("model override requires connection ID")?;
-                                let revision = parse_positive_revision(&args.next().ok_or("model override requires connection revision")?, "connection revision")?;
-                                let model_id = args.next().ok_or("model override requires model ID")?;
-                                let protocol = args.next().ok_or("model override requires protocol")?;
+                                let connection_id = next_command_value(&mut args).ok_or("model override requires connection ID")?;
+                                let revision = parse_positive_revision(&next_command_value(&mut args).ok_or("model override requires connection revision")?, "connection revision")?;
+                                let model_id = next_command_value(&mut args).ok_or("model override requires model ID")?;
+                                let protocol = next_command_value(&mut args).ok_or("model override requires protocol")?;
                                 if !matches!(protocol.as_str(), "responses" | "chat_completions" | "anthropic" | "siwc_responses") { return Err("unsupported override protocol".into()); }
-                                let value = args.next().ok_or("model override requires clear or an explicit capabilities JSON object")?;
+                                let value = next_command_value(&mut args).ok_or("model override requires clear or an explicit capabilities JSON object")?;
                                 let capabilities = if value == "clear" { None } else {
                                     let capabilities: nola_application::ModelExecutionCapabilities = serde_json::from_str(&value)
                                         .map_err(|_| "invalid capabilities object; explicitly declare toolCalls/imageInput/reasoning/samplingParameters")?;
@@ -564,9 +594,9 @@ impl Config {
                                 CommandMode::ModelOverride { connection_id, revision, model_id, protocol, capabilities }
                             },
                             Some("import") => {
-                                let source = args.next().ok_or("model import requires open_code/codex/kimi_code and a configuration path")?;
+                                let source = next_command_value(&mut args).ok_or("model import requires open_code/codex/kimi_code and a configuration path")?;
                                 if !matches!(source.as_str(), "open_code" | "codex" | "kimi_code") { return Err("unsupported import source".into()); }
-                                let raw_path = args.next().ok_or("model import requires a configuration path")?;
+                                let raw_path = next_command_value(&mut args).ok_or("model import requires a configuration path")?;
                                 let path = normalize_cli_file_path(raw_path)?;
                                 let mut credential_path = None;
                                 let mut include_credentials = false;
@@ -585,25 +615,25 @@ impl Config {
                                 if credential_path.is_some() && !include_credentials { return Err("--credential-path requires --include-credentials".into()); }
                                 CommandMode::ModelImport { source, path, credential_path, include_credentials, allow_environment }
                             },
-                            _ => return Err("model requires connections, import, discover, configure, probe, override or manage".into()),
+                            _ => return Err("model requires connections, apply-config, manage, chatgpt, discover, configure, probe, override or import".into()),
                         });
                     }
                     "room" => {
-                        let action = args.next().ok_or("room requires list/directory/create/show/join")?;
+                        let action = args.next().ok_or("room requires list/directory/create/show/join/send/recover")?;
                         if !matches!(action.as_str(), "list" | "directory" | "create" | "show" | "join" | "send" | "recover") {
-                            return Err(format!("unsupported room action: {action}"));
+                            return Err(format!("unsupported room action: {action}").into());
                         }
                         let value = if matches!(action.as_str(), "create" | "show" | "join" | "send" | "recover") {
-                            Some(args.next().ok_or("room action requires a title or room ID")?)
+                            Some(next_command_value(&mut args).ok_or("room action requires a title or room ID")?)
                         } else { None };
                         let mut agent_id = if action == "join" {
-                            Some(args.next().ok_or("room join requires an agent ID")?)
+                            Some(next_command_value(&mut args).ok_or("room join requires an agent ID")?)
                         } else if action == "send" {
                             peek_option_value(&mut args, "--to", "--to requires a participant ID")?
                         } else {
                             None
                         };
-                        let text = if action == "send" { Some(args.next().ok_or("room send requires message text")?) } else { None };
+                        let text = if action == "send" { Some(next_command_value(&mut args).ok_or("room send requires message text")?) } else { None };
                         if action == "send" && agent_id.is_none() {
                             agent_id = peek_option_value(&mut args, "--to", "--to requires a participant ID")?;
                         }
@@ -611,11 +641,19 @@ impl Config {
                     }
                     "plugin" => {
                         let action = args.next().ok_or("plugin requires inspect/install/list/enable/disable/remove/credential-set/credential-clear")?;
+                        if let Some(runtime) = crate::harness_plugin::Harness::named(&action) {
+                            let operation = crate::harness_plugin::HarnessPluginCommand::parse(runtime, args)?;
+                            command = Some(CommandMode::HarnessPlugin(operation));
+                            break;
+                        }
+                        if !matches!(action.as_str(), "inspect" | "install" | "list" | "enable" | "disable" | "remove" | "credential-set" | "credential-clear") {
+                            return Err(format!("unsupported plugin action: {action}").into());
+                        }
                         let mode = if action == "list" {
                             let after = peek_option_value(&mut args, "--after", "plugin list --after requires a plugin id")?;
                             PluginCommandMode::List { after }
                         } else {
-                            let value = args.next().ok_or("plugin action requires a directory or plugin id")?;
+                            let value = next_command_value(&mut args).ok_or("plugin action requires a directory or plugin id")?;
                             match action.as_str() {
                                 "inspect" => PluginCommandMode::Inspect(value),
                                 "install" => PluginCommandMode::Install(value),
@@ -623,12 +661,12 @@ impl Config {
                                 "disable" => PluginCommandMode::Disable(value),
                                 "remove" => PluginCommandMode::Remove(value),
                                 "credential-set" | "credential-clear" => {
-                                    let reference = args.next().ok_or("plugin credential command requires a reference")?;
+                                    let reference = next_command_value(&mut args).ok_or("plugin credential command requires a reference")?;
                                     if action == "credential-set" {
                                         PluginCommandMode::CredentialSet { id: value, reference }
                                     } else { PluginCommandMode::CredentialClear { id: value, reference } }
                                 }
-                                _ => return Err(format!("unsupported plugin action: {action}")),
+                                _ => return Err(format!("unsupported plugin action: {action}").into()),
                             }
                         };
                         command = Some(CommandMode::Plugin(mode));
@@ -637,19 +675,22 @@ impl Config {
                         let action = args
                             .next()
                             .ok_or_else(|| tr(Message::SessionRequiresAction).to_string())?;
-                        let id = args.next().ok_or_else(|| {
+                        if !matches!(action.as_str(), "show" | "part" | "sources" | "delete" | "rm") {
+                            return Err(format!("{} {action}", tr(Message::UnknownSessionActionPrefix)).into());
+                        }
+                        let id = next_command_value(&mut args).ok_or_else(|| {
                             format!("session {action} {}", tr(Message::RequiresSessionIdSuffix))
                         })?;
                         command = Some(match action.as_str() {
                             "show" => CommandMode::SessionShow(id),
                             "part" => {
-                                let message_id = args.next().ok_or("session part requires <conversation> <message> <part> <revision>")?;
-                                let part_id = args.next().ok_or("session part requires <conversation> <message> <part> <revision>")?;
-                                let revision = args.next().ok_or("session part requires <conversation> <message> <part> <revision>")?
-                                    .parse::<i64>().map_err(|_| "session part revision must be a positive integer")?;
+                                let message_id = next_command_value(&mut args).ok_or("session part requires <conversation> <message> <part> <conversation-revision>")?;
+                                let part_id = next_command_value(&mut args).ok_or("session part requires <conversation> <message> <part> <conversation-revision>")?;
+                                let revision = args.next().ok_or("session part requires <conversation> <message> <part> <conversation-revision>")?
+                                    .parse::<i64>().map_err(|_| "session part requires a positive conversation revision from conversation_projection.revision")?;
                                 if revision < 1 {
                                     return Err(
-                                        "session part revision must be a positive integer".into()
+                                        "session part requires a positive conversation revision from conversation_projection.revision".into()
                                     );
                                 }
                                 CommandMode::SessionPart {
@@ -674,12 +715,12 @@ impl Config {
                                 return Err(format!(
                                     "{} {action}",
                                     tr(Message::UnknownSessionActionPrefix)
-                                ))
+                                ).into())
                             }
                         });
                     }
                     _ if arg.starts_with('-') => {
-                        return Err(format!("{} {arg}", tr(Message::UnknownCommandPrefix)))
+                        return Err(format!("{} {arg}", tr(Message::UnknownCommandPrefix)).into())
                     }
                     _ => {
                         command = Some(CommandMode::Run);
@@ -773,7 +814,7 @@ impl Config {
             } else if let Some(value) = option_value(&arg, "--expected-artifact", &mut args)? {
                 let value = value.trim();
                 if value.is_empty() {
-                    return Err("--expected-artifact requires a non-empty resource".to_string());
+                    return Err("--expected-artifact requires a non-empty resource".into());
                 }
                 if !expected_artifact_refs
                     .iter()
@@ -809,19 +850,42 @@ impl Config {
                 } else if value.eq_ignore_ascii_case("standard") {
                     swe_mode = false;
                 } else {
-                    return Err(format!("{} {value}", tr(Message::UnknownAgentModePrefix)));
+                    return Err(format!("{} {value}", tr(Message::UnknownAgentModePrefix)).into());
                 }
             } else if let Some(value) = option_value(&arg, "--network-policy", &mut args)? {
                 network_policy_explicit = true;
                 network_policy = normalize_network_policy(&value)?;
             } else if arg.starts_with('-') {
-                return Err(format!("{} {arg}", tr(Message::UnknownOptionPrefix)));
+                return Err(format!("{} {arg}", tr(Message::UnknownOptionPrefix)).into());
+            } else if let Some(CommandMode::ModelApplyConfig { path: slot @ None }) = command.as_mut() {
+                *slot = Some(normalize_cli_file_path(arg)?);
             } else {
                 message_parts.push(arg);
             }
         }
 
-        let command = command.unwrap_or(CommandMode::Run);
+        let mut command = command.unwrap_or(CommandMode::Run);
+        if let CommandMode::ConfigFile { action, path } = &mut command {
+            let usage = "nola config [show | edit [path] | check [path] | apply [path] [--dry-run] | example]";
+            match message_parts.as_slice() {
+                [] => {}
+                [verb] if verb == "show" => {}
+                [verb] if verb == "example" => *action = ConfigFileAction::Example,
+                [verb, rest @ ..] if rest.len() <= 1 && matches!(verb.as_str(), "edit" | "apply" | "check") => {
+                    *action = match verb.as_str() {
+                        "apply" => ConfigFileAction::Apply,
+                        "edit" => ConfigFileAction::Edit,
+                        _ => ConfigFileAction::Check,
+                    };
+                    *path = rest.first().cloned().map(normalize_cli_file_path).transpose()?;
+                }
+                _ => return Err(usage.into()),
+            }
+            if dry_run && *action != ConfigFileAction::Apply {
+                return Err("--dry-run requires nola config apply".into());
+            }
+            message_parts.clear();
+        }
         // Reject selection ambiguity before loading defaults or invoking setup,
         // which may prompt and persist an unrelated API configuration.
         let cli_profile_selection = match (profile_id, profile_revision) {
@@ -838,7 +902,7 @@ impl Config {
                     || continue_last || resume_session || session_id.is_some() || !save_session || host_request_stdin {
                     return Err("--profile requires a new saved conversation and cannot combine with endpoint/model/API key, session/resume/continue, no-save, or Host stdin".into());
                 }
-                let revision = resolve_latest_profile_revision(&id)?;
+                let revision = resolve_latest_profile_revision(&id).map_err(ConfigStartError::Runtime)?;
                 Some((id, revision))
             }
             (None, Some(_)) => {
@@ -846,20 +910,25 @@ impl Config {
             }
         };
         if !matches!(command, CommandMode::Run) && !message_parts.is_empty() {
-            return Err(tr(Message::UnexpectedSessionArgs).to_string());
+            return Err(tr(Message::UnexpectedCommandArgs).into());
         }
 
         let raw_project_root = project_root_arg.unwrap_or(
             env::current_dir()
-                .map_err(|err| format!("{} {err}", tr(Message::CurrentDirFailedPrefix)))?,
+                .map_err(|err| ConfigStartError::Runtime(format!("{} {err}", tr(Message::CurrentDirFailedPrefix))))?,
         );
         let project_root = normalize_path(raw_project_root)?;
         let web_root = normalize_web_root(web_root_arg, &project_root)?;
         let mut runtime = match runtime {
             Some(runtime) => runtime,
-            None => RuntimeConfig::load(&project_root)?,
+            // The command validates its own source. A broken ambient model catalog
+            // must not prevent the user from applying a corrected explicit file.
+            None if matches!(command, CommandMode::ConfigFile { .. } | CommandMode::ModelApplyConfig { .. }) => RuntimeConfig::default(),
+            None if !host_request_stdin && matches!(command, CommandMode::Run | CommandMode::Init | CommandMode::Wiki | CommandMode::Web | CommandMode::Server) =>
+                RuntimeConfig::load_for_startup(&project_root).map_err(ConfigStartError::Runtime)?,
+            None => RuntimeConfig::load(&project_root).map_err(ConfigStartError::Runtime)?,
         };
-        if runtime.model_binding.is_some() && matches!(command, CommandMode::Run | CommandMode::Init | CommandMode::Wiki) {
+        if runtime.uses_file_catalog() && matches!(command, CommandMode::Run | CommandMode::Init | CommandMode::Wiki) {
             if !host_request_stdin && (endpoint_explicit || api_key_explicit || model_explicit) {
                 return Err("connection catalog selection cannot combine with endpoint/model/API key flags; use --profile and --profile-revision".into());
             }
@@ -941,9 +1010,9 @@ impl Config {
             && !restore_conversation_model
             && !show_help && !host_request_stdin && endpoint.trim().is_empty()
             && cli_profile_selection.is_none()
-            && runtime.model_binding.is_none()
+            && !runtime.uses_file_catalog()
         {
-            if let Some(generated) = setup.configure_missing_model()? {
+            if let Some(generated) = setup.configure_missing_model().map_err(ConfigStartError::Runtime)? {
                 endpoint = generated.endpoint.clone();
                 if !api_key_explicit { api_key = generated.api_key.clone(); }
                 if !model_explicit { model = generated.model.clone(); }
@@ -965,9 +1034,9 @@ impl Config {
             && !host_request_stdin
             && !show_help
             && cli_profile_selection.is_none()
-            && runtime.model_binding.is_none()
+            && !runtime.uses_file_catalog()
         {
-            return Err(tr(Message::MissingEndpoint).to_string());
+            return Err(ConfigStartError::Runtime(format!("{}\n  nola config\n  nola config edit", tr(Message::MissingEndpoint))));
         }
         if tailcat_ingress && (!matches!(command, CommandMode::Web | CommandMode::Server)
             || web_host != "127.0.0.1" || web_port == 0) {
@@ -982,19 +1051,19 @@ impl Config {
             crate::tailcat_transport::verified_command(program, digest)?;
         }
         if continue_last && session_id.is_some() {
-            return Err(tr(Message::ContinueOrSession).to_string());
+            return Err(tr(Message::ContinueOrSession).into());
         }
         if resume_session && session_id.is_some() {
-            return Err("cannot use --resume with --session".to_string());
+            return Err("cannot use --resume with --session".into());
         }
         if resume_session && continue_last {
-            return Err("cannot use --resume with --continue".to_string());
+            return Err("cannot use --resume with --continue".into());
         }
 
         if !language_explicit {
             if let Some(value) = runtime.language.as_deref() {
                 let language = parse_language_tag(value).ok_or_else(|| {
-                    format!("{} {value}", tr(Message::InteractiveInvalidLanguageValue))
+                    ConfigStartError::Runtime(format!("{} {value}", tr(Message::InteractiveInvalidLanguageValue)))
                 })?;
                 set_language(language);
             }
@@ -1106,7 +1175,7 @@ impl Config {
             "--endpoint".to_string(), "http://127.0.0.1:11434/v1".to_string(),
             "--api-key".to_string(), String::new(),
             "--model".to_string(), "fixture".to_string(),
-        ], &NoConfigurationSetup, Some(RuntimeConfig::default()))
+        ], &NoConfigurationSetup, Some(RuntimeConfig::default())).map_err(ConfigStartError::into_message)
     }
 }
 
@@ -1196,7 +1265,7 @@ fn permission_environment_distinguishes_absent_from_invalid_explicit_configurati
     assert!(permission_profile_from_environment(Err(env::VarError::NotUnicode(std::ffi::OsString::from("invalid")))).is_err());
 }
 
-fn normalize_network_policy(raw: &str) -> Result<String, String> {
+pub(crate) fn normalize_network_policy(raw: &str) -> Result<String, String> {
     let value = raw.trim().to_ascii_lowercase();
     match value.as_str() {
         "allow" | "ask" | "deny" => Ok(value),
@@ -1204,7 +1273,7 @@ fn normalize_network_policy(raw: &str) -> Result<String, String> {
     }
 }
 
-fn normalize_force_tool_set(raw: &str) -> Result<String, String> {
+pub(crate) fn normalize_force_tool_set(raw: &str) -> Result<String, String> {
     let value = raw.trim().to_ascii_lowercase();
     match value.as_str() {
         "auto" | "all" | "write" => Ok(value),
@@ -1212,8 +1281,8 @@ fn normalize_force_tool_set(raw: &str) -> Result<String, String> {
     }
 }
 
-fn is_global_option_token(arg: &str) -> bool {
-    if matches!(
+fn is_global_switch(arg: &str) -> bool {
+    matches!(
         arg,
         "--json"
             | "--tailcat-ingress"
@@ -1229,10 +1298,11 @@ fn is_global_option_token(arg: &str) -> bool {
             | "--no-save"
             | "--force"
             | "--dry-run"
-    ) {
-        return true;
-    }
-    if arg == "-m" || arg.starts_with("-m=") {
+    )
+}
+
+fn is_global_option_token(arg: &str) -> bool {
+    if is_global_switch(arg) || arg == "-m" || arg.starts_with("-m=") {
         return true;
     }
     [
@@ -1293,6 +1363,16 @@ where
     option_value(arg, short_name, args)
 }
 
+// A trailing option cannot supply a missing ID, title or message. An explicit
+// separator lets the caller provide option-shaped text such as a room title.
+fn next_command_value<I: Iterator<Item = String>>(args: &mut std::iter::Peekable<I>) -> Option<String> {
+    if args.peek().is_some_and(|arg| arg == "--") {
+        args.next();
+        return args.next();
+    }
+    args.next_if(|arg| !arg.starts_with("--") && !is_global_option_token(arg))
+}
+
 fn peek_option_value<I>(
     args: &mut std::iter::Peekable<I>,
     name: &str,
@@ -1306,8 +1386,7 @@ where
     };
     if token == name {
         args.next();
-        return args
-            .next()
+        return next_command_value(args)
             .map(Some)
             .ok_or_else(|| missing_error.to_string());
     }
@@ -1505,8 +1584,7 @@ where
     I: Iterator<Item = String>,
 {
     if arg == name {
-        return args
-            .next()
+        return next_command_value(args)
             .map(Some)
             .ok_or_else(|| format!("{name} {}", tr(Message::RequiresValueSuffix)));
     }
@@ -1543,7 +1621,48 @@ fn normalize_path(path: PathBuf) -> Result<PathBuf, String> {
     })
 }
 
-pub fn print_help() {
+pub(crate) fn help_topic(args: &[String]) -> Option<&str> {
+    let mut words = args.iter();
+    while let Some(word) = words.next() {
+        let arg = word.as_str();
+        if is_global_switch(arg) || matches!(arg, "--help" | "-h") {
+            continue;
+        }
+        if is_global_option_token(arg) {
+            if !arg.contains('=') {
+                words.next();
+            }
+            continue;
+        }
+        return match arg {
+            "model" if words.next().is_some_and(|subcommand| subcommand == "apply-config") => Some("model apply-config"),
+            "config" | "room" | "model" | "session" | "sessions" | "plugin" | "web" | "server"
+                | "init" | "wiki" => Some(arg),
+            "serve" => Some("server"),
+            "/init" => Some("init"),
+            _ => None,
+        };
+    }
+    None
+}
+
+const MODEL_USAGE: &str = "nola model connections
+nola model apply-config [config-path] [--dry-run]
+nola model acquire hardware
+nola model acquire engine-status|setup-engine <llama.cpp|vllm|mlx>
+nola model acquire recommend <llama.cpp|vllm|mlx> <huggingface|modelscope> [model-name-or-repository]
+nola model acquire confirm <engine> <source> <plan-json>
+nola model acquire search|install <engine> <source> <model-name-or-repository>
+nola model manage
+nola model chatgpt sign-in <label> | status <account-id> | reauthorize|models|refresh <account-id> <revision> | sign-out <account-id> [revision]
+nola model discover <connection-id> [revision]
+nola model configure <connection-id> <revision> <selected-key|none> <enabled-keys-json-or-csv>
+  Build each catalog key from the discovered protocol and model_id, for example responses:my-model.
+nola model probe <connection-id> [revision] <model-id> <responses|chat_completions|anthropic>
+nola model override <connection-id> <revision> <model-id> <protocol> <clear|capabilities-json>
+nola model import <open_code|codex|kimi_code> <path> [--include-credentials] [--credential-path <path>] [--allow-environment]";
+
+pub fn print_help(topic: Option<&str>) {
     use std::io::Write;
     let mut output = std::io::stdout().lock();
     macro_rules! println {
@@ -1558,6 +1677,36 @@ pub fn print_help() {
     }
 
     let text = help_text();
+    if let Some(topic) = topic {
+        if topic == "config" {
+            println!("{}", crate::config_files::usage());
+            return;
+        }
+        if topic == "model apply-config" {
+            println!("nola model apply-config [config-path] [--dry-run]");
+            println!("{}", crate::i18n::ui_text(crate::i18n::UiText::ApplyConfigHelp));
+            return;
+        }
+        if topic == "model" {
+            println!("{MODEL_USAGE}");
+            return;
+        }
+        let options: &[&str] = match topic {
+            "web" => &["--project", "--host", "--port", "--web-root"],
+            "server" => &["--project", "--host", "--port"],
+            "init" | "wiki" => &["--project", "--output", "--force", "--dry-run", "--yes"],
+            "sessions" | "session" | "plugin" | "room" => &["--json"],
+            _ => &[],
+        };
+        for line in text.lines() {
+            let mut words = line.split_whitespace();
+            let first = words.next().unwrap_or("").trim_end_matches(',');
+            if (first == "nola" && words.next() == Some(topic)) || options.contains(&first) {
+                println!("{}", line.trim_start());
+            }
+        }
+        return;
+    }
     let mut lines = text.lines();
     if let Some(title) = lines.next() {
         println!("{title}");
@@ -1566,24 +1715,7 @@ pub fn print_help() {
             println!("{line}");
         }
     }
-    println!("\n  nola room list|directory|create <title>|show <id>|join <room> <agent>|send <room> <text> [--to <participant>]|recover <room>");
-    println!("  nola skills [list|enable <id>|disable <id>] [--json]");
-    println!("  nola mcp [list|add <name> <command-or-url> [args...]|remove <id-or-name>|enable <id-or-name>|disable <id-or-name>] [--json]");
-    println!("  nola memory [list|add <text> [--scope global|project]|search <query>|create|revise <id>|delete <id>] [--json]");
-    println!("  nola update check | download <directory> [--source <absolute-public-source-json>]");
-    println!("  nola version | --version | -V");
-    println!("  nola model connections");
-    println!("  nola model apply-config [config-path] (default: ~/.nola/config.json or config.jsonc; supports relative and ~/ paths)");
-    println!("  nola model manage (local Host account/source management address; no login is started)");
-    println!("  nola model chatgpt sign-in <label> | status <account-id> | reauthorize|models|refresh <account-id> <core-revision> | sign-out <account-id> [core-revision]");
-    println!("  nola run --profile <Core-profile-id> [--profile-revision <revision>] [message]  (new saved conversation only)");
-    println!("    models syncs the owned ChatGPT catalog; use model configure explicitly to enable/select. Unreported capabilities stay unknown; model override is a user assertion, not verification.");
-    println!("    Independent local Nola authorization, not Codex login. No inference or billing fallback is started.");
-    println!("  nola model discover <connection-id> [revision] (GET catalog only; no inference request)");
-    println!("  nola model configure <connection-id> <revision> <selected-catalog-key|none> <enabled-keys-json-or-csv> (replaces enabled set; selecting a key replaces the selected remote profile)");
-    println!("  nola model probe <connection-id> [revision] <model-id> <responses|chat_completions|anthropic> (interactive confirmation; at most one billable request)");
-    println!("  nola model override <connection-id> <revision> <model-id> <protocol> <clear|capabilities-json> (explicit user assertion; no network probe)");
-    println!("  nola model import <open_code|codex|kimi_code> <path> [--include-credentials] [--credential-path <path>] [--allow-environment]");
+
 }
 
 #[cfg(test)]
@@ -2235,6 +2367,24 @@ mod tests {
         assert_eq!(config.runtime.allowed_dirs, vec![root.join("src")]);
 
         let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn apply_config_and_help_work_when_an_ambient_catalog_is_broken() {
+        let project = tempfile::tempdir().unwrap();
+        std::fs::write(project.path().join("nola.json"), r#"{"llm":{"connections":[],"default_model":{}}}"#).unwrap();
+        let parse = |words: &[&str]| {
+            let mut args = vec!["--project".to_owned(), project.path().to_string_lossy().into_owned()];
+            args.extend(words.iter().map(|word| word.to_string()));
+            super::Config::from_entry_args(args, &crate::configuration_setup::NoConfigurationSetup)
+        };
+        assert!(matches!(parse(&["model","apply-config"]).unwrap().command, super::CommandMode::ModelApplyConfig { .. }));
+        let startup = parse(&["hello"]).unwrap();
+        assert!(startup.runtime.startup_catalog_error.is_some());
+        assert!(startup.runtime.model_binding.is_none());
+        assert!(matches!(parse(&["model","apply-config","one","extra"]), Err(super::ConfigStartError::Usage(_))));
+        let args = ["--lang","zh","model","apply-config","--help"].map(str::to_owned);
+        assert_eq!(super::help_topic(&args), Some("model apply-config"));
     }
 
     #[test]

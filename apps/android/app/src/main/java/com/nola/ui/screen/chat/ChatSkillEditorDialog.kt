@@ -1,5 +1,6 @@
 package com.nola.ui.screen.chat
 
+import com.nola.ui.components.dismissImeOnBlankTap
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
@@ -10,6 +11,7 @@ import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
 import com.nola.R
+import com.nola.ui.components.GithubSkillSourceLink
 import com.nola.ui.components.DiscardChangesDialog
 import com.nola.domain.model.UploadedContent
 import kotlinx.coroutines.CancellationException
@@ -38,10 +40,12 @@ internal fun ChatSkillEditorDialog(
     if (discard) DiscardChangesDialog(onDiscard = onDismiss, onKeepEditing = { discard = false })
     val scope = rememberCoroutineScope()
     AlertDialog(
+        modifier = Modifier.dismissImeOnBlankTap().imePadding(),
         onDismissRequest = requestDismiss,
         title = { Text(stringResource(R.string.chat_skill_content)) },
         text = {
             Column(Modifier.fillMaxWidth().verticalScroll(rememberScrollState())) {
+                GithubSkillSourceLink(original)
                 OutlinedTextField(name, { name = it }, enabled = !saving, singleLine = true,
                     label = { Text(stringResource(R.string.chat_skill_name)) },
                     modifier = Modifier.fillMaxWidth().testTag("chat.skill.editor.name"))

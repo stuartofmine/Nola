@@ -4,7 +4,7 @@ use crate::execution_policy::{ConversationAgentPolicy, ConversationPermissionDec
 use std::collections::BTreeMap;
 
 /// Common parent/child workspace contract, independent of Host transport.
-pub const WORKSPACE_GUIDANCE: &str = "Task briefs and results must state scope, constraints, expected evidence, implementation paths, test/scratch paths and the delivered file set. Workspace scope: without an explicit frozen worktree binding, parent and child share the authorized project files. When a worktree is bound, use its admitted execution root and report its paths; its files are separate but Git metadata remains shared. A separate conversation or worker process does not create a private filesystem or OS sandbox. A task brief must distinguish implementation paths, test/scratch paths, and the delivered file set. Follow the existing project test layout; do not assume a source-only delivery directory is a test directory. If no layout exists, keep scratch tests outside the delivery tree. Preserve unrelated files and tests; never automatically delete shared files on task completion. Report changed paths and the exact files/commands actually validated. The parent accepts the complete delivery set, not merely the child's successful checks. This guidance does not grant file access.";
+pub const WORKSPACE_GUIDANCE: &str = "Task briefs and results must state scope, constraints, expected evidence, implementation paths, test/scratch paths and the delivered file set. Workspace scope: without an explicit frozen worktree binding, parent and child share the authorized project files. When a worktree is bound, use its admitted execution root and report its paths; its files are separate but Git metadata remains shared. A separate conversation or worker process does not create a private filesystem or OS sandbox. A task brief must distinguish implementation paths, test/scratch paths, and the delivered file set. Follow the existing project test layout; do not assume a source-only delivery directory is a test directory. If no layout exists, keep scratch tests outside the delivery tree. Preserve unrelated files and tests; never automatically delete shared files on task completion. For handoffs between coding agents, record the delivery commit and changed files. When review or test needs a separate checkout, inspect the delivery worktree and create a detached worktree at its exact HEAD via git_worktree_create. Pass the resulting binding to the next task. Verify the revision before running checks and repeat affected checks if implementation changes. Report changed paths and the exact revision and commands actually validated. The parent accepts the complete delivery set, not merely the child's successful checks. This guidance does not grant file access.";
 
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct AgentProfile {
@@ -49,7 +49,8 @@ pub fn effective_agent_profiles(
     let mut agents = builtins();
     for (name, backend) in [("codex", crate::execution_backend::ExecutionBackendKind::Codex),
         ("claude_code", crate::execution_backend::ExecutionBackendKind::ClaudeCode),
-        ("opencode", crate::execution_backend::ExecutionBackendKind::OpenCode)] {
+        ("opencode", crate::execution_backend::ExecutionBackendKind::OpenCode),
+        ("antigravity", crate::execution_backend::ExecutionBackendKind::Antigravity)] {
         agents.insert(name.into(), AgentProfile {
             name: name.into(), description: format!("Independent task using the installed {name} harness and its own existing login; desktop Host only"),
             prompt: generic_prompt(), model: None,

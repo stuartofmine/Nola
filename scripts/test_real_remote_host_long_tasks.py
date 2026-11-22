@@ -27,11 +27,12 @@ from test_real_cli_long_tasks import selected_route, fixture, apply_config, obse
 ROOT = Path(__file__).resolve().parents[1]
 
 
-def committed_tools(database, conversation):
+def committed_tools(database, conversation, run_id=None):
     with sqlite3.connect(database.as_uri() + '?mode=ro', uri=True) as db:
         headers = [json.loads(raw) for (raw,) in db.execute('''SELECT r.header_json FROM assistant_journal_records r
             WHERE r.sequence=(SELECT max(sequence) FROM assistant_journal_records WHERE owner=r.owner)
-            AND json_extract(r.owner,'$.conversation_id')=?''', (conversation,))]
+            AND json_extract(r.owner,'$.conversation_id')=?
+            AND (? IS NULL OR json_extract(r.owner,'$.run_id')=?)''', (conversation, run_id, run_id))]
     events = [{'type': 'assistant_journal_committed_v1', 'through': {
         name: header[name] for name in ('identity', 'sequence', 'record_digest')}} for header in headers]
     result = []
@@ -43,9 +44,81 @@ def committed_tools(database, conversation):
         encoded = json.loads(part['bodies']['tool_input'])
         if encoded.get('protocol_version') != 1 or not isinstance(encoded.get('value'), dict):
             raise ValueError('Current committed tool input required')
-        result.append(dict(tool=tool['capability_id'], state=tool['state'], call_id=tool['tool_call_id'],
-                           arguments=encoded['value']))
+        entry = dict(tool=tool['capability_id'], state=tool['state'], call_id=tool['tool_call_id'],
+                     arguments=encoded['value'])
+        if entry['tool'] == 'read_file' and Path(entry['arguments'].get('path','')).name == 'report.json':
+            raw = part['bodies'].get('tool_output')
+            if raw:
+                entry['output'] = json.loads(raw)['value']
+        result.append(entry)
     return result
+
+
+def verify_chain_reads(project, expected, tools):
+    """Count committed node reads and require a real read-back of the final write."""
+    node_reads = []
+    report_verified = False
+    report_written = False
+    report_content = bytearray()
+    next_line = 1
+    missing_confirmed = False
+    recovered = False
+    for tool in tools:
+        if tool['tool'] not in {'read_file', 'write_file'}:
+            continue
+        target = Path(tool['arguments'].get('path', ''))
+        name = (project / target).resolve().relative_to(project.resolve()).as_posix()
+        if tool['tool'] == 'read_file' and name == expected['missing'] and tool['state'] == 'failed':
+            missing_confirmed = True
+        if tool['tool'] == 'read_file' and name == expected['recovery'] and tool['state'] == 'completed':
+            assert missing_confirmed, 'Read the recovery file before confirming the missing link'
+            recovered = True
+        if name == 'report.json':
+            if tool['tool'] == 'write_file':
+                report_written = tool['state'] == 'completed'
+                report_verified = False
+                report_content.clear()
+                next_line = 1
+            elif report_written and tool['state'] == 'completed':
+                output = tool.get('output', {})
+                content = output.get('content')
+                if isinstance(content, str):
+                    offset = output.get('start_byte')
+                    line = tool['arguments'].get('start_line', 1) if offset is None else None
+                    if output.get('complete') or offset == 0 or line == 1:
+                        report_content.clear()
+                        next_line = 1
+                    if output.get('complete') or offset == len(report_content) or (line is not None and line == next_line):
+                        report_content.extend(content.encode())
+                        next_line = output.get('next_start_line')
+                        if output.get('complete') or output.get('eof') or (line is not None and next_line is None):
+                            report_verified |= report_content == (project / name).read_bytes()
+                if any(check.get('passed') and check.get('predicate') == 'json_value_matches_expected'
+                       for check in output.get('_nola_execution', {}).get('checks', [])):
+                    report_verified |= json.loads(tool['arguments']['expected_json']) == json.loads((project / name).read_bytes())
+        if tool['tool'] == 'read_file' and name in expected['names']:
+            assert tool['state'] == 'completed', 'Node read failed'
+            node_reads.append(name)
+    assert list(dict.fromkeys(node_reads)) == expected['names'], 'Committed node read order/coverage mismatch'
+    assert recovered, 'Missing confirmed recovery from the broken link'
+    assert report_verified, 'Missing complete report content or successful exact JSON validation after the final write'
+    return node_reads
+
+
+def checkpoint_schedule(project, expected, tools):
+    nodes = set(expected['names'])
+    seen = set()
+    writes = []
+    for tool in tools:
+        if tool['state'] != 'completed' or tool['tool'] not in {'read_file', 'write_file'}:
+            continue
+        target = (project / tool['arguments']['path']).resolve().relative_to(project.resolve())
+        if tool['tool'] == 'read_file' and target.as_posix() in nodes:
+            seen.add(target.as_posix())
+        elif tool['tool'] == 'write_file' and target.parent == Path('checkpoints'):
+            writes.append((target.name, len(seen)))
+    required = [(f'{start // 20:03}.json', min(start + 20, len(nodes))) for start in range(0, len(nodes), 20)]
+    return dict(actual=writes, required=required, on_time=writes == required)
 
 
 def cold_followup(root, config_path, binary):
@@ -92,8 +165,14 @@ def cold_followup(root, config_path, binary):
                 with sqlite3.connect((root/'store/nola.db').as_uri()+'?mode=ro',uri=True) as db:
                     result['canonical']=audit_runs(db,original['browser']['chainConversation'])
                     result['nonempty_compactions']=sum(json.loads(raw).get('replaced_item_count',0)>0
-                        for (raw,) in db.execute("SELECT payload_json FROM run_events WHERE event_kind='compaction_completed'"))
+                        for (raw,) in db.execute("SELECT payload_json FROM run_events WHERE run_id=? AND event_kind='compaction_completed'",
+                                                (original['browser']['chainRun'],)))
                 assert result['canonical']['runCount']==2 and all(x in {'answered','action_completed'} for x in result['canonical']['outcomes'])
+                followup_tools = committed_tools(root/'store/nola.db',original['browser']['chainConversation'],ui['followupRun'])
+                result['followup_tool_calls'] = len(followup_tools)
+                assert not followup_tools, 'Cold follow-up used tools despite the explicit context-only request'
+                if not original['smoke']:
+                    assert result['nonempty_compactions'] > 0, 'Cold long-run scenario never compacted'
                 expected=json.loads((root/'independent-oracle.json').read_text())
                 result['files']=check_files(project,expected)
                 result.update(passed=True,browser=ui,provider=provider_totals(root/'provider-cold.ndjson'))
@@ -137,6 +216,8 @@ def main():
             marker = 'REMOTE_FACT_'+uuid.uuid4().hex
             (root/'independent-oracle.json').write_text(json.dumps(expected))
             prompt = chain_prompt(expected, marker) + ' 所有输出文件仅使用 write_file 创建。最终回复以 REMOTE_CHAIN_DONE 开头。'
+            if args.smoke:
+                prompt += ' 开始前请实际调用 task_scope_update，以当前用户请求为来源、report.json 为必需资源，登记上述任务范围。创建每份 JSON 时在 write_file 中声明 content_format=json，写入前检验整个内容。'
             (root/'browser-input.json').write_text(json.dumps(dict(prompt=prompt,nodes=count,timeoutMs=args.timeout*1000)))
             (project/'cancel_job.py').write_text("from pathlib import Path\nimport time\nwith Path('cancel-starts.txt').open('a') as f:f.write('start\\n')\nfor i in range(180):\n with Path('cancel-progress.txt').open('a') as f:f.write(str(i)+'\\n')\n time.sleep(1)\nPath('cancel-result.json').write_text('completed')\n")
             with socket.socket() as sock:
@@ -177,27 +258,29 @@ def main():
             if browser.returncode or not ui['passed']:raise RuntimeError('Browser acceptance failed; see private receipt')
             receipt['files']=check_files(project,expected)
             tools=committed_tools(root/'store/nola.db',ui['chainConversation'])
-            reads=[]
-            for tool in tools:
-                if tool['tool']=='read_file':
-                    raw=Path(tool['arguments'].get('path',''))
-                    path=raw if raw.is_absolute() else project/raw
-                    name=str(path.resolve().relative_to(project.resolve()))
-                    if name in expected['names']:
-                        assert tool['state']=='completed', 'Node read failed'
-                        reads.append(name)
-            assert list(dict.fromkeys(reads))==expected['names'], 'Committed node read order/coverage mismatch'
-            assert len(reads)>=count
+            reads = verify_chain_reads(project, expected, tools)
             assert not any(t['tool'] in {'bash','code_mode_exec','Task'} for t in tools), 'Audit bypassed sequential reads'
             with sqlite3.connect((root/'store/nola.db').as_uri()+'?mode=ro',uri=True) as db:
+                admitted = db.execute('''SELECT r.user_message_id, e.payload_json FROM runs r
+                    JOIN run_events e ON e.run_id=r.id AND e.event_kind='input_accepted'
+                    WHERE r.id=? ORDER BY e.sequence LIMIT 1''', (ui['chainRun'],)).fetchone()
+                assert admitted and admitted[0] in json.loads(admitted[1])['admission']['item_ids'], 'Applied input lost its canonical message identity'
+                if args.smoke:
+                    writes = [t for t in tools if t['tool'] == 'write_file' and t['state'] == 'completed']
+                    assert writes and all(t['arguments'].get('content_format') == 'json' for t in writes), 'JSON files were created without their declared format check'
+                    revisions = db.execute("SELECT count(*) FROM run_events WHERE run_id=? AND event_kind='requirement_scope_changed'",
+                        (ui['chainRun'],)).fetchone()[0]
+                    assert revisions >= 2, 'Model scope revision did not commit'
                 receipt['chain']=audit_runs(db,ui['chainConversation'])
                 receipt['cancel']=audit_runs(db,ui['cancelConversation'])
             assert receipt['chain']['runCount']==1 and receipt['chain']['outcomes'][0] in {'answered','action_completed'}
             assert receipt['cancel']['outcomes']==['cancelled','answered']
             receipt['committed_node_reads']=len(reads)
+            receipt['checkpoint_schedule'] = checkpoint_schedule(project, expected, tools)
             receipt['provider']=provider_totals(root/'provider.ndjson')
             assert receipt['provider']['successful_requests']>=count
             assert receipt['provider']['injected_responses']==0
+            assert receipt['checkpoint_schedule']['on_time'], 'Checkpoints were not each written once at their requested boundary'
             receipt['passed']=True
     except Exception as error:
         receipt['error']=str(error)

@@ -40,7 +40,12 @@ pub enum ModelState {
 pub struct ModelManager {
     client: Arc<OnceLock<Client>>,
     models: Arc<Mutex<HashMap<String, ModelState>>>,
-    cancels: Arc<Mutex<HashMap<String, bool>>>,
+    active: Arc<Mutex<HashMap<String, ActiveDownload>>>,
+}
+
+struct ActiveDownload {
+    destination: PathBuf,
+    cancelled: bool,
 }
 
 impl ModelManager {
@@ -48,7 +53,7 @@ impl ModelManager {
         Self {
             client: Arc::new(OnceLock::new()),
             models: Arc::new(Mutex::new(HashMap::new())),
-            cancels: Arc::new(Mutex::new(HashMap::new())),
+            active: Arc::new(Mutex::new(HashMap::new())),
         }
     }
 
@@ -94,57 +99,110 @@ impl ModelManager {
     where
         F: FnOnce(&PathBuf) -> Result<(), String>,
     {
-        self.cancels
-            .lock()
-            .map_err(|_| "model cancellation state is unavailable".to_string())?
-            .remove(url);
-        self.set_state(url, ModelState::Downloading(0.0));
-        if let Some(parent) = dest.parent() {
-            std::fs::create_dir_all(parent).map_err(|error| {
-                let message = error.to_string();
-                self.set_state(url, ModelState::Failed(message.clone()));
-                message
+        let destination = self.reserve(url, dest)?;
+        self.finish_reserved(url, &destination, expected_sha256, write_partial)
+    }
+
+    fn reserve(&self, url: &str, dest: &Path) -> Result<PathBuf, String> {
+        let parent = dest
+            .parent()
+            .filter(|p| !p.as_os_str().is_empty())
+            .unwrap_or(Path::new("."));
+        let destination = (|| -> std::io::Result<PathBuf> {
+            let name = dest.file_name().ok_or_else(|| {
+                std::io::Error::new(
+                    std::io::ErrorKind::InvalidInput,
+                    "missing model destination filename",
+                )
             })?;
+            std::fs::create_dir_all(parent)?;
+            Ok(parent.canonicalize()?.join(name))
+        })();
+        let mut active = self
+            .active
+            .lock()
+            .map_err(|_| "model download state unavailable")?;
+        if active.contains_key(url) {
+            return Err("model download already in progress for this URL".into());
         }
-        let partial = PathBuf::from(format!("{}.partial", dest.display()));
-        if let Err(error) = write_partial(&partial) {
-            let _ = std::fs::remove_file(&partial);
-            self.set_state(url, ModelState::Failed(error.clone()));
-            return Err(error);
-        }
-        if let Some(expected_raw) = expected_sha256 {
-            let expected = expected_raw.trim().to_ascii_lowercase();
-            if expected.len() != 64 || !expected.chars().all(|ch| ch.is_ascii_hexdigit()) {
-                let _ = std::fs::remove_file(&partial);
-                let error = "invalid expected model sha256 digest".to_string();
-                self.set_state(url, ModelState::Failed(error.clone()));
-                return Err(error);
-            }
-            let actual = match Self::sha256_of_file(&partial) {
-                Ok(digest) => digest,
-                Err(error) => {
-                    let _ = std::fs::remove_file(&partial);
-                    self.set_state(url, ModelState::Failed(error.clone()));
-                    return Err(error);
-                }
-            };
-            if actual != expected {
-                let _ = std::fs::remove_file(&partial);
-                let error = format!(
-                    "model sha256 mismatch: expected {expected}, got {actual}"
-                );
-                self.set_state(url, ModelState::Failed(error.clone()));
-                return Err(error);
-            }
-        }
-        std::fs::rename(&partial, dest).map_err(|error| {
-            let _ = std::fs::remove_file(&partial);
-            let message = format!("finalize model download failed: {error}");
+        let destination = destination.map_err(|e| {
+            let message = e.to_string();
             self.set_state(url, ModelState::Failed(message.clone()));
             message
         })?;
-        self.set_state(url, ModelState::Downloaded);
-        Ok(())
+        if active.values().any(|job| job.destination == destination) {
+            return Err("model download already in progress for this destination".into());
+        }
+        active.insert(
+            url.to_owned(),
+            ActiveDownload {
+                destination: destination.clone(),
+                cancelled: false,
+            },
+        );
+        self.set_state(url, ModelState::Downloading(0.0));
+        Ok(destination)
+    }
+
+    fn finish_reserved<F>(
+        &self,
+        url: &str,
+        dest: &Path,
+        digest: Option<&str>,
+        write: F,
+    ) -> Result<(), String>
+    where
+        F: FnOnce(&PathBuf) -> Result<(), String>,
+    {
+        let staged = (|| -> Result<_, String> {
+            let expected = digest.map(str::trim);
+            if expected
+                .is_some_and(|s| s.len() != 64 || !s.bytes().all(|ch| ch.is_ascii_hexdigit()))
+            {
+                return Err("invalid expected model sha256 digest".into());
+            }
+            let parent = dest.parent().ok_or("missing model destination directory")?;
+            let file = tempfile::Builder::new()
+                .prefix(".nola-download-")
+                .suffix(".partial")
+                .tempfile_in(parent)
+                .map_err(|e| e.to_string())?;
+            let partial = file.path().to_owned();
+            write(&partial)?;
+            if let Some(expected) = expected {
+                let actual = Self::sha256_of_file(&partial)?;
+                if !actual.eq_ignore_ascii_case(expected) {
+                    return Err(format!(
+                        "model sha256 mismatch: expected {expected}, got {actual}"
+                    ));
+                }
+            }
+            Ok(file)
+        })();
+        // Cancellation and promotion share the same commit point. A successful
+        // cancellation must never race a rename after the last network read.
+        let mut active = self
+            .active
+            .lock()
+            .map_err(|_| "model download state unavailable")?;
+        let job = active.remove(url).ok_or("missing active model download")?;
+        let result = if job.cancelled {
+            Err("cancelled".to_owned())
+        } else {
+            staged.and_then(|file| {
+                file.persist(&job.destination)
+                    .map(|_| ())
+                    .map_err(|e| format!("finalize model download failed: {e}"))
+            })
+        };
+        self.set_state(
+            url,
+            match &result {
+                Ok(()) => ModelState::Downloaded,
+                Err(error) => ModelState::Failed(error.clone()),
+            },
+        );
+        result
     }
 
     fn download_to_partial(&self, url: &str, partial: &PathBuf) -> Result<(), String> {
@@ -171,10 +229,14 @@ impl ModelManager {
         let mut buf = [0u8; 8192];
         let mut written: i64 = 0;
         loop {
-            if let Ok(canc) = self.cancels.lock() {
-                if canc.get(url) == Some(&true) {
-                    return Err("cancelled".to_string());
-                }
+            if self
+                .active
+                .lock()
+                .map_err(|_| "model download state unavailable")?
+                .get(url)
+                .is_some_and(|job| job.cancelled)
+            {
+                return Err("cancelled".to_string());
             }
             let n = reader.read(&mut buf).map_err(|e| e.to_string())?;
             if n == 0 {
@@ -187,18 +249,37 @@ impl ModelManager {
                 self.set_state(url, ModelState::Downloading(progress));
             }
         }
+        if total >= 0 && written != total {
+            return Err(format!(
+                "model download length mismatch: expected {total}, got {written}"
+            ));
+        }
         f.flush().map_err(|error| error.to_string())?;
         f.sync_all().map_err(|error| error.to_string())?;
         Ok(())
     }
 
     pub fn download_file_background(&self, url: &str, dest: &PathBuf) -> Result<(), String> {
+        let destination = self.reserve(url, dest)?;
         let manager = self.clone();
-        let url = url.to_string();
-        let destination = dest.clone();
-        thread::spawn(move || {
-            let _ = manager.download_file(&url, &destination);
-        });
+        let request_url = url.to_owned();
+        let worker = thread::Builder::new()
+            .name("nola-model-download".into())
+            .spawn(move || {
+                let _ = manager.finish_reserved(&request_url, &destination, None, |partial| {
+                    manager.download_to_partial(&request_url, partial)
+                });
+            });
+        if let Err(error) = worker {
+            let message = error.to_string();
+            let mut active = self
+                .active
+                .lock()
+                .map_err(|_| "model download state unavailable")?;
+            active.remove(url);
+            self.set_state(url, ModelState::Failed(message.clone()));
+            return Err(message);
+        }
         Ok(())
     }
 
@@ -224,12 +305,14 @@ impl ModelManager {
     }
 
     pub fn cancel_download(&self, url: &str) -> bool {
-        if let Ok(mut c) = self.cancels.lock() {
-            c.insert(url.to_string(), true);
-            true
-        } else {
-            false
-        }
+        let Ok(mut active) = self.active.lock() else {
+            return false;
+        };
+        let Some(job) = active.get_mut(url) else {
+            return false;
+        };
+        job.cancelled = true;
+        true
     }
 
     fn models_root() -> PathBuf {
@@ -273,14 +356,16 @@ impl ModelManager {
         let Ok(p) = self.checked_model_path_for(model_id) else {
             return false;
         };
-        if !p.exists() {
-            return false;
-        }
-        // quick check - has files? at least one file exists
-        if let Ok(entries) = std::fs::read_dir(&p) {
-            return entries.count() > 0;
-        }
-        false
+        Self::has_committed_file(&p)
+    }
+
+    fn has_committed_file(directory: &Path) -> bool {
+        std::fs::read_dir(directory).is_ok_and(|entries| {
+            entries.flatten().any(|entry| {
+                let path = entry.path();
+                path.extension().is_none_or(|ext| ext != "partial") && path.is_file()
+            })
+        })
     }
 
     pub fn sha256_of_file(path: &PathBuf) -> Result<String, String> {
@@ -354,6 +439,55 @@ mod tests {
             );
             assert!(!manager.is_model_downloaded(unsafe_id));
         }
+    }
+
+    #[test]
+    fn cancellation_after_last_write_preserves_previous_model_and_releases_reservation() {
+        let directory = tempdir().unwrap();
+        let dest = directory.path().join("weights.bin");
+        std::fs::write(&dest, b"old").unwrap();
+        let manager = ModelManager::new();
+        let url = "fixture://model";
+        let result = manager.stage_and_commit_download(url, &dest, None, |partial| {
+            assert!(manager.download_file_background(url, &dest).is_err());
+            assert!(manager
+                .download_file_background("fixture://other", &dest)
+                .is_err());
+            std::fs::write(partial, b"new").unwrap();
+            assert!(manager.cancel_download(url));
+            Ok(())
+        });
+        assert_eq!(result.unwrap_err(), "cancelled");
+        assert_eq!(std::fs::read(&dest).unwrap(), b"old");
+        assert_eq!(std::fs::read_dir(directory.path()).unwrap().count(), 1);
+        assert!(!manager.cancel_download(url));
+        manager
+            .stage_and_commit_download(url, &dest, None, |partial| {
+                std::fs::write(partial, b"retry").map_err(|e| e.to_string())
+            })
+            .unwrap();
+        assert_eq!(std::fs::read(&dest).unwrap(), b"retry");
+    }
+
+    #[test]
+    fn short_reader_and_partial_files_do_not_report_a_downloaded_model() {
+        let dir = tempdir().unwrap();
+        std::fs::create_dir(dir.path().join("empty-dir")).unwrap();
+        std::fs::write(dir.path().join("old.bin.partial"), b"unfinished").unwrap();
+        let dest = dir.path().join("weights.bin");
+        let manager = ModelManager::new();
+        let url = "fixture://short-file";
+        let error = manager
+            .stage_and_commit_download(url, &dest, None, |partial| {
+                assert!(!ModelManager::has_committed_file(dir.path()));
+                manager.copy_reader_to_partial(url, &mut Cursor::new(b"short"), 100, partial)
+            })
+            .unwrap_err();
+        assert!(error.contains("length mismatch"), "{error}");
+        assert!(!dest.exists());
+        assert!(!ModelManager::has_committed_file(dir.path()));
+        std::fs::write(&dest, b"done").unwrap();
+        assert!(ModelManager::has_committed_file(dir.path()));
     }
 
     #[test]

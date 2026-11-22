@@ -423,7 +423,7 @@ struct MacDiagnosticsCenterView: View {
         if isPaused { return String(localized: "Live log updates are paused. Resume to continue following new entries.") }
         return detailedLoggingEnabled
             ? String(localized: "Detailed logging is active. New runtime events will appear here automatically.")
-            : String(localized: "Only warnings and errors are recorded until debug logging is enabled in Settings.")
+            : String(localized: "Only warnings and errors are recorded until detailed logging is turned on above.")
     }
 
     private var loggingLevelPicker: some View {
@@ -603,7 +603,7 @@ struct MacDiagnosticsCenterView: View {
                 Button(String(localized: "Detailed Logging")) {
                     detailedLoggingEnabled = true
                 }
-                .buttonStyle(.borderedProminent)
+                .buttonStyle(.nolaProminent)
             }
         }
         .padding(32)
@@ -633,7 +633,7 @@ struct MacDiagnosticsCenterView: View {
         if detailedLoggingEnabled {
             return String(localized: "Detailed logging is active. New runtime events will appear here automatically.")
         }
-        return String(localized: "Only warnings and errors are recorded until debug logging is enabled in Settings.")
+        return String(localized: "Only warnings and errors are recorded until detailed logging is turned on above.")
     }
 
     private var actionBar: some View {

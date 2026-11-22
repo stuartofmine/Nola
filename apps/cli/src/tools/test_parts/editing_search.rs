@@ -3122,6 +3122,10 @@ fn tool_search_dispatch_keeps_trusted_catalog_out_of_model_arguments() {
         let outcome = execute_authorized_tool_with_catalog(&request, &ctx, ExecutionAuthority::CoreApproved(nola_domain::PermissionProfile::Cautious), Some(&catalog));
         assert!(!outcome.error, "{}", outcome.text);
         assert_eq!(outcome.activation.unwrap().capability_ids, vec!["read_file"]);
+        let data = outcome.data.unwrap();
+        assert!(data["text"].as_str().unwrap().contains("matches: read_file"));
+        assert!(!data["text"].as_str().unwrap().contains("<functions>"));
+        assert_eq!(data["tool_discovery_metrics"]["returned_schema_utf8_bytes"], 0);
         // Even trusted execution authority cannot authorize forged metadata.
         request.args.insert("_nola_available_tool_ids".into(), json!(["write_file"]));
         let rejected = execute_authorized_tool_with_catalog(&request, &ctx, ExecutionAuthority::CoreApproved(nola_domain::PermissionProfile::Cautious), Some(&catalog));
@@ -3132,6 +3136,8 @@ fn tool_search_dispatch_keeps_trusted_catalog_out_of_model_arguments() {
     let request = ToolRequest { id: "empty".into(), name: "tool_search".into(),
         args: serde_json::from_value(json!({"query":"select:read_file"})).unwrap() };
     let result = execute_authorized_tool_with_catalog(&request, &ctx, ExecutionAuthority::CoreApproved(nola_domain::PermissionProfile::Cautious), Some(&empty));
+    let model_text = result.data.as_ref().unwrap()["text"].as_str().unwrap();
+    assert!(model_text.contains("missing_tools") && model_text.contains("read_file"));
     assert!(!result.error, "{}", result.text);
     assert!(result.activation.is_none());
 }
@@ -4107,7 +4113,10 @@ fn web_search_schema_exposes_keyless_engine_selection() {
             "serper",
             "brave",
             "searxng",
-            "google"
+            "google",
+            "baidu",
+            "sogou",
+            "360search"
         ])
     );
     let query_description = schema["function"]["parameters"]["properties"]["query"]["description"]

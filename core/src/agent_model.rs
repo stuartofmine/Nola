@@ -157,9 +157,10 @@ fn strip_reopened_markdown_fence(
 }
 
 fn longest_suffix_prefix_overlap(left: &str, right: &str, maximum_chars: usize) -> usize {
-    let left_chars = left.chars().collect::<Vec<_>>();
-    let right_chars = right.chars().collect::<Vec<_>>();
-    let maximum = left_chars.len().min(right_chars.len()).min(maximum_chars);
+    let right_chars: Vec<_> = right.chars().take(maximum_chars).collect();
+    let mut left_chars: Vec<_> = left.chars().rev().take(right_chars.len()).collect();
+    left_chars.reverse();
+    let maximum = left_chars.len();
     (1..=maximum)
         .rev()
         .find(|length| left_chars[left_chars.len() - length..] == right_chars[..*length])
@@ -177,8 +178,14 @@ pub fn parse_agent_model_output(input: AgentModelParseInput) -> AgentModelParseR
 
     if input.content.len() > MAX_MODEL_OUTPUT_BYTES {
         warnings.push("model output exceeded the mobile size limit".to_string());
+        let mut content = input.content;
+        let mut end = MAX_MODEL_OUTPUT_BYTES;
+        while !content.is_char_boundary(end) {
+            end -= 1;
+        }
+        content.truncate(end);
         return AgentModelParseResult {
-            content: input.content.chars().take(MAX_MODEL_OUTPUT_BYTES).collect(),
+            content,
             reasoning: input.reasoning,
             tool_calls: Vec::new(),
             finish_reason: "invalid_tool_output".to_string(),
@@ -630,6 +637,27 @@ mod tests {
             result.content,
             "Here is JSON: [{\"name\":\"write_file\",\"parameters\":{}}]"
         );
+    }
+
+    #[test]
+    fn oversized_multibyte_output_obeys_the_byte_limit_and_preserves_complete_characters() {
+        let text = "字".repeat(MAX_MODEL_OUTPUT_BYTES / 3 + 1);
+        let result = parse_agent_model_output(AgentModelParseInput {
+            content: text,
+            reasoning: String::new(),
+            native_tool_calls: vec![],
+            allowed_tool_names: vec![],
+        });
+        assert_eq!(result.content.len(), MAX_MODEL_OUTPUT_BYTES / 3 * 3);
+        assert_eq!(result.finish_reason, "invalid_tool_output");
+        assert!(result.tool_calls.is_empty());
+    }
+
+    #[test]
+    fn continuation_overlap_respects_character_window_for_long_multilingual_output() {
+        let repeated = "你好🌱".repeat(12);
+        assert_eq!(longest_suffix_prefix_overlap(&format!("前文{repeated}"), &format!("{repeated}后续"), 36), 36);
+        assert_eq!(longest_suffix_prefix_overlap("ab", "abcd", 0), 0);
     }
 
     #[test]

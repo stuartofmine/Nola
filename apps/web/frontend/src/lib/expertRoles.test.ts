@@ -33,3 +33,10 @@ test('expert effort options come only from the readable selected model declarati
     assert.deepEqual(expertEfforts([{...profile,reasoning:{control:'budget',budgets:[1024,2048,4096]}}],''),[]);
     assert.deepEqual(expertEfforts([{...profile,reasoning:{control:'effort',efforts:['invented','none','max']}}],'configured:model'),['none','max']);
 });
+
+test('external executor editing requires an additive declaration from this Host', async () => {
+    const {supportsExpertExecutors} = await import('./expertRoles.ts');
+    assert.equal(supportsExpertExecutors({version:1, features:{main_agent_delegation:true}}), false);
+    assert.equal(supportsExpertExecutors({version:1, features:{external_expert_executors:true}}), true);
+    assert.equal(supportsExpertExecutors({version:2, features:{external_expert_executors:true}}), false);
+});

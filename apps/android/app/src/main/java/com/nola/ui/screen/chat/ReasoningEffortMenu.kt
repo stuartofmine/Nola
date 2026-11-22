@@ -24,7 +24,6 @@ import com.nola.R
 import com.nola.ui.components.NolaDisclosureChevron
 import com.nola.ui.components.NolaRadius
 import com.nola.ui.components.rememberReduceMotionEnabled
-import com.nola.ui.theme.nolaSurface
 
 @Composable internal fun reasoningEffortLabel(value: String): String = when (value) {
     "automatic" -> stringResource(R.string.reasoning_effort_automatic)
@@ -47,12 +46,7 @@ import com.nola.ui.theme.nolaSurface
     Box {
         Row(
             modifier = Modifier
-                .heightIn(min = 36.dp)
-                .nolaSurface(
-                    radius = NolaRadius.pill,
-                    fill = MaterialTheme.colorScheme.surfaceContainer,
-                    border = MaterialTheme.colorScheme.outlineVariant
-                )
+                .heightIn(min = 48.dp)
                 .clip(RoundedCornerShape(NolaRadius.pill))
                 .clickable(
                     enabled = enabled,
@@ -70,7 +64,7 @@ import com.nola.ui.theme.nolaSurface
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis,
                 style = MaterialTheme.typography.labelMedium,
-                color = if (enabled) MaterialTheme.colorScheme.onSurface else MaterialTheme.colorScheme.onSurfaceVariant
+                color = if (enabled) MaterialTheme.colorScheme.onSurfaceVariant else MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.45f)
             )
             NolaDisclosureChevron(expanded = open, reduceMotion = reduceMotion)
         }

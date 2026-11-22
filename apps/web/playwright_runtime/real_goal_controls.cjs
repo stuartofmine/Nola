@@ -10,8 +10,8 @@ const { execFileSync, spawn } = require('node:child_process');
     assert.ok(state.root.includes('nola-a2ui-real-'));
     const out = process.env.NOLA_GOAL_AUDIT_OUT || require('./test_environment.cjs').artifactPath('nola-real-goal-controls');
     fs.mkdirSync(out, { recursive: true });
-    const browser = await chromium.launch({ ...require('./test_environment.cjs').browserOptions(), headless: false });
-    const page = await browser.newPage();
+    const browser = await chromium.launch({ ...require('./test_environment.cjs').browserOptions(), headless: process.env.NOLA_UI_HEADLESS === '1' });
+    const page = await browser.newPage({ locale: 'zh-CN', viewport: { width: 1440, height: 900 } });
     page.setDefaultTimeout(Number(process.env.NOLA_GOAL_BROWSER_TIMEOUT_MS || 20000));
     const report = { clicks: [], errors: [], receipts: [], network: [] };
     // Scoped to this test process; does not change system power settings.
@@ -38,7 +38,8 @@ const { execFileSync, spawn } = require('node:child_process');
         await page.goto(state.url + '/login');
         await page.getByLabel('Host 访问令牌', { exact: true }).fill(fs.readFileSync(state.root + '/home/.nola/web/mobile-access-token', 'utf8').trim());
         await click('连接');
-        await page.getByRole('button', { name: '新建会话', exact: true }).waitFor();
+        await page.waitForURL(url => url.pathname !== '/login');
+        await page.goto(state.url + '/chat');
         let identity;
         if (process.env.NOLA_GOAL_EXISTING_CONVERSATION) {
             identity = {conversationId: process.env.NOLA_GOAL_EXISTING_CONVERSATION};
@@ -46,9 +47,11 @@ const { execFileSync, spawn } = require('node:child_process');
             await page.waitForURL(u => u.searchParams.get('conversation') === identity.conversationId);
             report.restored = true;
         } else {
-            const created = page.waitForResponse(r => new URL(r.url()).pathname === '/api/chat/conversations' && r.request().method() === 'POST');
-            await click('新建会话');
-            identity = await (await created).json();
+            const [created] = await Promise.all([
+                page.waitForResponse(r => new URL(r.url()).pathname === '/api/chat/conversations' && r.request().method() === 'POST'),
+                click('新对话'),
+            ]);
+            identity = await created.json();
             await page.waitForURL(u => u.searchParams.get('conversation') === identity.conversationId);
         }
         report.conversationId = identity.conversationId;
@@ -71,8 +74,13 @@ const { execFileSync, spawn } = require('node:child_process');
             }
             report.selectedConversationModel = process.env.NOLA_GOAL_MODEL_LABEL;
         }
-        await click('进度');
-        const panel = page.getByRole('region', { name: '活动与目标', exact: true });
+        const goalSection = page.locator('details[data-inspector-section=goal]');
+        async function openGoal() {
+            await click('任务');
+            if (await goalSection.getAttribute('open') === null) await goalSection.locator('summary').click();
+        }
+        await openGoal();
+        const panel = goalSection.getByRole('region', { name: '活动与目标', exact: true });
         const startNewGoal = !report.restored || process.env.NOLA_GOAL_RESTART_EXISTING === '1';
         if (startNewGoal) await panel.getByLabel('目标内容', { exact: true }).fill(process.env.NOLA_GOAL_OBJECTIVE || 'Isolated UI goal control audit: wait for my next instruction before performing any work.');
         const executionEvidence = () => JSON.parse(execFileSync('python3', ['-c', `import json,sqlite3,sys
@@ -80,7 +88,7 @@ c=sqlite3.connect('file:'+sys.argv[1]+'/state/nola-v5.db?mode=ro',uri=True)
 r=c.execute('select id,status from runs where conversation_id=? order by created_at_ms desc limit 1',(sys.argv[2],)).fetchone()
 print(json.dumps({'run_id':r[0] if r else None,'status':r[1] if r else None,'model_deltas':c.execute("select count(*) from host_event_inbox where run_id=? and payload_json like '%model_delta%'",(r[0],)).fetchone()[0] if r else 0,'model_completions':c.execute("select count(*) from host_event_inbox where run_id=? and payload_json like '%model_completed%'",(r[0],)).fetchone()[0] if r else 0}))`, state.root, identity.conversationId], {encoding:'utf8'}));
         let lastRun;
-        const beforeControl = executionEvidence();
+        const beforeControl = process.env.NOLA_GOAL_REQUIRE_MODEL === '1' ? executionEvidence() : undefined;
         const waitModel = async () => {
             if (process.env.NOLA_GOAL_REQUIRE_MODEL !== '1') return;
             const deadline = Date.now() + 120_000;
@@ -187,7 +195,7 @@ print(json.dumps({'run_id':r[0] if r else None,'status':r[1] if r else None,'mod
                     .find(value => value.request.operationId === operationId), submitted);
                 assert.deepEqual((await saved()).request.operationId, submitted.operationId);
                 await page.reload();
-                await click('进度');
+                await openGoal();
                 await panel.getByRole('button', { name: '重试原操作', exact: true }).waitFor();
                 assert.equal((await saved()).request.operationId, submitted.operationId);
                 report.lostAcknowledgement = { operationId: submitted.operationId,
@@ -239,7 +247,7 @@ print(json.dumps({'run_id':r[0] if r else None,'status':r[1] if r else None,'mod
         else await control('暂停', 'paused');
         await waitStopped();
         await page.reload();
-        await click('进度');
+        await openGoal();
         await panel.locator('p.muted').filter({hasText:/^已暂停/}).waitFor();
         if (process.env.NOLA_GOAL_PAUSE_ONLY === '1') {
             await page.screenshot({path:out + '/paused.png'});
@@ -256,7 +264,10 @@ print(json.dumps({'run_id':r[0] if r else None,'status':r[1] if r else None,'mod
         await panel.locator('p.muted').filter({hasText:/^已取消/}).waitFor();
         // The Goal receipt can precede the final trace projection. Observe the
         // rendered history settle without a manual refresh or page reload.
-        const history = panel.locator('.section').filter({ has: page.getByRole('heading', { name: '运行记录', exact: true }) });
+        await click('上下文');
+        const executionSection = page.locator('details[data-inspector-section=execution]');
+        await executionSection.locator('summary').click();
+        const history = executionSection.locator('.section').filter({ has: page.getByRole('heading', { name: '运行记录', exact: true }) });
         await history.locator('ol li').first().waitFor();
         await page.waitForFunction(() => {
             const section = [...document.querySelectorAll('.section')]

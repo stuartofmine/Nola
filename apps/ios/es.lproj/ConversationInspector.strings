@@ -29,6 +29,7 @@
 
 "goal.example" = "Ejemplo: organiza los materiales del proyecto y prepara un resumen con fuentes.";
 
+"goal.constraints" = "Restricciones";
 "goal.optional_constraints" = "Restricciones (opcional)";
 
 "goal.cancel_title" = "¿Terminar este objetivo?";

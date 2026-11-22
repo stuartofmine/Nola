@@ -1,4 +1,5 @@
 import { executionConversationLink } from './results.ts';
+import { randomId } from './randomId.ts';
 export const automationFormats = ['agent', 'html', 'search', 'rss', 'json', 'icalendar', 'file', 'folder', 'script'] as const;
 export type AutomationFormat = typeof automationFormats[number];
 export interface Automation {
@@ -33,9 +34,13 @@ export function parseAutomations(value: unknown): Automation[] {
         return { ...item, scriptApproved: item.scriptApproved === true ? true : item.scriptApproved === false ? false : null } as Automation;
     });
 }
+export function isAbsoluteWorkspaceRoot(value: string): boolean {
+    const root = value.trim();
+    return root.startsWith('/') || /^[A-Za-z]:[\\/]/.test(root) || root.startsWith('\\\\');
+}
 export function automationCreateRequest(draft: AutomationDraft): Record<string, unknown> {
     if (!Array.isArray(draft.skillIds) || draft.skillIds.some(id => typeof id !== 'string' || !id.trim()) || new Set(draft.skillIds).size !== draft.skillIds.length) throw new Error('automation.invalidDraft');
-    if (!draft.workspaceRoot.trim().startsWith('/') || /[\u0000-\u001f]/.test(draft.workspaceRoot) || !draft.prompt.trim() || !['cautious', 'allow_all'].includes(draft.permissionProfile)) throw new Error('automation.invalidDraft');
+    if (!isAbsoluteWorkspaceRoot(draft.workspaceRoot) || /[\u0000-\u001f]/.test(draft.workspaceRoot) || !draft.prompt.trim() || !['cautious', 'allow_all'].includes(draft.permissionProfile)) throw new Error('automation.invalidDraft');
     if (!automationFormats.includes(draft.format as AutomationFormat) || !['daily', 'weekly'].includes(draft.frequency) || !/^([01]\d|2[0-3]):[0-5]\d$/.test(draft.time) || (draft.frequency === 'weekly' && (!Number.isInteger(draft.weekday) || draft.weekday < 1 || draft.weekday > 7)) || !draft.name.trim()) throw new Error('automation.invalidDraft');
     const body: Record<string, unknown> = { name: draft.name.trim(), format: draft.format, userPrompt: draft.prompt, frequency: draft.frequency, time: draft.time, timezone: 'local' };
     body.executionSpec = { kind: 'agent', spec: { prompt: draft.prompt,
@@ -121,13 +126,31 @@ export function automationRunConversationLink(value: unknown, expectedRevision: 
     if (!binding || binding.occurrence_id !== data.occurrenceId || binding.definition_revision !== expectedRevision) return;
     return executionConversationLink(binding.conversation_id, binding.run_id);
 }
+export function parseStoredAutomationRunIntent(raw: string | null, action: Automation): { previous?: AutomationRunIntent; clear: boolean } {
+    if (!raw) return { clear: false };
+    try {
+        const parsed = JSON.parse(raw) as Partial<AutomationRunIntent> | null;
+        if (!parsed || typeof parsed !== 'object'
+            || typeof parsed.definitionId !== 'string'
+            || !Number.isSafeInteger(parsed.expectedRevision)
+            || typeof parsed.occurrenceKey !== 'string'
+            || !parsed.occurrenceKey.trim()
+            || parsed.definitionId !== action.id
+            || (Number.isSafeInteger(action.revision) && parsed.expectedRevision! < action.revision!)) {
+            return { clear: true };
+        }
+        return { previous: parsed as AutomationRunIntent, clear: false };
+    } catch {
+        return { clear: true };
+    }
+}
 export function automationRunIntent(action: Automation, previous?: AutomationRunIntent): AutomationRunIntent {
     if (!Number.isSafeInteger(action.revision) || action.revision! <= 0) throw new Error('automation.approvalChanged');
     if (previous) {
         if (previous.definitionId !== action.id || previous.expectedRevision !== action.revision || !previous.occurrenceKey.trim()) throw new Error('automation.approvalChanged');
         return previous;
     }
-    return { definitionId: action.id, expectedRevision: action.revision!, occurrenceKey: `web-manual-${crypto.randomUUID()}` };
+    return { definitionId: action.id, expectedRevision: action.revision!, occurrenceKey: `web-manual-${randomId()}` };
 }
 export function automationRunResponse(value: unknown, expectedRevision: number): { terminal: boolean; message: string } {
     const data = value as { occurrenceId?: unknown; execution?: unknown; receipt?: { binding?: { occurrence_id?: unknown; definition_revision?: unknown }; terminal?: { result?: { value?: { kind?: unknown } } } }; outcomeUnknown?: unknown };

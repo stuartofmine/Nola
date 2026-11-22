@@ -6,6 +6,8 @@
         {id: 'writing', type: '技能', host: '这台 Mac', name: '写作协作', description: '围绕原意，整理结构与表达。', on: true, scope: '当前对话', status: '可用（演示）'},
         {id: 'review-skill', type: '技能', host: '已连接主机', name: '代码审查工作流', description: '检查改动范围、回归风险与可验证结果。', on: false, scope: '当前工作区', status: '远端主机示例（演示）'},
         {id: 'mcp', type: 'MCP', host: '这台 Mac', name: '参考资料服务', description: '为当前对话提供可检索的参考资料。', on: false, scope: '每次询问', endpoint: 'https://example.invalid/mcp', status: '未测试'},
+        {id: 'plugin-browser', type: '插件', host: '这台 Mac', name: '网页阅读插件', description: '按需提取网页正文与结构化摘要。', on: true, scope: '当前对话', status: '已安装（演示）'},
+        {id: 'plugin-git', type: '插件', host: '这台 Mac', name: 'Git 变更审阅', description: '在工作区提供差异查看与提交前核对。', on: false, scope: '当前工作区', status: '未启用'},
         {id: 'files', type: '系统访问', host: '这台 Mac', name: '文件与文件夹', description: '只访问你明确选定的范围。', on: false, scope: '每次询问', status: '未授权'},
         {id: 'notifications', type: '系统访问', host: '这台 Mac', name: '通知', description: '完成结果与需要你确认的事项。', on: true, scope: '仅重要事项', status: '本地演示'},
         {id: 'extensions', type: '扩展与诊断', host: '这台 Mac', name: '桌面扩展', description: '连接桌面能力，并查看运行状态。', on: false, scope: '当前设备', status: '未启用'},
@@ -20,21 +22,33 @@
     ];
     const note = '<div class="demo-banner">虚构演示数据 · 操作仅更新本页状态，不连接服务、不授予系统权限、不提交或推送代码。</div>';
     const action = (text, a, cls = 'text-action') => `<button class="${cls}" data-action="mg-${a}">${text}</button>`;
-    const row = c => `<button class="object-row" data-action="mg-cap:${c.id}"><div class="object-copy"><h3>${esc(c.name)}</h3><p>${esc(c.description)}</p><p class="meta">${esc(c.host || '这台 Mac')} · ${esc(c.scope)}</p></div><span class="object-meta">${c.on ? '已启用' : '未启用'}</span>${svg('chevron', 'chevron')}</button>`;
+    const row = c => `<div class="object-row object-row-with-switch"><button type="button" class="object-copy" style="text-align:left;padding:0" data-action="mg-cap:${c.id}"><h3>${esc(c.name)}</h3><p>${esc(c.description)}</p><p class="meta">${esc(c.host || '这台 Mac')} · ${esc(c.scope)}</p></button><button type="button" class="toggle" role="switch" aria-label="${esc(c.name)}" aria-checked="${c.on}" data-action="mg-quick-toggle:${c.id}"></button></div>`;
     let catalogFailed = false;
 
+    function installPreviewLink(platform = 'mac', paired = false) {
+        const scene = paired ? 'github-skill-host' : 'github-skill';
+        const label = paired ? '在配对 Host 安装' : '从对话安装 GitHub Skill';
+        return `<a class="text-action" href="scenarios.html?scene=${scene}&amp;platform=${platform}&amp;theme=${theme}">${label}</a>`;
+    }
+
+    function harnessLink(platform = 'mac') {
+        return `<a class="text-action" href="scenarios.html?scene=harness-plugins&amp;platform=${platform}&amp;theme=${theme}">插件</a>`;
+    }
+
     function capabilitiesForKind(kind) {
-        const targetType = kind === 'mcp' ? 'MCP' : '技能';
+        const targetType = kind === 'mcp' ? 'MCP' : kind === 'plugins' ? '插件' : '技能';
         const filtered = capabilities.filter(c => c.type === targetType && (sourceFilter === '全部' || c.host === sourceFilter));
         const headerActions = targetType === '技能'
-            ? `${action('从 Git 安装…', 'git-install-preview')}${action('新建技能…', 'new-skill-preview')}`
-            : action('添加服务器…', 'new-mcp-preview');
+            ? `${installPreviewLink()}${action('新建技能…', 'new-skill-preview')}`
+            : targetType === '插件'
+                ? harnessLink()
+                : action('添加服务器…', 'new-mcp-preview');
         return `<div class="cap-toolbar"><div class="segment" role="group" aria-label="来源筛选">${['全部', '这台 Mac', '已连接主机'].map(src => `<button type="button" class="${sourceFilter === src ? 'selected' : ''}" data-action="mg-source-filter:${src}">${src}</button>`).join('')}</div><div class="action-wrap" style="margin:0">${headerActions}</div></div>${catalogFailed ? `<section class="catalog-recovery" role="alert"><h2>无法读取能力清单</h2><p>原有配置保留；重新读取前不能编辑。不会把不完整响应显示为空清单。</p>${action('重新读取', 'catalog-reload', 'primary')}</section>` : `<div class="objects">${filtered.length ? filtered.map(row).join('') : '<div class="empty-state"><h2>此筛选下暂无项目</h2><p>切换到「全部」查看本机与已连接主机项目。</p></div>'}</div>`}<details class="prototype-state-controls"><summary>原型状态预览</summary><p>仅模拟清单读取失败，不连接服务。</p>${action('演示清单读取失败', 'catalog-fail')}</details>${note}`;
     }
 
-    function capabilitiesContent() {
+    function capabilitiesContent(platform = 'mac') {
         const filtered = capabilities.filter(c => c.type === capTab);
-        return `<details class="prototype-state-controls"><summary>原型状态预览</summary><p>仅模拟清单读取失败，不连接服务。</p>${action('演示清单读取失败', 'catalog-fail')}</details>${catalogFailed ? `<section class="catalog-recovery" role="alert"><h2>无法读取能力清单</h2><p>原有配置保留；重新读取前不能编辑。不会把不完整响应显示为空清单。</p>${action('重新读取', 'catalog-reload', 'primary')}</section>` : `<div class="tabs" aria-label="能力类型">${['技能', 'MCP', '系统访问', '扩展与诊断'].map(t => action(t, 'cap-tab:' + t, t === capTab ? 'selected' : '')).join('')}</div><div class="objects">${filtered.map(row).join('')}</div>`}${note}`;
+        return `<details class="prototype-state-controls"><summary>原型状态预览</summary><p>仅模拟清单读取失败，不连接服务。</p>${action('演示清单读取失败', 'catalog-fail')}</details>${catalogFailed ? `<section class="catalog-recovery" role="alert"><h2>无法读取能力清单</h2><p>原有配置保留；重新读取前不能编辑。不会把不完整响应显示为空清单。</p>${action('重新读取', 'catalog-reload', 'primary')}</section>` : `<div class="tabs" aria-label="能力类型">${['技能', 'MCP', '系统访问', '扩展与诊断'].map(t => action(t, 'cap-tab:' + t, t === capTab ? 'selected' : '')).join('')}</div>${capTab === '技能' ? `<div class="cap-toolbar">${harnessLink(platform)}${installPreviewLink(platform)}${['ios','android'].includes(platform) ? installPreviewLink(platform, true) : ''}</div>` : ''}<div class="objects">${filtered.map(row).join('')}</div>`}${note}`;
     }
 
     function capabilitiesView() {
@@ -82,7 +96,6 @@
         if (key === 'catalog-fail') {catalogFailed = true; render();}
         else if (key === 'catalog-reload') {catalogFailed = false; render();}
         else if (key === 'source-filter') {sourceFilter = id; render();}
-        else if (key === 'git-install-preview') {openDialog('从 Git 安装 Skill（演示）', `<p class="dialog-note">正式客户端支持从指定 Git 仓库读取并核对 Skill 说明书后再启用；启用状态仍受本机或工作区作用域约束。此处仅为交互说明，不执行联网拉取。</p><div class="dialog-actions">${action('关闭', 'close-dialog', 'primary')}</div>`);}
         else if (key === 'new-skill-preview') {openDialog('新建本地 Skill（演示）', `<p class="dialog-note">本地创建的 Skill 以工作区文件方式管理，启用时显式确认；此原型不写入磁盘。</p><div class="dialog-actions">${action('关闭', 'close-dialog', 'primary')}</div>`);}
         else if (key === 'new-mcp-preview') {openDialog('添加 MCP 服务器（演示）', `<p class="dialog-note">支持 HTTP 与本地 stdio 传输配置；原型不创建子进程或网络连接。</p><div class="dialog-actions">${action('关闭', 'close-dialog', 'primary')}</div>`);}
         else if (key === 'close-dialog') {closeDialog();}
@@ -134,6 +147,12 @@
                 render();
                 capDetail(c.id);
             };
+        }
+        else if (key === 'quick-toggle' && c) {
+            c.on = !c.on;
+            c.status = c.on ? '演示已启用' : '已停用';
+            render();
+            toast(`${c.name}已${c.on ? '启用' : '停用'}`);
         }
         else if (key === 'toggle-cap') {
             if (c.on) {c.on = false; c.status = '已停用'; closeDialog(); render(); return true;}

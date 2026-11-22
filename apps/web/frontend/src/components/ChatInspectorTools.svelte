@@ -52,7 +52,7 @@
     .heading button { font-size: 11px; }
     .status-row { min-height: 32px; font-size: 12px; }
     .status-row strong { font-size: 11px; font-weight: 600; color: var(--muted); }
-    .status-row .connected { color: #19865d; }
+    .status-row .connected { color: var(--success); }
     .caveat { margin: 0; font-size: 11px; line-height: 1.45; }
     .management { display: grid; gap: 2px; border-top: 1px solid var(--border); padding-top: 8px; }
     .management a { padding: 7px 2px; text-decoration: none; color: inherit; font-size: 12px; }

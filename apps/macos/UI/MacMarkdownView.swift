@@ -10,7 +10,7 @@ import SwiftMath
 enum MacMarkdownTypography {
     static let bodySize: CGFloat = 16
     static let lineSpacing: CGFloat = 6
-    static let blockSpacing: CGFloat = 12
+    static let blockSpacing: CGFloat = 14
     static let listItemSpacing: CGFloat = 8
     static let inlineCodeSize: CGFloat = 14.5
     static let secondaryBodySize: CGFloat = 15
@@ -54,7 +54,9 @@ struct MacSelectableResponseText: NSViewRepresentable {
     func makeNSView(context: Context) -> NSScrollView {
         let scroll = NSScrollView()
         scroll.hasVerticalScroller = true
+        scroll.drawsBackground = false
         let view = MacResponseSelectionTextView(frame: scroll.contentView.bounds)
+        view.drawsBackground = false
         view.isVerticallyResizable = true
         view.isHorizontallyResizable = false
         view.autoresizingMask = [.width]
@@ -963,7 +965,7 @@ struct MacMermaidBlockView: View {
             } else if source.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
                 MacCodeBlockView(language: "mermaid", source: source)
             } else if parseError == nil || measuredSource != source {
-                ScrollView([.horizontal, .vertical], showsIndicators: true) {
+                ScrollView(diagramSize.height + 28 > 560 ? [.horizontal, .vertical] : .horizontal, showsIndicators: true) {
                     MacStableMermaidDiagram(
                         source: source,
                         theme: mermaidTheme,
@@ -1090,13 +1092,17 @@ private struct MacCodeBlockView: View {
                 Button {
                     NSPasteboard.general.clearContents()
                     guard NSPasteboard.general.setString(source, forType: .string) else { copied = false; feedbackID = UUID(); copyFailed = true; return }
-                    copied = true
+                    withAnimation(reduceMotion ? nil : .easeOut(duration: MacDesignTokens.Motion.selection)) {
+                        copied = true
+                    }
                     feedbackID = UUID()
                     let feedback = feedbackID
                     Task { @MainActor in
                         do { try await Task.sleep(for: .seconds(1.2)) } catch { return }
                         guard feedbackID == feedback else { return }
-                        copied = false
+                        withAnimation(reduceMotion ? nil : .easeOut(duration: MacDesignTokens.Motion.selection)) {
+                            copied = false
+                        }
                     }
                 } label: {
                     Label(
@@ -1104,12 +1110,14 @@ private struct MacCodeBlockView: View {
                         systemImage: copied ? "checkmark" : "doc.on.doc"
                     )
                         .font(.system(size: 9.5, weight: .medium))
+                        .contentTransition(reduceMotion ? .identity : .symbolEffect(.replace))
                 }
-                .buttonStyle(.plain)
-                .foregroundStyle(copied ? Color.green : Color.secondary)
+                .buttonStyle(MacActionButtonStyle())
+                .foregroundStyle(copied ? MacDesignColor.success : Color.secondary)
             }
             .padding(.horizontal, 11)
-            .frame(height: 32)
+            .padding(.vertical, 3)
+            .frame(minHeight: 38)
             .background(Color.primary.opacity(0.045))
 
             Divider().opacity(0.45)

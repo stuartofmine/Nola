@@ -68,7 +68,14 @@ struct MacThinkingProcessRow: View {
     }
 
     private var collapsedTitle: String {
-        String(localized: "Execution process", table: "Chat")
+        if isStreaming {
+            let trimmed = title.trimmingCharacters(in: .whitespacesAndNewlines)
+            if !trimmed.isEmpty {
+                return trimmed
+            }
+            return String(localized: "正在处理中…", table: "Chat")
+        }
+        return String(localized: "Execution process", table: "Chat")
     }
 
     var body: some View {
@@ -157,7 +164,7 @@ struct MacThinkingProcessRow: View {
             HStack(alignment: .top, spacing: 8) {
                 Image(systemName: "exclamationmark.triangle.fill")
                     .font(.system(size: 10.5, weight: .semibold))
-                    .foregroundStyle(.red)
+                    .foregroundStyle(MacDesignColor.danger)
                     .padding(.top, 1)
                 VStack(alignment: .leading, spacing: 3) {
                     Text(trace.title)
@@ -175,10 +182,10 @@ struct MacThinkingProcessRow: View {
             .padding(.horizontal, 9)
             .padding(.vertical, 8)
             .frame(maxWidth: .infinity, alignment: .leading)
-            .background(Color.red.opacity(0.065), in: RoundedRectangle(cornerRadius: 9, style: .continuous))
+            .background(MacDesignColor.danger.opacity(0.065), in: RoundedRectangle(cornerRadius: 9, style: .continuous))
             .overlay {
                 RoundedRectangle(cornerRadius: 9, style: .continuous)
-                    .stroke(Color.red.opacity(0.18), lineWidth: 0.5)
+                    .stroke(MacDesignColor.danger.opacity(0.18), lineWidth: 0.5)
             }
         } else if trace.kind == .status, trace.state.isTerminal {
             Text(trace.detail)
@@ -273,12 +280,12 @@ private struct MacGroupedToolTraceRow: View {
                     } else {
                         Image(systemName: trace.toolSymbol)
                             .font(.system(size: 11, weight: .medium))
-                            .foregroundStyle(group.state == .failed ? Color.red : Color.secondary)
+                            .foregroundStyle(group.state == .failed ? MacDesignColor.danger : Color.secondary)
                             .frame(width: 16, height: 16)
                     }
                     MacFlowingStatusText(text: Text(title), isRunning: group.state == .running)
                         .font(.system(size: 11.5, weight: .semibold))
-                        .foregroundStyle(group.state == .failed ? Color.red : Color.secondary)
+                        .foregroundStyle(group.state == .failed ? MacDesignColor.danger : Color.secondary)
                         .lineLimit(1)
                     Spacer(minLength: 8)
                     Image(systemName: "chevron.down")

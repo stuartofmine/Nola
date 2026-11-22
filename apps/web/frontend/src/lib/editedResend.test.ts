@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { editResendText,parseEditedResendEnvelope,confirmEditedResendAdmission,prepareEditedResend,editedResendSourceForMessage } from './editedResend.ts';
+import { createEditedResendDraft,editResendText,editResendDraft,clearEditedResendMentions,parseEditedResendEnvelope,confirmEditedResendAdmission,prepareEditedResend,editedResendSourceForMessage } from './editedResend.ts';
+import { inPlaceInput } from './inPlaceResend.ts';
 import { editedFixture } from './editedResend.fixture.ts';
 import type { EditedResendEnvelope } from './editedResend.ts';
 import {createChatTimeline,reduceChatTimeline,timelineRequest,type TimelineMessage} from './chatTimeline.ts';
@@ -62,7 +63,9 @@ test('edit source uses only the message-paired read snapshot and exact disclosed
         (value:TimelineMessage)=>{value.canonicalSnapshot={...value.canonicalSnapshot!,revision:0};},
         (value:TimelineMessage)=>{value.canonicalSnapshot={...value.canonicalSnapshot!,revision:1.5};},
         (value:TimelineMessage)=>{value.canonical!.message_id='other';},
-        (value:TimelineMessage)=>{value.canonical!.revision=0;},
+        (value:TimelineMessage)=>{value.canonical!.revision=-1;},
+        (value:TimelineMessage)=>{Reflect.deleteProperty(value.canonical!, 'revision');},
+        (value:TimelineMessage)=>{value.canonical!.revision=0.5;},
         (value:TimelineMessage)=>{value.canonical!.role='assistant';},
         (value:TimelineMessage)=>{value.canonical!.state='pending';},
         (value:TimelineMessage)=>{value.state='pending';},
@@ -70,7 +73,8 @@ test('edit source uses only the message-paired read snapshot and exact disclosed
         (value:TimelineMessage)=>{value.parts=[{...value.parts[0],id:'different-body'}];},
         (value:TimelineMessage)=>{value.canonical!.parts[0].review='pending';},
         (value:TimelineMessage)=>{value.canonical!.parts[0].is_final=false;},
-        (value:TimelineMessage)=>{value.canonical!.parts[0].revision=0;},
+        (value:TimelineMessage)=>{value.canonical!.parts[0].revision=-1;},
+        (value:TimelineMessage)=>{Reflect.deleteProperty(value.canonical!.parts[0], 'revision');},
         (value:TimelineMessage)=>{value.canonical!.parts.push({...value.canonical!.parts[0],part_id:'another'});},
     ]){
         const changed=structuredClone(row);mutate(changed);
@@ -78,6 +82,29 @@ test('edit source uses only the message-paired read snapshot and exact disclosed
     }
     const fresh=editedResendSourceForMessage(row,{...owner,conversationId:'another'});
     assert.equal(fresh,null);
+});
+
+test('initial durable message revision survives edit, in-place dispatch and retry admission', () => {
+    const row = canonicalUserWitness();
+    row.canonical!.revision = 0;
+    row.canonical!.parts[0].revision = 0;
+    const {draft: original, envelope} = editedFixture();
+    const source = editedResendSourceForMessage(row, original.source);
+    assert.ok(source);
+    const draft = createEditedResendDraft(source, 'Corrected');
+    assert.equal(draft.source.messageRevision, 0);
+    assert.equal(inPlaceInput(draft).expected_message_revision, 0);
+    const receipt = structuredClone(envelope);
+    receipt.prepared.input.expected_source_message_revision = 0;
+    const expected = {...original.input, expected_source_message_revision: 0};
+    assert.equal(parseEditedResendEnvelope(receipt, original.source, expected).prepared.input.expected_source_message_revision, 0);
+    receipt.prepared.input.expected_source_message_revision = 1;
+    assert.throws(() => parseEditedResendEnvelope(receipt, original.source, expected));
+    for (const invalid of [null, undefined, -1, 1.5, '0']) {
+        assert.throws(() => createEditedResendDraft({...source, messageRevision: invalid as number}));
+        receipt.prepared.input.expected_source_message_revision = invalid as number;
+        assert.throws(() => parseEditedResendEnvelope(receipt, original.source));
+    }
 });
 
 test('attachment-encoded user messages remain ineligible even with genuine paired canonical revisions',()=>{
@@ -100,4 +127,17 @@ test('plain user text with opaque metadata stays editable only with its complete
     assert.equal(editedResendSourceForMessage(row,owner),null,'A truncated preview is not an edit witness');
     part.projection.canonical_text.total_utf8_bytes=20;part.projection.owner.message_id='foreign';
     assert.equal(editedResendSourceForMessage(row,owner),null);
+});
+
+test('clearing or changing mentions mints a new operation_id even when text is unchanged',()=>{
+    const {draft}=editedFixture();
+    const mention={start:0,text:'@Expert',selection:{agent_id:'a1',agent_revision:1,participant_id:'p1',context_conversation_id:'ctx-1'}};
+    const withMention=editResendDraft(draft,draft.input.edited_text,[mention],'epoch-1');
+    assert.notEqual(withMention.input.operation_id,draft.input.operation_id);
+    assert.equal(withMention.expertEpoch,'epoch-1');
+    assert.equal(editResendDraft(withMention,withMention.input.edited_text,[mention],'epoch-1').input.operation_id,withMention.input.operation_id);
+    const plain=clearEditedResendMentions(withMention);
+    assert.notEqual(plain.input.operation_id,withMention.input.operation_id);
+    assert.deepEqual(plain.mentions,[]);
+    assert.equal(plain.expertEpoch,undefined);
 });

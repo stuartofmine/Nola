@@ -127,6 +127,14 @@ public final class NotificationManager: ObservableObject {
         refreshUnread()
     }
 
+    public func clearAll() throws {
+        let center = UNUserNotificationCenter.current()
+        center.removeAllPendingNotificationRequests()
+        center.removeAllDeliveredNotifications()
+        try store.clearAll()
+        refreshUnread()
+    }
+
     /// Cancel any pending UN notifications associated with a dedupeKey by removing their requests (uses persisted entity id)
     public func cancelPendingRequests(forDedupeKey dedupeKey: String) {
         do {

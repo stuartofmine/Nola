@@ -34,9 +34,19 @@ const fs = require('node:fs');
             assert.equal(await checkbox.isChecked(),false,'failed save must not leave a browser-only enabled state');
             assert.equal(writes.length,1);
             assert.deepEqual(writes[0].enabled_model_ids,['chat_completions:test']);
-            await checkbox.focus(); await page.keyboard.press('Space');
-            await page.waitForFunction(()=>document.querySelector('.connection-body > .model input')?.checked);
+            await checkbox.waitFor({state:'visible'});
+            await page.waitForFunction(() => document.querySelector('.connection-body > .model input') === document.activeElement, null, {timeout:4000});
+            await page.keyboard.press('Space');
+            try {
+                await page.waitForFunction(()=>document.querySelector('.connection-body > .model input')?.checked, null, {timeout:8000});
+            } catch (error) {
+                const observed = await checkbox.evaluate(input => ({checked: input.checked, disabled: input.disabled,
+                    open: input.closest('details')?.open, focus: document.activeElement?.outerHTML.slice(0,150)}));
+                throw new Error('The keyboard selection was not confirmed: ' + JSON.stringify({width, writes, observed}), {cause:error});
+            }
             assert.equal(writes.length,2);
+            if (process.env.UI_EVIDENCE_DIR) await page.screenshot({path:require('node:path').join(process.env.UI_EVIDENCE_DIR,'keyboard-selection-'+width+'.png')});
+            assert.equal(await checkbox.isVisible(),true, 'refresh after saving preserves the open model list');
             failRead=true;
             await root.locator('.connections-heading button').click();
             await root.locator(':scope > [role=alert]').waitFor();
@@ -50,7 +60,7 @@ const fs = require('node:fs');
             assert.equal(await root.locator('.connection-detail').count(),0);
             await search.fill('reasoning');
             await root.locator('.connection-detail').waitFor();
-            await root.locator('.connection-summary').click();
+            assert.equal(await root.locator('.connection-detail').evaluate(details => details.open),true, 'filtering preserves the disclosure');
             assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth),true,'connection layout must not overflow');
             await page.waitForTimeout(250); // Capture the settled disclosure transition.
             if(process.env.UI_EVIDENCE_DIR){fs.mkdirSync(process.env.UI_EVIDENCE_DIR,{recursive:true});await root.screenshot({path:`${process.env.UI_EVIDENCE_DIR}/connections-${width}.png`});}

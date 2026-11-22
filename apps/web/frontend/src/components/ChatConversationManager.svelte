@@ -9,6 +9,7 @@
     import ConfirmationDialog from './ConfirmationDialog.svelte';
     import ConversationRowDetails from './ConversationRowDetails.svelte';
     import ExpertChildHistory from './ExpertChildHistory.svelte';
+    import PrototypeIcon from './PrototypeIcon.svelte';
     import type { ConfirmationHandle } from '../lib/confirmation';
     import { parseChatConversation, parseChatConversations, conversationUrl, conversationTitleRequest, conversationBranchRequest, conversationTruncateRequest, parseConversationExport, sameConversationOperation } from '../lib/chatConversations';
     import type { ChatConversation, ConversationOperationOwner } from '../lib/chatConversations';
@@ -115,6 +116,9 @@
     }
     async function pin(target: ChatConversation, opener: HTMLButtonElement) {
         if (rowLocked(target) || !conversations.some(item => item.conversationId === target.conversationId)) return;
+        const menu = opener.closest('details');
+        if (menu) menu.open = false;
+        const focusTarget = menu?.querySelector('summary') ?? opener;
         const captured = owner();
         const expectedPinned = target.isPinned;
         writing = true; error = '';
@@ -130,7 +134,7 @@
         finally {
             if (!disposed) writing = false;
             await tick();
-            if (current(captured) && opener.isConnected) opener.focus();
+            if (current(captured) && focusTarget.isConnected) focusTarget.focus();
         }
     }
     export async function refresh() {
@@ -211,7 +215,9 @@
             const result = parseConversationExport(await api(`${conversationUrl(target.conversationId)}/export?format=${format}`));
             if (!current(captured)) return;
             const href = URL.createObjectURL(new Blob([result.content], { type: format === 'json' ? 'application/json;charset=utf-8' : 'text/markdown;charset=utf-8' }));
-            const link = document.createElement('a'); link.href = href; link.download = result.filename; link.click(); setTimeout(() => URL.revokeObjectURL(href), 0);
+            const link = document.createElement('a'); link.href = href; link.download = result.filename;
+            document.body.append(link); link.click(); link.remove();
+            setTimeout(() => URL.revokeObjectURL(href), 1000);
         } catch { if (current(captured)) error = 'chatConversations.exportFailed'; }
         finally { if (!disposed) writing = false; }
     }
@@ -238,16 +244,17 @@
         {#if !query.trim() && (index === 0 || conversationGroup(conversation) !== conversationGroup(visible[index - 1]))}<h3 class="group-title">{conversationGroup(conversation)}</h3>{/if}
         <div class="conversation-row">
             <button class="conversation" aria-current={highlightSelection && activeId === conversation.conversationId ? 'true' : undefined} disabled={navigationDisabled || writing} onclick={() => selectConversation(conversation)}>
+                <span class="sr-only">{t($locale, 'chatConversations.open')} </span>
                 <span class="conversation-heading"><span>{conversation.title || t($locale, 'chatConversations.untitled')}</span>{#if layout === 'page'}<small title={new Date(conversation.updatedAt).toLocaleString($locale)}>{conversationTime(conversation.updatedAt)}</small>{/if}</span>
                 {#if layout === 'page'}<ConversationRowDetails conversationId={conversation.conversationId} version={JSON.stringify([generation, loadVersion, conversation.updatedAt, conversation.revision])} />{/if}
             </button>
             <details class="row-actions" use:dismissibleDisclosure>
-                <summary aria-label={t($locale, 'chatConversations.actionsFor', {name: conversation.title || t($locale, 'chatConversations.untitled')})} aria-disabled={menuLocked(conversation)} onclick={event => { if (menuLocked(conversation)) event.preventDefault(); }}>⋯</summary>
+                <summary aria-label={t($locale, 'chatConversations.actionsFor', {name: conversation.title || t($locale, 'chatConversations.untitled')})} aria-disabled={menuLocked(conversation)} onclick={event => { if (menuLocked(conversation)) event.preventDefault(); }}><PrototypeIcon name="more" size={16} /></summary>
                 <div class="row-action-buttons">
                     <button disabled={rowLocked(conversation)} onclick={event => pin(conversation, event.currentTarget)}>{t($locale, conversation.isPinned ? 'chatConversations.unpin' : 'chatConversations.pin')}</button>
                     <button disabled={rowLocked(conversation)} onclick={event => rename(conversation, event.currentTarget)}>{t($locale, 'chatConversations.rename')}</button>
-                    <button disabled={rowLocked(conversation)} onclick={() => download('markdown', conversation)}>{t($locale, 'chatConversations.exportMarkdown')}</button>
-                    <button disabled={rowLocked(conversation)} onclick={() => download('json', conversation)}>{t($locale, 'chatConversations.exportJson')}</button>
+                    <button disabled={rowLocked(conversation)} onclick={event => { const menu = event.currentTarget.closest('details'); if (menu) menu.open = false; void download('markdown', conversation); }}>{t($locale, 'chatConversations.exportMarkdown')}</button>
+                    <button disabled={rowLocked(conversation)} onclick={event => { const menu = event.currentTarget.closest('details'); if (menu) menu.open = false; void download('json', conversation); }}>{t($locale, 'chatConversations.exportJson')}</button>
                     {#if activeId === conversation.conversationId && showHistoryActions}
                         <div class="history-actions">
                             <button disabled={branchLocked || !hasMessages} onclick={() => mutate('branch')}>{t($locale, selectedMessageId ? 'chatConversations.branch' : 'chatConversations.branchWhole')}</button>
@@ -261,7 +268,7 @@
             {#if editing === conversation.conversationId}
                 <form class="row rename-form" onsubmit={event => { event.preventDefault(); void mutate('rename', undefined, conversation); }}>
                     <label>{t($locale, 'chatConversations.titleField')}<input bind:this={renameInput} bind:value={title} disabled={rowLocked(conversation)} required onkeydown={event => { if (event.key === 'Escape' && !rowLocked(conversation)) { event.preventDefault(); void closeRename(); } }} /></label>
-                    <button type="submit" disabled={rowLocked(conversation)}>{t($locale, 'chatConversations.save')}</button>
+                    <button type="submit" class="primary" disabled={rowLocked(conversation)}>{t($locale, writing ? 'models.saving' : 'chatConversations.save')}</button>
                     <button type="button" disabled={rowLocked(conversation)} onclick={closeRename}>{t($locale, 'chatConversations.cancel')}</button>
                 </form>
             {/if}
@@ -277,7 +284,7 @@
     .list-heading h2 { font-size: 12px; line-height: 20px; font-weight: 600; margin: 0; white-space: nowrap; flex: none; }
     .new-conversation { display: inline-flex; align-items: center; justify-content: flex-start; gap: 6px; min-height: 44px; max-width: 100%; flex-shrink: 0; padding: 6px 8px; border: 0; border-radius: 6px; background: transparent; color: var(--muted); text-align: start; }
     .new-conversation span { min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-    svg { width: 20px; height: 20px; flex: none; fill: none; stroke: currentColor; stroke-width: 1.5; }
+    svg { width: 20px; height: 20px; flex: none; fill: none; stroke: currentColor; stroke-width: 1.6; }
     .search-row { position: relative; display: flex; min-width: 0; }
     .conversation-search { display: flex; align-items: center; gap: 10px; min-width: 0; width: 100%; padding-left: 12px; padding-right: 44px; background: var(--panel); border-radius: 8px; color: var(--muted); }
     .conversation-search input { min-height: 44px; padding: 8px 0; border: 0; border-radius: 0; background: transparent; font-size: 15px; }
@@ -288,8 +295,11 @@
     .page-list .group-title::after { content: ''; flex: 1; height: 1px; background: var(--border); }
     .conversation-list { display: grid; gap: 3px; }
     .conversation-row { position: relative; display: grid; grid-template-columns: minmax(0, 1fr); min-width: 0; }
-    .conversation { display: grid; align-content: center; gap: 4px; min-width: 0; width: 100%; border: 0; border-radius: 6px; background: transparent; padding: 8px 40px 8px 12px; min-height: 40px; text-align: left; overflow-wrap: anywhere; }
-    .conversation[aria-current] { background: var(--panel); color: var(--content); }
+    .conversation { display: grid; align-content: center; gap: 4px; min-width: 0; width: 100%; border: 1px solid transparent; border-radius: 8px; background: transparent; padding: 8px 40px 8px 12px; min-height: 40px; text-align: left; overflow-wrap: anywhere; }
+    .conversation:hover:not(:disabled) { background: var(--composer-pill-hover-bg); border-color: transparent; }
+    .conversation[aria-current], .conversation[aria-current]:hover { background: var(--glass-pill-bg); border-color: var(--glass-pill-border); box-shadow: var(--glass-pill-shadow); color: var(--content); font-weight: 600; }
+    .conversation[aria-current] .conversation-heading > span { font-weight: 600; }
+    @media (hover: hover) { .conversation:not([aria-current]):not(:disabled):hover { background: var(--panel); } .conversation[aria-current]:not(:disabled):hover { background: var(--accent-subtle); } }
     .conversation-heading { display: flex; align-items: baseline; gap: 8px; min-width: 0; }
     .conversation-heading > span { flex: 1; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; font-weight: 400; }
     .conversation-heading small { flex-shrink: 0; max-width: 30%; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; color: var(--muted); font-size: 12px; font-weight: 400; }
@@ -301,10 +311,10 @@
     .page-list .conversation-row { border-bottom: 1px solid var(--border); }
     .page-list .conversation { padding: 16px 0; gap: 6px; border-radius: 0; min-height: 80px; align-content: start; }
     .page-list .conversation-heading > span { font-size: 17px; line-height: 24px; font-weight: 550; }
-    .page-list .conversation :global(.row-details) { padding-right: 36px; }
+    .page-list .conversation :global(.row-details) { padding-right: 44px; }
     .sidebar-list .list-heading { min-height: 24px; padding-inline: 12px; flex-wrap: wrap; gap: 4px 8px; }
-    .sidebar-list .conversation-search { padding-left: 10px; gap: 0; }
-    .sidebar-list .conversation-search > svg { display: none; }
+    .sidebar-list .conversation-search { padding-left: 10px; gap: 6px; }
+    .sidebar-list .conversation-search > svg { width: 15px; height: 15px; }
     .sidebar-list .conversation-search input { min-height: 36px; font-size: 12px; }
     .sidebar-list .refresh-list { min-height: 36px; width: 36px; }
     .sidebar-list .group-title { margin-left: 12px; margin-top: 4px; }
@@ -315,8 +325,7 @@
     .muted { font-size: 12px; margin: 0; }
     .row-actions { display: block; grid-column: 1 / -1; min-width: 0; }
     .row-actions > summary { position: absolute; top: 0; right: 0; width: 44px; min-height: 44px; display: grid; place-items: center; cursor: pointer; list-style: none; border: 0; border-radius: var(--radius-control); }
-    .page-list .row-actions > summary { top: auto; bottom: 4px; width: 36px; min-height: 44px; color: var(--muted); }
-    .page-list .row-actions[open] > summary { top: 40px; bottom: auto; }
+    .page-list .row-actions > summary { top: 36px; color: var(--muted); }
     @media (hover: hover) { .row-actions:not([open]) > summary { opacity: 0; } .conversation-row:hover .row-actions > summary, .conversation-row:focus-within .row-actions > summary { opacity: 1; } }
     .row-actions > summary::-webkit-details-marker { display: none; }
     .row-actions > summary[aria-disabled='true'] { color: var(--muted); background: var(--panel); cursor: not-allowed; }

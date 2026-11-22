@@ -100,47 +100,41 @@ struct MacWorkspaceSettingsRow: View {
 
 struct MacConversationRow: View {
     let conversation: MacConversation
+    var isSelected: Bool = false
     let loadParticipantNames: (String) async throws -> [String]
     @State private var participantNames: [String] = []
 
     var body: some View {
-        HStack(spacing: 8) {
-            VStack(alignment: .leading, spacing: 4) {
-                HStack(alignment: .firstTextBaseline, spacing: 8) {
-                    Text(MacConversationTitlePolicy.displayTitle(
-                        conversation.title,
-                        conversationID: conversation.id
-                    ))
-                        .font(.system(size: 14, weight: .medium))
-                        .lineLimit(1)
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                        .help(MacConversationTitlePolicy.displayTitle(conversation.title, conversationID: conversation.id))
-                    Text(conversation.updatedAt, format: Calendar.current.isDateInToday(conversation.updatedAt)
-                         ? .dateTime.hour().minute() : .dateTime.month().day())
-                        .font(.system(size: 11))
-                        .foregroundStyle(.secondary)
-                        .fixedSize()
-                }
+        VStack(alignment: .leading, spacing: 5) {
+            Text(MacConversationTitlePolicy.displayTitle(conversation.title, conversationID: conversation.id))
+                .font(.system(size: 14, weight: isSelected ? .semibold : .medium))
+                .foregroundStyle(isSelected ? MacDesignColor.brand : Color("NolaTextPrimary"))
+                .lineLimit(1)
+                .help(MacConversationTitlePolicy.displayTitle(conversation.title, conversationID: conversation.id))
+            HStack(alignment: .firstTextBaseline, spacing: 6) {
                 if !conversation.preview.isEmpty && conversation.preview != conversation.title {
                     Text(conversation.preview)
-                        .font(.system(size: 12))
-                        .foregroundStyle(.secondary)
                         .lineLimit(1)
+                    Spacer(minLength: 0)
                 }
-                if !participantNames.isEmpty {
-                    Label(participantNames.joined(separator: " · "), systemImage: "person.2")
-                        .font(.system(size: 11))
-                        .foregroundStyle(.secondary)
-                        .lineLimit(1)
-                        .help(participantNames.joined(separator: " · "))
-                }
+                Text(conversation.updatedAt, format: Calendar.current.isDateInToday(conversation.updatedAt)
+                     ? .dateTime.hour().minute() : .dateTime.month().day())
+                    .font(.caption.monospacedDigit())
+                    .fixedSize()
             }
-            Spacer(minLength: 4)
-
+            .font(.system(size: 12))
+            .foregroundStyle(Color("NolaTextSecondary"))
+            if !participantNames.isEmpty {
+                Label(participantNames.joined(separator: " · "), systemImage: "person.2")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
+                    .help(participantNames.joined(separator: " · "))
+            }
         }
         .padding(.horizontal, 12)
-        .padding(.vertical, 8)
-        .frame(minHeight: 40)
+        .padding(.vertical, 9)
+        .frame(minHeight: 44)
         .frame(maxWidth: .infinity, alignment: .leading)
         .contentShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
         .accessibilityElement(children: .combine)

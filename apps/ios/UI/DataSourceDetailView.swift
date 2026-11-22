@@ -54,12 +54,12 @@ struct DataSourceDetailView: View {
     @State private var isRefreshing = false
     @State private var errorMessage: String?
     @State private var showError = false
-    @State private var accessPolicy: URLDataSourceAccessPolicy
+    @State private var policySaveError: String?
+    @State private var accessPolicy: URLDataSourceAccessPolicy = .conversationOptIn
     @StateObject private var healthDashboard = HealthDashboardStore.shared
 
     init(sourceType: DataSourceType, healthDashboard: HealthDashboardStore? = nil) {
         self.sourceType = sourceType
-        _accessPolicy = State(initialValue: SystemDataSourceAccessPolicyStore.shared.policy(for: sourceType))
         _healthDashboard = StateObject(wrappedValue: healthDashboard ?? HealthDashboardStore.shared)
     }
     
@@ -73,29 +73,27 @@ struct DataSourceDetailView: View {
                 } label: {
                     HStack(spacing: 9) {
                         if isRefreshing || isCheckingPermission {
-                            ProgressView().tint(.white)
+                            ProgressView().tint(DesignTokens.onActionColor)
                         } else {
                             Image(systemName: primaryActionIcon)
-                                .contentTransition(.symbolEffect(.replace))
+                                .contentTransition(reduceMotion ? .identity : .symbolEffect(.replace))
                         }
                         Text(primaryActionTitle)
                             .fontWeight(.semibold)
-                            .contentTransition(.opacity)
+                            .contentTransition(reduceMotion ? .identity : .opacity)
                         Spacer()
-                        if runtimeState.phase != .syncing && runtimeState.phase != .checking {
-                            Image(systemName: "arrow.right")
-                                .font(.caption.weight(.bold))
-                                .opacity(0.72)
-                        }
                     }
                     .animation(reduceMotion ? nil : DesignTokens.responsiveAnimation, value: runtimeState.phase)
                     .frame(maxWidth: .infinity)
                     .padding(.horizontal, 16)
                     .padding(.vertical, 13)
+                    .frame(minHeight: 44)
+                    .contentShape(Rectangle())
                 }
                 .buttonStyle(.plain)
-                .foregroundStyle(.white)
-                .background(sourceType.color, in: RoundedRectangle(cornerRadius: 15, style: .continuous))
+                .accessibilityIdentifier("data.source.primaryAction")
+                .foregroundStyle(DesignTokens.onActionColor)
+                .background(DesignTokens.actionColor, in: RoundedRectangle(cornerRadius: 15, style: .continuous))
                 .disabled(!primaryActionEnabled)
                 .opacity(primaryActionEnabled ? 1 : 0.48)
 
@@ -137,7 +135,7 @@ struct DataSourceDetailView: View {
                             )
                             .font(.subheadline.weight(.semibold))
                             Spacer(minLength: 8)
-                            Picker(NSLocalizedString("data_source.policy.title", value: "Default access", comment: "Data source policy picker title"), selection: $accessPolicy) {
+                            Picker(NSLocalizedString("data_source.policy.title", value: "Default access", comment: "Data source policy picker title"), selection: Binding(get: { accessPolicy }, set: saveAccessPolicy)) {
                                 ForEach(URLDataSourceAccessPolicy.allCases) { policy in
                                     Text(policy.displayName).tag(policy)
                                 }
@@ -146,9 +144,6 @@ struct DataSourceDetailView: View {
                             .pickerStyle(.menu)
                             .accessibilityIdentifier("data.source.access.policy")
                         }
-                        .onChange(of: accessPolicy) { _, newValue in
-                            SystemDataSourceAccessPolicyStore.shared.setPolicy(newValue, for: sourceType)
-                        }
 
                         Text(accessPolicy.summaryText)
                             .font(.caption)
@@ -156,12 +151,11 @@ struct DataSourceDetailView: View {
                             .fixedSize(horizontal: false, vertical: true)
                             .accessibilityIdentifier("data.source.policy.summary")
 
-                        Label(
-                            NSLocalizedString("data_source.policy.saved_automatically", value: "Changes are saved automatically for future conversations.", comment: "Data source policy automatic save note"),
-                            systemImage: "checkmark.circle"
-                        )
-                        .font(.caption2.weight(.medium))
-                        .foregroundStyle(.secondary)
+                        if let policySaveError {
+                            Label(policySaveError, systemImage: "exclamationmark.circle")
+                                .font(.footnote).foregroundStyle(DesignTokens.dangerColor)
+                                .fixedSize(horizontal: false, vertical: true)
+                        }
                     }
                 }
 
@@ -199,7 +193,8 @@ struct DataSourceDetailView: View {
         .accessibilityIdentifier("data.source.detail.\(sourceType.rawValue)")
         .navigationTitle(sourceType.displayName)
         .navigationBarTitleDisplayMode(.inline)
-        .task {
+        .task(id: sourceType) {
+            accessPolicy = SystemDataSourceAccessPolicyStore(applicationRuntime: container.applicationRuntime).policy(for: sourceType)
             await checkInitialState()
         }
         .onChange(of: scenePhase) { _, newPhase in
@@ -230,6 +225,17 @@ struct DataSourceDetailView: View {
             Button(L10n.ok, role: .cancel) {}
         } message: {
             Text(errorMessage ?? L10n.dataSourceDetailUnknownError)
+        }
+    }
+
+    private func saveAccessPolicy(_ policy: URLDataSourceAccessPolicy) {
+        guard policy != accessPolicy else { return }
+        do {
+            try SystemDataSourceAccessPolicyStore(applicationRuntime: container.applicationRuntime).setPolicy(policy, for: sourceType)
+            accessPolicy = policy
+            policySaveError = nil
+        } catch {
+            policySaveError = String(localized: "personal.capabilities.error") + "\n" + error.localizedDescription
         }
     }
 
@@ -570,25 +576,20 @@ private struct DataSourceDetailHero: View {
     let state: DataSourceRuntimeState
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 15) {
-            HStack(alignment: .top, spacing: 13) {
-                Image(systemName: sourceType.iconSystemName)
-                    .font(.system(size: 22, weight: .semibold))
-                    .foregroundStyle(sourceType.color)
-                    .frame(width: 46, height: 46)
-                    .background(sourceType.color.opacity(0.10), in: RoundedRectangle(cornerRadius: 14, style: .continuous))
-                VStack(alignment: .leading, spacing: 5) {
-                    Text(sourceType.displayName)
-                        .font(.system(.title3, design: .rounded, weight: .bold))
-                    DataSourceStatusPill(state: state)
-                }
-                Spacer(minLength: 0)
+        HStack(alignment: .top, spacing: 13) {
+            Image(systemName: sourceType.iconSystemName)
+                .font(.title3.weight(.semibold))
+                .foregroundStyle(sourceType.color)
+                .frame(width: 44, height: 44)
+                .background(sourceType.color.opacity(0.10), in: RoundedRectangle(cornerRadius: 12))
+                .accessibilityHidden(true)
+            VStack(alignment: .leading, spacing: 5) {
+                Text(state.statusText).font(.headline)
+                Text(state.detailText)
+                    .font(.subheadline).foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
             }
-
-            Text(state.detailText)
-                .font(.subheadline)
-                .foregroundStyle(.secondary)
-                .fixedSize(horizontal: false, vertical: true)
+            Spacer(minLength: 0)
         }
         .padding(17)
         .background(DesignTokens.elevatedColor, in: RoundedRectangle(cornerRadius: 20, style: .continuous))

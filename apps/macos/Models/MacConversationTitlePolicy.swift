@@ -75,7 +75,7 @@ enum MacConversationTitlePolicy {
         return candidate
     }
 
-    private static func normalizedTitle(_ value: String) -> String {
+    static func normalizedTitle(_ value: String) -> String {
         let normalized = value
             .components(separatedBy: .whitespacesAndNewlines)
             .filter { !$0.isEmpty }

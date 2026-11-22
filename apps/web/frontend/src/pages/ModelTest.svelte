@@ -9,6 +9,7 @@
     import { api as unscopedApi, errorMessage } from '../lib/api';
     import { freezeHostToolPlan } from '../lib/hostToolPlan';
     import { locale, t } from '../lib/i18n';
+    import { randomId } from '../lib/randomId';
     import { parseChatConversation, conversationUrl } from '../lib/chatConversations';
     import type { ChatConversation } from '../lib/chatConversations';
     import { createChatTimeline, reduceChatTimeline, timelineMessageText } from '../lib/chatTimeline';
@@ -31,6 +32,21 @@
     import type { RemoteProfile } from '../lib/modelProfiles';
     import Markdown from '../components/Markdown.svelte';
 
+    const componentId = $props.id();
+
+    function navigateTabs(event: KeyboardEvent) {
+        const button = event.currentTarget as HTMLButtonElement;
+        const tabs = Array.from(button.parentElement!.querySelectorAll<HTMLButtonElement>('button[role="tab"]:enabled'));
+        const index = tabs.indexOf(button);
+        const next = event.key === 'Home' ? 0 : event.key === 'End' ? tabs.length - 1
+            : event.key === 'ArrowRight' ? (index + 1) % tabs.length
+            : event.key === 'ArrowLeft' ? (index + tabs.length - 1) % tabs.length : -1;
+        if (next < 0) return;
+        event.preventDefault();
+        tabs[next].focus();
+        tabs[next].click();
+    }
+
     let target = $state<'local' | 'cloud'>('local');
     let compactPane = $state<'setup' | 'output'>('setup');
     let prompt = $state(t(get(locale), 'modelTest.defaultPrompt'));
@@ -45,6 +61,8 @@
     let startedAt = 0;
     let profiles = $state<RemoteProfile[]>([]);
     let localModels = $state<LocalTestModel[]>([]);
+    let selectedLocalId = $state('');
+    let selectedRemoteId = $state('');
     let hostId = '';
     let clientId = '';
     let conversation = $state<ChatConversation | null>(null);
@@ -176,17 +194,27 @@
                 return current() && !!turn && !canReleaseChatTurn(turn) && ready;
             }, () => turn?.runId ? { run_id: turn.runId, assistant_message_id: turn.identity.assistantMessageId } : undefined);
     }
-    async function cancelCapturedSubmission(captured: PendingSourceSubmission) {
+    async function cancelCapturedSubmission(captured: PendingSourceSubmission, requestApi: typeof api = api) {
         if (captured.request_digest === null && !captured.sent) { submissionStorage().clear(captured); return; }
-        const response = await api<{ source_host_id: string; result: unknown }>('/api/chat/agent/v2/submission', {
+        const response = await requestApi<{ source_host_id: string; result: unknown }>('/api/chat/agent/v2/submission', {
             method: 'POST', body: JSON.stringify(sourceSubmissionQuery(captured, true)) });
         if (response.source_host_id !== captured.identity.source_host_id || response.result === null) throw new Error('Cancellation remains unresolved');
         const settled = acceptSourceReceipt(captured, response.result); submissionStorage().save(settled);
-        if (settled.receipt?.phase === 'admitted') await api('/api/chat/agent/v2/cancel', { method: 'POST', body: JSON.stringify(exactSubmissionCancel(settled)) });
+        if (settled.receipt?.phase === 'admitted') await requestApi('/api/chat/agent/v2/cancel', { method: 'POST', body: JSON.stringify(exactSubmissionCancel(settled)) });
         else if (settledSourceSubmission(settled)) submissionStorage().clear(settled);
     }
-    const activeRemote = $derived(activeApiTestModel(profiles));
-    const activeLocal = $derived(activeLocalTestModel(localModels));
+    const installedLocalModels = $derived(localModels.filter(model => model.installed));
+    const availableRemoteProfiles = $derived(profiles.filter(profile => profile.enabled && profile.endpoint.enabled !== false && profile.capabilities.includes('chat')));
+    const activeRemote = $derived(
+        availableRemoteProfiles.find(profile => profile.id === selectedRemoteId)
+        ?? activeApiTestModel(profiles)
+        ?? availableRemoteProfiles[0]
+    );
+    const activeLocal = $derived(
+        installedLocalModels.find(model => model.id === selectedLocalId)
+        ?? activeLocalTestModel(localModels)
+        ?? installedLocalModels[0]
+    );
     const activeName = $derived(target === 'local'
         ? activeLocal?.displayName || activeLocal?.name || activeLocal?.id
         : activeRemote?.displayName || activeRemote?.modelName);
@@ -204,10 +232,12 @@
             if (!session.authenticated || !session.hostId?.trim()) throw new Error('Session unavailable');
             if (disposed) return;
             hostId = session.hostId;
-            clientId = sessionStorage.getItem(editorStorageKey('client')) || `web-model-test-${crypto.randomUUID()}`;
+            clientId = sessionStorage.getItem(editorStorageKey('client')) || `web-model-test-${randomId()}`;
             sessionStorage.setItem(editorStorageKey('client'), clientId);
             profiles = remote.profiles;
             localModels = local.models;
+            if (!selectedLocalId) selectedLocalId = activeLocalTestModel(local.models)?.id ?? local.models.find(m => m.installed)?.id ?? '';
+            if (!selectedRemoteId) selectedRemoteId = activeApiTestModel(remote.profiles)?.id ?? remote.profiles.find(p => p.enabled && p.endpoint.enabled !== false && p.capabilities.includes('chat'))?.id ?? '';
             const retained = sessionStorage.getItem(editorStorageKey('pending-conversation'));
             if (retained) {
                 pendingSubmission = submissionStorage().read(hostId, clientId, retained);
@@ -241,7 +271,9 @@
             stopObservation(); document.removeEventListener('visibilitychange', visibility);
             streamController?.abort();
             journalReader?.dispose();
-            if (pendingSubmission && turn && !canReleaseChatTurn(turn)) void cancelCapturedSubmission(pendingSubmission).catch(() => {});
+            if (pendingSubmission && turn && !canReleaseChatTurn(turn)) {
+                void cancelCapturedSubmission(pendingSubmission, (path, options) => unscopedApi(path, { ...options, signal: AbortSignal.timeout(15_000) })).catch(() => {});
+            }
         };
     });
 
@@ -383,8 +415,11 @@
         usageProjection.reset(); contextUsage = null;
         stopObservation(); consumedResumeAuthorities.clear();
         journalReader?.dispose(); journalReader = null;
+        turn = null; timeline = null;
         compactPane = 'output';
         preparing = true; error = ''; warning = ''; output = ''; firstTokenMs = null; totalMs = null;
+        let createdConversationId: string | null = null;
+        let savedSubmission: PendingSourceSubmission | null = null;
         try {
             if (target === 'local' && activeLocal && !activeLocal.running) {
                 await api(`/api/local-models/${encodeURIComponent(activeLocal.id)}/start`, { method: 'POST' });
@@ -394,30 +429,58 @@
             const created = parseChatConversation(await api('/api/chat/conversations', {
                 method: 'POST', body: JSON.stringify(modelTestConversationRequest(target, model.id, t($locale, 'modelTest.title'))),
             }));
-            if (serial !== generation || disposed) { await retireConversation(created.conversationId); return; }
+            createdConversationId = created.conversationId;
+            if (serial !== generation || disposed) {
+                createdConversationId = null;
+                await retireConversation(created.conversationId);
+                return;
+            }
             conversation = created;
             const owner: ChatTurnOwner = { conversationId: created.conversationId, generation: serial, hostId, clientId };
-            const submissionId = crypto.randomUUID();
-            turn = createChatTurn(owner, chatTurnIdentity(submissionId));
-            timeline = reduceChatTimeline(createChatTimeline(owner), { type: 'beginSubmission', owner, submissionId }).state;
-            startedAt = Date.now();
-            preparing = false;
+            const submissionId = randomId();
+            const turnIdentity = chatTurnIdentity(submissionId);
             const request = { ...modelTestRunRequest(
                 created, clientId, submissionId, prompt, $locale,
                 Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC'
             ), expected_host_id: hostId };
             const frozenRequest = await freezeHostToolPlan(request, api);
-            if (serial !== generation || disposed) return;
-            pendingSubmission = createSourceSubmission(sourceIdentity(owner, turn.identity), frozenRequest);
-            submissionStorage().save(pendingSubmission); sessionStorage.setItem(editorStorageKey('pending-conversation'), created.conversationId);
-            const captured = pendingSubmission;
-            const prepared = await api('/api/chat/agent/v2/submission', { method: 'POST', body: JSON.stringify({ operation: 'prepare', identity: captured.identity, request: captured.request }) });
-            if (serial !== generation || disposed || pendingSubmission?.identity.submission_id !== captured.identity.submission_id) return;
-            pendingSubmission = bindSourceDigest(captured, prepared); submissionStorage().save(pendingSubmission);
-            const body = sourceSubmissionBody(pendingSubmission);
-            pendingSubmission = { ...pendingSubmission, sent: true }; submissionStorage().save(pendingSubmission);
+            if (serial !== generation || disposed) {
+                createdConversationId = null;
+                await retireConversation(created.conversationId);
+                return;
+            }
+            const draftSubmission = createSourceSubmission(sourceIdentity(owner, turnIdentity), frozenRequest);
+            const prepared = await api('/api/chat/agent/v2/submission', { method: 'POST', body: JSON.stringify({ operation: 'prepare', identity: draftSubmission.identity, request: draftSubmission.request }) });
+            if (serial !== generation || disposed) {
+                createdConversationId = null;
+                await retireConversation(created.conversationId);
+                return;
+            }
+            const boundSubmission = bindSourceDigest(draftSubmission, prepared);
+            const body = sourceSubmissionBody(boundSubmission);
+            const dispatchedSubmission: PendingSourceSubmission = { ...boundSubmission, sent: true };
+            submissionStorage().save(dispatchedSubmission);
+            savedSubmission = dispatchedSubmission;
+            sessionStorage.setItem(editorStorageKey('pending-conversation'), created.conversationId);
+            pendingSubmission = dispatchedSubmission;
+            turn = createChatTurn(owner, turnIdentity);
+            timeline = reduceChatTimeline(createChatTimeline(owner), { type: 'beginSubmission', owner, submissionId }).state;
+            startedAt = Date.now();
+            preparing = false;
+            createdConversationId = null;
+            savedSubmission = null;
             await consume('/api/chat/agent/v2/stream', body, serial);
-        } catch (cause) { if (serial === generation && !disposed) error = errorMessage(cause); }
+        } catch (cause) {
+            if (savedSubmission) {
+                submissionStorage().clear(savedSubmission);
+                if (pendingSubmission?.identity.submission_id === savedSubmission.identity.submission_id) pendingSubmission = null;
+                sessionStorage.removeItem(editorStorageKey('pending-conversation'));
+            }
+            if (createdConversationId) {
+                await retireConversation(createdConversationId);
+            }
+            if (serial === generation && !disposed) error = errorMessage(cause);
+        }
         finally { if (serial === generation && !disposed) { preparing = false; observeSubmission(); } }
     }
 
@@ -468,24 +531,46 @@
 <div class="model-test-page">
     <header class="page-header">
         <div><h1>{t($locale, 'modelTest.title')}</h1><p class="muted">{t($locale, 'modelTest.subtitle')}</p></div>
-        <div class="actions"><a href="/models">{t($locale, 'modelTest.back')}</a>{#if target === 'local' ? activeLocal : activeRemote}<a class="button" href={modelTestParametersUrl(target, (target === 'local' ? activeLocal : activeRemote)!.id)}>{t($locale, 'modelTest.parameters')}</a>{/if}<button class="primary" onclick={busy ? stop : run} disabled={loading || cleaning || turn?.phase === 'cancel_requested' || !busy && !canRun}>{t($locale, busy ? 'modelTest.stop' : 'modelTest.run')}</button></div>
+        <div class="actions">{#if target === 'local' ? activeLocal : activeRemote}<a class="button" href={modelTestParametersUrl(target, (target === 'local' ? activeLocal : activeRemote)!.id)}>{t($locale, 'modelTest.parameters')}</a>{/if}<button class="primary" onclick={busy ? stop : run} disabled={loading || cleaning || turn?.phase === 'cancel_requested' || !busy && !canRun}>{t($locale, busy ? 'modelTest.stop' : 'modelTest.run')}</button></div>
     </header>
     {#if error}<p class="notice error" role="alert">{error}</p>{/if}
     {#if warning}<p class="notice" role="status">{warning}{#if conversation}<a href={`/chat?conversation=${encodeURIComponent(conversation.conversationId)}`}>{t($locale, 'modelTest.openConversation')}</a>{/if}</p>{/if}
     <div class="tabs compact-panes" role="tablist" aria-label={t($locale, 'modelTest.pane')}>
-        <button role="tab" aria-controls="model-test-setup" aria-selected={compactPane === 'setup'} tabindex={compactPane === 'setup' ? 0 : -1} onclick={() => compactPane = 'setup'}>{t($locale, 'modelTest.setup')}</button>
-        <button role="tab" aria-controls="model-test-output" aria-selected={compactPane === 'output'} tabindex={compactPane === 'output' ? 0 : -1} onclick={() => compactPane = 'output'}>{t($locale, 'modelTest.output')}</button>
+        <button role="tab" id="{componentId}-setup-tab" aria-controls="{componentId}-setup" onkeydown={navigateTabs} aria-selected={compactPane === 'setup'} tabindex={compactPane === 'setup' ? 0 : -1} onclick={() => compactPane = 'setup'}>{t($locale, 'modelTest.setup')}</button>
+        <button role="tab" id="{componentId}-output-tab" aria-controls="{componentId}-output" onkeydown={navigateTabs} aria-selected={compactPane === 'output'} tabindex={compactPane === 'output' ? 0 : -1} onclick={() => compactPane = 'output'}>{t($locale, 'modelTest.output')}</button>
     </div>
     <div class="model-test-grid" data-active-pane={compactPane}>
-        <section id="model-test-setup" class="card setup">
-            <h2>{t($locale, 'modelTest.setup')}</h2>
+        <section id="{componentId}-setup" aria-labelledby="{componentId}-setup-title" class="card setup">
+            <h2 id="{componentId}-setup-title">{t($locale, 'modelTest.setup')}</h2>
             <div class="tabs" role="tablist" aria-label={t($locale, 'models.type')}>
-                <button role="tab" aria-selected={target === 'local'} onclick={() => target = 'local'} disabled={busy}>{t($locale, 'models.local')}</button>
-                <button role="tab" aria-selected={target === 'cloud'} onclick={() => target = 'cloud'} disabled={busy}>{t($locale, 'models.api')}</button>
+                <button role="tab" id="{componentId}-local-tab" aria-controls="{componentId}-model" tabindex={target === 'local' ? 0 : -1} onkeydown={navigateTabs} aria-selected={target === 'local'} onclick={() => target = 'local'} disabled={busy}>{t($locale, 'models.local')}</button>
+                <button role="tab" id="{componentId}-cloud-tab" aria-controls="{componentId}-model" tabindex={target === 'cloud' ? 0 : -1} onkeydown={navigateTabs} aria-selected={target === 'cloud'} onclick={() => target = 'cloud'} disabled={busy}>{t($locale, 'models.api')}</button>
             </div>
-            <p class="model-name">{activeName || t($locale, 'modelTest.notConfigured')}</p>
-            <label for="model-test-prompt">{t($locale, 'modelTest.prompt')}</label>
-            <textarea id="model-test-prompt" bind:value={prompt} disabled={busy} rows="9"></textarea>
+            <div class="model-select" id="{componentId}-model" role="tabpanel" aria-labelledby="{componentId}-{target}-tab">
+                {#if target === 'local'}
+                    {#if installedLocalModels.length}
+                        <select aria-label={t($locale, 'models.local')} value={activeLocal?.id ?? ''} onchange={event => selectedLocalId = event.currentTarget.value} disabled={busy}>
+                            {#each installedLocalModels as model (model.id)}
+                                <option value={model.id}>{model.displayName || model.name || model.id}</option>
+                            {/each}
+                        </select>
+                    {:else}
+                        <div class="model-name muted">{t($locale, 'modelTest.notConfigured')}</div>
+                    {/if}
+                {:else}
+                    {#if availableRemoteProfiles.length}
+                        <select aria-label={t($locale, 'models.api')} value={activeRemote?.id ?? ''} onchange={event => selectedRemoteId = event.currentTarget.value} disabled={busy}>
+                            {#each availableRemoteProfiles as profile (profile.id)}
+                                <option value={profile.id}>{profile.displayName || profile.modelName}</option>
+                            {/each}
+                        </select>
+                    {:else}
+                        <div class="model-name muted">{t($locale, 'modelTest.notConfigured')}</div>
+                    {/if}
+                {/if}
+            </div>
+            <label for="{componentId}-prompt">{t($locale, 'modelTest.prompt')}</label>
+            <textarea id="{componentId}-prompt" bind:value={prompt} disabled={busy} rows="9"></textarea>
             <p class="muted">{t($locale, 'modelTest.safeHint')}</p>
             <div class="metrics">
                 <h3>{t($locale, 'modelTest.metrics')}</h3>
@@ -497,8 +582,8 @@
                 {#if contextUsage?.usage.estimated}<p class="muted">{t($locale, 'chatOverview.estimated')}</p>{/if}
             </div>
         </section>
-        <section id="model-test-output" class="card output">
-            <header><h2>{t($locale, 'modelTest.output')}</h2><div class="actions">{#if turn?.phase === 'recovering'}<button onclick={resume} disabled={!turn.runId || observedRecovery !== 'resume_required' || !resumeAuthority || consumedResumeAuthorities.has(resumeAuthority)}>{t($locale, 'modelTest.resume')}</button>{/if}{#if conversation && (turn?.phase === 'recovering' || turn?.phase === 'cancel_requested')}<a href={`/chat?conversation=${encodeURIComponent(conversation.conversationId)}`}>{t($locale, 'modelTest.openConversation')}</a>{/if}<button onclick={clear} disabled={busy || !output && !error}>{t($locale, 'modelTest.clear')}</button></div></header>
+        <section id="{componentId}-output" aria-labelledby="{componentId}-output-title" class="card output">
+            <header><h2 id="{componentId}-output-title">{t($locale, 'modelTest.output')}</h2><div class="actions">{#if turn?.phase === 'recovering'}<button onclick={resume} disabled={!turn.runId || observedRecovery !== 'resume_required' || !resumeAuthority || consumedResumeAuthorities.has(resumeAuthority)}>{t($locale, 'modelTest.resume')}</button>{/if}{#if conversation && (turn?.phase === 'recovering' || turn?.phase === 'cancel_requested')}<a href={`/chat?conversation=${encodeURIComponent(conversation.conversationId)}`}>{t($locale, 'modelTest.openConversation')}</a>{/if}<button onclick={clear} disabled={busy || !output && !error}>{t($locale, 'modelTest.clear')}</button></div></header>
             {#if busy}<p role="status" class="muted">{t($locale, 'modelTest.running')}</p>{/if}
             {#if output}<div class="rendered-output"><Markdown source={output} /></div>{:else}<p class="empty muted">{t($locale, 'modelTest.empty')}</p>{/if}
         </section>
@@ -511,11 +596,11 @@
     .page-header h1 { margin-bottom: 4px; }
     .actions { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; }
     .model-test-grid { display: grid; grid-template-columns: minmax(280px, 360px) minmax(0, 1fr); gap: 16px; padding: 20px; }
-    .compact-panes { display: none; }
     .card { min-width: 0; padding: 20px; }
     .setup { display: flex; flex-direction: column; gap: 12px; }
     .setup h2, .output h2 { margin: 0; }
     .tabs { display: flex; gap: 4px; }
+    .compact-panes { display: none; }
     .model-name { font-weight: 600; margin: 0; }
     textarea { width: 100%; min-height: 160px; resize: vertical; }
     .metrics { margin-top: 12px; padding: 14px; border-radius: 12px; background: color-mix(in srgb, currentColor 4%, transparent); }

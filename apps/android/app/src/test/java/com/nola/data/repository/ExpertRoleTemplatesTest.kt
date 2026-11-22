@@ -8,6 +8,12 @@ class ExpertRoleTemplatesTest {
         mapOf("zh" to "代码编写", "en" to "Code writer"), mapOf("en" to "Implement changes"), "Inspect before editing",
         ExpertRoleToolPack("coding", listOf("read_file", "write_file")), listOf(ExpertRoleSkill("implement-code", mapOf("en" to "Implementation"), "Verify actual changes")))
     private val catalog = ExpertRoleCatalog(1, ExpertRoleFeatures(true, true, true), listOf(role))
+    @Test fun olderHostsKeepInlineMentionsDisabledUntilAdvertised() {
+        val json = kotlinx.serialization.json.Json { ignoreUnknownKeys = true }
+        val legacy = """{"reasoning_effort":true,"explicit_generation_reasoning":true,"rejoin":true,"main_agent_delegation":true}"""
+        assertFalse(json.decodeFromString<ExpertRoleFeatures>(legacy).inlineExpertMentions)
+        assertTrue(json.decodeFromString<ExpertRoleFeatures>(legacy.dropLast(1) + ""","inline_expert_mentions":true}""").inlineExpertMentions)
+    }
     @Test fun localizedPreviewUsesLanguageFallbackWithoutInventingRoleBodies() {
         assertEquals("代码编写", expertRoleText(role.name, "zh-Hans"))
         assertEquals("Code writer", expertRoleText(role.name, "ja"))

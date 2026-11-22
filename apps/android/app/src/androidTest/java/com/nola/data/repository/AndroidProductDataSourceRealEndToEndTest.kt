@@ -23,10 +23,7 @@ import io.ktor.client.plugins.HttpTimeout
 import io.ktor.client.plugins.contentnegotiation.ContentNegotiation
 import io.ktor.serialization.kotlinx.json.json
 import java.io.File
-import java.net.InetAddress
-import java.net.ServerSocket
 import java.util.UUID
-import kotlin.concurrent.thread
 import kotlinx.coroutines.flow.toList
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.runBlocking
@@ -34,6 +31,7 @@ import kotlinx.coroutines.withTimeout
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.put
+import com.nola.domain.model.ModelWireProtocol
 import org.json.JSONObject
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -184,6 +182,12 @@ class AndroidProductDataSourceRealEndToEndTest {
                     )
                 )
                 assertEquals("JSON", saved.validationContract?.format)
+                AndroidApplicationRuntime(context).use { reopened ->
+                    val reopenedStore = MemoryProfileDataStore(context, SecureTokenStore(context), reopened)
+                    val restored = AndroidDataSourceRepository(reopenedStore, AndroidDataSourceReader(sourceClient))
+                        .snapshot().first.single { it.id == saved.id }
+                    assertEquals("JSON", restored.validationContract?.format)
+                }
                 assertTrue(saved.cachedContent.contains(fact))
 
                 val conversationId = "android-product-e2e-${UUID.randomUUID()}"
@@ -233,7 +237,7 @@ class AndroidProductDataSourceRealEndToEndTest {
                         baseUrl = endpoint,
                         apiKey = apiKey,
                         model = model,
-                        temperature = 0f,
+                        wireProtocol = requireNotNull(ModelWireProtocol.fromWireValue(config.optString("protocol", "chat_completions"))),
                         maxCompletionTokens = 512,
                     )
                 }
@@ -305,7 +309,7 @@ class AndroidProductDataSourceRealEndToEndTest {
                         baseUrl = endpoint,
                         apiKey = apiKey,
                         model = model,
-                        temperature = 0f,
+                        wireProtocol = requireNotNull(ModelWireProtocol.fromWireValue(config.optString("protocol", "chat_completions"))),
                         maxCompletionTokens = 256,
                     )
                 }
@@ -391,29 +395,6 @@ class AndroidProductDataSourceRealEndToEndTest {
                 sourceClient.close()
                 modelClient.close()
             }
-        }
-    }
-
-    private class SourceFixtureServer(private val body: String) : AutoCloseable {
-        private val server = ServerSocket(0, 1, InetAddress.getByName("127.0.0.1"))
-        private val worker = thread(name = "nola-android-source-fixture", isDaemon = true) {
-            server.accept().use { socket ->
-                val reader = socket.getInputStream().bufferedReader()
-                while (reader.readLine()?.isNotEmpty() == true) Unit
-                val payload = body.toByteArray(Charsets.UTF_8)
-                socket.getOutputStream().apply {
-                    write("HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: ${payload.size}\r\nConnection: close\r\n\r\n".toByteArray())
-                    write(payload)
-                    flush()
-                }
-            }
-        }
-
-        val url: String = "http://127.0.0.1:${server.localPort}/context.json"
-
-        override fun close() {
-            runCatching { server.close() }
-            worker.join(2_000)
         }
     }
 

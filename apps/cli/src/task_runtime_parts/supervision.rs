@@ -2870,6 +2870,7 @@ fn expired_dispatched_terminal_is_reconciled_without_replay() {
     config.session.session_id = Some("terminal-recovery-fixture".into());
     let now = unix_epoch_millis();
     let record = DbBackgroundTask {
+        local_execution: None,
         process_sandbox: None,
         id: "dispatched-terminal".into(),
         terminal: Some(nola_domain::terminal_input::TerminalSessionConfiguration {

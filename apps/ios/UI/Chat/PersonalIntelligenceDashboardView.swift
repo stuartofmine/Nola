@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 import SwiftUI
 import UniformTypeIdentifiers
+import SafariServices
 
 struct PersonalIntelligenceDashboardView: View {
     var showsCloseButton = false
@@ -13,7 +14,6 @@ struct PersonalIntelligenceDashboardView: View {
     @State private var selectedFilter: MemoryFilter = .all
     @State private var visibleMemoryCount = 24
     @State private var showClearConfirmation = false
-    @State private var hasAppeared = false
     @State private var loadError: String?
 
     private let accent = DesignTokens.primaryColor
@@ -65,18 +65,11 @@ struct PersonalIntelligenceDashboardView: View {
                 intelligenceHeader
 
                 hero
-                    .opacity(hasAppeared ? 1 : 0)
-                    .offset(y: hasAppeared ? 0 : 10)
 
                 capabilitiesGateway
-                    .opacity(hasAppeared ? 1 : 0)
-                    .offset(y: hasAppeared ? 0 : 12)
-
             }
 
             memorySection
-                .opacity(hasAppeared ? 1 : 0)
-                .offset(y: hasAppeared ? 0 : 14)
 
             if embedded {
                 capabilitiesGateway
@@ -84,12 +77,9 @@ struct PersonalIntelligenceDashboardView: View {
 
             if !strategies.isEmpty {
                 executionSection
-                    .opacity(hasAppeared ? 1 : 0)
-                    .offset(y: hasAppeared ? 0 : 16)
             }
 
             howItWorks
-                .opacity(hasAppeared ? 1 : 0)
 
             clearSection
         }
@@ -98,7 +88,7 @@ struct PersonalIntelligenceDashboardView: View {
         .refreshable { reload() }
         .navigationTitle(embedded ? text("information.memory", "Long-term memory") : (showsCloseButton ? text("personal.intelligence.title", "Personal intelligence") : ""))
         .navigationBarTitleDisplayMode(.inline)
-        .toolbar(showsCloseButton || embedded ? .visible : .hidden, for: .navigationBar)
+        .toolbarBackground(.hidden, for: .navigationBar)
         .toolbar {
             if showsCloseButton {
                 ToolbarItem(placement: .cancellationAction) {
@@ -106,15 +96,8 @@ struct PersonalIntelligenceDashboardView: View {
                 }
             }
         }
-        .task {
+        .onAppear {
             reload()
-            if embedded || reduceMotion {
-                var transaction = Transaction()
-                transaction.disablesAnimations = true
-                withTransaction(transaction) { hasAppeared = true }
-            } else {
-                withAnimation(DesignTokens.revealAnimation) { hasAppeared = true }
-            }
         }
         .confirmationDialog(
             text("personal.intelligence.clear.confirm.title", "Clear all learned data?"),
@@ -122,7 +105,7 @@ struct PersonalIntelligenceDashboardView: View {
             titleVisibility: .visible
         ) {
             Button(text("common.clear", "Clear"), role: .destructive) {
-                if PersonalIntelligenceCore.clear() {
+                if container.applicationRuntime.clearIntelligence() {
                     reload()
                 } else {
                     loadError = text("personal.intelligence.clear.failed", "Could not clear learned data. Retry when local storage is ready.")
@@ -233,7 +216,7 @@ struct PersonalIntelligenceDashboardView: View {
                     .stroke(DesignTokens.borderColor, lineWidth: 1)
             }
         }
-        .buttonStyle(NolaActionButtonStyle())
+        .buttonStyle(NolaPressableStyle())
         .accessibilityIdentifier("intelligence.capabilities.open")
     }
 
@@ -250,7 +233,7 @@ struct PersonalIntelligenceDashboardView: View {
 
     private var capabilityGatewayCopy: some View {
         VStack(alignment: .leading, spacing: 4) {
-            Text(piText("personal.capabilities.title", "Skills & MCP"))
+            Text(piText("personal.capabilities.title", "Capability library"))
                 .font(.headline)
                 .foregroundStyle(.primary)
 
@@ -284,7 +267,7 @@ struct PersonalIntelligenceDashboardView: View {
                 .foregroundStyle(accent)
             Text("\(value.formatted())\(suffix)")
                 .font(.title3.monospacedDigit().weight(.bold))
-                .contentTransition(.numericText())
+                .contentTransition(reduceMotion ? .identity : .numericText())
             Text(title)
                 .font(.footnote)
                 .foregroundStyle(.secondary)
@@ -313,15 +296,8 @@ struct PersonalIntelligenceDashboardView: View {
             if filteredMemories.isEmpty && loadError == nil {
                 emptyMemoryState
             } else {
-                ForEach(Array(filteredMemories.prefix(visibleMemoryCount).enumerated()), id: \.offset) { index, memory in
-                    memoryCard(memory)
-                        .transition(.opacity.combined(with: .move(edge: .bottom)))
-                        .animation(
-                            reduceMotion
-                                ? nil
-                                : DesignTokens.revealAnimation,
-                            value: selectedFilter
-                        )
+                ForEach(visibleMemories, id: \.id) { item in
+                    memoryCard(item.record)
                 }
                 if filteredMemories.count > visibleMemoryCount {
                     Button(text("personal.intelligence.memories.load_more", "Load more memories")) {
@@ -332,15 +308,18 @@ struct PersonalIntelligenceDashboardView: View {
         }
     }
 
+    private var visibleMemories: [(id: String, record: [String: AgentCoreJSONValue])] {
+        filteredMemories.prefix(visibleMemoryCount).compactMap { record in
+            guard let id = record["id"]?.jsonString else { return nil }
+            return (id, record)
+        }
+    }
+
     private func filterButton(_ filter: MemoryFilter) -> some View {
         let selected = selectedFilter == filter
         return Button {
             visibleMemoryCount = 24
-            if reduceMotion {
-                selectedFilter = filter
-            } else {
-                withAnimation(DesignTokens.disclosureAnimation) { selectedFilter = filter }
-            }
+            selectedFilter = filter
         } label: {
             Text(filterTitle(filter))
                 .font(.subheadline.weight(.medium))
@@ -348,10 +327,14 @@ struct PersonalIntelligenceDashboardView: View {
                 .padding(.horizontal, 13)
                 .padding(.vertical, 8)
                 .frame(minHeight: 44)
-                .background(selected ? DesignTokens.accentSubtleColor : .clear, in: RoundedRectangle(cornerRadius: 12))
+                .background {
+                    RoundedRectangle(cornerRadius: 12)
+                        .fill(selected ? DesignTokens.accentSubtleColor : Color.clear)
+                        .animation(reduceMotion ? nil : DesignTokens.disclosureAnimation, value: selected)
+                }
                 .overlay(RoundedRectangle(cornerRadius: 12).stroke(DesignTokens.borderColor, lineWidth: 1))
         }
-        .buttonStyle(NolaActionButtonStyle())
+        .buttonStyle(NolaPressableStyle())
         .accessibilityAddTraits(selected ? .isSelected : [])
         .accessibilityIdentifier("intelligence.filter.\(filter.rawValue)")
     }
@@ -408,7 +391,7 @@ struct PersonalIntelligenceDashboardView: View {
                     Spacer()
                     Text("\(Int(confidence * 100))%")
                         .monospacedDigit()
-                        .contentTransition(.numericText())
+                        .contentTransition(reduceMotion ? .identity : .numericText())
                 }
                 .font(.caption)
                 .foregroundStyle(.secondary)
@@ -586,7 +569,7 @@ struct PersonalIntelligenceDashboardView: View {
 
     private func reload() {
         contextProfile = container.chatMemoryProfileStore.loadProfile()
-        guard let updated = PersonalIntelligenceCore.snapshot() else {
+        guard let updated = container.applicationRuntime.intelligenceSnapshot() else {
             loadError = text("personal.intelligence.load.failed", "Could not load learned data. Previous results are retained. Try refreshing.")
             return
         }
@@ -600,6 +583,7 @@ struct PersonalIntelligenceDashboardView: View {
 private enum PersonalCapabilityKind: String, CaseIterable, Identifiable {
     case skills
     case mcp
+    case plugins
 
     var id: String { rawValue }
 }
@@ -635,6 +619,7 @@ private enum PersonalCapabilityDeleteTarget: Identifiable {
 }
 
 struct PersonalCapabilitiesLibraryView: View {
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     var hostSkills: [UserUploadedContextItem] = []
     var onUseSkill: ((String) -> Void)? = nil
     @Environment(\.horizontalSizeClass) private var horizontalSizeClass
@@ -643,6 +628,11 @@ struct PersonalCapabilitiesLibraryView: View {
     @State private var libraryLoaded = false
     @State private var libraryReadFailed = false
     @State private var selectedKind: PersonalCapabilityKind = .skills
+    @State private var pluginManagementPage: PluginManagementPage?
+    @State private var pluginHosts: [ModelInfo] = []
+    @State private var pairPluginHost = false
+    @State private var newlyPairedPluginHost: (model: ModelInfo, identity: String)?
+    @State private var openingPluginHost = false
     @State private var query = ""
     @State private var editor: PersonalCapabilityEditorItem?
     @State private var skillEditorSnapshot: IOSCanonicalSkillEditor?
@@ -657,62 +647,20 @@ struct PersonalCapabilitiesLibraryView: View {
     var body: some View {
         ScrollView {
             LazyVStack(alignment: .leading, spacing: 16) {
-                VStack(alignment: .leading, spacing: 5) {
-                    Group {
-                        if selectedKind == .mcp { Text("mcp.mobile.http_execution") }
-                        else { Text(piText("personal.capabilities.subtitle", "Reusable workflows and connected tools available across conversations.")) }
-                    }
-                        .font(.subheadline)
-                        .foregroundStyle(.secondary)
-                }
-
                 Picker(piText("personal.capabilities.type", "Capability type"), selection: $selectedKind) {
-                    Text("\(piText("personal.capabilities.skills", "Skills")) \(profile.uploadedSkills.filter(\.enabled).count)/\(profile.uploadedSkills.count)")
+                    Text(piText("personal.capabilities.skills", "Skills"))
                         .tag(PersonalCapabilityKind.skills)
-                    Text("MCP \(profile.mcpServers.filter(\.enabled).count)/\(profile.mcpServers.count)")
+                    Text(verbatim: "MCP")
                         .tag(PersonalCapabilityKind.mcp)
+                    Text(piText("harness.plugins", "Plugins")).tag(PersonalCapabilityKind.plugins)
                 }
                 .pickerStyle(.segmented)
                 .accessibilityIdentifier("intelligence.capabilities.kind")
 
-                if horizontalSizeClass == .compact {
-                    VStack(spacing: 10) {
-                        capabilitySearchField
-                        addCapabilityButton
-                    }
+                if selectedKind == .plugins {
+                    pluginHostList
                 } else {
-                    HStack(spacing: 10) {
-                        capabilitySearchField
-                        addCapabilityButton
-                    }
-                }
-
-                if let notice {
-                    Label(notice, systemImage: "checkmark.circle.fill")
-                        .font(.caption)
-                        .foregroundStyle(.green)
-                        .transition(.opacity)
-                }
-
-                if libraryReadFailed {
-                    VStack(alignment: .leading, spacing: 8) {
-                        Text(piText("personal.capabilities.load_failed", "Could not load capabilities. Previous results are retained; reload before editing."))
-                            .foregroundStyle(.red)
-                        Button { reload() } label: {
-                            Text(piText("personal.capabilities.retry", "Retry"))
-                                .font(.subheadline.weight(.medium))
-                                .frame(minHeight: 44)
-                                .contentShape(Rectangle())
-                        }
-                        .accessibilityIdentifier("intelligence.capabilities.retry")
-                    }
-                }
-                if libraryLoaded {
-                    capabilityGallery
-                        .disabled(libraryReadFailed)
-                        .animation(.easeInOut(duration: 0.18), value: selectedKind)
-                } else if !libraryReadFailed {
-                    ProgressView()
+                    localLibraryControls
                 }
 
                 if selectedKind == .skills {
@@ -739,6 +687,7 @@ struct PersonalCapabilitiesLibraryView: View {
                     }
                     ForEach(hostSkills) { skill in
                         DisclosureGroup(skill.name) {
+                            GitHubSkillSourceLink(reference: skill.packageReference)
                             Text(skill.description)
                                 .foregroundStyle(.secondary)
                             Text(skill.content)
@@ -767,11 +716,32 @@ struct PersonalCapabilitiesLibraryView: View {
         .background(NolaPageBackground())
         .accessibilityElement(children: .contain)
         .accessibilityIdentifier("intelligence.capabilities.screen")
-        .navigationTitle(piText("personal.capabilities.title", "Skills & MCP"))
+        .navigationTitle(piText("personal.capabilities.title", "Capability library"))
         .navigationBarTitleDisplayMode(.inline)
         .task { reload() }
-        .refreshable { reload() }
-        .onChange(of: selectedKind) { _, _ in query = "" }
+        .refreshable { if selectedKind == .plugins { refreshPluginHosts() } else { reload() } }
+        .onChange(of: selectedKind) { _, kind in
+            query = ""
+            if kind == .plugins { refreshPluginHosts() }
+        }
+        .sheet(isPresented: $pairPluginHost, onDismiss: {
+            refreshPluginHosts()
+            if let paired = newlyPairedPluginHost {
+                newlyPairedPluginHost = nil
+                Task { await openPluginManager(paired.model, justPairedIdentity: paired.identity) }
+            }
+        }) {
+            NavigationStack {
+                WebHostConfigurationView(existingModel: nil) { model, verifiedIdentity in
+                    ModelSelectionManager.addModel(model)
+                    newlyPairedPluginHost = (model, verifiedIdentity)
+                }
+            }
+        }
+        .sheet(item: $pluginManagementPage) { page in
+            PluginManagementBrowser(url: page.url) { pluginManagementPage = nil }
+                .ignoresSafeArea()
+        }
         .fileImporter(isPresented: $showSkillImporter, allowedContentTypes: [.data]) { result in
             do {
                 let url = try result.get()
@@ -804,7 +774,7 @@ struct PersonalCapabilitiesLibraryView: View {
             Text(deleteTarget?.name ?? "")
         }
         .alert(
-            piText("personal.capabilities.error", "Could not save changes"),
+            selectedKind == .plugins ? piText("harness.plugins", "Plugins") : piText("personal.capabilities.error", "Could not save changes"),
             isPresented: Binding(
                 get: { errorMessage != nil && editor == nil },
                 set: { if !$0 { errorMessage = nil } }
@@ -813,6 +783,122 @@ struct PersonalCapabilitiesLibraryView: View {
             Button(piText("personal.capabilities.ok", "OK")) { errorMessage = nil }
         } message: {
             Text(errorMessage ?? "")
+        }
+    }
+
+    @MainActor
+    private func openPluginManager(_ model: ModelInfo, justPairedIdentity: String? = nil) async {
+        guard !openingPluginHost, let address = model.baseURL, let url = URL(string: address),
+              let identity = ModelSelectionManager.pairedWebHostIdentity(for: url),
+              let token = model.resolvedAPIKey, !token.isEmpty else {
+            errorMessage = piText("harness.host", "Choose a desktop Host")
+            return
+        }
+        openingPluginHost = true
+        defer { openingPluginHost = false }
+        do {
+            // The pairing sheet has already verified this origin, token and
+            // permission protocol. Reopening a saved Host verifies its identity afresh.
+            if justPairedIdentity != identity {
+                let settings = try await WebAgentProvider.fetchHostAgentSettings(baseURL: url, token: token,
+                    pinnedCertificateSHA256: model.tlsCertificateSHA256, modelsOnly: true)
+                guard settings.host_identity?.id == identity else { throw URLError(.userAuthenticationRequired) }
+            }
+            let target = try await WebAgentProvider.requestWebManagementURL(baseURL: url, token: token, target: "/capabilities?tab=plugins", pinnedCertificateSHA256: model.tlsCertificateSHA256)
+            pluginManagementPage = PluginManagementPage(url: target)
+        } catch { errorMessage = error.localizedDescription }
+    }
+
+    @ViewBuilder
+    private var pluginHostList: some View {
+        if pluginHosts.isEmpty {
+            Text(piText("harness.device_note", "Connect the computer that runs your plugins to use them here."))
+                .font(.subheadline)
+                .foregroundStyle(.secondary)
+        } else {
+            ForEach(pluginHosts) { model in
+                Button {
+                    Task { await openPluginManager(model) }
+                } label: {
+                    Label(model.baseURL ?? model.name, systemImage: "desktopcomputer")
+                        .frame(maxWidth: .infinity, minHeight: 44, alignment: .leading)
+                        .contentShape(Rectangle())
+                }
+                .disabled(openingPluginHost)
+                .accessibilityIdentifier("intelligence.harness.host." + model.id)
+            }
+        }
+        Button {
+            pairPluginHost = true
+        } label: {
+            Label(pluginHosts.isEmpty ? piText("harness.connect", "Connect desktop Host") : piText("harness.pair", "Connect desktop Host"), systemImage: "plus")
+                .frame(maxWidth: .infinity, minHeight: 44, alignment: .leading)
+                .contentShape(Rectangle())
+        }
+        .disabled(openingPluginHost)
+        .accessibilityIdentifier("intelligence.harness.plugins")
+        if openingPluginHost {
+            if reduceMotion { Text("model.web_host.checking") }
+            else { ProgressView().accessibilityLabel(Text("model.web_host.checking")) }
+        }
+    }
+
+    private func refreshPluginHosts() {
+        var identities = Set<String>()
+        pluginHosts = ModelSelectionManager.getAvailableModels().filter { model in
+            guard model.isWebBackend, let raw = model.baseURL, let url = URL(string: raw),
+                  let identity = ModelSelectionManager.pairedWebHostIdentity(for: url) else { return false }
+            return identities.insert(identity).inserted
+        }
+    }
+
+    @ViewBuilder
+    private var localLibraryControls: some View {
+        VStack(alignment: .leading, spacing: 5) {
+            Group {
+                if selectedKind == .mcp { Text("mcp.mobile.http_execution") }
+                else { Text(piText("personal.capabilities.subtitle", "Reusable workflows and connected tools available across conversations.")) }
+            }
+                .font(.subheadline)
+                .foregroundStyle(.secondary)
+        }
+        if horizontalSizeClass == .compact {
+            VStack(spacing: 10) {
+                capabilitySearchField
+                addCapabilityButton
+            }
+        } else {
+            HStack(spacing: 10) {
+                capabilitySearchField
+                addCapabilityButton
+            }
+        }
+
+        if let notice {
+            Label(notice, systemImage: "checkmark.circle.fill")
+                .font(.caption)
+                .foregroundStyle(.green)
+                .transition(reduceMotion ? .identity : .opacity)
+        }
+
+        if libraryReadFailed {
+            VStack(alignment: .leading, spacing: 8) {
+                Text(piText("personal.capabilities.load_failed", "Could not load capabilities. Previous results are retained; reload before editing."))
+                    .foregroundStyle(.red)
+                Button { reload() } label: {
+                    Text(piText("personal.capabilities.retry", "Retry"))
+                        .font(.subheadline.weight(.medium))
+                        .frame(minHeight: 44)
+                        .contentShape(Rectangle())
+                }
+                .accessibilityIdentifier("intelligence.capabilities.retry")
+            }
+        }
+        if libraryLoaded {
+            capabilityGallery
+                .disabled(libraryReadFailed)
+        } else if !libraryReadFailed {
+            ProgressView()
         }
     }
 
@@ -851,6 +937,7 @@ struct PersonalCapabilitiesLibraryView: View {
     @ViewBuilder
     private var capabilityGallery: some View {
         switch selectedKind {
+        case .plugins: EmptyView()
         case .skills:
             let entries = profile.uploadedSkills.enumerated().filter { _, item in
                 query.isEmpty || [item.name, item.description, item.content].contains { $0.localizedCaseInsensitiveContains(query) }
@@ -941,6 +1028,7 @@ struct PersonalCapabilitiesLibraryView: View {
         skillEditorSnapshot = nil
         mcpEditorSnapshot = nil
         switch selectedKind {
+        case .plugins: return
         case .skills:
             editor = .skill(nil, UserUploadedContextItem(name: "", content: "# Skill\n\n## Workflow\n\n1. ", enabled: true))
         case .mcp:
@@ -1123,7 +1211,7 @@ private struct PersonalCapabilityCard: View {
                         .frame(maxWidth: .infinity, alignment: .leading)
                 }
             }
-            .buttonStyle(NolaActionButtonStyle())
+            .buttonStyle(NolaPressableStyle())
 
             HStack {
                 Button(action: onEdit) {
@@ -1134,8 +1222,10 @@ private struct PersonalCapabilityCard: View {
                     }
                     .font(.caption.weight(.semibold))
                     .foregroundStyle(DesignTokens.actionColor)
+                    .frame(minHeight: 44)
+                    .contentShape(Rectangle())
                 }
-                .buttonStyle(NolaActionButtonStyle())
+                .buttonStyle(NolaPressableStyle())
                 .accessibilityIdentifier("\(identifier).edit")
                 Spacer()
                 Menu {
@@ -1163,7 +1253,10 @@ private struct PersonalCapabilityCard: View {
 }
 
 struct PersonalCapabilityEditorView: View {
+    private enum Field { case name, detail, primary }
+
     @Environment(\.dismiss) private var dismiss
+    @FocusState private var focusedField: Field?
     let item: PersonalCapabilityEditorItem
     let errorMessage: String?
     let onSave: (String, String, String) -> Void
@@ -1222,9 +1315,14 @@ struct PersonalCapabilityEditorView: View {
                     }
                 }
                 Section {
+                    if case .skill(_, let skill) = item {
+                        GitHubSkillSourceLink(reference: skill.packageReference)
+                    }
                     TextField(piText("personal.capabilities.name", "Name"), text: $name)
+                        .focused($focusedField, equals: .name)
                         .accessibilityIdentifier("intelligence.capabilities.editor.name")
                     TextField(piText("personal.capabilities.description", "Description"), text: $detail, axis: .vertical)
+                        .focused($focusedField, equals: .detail)
                         .accessibilityIdentifier("intelligence.capabilities.editor.description")
                         .lineLimit(2...5)
                 }
@@ -1233,6 +1331,7 @@ struct PersonalCapabilityEditorView: View {
                     : piText("personal.capabilities.endpoint", "Endpoint")) {
                     if isSkill {
                         TextEditor(text: $primary)
+                            .focused($focusedField, equals: .primary)
                             .accessibilityIdentifier("intelligence.capabilities.editor.instructions")
                             .font(.body.monospaced())
                             .frame(minHeight: 260)
@@ -1244,6 +1343,7 @@ struct PersonalCapabilityEditorView: View {
                             .frame(maxWidth: .infinity, alignment: .trailing)
                     } else {
                         TextField("https://example.com/mcp", text: $primary)
+                            .focused($focusedField, equals: .primary)
                             .textInputAutocapitalization(.never)
                             .autocorrectionDisabled()
                             .keyboardType(.URL)
@@ -1265,13 +1365,14 @@ struct PersonalCapabilityEditorView: View {
                 : "MCP")
             .navigationBarTitleDisplayMode(.inline)
             .interactiveDismissDisabled(isDirty)
-            .confirmationDialog(NSLocalizedString("common.discard_changes", value: "Discard Changes?", comment: "Discard changes confirmation"), isPresented: $showDiscardConfirmation) {
+            .alert(NSLocalizedString("common.discard_changes", value: "Discard Changes?", comment: "Discard changes confirmation"), isPresented: $showDiscardConfirmation) {
                 Button(NSLocalizedString("common.discard", value: "Discard", comment: "Discard changes"), role: .destructive) { dismiss() }
-                Button(L10n.cancel, role: .cancel) { }
+                Button(String(localized: "model.setup.keep_editing"), role: .cancel) { }
             }
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
                     Button(piText("personal.capabilities.cancel", "Cancel")) {
+                        focusedField = nil
                         if isDirty { showDiscardConfirmation = true } else { dismiss() }
                     }
                     .accessibilityIdentifier("intelligence.capabilities.editor.cancel")
@@ -1336,5 +1437,32 @@ private extension AgentCoreJSONValue {
     var jsonArray: [AgentCoreJSONValue]? {
         guard case .array(let value) = self else { return nil }
         return value
+    }
+}
+
+private struct PluginManagementPage: Identifiable {
+    let url: URL
+    let id = UUID()
+}
+
+private struct PluginManagementBrowser: UIViewControllerRepresentable {
+    let url: URL
+    let close: () -> Void
+
+    func makeCoordinator() -> Coordinator { Coordinator(close: close) }
+
+    func makeUIViewController(context: Context) -> SFSafariViewController {
+        let browser = SFSafariViewController(url: url)
+        browser.dismissButtonStyle = .done
+        browser.delegate = context.coordinator
+        return browser
+    }
+
+    func updateUIViewController(_ browser: SFSafariViewController, context: Context) {}
+
+    final class Coordinator: NSObject, SFSafariViewControllerDelegate {
+        let close: () -> Void
+        init(close: @escaping () -> Void) { self.close = close }
+        func safariViewControllerDidFinish(_ controller: SFSafariViewController) { close() }
     }
 }
