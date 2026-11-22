@@ -16,7 +16,7 @@
 import SwiftUI
 import UIKit
 
-private struct HomeHealthDashboardCard: View {
+struct HomeHealthDashboardCard: View {
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @ObservedObject var store: HealthDashboardStore
     let onTapManage: () -> Void
@@ -44,19 +44,15 @@ private struct HomeHealthDashboardCard: View {
                             .foregroundStyle(.secondary)
                     }
                     Spacer()
-                    if store.isLoading {
-                        ProgressView().controlSize(.small)
-                    } else {
-                        HStack(spacing: 6) {
-                            Circle()
-                                .fill(store.snapshot == nil ? Color.secondary : Color.green)
-                                .frame(width: 7, height: 7)
-                            Text(store.snapshot == nil
-                                ? tr("health.dashboard.waiting", "Waiting")
-                                : tr("health.dashboard.connected", "Connected"))
-                                .font(.caption2.weight(.semibold))
-                                .foregroundStyle(.secondary)
-                        }
+                    HStack(spacing: 6) {
+                        Circle()
+                            .fill(store.snapshot == nil ? Color.secondary : Color.green)
+                            .frame(width: 7, height: 7)
+                        Text(store.snapshot == nil
+                            ? tr("health.dashboard.waiting", "Waiting")
+                            : tr("health.dashboard.connected", "Connected"))
+                            .font(.caption2.weight(.semibold))
+                            .foregroundStyle(.secondary)
                     }
                 }
                 .contentShape(Rectangle())
@@ -104,20 +100,15 @@ private struct HomeHealthDashboardCard: View {
                         .font(.caption)
                         .foregroundStyle(.tertiary)
                     Spacer()
-                    Button(L10n.settings, action: onTapOpenSettings)
-                        .font(.caption.weight(.semibold))
-                        .buttonStyle(.plain)
-                        .foregroundStyle(DesignTokens.primaryColor)
+                    Button(action: onTapOpenSettings) {
+                        Text(L10n.settings)
+                            .font(.caption.weight(.semibold))
+                            .frame(minWidth: 44, minHeight: 44)
+                            .contentShape(Rectangle())
+                    }
+                    .buttonStyle(.plain)
+                    .foregroundStyle(DesignTokens.primaryColor)
                 }
-            } else if store.isLoading {
-                HStack(spacing: DesignTokens.spacing_sm) {
-                    ProgressView().controlSize(.small)
-                    Text(tr("health.dashboard.reading", "Reading the latest Health data..."))
-                        .font(.callout)
-                        .foregroundStyle(.secondary)
-                }
-                .frame(maxWidth: .infinity, alignment: .center)
-                .padding(.vertical, DesignTokens.spacing_lg)
             } else {
                 VStack(alignment: .leading, spacing: DesignTokens.spacing_sm) {
                     if let error = store.errorMessage {
@@ -125,7 +116,8 @@ private struct HomeHealthDashboardCard: View {
                             .font(.caption)
                             .foregroundStyle(DesignTokens.dangerColor)
                     } else {
-                        Text(tr("health.dashboard.no_readable_data", "No readable Health data is available yet."))
+                        Text(store.isLoading ? tr("health.dashboard.reading", "Reading the latest Health data…")
+                            : tr("health.dashboard.no_readable_data", "No readable Health data is available yet."))
                             .font(.callout)
                             .foregroundStyle(.secondary)
                     }
@@ -143,7 +135,6 @@ private struct HomeHealthDashboardCard: View {
             }
         }
         .padding(.vertical, DesignTokens.spacing_xs)
-        .animation(reduceMotion ? nil : DesignTokens.revealAnimation, value: store.isLoading)
     }
 
     private func primaryStepsMetric(_ snapshot: HealthDashboardSnapshot) -> some View {
@@ -265,10 +256,6 @@ struct HomeView: View {
         healthDashboard.isLoading || isLoadingSchedule || isLoadingScheduledActions
     }
 
-    private var isRunningUITests: Bool {
-        ProcessInfo.processInfo.arguments.contains("-ui-testing")
-    }
-
     var body: some View {
         Group {
             if ownsNavigationStack { NavigationStack { content } }
@@ -278,38 +265,6 @@ struct HomeView: View {
 
     private var content: some View {
         NolaPage {
-            NolaPageHeader(
-                title: NSLocalizedString("data.title", value: "数据", comment: "Data tab page title"),
-                subtitle: NSLocalizedString("data.subtitle.local_first", value: "本机数据源、定时动作与最近执行状态。", comment: "Data page subtitle")
-            ) {
-                Button {
-                    showNotificationManager = true
-                } label: {
-                    Image(systemName: unreadNotificationCount > 0 ? "bell.fill" : "bell")
-                        .font(.system(size: 18, weight: .semibold))
-                        .foregroundColor(DesignTokens.primaryColor)
-                        .frame(width: 36, height: 36)
-                        .background(
-                            RoundedRectangle(cornerRadius: DesignTokens.radius_md, style: .continuous)
-                                .fill(DesignTokens.primaryColor.opacity(DesignTokens.overlayMediumOpacity))
-                        )
-                        .overlay(alignment: .topTrailing) {
-                            if unreadNotificationCount > 0 {
-                                Text(unreadNotificationCount > 99 ? "99+" : String(unreadNotificationCount))
-                                    .font(.caption2.weight(.bold))
-                                    .foregroundStyle(.white)
-                                    .padding(.horizontal, 4)
-                                    .frame(minWidth: 16, minHeight: 16)
-                                    .background(Color.red, in: Capsule())
-                                    .overlay(Capsule().stroke(Color.white, lineWidth: 1.5))
-                                    .offset(x: 7, y: -6)
-                            }
-                        }
-                }
-                .accessibilityLabel(L10n.notificationsTitle)
-                .accessibilityValue(String(unreadNotificationCount))
-            }
-
             HomeRefreshStrip(
                 isLoading: isReloading,
                 lastReloadedAt: lastReloadedAt,
@@ -362,10 +317,7 @@ struct HomeView: View {
                 )
 
                 HomePhoneScheduleCard(
-                    birthdayLeadDays: birthdayLeadDays,
-                    scheduleLeadDays: reminderLeadDays,
                     items: scheduleItems,
-                    isLoading: isLoadingSchedule,
                     error: scheduleError,
                     onTapManage: { showScheduleDetail = true },
                     onTapItem: { item in
@@ -374,11 +326,20 @@ struct HomeView: View {
                 )
             }
         }
-        .toolbar(ownsNavigationStack ? .hidden : .visible, for: .navigationBar)
+        .navigationTitle(L10n.dataSourcesTitle)
+        .navigationBarTitleDisplayMode(.inline)
+        .toolbar {
+            if #available(iOS 26.0, *) {
+                ToolbarItem(placement: .topBarTrailing) { notificationButton }
+                    .sharedBackgroundVisibility(.hidden)
+            } else {
+                ToolbarItem(placement: .topBarTrailing) { notificationButton }
+            }
+        }
 
         .onAppear {
             refreshUnreadNotificationCount()
-            guard !isRunningUITests else { return }
+            guard lastReloadedAt.map({ Date().timeIntervalSince($0) >= 30 }) ?? true else { return }
             Task { await reloadAll() }
         }
         .onChange(of: birthdayLeadDays) { _, _ in
@@ -396,16 +357,14 @@ struct HomeView: View {
         .onReceive(NotificationCenter.default.publisher(for: .nolaNotificationsUpdated)) { _ in
             refreshUnreadNotificationCount()
         }
-        .onReceive(NotificationCenter.default.publisher(for: .nolaHealthDataDidChange)) { _ in
+        .onReceive(NotificationCenter.default.publisher(for: .nolaHealthDataDidChange)) { notification in
+            if let updated = notification.object as? HealthDashboardStore, updated === healthDashboard { return }
             Task { await reloadHealth() }
         }
         .onChange(of: scenePhase) { _, newPhase in
-            guard newPhase == .active, !isRunningUITests else { return }
+            guard newPhase == .active else { return }
             refreshUnreadNotificationCount()
-            Task {
-                await reloadHealth()
-                await reloadScheduledActions()
-            }
+            Task { await reloadAll() }
         }
         .refreshable {
             await reloadAll()
@@ -442,6 +401,29 @@ struct HomeView: View {
                 CalendarEventDetailSheet(eventId: eventId)
             }
         }
+    }
+
+    private var notificationButton: some View {
+        Button { showNotificationManager = true } label: {
+            Image(systemName: unreadNotificationCount > 0 ? "bell.fill" : "bell")
+                .overlay(alignment: .topTrailing) {
+                    if unreadNotificationCount > 0 {
+                        Text(unreadNotificationCount > 99 ? "99+" : String(unreadNotificationCount))
+                            .font(.caption2.bold()).monospacedDigit()
+                            .foregroundStyle(DesignTokens.onActionColor)
+                            .padding(.horizontal, 4)
+                            .background(DesignTokens.actionColor, in: Capsule())
+                            .fixedSize().offset(x: 8, y: -6)
+                            .accessibilityHidden(true)
+                    }
+                }
+                .frame(minWidth: 44, minHeight: 44)
+                .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel(L10n.notificationsTitle)
+        .accessibilityValue(String(unreadNotificationCount))
+        .accessibilityIdentifier("data.notifications")
     }
 
     @MainActor
@@ -510,9 +492,9 @@ struct HomeView: View {
         let scheduleEnd = cal.date(byAdding: .day, value: scheduleWindowDays, to: start) ?? start.addingTimeInterval(TimeInterval(scheduleWindowDays) * 24 * 3600)
 
         do {
-            async let bdays = ContactsDataSource().fetchEvents(in: DateInterval(start: start, end: birthdayEnd))
-            async let cals = CalendarsDataSource().fetchEvents(in: DateInterval(start: start, end: scheduleEnd))
-            async let rems = RemindersDataSource().fetchEvents(in: DateInterval(start: start, end: scheduleEnd))
+            async let bdays = ContactsDataSource().readBirthdays(in: DateInterval(start: start, end: birthdayEnd))
+            async let cals = CalendarsDataSource().readCalendarEvents(in: DateInterval(start: start, end: scheduleEnd))
+            async let rems = RemindersDataSource().readReminders(in: DateInterval(start: start, end: scheduleEnd))
 
             let (birthdayEvents, calendarEvents, reminderEvents) = try await (bdays, cals, rems)
 
@@ -602,12 +584,18 @@ struct HomeView: View {
 
             var textSnippets: [String: String] = [:]
             for (aid, run) in chosen {
-                guard let jid = run.resultJournalId, !jid.isEmpty else { continue }
-                if let journal = try? storage.getJournal(id: jid) {
+                if let jid = run.resultJournalId, !jid.isEmpty,
+                   let journal = try? storage.getJournal(id: jid) {
                     let raw = journal.content
                         .replacingOccurrences(of: "\n\n\n", with: "\n\n")
                         .trimmingCharacters(in: .whitespacesAndNewlines)
-                    if !raw.isEmpty { textSnippets[aid] = String(raw.prefix(200)) }
+                    if !raw.isEmpty {
+                        textSnippets[aid] = String(raw.prefix(200))
+                        continue
+                    }
+                }
+                if let fallback = run.displayResultText {
+                    textSnippets[aid] = String(fallback.prefix(200))
                 }
             }
 
@@ -659,17 +647,15 @@ private struct HomeRefreshStrip: View {
             }
             .frame(maxWidth: .infinity, alignment: .leading)
 
-            if isLoading {
-                ProgressView()
-                    .controlSize(.small)
-            }
-
-            Button(NSLocalizedString("home.refresh.button", value: "刷新", comment: "Home refresh button")) {
-                onRefresh()
+            Button(action: onRefresh) {
+                Text(NSLocalizedString("home.refresh.button", value: "刷新", comment: "Home refresh button"))
+                    .opacity(isLoading ? 0 : 1)
+                    .overlay { if isLoading { ProgressView().controlSize(.small) } }
             }
             .font(.callout.weight(.semibold))
             .buttonStyle(.bordered)
             .disabled(isLoading)
+            .accessibilityIdentifier("data.overview.refresh")
         }
         .padding(.horizontal, DesignTokens.spacing_lg)
         .padding(.vertical, DesignTokens.spacing_md)
@@ -1073,7 +1059,6 @@ struct SummaryItemCard: View {
     @EnvironmentObject var container: ServiceContainer
     let item: SummaryItem
     let prefersEventDetail: Bool
-    @State private var isPressed = false
 
     var body: some View {
         Group {
@@ -1087,12 +1072,7 @@ struct SummaryItemCard: View {
                 }
             }
         }
-        .buttonStyle(.plain)
-        .simultaneousGesture(
-            DragGesture(minimumDistance: 0)
-                .onChanged { _ in isPressed = true }
-                .onEnded { _ in isPressed = false }
-        )
+        .buttonStyle(SummaryItemCardButtonStyle())
     }
 
     private var cardContent: some View {
@@ -1143,15 +1123,6 @@ struct SummaryItemCard: View {
             }
             .contentShape(Rectangle())
             .padding(16)
-            .background(
-                RoundedRectangle(cornerRadius: DesignTokens.radius_lg, style: .continuous)
-                    .fill(DesignTokens.surfaceColor)
-            )
-            .overlay(
-                RoundedRectangle(cornerRadius: DesignTokens.radius_lg, style: .continuous)
-                    .stroke(DesignTokens.borderColor, lineWidth: 1)
-            )
-            .scaleEffect(isPressed ? 0.98 : 1.0)
         }
     private var priorityColor: Color {
         if item.priority >= 0.8 { return .red }
@@ -1169,6 +1140,26 @@ struct SummaryItemCard: View {
         if item.priority >= 0.8 { return "flame.fill" }
         if item.priority >= 0.5 { return "bolt.fill" }
         return "checkmark"
+    }
+}
+
+private struct SummaryItemCardButtonStyle: ButtonStyle {
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+
+    func makeBody(configuration: Configuration) -> some View {
+        configuration.label
+            .background(
+                RoundedRectangle(cornerRadius: DesignTokens.radius_lg, style: .continuous)
+                    .fill(configuration.isPressed ? DesignTokens.rowFillColor : DesignTokens.surfaceColor)
+            )
+            .overlay(
+                RoundedRectangle(cornerRadius: DesignTokens.radius_lg, style: .continuous)
+                    .stroke(DesignTokens.borderColor, lineWidth: 1)
+            )
+            .animation(
+                reduceMotion ? nil : .easeOut(duration: DesignTokens.motionFast),
+                value: configuration.isPressed
+            )
     }
 }
 

@@ -655,8 +655,8 @@ struct MacCodeReferenceInspector: View {
             VStack(alignment: .leading, spacing: 16) {
                 Text("Copy").font(.headline)
                 ScrollView { Text(manualCopy).textSelection(.enabled).frame(maxWidth: .infinity, alignment: .leading) }
-                HStack { Spacer(); Button("Done") { showsManualCopy = false }.keyboardShortcut(.defaultAction) }
-            }.padding(24).frame(width: 560, height: 420)
+                HStack { Spacer(); Button("Done") { showsManualCopy = false }.keyboardShortcut(.cancelAction) }
+            }.padding(24).frame(width: 560, height: 420).background(MacDesignColor.canvas)
         }
     }
 
@@ -864,7 +864,7 @@ private struct MacCodeReferenceDocumentView: View {
             .foregroundStyle(.tertiary)
             .padding(.horizontal, 13)
             .frame(height: 28)
-            .background(.bar)
+            .background(MacDesignColor.chrome)
         }
     }
 }
@@ -872,6 +872,7 @@ private struct MacCodeReferenceDocumentView: View {
 private struct MacSelectableCodeView: NSViewRepresentable {
     let document: MacCodeReferenceDocument
     let targetLine: Int?
+    @Environment(\.colorScheme) private var colorScheme
     @Environment(\.macDetailScrollPositions) private var positions
     @Environment(\.macDetailScrollScope) private var scope
 
@@ -941,14 +942,15 @@ private struct MacSelectableCodeView: NSViewRepresentable {
         guard let textView = scrollView.documentView as? NSTextView else {
             return
         }
-        let identity = [
+        let documentIdentity = [
             document.url.path,
             String(document.byteCount),
             String(targetLine ?? 0),
         ].joined(separator: ":")
+        let identity = documentIdentity + ":" + (colorScheme == .dark ? "dark" : "light")
         guard context.coordinator.identity != identity else { return }
         context.coordinator.identity = identity
-        let viewportKey = scope + "/file/" + identity
+        let viewportKey = scope + "/file/" + documentIdentity
         let savedPosition = positions?.position(for: viewportKey)
         context.coordinator.detach()
 

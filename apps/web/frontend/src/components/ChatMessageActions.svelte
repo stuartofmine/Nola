@@ -10,7 +10,9 @@
     import { locale, t } from '../lib/i18n';
     import type { TimelineMessage } from '../lib/chatTimeline';
     import { messageCopyContent, messageMutationId } from '../lib/chatMessageActions';
-    let { message, ownerKey, busy = false, selected = false, onselect, onoperation, editSource, oneditresend, ownerCurrent }: {
+    let { mentionDirectory=[], mentionMembers=[], loadMentions, mentionEpoch, message, ownerKey, busy = false, selected = false, onselect, onoperation, editSource, oneditresend, ownerCurrent }: {
+        mentionDirectory?:import('../lib/agentRooms').PersistentAgent[]; mentionMembers?:import('../lib/agentRooms').RoomParticipant[];
+        loadMentions?:()=>Promise<void>; mentionEpoch?:()=>string|null;
         message: TimelineMessage; ownerKey: string; busy?: boolean; selected?: boolean; onselect?: () => void;
         onoperation?: (operation: 'branch' | 'truncate', messageId: string) => void | Promise<string | void>;
         editSource?: EditedResendSourceSnapshot;
@@ -26,13 +28,14 @@
     function openEditor() {
         if (!editable || busy || !editSource || ownerCurrent && !ownerCurrent()) return;
         try { editing={ownerKey,sourceKey:editSourceKey,draft:createEditedResendDraft(editSource)}; }
-        catch(cause) { notice=cause instanceof Error?cause.message:String(cause); }
+        catch(cause) { notice=cause instanceof Error?cause.message:String(cause); noticeError=true; }
     }
     async function submitEditor(draft:EditedResendDraft) {
         if (!oneditresend || busy || editOwnerChanged || ownerCurrent && !ownerCurrent()) throw new Error('Edit owner changed or is running');
         return oneditresend(draft);
     }
     let notice = $state('');
+    let noticeError = $state(false);
     let copying = $state(false);
     let overflow = $state<ActionDisclosure>();
     let manualCopy = $state<string | null>(null);
@@ -50,7 +53,7 @@
     $effect.pre(() => {
         contentKey;
         generation++; clearCopyFeedback();
-        notice = ''; manualCopy = null; copying = false;
+        notice = ''; noticeError = false; manualCopy = null; copying = false;
     });
     onDestroy(() => { generation++; clearCopyFeedback(); });
     async function mutate(operation: 'branch' | 'truncate', button: HTMLButtonElement) {
@@ -59,9 +62,9 @@
         const disclosure = button.closest('details');
         const fallback = disclosure?.querySelector('summary');
         const epoch = generation, key = contentKey;
-        notice = '';
+        notice = ''; noticeError = false;
         const failure = await onoperation(operation, capturedId);
-        if (epoch === generation && key === contentKey && capturedId === mutationId && failure) notice = failure;
+        if (epoch === generation && key === contentKey && capturedId === mutationId && failure) { notice = failure; noticeError = true; }
         await tick();
         // Native dialog restoration happens while the operation lock still disables
         // the opener. Restore only a surviving boundary after that lock releases.
@@ -72,20 +75,20 @@
     }
     async function copy(format: 'plain' | 'markdown') {
         if (unavailable || copying) return;
-        clearCopyFeedback(); copying = true; notice = ''; manualCopy = null;
+        clearCopyFeedback(); copying = true; notice = ''; noticeError = false; manualCopy = null;
         const epoch = generation, key = contentKey;
         const current = () => epoch === generation && key === contentKey;
         const content = messageCopyContent(message, format);
         try {
             await navigator.clipboard.writeText(content);
             if (current()) {
-                notice = 'chatPage.textCopied';
+                notice = 'chatPage.textCopied'; noticeError = false;
                 copyFeedback = setTimeout(() => { copyFeedback = null; if (current()) notice = ''; }, 1800);
             }
         }
         catch {
             if (current()) {
-                notice = 'chatPage.copyFailed'; manualCopy = content;
+                notice = 'chatPage.copyFailed'; noticeError = true; manualCopy = content;
                 await tick();
                 if (current() && copyField?.isConnected) { copyField.focus(); copyField.select(); }
             }
@@ -110,22 +113,27 @@
                 {/if}
             </ActionDisclosure>
         {/if}
-        {#if notice}<span role="status">{t($locale, notice)}</span>{/if}
+        {#if notice}<span role={noticeError ? 'alert' : 'status'} class:error={noticeError}>{t($locale, notice)}</span>{/if}
         {#if manualCopy !== null}<textarea bind:this={copyField} readonly value={manualCopy} aria-label={t($locale, 'shell.markdown.copy')} rows="3"></textarea>{/if}
     </div>
 {/if}
 
 {#if editing}
-    <ChatMessageEditDialog initial={editing.draft} {busy} ownerChanged={editOwnerChanged} onsubmit={submitEditor} onclose={()=>editing=null} />
+    <ChatMessageEditDialog initial={editing.draft} {mentionDirectory} {mentionMembers} {loadMentions} {mentionEpoch} {busy} ownerChanged={editOwnerChanged} onsubmit={submitEditor} onclose={()=>editing=null} />
 {/if}
 
 <style>
-    .message-actions { display: flex; flex-wrap: wrap; gap: 2px; align-items: center; margin-top: 5px; font-size: 12px; color: var(--muted); }
+    .message-actions { display: flex; flex-wrap: wrap; gap: 2px; align-items: center; margin-top: 5px; font-size: 12px; color: var(--muted); transition: opacity var(--motion-fast) ease; }
+    @media (hover: hover) and (min-width: 761px) {
+        .message-actions { opacity: .45; }
+        .message-actions:hover, .message-actions:focus-within, :global(article:hover) .message-actions, :global(article:focus-within) .message-actions { opacity: 1; }
+    }
     button { display:inline-flex; align-items:center; gap:5px; min-height: var(--control-hit-size); padding: 6px 8px; font-size: 12px; border: 0; box-shadow: none; background: transparent; color: var(--muted); }
     button:hover:not(:disabled) { background: var(--panel); color: var(--content); }
-    button.copy-action, button.copy-action:hover:not(:disabled), button.copy-action:active:not(:disabled) { background: transparent; border: 0; box-shadow: none; }
-    button.copy-action:active:not(:disabled) { opacity: .65; }
-    svg { flex-shrink:0; width:14px; height:14px; fill:none; stroke:currentColor; stroke-width:1.5; }
+    button:active:not(:disabled) { background: var(--accent-subtle); color: var(--content); }
+    button.copy-action:hover:not(:disabled) { background: var(--panel); color: var(--content); }
+    button.copy-action:active:not(:disabled) { background: var(--accent-subtle); color: var(--content); }
+    svg { flex-shrink:0; width:14px; height:14px; fill:none; stroke:currentColor; stroke-width:1.6; }
     textarea { flex: 1 0 100%; min-width: 0; max-width: 100%; max-height: 180px; box-sizing: border-box; background: var(--canvas); color: inherit; border: 1px solid var(--border); border-radius: 7px; padding: 8px; }
     @media (max-width: 760px) {
         .message-actions { gap: 2px; margin-top: 4px; }

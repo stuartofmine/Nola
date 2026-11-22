@@ -1,5 +1,6 @@
 // Static import targets keep bundling predictable; URL input never becomes a module path.
 const pages = {
+    '/plugin-page': () => import('../pages/DesktopPlugin.svelte'),
     '/models': () => import('../pages/ModelCenter.svelte'),
     '/model-test': () => import('../pages/ModelTest.svelte'),
     '/login': () => import('../pages/Login.svelte'),

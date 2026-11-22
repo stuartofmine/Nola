@@ -137,12 +137,19 @@ char* nola_core_stitch_agent_model_continuation(const unsigned char* input_json,
 // Persistent personal intelligence engine. Model output supplies candidates;
 // the core owns deterministic event, memory, recall, and outcome lifecycles.
 uint32_t nola_core_intelligence_abi_version(void);
+// Use the application's live handle for all embedded intelligence operations.
+// Handle-less ABI v1 calls are ambiguous when multiple databases are open.
+char* nola_core_application_intelligence_ingest(NolaCoreApplication* application, const unsigned char* input_json, size_t input_len);
+char* nola_core_application_intelligence_recall(NolaCoreApplication* application, const unsigned char* input_json, size_t input_len);
+char* nola_core_application_intelligence_snapshot(NolaCoreApplication* application);
+bool nola_core_application_intelligence_clear(NolaCoreApplication* application);
 char* nola_core_intelligence_ingest(const unsigned char* input_json, size_t input_len);
 char* nola_core_intelligence_recall(const unsigned char* input_json, size_t input_len);
 char* nola_core_intelligence_snapshot(void);
 bool nola_core_intelligence_clear(void);
 
 // Software updates are Host operations; invoke on an IO worker.
+char *nola_mobile_github_skill_package_json(const char *package_root, const char *request_json);
 char *nola_core_software_update_json(const uint8_t *input, size_t length);
 
 #ifdef __cplusplus

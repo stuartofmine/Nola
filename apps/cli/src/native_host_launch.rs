@@ -22,6 +22,7 @@ struct Launch {
     session: Option<String>, project: Option<PathBuf>, endpoint: Option<String>,
     model: Option<String>, allowed_dirs: Vec<PathBuf>,
     skill_dirs: Option<Vec<PathBuf>>,
+    github_skills: Vec<String>,
 }
 
 impl Launch {
@@ -31,9 +32,12 @@ impl Launch {
         while let Some(arg) = args.next() {
             match arg.as_str() {
                 "--json" | "--host-request-stdin" => {},
-                "--no-skills" => launch.skill_dirs = Some(Vec::new()),
+                "--no-skills" => {
+                    launch.skill_dirs = Some(Vec::new());
+                    launch.github_skills.clear();
+                }
                 "--session" | "--project" | "--endpoint" | "--model"
-                | "--allow-dir" | "--skill-dir" => {
+                | "--allow-dir" | "--skill-dir" | "--github-skill" => {
                     let value = args.next().ok_or_else(|| format!("missing native launch value for {arg}"))?;
                     match arg.as_str() {
                         "--session" => launch.session = Some(value.clone()),
@@ -41,6 +45,10 @@ impl Launch {
                         "--endpoint" => launch.endpoint = Some(value.clone()),
                         "--model" => launch.model = Some(value.clone()),
                         "--allow-dir" => launch.allowed_dirs.push(value.into()),
+                        "--github-skill" => {
+                            launch.skill_dirs.get_or_insert_with(Vec::new);
+                            launch.github_skills.push(value.clone());
+                        }
                         "--skill-dir" => launch.skill_dirs.get_or_insert_with(Vec::new).push(value.into()),
                         _ => unreachable!(),
                     }
@@ -80,9 +88,20 @@ impl Launch {
             allowed_dirs = allowed_dirs.into_iter().map(normalize).collect::<Result<_, _>>()?;
         }
         allowed_dirs.dedup();
-        let skill_dirs = if cancellation_only { Some(Vec::new()) } else {
+        let mut skill_dirs = if cancellation_only { Some(Vec::new()) } else {
             self.skill_dirs.map(|dirs| dirs.into_iter().map(normalize).collect::<Result<Vec<_>, _>>()).transpose()?
         };
+        if !cancellation_only && !self.github_skills.is_empty() {
+            let mut application = crate::application_port::CliApplicationPort::persistent_default()?;
+            for id in self.github_skills {
+                if let Some(directory) = github_skill_directory(&mut application, &id)? {
+                    let directories = skill_dirs.get_or_insert_with(Vec::new);
+                    if !directories.contains(&directory) {
+                        directories.push(directory);
+                    }
+                }
+            }
+        }
         let force_tool_set = runtime.force_tool_set.as_deref().unwrap_or("auto").trim().to_ascii_lowercase();
         if !matches!(force_tool_set.as_str(), "auto" | "all" | "write") {
             return Err("invalid native Host force_tool_set".into());
@@ -133,6 +152,55 @@ impl Launch {
     }
 }
 
+// The native request freezes exact identities. Resolve them against the same
+// application store as the Host, including changes committed since the UI read.
+fn github_skill_directory(
+    app: &mut crate::application_port::CliApplicationPort,
+    id: &str,
+) -> Result<Option<PathBuf>, String> {
+    use nola_application::{ApplicationCommand, SkillCommand};
+    if !nola_host_protocol::valid_custom_skill_id(id) {
+        return Err("Invalid installed Skill ID".into());
+    }
+    let editor: serde_json::Value = app.execute(ApplicationCommand::Skill {
+        command: SkillCommand::GetEditor { id: id.into() },
+    })?;
+    let record = &editor["record"];
+    let Some(origin) = record["instructions_ref"]
+        .as_str()
+        .and_then(crate::github_skills::source_url)
+    else {
+        return Ok(None);
+    };
+    if record["source"] != "user" || record["enabled"] != true || !record["deleted_at_ms"].is_null()
+    {
+        return Ok(None);
+    }
+    let managed_root = crate::builtin_skills::managed_custom_root()?;
+    let root = managed_root.join(id);
+    match std::fs::symlink_metadata(&root) {
+        Ok(metadata) if !metadata.is_dir() => {
+            return Err(format!("Invalid installed Skill directory: {id}"))
+        }
+        Err(error) if error.kind() != std::io::ErrorKind::NotFound => return Err(error.to_string()),
+        _ => {}
+    }
+    let manifest = crate::github_skills::registered_metadata(&managed_root, &root);
+    let current = manifest.as_ref().is_some_and(|manifest| {
+        manifest["version"] == record["version"]
+            && manifest["source_url"].as_str() == Some(origin.as_str())
+            && crate::github_skills::resource_base(&root, manifest) != root
+            && root.join("SKILL.md").is_file()
+    });
+    if !current {
+        crate::builtin_skills::sync_registered_custom(app, Some(id))?;
+    }
+    root.join("SKILL.md")
+        .is_file()
+        .then(|| normalize(root))
+        .transpose()
+}
+
 fn normalize(path: PathBuf) -> Result<PathBuf, String> {
     let path = crate::config_paths::expand_home(&path);
     if path.exists() { path.canonicalize().map_err(|error| error.to_string()) }
@@ -156,6 +224,16 @@ pub(crate) fn run(arguments: &[String]) -> Result<(), String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn native_github_skill_selection_is_explicit_and_no_skills_resets_it() {
+        let mut args = ["run", "--session", "mac", "--github-skill", "nature-paper-card"].map(str::to_owned).to_vec();
+        let launch = Launch::parse(&args).unwrap();
+        assert_eq!(launch.github_skills, ["nature-paper-card"]);
+        assert_eq!(launch.skill_dirs, Some(vec![]));
+        args.push("--no-skills".into());
+        assert!(Launch::parse(&args).unwrap().github_skills.is_empty());
+    }
+
     #[test]
     fn transport_parser_rejects_product_commands_and_requires_explicit_owner() {
         for args in [vec!["run", "--host-request-stdin"], vec!["run", "--session", "session", "--web"]] {

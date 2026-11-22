@@ -185,6 +185,7 @@ impl RuntimeSupervisorConfig {
             || self.long_wait > Duration::from_secs(30)
             || self.initial_backoff.is_zero()
             || self.maximum_backoff < self.initial_backoff
+            || Instant::now().checked_add(self.maximum_backoff).is_none()
         {
             return Err("invalid Runtime Effect Supervisor configuration".into());
         }
@@ -1055,6 +1056,17 @@ mod tests {
             }
         )
         .is_err());
+    }
+
+    #[test]
+    fn unrepresentable_retry_deadline_is_rejected_before_starting_workers() {
+        let config = RuntimeSupervisorConfig {
+            initial_backoff: Duration::MAX,
+            maximum_backoff: Duration::MAX,
+            ..RuntimeSupervisorConfig::default()
+        };
+        assert!(config.validate().is_err());
+        assert!(RuntimeSupervisorConfig::default().validate().is_ok());
     }
 
     #[test]

@@ -67,11 +67,21 @@ fn collect(record: &StoredUserInputWait, task_id: Option<&str>, interaction: &dy
 mod tests {
     use super::*;
     #[test]
+    fn empty_question_list_does_not_open_a_prompt_or_commit_an_answer() {
+        let result = present_records("parent", vec![], |_, _| panic!("unexpected prompt"),
+            |_| panic!("unexpected answer")).unwrap();
+        assert!(!result.had_questions);
+        assert!(!result.deferred);
+        assert!(result.resume_run.is_none());
+    }
+
+    #[test]
     fn unavailable_interaction_preserves_committed_wait_without_response() {
         let record=child_record();
         let result=present_records("parent",vec![(Some("task".into()),record)],
             |record,task|collect(record,task,&crate::runtime_interaction::UnavailableInteraction),
             |_|panic!("unavailable presentation cannot commit an answer")).unwrap();
+        assert!(result.had_questions);
         assert!(result.deferred);
         assert!(result.resume_run.is_none());
     }
@@ -192,6 +202,7 @@ mod tests {
 /// Invoked outside the running worker/composer input lock. Every form answers
 /// its captured conversation/Run, never whatever session is currently selected.
 pub(crate) struct PresentationOutcome {
+    pub had_questions: bool,
     pub resume_run: Option<String>,
     pub notice: Option<String>,
     pub deferred: bool,
@@ -222,7 +233,7 @@ fn present_records(
     mut collect: impl FnMut(&StoredUserInputWait, Option<&str>) -> Result<Option<UserInputWaitResponse>, String>,
     mut respond: impl FnMut(nola_application::RespondToConversationWait) -> Result<nola_application::ConversationWaitResponse, String>,
 ) -> Result<PresentationOutcome, String> {
-    let mut outcome = PresentationOutcome { resume_run: None, notice: None, deferred: false };
+    let mut outcome = PresentationOutcome { had_questions: !records.is_empty(), resume_run: None, notice: None, deferred: false };
     let mut remaining_own = records.iter().filter(|(task, record)| task.is_none() && record.conversation_id == conversation).count();
     for (task_id, record) in records {
         let response = match collect(&record, task_id.as_deref()) {

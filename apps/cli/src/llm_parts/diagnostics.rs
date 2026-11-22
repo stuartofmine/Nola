@@ -11,12 +11,17 @@ mod request_audit {
         matches!(key.to_ascii_lowercase().as_str(), "api_key" | "apikey" | "authorization" | "password" | "access_token" | "refresh_token" | "client_secret")
     }
 
-    fn sanitized(request: &reqwest::blocking::Request, configured_secrets: &[&str]) -> Result<Value, String> {
-        let bytes = request.body().and_then(|body| body.as_bytes()).ok_or("non-buffered request")?;
+    fn sanitized_parts(
+        method: &str,
+        url: &reqwest::Url,
+        headers: &reqwest::header::HeaderMap,
+        bytes: &[u8],
+        configured_secrets: &[&str],
+    ) -> Result<Value, String> {
         let mut body: Value = serde_json::from_slice(bytes).map_err(|_| "non-JSON request")?;
         let mut secrets: Vec<String> = configured_secrets.iter().map(|value| (*value).to_owned()).collect();
         for name in ["authorization", "x-api-key", "api-key"] {
-            if let Some(value) = request.headers().get(name).and_then(|value| value.to_str().ok()) {
+            if let Some(value) = headers.get(name).and_then(|value| value.to_str().ok()) {
                 secrets.push(value.to_owned());
                 if let Some((scheme, token)) = value.split_once(' ') {
                     secrets.push(token.to_owned());
@@ -36,8 +41,8 @@ mod request_audit {
         }
         // URL values may also carry authentication; never export the query or
         // userinfo, and redact their values if repeated in the JSON body.
-        secrets.extend(request.url().query_pairs().map(|(_, value)| value.into_owned()));
-        if let Some(password) = request.url().password() { secrets.push(password.into()); }
+        secrets.extend(url.query_pairs().map(|(_, value)| value.into_owned()));
+        if let Some(password) = url.password() { secrets.push(password.into()); }
         fn collect_credentials(value: &Value, secrets: &mut Vec<String>) {
             match value {
                 Value::Array(items) => for item in items { collect_credentials(item, secrets); },
@@ -66,21 +71,25 @@ mod request_audit {
             }
         }
         scrub(&mut body, &secrets);
-        let mut endpoint = request.url().clone();
+        let mut endpoint = url.clone();
         let _ = endpoint.set_username("");
         let _ = endpoint.set_password(None);
         endpoint.set_query(None);
         endpoint.set_fragment(None);
         let sanitized_bytes = serde_json::to_vec(&body).map_err(|_| "JSON serialization failed")?;
         Ok(json!({"schema":"nola.model_request_audit.v1", "phase":"prepared_for_dispatch",
-            "provider_receipt_proven":false, "method":request.method().as_str(), "endpoint":endpoint.as_str(),
+            "provider_receipt_proven":false, "method":method, "endpoint":endpoint.as_str(),
             "body_sha256":format!("{:x}", Sha256::digest(bytes)),
             "redacted_body_sha256":format!("{:x}", Sha256::digest(sanitized_bytes)),
             "redaction":"configured_credentials_request_auth_url_values_and_sensitive_body_fields", "body":body}))
     }
 
-    fn archive(root: &Path, request: &reqwest::blocking::Request, configured_secrets: &[&str]) -> Result<(), String> {
-        let mut record = sanitized(request, configured_secrets)?;
+    fn sanitized(request: &reqwest::blocking::Request, configured_secrets: &[&str]) -> Result<Value, String> {
+        let bytes = request.body().and_then(|body| body.as_bytes()).ok_or("non-buffered request")?;
+        sanitized_parts(request.method().as_str(), request.url(), request.headers(), bytes, configured_secrets)
+    }
+
+    fn archive_record(root: &Path, mut record: Value) -> Result<(), String> {
         let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH)
             .map_err(|_| "invalid audit clock")?.as_millis();
         record["recorded_at_ms"] = json!(now);
@@ -99,6 +108,11 @@ mod request_audit {
             .map_err(|_| "audit write failed".to_string())
     }
 
+    fn archive(root: &Path, request: &reqwest::blocking::Request, configured_secrets: &[&str]) -> Result<(), String> {
+        let record = sanitized(request, configured_secrets)?;
+        archive_record(root, record)
+    }
+
     pub(in crate::llm) fn record(request: &reqwest::blocking::RequestBuilder, configured_secrets: &[&str]) {
         let Some(root) = std::env::var_os("NOLA_EVAL_REQUEST_AUDIT_DIR") else { return; };
         let outcome = request.try_clone().ok_or_else(|| "request is not cloneable".to_string())
@@ -106,6 +120,20 @@ mod request_audit {
             .and_then(|request| archive(Path::new(&root), &request, configured_secrets));
         if let Err(error) = outcome {
             // Never log the URL/body/credentials, including library error strings.
+            eprintln!("nola_request_audit_unavailable: {error}");
+        }
+    }
+
+    pub(in crate::llm) fn record_async(request: &reqwest::RequestBuilder, configured_secrets: &[&str]) {
+        let Some(root) = std::env::var_os("NOLA_EVAL_REQUEST_AUDIT_DIR") else { return; };
+        let outcome = request.try_clone().ok_or_else(|| "request is not cloneable".to_string())
+            .and_then(|builder| builder.build().map_err(|_| "request cannot be built".to_string()))
+            .and_then(|request| {
+                let bytes = request.body().and_then(|body| body.as_bytes()).ok_or("non-buffered request")?;
+                let record = sanitized_parts(request.method().as_str(), request.url(), request.headers(), bytes, configured_secrets)?;
+                archive_record(Path::new(&root), record)
+            });
+        if let Err(error) = outcome {
             eprintln!("nola_request_audit_unavailable: {error}");
         }
     }
@@ -141,7 +169,9 @@ mod request_audit {
     }
 }
 
+#[allow(unused_imports)]
 pub(super) use request_audit::record as record_prepared_request;
+pub(super) use request_audit::record_async as record_prepared_async_request;
 
 use super::contracts::{LlmConfig, StreamedChoice};
 use crate::execution_context::{current_execution_id, ExecutionContext};

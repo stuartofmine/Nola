@@ -924,52 +924,8 @@ fn send_http_payload_streaming(
                 format!("MCP server returned HTTP {}", status.as_u16()),
             ));
         }
-        let mut body = Vec::new();
-        let mut buffer = [0u8; 8 * 1_024];
-        let mut parsed_until = 0usize;
-        loop {
-            let count = response.read(&mut buffer).map_err(|error| {
-                McpHostError::new("mcp_response_read_failed", error.to_string())
-            })?;
-            if count == 0 {
-                break;
-            }
-            body.extend_from_slice(&buffer[..count]);
-            if body.len() as u64 > MAX_RESPONSE_BYTES {
-                return Err(McpHostError::new(
-                    "mcp_response_too_large",
-                    "MCP response exceeded the 4 MB limit",
-                ));
-            }
-            if !is_sse {
-                continue;
-            }
-            while let Some(relative_end) = body[parsed_until..]
-                .windows(2)
-                .position(|window| window == b"\n\n")
-            {
-                let frame_end = parsed_until + relative_end + 2;
-                if let Ok(frame) = std::str::from_utf8(&body[parsed_until..frame_end]) {
-                    if let Ok(messages) = decode_rpc_messages(frame) {
-                        for message in messages {
-                            if message.get("method").and_then(Value::as_str)
-                                == Some("notifications/progress")
-                            {
-                                let _ = events.send(HttpRequestEvent::Progress(
-                                    message.get("params").cloned().unwrap_or(Value::Null),
-                                ));
-                            }
-                        }
-                    }
-                }
-                parsed_until = frame_end;
-            }
-        }
-        let body = String::from_utf8(body).map_err(|error| {
-            McpHostError::new(
-                "mcp_response_invalid",
-                format!("Invalid MCP response UTF-8: {error}"),
-            )
+        let body = read_rpc_body(&mut response, is_sse, payload.get("id"), |progress| {
+            let _ = events.send(HttpRequestEvent::Progress(progress));
         })?;
         Ok(HttpResponseSnapshot {
             session_id: response_session_id,
@@ -1007,17 +963,9 @@ fn send_http_payload(
         .get("mcp-session-id")
         .and_then(|value| value.to_str().ok())
         .map(str::to_string);
-    let mut body = String::new();
-    response
-        .take(MAX_RESPONSE_BYTES + 1)
-        .read_to_string(&mut body)
-        .map_err(|error| McpHostError::new("mcp_response_read_failed", error.to_string()))?;
-    if body.len() as u64 > MAX_RESPONSE_BYTES {
-        return Err(McpHostError::new(
-            "mcp_response_too_large",
-            "MCP response exceeded the 4 MB limit",
-        ));
-    }
+    let is_sse = status.is_success() && response.headers().get(CONTENT_TYPE)
+        .and_then(|value| value.to_str().ok()).is_some_and(|value| value.to_ascii_lowercase().contains("text/event-stream"));
+    let body = read_rpc_body(response, is_sse, payload.get("id"), |_| {})?;
     if status.as_u16() == 401 || status.as_u16() == 403 {
         return Err(McpHostError::new(
             "mcp_authorization_required",
@@ -1465,29 +1413,69 @@ pub fn decode_rpc_response(
         .ok_or_else(|| McpHostError::new("mcp_result_missing", "MCP response has no result"))
 }
 
+// Parse event boundaries incrementally so a notification is delivered even if
+// CRLF is split between reads, and a completed call never waits on HTTP EOF.
+fn read_rpc_body(mut reader: impl Read, is_sse: bool, id: Option<&Value>, mut progress: impl FnMut(Value)) -> Result<String, McpHostError> {
+    let mut body = Vec::new();
+    let mut buffer = [0_u8; 8192];
+    let mut frame_start = 0;
+    let mut previous_line_end = false;
+    loop {
+        let count = reader.read(&mut buffer).map_err(|error| McpHostError::new("mcp_response_read_failed", error.to_string()))?;
+        if count == 0 { break; }
+        let start = body.len();
+        if (start + count) as u64 > MAX_RESPONSE_BYTES {
+            return Err(McpHostError::new("mcp_response_too_large", "MCP response exceeded the 4 MB limit"));
+        }
+        body.extend_from_slice(&buffer[..count]);
+        if !is_sse { continue; }
+        let mut finished = false;
+        for i in start..body.len() {
+            if body[i] == b'\n' && i > 0 && body[i - 1] == b'\r' { continue; }
+            let line_end = matches!(body[i], b'\r' | b'\n');
+            if line_end && previous_line_end {
+                let frame = std::str::from_utf8(&body[frame_start..=i])
+                    .map_err(|e| McpHostError::new("mcp_response_invalid", e.to_string()))?;
+                for message in decode_rpc_messages(frame)? {
+                    if message.get("method").and_then(Value::as_str) == Some("notifications/progress") {
+                        progress(message.get("params").cloned().unwrap_or(Value::Null));
+                    }
+                    if id.is_some() && message.get("id") == id && (message.get("result").is_some() || message.get("error").is_some()) {
+                        finished = true;
+                    }
+                }
+                frame_start = i + 1;
+            }
+            previous_line_end = line_end;
+        }
+        if finished { body.truncate(frame_start); break; }
+    }
+    String::from_utf8(body).map_err(|e| McpHostError::new("mcp_response_invalid", e.to_string()))
+}
+
 fn decode_rpc_messages(body: &str) -> Result<Vec<Value>, McpHostError> {
-    let candidates = if body.trim().is_empty() {
-        Vec::new()
-    } else if body.trim_start().starts_with('{') {
-        vec![body.trim()]
-    } else {
-        body.lines()
-            .filter_map(|line| line.strip_prefix("data:"))
-            .map(str::trim)
-            .filter(|line| line.starts_with('{'))
-            .collect::<Vec<_>>()
-    };
-    candidates
-        .into_iter()
-        .map(|candidate| {
-            serde_json::from_str(candidate).map_err(|error| {
-                McpHostError::new(
-                    "mcp_response_invalid",
-                    format!("Invalid MCP JSON-RPC response: {error}"),
-                )
-            })
-        })
-        .collect()
+    let body = body.trim_start_matches('\u{feff}');
+    let decode = |json: &str| serde_json::from_str(json).map_err(|error| {
+        McpHostError::new("mcp_response_invalid", format!("Invalid MCP JSON-RPC response: {error}"))
+    });
+    if body.trim_start().starts_with('{') {
+        return Ok(vec![decode(body)?]);
+    }
+    let normalized = body.replace("\r\n", "\n").replace('\r', "\n");
+    let mut messages = Vec::new();
+    for event in normalized.split("\n\n") {
+        let mut fields = event.lines().filter_map(|line| {
+            if line == "data" { Some("") } else {
+                line.strip_prefix("data:").map(|value| value.strip_prefix(' ').unwrap_or(value))
+            }
+        });
+        if let Some(first) = fields.next() {
+            let mut json = first.to_owned();
+            for field in fields { json.push('\n'); json.push_str(field); }
+            if json.trim_start().starts_with('{') { messages.push(decode(&json)?); }
+        }
+    }
+    Ok(messages)
 }
 
 fn contains_catalog_change_notification(body: &str) -> bool {
@@ -1968,6 +1956,31 @@ mod tests {
         assert!(contains_catalog_change_notification(
             response_then_notification
         ));
+    }
+
+    #[test]
+    fn split_crlf_and_multiline_rpc_finish_on_response_before_stream_close() {
+        struct OpenStream<'a>(&'a [u8]);
+        impl Read for OpenStream<'_> {
+            fn read(&mut self, output: &mut [u8]) -> std::io::Result<usize> {
+                let (byte, rest) = self.0.split_first().expect("client waited past matching response");
+                output[0] = *byte;
+                self.0 = rest;
+                Ok(1)
+            }
+        }
+        let stream = concat!(
+            ": heartbeat\r\n\r\n",
+            "data: {\"jsonrpc\":\"2.0\",\"method\":\"notifications/progress\",\r\n",
+            "data: \"params\":{\"progress\":2}}\r\n\r\n",
+            "data: {\"id\":99,\"result\":null}\r\n\r\n",
+            "data: {\"id\":7,\r\n",
+            "data: \"result\":{\"ok\":true}}\r\n\r\n",
+        );
+        let mut progress = Vec::new();
+        let body = read_rpc_body(OpenStream(stream.as_bytes()), true, Some(&json!(7)), |value| progress.push(value)).unwrap();
+        assert_eq!(progress, [json!({"progress":2})]);
+        assert_eq!(decode_rpc_response(&body, Some(7)).unwrap(), json!({"ok":true}));
     }
 
     #[test]

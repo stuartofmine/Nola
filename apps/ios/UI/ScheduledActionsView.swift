@@ -23,6 +23,7 @@ struct ScheduledActionsView: View {
     @State private var latestSummaryByActionId: [String: String] = [:]
     @State private var latestRunsError: String? = nil
     @State private var loadRunsTask: Task<Void, Never>? = nil
+    @State private var couldNotCreateConversation = false
     @State private var searchText = ""
     @State private var selectedFilter: ScheduledActionFilter = .all
 
@@ -43,6 +44,9 @@ struct ScheduledActionsView: View {
                     pageContent
                 }
             }
+        }
+        .alert(Text("chat.history.create_failed"), isPresented: $couldNotCreateConversation) {
+            Button(L10n.ok, role: .cancel) {}
         }
         .onAppear {
             refreshNonce += 1
@@ -149,6 +153,7 @@ struct ScheduledActionsView: View {
                             latestSummary: entry.latestSummary,
                             onToggleEnabled: {
                                 container.urlFetcher?.toggleSource(id: entry.source.id)
+                                container.scheduler.scheduleNextRefresh()
                                 refreshNonce += 1
                             }
                         )
@@ -156,9 +161,9 @@ struct ScheduledActionsView: View {
                 }
 
         }
-        .navigationTitle(NSLocalizedString("scheduled.actions.redesigned.title", value: "Automation & Scheduling", comment: "Scheduled actions redesigned page title"))
+        .navigationTitle(embedded ? NSLocalizedString("scheduled.actions.redesigned.title", value: "Automation & Scheduling", comment: "Scheduled actions redesigned page title") : "")
         .navigationBarTitleDisplayMode(.inline)
-        .toolbar(embedded ? .visible : .hidden, for: .navigationBar)
+        .toolbarBackground(.hidden, for: .navigationBar)
         .refreshable {
             refreshNonce += 1
             await loadLatestRuns()
@@ -166,7 +171,11 @@ struct ScheduledActionsView: View {
     }
 
     private func openChatForAutomation() {
-        NotificationCenter.default.post(name: .nolaOpenChatTab, object: nil)
+        guard let id = container.chatManager.startConversation(title: nil, language: nil) else {
+            couldNotCreateConversation = true
+            return
+        }
+        NotificationCenter.default.post(name: .nolaOpenChatTab, object: id)
     }
 
     // MARK: - Derived Data
@@ -306,14 +315,18 @@ struct ScheduledActionsView: View {
 
             var snippets: [String: String] = [:]
             for (aid, run) in latestByActionId {
-                guard let jid = run.resultJournalId, !jid.isEmpty else { continue }
-                if let journal = try storage.getJournal(id: jid) {
+                if let jid = run.resultJournalId, !jid.isEmpty,
+                   let journal = try storage.getJournal(id: jid) {
                     let raw = journal.content
                         .replacingOccurrences(of: "\n\n\n", with: "\n\n")
                         .trimmingCharacters(in: .whitespacesAndNewlines)
                     if !raw.isEmpty {
                         snippets[aid] = String(raw.prefix(240))
+                        continue
                     }
+                }
+                if let fallback = run.displayResultText {
+                    snippets[aid] = String(fallback.prefix(240))
                 }
             }
             latestSummaryByActionId = snippets
@@ -479,7 +492,8 @@ private struct ScheduledActionsFilterBar: View {
                     } label: {
                         Image(systemName: "xmark.circle.fill")
                             .foregroundStyle(.tertiary)
-                            .frame(width: 32, height: 44)
+                            .frame(width: 44, height: 44)
+                            .contentShape(Rectangle())
                     }
                     .buttonStyle(.plain)
                     .accessibilityLabel(NSLocalizedString("common.clear", value: "Clear", comment: "Clear search"))
@@ -501,7 +515,8 @@ private struct ScheduledActionsFilterBar: View {
                                 .foregroundStyle(selected ? Color.primary : Color.secondary)
                                 .padding(.horizontal, 11)
                                 .padding(.vertical, 7)
-                                .frame(minHeight: 40)
+                                .frame(minHeight: 44)
+                                .contentShape(Capsule())
                                 .background(
                                     selected ? DesignTokens.accentSubtleColor : Color.clear,
                                     in: Capsule()
@@ -719,7 +734,7 @@ private struct ScheduledActionSimpleRow: View {
                 label: NSLocalizedString("scheduled.actions.badge.paused", value: "Paused", comment: "Scheduled action paused badge"),
                 tint: .secondary
             )
-        } else if let latestRun, latestRun.status != .success {
+        } else if let latestRun, !latestRun.status.isSuccessful {
             ScheduledActionInfoBadge(
                 label: statusText(for: latestRun),
                 tint: statusColor(for: latestRun)
@@ -739,12 +754,11 @@ private struct ScheduledActionSimpleRow: View {
 
     private func statusColor(for run: LocalJSONStorage.ScheduledActionRunRecord) -> Color {
         switch run.status {
-        case .success: return DesignTokens.successColor
+        case .success, .answered, .actionCompleted: return DesignTokens.successColor
         case .partial: return DesignTokens.warningColor
         case .skipped: return .secondary
         case .failed: return DesignTokens.dangerColor
-        case .actionCompleted: return DesignTokens.successColor
-        case .answered, .delegationAccepted, .cancelled: return .secondary
+        case .delegationAccepted, .cancelled: return .secondary
         case .incomplete, .blocked: return DesignTokens.warningColor
         }
     }

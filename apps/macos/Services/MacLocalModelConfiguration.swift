@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 // File Overview:
-// - Purpose: Persists the MLX model selected for native on-device macOS chat.
+// - Purpose: Persists the local model selected for native on-device macOS chat.
 
 import Foundation
 
@@ -29,7 +29,7 @@ final class MacLocalModelConfigurationStore {
     var selectedModelID: String {
         if let profiles = try? modelClient.listModelProfiles(),
            let selected = profiles.first(where: {
-               $0.provider == "local" && $0.runtime == "mlx" && $0.selected && $0.enabled
+               $0.provider == "local" && MacLocalInferenceEngine(rawValue: $0.runtime) != nil && $0.selected && $0.enabled
            }) {
             return selected.id
         }
@@ -70,7 +70,7 @@ final class MacLocalModelConfigurationStore {
            let parameters = try? JSONDecoder().decode(ModelParameters.self, from: data) {
             return parameters
         }
-        return ModelParameters.localDefaults
+        return profile.defaultParameters
     }
 
     struct ParameterSnapshot {
@@ -80,7 +80,7 @@ final class MacLocalModelConfigurationStore {
 
     func parameterSnapshot(for profile: MacLocalModelProfile) throws -> ParameterSnapshot {
         guard let stored = try modelClient.modelProfile(profile.id) else {
-            return ParameterSnapshot(parameters: .localDefaults, revision: 0)
+            return ParameterSnapshot(parameters: profile.defaultParameters, revision: 0)
         }
         guard let revision = UInt64(exactly: stored.revision),
               let data = stored.parametersJSON.data(using: .utf8) else {
@@ -146,7 +146,7 @@ final class MacLocalModelConfigurationStore {
             displayName: profile.displayName,
             provider: "local",
             modelName: profile.id,
-            runtime: "mlx",
+            runtime: profile.runtime,
             sourceJSON: sourceJSON,
             parametersJSON: parameterJSON,
             selected: selected,
@@ -178,9 +178,9 @@ final class MacLocalModelConfigurationStore {
         }
         let ready: Bool
         if let directory = profile.installedDirectory {
-            ready = FileManager.default.fileExists(
-                atPath: directory.appendingPathComponent("config.json").path
-            )
+            ready = profile.engine == .llamaCpp
+                ? profile.artifactURL.map { FileManager.default.fileExists(atPath: $0.path) } ?? false
+                : FileManager.default.fileExists(atPath: directory.appendingPathComponent("config.json").path)
         } else if let model = ModelDownloader.ModelType(rawValue: profile.id) {
             ready = model.validatesDownloadedFiles(at: modelDirectory(for: model))
         } else {

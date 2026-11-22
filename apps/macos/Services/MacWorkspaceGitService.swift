@@ -89,7 +89,7 @@ nonisolated enum MacWorkspaceGitError: LocalizedError {
 actor MacWorkspaceGitService {
     static let shared = MacWorkspaceGitService()
 
-    func snapshot(at workspaceURL: URL) async throws -> MacGitWorkspaceSnapshot {
+    func snapshot(at workspaceURL: URL, allowEnclosingRepository: Bool = true) async throws -> MacGitWorkspaceSnapshot {
         let rootOutput: String
         do {
             rootOutput = try await runGit(["rev-parse", "--show-toplevel"], at: workspaceURL)
@@ -99,6 +99,9 @@ actor MacWorkspaceGitService {
         let rootPath = rootOutput.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !rootPath.isEmpty else { throw MacWorkspaceGitError.notRepository }
         let repositoryURL = URL(fileURLWithPath: rootPath, isDirectory: true)
+        guard allowEnclosingRepository || MacAppEnvironment.contains(repositoryURL, in: workspaceURL) else {
+            throw MacWorkspaceGitError.notRepository
+        }
         let branch = (try? await runGit(["branch", "--show-current"], at: repositoryURL))?
             .trimmingCharacters(in: .whitespacesAndNewlines)
         let statusData = try await runGitData(

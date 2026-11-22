@@ -71,31 +71,50 @@ pub(crate) fn run_if_requested(args: &[String]) -> Option<Result<(), String>> {
         Ok(context) => context,
         Err(error) => return Some(Err(error)),
     };
-    if !is_admin_dispatch_target(&context.remaining) {
+    let remaining = &context.remaining;
+    let desktop_usage = match remaining.as_slice() {
+        [plugin, action, ..] if plugin == "plugin" => match action.as_str() {
+            "desktop-library" => Some("nola plugin desktop-library [--json]"),
+            "desktop-pages" => Some("nola plugin desktop-pages [id] [--json]"),
+            _ => None,
+        },
+        _ => None,
+    };
+    if !is_admin_dispatch_target(remaining) && desktop_usage.is_none() {
         return None;
     }
     if let Some(language) = context.language {
         set_language(language);
     }
-
-    match context.remaining.first().map(String::as_str) {
-        Some("version" | "--version" | "-V") => {
-            if context.remaining.len() == 1
-                || (context.remaining.len() == 2
-                    && matches!(context.remaining[1].as_str(), "--help" | "-h"))
-            {
-                if context.remaining.get(1).is_some() {
-                    println!("Usage:\n  nola version\n  nola --version | -V");
-                    return Some(Ok(()));
+    if let Some(usage) = desktop_usage {
+        return Some(strip_admin_flags(&remaining[2..], context.json_output).and_then(
+            |(args, _, help)| {
+                if help {
+                    println!("{usage}");
+                    return Ok(());
                 }
-                return Some(run_version(context.json_output));
-            }
-            if context.remaining.first().map(String::as_str) == Some("version") {
-                return Some(Err("Usage: nola version [--json]".to_string()));
-            }
-            None
-        }
-        Some("update") => crate::software_update::run_if_requested(&context.remaining),
+                let mut command = remaining[..2].to_vec();
+                command.extend(args);
+                crate::harness_plugin::desktop_command(&command)
+                    .unwrap_or_else(|| Err(usage.to_owned()))
+            },
+        ));
+    }
+    match remaining.first().map(String::as_str) {
+        Some("version" | "--version" | "-V") => Some(
+            strip_admin_flags(&remaining[1..], context.json_output).and_then(|(args, json, help)| {
+                const USAGE: &str = "nola version | --version | -V [--json]";
+                if help {
+                    println!("{USAGE}");
+                    Ok(())
+                } else if args.is_empty() {
+                    run_version(json)
+                } else {
+                    Err(USAGE.into())
+                }
+            }),
+        ),
+        Some("update") => crate::software_update::run_if_requested(remaining),
         Some("memory") => Some(crate::memory_admin::run_cli_args(
             &context.remaining[1..],
             context.json_output,
@@ -170,7 +189,7 @@ fn strip_admin_flags(
 }
 
 fn skills_usage() -> &'static str {
-    "Usage:\n  nola skills [list] [--json]\n  nola skills enable <id> [--json]\n  nola skills disable <id> [--json]"
+    "Usage:\n  nola skills [list] [--json]\n  nola skills find <name-or-github-url> [--json]\n  nola skills install <github-url> [--json]\n  nola skills enable <id> [--json]\n  nola skills disable <id> [--json]"
 }
 
 fn run_skills_command(args: &[String], leading_json: bool) -> Result<(), String> {
@@ -178,6 +197,32 @@ fn run_skills_command(args: &[String], leading_json: bool) -> Result<(), String>
     if show_help {
         println!("{}", skills_usage());
         return Ok(());
+    }
+    if let [action, value] = positional.as_slice() {
+        let result = match action.as_str() {
+            "find" => Some(crate::github_skills::find(value)?),
+            "install" => Some(crate::github_skills::install(value)?),
+            _ => None,
+        };
+        if let Some(value) = result {
+            if json_output {
+                println!("{value}");
+            } else if let Some(items) = value["repositories"].as_array().or(value["skills"].as_array()) {
+                for item in items {
+                    println!("{}  {}", item["repository"].as_str().or(item["path"].as_str()).unwrap_or_default(),
+                             item["url"].as_str().unwrap_or_default());
+                }
+                if value["status"] == "selection_required" {
+                    println!("Select a Skill URL and run nola skills install <url>.");
+                } else if items.is_empty() {
+                    println!("No matching Skills or repositories found.");
+                }
+            } else {
+                println!("Enabled {} from {}", value["id"].as_str().unwrap_or_default(),
+                         value["source_url"].as_str().unwrap_or_default());
+            }
+            return Ok(());
+        }
     }
     let mut application = CliApplicationPort::persistent_default()?;
     execute_skills_command(&mut application, &positional, json_output)
@@ -257,6 +302,9 @@ fn set_skill_enabled(
             updated_at_ms: Utc::now().timestamp_millis(),
         },
     })?;
+    if updated["record"]["source"] == "user" {
+        crate::builtin_skills::sync_registered_custom(application, Some(&matched_id))?;
+    }
     let new_revision = updated["revision"].as_i64().unwrap_or(revision + 1);
     if json_output {
         println!(
@@ -279,8 +327,62 @@ fn mcp_usage() -> &'static str {
     "Usage:\n  nola mcp [list] [--json]\n  nola mcp add <name> <command-or-url> [args...] [--json]\n  nola mcp remove <id-or-name> [--json]\n  nola mcp enable <id-or-name> [--json]\n  nola mcp disable <id-or-name> [--json]"
 }
 
+fn strip_mcp_admin_flags(
+    args: &[String],
+    mut json_output: bool,
+) -> Result<(Vec<String>, bool, bool), String> {
+    let mut positional = Vec::new();
+    let mut show_help = false;
+    let mut index = 0;
+    while index < args.len() {
+        let in_stdio_server_args = positional.first().map(String::as_str) == Some("add")
+            && positional.len() >= 3
+            && positional.get(2).is_some_and(|target| {
+                let lower = target.trim().to_ascii_lowercase();
+                !lower.starts_with("http://") && !lower.starts_with("https://")
+            });
+        if in_stdio_server_args {
+            if args[index] == "--" {
+                positional.extend(args[index + 1..].iter().cloned());
+            } else {
+                positional.extend(args[index..].iter().cloned());
+            }
+            break;
+        }
+        let arg = &args[index];
+        if arg == "--" {
+            positional.extend(args[index + 1..].iter().cloned());
+            break;
+        }
+        if arg == "-h" || arg == "--help" {
+            show_help = true;
+            index += 1;
+        } else if arg == "--json" {
+            json_output = true;
+            index += 1;
+        } else if arg == "--lang" {
+            let value = args
+                .get(index + 1)
+                .ok_or_else(|| "--lang requires a language tag".to_string())?;
+            let language = parse_language_tag(value)
+                .ok_or_else(|| format!("--lang unsupported language: {value}"))?;
+            set_language(language);
+            index += 2;
+        } else if let Some(value) = arg.strip_prefix("--lang=") {
+            let language = parse_language_tag(value)
+                .ok_or_else(|| format!("--lang unsupported language: {value}"))?;
+            set_language(language);
+            index += 1;
+        } else {
+            positional.push(arg.clone());
+            index += 1;
+        }
+    }
+    Ok((positional, json_output, show_help))
+}
+
 fn run_mcp_command(args: &[String], leading_json: bool) -> Result<(), String> {
-    let (positional, json_output, show_help) = strip_admin_flags(args, leading_json)?;
+    let (positional, json_output, show_help) = strip_mcp_admin_flags(args, leading_json)?;
     if show_help {
         println!("{}", mcp_usage());
         return Ok(());
@@ -653,5 +755,45 @@ mod tests {
         assert_eq!(listed.len(), 1);
         let summary = mcp_server_summary(&listed[0]);
         assert_eq!(summary["transport"], "streamable_http");
+    }
+
+    #[test]
+    fn strip_mcp_admin_flags_preserves_stdio_server_flags() {
+        let args: Vec<String> = [
+            "add", "my-server", "npx", "-y", "some-mcp", "--json", "--lang", "fr", "--help", "-h",
+        ]
+        .into_iter()
+        .map(String::from)
+        .collect();
+        let (positional, json_output, show_help) = strip_mcp_admin_flags(&args, false).unwrap();
+        assert!(!json_output);
+        assert!(!show_help);
+        assert_eq!(
+            positional,
+            vec!["add", "my-server", "npx", "-y", "some-mcp", "--json", "--lang", "fr", "--help", "-h"]
+        );
+
+        let args_with_cli_json: Vec<String> = [
+            "add", "--json", "my-server", "npx", "--json",
+        ]
+        .into_iter()
+        .map(String::from)
+        .collect();
+        let (positional, json_output, show_help) =
+            strip_mcp_admin_flags(&args_with_cli_json, false).unwrap();
+        assert!(json_output);
+        assert!(!show_help);
+        assert_eq!(positional, vec!["add", "my-server", "npx", "--json"]);
+
+        let http_args: Vec<String> = [
+            "add", "remote", "https://example.com/mcp", "--json",
+        ]
+        .into_iter()
+        .map(String::from)
+        .collect();
+        let (positional, json_output, show_help) = strip_mcp_admin_flags(&http_args, false).unwrap();
+        assert!(json_output);
+        assert!(!show_help);
+        assert_eq!(positional, vec!["add", "remote", "https://example.com/mcp"]);
     }
 }

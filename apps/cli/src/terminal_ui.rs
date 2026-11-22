@@ -1007,6 +1007,15 @@ pub(crate) fn clear_idle_frame() {
     dispatch(UiEvent::IdleFrameChanged(None));
 }
 
+// History and model status occupy physical rows even while a modal has focus.
+fn permission_viewport(state: &UiState, rows: u16, lines: usize) -> (usize, bool) {
+    let footer = (state.footer.len() + usize::from(state.history_reading))
+        .min(MAX_FOOTER_LINES).min(usize::from(rows.saturating_sub(2)));
+    let capacity = usize::from(rows.saturating_sub(1)).saturating_sub(footer).max(1);
+    let show_hint = lines > capacity && capacity > 1;
+    (capacity - usize::from(show_hint), show_hint)
+}
+
 pub(crate) fn present_permission_frame(text: &str, focus_selection: bool) -> io::Result<()> {
     let mut state = shared_state().lock().unwrap_or_else(|e| e.into_inner());
     if state.prompt_frame.is_none() {
@@ -1015,7 +1024,7 @@ pub(crate) fn present_permission_frame(text: &str, focus_selection: bool) -> io:
     state.prompt_frame = Some(text.lines().map(str::to_string).collect());
     if focus_selection {
         let rows = crossterm::terminal::size()?.1;
-        let visible = usize::from(rows.saturating_sub(2).max(1));
+        let (visible, _) = permission_viewport(&state, rows, state.prompt_frame.as_ref().map_or(0, Vec::len));
         if let Some(index) = state
             .prompt_frame
             .as_ref()
@@ -1036,11 +1045,9 @@ pub(crate) fn present_permission_frame(text: &str, focus_selection: bool) -> io:
 pub(crate) fn scroll_permission_frame(down: bool) {
     let mut state = shared_state().lock().unwrap_or_else(|e| e.into_inner());
     let rows = crossterm::terminal::size().map_or(24, |size| size.1);
-    let step = usize::from(rows.saturating_sub(3).max(1));
-    let max = state
-        .prompt_frame
-        .as_ref()
-        .map_or(0, |lines| lines.len().saturating_sub(step + 1));
+    let length = state.prompt_frame.as_ref().map_or(0, Vec::len);
+    let (step, _) = permission_viewport(&state, rows, length);
+    let max = length.saturating_sub(step);
     state.prompt_scroll = if down {
         state.prompt_scroll.saturating_add(step).min(max)
     } else {
@@ -1387,12 +1394,14 @@ fn local_command_hint() -> &'static str {
     use crate::i18n::Language;
     match crate::i18n::current_language() {
         Language::ZhHans => "Enter 执行本地指令 · 不进入消息队列",
+        Language::ZhHant => "Enter 執行本地指令 · 不進入訊息佇列",
         Language::De => "Enter: lokaler Befehl · keine Nachrichtenwarteschlange",
         Language::Es => "Enter: comando local · no se encola como mensaje",
         Language::Fr => "Entrée : commande locale · aucun message en attente",
         Language::Ja => "Enter: ローカルコマンド · メッセージとして予約しません",
+        Language::Ko => "Enter: 로컬 명령 · 메시지 대기열에 추가되지 않음",
         Language::Ru => "Enter: локальная команда · не сообщение в очереди",
-        Language::En | _ => "Enter: local command · never queued as a message",
+        Language::En => "Enter: local command · never queued as a message",
     }
 }
 
@@ -1400,12 +1409,14 @@ fn history_reading_hint() -> &'static str {
     use crate::i18n::Language;
     match crate::i18n::current_language() {
         Language::ZhHans => "Ctrl+End 返回最新 · 浏览历史 · PgUp/PgDn",
+        Language::ZhHant => "Ctrl+End 返回最新 · 瀏覽歷史 · PgUp/PgDn",
         Language::De => "Strg+Ende: neueste · Verlauf · Bild↑/Bild↓",
         Language::Es => "Ctrl+Fin: reciente · Historial · RePág/AvPág",
         Language::Fr => "Ctrl+Fin : récent · Historique · PgUp/PgDn",
         Language::Ja => "Ctrl+End: 最新へ · 履歴表示 · PgUp/PgDn",
+        Language::Ko => "Ctrl+End: 최신 · 기록 보기 · PgUp/PgDn",
         Language::Ru => "Ctrl+End: к последнему · История · PgUp/PgDn",
-        Language::En | _ => "Ctrl+End: latest · Reading history · PgUp/PgDn",
+        Language::En => "Ctrl+End: latest · Reading history · PgUp/PgDn",
     }
 }
 
@@ -1421,14 +1432,12 @@ fn build_frame(state: &UiState, columns: u16, rows: u16) -> Frame {
             } else { format!("  {line}") }
         }).collect::<Vec<_>>();
     if let Some(prompt) = &state.prompt_frame {
-        let capacity = usize::from(rows.saturating_sub(1).max(1)).saturating_sub(footer.len()).max(1);
-        let mut lines = prompt.clone();
-        if lines.len() > capacity {
-            let count = capacity.saturating_sub(1);
-            let offset = state.prompt_scroll.min(lines.len().saturating_sub(count));
-            lines = lines[offset..offset + count].to_vec();
+        let (count, show_hint) = permission_viewport(state, rows, prompt.len());
+        let offset = state.prompt_scroll.min(prompt.len().saturating_sub(count));
+        let mut lines = prompt.iter().skip(offset).take(count).cloned().collect::<Vec<_>>();
+        if show_hint {
             lines.push(truncate_display(
-                "PgUp/PgDn: details · ↑/↓: select",
+                crate::i18n::ui_text(crate::i18n::UiText::PermissionScrollHint),
                 usize::from(columns.saturating_sub(1)),
             ));
         }
@@ -1441,8 +1450,8 @@ fn build_frame(state: &UiState, columns: u16, rows: u16) -> Frame {
     if matches!(state.turn, TurnPhase::Idle) {
         if let Some(idle) = &state.idle_frame {
             let max_rows = usize::from(rows.saturating_sub(1).max(1)).saturating_sub(footer.len()).max(1);
-            let dropped = idle.lines.len().saturating_sub(max_rows);
-            let mut lines = idle.lines.iter().skip(dropped).cloned().collect::<Vec<_>>();
+            let dropped = idle.lines.len().saturating_sub(max_rows).min(idle.cursor_row);
+            let mut lines = idle.lines.iter().skip(dropped).take(max_rows).cloned().collect::<Vec<_>>();
             lines.extend(footer);
             let start = rows.saturating_sub(lines.len() as u16).saturating_add(1);
             let relative_cursor = idle.cursor_row.saturating_sub(dropped);
@@ -1923,7 +1932,7 @@ pub(crate) fn clear_last_wrapped_block() {
         .unwrap_or_else(|poisoned| poisoned.into_inner()) = None;
 }
 
-fn wrap_styled_line(line: &str, max_width: usize) -> Vec<String> {
+pub(crate) fn wrap_styled_line(line: &str, max_width: usize) -> Vec<String> {
     wrap_styled_line_with_offsets(line,max_width).into_iter().map(|(line,_)|line).collect()
 }
 
@@ -3085,11 +3094,38 @@ mod tests {
             .lines
             .iter()
             .any(|line| line.contains("detail 29")));
+        state.footer = vec!["model".into(), "context".into()];
+        state.prompt_scroll = usize::MAX;
+        for rows in [2, 3, 5, 12] {
+            let bottom = build_frame(&state, 40, rows);
+            assert!(bottom.lines.iter().any(|line| line.contains("detail 29")),
+                    "The last permission detail must be readable at height {rows}");
+        }
         state.prompt_frame = None;
         assert!(build_frame(&state, 80, 12)
             .lines
             .iter()
             .any(|line| line.contains("private draft")));
+    }
+
+    #[test]
+    fn long_idle_draft_keeps_the_edited_line_under_the_cursor() {
+        let mut state = UiState::default();
+        state.footer = vec!["model".into(), "context".into()];
+        let lines: Vec<_> = (0..18).map(|index| format!("草稿 {index}")).collect();
+        for row in [17, 0, 6, 12, 1, 17] {
+            state.idle_frame = Some(IdleFrameState {
+                lines: lines.clone(), cursor_row: row, cursor_column: 3,
+            });
+            for rows in [7, 9, 24] {
+                let frame = build_frame(&state, 32, rows);
+                let (screen_row, column) = frame.cursor.unwrap();
+                let first_row = usize::from(rows) + 1 - frame.lines.len();
+                assert_eq!(frame.lines[usize::from(screen_row) - first_row], lines[row]);
+                assert_eq!(column, 3);
+                assert_eq!(strip_ansi(frame.lines.last().unwrap()).trim(), "context");
+            }
+        }
     }
 
     #[test]

@@ -58,6 +58,8 @@ class ModelParametersStore @Inject constructor(
     }
 
     suspend fun saveParameters(snapshot: ParameterSnapshot, params: ModelParameters): ParameterSnapshot {
+        // configure_parameters preserves the stored selection. A true flag in the
+        // command requests a selection change and is rejected by Core.
         val input = snapshot.profile.copy(parametersJson = json.encodeToString(params),
             selected = false, enabled = true, deletedAtMs = null, updatedAtMs = System.currentTimeMillis())
         val committed = applicationRuntime.configureModelParameters(input, snapshot.profile.revision)

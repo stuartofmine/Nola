@@ -1,4 +1,60 @@
-// Delay an actual Host response; preserve its payload and assert startup cannot
-// create/select a conversation before its owning workspace has initialized.
-const {chromium}=require('playwright-core');const assert=require('node:assert/strict');
-(async()=>{const b=await chromium.launch({...require('./test_environment.cjs').browserOptions(),headless:true});try{const p=await b.newPage({viewport:{width:1440,height:900}});let release;const gate=new Promise(r=>release=r);let creations=0;p.on('request',r=>{if(r.url().endsWith('/api/chat/conversations')&&r.method()==='POST')creations++});await p.route('**/api/web/session',async r=>{await gate;await r.continue()});await p.goto('http://127.0.0.1:5159/chat',{waitUntil:'domcontentloaded'});const button=p.locator('.new-conversation');await button.waitFor();assert.equal(await button.isDisabled(),true);await button.dispatchEvent('click');assert.equal(creations,0);release();await p.waitForFunction(()=>!document.querySelector('.new-conversation').disabled);const response=p.waitForResponse(r=>r.url().endsWith('/api/chat/conversations')&&r.request().method()==='POST');await button.click();const body=await(await response).json();const id=body.conversationId??body.conversation?.conversationId;await p.waitForURL(u=>u.searchParams.get('conversation')===id);await p.waitForTimeout(700);assert.equal(new URL(p.url()).searchParams.get('conversation'),id);assert.equal(creations,1);await p.locator('#chat-composer').fill('草稿保留：不发送');await p.waitForTimeout(500);assert.equal(await p.locator('#chat-composer').inputValue(),'草稿保留：不发送');const previous=await p.locator('.conversation[aria-current=true]').elementHandle();const nextResponse=p.waitForResponse(r=>r.url().endsWith('/api/chat/conversations')&&r.request().method()==='POST');await button.click();await nextResponse;await p.waitForURL(u=>u.searchParams.get('conversation')!==id);await previous.click();await p.waitForURL(u=>u.searchParams.get('conversation')===id);assert.equal(await p.locator('#chat-composer').inputValue(),'草稿保留：不发送');console.log('PASS startup owner gate, one create identity, draft survives conversation switch',id);}finally{await b.close()}})().catch(e=>{console.error(e);process.exitCode=1});
+// Hold the actual session response until the user attempts to start a chat.
+const { chromium } = require('playwright-core');
+const assert = require('node:assert/strict');
+const { browserOptions, isolatedHostOrigin } = require('./test_environment.cjs');
+
+async function main() {
+    const origin = isolatedHostOrigin();
+    const browser = await chromium.launch({...browserOptions(), headless: true});
+    let release;
+    const gate = new Promise(resolve => { release = resolve; });
+    try {
+        const page = await browser.newPage({locale: 'en-US', viewport: {width: 1440, height: 900}});
+        page.setDefaultTimeout(12000);
+        const createRequests = [];
+        const creation = request => new URL(request.url()).pathname === '/api/chat/conversations' && request.method() === 'POST';
+        page.on('request', request => { if (creation(request)) createRequests.push(request); });
+        await page.route('**/api/web/session', async route => { await gate; await route.continue(); }, {times: 1});
+        await page.goto(new URL('/chat', origin).href, {waitUntil: 'domcontentloaded'});
+        const button = page.getByRole('button', {name: 'New conversation', exact: true});
+        await button.waitFor();
+        assert.ok(await button.isDisabled());
+        await button.dispatchEvent('click');
+        assert.equal(createRequests.length, 0);
+        release();
+        async function create() {
+            const [response] = await Promise.all([
+                page.waitForResponse(response => creation(response.request())),
+                button.click(),
+            ]);
+            assert.ok(response.ok());
+            const {conversationId} = await response.json();
+            assert.ok(typeof conversationId === 'string' && conversationId.length > 0);
+            await page.waitForURL(url => url.searchParams.get('conversation') === conversationId);
+            return conversationId;
+        }
+        const first = await create();
+        const name = 'Navigation audit ' + first;
+        await page.getByRole('tab', {name: 'New conversation', exact: true}).dblclick();
+        const title = page.getByRole('textbox', {name: 'Conversation title'});
+        await title.fill(name);
+        await title.press('Enter');
+        await page.getByRole('tab', {name, exact: true}).waitFor();
+        const composer = page.locator('#chat-composer');
+        const draft = 'An unsent navigation draft';
+        await composer.fill(draft);
+        const second = await create();
+        assert.notEqual(second, first);
+        assert.equal(await composer.inputValue(), '');
+        await page.locator('.conversation').filter({hasText: name}).click();
+        await page.waitForURL(url => url.searchParams.get('conversation') === first);
+        await page.waitForFunction(value => document.querySelector('#chat-composer')?.value === value, draft);
+        assert.equal(createRequests.length, 2);
+        console.log('PASS: startup gated, two distinct creations, selected original row restores draft');
+    } finally {
+        release();
+        await browser.close();
+    }
+}
+
+main().catch(error => { console.error(error); process.exitCode = 1; });

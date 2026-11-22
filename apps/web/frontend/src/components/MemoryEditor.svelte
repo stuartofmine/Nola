@@ -41,19 +41,21 @@
 </script>
 <svelte:window onbeforeunload={event => { if (!acceptsWorkspaceUnload(event)) return;if (dirty || saving || uncertain) {event.preventDefault(); event.returnValue = '';}}} />
 <ConfirmationDialog bind:this={confirmation} />
-<dialog use:ownDialog bind:this={dialog} oncancel={close} aria-labelledby="memory-editor-title">
+<dialog use:ownDialog bind:this={dialog} oncancel={close} onclick={event => { if (event.target === dialog && !saving) void close(); }} aria-labelledby="memory-editor-title">
     <form onsubmit={event => {event.preventDefault(); void save();}} aria-busy={saving}>
         <h2 id="memory-editor-title">{t($locale, record ? 'memoryCenter.revise' : 'memoryCenter.create')}</h2>
-        {#if uncertain}<p role="alert">{t($locale, 'memoryCenter.uncertain')}</p>{/if}
+        {#if uncertain}<p role="alert" class="error">{t($locale, 'memoryCenter.uncertain')}</p>{/if}
         <fieldset disabled={saving || uncertain}>
             <label>{t($locale, 'memoryCenter.content')}<textarea bind:value={draft.content} rows="6" required maxlength="100000"></textarea></label>
             <label>{t($locale, 'memoryCenter.summary')}<textarea bind:value={draft.summary} rows="2"></textarea></label>
             <label>{t($locale, 'memoryCenter.scope')}<select bind:value={draft.scope}>{#if !['global', 'workspace', 'conversation', 'turn'].includes(draft.scope)}<option value={draft.scope}>{draft.scope}</option>{/if}{#each ['global', 'workspace', 'conversation', 'turn'] as value}<option {value}>{t($locale, `memoryCenter.scope.${value}`)}</option>{/each}</select></label>
             <label>{t($locale, 'memoryCenter.kind')}<select bind:value={draft.kind}>{#each ['preference', 'identity', 'decision', 'project', 'feedback', 'reference', 'other'] as value}<option {value}>{t($locale, `memoryCenter.kind.${value}`)}</option>{/each}</select></label>
             <label>{t($locale, 'memoryCenter.tags')}<input bind:value={tags} /></label>
-            <label>{t($locale, 'memoryCenter.confidence')}<input type="number" min="0" max="1" step="any" bind:value={draft.confidence} required /></label>
+            {#if record && record.source && record.source !== 'user' && record.source !== 'manual'}
+                <p class="source-note muted">{t($locale, 'memoryCenter.source')}: {record.source}</p>
+            {/if}
         </fieldset>
-        <div class="actions"><button type="button" disabled={saving} onclick={() => close()}>{t($locale, 'shell.cancel')}</button><button type="submit" disabled={saving || uncertain || !draft.content.trim()}>{t($locale, 'memoryCenter.save')}</button></div>
+        <div class="actions"><button type="button" disabled={saving} onclick={() => close()}>{t($locale, 'shell.cancel')}</button><button type="submit" class="primary" disabled={saving || uncertain || !draft.content.trim()}>{t($locale, saving ? 'models.saving' : 'memoryCenter.save')}</button></div>
     </form>
 </dialog>
 <style>

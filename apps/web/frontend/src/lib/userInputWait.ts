@@ -48,6 +48,23 @@ export function parseUserInputWaits(value: unknown, conversation: string): Prese
     }
     return result;
 }
+export function validateWaitAnswers(record: PresentedWait, answers: WaitAnswer[]): boolean {
+    const byId = new Map(answers.map(item => [item.question_id, item]));
+    for (const q of record.wait.question_set.questions) {
+        const answer = byId.get(q.id);
+        if (!answer) {
+            if (q.required) return false;
+            continue;
+        }
+        const value = answer.value;
+        if (value.type === 'text') {
+            if (!q.allow_freeform || !value.text.trim() || value.text.length > q.max_text_chars) return false;
+        } else if (!q.options.some(option => option.id === value.option_id)) {
+            return false;
+        }
+    }
+    return true;
+}
 export function freezeWaitResponse(record: PresentedWait, response: WaitResponse, commandId: string): string {
     if (!string(commandId)) return invalid();
     return JSON.stringify({ run_id: record.run_id, response: { command_id: commandId, wait_id: record.wait.wait_id,

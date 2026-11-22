@@ -3,6 +3,30 @@
 
 #[cfg(test)]
 #[test]
+fn mobile_login_lru_eviction_exempts_persistent_host_access_token() {
+    let mut tokens = HashMap::new();
+    let now = Instant::now();
+    let host_token = "persistent-host-token";
+    // Make the persistent host token the oldest entry in the map.
+    tokens.insert(host_token.to_string(), now - StdDuration::from_secs(600));
+    for idx in 1..32 {
+        tokens.insert(
+            format!("mobile-token-{idx}"),
+            now - StdDuration::from_secs(300 - idx as u64),
+        );
+    }
+    assert_eq!(tokens.len(), 32);
+
+    insert_mobile_token_locked(&mut tokens, "mobile-token-new".to_string(), Some(host_token), now);
+
+    assert!(tokens.contains_key(host_token), "persistent host token must never be evicted");
+    assert!(tokens.contains_key("mobile-token-new"));
+    assert!(!tokens.contains_key("mobile-token-1"), "oldest non-host token should be evicted");
+    assert_eq!(tokens.len(), 32);
+}
+
+#[cfg(test)]
+#[test]
 fn mobile_attachment_text_decodes_utf8_and_utf16_bom() {
     let utf8 =
         extract_mobile_attachment_text(b"\xEF\xBB\xBFalpha\nbeta", "notes.md", "text/markdown")
@@ -351,6 +375,20 @@ mod host_permission_broker_tests {
             host_permission_safe_review_text(&request("delete_file", json!({"path":"notes.txt"}))),
             Some("delete_file: \"notes.txt\"".into())
         );
+        let edit = |extra: Value| {
+            let mut args = json!({"path":"report.json","old_text":"fixture-secret","new_text":"新"});
+            args.as_object_mut().unwrap().extend(extra.as_object().unwrap().clone());
+            host_permission_safe_review_text(&request("edit_file", args))
+        };
+        let preview = edit(json!({})).unwrap();
+        assert!(preview.contains("edit_file: \"report.json\"") && preview.contains("required matches: 1"));
+        assert!(preview.contains("14 UTF-8 bytes removed, 3 inserted") && !preview.contains("fixture-secret"));
+        let bulk = edit(json!({"replace_all":true,"expected_replacements":3,"dry_run":true})).unwrap();
+        assert!(bulk.contains("preview only; required matches: 3"));
+        for invalid in [json!({"replace_all":true}),json!({"expected_replacements":2}),json!({"dry_run":"yes"}),
+            json!({"expected_sha256":"invalid"}),json!({"path":"secret-key.txt"}),json!({"unknown_effect":true})] {
+            assert!(edit(invalid.clone()).is_none(), "unsafe edit preview for {invalid}");
+        }
         let configured = crate::mcp_connection_authority::bind_configurations(
             &[json!({"server_id":"preview","enabled":true,"endpoint":"http://127.0.0.1:1/mcp"})],
             "preview-host", &uuid::Uuid::new_v4().to_string()).unwrap();

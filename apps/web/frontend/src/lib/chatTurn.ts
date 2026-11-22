@@ -17,6 +17,7 @@ export interface ChatTurn {
     readonly outcome: ChatTurnOutcome;
     readonly runId: string | null;
     readonly permissionClientId: string;
+    readonly allowedPermissionClientIds: readonly string[];
     readonly permission: Readonly<TurnPermission> | null;
     readonly permissionAcknowledged: boolean;
     readonly committedRevision: string | null;
@@ -24,7 +25,7 @@ export interface ChatTurn {
 export type ChatTurnAction = { owner: ChatTurnOwner } & (
     | { type: 'stream_opened' }
     /** Caller supplies the validated canonical run binding, never a provider session ID. */
-    | { type: 'run_bound'; runId: string; permissionClientId?: string }
+    | { type: 'run_bound'; runId: string; permissionClientId?: string; permissionClientIds?: readonly string[] }
     | { type: 'permission_pending'; challenge: unknown; nowSeconds: number }
     /** Complete permission list from the authenticated observation of this Run. */
     | { type: 'permissions_observed'; challenges: unknown[]; nowSeconds: number }
@@ -55,7 +56,7 @@ export function createChatTurn(owner: ChatTurnOwner, identity: ChatTurnIdentity 
     if (!validId(owner.conversationId, 512) || !validId(owner.hostId, 512) || !validId(owner.clientId, 512) || !counter(owner.generation)) throw new Error('chat.turn.invalid_owner');
     const ids = typeof identity === 'string' ? chatTurnIdentity(identity) : { submissionId: identity.submissionId, userMessageId: identity.userMessageId, assistantMessageId: identity.assistantMessageId };
     if (![ids.submissionId, ids.userMessageId, ids.assistantMessageId].every(value => validId(value)) || ids.userMessageId === ids.assistantMessageId) throw new Error('chat.turn.invalid_identity');
-    return { owner: Object.freeze({ conversationId: owner.conversationId, generation: owner.generation, hostId: owner.hostId, clientId: owner.clientId }), identity: Object.freeze(ids), phase: 'sending', outcome: 'pending', runId: null, permissionClientId: owner.clientId, permission: null, permissionAcknowledged: false, committedRevision: null };
+    return { owner: Object.freeze({ conversationId: owner.conversationId, generation: owner.generation, hostId: owner.hostId, clientId: owner.clientId }), identity: Object.freeze(ids), phase: 'sending', outcome: 'pending', runId: null, permissionClientId: owner.clientId, allowedPermissionClientIds: Object.freeze([owner.clientId]), permission: null, permissionAcknowledged: false, committedRevision: null };
 }
 
 export function canReleaseChatTurn(state: ChatTurn): boolean { return state.phase === 'committed'; }
@@ -72,12 +73,26 @@ export function reduceChatTurn(state: ChatTurn, action: ChatTurnAction): ChatTur
             return state.phase === 'sending' || state.phase === 'recovering'
                 ? { state: { ...state, phase: state.permission ? 'awaiting_permission' : 'streaming' } }
                 : { state, ignored: 'phase' };
-        case 'run_bound':
+        case 'run_bound': {
             if (!validId(action.runId, 512)) return { state, ignored: 'invalid' };
             if (state.runId && state.runId !== action.runId) return { state, ignored: 'run' };
-            if (action.permissionClientId !== undefined && (!validId(action.permissionClientId, 512)
-                || state.runId !== null && action.permissionClientId !== state.permissionClientId)) return { state, ignored: 'owner' };
-            return { state: { ...state, runId: action.runId, permissionClientId: action.permissionClientId ?? state.permissionClientId } };
+            let nextAllowed: readonly string[] = state.allowedPermissionClientIds;
+            if (action.permissionClientIds !== undefined) {
+                if (!action.permissionClientIds.length || !action.permissionClientIds.every(id => validId(id, 512))) return { state, ignored: 'owner' };
+                const requested = [...new Set(action.permissionClientIds)];
+                if (state.runId !== null && requested.some(id => !state.allowedPermissionClientIds.includes(id) && id !== state.owner.clientId && id !== 'web-goal')) {
+                    return { state, ignored: 'owner' };
+                }
+                nextAllowed = Object.freeze(requested);
+            } else if (action.permissionClientId !== undefined) {
+                if (!validId(action.permissionClientId, 512)
+                    || (state.runId !== null && !state.allowedPermissionClientIds.includes(action.permissionClientId) && action.permissionClientId !== 'web-goal')) {
+                    return { state, ignored: 'owner' };
+                }
+                nextAllowed = Object.freeze([action.permissionClientId]);
+            }
+            return { state: { ...state, runId: action.runId, permissionClientId: nextAllowed[0], allowedPermissionClientIds: nextAllowed } };
+        }
         case 'permissions_observed': {
             // Validate the entire snapshot before retiring a displayed challenge. A stream
             // event alone cannot replace it: parallel requests can arrive out of order.
@@ -103,7 +118,7 @@ export function reduceChatTurn(state: ChatTurn, action: ChatTurnAction): ChatTur
             if (state.phase === 'cancel_requested') return { state, ignored: 'phase' };
             if (!object(value) || value.protocol_version !== 1 || typeof value.allow_conversation !== 'boolean' || !counter(action.nowSeconds) || !counter(value.expires_at) || value.expires_at <= action.nowSeconds
                 || !['nonce', 'request_id', 'host_id', 'client_id', 'session_id', 'tool_name'].every(key => validId(value[key], 512))) return { state, ignored: 'invalid' };
-            if (value.host_id !== state.owner.hostId || value.client_id !== state.permissionClientId || value.session_id !== state.owner.conversationId) return { state, ignored: 'owner' };
+            if (value.host_id !== state.owner.hostId || !state.allowedPermissionClientIds.includes(value.client_id as string) || value.session_id !== state.owner.conversationId) return { state, ignored: 'owner' };
             if (state.permission && state.permission.nonce !== value.nonce) return { state, ignored: 'permission' };
             // Store only ownership fields, not arbitrary event objects or mutable UI payloads.
             const permission: TurnPermission = { protocol_version: 1, allow_conversation: value.allow_conversation, nonce: value.nonce as string, request_id: value.request_id as string,

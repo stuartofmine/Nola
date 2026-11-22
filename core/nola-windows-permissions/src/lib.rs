@@ -1,5 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 //! Current-token-only protected DACLs for private files and registry records.
+#![cfg(windows)]
+
 use std::path::Path;
 use windows_sys::Win32::{Foundation::{CloseHandle, LocalFree, HANDLE}, Security::*,
     Security::Authorization::*, System::Threading::{GetCurrentProcess, OpenProcessToken}};

@@ -168,6 +168,11 @@ impl RuntimeOutputPort for NativeRuntimeOutput {
         self.canonical_trace_observed = false;
         self.discard_deferred_terminal_transport();
     }
+    fn committed_external_session(&mut self, session: &crate::session::CommittedExternalSession) {
+        if let Some(event) = session.event_for(self.host_trace_binding.as_ref()) {
+            self.emit_json_value(event);
+        }
+    }
     fn committed_assistant_journal(
         &mut self,
         through: nola_domain::assistant_journal::AssistantJournalCursor,

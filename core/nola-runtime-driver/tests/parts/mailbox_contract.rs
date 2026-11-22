@@ -188,3 +188,18 @@ fn busy_delivery_abort_waits_for_the_real_application_ack_and_leaves_mailbox_ope
     assert!(worker.join().unwrap().unwrap_err().contains("stop remains unconfirmed"));
     assert!(mailbox.poll(Duration::ZERO).unwrap().is_none(), "effect abort does not close the owner mailbox");
 }
+
+#[test]
+fn abort_before_platform_poll_withdraws_the_unclaimed_delivery() {
+    let (mut host, mailbox) = bounded_host_mailbox::<OpaqueProtocol>(1).unwrap();
+    let request = fixture_request();
+    let effect = request.effect_id.0.clone();
+    let worker = std::thread::spawn(move || host.dispatch(request, &mut |_| panic!("aborted unclaimed delivery emitted a response")));
+    let deadline = std::time::Instant::now() + Duration::from_secs(5);
+    while !mailbox.abort_delivery(&effect).unwrap() {
+        assert!(std::time::Instant::now() < deadline, "worker never queued the request");
+        std::thread::yield_now();
+    }
+    assert!(mailbox.poll(Duration::ZERO).unwrap().is_none());
+    assert!(worker.join().unwrap().unwrap_err().contains("stop remains unconfirmed"));
+}

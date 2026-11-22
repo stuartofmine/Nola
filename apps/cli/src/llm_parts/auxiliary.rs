@@ -42,10 +42,10 @@ pub(crate) fn auxiliary_usage(raw: &Value, protocol: ModelProtocol) -> Value {
         raw["input_tokens_details"]["cache_write_tokens"].as_u64()
     };
     let input = if protocol == ModelProtocol::Anthropic {
-        input
-            .zip(cached)
-            .zip(write)
-            .and_then(|((base, read), write)| base.checked_add(read)?.checked_add(write))
+        input.and_then(|base| {
+            base.checked_add(cached.unwrap_or(0))?
+                .checked_add(write.unwrap_or(0))
+        })
     } else {
         input
     };
@@ -307,5 +307,41 @@ mod tests {
             }
         }
         worker.join().unwrap();
+    }
+
+    #[test]
+    fn anthropic_auxiliary_usage_handles_absent_cache_token_fields() {
+        let without_cache = auxiliary_usage(
+            &json!({"input_tokens": 120, "output_tokens": 45}),
+            ModelProtocol::Anthropic,
+        );
+        assert_eq!(without_cache["coverage"], "known");
+        assert_eq!(without_cache["normalized"]["input_tokens"], 120);
+        assert_eq!(without_cache["normalized"]["output_tokens"], 45);
+        assert!(without_cache["normalized"]["cached_input_tokens"].is_null());
+        assert!(without_cache["normalized"]["cache_write_input_tokens"].is_null());
+
+        let with_read_only = auxiliary_usage(
+            &json!({"input_tokens": 100, "output_tokens": 20, "cache_read_input_tokens": 30}),
+            ModelProtocol::Anthropic,
+        );
+        assert_eq!(with_read_only["coverage"], "known");
+        assert_eq!(with_read_only["normalized"]["input_tokens"], 130);
+        assert_eq!(with_read_only["normalized"]["cached_input_tokens"], 30);
+        assert!(with_read_only["normalized"]["cache_write_input_tokens"].is_null());
+
+        let with_both = auxiliary_usage(
+            &json!({
+                "input_tokens": 100,
+                "output_tokens": 20,
+                "cache_read_input_tokens": 30,
+                "cache_creation_input_tokens": 15
+            }),
+            ModelProtocol::Anthropic,
+        );
+        assert_eq!(with_both["coverage"], "known");
+        assert_eq!(with_both["normalized"]["input_tokens"], 145);
+        assert_eq!(with_both["normalized"]["cached_input_tokens"], 30);
+        assert_eq!(with_both["normalized"]["cache_write_input_tokens"], 15);
     }
 }

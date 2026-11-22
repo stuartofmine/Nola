@@ -23,6 +23,9 @@ pub struct PlatformToolProfile {
 }
 
 pub const CANONICAL_DEVICE_TOOL_IDS: &[&str] = &[
+    "device_github_skill_find",
+    "device_github_skill_install",
+    "device_skill_read_resource",
     "device_read_file",
     "device_write_file",
     "device_clipboard_read",
@@ -34,6 +37,8 @@ pub const CANONICAL_DEVICE_TOOL_IDS: &[&str] = &[
 
 pub fn canonical_device_tool_capability(tool_id: &str) -> Option<&'static str> {
     match normalize_tool_id(tool_id).as_str() {
+        "device_github_skill_find" | "device_github_skill_install" => Some("network"),
+        "device_skill_read_resource" => Some("none"),
         "device_read_file" => Some("files_read"),
         "device_write_file" => Some("files_write"),
         "device_clipboard_read" | "device_clipboard_write" => Some("clipboard"),
@@ -185,7 +190,7 @@ fn internal_control_tool(name: &str) -> bool {
 }
 
 fn risk_for(tool_id: &str, capability: &str) -> ToolRisk {
-    if tool_id == "workspace_access" {
+    if matches!(tool_id, "workspace_access" | "github_skill_install" | "device_github_skill_install") {
         return ToolRisk::Medium;
     }
     if matches!(
@@ -228,7 +233,7 @@ pub fn default_route(platform: ToolPlatform, tool_id: &str) -> ToolRoute {
 }
 
 fn requires_agent_host_route(id: &str) -> bool {
-    matches!(id, "terminal_input" | "language_service_list" | "language_service_query" | "git_worktree_list" | "git_worktree_create" | "git_worktree_integrate")
+    matches!(id, "github_skill_find" | "github_skill_install" | "terminal_input" | "language_service_list" | "language_service_query" | "git_worktree_list" | "git_worktree_create" | "git_worktree_integrate")
         || code_intelligence_capability(id).is_some()
 }
 
@@ -318,10 +323,23 @@ mod tests {
     use super::*;
 
     #[test]
+    fn mobile_skill_tools_target_the_device_and_host_installs_have_separate_identity() {
+        for platform in [ToolPlatform::Android, ToolPlatform::Ios] {
+            for (id, capability) in [("device_github_skill_find","network"),("device_github_skill_install","network"),("device_skill_read_resource","none")] {
+                assert_eq!(default_route(platform,id), ToolRoute::Device);
+                assert!(!route_supported(platform,id,ToolRoute::AgentHost));
+                assert_eq!(builtin_tool_metadata(id).unwrap().capability,capability);
+            }
+            assert_eq!(builtin_tool_metadata("device_github_skill_install").unwrap().risk,ToolRisk::Medium);
+            assert_eq!(default_route(platform,"github_skill_install"),ToolRoute::AgentHost);
+        }
+    }
+
+    #[test]
     fn host_process_tools_cannot_be_advertised_as_device_or_web_handlers() {
         for platform in [ToolPlatform::Ios, ToolPlatform::Android, ToolPlatform::Macos,
             ToolPlatform::Cli, ToolPlatform::Web, ToolPlatform::AgentHost] {
-            for name in ["terminal_input", "language_service_list", "language_service_query", "git_worktree_list", "git_worktree_create", "git_worktree_integrate"] {
+            for name in ["github_skill_find", "github_skill_install", "terminal_input", "language_service_list", "language_service_query", "git_worktree_list", "git_worktree_create", "git_worktree_integrate"] {
                 assert_eq!(default_route(platform, name), ToolRoute::AgentHost);
                 assert!(route_supported(platform, name, ToolRoute::AgentHost));
                 for route in [ToolRoute::Device, ToolRoute::Cloud, ToolRoute::WebClient] {

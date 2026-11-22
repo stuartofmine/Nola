@@ -15,6 +15,7 @@ struct AppleUINodeView<JSON: JournalJSONValue>: View {
     var depth = 0
     var presentationOnly = false
     var actionsDisabled = false
+    var onTextFocusChanged: (String, Bool) -> Void = { _, _ in }
     @State private var selectedTab = 0
     @FocusState private var textFocused: Bool
 
@@ -81,20 +82,25 @@ struct AppleUINodeView<JSON: JournalJSONValue>: View {
                     .onTapGesture { textFocused = true }
                 if node.props["variant"]?.journalString == "obscured" {
                     SecureField(label(node), text: binding(node, default: "")).focused($textFocused)
+                        .modifier(AppleUITextFieldSurface())
                         .accessibilityIdentifier("a2ui.field.\(node.component_id)")
                 } else if node.props["variant"]?.journalString == "number" {
                     TextField(label(node), value: binding(node, default: ""), formatter: AppleUINumberFormatter())
                         .modifier(AppleUINumericInput(enabled: true))
+                        .modifier(AppleUITextFieldSurface())
                         .focused($textFocused)
                         .accessibilityIdentifier("a2ui.field.\(node.component_id)")
                 } else {
                     TextField(label(node), text: binding(node, default: ""), axis: node.props["variant"]?.journalString == "longText" ? .vertical : .horizontal)
                         .modifier(AppleUINumericInput(enabled: node.props["variant"]?.journalString == "number"))
+                        .modifier(AppleUITextFieldSurface())
                         .focused($textFocused)
                         .accessibilityIdentifier("a2ui.field.\(node.component_id)")
                 }
-            }.textFieldStyle(.roundedBorder).frame(minHeight: controlHeight)
+            }.frame(minHeight: controlHeight)
                 .disabled(node.bindings["value"] == nil)
+                .onChange(of: textFocused) { _, focused in onTextFocusChanged(id, focused) }
+                .onDisappear { onTextFocusChanged(id, false) }
         case "CheckBox":
             Toggle(label(node), isOn: binding(node, default: false))
                 .tint(Color(red: 0x23 / 255.0, green: 0x70 / 255.0, blue: 0x47 / 255.0))
@@ -174,7 +180,7 @@ struct AppleUINodeView<JSON: JournalJSONValue>: View {
         ForEach(node.slots[slot] ?? [], id: \.self) { child in
             // Type erasure breaks the recursive opaque View type, not identity.
             AnyView(AppleUINodeView(id: child, snapshot: snapshot, value: value,
-                edit: edit, dispatch: dispatch, present: present, depth: depth + 1, presentationOnly: presentationOnly || labelOnly, actionsDisabled: actionsDisabled))
+                edit: edit, dispatch: dispatch, present: present, depth: depth + 1, presentationOnly: presentationOnly || labelOnly, actionsDisabled: actionsDisabled, onTextFocusChanged: onTextFocusChanged))
                 .layoutValue(key: AppleUIChildWeight.self, value: weighted ? CGFloat(scalar(snapshot.nodes[child]?.props["weight"], as: Double.self) ?? 0) : 0)
         }
     }
@@ -222,6 +228,24 @@ private struct AppleUIButtonVariant: ViewModifier {
         case "borderless": content.buttonStyle(.borderless)
         default: content.buttonStyle(.bordered)
         }
+    }
+}
+
+private struct AppleUITextFieldSurface: ViewModifier {
+    @ViewBuilder func body(content: Content) -> some View {
+        #if os(iOS)
+        content
+            .textFieldStyle(.plain)
+            .padding(.horizontal, 12)
+            .padding(.vertical, 10)
+            .background(DesignTokens.elevatedColor, in: RoundedRectangle(cornerRadius: 10, style: .continuous))
+            .overlay(
+                RoundedRectangle(cornerRadius: 10, style: .continuous)
+                    .stroke(DesignTokens.borderColor, lineWidth: 1)
+            )
+        #else
+        content.textFieldStyle(.roundedBorder)
+        #endif
     }
 }
 

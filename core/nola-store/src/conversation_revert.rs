@@ -21,6 +21,52 @@ impl ConversationRevertRepository for NolaStore {
         crate::edited_resend::write_immutable(&self.connection,
             &format!("edited_resend/in_place/{}", prepared.input.operation_id), prepared, prepared.input.created_at_ms)
     }
+    fn delegated_expert_rewind_points(
+        &self,
+        parent: &str,
+        boundary_ordinal: i64,
+    ) -> StoreResult<Vec<(String, String)>> {
+        // Use the visible parent Run, not timestamps or display names. A previous
+        // edit can leave sealed Tasks and their immutable bindings in the ledger.
+        let sql = format!(
+            "SELECT t.id, t.child_session_id, t.status FROM durable_tasks t
+             WHERE t.owner_session_id=?1 AND t.kind='agent'
+               AND json_type(t.metadata_json, '$.expert_target')='object'
+               AND EXISTS (SELECT 1 FROM messages m WHERE m.conversation_id=?1
+                   AND m.ordinal >= ?2 AND {VISIBLE}
+                   AND m.run_id=json_extract(t.metadata_json, '$.expert_target.source_run_id'))"
+        );
+        let mut tasks = self.connection.prepare(&sql)?;
+        let mut child_message = self.connection.prepare(&format!(
+            "SELECT m.ordinal,m.id FROM runtime_task_run_bindings b JOIN runs r ON r.id=b.run_id
+             JOIN messages m ON m.id=r.user_message_id AND m.run_id=r.id
+             WHERE b.task_id=?1 AND b.owner_session_id=?2 AND b.child_session_id=?3
+               AND r.conversation_id=?3 AND m.conversation_id=?3 AND {VISIBLE}"
+        ))?;
+        let mut first = std::collections::BTreeMap::<String, (i64, String)>::new();
+        let rows = tasks.query_map(params![parent, boundary_ordinal], |row| {
+            Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?, row.get::<_, String>(2)?))
+        })?;
+        for row in rows {
+            let (id, child, status) = row?;
+            if !matches!(status.as_str(), "sealed" | "failed" | "cancelled" | "completed") {
+                return Err(StoreError::Conflict("Wait for the expert task to finish before editing this message.".into()));
+            }
+            let point: Option<(i64, String)> = child_message
+                .query_row(params![id, parent, child], |r| Ok((r.get(0)?, r.get(1)?)))
+                .optional()?;
+            if let Some(point) = point {
+                let pin = self.validated_expert_task_target(&id, &child, true)?
+                    .ok_or_else(|| StoreError::Conflict("Missing expert task ownership".into()))?;
+                if !pin.source.is_main_agent() || pin.parent_conversation_id != parent {
+                    return Err(StoreError::Conflict("Expert task parent differs from edit owner".into()));
+                }
+                let earliest = first.entry(child).or_insert_with(|| point.clone());
+                if point.0 < earliest.0 { *earliest = point; }
+            }
+        }
+        Ok(first.into_iter().map(|(child, (_, message))| (child, message)).collect())
+    }
     fn commit_checkpoint_projection(
         &mut self,
         input: &nola_store_port::conversation_revert::CommitCheckpointProjectionInput,

@@ -477,7 +477,7 @@ struct MacModelParametersView: View {
         Button(String(localized: "mac.model_parameters.reset")) { reset() }
             .disabled(localRevision == nil && remoteSnapshot == nil)
         Button(String(localized: "mac.model_parameters.save")) { save() }
-            .buttonStyle(.borderedProminent)
+            .buttonStyle(.nolaProminent)
             .keyboardShortcut("s", modifiers: .command)
             .disabled(!hasUnsavedChanges || validationMessage != nil || (localRevision == nil && remoteSnapshot == nil))
         Button(String(localized: "mac.model_parameters.done")) { requestDismiss() }
@@ -806,11 +806,8 @@ struct MacModelParametersView: View {
     }
 
     private var contextRange: ClosedRange<Int> {
-        let minimum = route.isLocal ? 65_536 : 512
-        let maximum = route.isLocal
-            ? max(minimum, MacLocalModelProfile.resolve(route.modelName)?.nativeContextTokens ?? 2_000_000)
-            : ModelParameterLimits.remoteContextTokens.upperBound
-        return minimum...maximum
+        if route.isLocal, let profile = MacLocalModelProfile.resolve(route.modelName) { return profile.configurableContext }
+        return route.isLocal ? 65_536...2_000_000 : 512...ModelParameterLimits.remoteContextTokens.upperBound
     }
 
     private var validationMessage: String? {

@@ -271,7 +271,7 @@ class AndroidDataSourceReader @Inject constructor(
             val bytes = response.bodyAsChannel().readRemaining(limit = 1_000_001L).readBytes()
             require(bytes.size <= 1_000_000) { "Data source response exceeds the 1 MB limit" }
             val contentType = response.headers["Content-Type"]
-            val charset = contentType?.let { io.ktor.http.ContentType.parse(it).charset() } ?: Charsets.UTF_8
+            val charset = contentType?.let { runCatching { io.ktor.http.ContentType.parse(it).charset() }.getOrNull() } ?: Charsets.UTF_8
             DataSourceDocumentInspector.inspect(
                 sourceId = source.id,
                 location = source.location,

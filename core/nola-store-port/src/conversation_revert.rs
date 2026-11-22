@@ -14,6 +14,12 @@ pub trait ConversationRevertRepository {
         -> Result<Option<nola_domain::edited_resend::PreparedInPlaceResend>, Self::Error>;
     fn put_prepared_in_place_resend(&mut self, prepared: &nola_domain::edited_resend::PreparedInPlaceResend)
         -> Result<(), Self::Error>;
+    /// First visible user input in each expert context delegated to by the visible parent suffix.
+    fn delegated_expert_rewind_points(
+        &self,
+        parent: &str,
+        boundary_ordinal: i64,
+    ) -> Result<Vec<(String, String)>, Self::Error>;
     /// Same-connection atomic checkpoint/visibility CAS; nested in outer receipt savepoint.
     fn commit_checkpoint_projection(
         &mut self,

@@ -92,12 +92,35 @@ test('repeated exact admissions keep the hydrated user Parts and snapshot refere
         assert.strictEqual(next.canonical,original.canonical);
         assert.strictEqual(next.canonicalSnapshot,original.canonicalSnapshot);
     }
+    const historical=structuredClone(original),id=original.parts[0].id,text='Exact public question';
+    historical.parts=[{source:'canonical',id,value:{kind:'historical',part_id:id,revision:1,projection:{
+        canonical_kind:'text',owner:{message_id:userId,part_id:id},canonical_text:{text,total_utf8_bytes:text.length},
+        fields:{expert_mentions:{availability:'complete',value:{version:1}}}}}}];
+    const withHistory={...hydrated,messages:hydrated.messages.map(m=>m.id===userId?historical:m)};
+    const replay=reduceChatTimeline(withHistory,{type:'admissions',owner,messages:evidence.declarations}).state;
+    assert.strictEqual(replay.messages.find(m=>m.id===userId)?.parts,historical.parts);
     const optimisticParts=[{source:'optimistic' as const,id:original.parts[0].id,value:{kind:'text' as const,markdown:'Exact public question'}}];
     const optimistic={...hydrated,messages:hydrated.messages.map(message=>message.id===userId?{...message,parts:optimisticParts}:message)};
     const admitted=reduceChatTimeline(optimistic,{type:'admissions',owner,messages:evidence.declarations}).state.messages.find(message=>message.id===userId)!;
     assert.notStrictEqual(admitted.parts,optimisticParts);
     assert.equal(admitted.parts[0].source,'canonical');
     assert.strictEqual(admitted.canonicalSnapshot,original.canonicalSnapshot);
+});
+
+test('terminal hydration accepts the initial user message revision without allowing revision regression', async () => {
+    const {state, evidence, payload, userId} = await terminalWitnessFixture();
+    const first = payload.conversationProjection.messages[0];
+    first.revision = 0;
+    first.parts[0].revision = 0;
+    const action = {type: 'terminal_witness' as const, request: timelineRequest(state), sourceHostId: 'host', evidence, payload};
+    const hydrated = reduceChatTimeline(state, action);
+    assert.equal(hydrated.ignored, undefined);
+    const witness = hydrated.state.messages.find(message => message.id === userId)?.canonical;
+    assert.equal(witness?.revision, 0);
+    assert.equal(witness?.parts[0].revision, 0);
+    const newer = {...first, revision: 1};
+    const partial = {...state, messages: state.messages.map(message => message.id === userId ? {...message, canonical: newer, canonicalSnapshot: null} : message)};
+    assert.equal(reduceChatTimeline(partial, {...action, request: timelineRequest(partial)}).ignored, 'invalid');
 });
 
 test('missing-snapshot hydration cannot lower a known revision of the same canonical Part',async()=>{
@@ -133,7 +156,8 @@ test('terminal witness rejects stale owner/request/Run and foreign or regressing
         (value:typeof payload)=>{value.conversationProjection.messages[0].parts[0].part_id='different-part';},
         (value:typeof payload)=>{value.conversationProjection.messages[0].parts[0].review='pending';},
         (value:typeof payload)=>{value.conversationProjection.messages[0].role='assistant';},
-        (value:typeof payload)=>{value.conversationProjection.messages[0].revision=0;},
+        (value:typeof payload)=>{value.conversationProjection.messages[0].revision=-1;},
+        (value:typeof payload)=>{Reflect.deleteProperty(value.conversationProjection.messages[0], 'revision');},
     ]){
         const changed=structuredClone(payload);mutate(changed);
         const result=reduceChatTimeline(state,{...action,payload:changed});
@@ -362,4 +386,28 @@ test('canonical errors require the one current typed contract without field alia
         const changed = structuredClone(row); changed.parts[1] = {...error, ...changes};
         assert.throws(() => parseCanonicalProjection(projection([changed])), /Invalid canonical Error/);
     }
+});
+
+test('admitted same-conversation edit removes only its replaced suffix from the visible window',()=>{
+    const initial=createChatTimeline(owner),payload=history([message('keep','user'),message('edit','user'),message('old-reply','assistant')],5);
+    const loaded=reduceChatTimeline(initial,{type:'history',request:timelineRequest(initial),mode:'replace',payload}).state;
+    const pending=reduceChatTimeline(loaded,{type:'beginSubmission',owner,submissionId:'new-run',userMessageId:'new-user',userText:'Edited question'}).state;
+    const edit={type:'admittedEdit' as const,owner,editedId:'edit',replacementId:'new-user',submissionId:'new-run'};
+    assert.equal(reduceChatTimeline(pending,{...edit,submissionId:'stale'}).state,pending);
+    const admitted=reduceChatTimeline(pending,edit).state;
+    assert.deepEqual(admitted.messages.map(m=>m.id),['keep','new-user']);
+    assert.equal(reduceChatTimeline(admitted,edit).state,admitted);
+});
+
+test('a terminal witness hydrates exact frozen mention fields from the historical user part',async()=>{
+    const {state,evidence,payload,userId}=await terminalWitnessFixture();
+    const user=payload.conversationProjection.messages[0],part=user.parts[0],text='Exact public question';
+    const wire={...payload,conversationProjection:{...payload.conversationProjection,messages:[{...user,parts:[{kind:'historical',part_id:part.part_id,revision:3,
+        projection:{canonical_kind:'text',owner:{conversation_id:owner.conversationId,message_id:userId,part_id:part.part_id},status:{state:'unsupported'},
+            canonical_text:{text,total_utf8_bytes:text.length},fields:{expert_mentions:{availability:'complete',value:{version:1}}}}}]}]}};
+    const action={type:'terminal_witness' as const,request:timelineRequest(state),sourceHostId:'host',evidence,payload:wire};
+    const next=reduceChatTimeline(state,action);
+    assert.equal(next.ignored,undefined);assert.equal(next.state.messages.find(m=>m.id===userId)?.parts[0].value.kind,'historical');
+    wire.conversationProjection.messages[0].parts[0].projection.canonical_text.total_utf8_bytes+=10;
+    assert.equal(reduceChatTimeline(state,action).ignored,'invalid');
 });

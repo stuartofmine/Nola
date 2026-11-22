@@ -60,6 +60,17 @@ fn read_file(args: &Map<String, Value>, ctx: &ToolContext) -> ToolOutcome {
     if expected_json.is_some() && (mime.is_some() || header.starts_with(b"%PDF-")) {
         return error("JSON validation requires a complete UTF-8 text file".into());
     }
+    if let Some(offset) = args.get("start_byte") {
+        if mime.is_some() || binary_document_kind(header) != BinaryDocumentKind::Unknown {
+            return error("start_byte requires UTF-8 source text".into());
+        }
+        if expected_json.is_some() || args.contains_key("start_line") || args.contains_key("line_count") {
+            return error("Use start_byte independently of line ranges and expected_json".into());
+        }
+        let Some(offset) = offset.as_u64() else { return error("start_byte must be a nonnegative integer".into()); };
+        let cap = tool_try!(validate_integer_arg(args, "max_bytes", MAX_TOOL_RESULT_CHARS as i64, 1024, MAX_READ_BYTES as i64));
+        return read_file_bytes(&mut media_file, offset, cap as usize, &target);
+    }
     if let Some(mime) = mime {
         const LIMIT: u64 = 30 * 1024 * 1024;
         let mut bytes = header.to_vec();
@@ -91,25 +102,17 @@ fn read_file(args: &Map<String, Value>, ctx: &ToolContext) -> ToolOutcome {
     } else {
         LARGE_FILE_AUTO_PREVIEW_BYTES
     };
-    let observed = tool_try!(read_file_text(
-        &target,
-        args,
-        show_line_numbers,
-        default_max_bytes,
-        FileReadPresentationBudget::direct()
-    ));
-    if observed.presentation_exhausted {
-        return error("File-read headers/continuation exceed the presentation budget; select a shorter authorized path or a bounded source inspection method. No file content was returned.".into());
-    }
     if let Some(expected) = expected_json {
         use nola_host_protocol::tool_result::{
             ExecutionCheckKind, ExecutionReceipt, ExecutionState, PostconditionCheck,
         };
-        let Some(observation) = observed.observation.as_ref()
+        let selection = tool_try!(file_read_selection(args, MAX_READ_BYTES as i64));
+        let snapshot = tool_try!(read_file_snapshot(&target, selection));
+        let Some(observation) = snapshot.observation.as_ref()
             .filter(|observation| observation.coverage == FileReadCoverage::Full) else {
             return error("JSON validation requires a complete UTF-8 read; no check was recorded".into());
         };
-        let Some(content) = observed.raw_content.as_deref() else {
+        let Some(content) = snapshot.text.as_deref() else {
             return error("JSON validation cannot use extracted document text".into());
         };
         let Ok(uri) = url::Url::from_file_path(&target) else {
@@ -135,7 +138,21 @@ fn read_file(args: &Map<String, Value>, ctx: &ToolContext) -> ToolOutcome {
         };
         return outcome.with_execution(receipt);
     }
-    let data = json!({
+    let observed = tool_try!(read_file_text(
+        &target,
+        args,
+        show_line_numbers,
+        default_max_bytes,
+        FileReadPresentationBudget::direct()
+    ));
+    if observed.presentation_exhausted {
+        return error("File-read headers/continuation exceed the presentation budget; select a shorter authorized path or a bounded source inspection method. No file content was returned.".into());
+    }
+    if let Some(offset) = observed.oversized_line_offset {
+        let cap = args.get("max_bytes").and_then(Value::as_u64).unwrap_or(MAX_TOOL_RESULT_CHARS as u64);
+        return read_file_bytes(&mut media_file, offset, cap as usize, &target);
+    }
+    let mut data = json!({
         "path": target.to_string_lossy(),
         "content": observed.raw_content,
         "content_kind": if observed.raw_content.is_some() { "utf8_source" } else { "extracted_document" },
@@ -143,6 +160,9 @@ fn read_file(args: &Map<String, Value>, ctx: &ToolContext) -> ToolOutcome {
         "complete": observed.observation.as_ref().is_some_and(|observation|
             matches!(observation.coverage, FileReadCoverage::Full)),
     });
+    if let Some(full) = observed.observation.as_ref().filter(|item| item.coverage == FileReadCoverage::Full) {
+        data["expected_sha256"] = Value::String(full.version.sha256.clone());
+    }
     let text = observed.text;
     record_returned_file_observations(&text, observed.observation);
     ok(
@@ -2134,6 +2154,7 @@ fn skill_invoke(args: &Map<String, Value>, ctx: &ToolContext) -> ToolOutcome {
         .ok()
         .and_then(|content| serde_json::from_str::<Value>(&content).ok())
         .unwrap_or(Value::Null);
+    let base_directory = crate::github_skills::resource_base(&base_directory, &manifest);
     let version = manifest
         .get("version")
         .and_then(Value::as_str)

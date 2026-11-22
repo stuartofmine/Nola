@@ -98,6 +98,7 @@ struct MacHistoricalPartDetailsView: View {
         }
         .padding(20)
         .frame(minWidth: 560, idealWidth: 760, minHeight: 420, idealHeight: 600)
+        .background(MacDesignColor.canvas)
         .task(id: "\(selectedIndex):\(retry)") {
             guard selections.indices.contains(selectedIndex) else { return }
             await model.load(selections[selectedIndex])

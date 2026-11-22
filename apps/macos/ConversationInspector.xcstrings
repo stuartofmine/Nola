@@ -17,7 +17,11 @@
         }
       }
     },
+    "Diff preview is shortened. Open full review to inspect all changes." : {
+
+    },
     "Diff preview is shortened. Open in a tab to review the full changes." : {
+      "extractionState" : "stale",
       "localizations" : {
         "en" : {
           "stringUnit" : {
@@ -855,6 +859,65 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "重試"
+          }
+        }
+      }
+    },
+    "inspector.section.constraints" : {
+      "extractionState" : "stale",
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Vorgaben"
+          }
+        },
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Constraints"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Restricciones"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Contraintes"
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "制約"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "제약 조건"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Ограничения"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "约束条件"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "約束條件"
           }
         }
       }
@@ -2332,6 +2395,9 @@
           }
         }
       }
+    },
+    "New Goal" : {
+
     },
     "No textual diff is available for this file." : {
       "localizations" : {

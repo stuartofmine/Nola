@@ -26,6 +26,7 @@ data class HealthSummaryUiState(
 
 @HiltViewModel
 class HealthSummaryViewModel @Inject constructor(
+    private val intelligence: PersonalIntelligenceCore,
     private val healthDataSource: AndroidHealthDataSource
 ) : ViewModel() {
     private val _uiState = MutableStateFlow(HealthSummaryUiState())
@@ -115,7 +116,7 @@ class HealthSummaryViewModel @Inject constructor(
             }
         }
         viewModelScope.launch(Dispatchers.IO) {
-            PersonalIntelligenceCore.ingest(
+            intelligence.ingest(
                 IntelligenceIngestRequest(
                     events = listOf(
                         IntelligenceEvent(

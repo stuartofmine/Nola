@@ -5,8 +5,8 @@
 "room.left" = "Salió · historial conservado";
 "room.remove" = "Quitar";
 "room.add" = "Añadir agente";
-"room.create_agent" = "Crear agente";
-"room.agent_name" = "Nombre del agente";
+"room.create_agent" = "Crear experto";
+"room.agent_name" = "Nombre del experto";
 "room.use_current_model" = "Usar modelo actual";
 "room.open" = "Abrir chat";
 "room.all" = "Todos los chats";
@@ -678,6 +678,9 @@
 "chat.host_tool.name.time" = "Leer hora del sistema";
 "chat.host_tool.name.browser" = "Controlar navegador";
 "chat.host_tool.name.computer" = "Controlar el ordenador";
+"chat.host_tool.name.find_skill" = "Buscar un skill en GitHub";
+"chat.host_tool.name.install_skill" = "Instalar y activar el skill";
+"chat.host_tool.name.read_skill_resource" = "Leer un recurso del skill";
 "chat.host_tool.name.skill" = "Usar skill";
 "chat.host_tool.name.mcp" = "Invocar MCP";
 "chat.host_tool.name.background" = "Tarea en segundo plano";
@@ -1641,6 +1644,7 @@
 "common.frequency.weekly" = "Semanal";
 "common.no.zh" = "No";
 "common.retry" = "Reintentar";
+"common.search" = "Buscar";
 "common.unknown" = "Desconocido";
 "common.yes.zh" = "Sí";
 "data.subtitle.local_first" = "Fuentes de datos en el dispositivo, acciones programadas y estado de ejecución reciente.";
@@ -1968,6 +1972,12 @@
 "chat.permission.action.create_calendar" = "Crear evento";
 "chat.hybrid.clipboard" = "Portapapeles";
 "model.web_host.connect" = "Conectar";
+"model.web_host.setup_payload" = "Datos de conexión";
+"model.web_host.paste_setup" = "Pegar datos de conexión";
+"model.web_host.invalid_setup" = "Copia los datos de conexión en Nola en el host y pégalos aquí.";
+"model.web_host.cancel_verification" = "Cancelar verificación";
+"model.web_host.error.rollback" = "No se pudo guardar el token ni eliminar la nueva identidad del host. Olvida este emparejamiento y vuelve a intentarlo.";
+"model.web_host.recheck" = "Volver a verificar";
 "chat.model.not_configured" = "Sin configurar";
 "chat.permission.action.write_clipboard" = "Actualizar portapapeles";
 "chat.model.group.cloud" = "Nube";
@@ -2266,7 +2276,7 @@
 /* macOS Settings workspace */
 
 /* Personal intelligence capabilities */
-"personal.capabilities.title" = "Habilidades y MCP";
+"personal.capabilities.title" = "Biblioteca de capacidades";
 "personal.capabilities.gateway.detail" = "Gestiona flujos reutilizables y conexiones con herramientas externas.";
 "personal.capabilities.gateway.count" = "activos";
 "personal.capabilities.subtitle" = "Flujos reutilizables y herramientas conectadas disponibles entre conversaciones.";
@@ -2445,7 +2455,7 @@
 
 "chat.task.guidance.send" = "Enviar orientación";
 "model.web_host.setup" = "Antes de conectar";
-"model.web_host.setup.start" = "En el Mac, abre «Ajustes > Conexión con el host» en Nola y permite conexiones de dispositivos.";
+"model.web_host.setup.start" = "En el Mac, abre «Ajustes > Conexiones» en Nola y activa «Compartir este Mac como Nola Server».";
 "model.web_host.setup.copy" = "Copia la dirección y el token de emparejamiento que muestra Nola en el Mac. Usa una red privada de confianza o HTTPS.";
 "model.web_host.checking" = "Comprobando el host";
 "model.web_host.checking.detail" = "Verificando el token, el protocolo de permisos y la identidad del host antes de guardar.";
@@ -2707,6 +2717,7 @@
 "chat.history.retry" = "Reintentar";
 "chat.history.running" = "En curso";
 "chat.history.search" = "Buscar conversaciones";
+"chat.history.search.clear" = "Borrar búsqueda";
 "chat.history.stop_before_delete" = "Detén la tarea antes de eliminarla";
 "chat.response.cancelled" = "Respuesta detenida";
 "chat.response.failed" = "Error en la respuesta. Abre el proceso para ver los detalles.";
@@ -2859,6 +2870,7 @@
 
 "room.pending_expert_message" = "La solicitud a expertos está pendiente de inicio.";
 "room.resume_complete_experts" = "Reanudar el mensaje original a expertos";
+"room.retry_expert_reply" = "Reintentar respuesta del experto";
 
 // Expert directory management
 "experts.manage" = "Gestionar expertos";
@@ -3176,6 +3188,7 @@
 "chat.context.import.failed_count" = "No se pudieron importar %d archivos. Usa archivos de texto UTF-8 no vacíos con un máximo de 40.000 caracteres (192 KB).";
 
 /* Expert roles and revision-aware mentions */
+"experts.useModelDefaults" = "Usar valores predeterminados del modelo";
 "experts.reasoning.inherit" = "Heredar ajustes del modelo";
 "experts.reasoning.unknown" = "Este modelo no declara niveles de razonamiento. Se hereda su ajuste predeterminado.";
 "experts.role.details" = "Prompt, herramientas y Skills";
@@ -3258,3 +3271,22 @@
 "chat.message.pendingEdit" = "Revisar edición pendiente";
 "chat.message.editSavedForReview" = "Puedes cerrar el editor. Abre la edición pendiente en esta conversación para comprobar si se envió.";
 "chat.context.documents.blank" = "Introduce texto para %@ o elimina el documento vacío.";
+
+"chat.history.otherClientReadOnly" = "Solo lectura. Para continuar esta conversación, ábrela en el cliente donde la creaste.";
+"chat.history.ambiguousIDs" = "Dos conversaciones tienen identificadores que solo se distinguen por las mayúsculas. Ábrelas en el cliente original.";
+"experts.executor.requiresHost" = "Conecta el equipo que ejecuta este agente de programación y selecciona al experto en una conversación de ese equipo.";
+
+"harness.plugins" = "Plugins";
+"harness.host" = "Elegir Host";
+"harness.device_note" = "Conecta el equipo donde se ejecutan tus plugins para usarlos aquí.";
+"harness.connect" = "Conectar un Host de escritorio";
+"harness.pair" = "Conectar otro Host";
+
+"Keep names as plain text" = "Mantener los nombres como texto plano";
+"The expert selection changed. Remove the mention and select the expert again." = "La selección de expertos cambió. Elimina la mención y vuelve a seleccionar al experto.";
+"Write what you want the expert to do." = "Escribe lo que quieres que haga el experto.";
+"View expert history" = "Ver historial del experto";
+"Icon could not be rendered" = "No se pudo renderizar el icono";
+
+"model.center.selection_error.title" = "No se pudo seleccionar el modelo";
+"prompt.templates.copy_name" = "%@ (copia)";

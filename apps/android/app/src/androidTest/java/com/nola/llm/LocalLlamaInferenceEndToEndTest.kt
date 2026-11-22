@@ -24,7 +24,9 @@ class LocalLlamaInferenceEndToEndTest {
         val context = ApplicationProvider.getApplicationContext<android.content.Context>()
         val model = File(context.filesDir, "models/e2e-qwen3-0.6b.gguf")
         assertTrue("Real GGUF fixture was not provisioned at ${model.absolutePath}", model.isFile)
-        assertTrue("GGUF fixture is unexpectedly small", model.length() > 400_000_000)
+        assertTrue("Expected a GGUF model", model.inputStream().buffered().use {
+            java.io.DataInputStream(it).readInt() == 0x47475546
+        })
 
         val engine = AiChat.getInferenceEngine(context)
         try {

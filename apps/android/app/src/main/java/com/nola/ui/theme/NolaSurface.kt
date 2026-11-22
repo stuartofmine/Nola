@@ -14,9 +14,11 @@ import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Outline
 import androidx.compose.ui.graphics.Path
+import androidx.compose.ui.graphics.luminance
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.LayoutDirection
 import androidx.compose.ui.unit.dp
+import com.nola.ui.components.NolaColors
 
 /** Two tangent cubic segments per corner, with zero curvature at each straight
  * edge and matching curvature at their midpoint. No circular-arc/line kink. */
@@ -58,9 +60,12 @@ class NolaContinuousShape(
 @Composable
 fun Modifier.nolaSurface(radius: Dp = 16.dp, raised: Boolean = false,
                          fill: Color = MaterialTheme.colorScheme.surface,
-                         border: Color = MaterialTheme.colorScheme.outlineVariant): Modifier {
+                         border: Color = Color.Unspecified): Modifier {
+    val isDark = MaterialTheme.colorScheme.background.luminance() < 0.5f
+    val resolvedBorder = if (border != Color.Unspecified) border else NolaColors.hairlineBorder
     val shape = remember(radius) { NolaContinuousShape(radius) }
     val elevation = if (raised) shadow(3.dp, shape, clip = false,
-        ambientColor = Color.Black.copy(alpha = .06f), spotColor = Color.Black.copy(alpha = .06f)) else this
-    return elevation.background(fill, shape).border(.75.dp, border, shape).clip(shape)
+        ambientColor = Color.Black.copy(alpha = if (isDark) .24f else .06f),
+        spotColor = Color.Black.copy(alpha = if (isDark) .24f else .06f)) else this
+    return elevation.background(fill, shape).border(.75.dp, resolvedBorder, shape).clip(shape)
 }

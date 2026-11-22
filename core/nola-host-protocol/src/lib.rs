@@ -18,7 +18,7 @@ mod worker_process;
 pub use worker_process::{HostWorkerProcessIdentity, HostWorkerIdentity, HostWorkerLeaseIdentity, HostProcessObservation};
 mod host_invocation;
 mod mac_launch;
-pub use mac_launch::{HostMacInputOrigin, HostMacLaunchDescriptor, HostMacLaunchAttachment};
+pub use mac_launch::{valid_custom_skill_id, HostMacInputOrigin, HostMacLaunchDescriptor, HostMacLaunchAttachment};
 mod host_secret;
 pub use host_invocation::{
     HostRunRecoveryReference, HostSiwcAccountBinding,

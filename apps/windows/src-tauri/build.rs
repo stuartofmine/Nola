@@ -25,6 +25,8 @@ fn main() {
         "login_item",
         "set_login_item",
         "native_runtime",
+        "set_theme",
+        "open_logs_folder",
     ]);
     tauri_build::try_build(tauri_build::Attributes::new().app_manifest(manifest))
         .expect("Build Tauri application resources");

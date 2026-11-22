@@ -76,6 +76,13 @@ fn core_permission_projection_updated(
         pending: &[nola_core::agent::permissions::PendingPermissionRequest],
         active_policy: Option<&nola_domain::ActivePermissionPolicy>,
     ) { Emitter::core_permission_projection_updated(self, session_id, turn_id, revision, pending, active_policy) }
+fn committed_external_session(&mut self, session: &crate::session::CommittedExternalSession) {
+    if self.json {
+        if let Some(event) = session.event_for(self.host_trace_binding.as_ref()) {
+            self.emit_json_value(event);
+        }
+    }
+}
 fn committed_assistant_journal(
         &mut self,
         through: nola_domain::assistant_journal::AssistantJournalCursor,

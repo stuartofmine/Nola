@@ -41,7 +41,7 @@ class ApplicationCommandEffectTest {
     }
     @Test fun versionedExpertRoleCatalogIsReadOnlyButReintroductionMutates() {
         assertTrue(ApplicationCommandEffect.isObservation(command("list_root_conversations")))
-        for (read in listOf("child_conversations", "child_history", "for_conversation", "role_templates"))
+        for (read in listOf("child_conversations", "child_history", "peer_exchanges", "for_conversation", "role_templates"))
             assertTrue(ApplicationCommandEffect.isObservation(command("agent_room", read)))
         assertFalse(ApplicationCommandEffect.isObservation(command("agent_room", "rejoin")))
     }

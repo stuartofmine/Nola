@@ -103,9 +103,16 @@ nonisolated final class IOSModelConnectionService: Sendable {
         let id = previous?.id ?? UUID().uuidString.lowercased()
         var accountID = previous?.document.connection.account_id
         var account: AgentCoreJSONValue = .null
-        let sameCredential = try previous.map {
-            try credential(connectionID: $0.id, endpoint: endpoint, wireProtocol: wireProtocol).secret == secret
-        } ?? false
+        let sameCredential: Bool
+        if let previous, previous.document.connection.enabled {
+            if secret.isEmpty {
+                sameCredential = try credential(connectionID: previous.id, endpoint: endpoint, wireProtocol: wireProtocol).secret == secret
+            } else {
+                sameCredential = (try? credential(connectionID: previous.id, endpoint: endpoint, wireProtocol: wireProtocol).secret) == secret
+            }
+        } else {
+            sameCredential = false
+        }
         if !secret.isEmpty && !sameCredential {
             let reference = try credentials.storeAccountSecret(secret, connectionID: id,
                 endpoint: endpoint, protocols: [wireProtocol])
@@ -180,18 +187,29 @@ nonisolated final class IOSModelConnectionService: Sendable {
         return try command(["type": .string("save_connection"), "input": input,
             "expected_revision": .signedInteger(snapshot.revision), "updated_at_ms": now])
     }
+    func reconnect(_ snapshot: IOSModelConnectionSnapshot) throws -> IOSModelConnectionSnapshot {
+        var document = snapshot.document; document.connection.enabled = true
+        let input = try JSONDecoder().decode(AgentCoreJSONValue.self, from: JSONEncoder().encode(document.connection))
+        return try command(["type": .string("save_connection"), "input": input,
+            "expected_revision": .signedInteger(snapshot.revision), "updated_at_ms": now])
+    }
     func discover(endpoint: String, wireProtocol: String, secret: String, name: String) async throws -> [AppleModelCatalogDiscovery.Model] {
         var key = secret
-        let host = URLComponents(string: endpoint)?.host ?? ""
+        let trimmedEndpoint = endpoint.trimmingCharacters(in: .whitespacesAndNewlines)
+        let host = URLComponents(string: trimmedEndpoint)?.host ?? ""
         let label = name.trimmingCharacters(in: .whitespacesAndNewlines)
+        let defaultDisplayName = "\(trimmedEndpoint) · \(wireProtocol)"
         if key.isEmpty, let connection = try connections().first(where: {
             $0.document.connection.enabled && $0.document.connection.source == "manual" &&
-            $0.document.connection.display_name.caseInsensitiveCompare(label.isEmpty ? host : label) == .orderedSame &&
-            $0.document.connection.base_url == endpoint && $0.document.connection.protocols == [wireProtocol]
+            $0.document.connection.base_url == trimmedEndpoint && $0.document.connection.protocols == [wireProtocol] &&
+            (label.isEmpty
+                ? ($0.document.connection.display_name.caseInsensitiveCompare(defaultDisplayName) == .orderedSame
+                    || (!host.isEmpty && $0.document.connection.display_name.caseInsensitiveCompare(host) == .orderedSame))
+                : $0.document.connection.display_name.caseInsensitiveCompare(label) == .orderedSame)
         }) {
-            key = try credential(connectionID: connection.id, endpoint: endpoint, wireProtocol: wireProtocol).secret
+            key = try credential(connectionID: connection.id, endpoint: trimmedEndpoint, wireProtocol: wireProtocol).secret
         }
-        return try await AppleModelCatalogDiscovery.discover(endpoint: endpoint, wireProtocol: wireProtocol, secret: key)
+        return try await AppleModelCatalogDiscovery.discover(endpoint: trimmedEndpoint, wireProtocol: wireProtocol, secret: key)
     }
 
     func discover(_ snapshot: IOSModelConnectionSnapshot) async throws -> IOSModelConnectionSnapshot {

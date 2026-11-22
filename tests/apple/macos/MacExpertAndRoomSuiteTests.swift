@@ -44,6 +44,51 @@ import XCTest
 }
 
 final class MacMainExpertDispatchContractTests: XCTestCase {
+    func testInlineMentionsUseCursorAndPreserveFrozenIdentity() throws {
+        let text = "👩🏽‍💻请@测帮我"
+        let caret = "👩🏽‍💻请@测".utf16.count
+        let query = try XCTUnwrap(ExpertMentionQuery.atCaret(in: text, selection: NSRange(location: caret, length: 0)))
+        let expert = AppleMainExpertSelectionEntry(agentID: "a", agentRevision: 3)
+        let inserted = AppleDraftMention.insertion(text: text, range: query.range, name: "测试", expert: expert, mentions: [], sourceID: nil, epoch: nil)
+        XCTAssertEqual(inserted.text, "👩🏽‍💻请@测试 帮我")
+        let again = AppleDraftMention.insertion(text: inserted.text, range: NSRange(location: inserted.text.utf16.count, length: 0),
+            name: "测试", expert: expert, mentions: inserted.mentions, sourceID: nil, epoch: nil)
+        var wire = try XCTUnwrap(AppleDraftMention.segments(again.mentions, in: again.text))
+        XCTAssertEqual(wire.segments.compactMap(\.agentID), ["a", "a"])
+        wire.selectedExperts = try AppleDraftMention.selected(again.mentions, sourceID: nil, epoch: nil)
+        XCTAssertEqual(wire.selectedExperts, [expert])
+        XCTAssertEqual(wire.runs(in: again.text), again.mentions)
+        XCTAssertNil(wire.runs(in: "stale"))
+        XCTAssertEqual(AppleDraftMention.replacing(again.mentions, range: again.mentions[0].range, with: "@测试").count, 1)
+        XCTAssertNil(ExpertMentionQuery.atEnd(of: "hello@example"))
+        XCTAssertThrowsError(try AppleDraftMention.selected(again.mentions, sourceID: "different-host", epoch: "1"))
+    }
+
+    @MainActor func testScopedExpertHistoryLoadsJournalOnlyFromItsSourceWindow() async throws {
+        let fixture = try MacAssistantJournalTestFixture(conversationID: "child-history", runID: "run", assistantMessageID: "assistant")
+        _ = try fixture.append("专家回复。")
+        _ = try fixture.finish()
+        let source = try MacApplicationPort(databaseURL: fixture.databaseURL)
+        let window = try source.loadConversationWindow(fixture.conversationID)
+        let head = try XCTUnwrap(window.assistantJournalHeads.first)
+        let page = MacExpertChildHistoryReader.Page(version: 1, conversationID: "parent", childConversationID: fixture.conversationID,
+            roomID: "room", roomRevision: 1, sourceOwner: .local, window: window, expertExchanges: [])
+        let reader = MacExpertChildHistoryReader(parentID: "parent", childID: fixture.conversationID, readJournal: { cursor in
+            XCTAssertEqual(cursor, head)
+            let snapshot = try source.openAssistantJournalSnapshot(at: cursor)
+            defer { try? source.releaseAssistantJournalSnapshot(snapshot) }
+            return try await MacJournalTextRead.publicMarkdown(at: cursor, parts: { after in
+                try source.assistantJournalParts(snapshot: snapshot, afterPartID: after)
+            }, range: { part, body, offset in
+                try source.assistantJournalRange(snapshot: snapshot, partID: part, content: body, offsetBytes: offset)
+            })
+        }, read: { _ in page })
+        await reader.load()
+        XCTAssertNil(reader.error)
+        XCTAssertEqual(reader.messages.first(where: { $0.role == .assistant })?.scopedJournalText, "专家回复。")
+        XCTAssertThrowsError(try MacCanonicalConversationRepository.projectMessages(window, disclosedJournalText: ["someone-else": "foreign"]))
+    }
+
     func testSelectedChipsBlockedBudgetRemotePayloadAndTaskSourceContracts() throws {
         let old = MacRoomParticipant(id: "member", agentID: "expert", agentRevision: 1,
             displayName: "Frozen name", description: "", contextConversationID: "old-context", active: true)
@@ -248,8 +293,101 @@ final class MacMainExpertDispatchContractTests: XCTestCase {
         XCTAssertFalse(try repository.loadSidebar().contains { $0.conversation.id == current.id || $0.conversation.id == previous.id })
     }
 
+    func testPeerExchangesUseParentAndRoomForRemoteRestoreRefreshAndStandaloneRoom() async throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let port = try MacApplicationPort(databaseURL: root.appendingPathComponent("nola.sqlite"))
+        let repository = MacCanonicalConversationRepository(store: port)
+        let local = MacAgentRoomService(execute: { request in
+            if case .object(let envelope) = request, case .object(let command) = envelope["command"] {
+                XCTAssertNotEqual(command["type"], .string("peer_exchanges"), "Selecting a standalone room has no main owner")
+            }
+            return try port.executeAgentRoomEnvelope(request)
+        })
+        let standalone = try local.create(title: "Standalone")
+        let workspace = MacAgentRoomWorkspace(service: local)
+        let execution = MacRoomExecutionService(repository: repository,
+            localRuntime: PersistenceTestLocalRuntime(), remoteHost: PersistenceTestRemoteHost())
+        workspace.executionService = execution
+        workspace.mainIsRemote = { true }
+
+        var associatedParent = "parent"
+        var pageParent = "parent"
+        var exchangeParent = "parent"
+        var exchangeRoom = "room"
+        var requests = [String]()
+        workspace.mainCommand = { owner, request in
+            guard case .object(let fields) = request, case .string(let kind) = fields["type"] else {
+                throw MacApplicationPortError.invalidResponse
+            }
+            XCTAssertEqual(owner, "parent")
+            XCTAssertEqual(fields["conversation_id"], .string("parent"))
+            requests.append(kind)
+            switch kind {
+            case "for_conversation":
+                let participants = ["source", "target"].map {
+                    MacRoomParticipant(id: $0 + "-member", agentID: $0 + "-agent", agentRevision: 1,
+                        displayName: $0, description: "", contextConversationID: $0, active: true)
+                }
+                let association = MacConversationRoomAssociation(conversationID: associatedParent, roomID: "room", revision: 1,
+                    room: .init(revision: 1, room: .init(id: "room", title: "Owner", participants: participants)))
+                return try JSONDecoder().decode(MacCanonicalJSONValue.self, from: JSONEncoder().encode(association))
+            case "peer_exchanges":
+                let text = Self.peerJSON.replacingOccurrences(of: #""parent_conversation_id":"parent""#,
+                    with: #""parent_conversation_id":"\#(exchangeParent)""#)
+                    .replacingOccurrences(of: #""room_id":"room""#, with: #""room_id":"\#(exchangeRoom)""#)
+                return .object(["version": .signedInteger(1), "conversation_id": .string(pageParent),
+                    "exchanges": .array([try JSONDecoder().decode(MacCanonicalJSONValue.self, from: Data(text.utf8))]),
+                    "has_more": .bool(false), "next_offset": .null])
+            default: throw MacApplicationPortError.invalidResponse
+            }
+        }
+        let initialIDs = try repository.conversationIDs()
+        await workspace.restoreConversation("parent")
+        XCTAssertEqual(workspace.peerExchanges.map(\.exchangeID), ["exchange"])
+        XCTAssertTrue(execution.owners.isEmpty, "A read from a remote Host must not create a local child conversation")
+        XCTAssertEqual(try repository.conversationIDs(), initialIDs)
+        execution.observe(contextID: "target")
+        await workspace.refreshPeerExchanges(for: "parent")
+        XCTAssertTrue(workspace.transcriptOwners.isEmpty, "A local child with the same ID cannot supply a remote transcript")
+
+        let initialRequests = requests
+        await workspace.select(standalone, resumeExecutions: false)
+        XCTAssertEqual(workspace.selectedRoom?.room.id, standalone.room.id)
+        XCTAssertNil(workspace.errors[standalone.room.id])
+        XCTAssertEqual(requests, initialRequests)
+
+        pageParent = "foreign"
+        await workspace.restoreConversation("parent")
+        XCTAssertTrue(workspace.peerExchanges.isEmpty)
+        pageParent = "parent"
+        exchangeParent = "foreign"
+        await workspace.refreshPeerExchanges(for: "parent")
+        XCTAssertTrue(workspace.peerExchanges.isEmpty)
+        exchangeParent = "parent"
+        exchangeRoom = "foreign-room"
+        await workspace.refreshPeerExchanges(for: "parent")
+        XCTAssertTrue(workspace.peerExchanges.isEmpty)
+        exchangeRoom = "room"
+        await workspace.refreshPeerExchanges(for: "parent")
+        XCTAssertEqual(workspace.peerExchanges.map(\.exchangeID), ["exchange"])
+        associatedParent = "foreign"
+        let count = requests.count
+        await workspace.restoreConversation("parent")
+        XCTAssertNil(workspace.conversationAssociation)
+        XCTAssertTrue(workspace.peerExchanges.isEmpty)
+        XCTAssertEqual(Array(requests.dropFirst(count)), ["for_conversation"])
+    }
+
     func testScopedPeerAuthorsUseFrozenNamesAndRejectForeignOrUnmappedMessages() throws {
         let exchange = try JSONDecoder().decode(AppleExpertPeerView.self, from: Data(Self.peerJSON.utf8))
+        let result = AppleExpertPeerExchanges(version: 1, conversationID: "parent", exchanges: [exchange],
+            hasMore: false, nextOffset: nil)
+        let wire = try JSONDecoder().decode(MacCanonicalJSONValue.self, from: JSONEncoder().encode(result))
+        let service = MacAgentRoomService(execute: { _ in wire })
+        XCTAssertEqual(try service.peerExchanges(conversationID: "parent").exchanges, [exchange])
+        XCTAssertThrowsError(try service.peerExchanges(conversationID: "source"))
+        XCTAssertThrowsError(try service.peerExchanges(conversationID: "target"))
         let authors = try MacExpertChildHistoryReader.authors([exchange], parentID: "parent", childID: "target", userMessageIDs: ["exchange:user"])
         XCTAssertEqual(authors["exchange:user"], "Frozen reviewer")
         XCTAssertThrowsError(try MacExpertChildHistoryReader.authors([exchange], parentID: "other", childID: "target", userMessageIDs: ["exchange:user"]))
@@ -337,6 +475,19 @@ final class MacMainExpertDispatchContractTests: XCTestCase {
 
 @MainActor
 final class MacExpertRoleConfigurationTests: XCTestCase {
+    func testExecutorVariantRoundTripPreservesInactiveHTTPModel() throws {
+        let original: MacCanonicalJSONValue = .object(["modelSelectionID": .string("configured:original"),
+            "expertExecutor": .object(["backend": .string("codex"), "model": .string("x"), "model_provider": .string("p")])])
+        var draft = try AppleExpertConfigurationDraft(defaults: original)
+        XCTAssertEqual(draft.executor, .init(backend: "codex", model: "x", model_provider: "p"))
+        XCTAssertEqual(try draft.applying(to: original), original)
+        draft.executor = .init(backend: AppleExpertExecutor.backendKey("opencode"), model: "provider/model")
+        let changed = try draft.applying(to: original)
+        XCTAssertEqual(try AppleExpertConfigurationDraft(defaults: changed), draft)
+        draft.executor = nil
+        XCTAssertEqual(try draft.applying(to: changed), .object(["modelSelectionID": .string("configured:original")]))
+    }
+
     func testEffortSelectionPreservesOpaqueDefaultsAndPerModelOverrides() throws {
         let original: MacCanonicalJSONValue = .object([
             "modelSelectionID": .string("configured:model"), "expertReasoningEffort": .string("high"),
@@ -516,9 +667,19 @@ final class MacExpertRoleConfigurationTests: XCTestCase {
         let role = try XCTUnwrap(catalog.templates.first)
         try await wait { self.element(host, "mac-expert-builtin-" + role.id) != nil }
         XCTAssertEqual(catalog.templates.count, 7)
-        for builtin in catalog.templates {
-            _ = element(host, "mac-expert-builtin-" + builtin.id)?.accessibilityPerformPress?()
-            try await wait { self.element(host, "mac-expert-builtin-preview") != nil }
+        attach(host, name: "expert-library-before-selection")
+        for builtin in catalog.templates.dropFirst() + catalog.templates.prefix(1) {
+            let button = try XCTUnwrap(element(host, "mac-expert-builtin-" + builtin.id))
+            XCTAssertTrue(button.accessibilityPerformPress?() == true, "Could not press \(builtin.id)")
+            let description = builtin.localizedDescription()
+            try await wait {
+                guard let preview = self.element(host, "mac-expert-builtin-preview") else { return false }
+                return self.elements(preview).contains { node in
+                    let value: Any? = node.accessibilityValue?() ?? nil
+                    return (value as? String) == description || node.accessibilityLabel?() == description
+                }
+            }
+            attach(host, name: "expert-preview-" + builtin.localizedName(locale: Locale(identifier: "en")))
         }
         XCTAssertEqual(try fixture.service.directory().agents.count, before.agents.count,
             "Browsing built-in roles must not create persistent agents")
@@ -580,20 +741,19 @@ final class MacExpertRoleConfigurationTests: XCTestCase {
         XCTAssertEqual(try AppleExpertConfigurationDraft(defaults: fixture.service.directory().agents[0].defaults).templateID, fixture.role.id)
     }
 
-    func testNativeAtSelectionJoinsDirectoryExpertByIDWithoutModelRequest() async throws {
+    func testNativeAtSelectionBindsDirectoryExpertByIDWithoutModelRequest() async throws {
         let accessibility = try MacHostedAccessibilitySession()
         defer { accessibility.restore() }
         let fixture = try nativeFixture()
         defer { try? FileManager.default.removeItem(at: fixture.root) }
         let workspace = MacAgentRoomWorkspace(service: fixture.service)
-        let state = ExpertMentionUITestSelection()
         let model = MacWorkspaceModel(canonicalRepository: fixture.repository,
             localAgentRuntime: PersistenceTestLocalRuntime(), remoteHost: PersistenceTestRemoteHost(), modelApplication: fixture.port)
         let owner = try XCTUnwrap(model.selectedConversationID)
         model.presentationDidAttach()
         await model.loadSelectedConversationIfNeeded()
         await workspace.restoreConversation(owner)
-        let host = NSHostingView(rootView: ExpertMentionUITestRoot(model: model, workspace: workspace, selection: state)
+        let host = NSHostingView(rootView: ExpertMentionUITestRoot(model: model, workspace: workspace)
             .environment(\.accessibilityEnabled, true).environment(\.colorScheme, .light).preferredColorScheme(.light))
         let window = makeWindow(host, width: 980, height: 760)
         defer { model.presentationDidDetach(); window.orderOut(nil); window.contentView = nil; window.close() }
@@ -603,12 +763,10 @@ final class MacExpertRoleConfigurationTests: XCTestCase {
         input.insertText("Review @Editor", replacementRange: NSRange(location: NSNotFound, length: 0))
         try await wait { self.element(host, "chat.mention." + fixture.expert.id) != nil }
         _ = element(host, "chat.mention." + fixture.expert.id)?.accessibilityPerformPress?()
-        try await wait { state.ids.contains(fixture.expert.id) && model.draft == "Review " }
-        let association = try XCTUnwrap(fixture.service.forConversation(owner))
-        XCTAssertEqual(association.room.room.participants.first?.agentID, fixture.expert.id)
-        XCTAssertTrue(try fixture.service.submissions(roomID: association.roomID).isEmpty, "Mention selection must not call a model")
+        try await wait { model.draftMentions(owner).map { $0.expert.agentID } == [fixture.expert.id] && model.draft == "Review @"+fixture.expert.name+" " }
+        XCTAssertNil(try fixture.service.forConversation(owner), "Selecting a candidate must only edit the draft")
         for scheme: ColorScheme in [.light, .dark] {
-            host.rootView = ExpertMentionUITestRoot(model: model, workspace: workspace, selection: state)
+            host.rootView = ExpertMentionUITestRoot(model: model, workspace: workspace)
                 .environment(\.accessibilityEnabled, true).environment(\.colorScheme, scheme).preferredColorScheme(scheme)
             window.appearance = NSAppearance(named: scheme == .dark ? .darkAqua : .aqua)
             host.appearance = window.appearance
@@ -626,6 +784,9 @@ final class MacExpertRoleConfigurationTests: XCTestCase {
         await workspace.restoreConversation(conversation.id)
         try await workspace.prepareExpertMention(agentID: fixture.expert.id, expectedRevision: fixture.expert.revision,
             conversationID: conversation.id, isPersisted: true)
+        XCTAssertNil(try fixture.service.forConversation(conversation.id))
+        let room = try fixture.service.ensureForConversation(conversation.id)
+        _ = try fixture.service.join(agent: fixture.expert, room: room.room)
         let joined = try XCTUnwrap(fixture.service.forConversation(conversation.id))
         let original = try XCTUnwrap(joined.room.room.participants.first)
         _ = try fixture.service.updateAgent(fixture.expert, name: fixture.expert.name, description: "A newer directory definition",
@@ -713,17 +874,13 @@ final class MacExpertRoleConfigurationTests: XCTestCase {
     }
 }
 
-@MainActor private final class ExpertMentionUITestSelection: ObservableObject {
-    @Published var ids: Set<String> = []
-}
 private struct ExpertMentionUITestRoot: View {
     let model: MacWorkspaceModel
     @ObservedObject var workspace: MacAgentRoomWorkspace
-    @ObservedObject var selection: ExpertMentionUITestSelection
     @FocusState private var focused: Bool
     var body: some View {
         MacConversationCanvas(model: model, composerFocused: $focused,
-            expertSelection: $selection.ids, expertWorkspace: workspace)
+            expertWorkspace: workspace)
             .background(MacDesignColor.canvas).tint(MacDesignColor.brand).onAppear { focused = true }
     }
 }

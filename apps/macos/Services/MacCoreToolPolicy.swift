@@ -394,7 +394,7 @@ nonisolated enum MacCoreToolPolicy {
         "tool_search", "update_agent_todos", "validation_plan", "verification_review", "wait_task", "workspace_checkpoint",
         "workspace_access", "workspace_status", "workspace_symbols", "write_file",
     ]
-    private static let webTools = ["web_search", "web_fetch"]
+    private static let webTools = ["web_search", "web_fetch", "github_skill_find", "github_skill_install"]
     private static let macProductivityTools = [
         "search_calendar_events", "create_calendar_event",
         "search_reminders", "create_reminder", "update_reminder",

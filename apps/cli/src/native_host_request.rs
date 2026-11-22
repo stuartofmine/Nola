@@ -1248,7 +1248,7 @@ mod desktop_resume_request_tests {
     #[test]
     fn resume_rejects_input_fields_in_both_envelope_and_configuration() {
         for key in ["prompt", "submission_id", "user_message_id", "context_components",
-            "context_messages", "attachments", "input_origin", "replace_active_run", "selected_experts", "expected_source_store_epoch"] {
+            "context_messages", "attachments", "input_origin", "replace_active_run", "selected_experts", "expected_source_store_epoch", "expert_mentions"] {
             let mut request = frame();
             request[key] = Value::Null;
             assert!(decode_desktop_operation(request, Some("session")).is_err(), "top-level {key}");
@@ -1469,10 +1469,14 @@ mod desktop_model_capability_tests {
 /// Shared native/Web transport projection. Selection data is validated again
 /// and resolved atomically by Core; it is not a prompt or a permission grant.
 pub(crate) fn decode_main_expert_selection(request: &Value) -> Result<Option<nola_domain::expert_task_target::MainExpertSelectionContextV1>,String> {
-    let Some(selected)=request.get("selected_experts") else {return Ok(None);};
+    let Some(selected)=request.get("selected_experts") else {
+        return if request.get("expert_mentions").is_some_and(|v| !v.is_null()) { Err("expert_mentions_require_selection".into()) } else { Ok(None) };
+    };
     let selection:nola_domain::expert_task_target::MainExpertSelectionContextV1=serde_json::from_value(
-        serde_json::json!({"version":1,"selected_experts":selected,"expected_source_store_epoch":request.get("expected_source_store_epoch")})).map_err(|_|"invalid_main_expert_selection")?;
-    if selection.selected_experts.is_empty() {return Ok(None);}
+        serde_json::json!({"version":1,"selected_experts":selected,"expert_mentions":request.get("expert_mentions"),"expected_source_store_epoch":request.get("expected_source_store_epoch")})).map_err(|_|"invalid_main_expert_selection")?;
+    if selection.selected_experts.is_empty() {
+        return if selection.expert_mentions.is_some() { Err("expert_mentions_require_selection".into()) } else { Ok(None) };
+    }
     Ok(Some(selection))
 }
 

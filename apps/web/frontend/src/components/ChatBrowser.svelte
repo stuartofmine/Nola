@@ -37,6 +37,19 @@
     const current = $derived(pageState && pageState.conversationId === conversationId && pageState.generation === generation && pageState.activityKey === activityKey ? pageState.snapshot : snapshot);
     const preview = $derived(current?.previewUrl && typeof window !== 'undefined'
         ? localBrowserPreviewURL(current.previewUrl, window.location.href) : null);
+    $effect(() => {
+        conversationId; generation;
+        untrack(() => {
+            if (expanded) {
+                if (previewDialog?.open) previewDialog.close();
+                expanded = false;
+                if (previewDialog) previewDialog.open = true;
+            }
+        });
+    });
+    $effect(() => {
+        if (!preview || current?.target !== 'managed') expanded = false;
+    });
 
     async function loadPages(id: string, ownerGeneration: number) {
         pagesController?.abort();

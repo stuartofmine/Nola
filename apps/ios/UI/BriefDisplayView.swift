@@ -77,7 +77,7 @@ struct BriefDisplayView: View {
             Spacer()
         }
         .padding()
-        .background(Color(red: 0.95, green: 0.95, blue: 0.95))
+        .background(DesignTokens.surfaceColor)
         .cornerRadius(12)
     }
 }

@@ -260,7 +260,7 @@ nonisolated final class IOSAgentRoomService: Sendable {
         let result: AppleExpertPeerExchanges = try command(["type": .string("peer_exchanges"),
             "conversation_id": .string(conversationID), "limit": .signedInteger(Int64(limit)),
             "offset": .signedInteger(Int64(offset))])
-        try result.validate(contextID: conversationID, offset: offset)
+        try result.validate(parentID: conversationID, offset: offset)
         return result
     }
 

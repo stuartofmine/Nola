@@ -19,9 +19,18 @@ import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
 import com.nola.R
 import com.nola.ui.components.NolaCardCompact
+import com.nola.ui.components.nolaDisclosureEnter
+import com.nola.ui.components.nolaDisclosureExit
+import com.nola.ui.components.rememberReduceMotionEnabled
 
 @Composable
-internal fun ModelConnectionsSection(state: ModelsUiState, refresh: () -> Unit, manageHost: () -> Unit) {
+internal fun ModelConnectionsSection(
+    state: ModelsUiState,
+    refresh: () -> Unit,
+    connectHost: () -> Unit,
+    manageHost: () -> Unit,
+) {
+    val reduceMotion = rememberReduceMotionEnabled()
     var showAccountDetails by remember { mutableStateOf(false) }
     NolaCardCompact {
         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
@@ -31,11 +40,12 @@ internal fun ModelConnectionsSection(state: ModelsUiState, refresh: () -> Unit, 
         if (state.connectionInventoryLoading) Text(stringResource(R.string.model_connections_loading))
         if (state.connectionInventoryFailed) Text(stringResource(R.string.model_connections_failed), color = MaterialTheme.colorScheme.error)
         Text(stringResource(R.string.model_connections_host_hint), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-        TextButton(enabled = !state.openingHostManagement && state.webHostUrl.isNotBlank() && state.webHostToken.isNotBlank(), onClick = manageHost) {
-            Text(stringResource(R.string.model_connections_host_manage))
-        }
         if (state.webHostUrl.isBlank() || state.webHostToken.isBlank()) {
-            Text(stringResource(R.string.model_connections_pair_first), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            TextButton(onClick = connectHost) { Text(stringResource(R.string.onboarding_guide_runtime_host)) }
+        } else {
+            TextButton(enabled = !state.openingHostManagement, onClick = manageHost) {
+                Text(stringResource(R.string.model_connections_host_manage))
+            }
         }
         NolaDisclosureBar(
             title = stringResource(
@@ -45,7 +55,11 @@ internal fun ModelConnectionsSection(state: ModelsUiState, refresh: () -> Unit, 
             expanded = showAccountDetails,
             onToggle = { showAccountDetails = !showAccountDetails }
         )
-        AnimatedVisibility(visible = showAccountDetails) {
+        AnimatedVisibility(
+            visible = showAccountDetails,
+            enter = nolaDisclosureEnter(reduceMotion),
+            exit = nolaDisclosureExit(reduceMotion),
+        ) {
             Text(
                 stringResource(R.string.model_connections_source_boundary),
                 style = MaterialTheme.typography.bodySmall,

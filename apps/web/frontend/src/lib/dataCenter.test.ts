@@ -14,7 +14,7 @@ test('overview counts only verified default sources as ready, treating unknown p
     assert.deepEqual(overview.attention.map(source => source.id), ['blocked', 'unknown', 'failed', 'pending']);
     assert.deepEqual(sourceOverview([]), {connected: 0, ready: 0, attention: []});
 });
-test('data center renders four real labelled panels and no fabricated initial source totals', async () => {
+test('data center renders five real labelled panels and no fabricated initial source totals', async () => {
     const previousWindow = Object.getOwnPropertyDescriptor(globalThis, 'window');
     Object.defineProperty(globalThis, 'window', { configurable: true, value: {
         innerWidth: 1280, location: { href: 'http://nola.invalid/data-sources' },
@@ -27,9 +27,11 @@ test('data center renders four real labelled panels and no fabricated initial so
         for (const language of supportedLocales) {
             locale.set(language);
             const html = render(Component).body;
-            assert.equal((html.match(/role="tab"/g) ?? []).length, 4);
-            assert.equal((html.match(/role="tabpanel"/g) ?? []).length, 4);
+            assert.equal((html.match(/role="tab"/g) ?? []).length, 5);
+            assert.equal((html.match(/role="tabpanel"/g) ?? []).length, 5);
             assert.ok(!html.includes('class="source-stats"'));
+            assert.ok(html.includes('aria-controls="data-panel-knowledge"'));
+            assert.ok(html.includes(t(language, 'chatKnowledge.knowledgePoints')));
             for (const pane of ['sources', 'memory', 'plans', 'usage']) {
                 assert.ok(html.includes(`aria-controls="data-panel-${pane}"`));
                 assert.ok(html.includes(t(language, `data_sources.tab.${pane}`)));

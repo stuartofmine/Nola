@@ -17,7 +17,10 @@ nonisolated struct MacConversationDraftRecord: Codable, Sendable {
     let attachments: [Attachment]
     var browserSnapshot: MacConversationBrowserSnapshot? = nil
 
+    var mentions: [AppleDraftMention]?
+
     func validate() throws {
+        guard mentions?.isEmpty != false || AppleDraftMention.segments(mentions ?? [], in: text) != nil else { throw MacApplicationPortError.invalidResponse }
         guard !conversationID.isEmpty, text.utf8.count <= 4_000_000, attachments.count <= 100,
               attachments.reduce(text.utf8.count, { $0 + $1.text.utf8.count })
                 + (try JSONEncoder().encode(browserSnapshot).count) <= 8_000_000,

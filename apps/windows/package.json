@@ -18,7 +18,7 @@
     "dist:x64:cuda": "powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts/tauri-dist.ps1 -Architecture x64 -Backend cuda",
     "dist:arm64": "powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts/tauri-dist.ps1 -Architecture arm64 -Backend cpu",
     "test": "npm run test:unit && npx playwright test --project=chromium-desktop-shell",
-    "test:e2e": "node scripts/test-installed-tauri.cjs",
+    "test:e2e": "powershell.exe -STA -NoProfile -ExecutionPolicy Bypass -File scripts/test-installed-ui.ps1",
     "pretest:unit": "tsc -p tsconfig.json",
     "test:unit": "node --test unit/*.test.cjs"
   },

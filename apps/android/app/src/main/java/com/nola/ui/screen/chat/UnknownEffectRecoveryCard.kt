@@ -34,12 +34,12 @@ internal fun UnknownEffectRecoveryCard(snapshot: UnknownEffectRecoveryPresentati
             } else if (inspection != null) {
                 if (allowsRiskRetry) LazyColumn(Modifier.fillMaxWidth().heightIn(max = 180.dp)) {
                     itemsIndexed(inspection.targets, key = { _, target -> target.effectId }) { index, target ->
-                        TextButton(onClick = { selected = index }, enabled = !busy,
-                            modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp)) {
-                            RadioButton(selected = selected == index, onClick = null)
-                            Spacer(Modifier.width(8.dp))
-                            Text(target.effectId, style = MaterialTheme.typography.bodyMedium)
-                        }
+                        com.nola.ui.components.NolaRadioOption(
+                            label = target.effectId,
+                            selected = selected == index,
+                            enabled = !busy,
+                            onClick = { selected = index },
+                        )
                     }
                 }
                 OutlinedTextField(value = reason, onValueChange = { reason = it }, enabled = !busy,

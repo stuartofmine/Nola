@@ -35,13 +35,17 @@ class ExpertEditorDefaultsTest {
         assertEquals(original["language"], updated["language"])
     }
 
-    @Test fun creationInitializesOnlyAbsentParameterProfiles() {
-        val original = value("""{"modelOverrides":{"configured:a":{"temperature":0.21}}}""")
-        val generated = value("""{"modelSelectionID":"configured:b","modelOverrides":{"configured:a":{"temperature":0.7},"configured:b":{"temperature":0.8}}}""")
-        val updated = mergeExpertEditorDefaults(original, true, generated, false, null, initializeModelParameters = true)
-        val profiles = updated.getValue("modelOverrides").jsonObject
-        assertEquals(original.getValue("modelOverrides").jsonObject["configured:a"], profiles["configured:a"])
-        assertEquals(generated.getValue("modelOverrides").jsonObject["configured:b"], profiles["configured:b"])
+    @Test fun selectingModelInheritsItsProfileUntilTheUserExplicitlyResetsExistingParameters() {
+        val selected = value("""{"modelSelectionID":"configured:b"}""")
+        val created = mergeExpertEditorDefaults(value("{}"), true, selected, false, null)
+        assertEquals(selected, created)
+
+        val original = value("""{"modelSelectionID":"configured:b","modelOverrides":{"configured:a":{"temperature":0.21},"configured:b":{"temperature":0.7,"topP":0.9}}}""")
+        val saved = mergeExpertEditorDefaults(original, false, null, false, null, reasoningEffort = "automatic")
+        assertEquals(original, saved)
+        val reset = mergeExpertEditorDefaults(original, false, null, false, null, resetModelParameters = "configured:b")
+        assertEquals(value("""{"configured:a":{"temperature":0.21}}"""), reset["modelOverrides"])
+        assertEquals(original["modelSelectionID"], reset["modelSelectionID"])
     }
     @Test fun effortIsExactAndAutomaticRemovesOnlyItsOverride() {
         val original = value("""{"expertReasoningEffort":"high","modelOverrides":{"configured:a":{"temperature":0.21}},"selectedPromptTemplateID":"template"}""")
@@ -54,5 +58,14 @@ class ExpertEditorDefaultsTest {
         assertThrows(IllegalArgumentException::class.java) {
             mergeExpertEditorDefaults(original, false, null, false, null, reasoningEffort = "balanced")
         }
+    }
+    @Test fun executorVariantsKeepProviderAndPreserveModelDefaults() {
+        val original = buildJsonObject { put("modelSelectionID", "old") }
+        val variant = com.nola.data.remote.dto.ExecutionBackendModelDto("x", "X", "p")
+        val binding = expertExecutorBinding("codex", variant)
+        val updated = mergeExpertEditorDefaults(original, false, null, false, null, changeExecutor = true, executor = binding)
+        assertEquals(JsonPrimitive("p"), (updated["expertExecutor"] as JsonObject)["model_provider"])
+        assertEquals(JsonPrimitive("open_code"), expertExecutorBinding("opencode")["backend"])
+        assertEquals(original, mergeExpertEditorDefaults(updated, false, null, false, null, changeExecutor = true))
     }
 }

@@ -55,6 +55,68 @@ pub struct MainExpertSelectionV1 {
     #[serde(default)]
     pub context_conversation_id: Option<String>,
 }
+/// Ordered user-visible runs. Only selections made in the picker carry an ID.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ExpertMentionSegment {
+    pub text: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub agent_id: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ExpertMentions {
+    pub version: u32,
+    pub segments: Vec<ExpertMentionSegment>,
+}
+
+impl ExpertMentions {
+    pub fn validate(&self, text: &str, selections: &[MainExpertSelectionV1]) -> Result<(), String> {
+        if self.version != 1 { return Err("unsupported_expert_mentions_version".into()); }
+        Self::validate_segments(&self.segments, text, selections)
+    }
+
+    fn validate_segments(segments: &[ExpertMentionSegment], text: &str, selections: &[MainExpertSelectionV1]) -> Result<(), String> {
+        use std::collections::BTreeSet;
+        let selected: BTreeSet<_> = selections.iter().map(|s| s.agent_id.as_str()).collect();
+        if segments.is_empty() || segments.len() > 1024
+            || selected.is_empty() || selected.len() != selections.len() || selected.len() > 32 {
+            return Err("invalid_expert_mentions".into());
+        }
+        let mut remaining = text;
+        let mut mentioned = BTreeSet::new();
+        for segment in segments {
+            if segment.text.is_empty() { return Err("invalid_expert_mention_segment".into()); }
+            remaining = remaining.strip_prefix(&segment.text).ok_or("expert_mentions_text_changed")?;
+            if let Some(id) = segment.agent_id.as_deref() {
+                if !selected.contains(id) || !segment.text.starts_with('@') || segment.text.len() == 1 {
+                    return Err("expert_mentions_selection_changed".into());
+                }
+                mentioned.insert(id);
+            }
+        }
+        if !remaining.is_empty() || mentioned != selected { return Err("expert_mentions_projection_changed".into()); }
+        Ok(())
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct FrozenExpertMentions {
+    pub version: u32,
+    pub segments: Vec<ExpertMentionSegment>,
+    pub selected_experts: Vec<MainExpertSelectionV1>,
+}
+
+impl FrozenExpertMentions {
+    pub fn matches_text(&self, text: &str) -> bool {
+        self.version == 1 && !self.selected_experts.is_empty()
+            && self.selected_experts.iter().all(|s| s.participant_id.is_some() && s.context_conversation_id.is_some())
+            && ExpertMentions::validate_segments(&self.segments, text, &self.selected_experts).is_ok()
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct MainExpertSelectionContextV1 {
@@ -62,6 +124,8 @@ pub struct MainExpertSelectionContextV1 {
     pub selected_experts: Vec<MainExpertSelectionV1>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub expected_source_store_epoch: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub expert_mentions: Option<ExpertMentions>,
 }
 pub const MAIN_EXPERT_SELECTION_COMPONENT_ID: &str = "nola.main-expert-selection";
 

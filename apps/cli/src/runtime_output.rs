@@ -58,6 +58,7 @@ pub trait RuntimeOutputPort {
         pending: &[nola_core::agent::permissions::PendingPermissionRequest],
         active_policy: Option<&nola_domain::ActivePermissionPolicy>,
     );
+    fn committed_external_session(&mut self, session: &crate::session::CommittedExternalSession);
     fn committed_assistant_journal(
         &mut self,
         through: nola_domain::assistant_journal::AssistantJournalCursor,

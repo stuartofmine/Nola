@@ -7,6 +7,9 @@ import CryptoKit
 nonisolated enum IOSExpertInstructionProducer {
     static func model(declaration: AppleExpertModelDeclaration<AgentCoreJSONValue>, defaults: AgentCoreJSONValue,
                       presentation: AgentCoreJSONValue = .null, store: IOSApplicationRuntime) throws -> (ModelInfo, ModelParameters) {
+        guard declaration.runtime != "external" else {
+            throw IOSApplicationRuntimeError.rejected(String(localized: "experts.executor.requiresHost"))
+        }
         guard let profile = try store.modelProfile(id: declaration.profile_id), profile.enabled, profile.deletedAtMs == nil,
               profile.revision == declaration.profile_revision, profile.provider == declaration.provider,
               profile.modelName == declaration.model_name, profile.runtime == declaration.runtime,

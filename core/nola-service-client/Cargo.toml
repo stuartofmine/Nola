@@ -14,5 +14,5 @@ socket2 = "0.5"
 
 [target.'cfg(windows)'.dependencies]
 uds_windows = "1.2.1"
-nola_credential_host = { path = "../nola-credential-host" }
+nola_windows_permissions = { path = "../nola-windows-permissions" }
 windows-sys = { version = "0.61", features = ["Win32_Foundation", "Win32_Networking_WinSock", "Win32_System_Threading"] }

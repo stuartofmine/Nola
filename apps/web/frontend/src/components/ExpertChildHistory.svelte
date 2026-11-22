@@ -2,15 +2,16 @@
     import { onDestroy } from 'svelte';
     import { api } from '../lib/api';
     import { roomCommandAtSource } from '../lib/agentRooms';
-    import { parseExpertChildPage,expertChildHistoryPayload,expertChildContinuationUrl,type ExpertChildConversation } from '../lib/expertChildConversations';
+    import { referencedExpertChild,parseExpertChildPage,expertChildHistoryPayload,expertChildContinuationUrl,type ExpertChildConversation } from '../lib/expertChildConversations';
     import { createChatTimeline,timelineRequest,reduceChatTimeline } from '../lib/chatTimeline';
     import { navigateWorkspace } from '../lib/workspaceNavigation';
     import { locale,t } from '../lib/i18n';
     import ChatMessageContent from './ChatMessageContent.svelte';
     import ChatReadOnlySurfacePart from './ChatReadOnlySurfacePart.svelte';
-    let {parentId,disabled=false,preload=false}:{parentId:string;disabled?:boolean;preload?:boolean}=$props();
+    let {parentId,disabled=false,preload=false,reference,expectedEpoch,expectedHost}:{parentId:string;disabled?:boolean;preload?:boolean;
+        reference?:import('../lib/mainExpertSelection').MainExpertSelection;expectedEpoch?:string|null;expectedHost?:string}=$props();
     let expanded=$state(false),loading=$state(false),preloaded=$state(false),error=$state(''),host=$state('');
-    let children=$state<ExpertChildConversation[]>([]),next=$state<number|null>(0),roomId=$state('');
+    let children=$state<ExpertChildConversation[]>([]),next=$state<number|null>(0),roomId=$state(''),roomRevision=$state<number|null>(null);
     let sourceEpoch=$state<string|null>(null);
     let sourceIdentity=$state(''),senders=$state<Record<string,{name:string;agentId:string}>>({});
     let selected=$state<ExpertChildConversation|null>(null),historyLoading=$state(false),historyError=$state('');
@@ -22,18 +23,32 @@
     async function sessionHost(){const session=await api<{hostId:string}>('/api/web/session',{signal:controller.signal});if(!session.hostId)throw Error('Invalid Host');return session.hostId;}
     async function load(reset=false,silent=false){
         if(loading||!reset&&next===null)return;const request=++serial,parent=parentId,offset=reset?0:next!;loading=true;if(!silent)error='';
-        try{const source=await sessionHost();if(host&&host!==source)throw Error('Host changed');
-            const scoped=await roomCommandAtSource({type:'child_conversations',conversation_id:parent,offset,limit:40},sourceEpoch,controller.signal);
+        try{const source=await sessionHost();if(expectedHost&&expectedHost!==source||host&&host!==source)throw Error('Host changed');
+            const scoped=await roomCommandAtSource({type:'child_conversations',conversation_id:parent,offset,limit:40},sourceEpoch??expectedEpoch,controller.signal);
             const page=parseExpertChildPage(scoped.result,parent,offset);
             if(await sessionHost()!==source)throw Error('Host changed');
             if(!alive||request!==serial||parent!==parentId)return;
             if(!reset&&page.children.some(c=>children.some(old=>old.conversation_id===c.conversation_id)))throw Error('History changed; reopen the list');
-            if(roomId&&roomId!==page.room_id)throw Error('Room changed');
-            host=source;sourceEpoch=scoped.sourceEpoch;roomId=page.room_id??'';children=reset?page.children:[...children,...page.children];next=page.next_offset;
+            if(!reset && roomId && (roomId!==page.room_id || roomRevision!==page.room_revision))throw Error('Room changed');
+            host=source;sourceEpoch=scoped.sourceEpoch;roomId=page.room_id??'';roomRevision=page.room_revision;children=reset?page.children:[...children,...page.children];next=page.next_offset;
         }catch{if(alive&&request===serial&&!silent)error=t($locale,'rooms.childLoadFailed');}finally{if(alive&&request===serial)loading=false;}
     }
-    async function open(child:ExpertChildConversation,event:MouseEvent){
-        opener=event.currentTarget as HTMLElement;selected=child;timeline=createChatTimeline({conversationId:child.conversation_id,generation:++historySerial});historyError='';sourceIdentity='';senders={};
+    async function openReferenced(event:MouseEvent) {
+        const button=event.currentTarget as HTMLElement,parent=parentId,target=reference;
+        if(!target||!target.context_conversation_id||!target.participant_id||!expectedHost||disabled)return;
+        error='';
+        while(alive&&parent===parentId&&target===reference){
+            const child=children.find(c=>referencedExpertChild(c,target));
+            if(child){await open(child,button);return;}
+            const offset=next;
+            if(offset===null)break;
+            await load();
+            if(error||next===offset)break;
+        }
+        if(alive)error=t($locale,'rooms.childLoadFailed');
+    }
+    async function open(child:ExpertChildConversation,button:HTMLElement){
+        opener=button;selected=child;timeline=createChatTimeline({conversationId:child.conversation_id,generation:++historySerial});historyError='';sourceIdentity='';senders={};
         dialog.showModal();closeButton.focus();await readHistory();
     }
     function close(){++historySerial;selected=null;timeline=null;historyLoading=false;dialog.close();opener?.focus();}
@@ -42,7 +57,7 @@
         const child=selected,request=historySerial,state=timeline;historyLoading=true;historyError='';
         try{if(await sessionHost()!==host)throw Error('Host changed');
             const window=state.window;const scoped=await roomCommandAtSource({type:'child_history',conversation_id:parentId,child_conversation_id:child.conversation_id,
-                before_ordinal:window?.before??null,limit:50,content_byte_limit:262144},sourceEpoch,controller.signal);
+                before_ordinal:window?.before??null,limit:50,content_byte_limit:262144},sourceEpoch??expectedEpoch,controller.signal);
             if(scoped.sourceEpoch!==sourceEpoch)throw Error('Expert source changed');const raw=scoped.result;
             const decoded=expertChildHistoryPayload(raw,parentId,child,roomId,host),payload=decoded.payload;
             if(sourceIdentity&&sourceIdentity!==decoded.sourceIdentity||await sessionHost()!==host)throw Error('Host changed');
@@ -53,12 +68,15 @@
     }
     function restartHistory(){if(!selected||historyLoading)return;timeline=createChatTimeline({conversationId:selected.conversation_id,generation:++historySerial});sourceIdentity='';senders={};void readHistory();}
 </script>
-{#if children.length > 0 || error || expanded}
+{#if reference}
+    <button disabled={disabled||loading} onclick={openReferenced}>{t($locale,'rooms.childHistory')}</button>
+    {#if error}<p role="alert">{error}</p>{/if}
+{:else if children.length > 0 || error || expanded}
 <div class="child-tree">
     <button class="disclosure" {disabled} aria-expanded={expanded} onclick={()=>{expanded=!expanded;if(expanded&&!children.length)void load();}}><span>{t($locale,'rooms.childHistory')}</span><span class="chevron" aria-hidden="true">{expanded?'▴':'▾'}</span></button>
     {#if expanded}
         <div class="children" aria-busy={loading}>
-            {#each children as child(child.conversation_id)}<button {disabled} class="child" onclick={event=>open(child,event)}><span>{child.title||t($locale,'rooms.experts')}</span><small>{t($locale,child.is_current?'rooms.childCurrent':'rooms.childArchived')} · {child.message_count}</small></button>{/each}
+            {#each children as child(child.conversation_id)}<button {disabled} class="child" onclick={event=>open(child,event.currentTarget)}><span>{child.title||t($locale,'rooms.experts')}</span><small>{t($locale,child.is_current?'rooms.childCurrent':'rooms.childArchived')} · {child.message_count}</small></button>{/each}
             {#if error}<p role="alert">{error}</p><button {disabled} onclick={()=>load(true)}>{t($locale,'rooms.refresh')}</button>
             {:else if next!==null}<button disabled={disabled||loading} onclick={()=>load()}>{loading?t($locale,'rooms.loading'):t($locale,'rooms.childMore')}</button>
             {:else if !children.length}<p>{t($locale,'rooms.childEmpty')}</p>{/if}

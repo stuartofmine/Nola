@@ -14,7 +14,7 @@ enum MacPromptLibraryLayoutPolicy {
 }
 
 struct MacPromptLibraryView: View {
-    @StateObject private var service = MacPromptLibrary.service
+    @StateObject private var service: PromptTemplateService
     @State private var selectedID: UUID?
     @State private var defaultTemplateID: UUID?
     @State private var editorTemplate: PromptTemplate?
@@ -27,7 +27,8 @@ struct MacPromptLibraryView: View {
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     let navigationAction: (() -> Void)?
 
-    init(navigationAction: (() -> Void)? = nil) {
+    init(service: PromptTemplateService = MacPromptLibrary.service, navigationAction: (() -> Void)? = nil) {
+        _service = StateObject(wrappedValue: service)
         self.navigationAction = navigationAction
     }
 
@@ -96,6 +97,10 @@ struct MacPromptLibraryView: View {
             Button(String(localized: "Delete"), role: .destructive) {
                 guard let template = pendingDeletion else { return }
                 do {
+                    if template.id == defaultTemplateID || (try? MacPromptLibrary.defaultTemplateID()) == template.id {
+                        try MacPromptLibrary.setDefaultTemplateID(nil)
+                        defaultTemplateID = nil
+                    }
                     try service.deleteTemplate(id: template.id)
                     pendingDeletion = nil
                     selectedID = filteredTemplates.first?.id
@@ -264,6 +269,7 @@ struct MacPromptLibraryView: View {
         }
         .help(String(localized: "New Template"))
         .accessibilityLabel(String(localized: "New Template"))
+        .accessibilityIdentifier("mac.prompt.new")
         .macToolbarIcon()
     }
 
@@ -441,7 +447,7 @@ private struct MacPromptTemplateDetail: View {
             Button(action: useAsDefault) {
                 Label(String(localized: "Use as Default"), systemImage: "checkmark.circle")
             }
-                .buttonStyle(.borderedProminent)
+                .buttonStyle(.nolaProminent)
         }
     }
 
@@ -455,6 +461,7 @@ private struct MacPromptTemplateDetail: View {
         Button(action: duplicate) {
             Label(String(localized: "Duplicate"), systemImage: "plus.square.on.square")
         }
+        .accessibilityIdentifier("mac.prompt.duplicate")
         Button(action: export) {
             Label(String(localized: "Export"), systemImage: "square.and.arrow.up")
         }
@@ -511,21 +518,24 @@ private struct MacPromptTemplateEditor: View {
                 if let saveError { Text(saveError).foregroundStyle(.red) }
                 TextField(String(localized: "Name"), text: $name)
                     .focused($nameFocused)
+                    .accessibilityIdentifier("mac.prompt.name")
                 TextField(String(localized: "Language (optional)"), text: $language, prompt: Text("en, zh-Hans…"))
                 TextField(String(localized: "Description"), text: $description, axis: .vertical)
                     .lineLimit(2...4)
-                TextEditor(text: $content)
-                    .font(.system(size: 12, design: .monospaced))
-                    .scrollContentBackground(.hidden)
-                    .frame(minHeight: 220)
-                LabeledContent(String(localized: "Variables")) {
-                    ViewThatFits(in: .horizontal) {
-                        HStack {
-                            variableButtons
-                        }
-                        VStack(alignment: .trailing, spacing: 6) {
-                            variableButtons
-                        }
+                VStack(alignment: .leading, spacing: 6) {
+                    Text(String(localized: "Prompt"))
+                    TextEditor(text: $content)
+                        .font(.system(size: 12, design: .monospaced))
+                        .scrollContentBackground(.hidden)
+                        .frame(minHeight: 116, idealHeight: 148)
+                        .accessibilityLabel(String(localized: "Prompt"))
+                        .accessibilityIdentifier("mac.prompt.content")
+                }
+                VStack(alignment: .leading, spacing: 8) {
+                    Text(String(localized: "Variables"))
+                    LazyVGrid(columns: [GridItem(.adaptive(minimum: 100), spacing: 6, alignment: .leading)],
+                              alignment: .leading, spacing: 6) {
+                        variableButtons
                     }
                 }
                 LabeledContent(
@@ -537,8 +547,9 @@ private struct MacPromptTemplateEditor: View {
                 )
             }
             .formStyle(.grouped)
+            .scrollContentBackground(.hidden)
             HStack {
-                if let validationMessage {
+                if hasUnsavedChanges, let validationMessage {
                     Label(validationMessage, systemImage: "exclamationmark.circle.fill")
                         .font(.caption)
                         .foregroundStyle(.orange)
@@ -559,14 +570,16 @@ private struct MacPromptTemplateEditor: View {
                         updatedAt: .now
                     )) } catch { saveError = error.localizedDescription }
                 }
-                .buttonStyle(.borderedProminent)
+                .buttonStyle(.nolaProminent)
                 .keyboardShortcut(.defaultAction)
                 .disabled(validationMessage != nil)
+                .accessibilityIdentifier("mac.prompt.save")
             }
         }
         .padding(22)
         .frame(minWidth: 440, idealWidth: 680, maxWidth: 760)
         .frame(minHeight: 480, idealHeight: 620, maxHeight: 760)
+        .background(MacDesignColor.canvas)
         .interactiveDismissDisabled(hasUnsavedChanges)
         .confirmationDialog(
             String(localized: "Discard unsaved changes?"),

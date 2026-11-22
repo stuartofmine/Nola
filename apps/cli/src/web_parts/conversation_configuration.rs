@@ -290,6 +290,27 @@ mod session_override_translation_tests {
     }
 
     #[test]
+    fn inherited_goal_model_requires_a_local_nola_execution_owner() {
+        assert!(conversation_inherits_host_goal_model(&json!({})));
+        assert!(conversation_inherits_host_goal_model(&json!({
+            "executionHostRawValue":"local","executionBackend":"nola",
+            "conversation":{"selectedModelId":"","selectedModelSource":"auto","executionBackend":"nola"}
+        })));
+        for settings in [
+            json!({"executionHostRawValue":"remote"}),
+            json!({"executionHostBinding":{"host_id":"other"}}),
+            json!({"executionBackend":"codex"}),
+            json!({"conversation":{"executionBackend":"claude_code"}}),
+            json!({"conversation":{"selectedModelSource":"local"}}),
+            json!({"modelSelectionID":"configured:explicit"}),
+            json!({"conversation":{"selectedModelId":7}}),
+            json!({"conversation":false}),
+        ] {
+            assert!(!conversation_inherits_host_goal_model(&settings), "{settings}");
+        }
+    }
+
+    #[test]
     fn configuration_get_preserves_mobile_bindings_without_exposing_display_snapshots() {
         let binding = json!({"baseURL":"https://host.example/v1"});
         let parameters = json!({"maxOutputTokens":2048, "temperature":0.3});
@@ -396,9 +417,29 @@ fn validate_session_model_override(key: &str, overrides: &Value) -> Result<(), S
     Ok(())
 }
 
+// A Goal may inherit this Host's preference only when the recorded conversation
+// has neither a different execution owner nor an explicit model. Unknown values
+// are not interchangeable with an absent selection.
+fn conversation_inherits_host_goal_model(settings: &Value) -> bool {
+    let web = &settings["conversation"];
+    let absent_or = |value: &Value, allowed: &str| value.is_null() || value.as_str() == Some(allowed);
+    settings["modelSelectionID"].is_null()
+        && settings["executionHostBinding"].is_null()
+        && absent_or(&settings["executionHostRawValue"], "local")
+        && absent_or(&settings["executionBackend"], "nola")
+        && (web.is_null() || web.is_object())
+        && absent_or(&web["selectedModelId"], "")
+        && absent_or(&web["selectedModelSource"], "auto")
+        && absent_or(&web["executionBackend"], "nola")
+}
+
 /// One frozen snapshot per submission. Explicit per-turn controls override the
 /// persisted session; missing controls inherit session before provider defaults.
-fn apply_conversation_request_configuration(mut body: Value) -> Result<Value, String> {
+fn apply_conversation_request_configuration(body: Value) -> Result<Value, String> {
+    conversation_request_model_configuration(body, false)
+}
+
+fn conversation_request_model_configuration(mut body: Value, allow_inherited_goal_model: bool) -> Result<Value, String> {
     let intent = decode_run_model_intent(&body)?;
     let object = body.as_object_mut().ok_or("request must be an object")?;
     object.remove("__nola_session_model_contract");
@@ -454,6 +495,8 @@ fn apply_conversation_request_configuration(mut body: Value) -> Result<Value, St
             } else {
                 object.insert("modelProfileId".into(), json!(id));
             }
+        } else if allow_inherited_goal_model && conversation_inherits_host_goal_model(&settings) {
+            return Ok(body);
         } else {
             return Err("Conversation has no saved model selection; choose a model for this conversation".into());
         }

@@ -529,13 +529,23 @@ nonisolated final class MacChromeMessagingService: @unchecked Sendable {
         postStatusChanged()
     }
 
+    private func runOnMainThread<T>(_ work: () -> T) -> T {
+        if Thread.isMainThread {
+            return work()
+        }
+        return DispatchQueue.main.sync(execute: work)
+    }
+
     @discardableResult
     func beginExtensionInstallation() throws -> String {
         try reinstall()
         let path = MacChromeExtensionInstaller.extensionDirectoryURL.path
-        NSPasteboard.general.clearContents()
-        NSPasteboard.general.setString(path, forType: .string)
-        guard openChromeExtensions() else {
+        let opened = runOnMainThread {
+            NSPasteboard.general.clearContents()
+            NSPasteboard.general.setString(path, forType: .string)
+            return openChromeExtensions()
+        }
+        guard opened else {
             throw NSError(
                 domain: "MacChromeMessagingService",
                 code: 3,
@@ -575,17 +585,22 @@ nonisolated final class MacChromeMessagingService: @unchecked Sendable {
     }
 
     func revealExtension() {
-        NSWorkspace.shared.activateFileViewerSelecting([
-            MacChromeExtensionInstaller.extensionDirectoryURL
-        ])
+        runOnMainThread {
+            NSWorkspace.shared.activateFileViewerSelecting([
+                MacChromeExtensionInstaller.extensionDirectoryURL
+            ])
+        }
     }
 
     @discardableResult
     func openChromeExtensions() -> Bool {
-        guard let url = URL(string: "chrome://extensions") else { return false }
-        if let chrome = NSWorkspace.shared.urlForApplication(
-            withBundleIdentifier: "com.google.Chrome"
-        ) {
+        runOnMainThread {
+            guard let url = URL(string: "chrome://extensions"),
+                  let chrome = NSWorkspace.shared.urlForApplication(
+                      withBundleIdentifier: "com.google.Chrome"
+                  ) else {
+                return false
+            }
             let configuration = NSWorkspace.OpenConfiguration()
             configuration.activates = true
             NSWorkspace.shared.open(
@@ -593,10 +608,8 @@ nonisolated final class MacChromeMessagingService: @unchecked Sendable {
                 withApplicationAt: chrome,
                 configuration: configuration
             )
-        } else {
-            NSWorkspace.shared.open(url)
+            return true
         }
-        return true
     }
 
     private func accept(_ connection: NWConnection) {
@@ -615,7 +628,7 @@ nonisolated final class MacChromeMessagingService: @unchecked Sendable {
             }
             var buffer = accumulated
             if let data { buffer.append(data) }
-            if buffer.count > 2 * 1024 * 1024 {
+            if buffer.count > Self.maxRequestBytes {
                 self.send(
                     status: 413,
                     object: ["error": String(localized: "Request is too large.")],
@@ -623,7 +636,8 @@ nonisolated final class MacChromeMessagingService: @unchecked Sendable {
                 )
                 return
             }
-            if let request = Self.parseRequest(buffer) {
+            switch Self.parseRequest(buffer) {
+            case .complete(let request):
                 if request.path == "/api/native-browser/managed/rpc" {
                     self.handleManagedBrowserRequest(request, on: connection)
                     return
@@ -633,17 +647,41 @@ nonisolated final class MacChromeMessagingService: @unchecked Sendable {
                     self.send(status: response.status, object: response.object, on: connection)
                 }
                 return
-            }
-            if isComplete || error != nil {
+            case .payloadTooLarge:
+                self.send(
+                    status: 413,
+                    object: ["error": String(localized: "Request is too large.")],
+                    on: connection
+                )
+                return
+            case .malformed:
                 self.send(
                     status: 400,
                     object: ["error": String(localized: "Malformed local Chrome bridge request.")],
                     on: connection
                 )
                 return
+            case .incomplete:
+                if isComplete || error != nil {
+                    self.send(
+                        status: 400,
+                        object: ["error": String(localized: "Malformed local Chrome bridge request.")],
+                        on: connection
+                    )
+                    return
+                }
+                self.receive(on: connection, accumulated: buffer)
             }
-            self.receive(on: connection, accumulated: buffer)
         }
+    }
+
+    private static let maxRequestBytes = 2 * 1024 * 1024
+
+    nonisolated private enum HTTPParseResult {
+        case complete(HTTPRequest)
+        case incomplete
+        case malformed
+        case payloadTooLarge
     }
 
     nonisolated private struct HTTPRequest {
@@ -658,19 +696,21 @@ nonisolated final class MacChromeMessagingService: @unchecked Sendable {
         let object: [String: Any]
     }
 
-    private static func parseRequest(_ data: Data) -> HTTPRequest? {
+    private static func parseRequest(_ data: Data) -> HTTPParseResult {
         let separator = Data("\r\n\r\n".utf8)
-        guard let headerRange = data.range(of: separator),
-              let headerText = String(
-                data: data[..<headerRange.lowerBound],
-                encoding: .utf8
-              ) else {
-            return nil
+        guard let headerRange = data.range(of: separator) else {
+            return .incomplete
+        }
+        guard let headerText = String(
+            data: data[..<headerRange.lowerBound],
+            encoding: .utf8
+        ) else {
+            return .malformed
         }
         let lines = headerText.components(separatedBy: "\r\n")
-        guard let requestLine = lines.first else { return nil }
+        guard let requestLine = lines.first else { return .malformed }
         let components = requestLine.split(separator: " ", omittingEmptySubsequences: true)
-        guard components.count >= 2 else { return nil }
+        guard components.count >= 2 else { return .malformed }
         var headers: [String: String] = [:]
         for line in lines.dropFirst() {
             guard let separatorIndex = line.firstIndex(of: ":") else { continue }
@@ -681,27 +721,44 @@ nonisolated final class MacChromeMessagingService: @unchecked Sendable {
                 .trimmingCharacters(in: .whitespacesAndNewlines)
             headers[key] = value
         }
-        let contentLength = Int(headers["content-length"] ?? "0") ?? 0
+        let contentLength: Int
+        if let rawLength = headers["content-length"] {
+            let trimmed = rawLength.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !trimmed.isEmpty,
+                  trimmed.utf8.allSatisfy({ (UInt8(ascii: "0")...UInt8(ascii: "9")).contains($0) }) else {
+                return .malformed
+            }
+            guard let parsed = Int(trimmed) else {
+                return .payloadTooLarge
+            }
+            contentLength = parsed
+        } else {
+            contentLength = 0
+        }
         let bodyStart = headerRange.upperBound
-        guard data.count >= bodyStart + contentLength else { return nil }
-        let bodyData = Data(data[bodyStart..<(bodyStart + contentLength)])
+        let (bodyEnd, overflow) = bodyStart.addingReportingOverflow(contentLength)
+        guard !overflow, bodyEnd <= maxRequestBytes else {
+            return .payloadTooLarge
+        }
+        guard data.count >= bodyEnd else { return .incomplete }
+        let bodyData = Data(data[bodyStart..<bodyEnd])
         let body: [String: Any]
         if bodyData.isEmpty {
             body = [:]
         } else {
             guard let object = try? JSONSerialization.jsonObject(with: bodyData),
                   let dictionary = object as? [String: Any] else {
-                return nil
+                return .malformed
             }
             body = dictionary
         }
         let rawPath = String(components[1])
-        return HTTPRequest(
+        return .complete(HTTPRequest(
             method: String(components[0]).uppercased(),
             path: rawPath.split(separator: "?", maxSplits: 1).first.map(String.init) ?? rawPath,
             headers: headers,
             body: body
-        )
+        ))
     }
 
     private func route(_ request: HTTPRequest) -> HTTPResponse {

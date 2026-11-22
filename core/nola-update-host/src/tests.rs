@@ -93,7 +93,9 @@ impl Transport for Fake {
     let offer=check(&source,"cli-macos-aarch64",&transport).unwrap().release.unwrap();
     let path=download(&source,"cli-macos-aarch64",&offer.release_id,temp.path(),&transport).unwrap();
     assert_eq!(fs::read(&path).unwrap(),b"package");
+    transport.calls.borrow_mut().clear();
     assert!(download(&source,"cli-macos-aarch64",&offer.release_id,temp.path(),&transport).is_err());
+    assert_eq!(transport.calls.borrow().as_slice(), &[source.feed_url.clone().unwrap()]);
     assert_eq!(fs::read(path).unwrap(),b"package");assert_eq!(fs::read_dir(temp.path()).unwrap().count(),1);
 }
 #[test] fn corrupt_short_large_packages_are_removed_and_not_published() {

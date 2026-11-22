@@ -13,12 +13,12 @@ import UIKit
 
 struct SettingsView: View {
     var ownsNavigationStack = true
-    @State private var showsAgentManagement = false
     @EnvironmentObject var container: ServiceContainer
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @Environment(\.scenePhase) private var scenePhase
+    @Environment(\.horizontalSizeClass) private var horizontalSizeClass
+    @Environment(\.colorScheme) private var colorScheme
     @State private var showingClearDataAlert = false
-    @State private var pageWidth: CGFloat = 390
     @State private var showingExportSheet = false
     @State private var exportedFileURL: URL?
     @State private var isExporting = false
@@ -29,6 +29,7 @@ struct SettingsView: View {
     @State private var notificationAuthorizationStatus: UNAuthorizationStatus = .notDetermined
     @State private var isUpdatingNotificationAuthorization = false
     @State private var shouldEnableNotificationsAfterSettings = false
+    @State private var notificationError: String?
 
     @AppStorage("enableNotifications") private var enableNotifications: Bool = true
     @AppStorage("enableStepReminders") private var enableStepReminders: Bool = true
@@ -49,7 +50,7 @@ struct SettingsView: View {
         }
         .onChange(of: scenePhase) { _, phase in
             guard phase == .active else { return }
-            Task { await refreshNotificationAuthorization() }
+            Task { await refreshNotificationAuthorization(returningToApp: true) }
         }
     }
 
@@ -70,40 +71,62 @@ struct SettingsView: View {
     }
 
     private var content: some View {
-        settingsPage(title: L10n.settings, showsHeading: false) {
-            if ownsNavigationStack {
+        settingsPage(title: L10n.settings, showsHeading: false, topInset: ownsNavigationStack ? 4 : DesignTokens.spacing_lg) {
+            if ownsNavigationStack && horizontalSizeClass != .compact {
                 IOSWorkspacePageHeading(title: L10n.settings).frame(minHeight: 64)
             }
             ForEach(categoryGroups.indices, id: \.self) { group in
-                VStack(alignment: .leading, spacing: 0) {
-                    Text(LocalizedStringKey(["settings.group.preferences", "settings.group.connections", "settings.group.security"][group]))
-                        .font(.footnote.weight(.medium))
-                        .foregroundStyle(DesignTokens.secondaryContentColor)
-                        .padding(.bottom, 8)
+                VStack(alignment: .leading, spacing: 8) {
+                    settingsSectionTitle(NSLocalizedString(["settings.group.preferences", "settings.group.connections", "settings.group.security"][group], comment: "Settings group heading"), compactSpacing: true)
                     NolaSettingsCard {
                         ForEach(categoryGroups[group], id: \.rawValue) { category in
-                            Group {
-                                if category == .agents {
-                                    Button { showsAgentManagement = true } label: { categoryLabel(category) }
-                                } else {
-                                    NavigationLink { destination(category).toolbar(.visible, for: .navigationBar) } label: { categoryLabel(category) }
-                                }
-                            }
+                            NavigationLink { destination(category) } label: { categoryLabel(category) }
                             .buttonStyle(NolaPressableButtonStyle())
-                            .padding(.horizontal, 14)
-                            .padding(.vertical, 4)
                             .accessibilityIdentifier(category == .providers ? "settings.models" : "settings.category." + category.rawValue)
                             if category != categoryGroups[group].last {
-                                Rectangle().fill(DesignTokens.borderColor).frame(height: 0.5).padding(.leading, 48).accessibilityHidden(true)
+                                Rectangle().fill(DesignTokens.hairlineBorderColor(for: colorScheme)).frame(height: 0.5).padding(.leading, 48).accessibilityHidden(true)
                             }
                         }
                     }
                 }
             }
+            VStack(alignment: .leading, spacing: 8) {
+                settingsSectionTitle(
+                    NSLocalizedString("settings.group.about_diagnostics", value: "About & Diagnostics", comment: "About and diagnostics settings section"),
+                    compactSpacing: true
+                )
+                NolaSettingsCard {
+                    NolaSettingsValueRow(
+                        icon: "info.circle",
+                        tint: DesignTokens.secondaryContentColor,
+                        title: NSLocalizedString("settings.about.version", value: "App Version", comment: "App version label"),
+                        value: appVersionLabel
+                    )
+                    NolaSettingsDivider()
+                    NavigationLink {
+                        LogViewerView()
+                    } label: {
+                        NolaSettingsLinkLabel(
+                            icon: "doc.text.magnifyingglass",
+                            tint: DesignTokens.actionColor,
+                            title: NSLocalizedString("settings.diagnostics.logs", value: "Diagnostic Logs", comment: "Diagnostic logs link"),
+                            trailingIcon: "chevron.right"
+                        )
+                    }
+                    .buttonStyle(NolaPressableButtonStyle())
+                    .accessibilityIdentifier("settings.diagnostics.logs")
+                }
+            }
         }
-        .sheet(isPresented: $showsAgentManagement) { IOSAgentRoomsView().environmentObject(container) }
-        .navigationTitle(L10n.settings)
-        .toolbar(ownsNavigationStack ? .hidden : .visible, for: .navigationBar)
+        .navigationTitle(ownsNavigationStack ? "" : L10n.settings)
+        .navigationBarTitleDisplayMode(.inline)
+        .toolbar {
+            if ownsNavigationStack && horizontalSizeClass == .compact {
+                IOSWorkspaceToolbarHeading(title: L10n.settings, identifier: "settings.heading")
+            }
+        }
+        .toolbarBackground(DesignTokens.backgroundColor, for: .navigationBar)
+        .toolbarBackground(.visible, for: .navigationBar)
     }
 
     private func categoryLabel(_ category: Category) -> some View {
@@ -113,7 +136,11 @@ struct SettingsView: View {
             Text(LocalizedStringKey(category.titleKey)).font(.body).foregroundStyle(.primary)
                 .frame(maxWidth: .infinity, alignment: .leading)
             Image(systemName: "chevron.right").font(.caption.weight(.medium)).foregroundStyle(.tertiary)
-        }.frame(maxWidth: .infinity, minHeight: 56).padding(.vertical, 4).contentShape(Rectangle())
+        }
+        .frame(maxWidth: .infinity, minHeight: 56)
+        .padding(.vertical, 8)
+        .padding(.horizontal, 14)
+        .contentShape(Rectangle())
     }
 
     private func categoryIcon(_ category: Category) -> String {
@@ -130,16 +157,21 @@ struct SettingsView: View {
         switch category {
         case .general:
             settingsPage(title: NSLocalizedString(category.titleKey, comment: "General settings"), showsHeading: false) {
-                Text("settings.navigation.appearance").font(.headline)
+                settingsSectionTitle(NSLocalizedString("settings.navigation.appearance", comment: "Appearance section"))
                 NolaSettingsCard { appearanceControls }
-                Text("settings.navigation.notifications").font(.headline)
+                settingsSectionTitle(NSLocalizedString("settings.navigation.notifications", comment: "Notifications section"))
                 notificationControls
+                if let notificationError {
+                    NolaSettingsStatusBanner(message: notificationError, isError: true) {
+                        self.notificationError = nil
+                    }
+                }
                 AppleSoftwareUpdateSection()
             }.navigationTitle(LocalizedStringKey(category.titleKey)).navigationBarTitleDisplayMode(.inline)
         case .providers:
             ModelsView(ownsNavigationStack: false).environmentObject(container)
         case .agents:
-            IOSAgentRoomsView().environmentObject(container)
+            IOSAgentRoomsView(embeddedInNavigationStack: true).environmentObject(container)
         case .agent:
             PersonalCapabilitiesLibraryView().environmentObject(container)
         case .privacy:
@@ -149,46 +181,39 @@ struct SettingsView: View {
 
     private var appearanceControls: some View {
         VStack(alignment: .leading, spacing: 12) {
-            HStack {
-                Text("settings.appearance.theme").font(.body.weight(.medium))
-                Spacer(minLength: 12)
-                AppleAppearancePicker().labelsHidden().pickerStyle(.menu)
-            }.frame(minHeight: 44)
+            Text("settings.appearance.theme")
+                .font(.body.weight(.medium))
+            AppleAppearancePicker()
+                .labelsHidden()
+                .pickerStyle(.segmented)
             let motionKey = reduceMotion ? "settings.appearance.motionReduced" : "settings.appearance.motionStandard"
             Text(LocalizedStringKey(motionKey))
                 .font(.footnote).foregroundStyle(.secondary)
         }
         .padding(.horizontal, 14)
-        .padding(.vertical, 10)
+        .padding(.vertical, 12)
     }
 
-    private func settingsPage<Content: View>(title: String, showsHeading: Bool = true, @ViewBuilder content: () -> Content) -> some View {
+    private func settingsPage<Content: View>(title: String, showsHeading: Bool = true, topInset: CGFloat = DesignTokens.spacing_lg, @ViewBuilder content: () -> Content) -> some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 20) {
                 if showsHeading { IOSWorkspacePageHeading(title: title) }
                 content()
             }
-            .padding(.horizontal, pageWidth < 359 ? 16 : 20)
-            .padding(.top, DesignTokens.spacing_lg)
+            .padding(.horizontal, horizontalSizeClass == .regular ? 24 : 20)
+            .padding(.top, topInset)
             .padding(.bottom, DesignTokens.pageBottomInset)
             .frame(maxWidth: DesignTokens.pageMaxWidth)
             .frame(maxWidth: .infinity)
         }
         .background(NolaPageBackground())
-        .background {
-            GeometryReader { geometry in
-                Color.clear.onChange(of: geometry.size.width, initial: true) { _, width in
-                    if width > 0 { pageWidth = width }
-                }
-            }
-        }
     }
 
     private var notificationControls: some View {
         NolaSettingsCard {
             NolaSettingsToggleRow(
                 icon: "bell.badge",
-                tint: .red,
+                tint: DesignTokens.actionColor,
                 title: L10n.settingsEnableNotifications,
                 detail: notificationStatusText,
                 isBusy: isUpdatingNotificationAuthorization,
@@ -200,7 +225,7 @@ struct SettingsView: View {
                 Button { openApplicationSettings() } label: {
                     NolaSettingsLinkLabel(
                         icon: "gearshape.fill",
-                        tint: .red,
+                        tint: DesignTokens.dangerColor,
                         title: NSLocalizedString("permission.go_to_settings", value: "Open Settings", comment: "Open system settings"),
                         detail: NSLocalizedString("settings.notifications.status.denied", value: "Blocked in iOS Settings", comment: "Notifications denied")
                     )
@@ -212,7 +237,7 @@ struct SettingsView: View {
                 NolaSettingsDivider()
                 NolaSettingsToggleRow(
                     icon: "figure.walk",
-                    tint: .green,
+                    tint: DesignTokens.actionColor,
                     title: L10n.settingsEnableStepReminders,
                     isOn: $enableStepReminders
                 )
@@ -226,7 +251,7 @@ struct SettingsView: View {
                 NolaSettingsDivider()
                 NolaSettingsPickerRow(
                     icon: "clock",
-                    tint: .indigo,
+                    tint: DesignTokens.actionColor,
                     title: NSLocalizedString("settings.notifications.frequency", value: "Notification Frequency", comment: "Notification frequency setting"),
                     selection: $notificationFrequency
                 )
@@ -255,7 +280,7 @@ struct SettingsView: View {
             NolaSettingsCard {
                 NolaSettingsValueRow(
                     icon: "internaldrive",
-                    tint: .gray,
+                    tint: DesignTokens.secondaryContentColor,
                     title: L10n.settingsLocalDataSize,
                     value: localDataSize
                 )
@@ -278,7 +303,6 @@ struct SettingsView: View {
             NolaSettingsCard {
                 NavigationLink {
                     PrivacyDisclosureView()
-                        .toolbar(.visible, for: .navigationBar)
                 } label: {
                     NolaSettingsLinkLabel(
                         icon: "hand.raised.fill",
@@ -289,7 +313,7 @@ struct SettingsView: View {
                 .buttonStyle(.plain)
             }
             settingsSectionTitle(NSLocalizedString("settings.section.reset", comment: "Reset section"))
-            NolaSettingsCard(tint: .red) {
+            NolaSettingsCard(tint: DesignTokens.dangerColor) {
                 Button(role: .destructive) {
                     showingClearDataAlert = true
                 } label: {
@@ -303,6 +327,7 @@ struct SettingsView: View {
                 }
                 .buttonStyle(.plain)
                 .disabled(isExporting || isClearingData)
+                .accessibilityIdentifier("settings.privacy.clear")
             }
         }
         .navigationTitle(LocalizedStringKey("settings.navigation.privacy"))
@@ -350,14 +375,23 @@ struct SettingsView: View {
         }
     }
 
-    private func settingsSectionTitle(_ title: String) -> some View {
+    private var appVersionLabel: String {
+        let short = Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "1.0"
+        let build = Bundle.main.infoDictionary?["CFBundleVersion"] as? String
+        if let build, !build.isEmpty, build != short {
+            return "\(short) (\(build))"
+        }
+        return short
+    }
+
+    private func settingsSectionTitle(_ title: String, compactSpacing: Bool = false) -> some View {
         Text(title)
             .font(.caption.weight(.semibold))
-            .foregroundStyle(.secondary)
+            .foregroundStyle(DesignTokens.secondaryContentColor)
             .textCase(.uppercase)
             .tracking(0.5)
             .padding(.horizontal, 4)
-            .padding(.bottom, -12)
+            .padding(.bottom, compactSpacing ? 0 : -12)
     }
 
     private func beginExport() {
@@ -392,34 +426,31 @@ struct SettingsView: View {
     }
 
     @MainActor
-    private func refreshNotificationAuthorization() async {
-        let settings = await UNUserNotificationCenter.current().notificationSettings()
-        notificationAuthorizationStatus = settings.authorizationStatus
-        let isAuthorized = settings.authorizationStatus == .authorized
-            || settings.authorizationStatus == .provisional
-            || settings.authorizationStatus == .ephemeral
-        if shouldEnableNotificationsAfterSettings, isAuthorized {
-            shouldEnableNotificationsAfterSettings = false
-            enableNotifications = true
-        } else if settings.authorizationStatus == .denied
-                    || settings.authorizationStatus == .notDetermined {
-            enableNotifications = false
-        }
+    private func refreshNotificationAuthorization(returningToApp: Bool = false) async {
+        let status = await UNUserNotificationCenter.current().notificationSettings().authorizationStatus
+        notificationAuthorizationStatus = status
+        let requested = shouldEnableNotificationsAfterSettings && returningToApp
+        if returningToApp { shouldEnableNotificationsAfterSettings = false }
+        enableNotifications = SettingsNotificationPresentation.refreshedPreference(
+            current: enableNotifications, requestedFromSettings: requested, authorizationStatus: status
+        )
+        if notificationsAreUsable { notificationError = nil }
     }
 
     @MainActor
     private func updateNotificationPreference(enabled: Bool) async {
-        guard enabled else { return }
+        guard enabled else {
+            UNUserNotificationCenter.current().removeAllPendingNotificationRequests()
+            return
+        }
         guard !isUpdatingNotificationAuthorization else { return }
         guard !notificationsAreUsable else { return }
-        operationMessage = nil
-        operationIsError = false
+        notificationError = nil
 
         if SettingsNotificationPresentation.requiresSystemSettings(
             requestedEnabled: enabled,
             authorizationStatus: notificationAuthorizationStatus
         ) {
-            shouldEnableNotificationsAfterSettings = true
             enableNotifications = false
             openApplicationSettings()
             return
@@ -433,8 +464,7 @@ struct SettingsView: View {
             await refreshNotificationAuthorization()
             if !granted {
                 enableNotifications = false
-                operationIsError = true
-                operationMessage = NSLocalizedString(
+                notificationError = NSLocalizedString(
                     "settings.notifications.permission_denied",
                     value: "Notifications are blocked by iOS. You can allow them later in Settings.",
                     comment: "Notification permission denied guidance"
@@ -442,8 +472,7 @@ struct SettingsView: View {
             }
         } catch {
             enableNotifications = false
-            operationIsError = true
-            operationMessage = String(
+            notificationError = String(
                 format: NSLocalizedString("settings.notifications.permission_failed", value: "Could not update notification permission: %@", comment: "Notification permission update failed"),
                 error.localizedDescription
             )
@@ -505,7 +534,7 @@ struct SettingsView: View {
             }
         }
         let clearedAtMs = Int64(Date().timeIntervalSince1970 * 1_000)
-        if !PersonalIntelligenceCore.clear() {
+        if !container.applicationRuntime.clearIntelligence() {
             completelyCleared = false
             container.logger.log(.warn, "SettingsView", "Failed to clear PersonalIntelligenceCore store")
         }
@@ -545,16 +574,67 @@ struct SettingsView: View {
             completelyCleared = false
             container.logger.log(.warn, "SettingsView", "Failed to clear MCP servers", metadata: ["error": error.localizedDescription])
         }
+        if let notificationManager = container.notificationManager {
+            do {
+                try notificationManager.clearAll()
+            } catch {
+                completelyCleared = false
+                container.logger.log(.warn, "SettingsView", "Failed to clear notifications", metadata: ["error": error.localizedDescription])
+            }
+        }
+        if let promptTemplates = container.promptTemplates {
+            let customTemplates = promptTemplates.templates.filter { !$0.isBuiltIn }
+            for template in customTemplates {
+                do {
+                    try promptTemplates.deleteTemplate(id: template.id)
+                } catch {
+                    completelyCleared = false
+                    container.logger.log(.warn, "SettingsView", "Failed to clear custom prompt template", metadata: ["error": error.localizedDescription])
+                }
+            }
+        }
+        if let storage = container.localJSONStorage {
+            do {
+                let tasks = try storage.getAllUserTasks()
+                for task in tasks {
+                    try storage.deleteUserTask(id: task.id)
+                }
+            } catch {
+                completelyCleared = false
+                container.logger.log(.warn, "SettingsView", "Failed to clear user tasks", metadata: ["error": error.localizedDescription])
+            }
+        }
+        for localModel in container.modelDownloader.downloadedModels {
+            do {
+                try container.modelDownloader.deleteModel(localModel)
+            } catch {
+                completelyCleared = false
+                container.logger.log(.warn, "SettingsView", "Failed to delete local model", metadata: ["error": error.localizedDescription])
+            }
+        }
+        for model in ModelSelectionManager.getAvailableModels() {
+            ModelSelectionManager.removeModel(model)
+        }
+        container.summaryStorage.clearAllSummaries()
         return completelyCleared
     }
 
     private func refreshLocalDataSize() {
-        localDataSize = container.dataManager.getDataSize()
+        let databaseURL = container.applicationRuntime.databaseURL
+        Task.detached(priority: .utility) {
+            let size = DataManager.computeDataSize(databaseURL: databaseURL)
+            await MainActor.run {
+                localDataSize = size
+            }
+        }
     }
 
     private func openApplicationSettings() {
         guard let url = URL(string: UIApplication.openSettingsURLString) else { return }
-        UIApplication.shared.open(url)
+        shouldEnableNotificationsAfterSettings = true
+        UIApplication.shared.open(url) { opened in
+            if !opened { shouldEnableNotificationsAfterSettings = false }
+        }
     }
 
     private func finishExportPresentation() {
@@ -572,6 +652,14 @@ struct SettingsView: View {
 }
 
 enum SettingsNotificationPresentation {
+    static func refreshedPreference(current: Bool, requestedFromSettings: Bool, authorizationStatus: UNAuthorizationStatus) -> Bool {
+        switch authorizationStatus {
+        case .denied, .notDetermined: false
+        case .authorized, .provisional, .ephemeral: current || requestedFromSettings
+        @unknown default: current
+        }
+    }
+
     static func requiresSystemSettings(
         requestedEnabled: Bool,
         authorizationStatus: UNAuthorizationStatus
@@ -586,7 +674,7 @@ private struct NolaSettingsStatusBanner: View {
     let onDismiss: () -> Void
 
     private var tint: Color {
-        isError ? .red : .green
+        isError ? DesignTokens.dangerColor : DesignTokens.successColor
     }
 
     var body: some View {
@@ -634,7 +722,7 @@ private struct NolaSettingsCard<Content: View>: View {
         .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
         .overlay {
             RoundedRectangle(cornerRadius: 16, style: .continuous)
-                .strokeBorder(tint?.opacity(0.28) ?? DesignTokens.borderColor, lineWidth: 1)
+                .strokeBorder(tint?.opacity(0.28) ?? DesignTokens.hairlineBorderColor(for: colorScheme), lineWidth: 1)
         }
     }
 }
@@ -741,7 +829,7 @@ struct NolaSettingsToggleRow: View {
             } else if dynamicTypeSize.isAccessibilitySize {
                 VStack(alignment: .leading, spacing: 12) {
                     Button { isOn.toggle() } label: { rowLabel }
-                        .buttonStyle(NolaActionButtonStyle())
+                        .buttonStyle(NolaPressableButtonStyle())
                         // The native switch below supplies the single VoiceOver
                         // toggle; this label also accepts direct touch input.
                         .accessibilityHidden(true)
@@ -824,11 +912,11 @@ private struct NolaSettingsActionLabel: View {
 
     var body: some View {
         HStack(spacing: 12) {
-            NolaSettingsIconTile(icon: icon, tint: .red)
+            NolaSettingsIconTile(icon: icon, tint: DesignTokens.dangerColor)
             VStack(alignment: .leading, spacing: 2) {
                 Text(title)
                     .font(.body.weight(.medium))
-                    .foregroundStyle(.red)
+                    .foregroundStyle(DesignTokens.dangerColor)
                 Text(detail)
                     .font(.caption)
                     .foregroundStyle(.secondary)
@@ -843,9 +931,11 @@ private struct NolaSettingsActionLabel: View {
 }
 
 private struct NolaSettingsDivider: View {
+    @Environment(\.colorScheme) private var colorScheme
+
     var body: some View {
         Rectangle()
-            .fill(DesignTokens.borderColor)
+            .fill(DesignTokens.hairlineBorderColor(for: colorScheme))
             .frame(height: 0.5)
             .padding(.leading, 60)
             .accessibilityHidden(true)

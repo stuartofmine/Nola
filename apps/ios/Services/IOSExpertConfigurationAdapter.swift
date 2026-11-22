@@ -21,10 +21,25 @@ extension AppleExpertConfigurationDraft {
         default: throw IOSApplicationRuntimeError.invalidResponse
         }
         self.init(modelID: model, templateID: template, reasoningEffort: effort)
+        if let binding = fields["expertExecutor"], binding != .null {
+            executor = try JSONDecoder().decode(AppleExpertExecutor.self, from: JSONEncoder().encode(binding))
+        }
     }
 
-    nonisolated func applying(to defaults: AgentCoreJSONValue) throws -> AgentCoreJSONValue {
+    nonisolated func hasSelectedModelOverride(in defaults: AgentCoreJSONValue) -> Bool {
+        guard !modelID.isEmpty, case .object(let fields) = defaults,
+              case .object(let models) = fields["modelOverrides"],
+              case .object(let overrides) = models[modelID] else { return false }
+        return !overrides.isEmpty
+    }
+
+    nonisolated func applying(to defaults: AgentCoreJSONValue, removingModelOverrides: Set<String> = []) throws -> AgentCoreJSONValue {
         guard case .object(let fields) = defaults else { throw IOSApplicationRuntimeError.invalidResponse }
-        return .object(applying(to: fields, originalSelection: try Self(defaults: defaults), makeString: { .string($0) }))
+        var updated = try applying(to: fields, originalSelection: try Self(defaults: defaults), makeString: { .string($0) })
+        if !removingModelOverrides.isEmpty, case .object(let models) = updated["modelOverrides"] {
+            let remaining = models.filter { !removingModelOverrides.contains($0.key) }
+            updated["modelOverrides"] = remaining.isEmpty ? nil : .object(remaining)
+        }
+        return .object(updated)
     }
 }

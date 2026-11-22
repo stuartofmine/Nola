@@ -92,11 +92,10 @@
 
 <svelte:window onbeforeunload={event => { if (!acceptsWorkspaceUnload(event)) return; if (dirty || writing) { event.preventDefault(); event.returnValue = ''; } }} />
 <div class="knowledge-panes" role="tablist" aria-label={t($locale, 'chatPage.knowledge')}>
-    {#each panes as item, index}<button type="button" role="tab" id={`knowledge-tab-${item}`} aria-controls={`knowledge-panel-${item}`} aria-selected={pane === item} tabindex={pane === item ? 0 : -1} onclick={() => pane = item} onkeydown={event => paneKey(event, index)}><span>{t($locale, `chatKnowledge.${item}`)}</span><span class="chevron" aria-hidden="true">{pane === item ? '▴' : '▾'}</span></button>{/each}
+    {#each panes as item, index}<button type="button" role="tab" id={`knowledge-tab-${item}`} aria-controls={`knowledge-panel-${item}`} aria-selected={pane === item} tabindex={pane === item ? 0 : -1} onclick={() => pane = item} onkeydown={event => paneKey(event, index)}><span>{t($locale, `chatKnowledge.${item}`)}</span></button>{/each}
 </div>
 <section class="knowledge-editor" aria-busy={loading || writing} hidden={pane === 'recall'}>
     <p class="muted">{t($locale, 'chatKnowledge.hint')}</p>
-    <p class="muted">{t($locale, 'chatKnowledge.autosave')}</p>
     {#if loading}<p role="status">{t($locale, 'chatKnowledge.loading')}</p>{/if}
     {#if error}<p role="alert">{t($locale, 'chatKnowledge.failed')}</p>{/if}
     {#each ['knowledgePoints', 'wiki'] as field}
@@ -111,15 +110,20 @@
         {/each}
         <div class="actions"><button type="button" disabled={locked} onclick={() => resolve('remote')}>{t($locale, 'chatKnowledge.useLatest')}</button><button type="button" disabled={locked} onclick={() => resolve('local')}>{t($locale, 'chatKnowledge.useDraft')}</button></div>
     {/if}
-    <div class="actions"><button type="button" disabled={saveBlocked || !dirty} onclick={save}>{t($locale, 'chatKnowledge.save')}</button><button type="button" disabled={locked} onclick={load}>{t($locale, 'chatKnowledge.reload')}</button></div>
-    {#if dirty || saved}<p role="status">{t($locale, dirty ? 'chatKnowledge.unsaved' : 'chatKnowledge.saved')}</p>{/if}
+    <div class="status-bar">
+        <span class="live-status" class:saved={saved && !dirty && !writing} role="status">
+            <span class="status-dot" aria-hidden="true"></span>
+            {writing ? t($locale, 'models.saving') : dirty ? t($locale, 'chatKnowledge.unsaved') : saved ? t($locale, 'chatKnowledge.saved') : t($locale, 'chatKnowledge.autosave')}
+        </span>
+        <button type="button" class="reload-btn" disabled={locked} onclick={load}>{t($locale, 'chatKnowledge.reload')}</button>
+    </div>
 </section>
 <div role="tabpanel" id="knowledge-panel-recall" aria-labelledby="knowledge-tab-recall" hidden={pane !== 'recall'} tabindex="0"><ChatRecall {conversationId} {generation} /></div>
 <style>
-    .knowledge-panes { display: grid; gap: 6px; padding: 0; background: transparent; margin-bottom: 8px; }
-    .knowledge-panes button { display: flex; align-items: center; justify-content: space-between; width: 100%; min-width: 0; min-height: 40px; padding: 8px 12px; border: 1px solid var(--border); border-radius: 8px; background: var(--surface); font-size: 12.5px; font-weight: 500; text-align: start; overflow-wrap: anywhere; }
-    .knowledge-panes button .chevron { flex: none; font-size: 11px; color: var(--muted); }
-    .knowledge-panes button[aria-selected='true'] { border-color: var(--outline); background: var(--accent-subtle); font-weight: 600; }
+    .knowledge-panes { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 3px; padding: 3px; border-radius: 10px; background: var(--panel); border: 1px solid var(--border); margin-bottom: 10px; }
+    .knowledge-panes button { display: flex; align-items: center; justify-content: center; width: 100%; min-width: 0; min-height: 36px; padding: 6px 8px; border: 0; border-radius: 7px; background: transparent; box-shadow: none; font-size: 12.5px; font-weight: 500; color: var(--muted); text-align: center; overflow-wrap: anywhere; }
+    .knowledge-panes button:hover:not([aria-selected='true']) { color: var(--content); }
+    .knowledge-panes button[aria-selected='true'] { background: var(--surface); color: var(--content); font-weight: 600; box-shadow: 0 1px 2px rgb(0 0 0 / 6%); }
     [hidden] { display: none !important; }
     .knowledge-editor, label { display: grid; gap: 10px; min-width: 0; }
     .knowledge-editor { padding: 12px; border: 1px solid var(--border); border-radius: 10px; }
@@ -127,5 +131,11 @@
     label { font-size: 12px; font-weight: 600; }
     p { margin: 0; font-size: 12px; overflow-wrap: anywhere; }
     .muted { color: var(--muted); } [role="alert"] { color: var(--danger); }
+    .status-bar { display: flex; align-items: center; justify-content: space-between; gap: 8px; flex-wrap: wrap; }
+    .live-status { display: inline-flex; align-items: center; gap: 6px; font-size: 12px; color: var(--muted); min-width: 0; overflow-wrap: anywhere; }
+    .live-status.saved { color: var(--success); }
+    .status-dot { width: 6px; height: 6px; border-radius: 50%; background: currentColor; flex: none; opacity: .75; }
+    .reload-btn { min-height: 34px; padding: 4px 10px; font-size: 12px; }
     .actions { display: flex; flex-wrap: wrap; gap: 8px; } button { min-height: 44px; }
+    @media (pointer: coarse) { .knowledge-panes button, .reload-btn { min-height: 44px; } }
 </style>

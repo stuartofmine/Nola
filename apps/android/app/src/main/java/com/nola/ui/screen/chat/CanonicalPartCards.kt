@@ -166,17 +166,17 @@ private fun CanonicalActivityRow(part: ConversationProjectionV1.Part.Tool, detai
             onToggle = { onDetailsChanged(!details) }
         )
         AnimatedVisibility(visible = details, enter = nolaDisclosureEnter(reduceMotion), exit = nolaDisclosureExit(reduceMotion)) {
+            var showRawDetails by remember(part.partId) { mutableStateOf(false) }
             Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                Text(listOfNotNull(facts.capabilityId, facts.origin.providerTitle, facts.origin.namespace).joinToString(" · "),
-                    style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                val friendlyOrigin = listOfNotNull(facts.origin.providerTitle, facts.origin.namespace).joinToString(" · ")
+                if (friendlyOrigin.isNotEmpty()) {
+                    Text(friendlyOrigin, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                }
                 facts.permission?.let { permission ->
                     Fact(part.partId, CanonicalPartReadField.ToolPermission, onReadText, stringResource(R.string.canonical_permission_record), listOfNotNull(permission.rationale, permission.permissionDomain, permission.decision).joinToString(" · "))
                 }
-                Fact(part.partId, CanonicalPartReadField.ToolInput, onReadText, stringResource(R.string.canonical_input), facts.input.toString(), code = true)
                 facts.result?.let { Fact(part.partId, CanonicalPartReadField.ToolResult, onReadText, stringResource(R.string.canonical_result), it.toString(), code = true) }
                 facts.preview?.let { Fact(part.partId, CanonicalPartReadField.ToolPreview, onReadText, stringResource(R.string.canonical_preview), it, code = true) }
-                Fact(part.partId, CanonicalPartReadField.ToolOrigin, onReadText, stringResource(R.string.canonical_origin), listOfNotNull(facts.origin.kind, facts.origin.providerId, facts.origin.providerTitle, facts.origin.namespace).joinToString(" · "))
-                facts.permission?.let { Fact(part.partId, CanonicalPartReadField.ToolPermissionIdentity, onReadText, stringResource(R.string.canonical_permission_record), it.requestId) }
                 facts.startedAtMs?.let {
                     Fact(part.partId, CanonicalPartReadField.ToolStarted, onReadText, stringResource(R.string.canonical_started),
                         java.text.DateFormat.getDateTimeInstance(java.text.DateFormat.SHORT, java.text.DateFormat.MEDIUM).format(java.util.Date(it.coerceAtMost(Long.MAX_VALUE.toULong()).toLong())))
@@ -185,9 +185,23 @@ private fun CanonicalActivityRow(part: ConversationProjectionV1.Part.Tool, detai
                     Fact(part.partId, CanonicalPartReadField.ToolFinished, onReadText, stringResource(R.string.canonical_finished),
                         java.text.DateFormat.getDateTimeInstance(java.text.DateFormat.SHORT, java.text.DateFormat.MEDIUM).format(java.util.Date(it.coerceAtMost(Long.MAX_VALUE.toULong()).toLong())))
                 }
-                // Owner facts are selectable display only; there is intentionally no open/download action.
-                facts.fullOutput?.let { owner -> Fact(part.partId, CanonicalPartReadField.ToolOutputOwner, onReadText, stringResource(R.string.canonical_retained_output),
-                    listOf(owner.messageId, owner.partId, owner.toolCallId).joinToString(" · ")) }
+                NolaDisclosureBar(
+                    title = stringResource(R.string.canonical_raw_details),
+                    expanded = showRawDetails,
+                    onToggle = { showRawDetails = !showRawDetails },
+                )
+                AnimatedVisibility(visible = showRawDetails, enter = nolaDisclosureEnter(reduceMotion), exit = nolaDisclosureExit(reduceMotion)) {
+                    Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                        Text(listOfNotNull(facts.capabilityId, facts.origin.providerTitle, facts.origin.namespace).joinToString(" · "),
+                            style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        Fact(part.partId, CanonicalPartReadField.ToolInput, onReadText, stringResource(R.string.canonical_input), facts.input.toString(), code = true)
+                        Fact(part.partId, CanonicalPartReadField.ToolOrigin, onReadText, stringResource(R.string.canonical_origin), listOfNotNull(facts.origin.kind, facts.origin.providerId, facts.origin.providerTitle, facts.origin.namespace).joinToString(" · "))
+                        facts.permission?.let { Fact(part.partId, CanonicalPartReadField.ToolPermissionIdentity, onReadText, stringResource(R.string.canonical_permission_record), it.requestId) }
+                        // Owner facts are selectable display only; there is intentionally no open/download action.
+                        facts.fullOutput?.let { owner -> Fact(part.partId, CanonicalPartReadField.ToolOutputOwner, onReadText, stringResource(R.string.canonical_retained_output),
+                            listOf(owner.messageId, owner.partId, owner.toolCallId).joinToString(" · ")) }
+                    }
+                }
             }
         }
     }
@@ -217,7 +231,6 @@ internal fun CanonicalSourceCards(parts: List<ConversationProjectionV1.Part>, on
                         Text(facts.uri, style = MaterialTheme.typography.bodySmall)
                         facts.location?.let { Text(listOfNotNull(it.section, it.page?.let { "p. $it" }, it.lineStart?.let { start -> "L$start–${it.lineEnd ?: start}" }).joinToString(" · ")) }
                         facts.snippet?.let { Text(it) }
-                        facts.range?.let { Text("[${it.start}, ${it.end})") }
                         facts.evidence?.usage?.let { Text(listOfNotNull(it.title, it.source, it.observedAt).joinToString(" · ")) }
                     } } },
                     confirmButton = { TextButton(onClick = { details = false }) { Text(stringResource(R.string.common_done)) } })

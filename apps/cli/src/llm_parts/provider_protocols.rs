@@ -955,6 +955,7 @@ pub(super) fn anthropic_request_body(
     normalize_trailing_assistant_messages(&mut canonical_messages);
     repair_openai_tool_message_sequence(&mut canonical_messages);
     strip_ephemeral_message_metadata(&mut canonical_messages);
+    strip_excess_media_items(&mut canonical_messages, 80);
     let (mut system, mut anthropic_messages) = convert_messages_to_anthropic(&canonical_messages);
     if cfg.openai_prompt_cache {
         // Only the leading instruction segment is a reusable policy prefix.
@@ -1198,53 +1199,74 @@ fn anthropic_user_content_blocks(message: &Value) -> Vec<Value> {
                 "text": item.get("text").and_then(Value::as_str).unwrap_or_default()
             })),
             Some("image_url") => {
-                let Some(data_url) = item.pointer("/image_url/url").and_then(Value::as_str) else {
-                    continue;
-                };
-                let Some((header, data)) = data_url.split_once(',') else {
-                    continue;
-                };
-                let Some(media_type) = header
-                    .strip_prefix("data:")
-                    .and_then(|value| value.strip_suffix(";base64"))
-                else {
-                    continue;
-                };
-                blocks.push(json!({
-                    "type": "image",
-                    "source": {
-                        "type": "base64",
-                        "media_type": media_type,
-                        "data": data
-                    }
-                }));
-            }
-            Some("input_file") => {
-                let Some(data_url) = item.get("file_data").and_then(Value::as_str) else {
-                    continue;
-                };
-                let Some((header, data)) = data_url.split_once(',') else {
-                    continue;
-                };
-                let Some(media_type) = header
-                    .strip_prefix("data:")
-                    .and_then(|value| value.strip_suffix(";base64"))
-                else {
-                    continue;
-                };
-                if media_type.eq_ignore_ascii_case("application/pdf") {
+                let data_url = item.pointer("/image_url/url").and_then(Value::as_str);
+                let parsed = data_url.and_then(|url| {
+                    let (header, data) = url.split_once(',')?;
+                    let media_type = header
+                        .strip_prefix("data:")
+                        .and_then(|value| value.strip_suffix(";base64"))?;
+                    Some((media_type, data))
+                });
+                if let Some((media_type, data)) = parsed {
                     blocks.push(json!({
-                        "type": "document",
+                        "type": "image",
                         "source": {
                             "type": "base64",
                             "media_type": media_type,
                             "data": data
                         }
                     }));
+                } else {
+                    blocks.push(json!({
+                        "type": "text",
+                        "text": "[Unsupported image attachment omitted]"
+                    }));
                 }
+            }
+            Some("input_file") => {
+                let filename = item
+                    .get("filename")
+                    .and_then(Value::as_str)
+                    .map(str::trim)
+                    .filter(|value| !value.is_empty());
+                let data_url = item.get("file_data").and_then(Value::as_str);
+                let parsed = data_url.and_then(|url| {
+                    let (header, data) = url.split_once(',')?;
+                    let media_type = header
+                        .strip_prefix("data:")
+                        .and_then(|value| value.strip_suffix(";base64"))?;
+                    Some((media_type, data))
+                });
+                if let Some((media_type, data)) = parsed {
+                    if media_type.eq_ignore_ascii_case("application/pdf") {
+                        blocks.push(json!({
+                            "type": "document",
+                            "source": {
+                                "type": "base64",
+                                "media_type": media_type,
+                                "data": data
+                            }
+                        }));
+                        continue;
+                    }
+                }
+                let placeholder = match filename {
+                    Some(name) => format!("[Unsupported file attachment omitted: {name}]"),
+                    None => "[Unsupported file attachment omitted]".to_string(),
+                };
+                blocks.push(json!({
+                    "type": "text",
+                    "text": placeholder
+                }));
             }
             _ => {}
         }
+    }
+    if blocks.is_empty() {
+        blocks.push(json!({
+            "type": "text",
+            "text": "[Attachment omitted]"
+        }));
     }
     blocks
 }
@@ -1740,5 +1762,75 @@ mod provider_usage_presence_tests {
         assert_eq!(durable["cache_write_input_tokens"], 0);
         assert_eq!(serde_json::from_value::<LlmUsage>(durable).unwrap(), usage);
         assert!(serde_json::from_value::<LlmUsage>(json!({"input_tokens":"0"})).is_err());
+    }
+
+    #[test]
+    fn anthropic_request_caps_media_at_80_and_preserves_unsupported_attachment_turns() {
+        let cfg = LlmConfig {
+            siwc: None,
+            native_model_route: None,
+            compaction_output_budget: None,
+            chat_output_token_field: Default::default(),
+            provider: Some("anthropic".to_string()),
+            fallbacks: Vec::new(),
+            endpoint: "https://api.anthropic.com".to_string(),
+            api_key: "test-key".to_string(),
+            model: "claude-sonnet-4-5".to_string(),
+            temperature: 0.2,
+            top_p: 0.9,
+            max_output_tokens: 256,
+            max_retries: 1,
+            thinking_enabled: false,
+            reasoning_summary_supported: None,
+            reasoning_selection: None,
+            sampling_override: false,
+            generation_options: Default::default(),
+            cancellation: Default::default(),
+            openai_prompt_cache: false,
+            openai_prompt_cache_key: None,
+            openai_prompt_cache_key_prefix: None,
+            openai_prompt_cache_retention: None,
+            openai_prompt_cache_history_breakpoint: false,
+            openai_prompt_cache_history_breakpoint_endpoints: None,
+            parallel_tool_calls: None,
+        };
+        let mut content = Vec::new();
+        for _ in 0..85 {
+            content.push(json!({
+                "type": "image_url",
+                "image_url": { "url": "data:image/png;base64,AAAA" }
+            }));
+        }
+        let messages = vec![
+            json!({ "role": "user", "content": content }),
+            json!({ "role": "assistant", "content": "noted" }),
+            json!({
+                "role": "user",
+                "content": [
+                    { "type": "image_url", "image_url": { "url": "https://example.com/photo.png" } },
+                    { "type": "input_file", "filename": "report.docx", "file_data": "data:application/vnd.openxmlformats-officedocument.wordprocessingml.document;base64,AAAA" }
+                ]
+            }),
+        ];
+        let body = anthropic_request_body(&cfg, &messages, &[], "auto").expect("anthropic body");
+        let anthropic_messages = body["messages"].as_array().expect("messages array");
+        assert_eq!(anthropic_messages.len(), 3);
+        let image_count = anthropic_messages[0]["content"]
+            .as_array()
+            .expect("first user blocks")
+            .iter()
+            .filter(|block| block["type"] == "image")
+            .count();
+        // 85 images in message 0 + 2 media items in message 2 = 87 total;
+        // capping to 80 drops the 7 oldest items from message 0, leaving 78.
+        assert_eq!(image_count, 78);
+        let third_blocks = anthropic_messages[2]["content"]
+            .as_array()
+            .expect("unsupported attachment turn preserved");
+        assert_eq!(third_blocks.len(), 2);
+        assert_eq!(third_blocks[0]["type"], "text");
+        assert!(third_blocks[0]["text"].as_str().unwrap().contains("image"));
+        assert_eq!(third_blocks[1]["type"], "text");
+        assert!(third_blocks[1]["text"].as_str().unwrap().contains("report.docx"));
     }
 }

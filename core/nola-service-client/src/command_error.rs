@@ -75,13 +75,22 @@ impl ApplicationServiceCommandError {
     /// Decode only our structured outcome marker, never natural-language hints
     /// or the protocol's unrelated `recoverable` flag.
     pub fn unresolved_from_boundary_message(message: &str) -> Option<Self> {
-        for marker in ["command_outcome_unknown: ", "command_outcome_pending: "] {
-            if let Some((_, encoded)) = message.split_once(marker) {
-                let error = serde_json::Deserializer::from_str(encoded)
-                    .into_iter::<Self>()
-                    .next()?
-                    .ok()?;
-                if error.requires_reconciliation() {
+        for (offset, marker) in message.match_indices("command_outcome_") {
+            let suffix = &message[offset + marker.len()..];
+            let (encoded, pending) = if let Some(value) = suffix.strip_prefix("unknown: ") {
+                (value, false)
+            } else if let Some(value) = suffix.strip_prefix("pending: ") {
+                (value, true)
+            } else {
+                continue;
+            };
+            if let Some(Ok(error)) = serde_json::Deserializer::from_str(encoded)
+                .into_iter::<Self>()
+                .next()
+            {
+                if error.requires_reconciliation()
+                    && matches!(error, Self::Pending { .. }) == pending
+                {
                     return Some(error);
                 }
             }
@@ -200,6 +209,17 @@ pub(crate) fn receipt_result_typed(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn diagnostic_marker_cannot_hide_a_later_structured_pending_receipt() {
+        let pending = ApplicationServiceCommandError::Pending {
+            client_id: "client".into(), request_id: "request".into(),
+        };
+        let message = format!("previous command_outcome_unknown: unavailable; receipt: {pending}");
+        assert_eq!(ApplicationServiceCommandError::unresolved_from_boundary_message(&message), Some(pending.clone()));
+        let mismatched = format!("command_outcome_unknown: {}", serde_json::to_string(&pending).unwrap());
+        assert_eq!(ApplicationServiceCommandError::unresolved_from_boundary_message(&mismatched), None);
+    }
 
     #[test]
     fn invalid_committed_result_never_becomes_a_safe_pre_send_failure() {

@@ -26,12 +26,12 @@ export function navigateWorkspace(href: string): void {
 export function initialWorkspaceLocation(href: string, width: number): URL {
     const location = new URL(href);
     if (!Number.isFinite(width) || width < 0) return location;
-    if (width <= 700 && location.pathname === '/chat') {
+    if (width <= 760 && location.pathname === '/chat') {
         const content = location.searchParams.get('content');
         const management = content ? managementContentPath(content, location.origin) : null;
         if (management) return new URL(management.path, location.origin);
         if (!location.search) location.pathname = '/conversations';
-    } else if (width > 700 && managementContentPath(location.href, location.origin)) {
+    } else if (width > 760 && managementContentPath(location.href, location.origin)) {
         const content = location.pathname + location.search + location.hash;
         location.pathname = '/chat'; location.search = ''; location.hash = '';
         location.searchParams.set('content', content);

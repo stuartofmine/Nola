@@ -4,7 +4,7 @@
 fn startup_process_lock(socket: &Path, timeout: Duration) -> Result<std::fs::File, String> {
     let parent = socket.parent().ok_or("service endpoint has no directory")?;
     std::fs::create_dir_all(parent).map_err(|error| error.to_string())?;
-    nola_credential_host::windows_permissions::protect_private_path(parent)?;
+    nola_windows_permissions::protect_private_path(parent)?;
     let file = std::fs::OpenOptions::new().read(true).write(true).create(true)
         .truncate(false).open(socket.with_extension("startup.lock")).map_err(|error| error.to_string())?;
     let deadline = Instant::now() + timeout;

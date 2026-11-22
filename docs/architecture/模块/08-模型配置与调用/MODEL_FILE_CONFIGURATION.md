@@ -2,31 +2,35 @@
 
 # 多端点文件配置与 Core 模型目录
 
+简体中文 · [English](MODEL_FILE_CONFIGURATION.en.md)
+
 ## 所有权
 
-文件是显式编辑入口，Core ModelConnection、CatalogModel、ModelProfile 与 chat.default_model 是运行权威。不把 connections 数组当成故障回退列表，不在每次启动时覆盖模型中心编辑。显式执行 `nola model apply-config [absolute-config-path]` 才写入；省略路径时只读取 `~/.nola/config.json` 或 `.jsonc`；已有会话继续读取自己的冻结选择与覆盖参数。
+CLI 对话、init、wiki、Web 和 server 启动时读取生效的模型目录。文件声明连接、模型与宿主默认选择，Core 保存供各端使用的运行状态。已有会话继续使用自己的模型绑定。检查、查看和编辑命令支持在启动前修复文件。
 
 示例见 `apps/cli/config.multi-endpoint.example.json`。每个连接声明 id/name/endpoint/protocol/models；协议为 chat_completions、responses 或 anthropic。模型 id 为服务端原始标识，不按模型名称推测能力。可显式声明 capabilities；未提供能力时使用 Core agent 基线（toolCalls=true，其余能力不推断）。显式false保留；工具能力不替代执行权限。密钥通过 api_key_env 指定环境变量，应用时写入 Host 私有 vault，公开配置回执与 Core 目录不含密钥。匿名端点省略 api_key_env。
 
-首次导入需要提供声明的密钥环境变量。重新应用时，若环境变量不可用，可复用同来源、同 URL/协议/账户且状态为 Ready 的已有凭据引用，不重新写 vault。省略 api_key_env 不表示删除已有凭据；删除/撤销通过账户管理显式操作。更换 URL 或协议不能自动沿用旧凭据，必须显式提供。引用可复用不等于远端认证一定成功，运行时仍验证私有存储与实际服务响应。
+需要密钥时，在用户配置中声明服务地址、协议和 `api_key_env`。项目配置可复用相同用户声明，或沿用同一连接已经绑定的有效凭据。单独打开项目不会把任意环境变量绑定到项目指定的服务。切换服务地址或协议时需要为新路由提供凭据。
 
-模型发现解析provider目录元数据：supported_parameters中的tools/reasoning/reasoning_effort/temperature、architecture.input_modalities、context_length、top_provider.max_completion_tokens。已有导入格式的显式字段优先。provider返回完整支持列表时以列表为准，未提供列表不能误判为不支持。apply-config仍是离线显式配置操作，不隐式访问每个端点；联网元数据读取走模型发现入口。服务不返回的参数不能声称自动获取，具体生成参数也不等于服务能力上限。
+模型发现解析provider目录元数据：supported_parameters中的tools/reasoning/reasoning_effort/temperature、architecture.input_modalities、context_length、top_provider.max_completion_tokens。已有导入格式的显式字段优先。provider返回完整支持列表时以列表为准，未提供列表不能误判为不支持。启动时应用目录只访问本地宿主；联网元数据由模型发现入口读取。服务不返回的参数不能声称自动获取，具体生成参数也不等于服务能力上限。
 
 ## 流程与输入输出
 
 1. 有界、禁止符号链接的绝对文件路径读取，解析 JSON/JSONC 的 llm 对象；拒绝混用单路由字段、未知字段、重复连接/模型、无效默认引用。
 2. 全部连接先验证身份、网关回环、账户所有权、环境密钥是否存在，再开始写入。
-3. 每个连接复用现有带 revision 的 SaveConnection、RefreshConnectionCatalog、ConfigureConnectionModels 与账户凭据保存流程。连接跨批不是原子事务；后项失败明确报告已应用的连接，不伪报全部成功或自动重放。
-4. 全部成功后设置 Core chat.default_model；回执包含连接ID、默认profile ID和revision，不包含secret。
-5. CLI配置中有 connections 时，新会话读取 Core 当前默认选择与revision；未应用、默认模型禁用/丢失时明确报错。模型中心改默认值无需改文件；再次apply才覆盖该默认值。显式 --profile 优先；禁止混入 --endpoint/--model/--api-key 造成不明确的身份。现有会话不受默认变更影响。
+3. Core 在一个事务中核对连接和账户修订，更新声明的模型、启用状态以及默认选择。任意一步失败都回滚本批次的目录修改。
+4. 相同声明、启用状态和凭据保持原有修订号。回执包含连接 ID、默认模型配置 ID 和修订号。
+5. 新会话读取已提交的宿主默认模型。若目录被拒绝，CLI 指出出错文件，有可用的已保存默认模型时继续；首次使用且缺少默认模型时，在发送请求前退出。现有会话恢复其原有选择。
+
+文件检查与启动共用 JSONC 解析器和运行配置合并逻辑。预览只读取文件，公开连接 ID、模型 ID、协议、服务来源与凭据环境变量名称。应用时再次使用有界文件读取、Core 连接修订检查及 Host 私有凭据写入。查看配置通过 Application 查询已保存的默认值，可与文件声明对照。没有数据库时查看和预览都不会创建数据库。
 
 ## 使用
 
 编辑 `~/.nola/config.json`，保留其他业务配置，将 llm 整体替换成多连接对象。设置声明的密钥环境变量后执行：
 
 ```sh
-nola model apply-config
-nola model connections
+nola config check
+nola config
 nola
 ```
 
@@ -44,7 +48,7 @@ nola
 {"llm":{"connections":[{"id":"primary","name":"Primary service","endpoint":"https://primary.example/v1","protocol":"chat_completions","models":[{"id":"fast-model","name":"Fast"}]}],"default_model":{"connection":"primary","model":"fast-model"}}}
 ```
 
-对照修正文件中的精确 ID，再执行 `nola model apply-config /absolute/config.json`。此错误在开始应用连接前拒绝；不会替用户猜测引用、重写配置或删除已有目录。完整格式以[仓库示例](../../../../apps/cli/config.multi-endpoint.example.json)和[解析器](../../../../apps/cli/src/model_file_config.rs)为准。
+对照修正文件中的精确 ID，保存后重新启动 Nola。此错误在开始应用连接前拒绝；不会替用户猜测引用、重写配置或删除已有目录。完整格式以[仓库示例](../../../../apps/cli/config.multi-endpoint.example.json)和[解析器](../../../../apps/cli/src/model_file_config.rs)为准。
 
 ## CLI 与 Web 数据库
 
@@ -52,7 +56,7 @@ nola
 
 ## 验收
 
-覆盖多端点同名模型、错误默认引用、重复身份、混合旧路由字段、预验证失败无部分写入、复用Core目录与重复应用、默认切换、CLI启动。所有测试使用隔离库与无网络fixture，不调用用户本地模型。
+覆盖多端点同名模型、错误默认引用、重复身份、混合旧路由字段、预验证失败无部分写入、复用Core目录与重复应用、默认切换、CLI启动。配置回归测试使用隔离数据库。`scripts/e2e/test_cli_config_files.py` 使用本地 HTTP 模型端点，验证首次启动、重复启动、拒绝无效目录后继续对话、密钥轮换以及 Web 和 server 启动。
 
 2026-10-19 验证：`cargo test -p nola_cli --lib model_ --offline` 271通过、1忽略；CLI与Application Service构建成功（既有链接器eh_frame警告）。真实PTY在隔离库中完成两连接三模型导入、默认large启动、切换到另一连接的Responses/fast、退出后按session ID恢复。数据库核验选中`config-two|responses|fast`，runs=0。未调用真实模型，也未验证远程服务可达性。
 

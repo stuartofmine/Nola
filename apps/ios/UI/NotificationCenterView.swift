@@ -41,7 +41,7 @@ struct NotificationCenterView: View {
     @Environment(\.dismiss) private var dismiss
     @EnvironmentObject var container: ServiceContainer
     @State private var items: [NotificationEntity] = []
-    @State private var isLoading: Bool = false
+    @State private var isLoading: Bool = true
     @State private var isLoadingMore: Bool = false
     @State private var hasMoreHistory: Bool = false
     @State private var pageSize: Int = 25
@@ -129,16 +129,20 @@ struct NotificationCenterView: View {
                                         Task { await loadHistory(showLoading: false) }
                                     }
                                     .buttonStyle(.borderless)
+                                    .frame(minHeight: 44)
                                 } else {
                                     Button {
                                         operationError = nil
                                     } label: {
                                         Image(systemName: "xmark")
+                                            .frame(width: 44, height: 44)
+                                            .contentShape(Rectangle())
                                     }
                                     .buttonStyle(.borderless)
                                     .accessibilityLabel(NSLocalizedString("common.close", value: "Close", comment: "Close"))
                                 }
                             }
+                            .listRowBackground(DesignTokens.surfaceColor)
                         }
                     }
                     ForEach(groupedByDay(items.sorted(by: { $0.createdAt > $1.createdAt })), id: \.0) { (day, list) in
@@ -179,18 +183,23 @@ struct NotificationCenterView: View {
                                 }
                                 Spacer()
                             }
+                            .frame(minHeight: 44)
+                            .contentShape(Rectangle())
                         }
                         .disabled(isLoadingMore)
+                        .listRowBackground(DesignTokens.backgroundColor)
                     }
                 }
                 .listStyle(.plain)
                 .scrollContentBackground(.hidden)
-                .background(DesignTokens.backgroundColor)
                 .refreshable {
                     await loadHistory(showLoading: false)
                 }
             }
         }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .background(DesignTokens.backgroundColor)
+        .toolbarBackground(DesignTokens.backgroundColor, for: .navigationBar)
         .navigationTitle(L10n.notificationsTitle)
         .toolbar {
             if ownsNavigationStack {
@@ -350,13 +359,16 @@ struct NotificationCenterView: View {
 
     @MainActor
     private func markRead(_ item: NotificationEntity, refreshList: Bool = true) async {
-        suppressNextNotificationRefresh = true
         operationError = nil
-        do {
-            try container.notificationManager?.markAsRead(id: item.id)
-        } catch {
-            operationError = error.localizedDescription
-            container.logger.log(.error, "NotificationCenter", "Failed to mark local notification read", metadata: ["error": error.localizedDescription])
+        if let manager = container.notificationManager {
+            suppressNextNotificationRefresh = true
+            do {
+                try manager.markAsRead(id: item.id)
+            } catch {
+                suppressNextNotificationRefresh = false
+                operationError = error.localizedDescription
+                container.logger.log(.error, "NotificationCenter", "Failed to mark local notification read", metadata: ["error": error.localizedDescription])
+            }
         }
         if refreshList {
             await loadHistory(showLoading: false)
@@ -365,13 +377,16 @@ struct NotificationCenterView: View {
 
     @MainActor
     private func markAllRead() async {
-        suppressNextNotificationRefresh = true
         operationError = nil
-        do {
-            try container.notificationManager?.markAllRead()
-        } catch {
-            operationError = error.localizedDescription
-            container.logger.log(.error, "NotificationCenter", "Failed to mark local notifications read", metadata: ["error": error.localizedDescription])
+        if let manager = container.notificationManager {
+            suppressNextNotificationRefresh = true
+            do {
+                try manager.markAllRead()
+            } catch {
+                suppressNextNotificationRefresh = false
+                operationError = error.localizedDescription
+                container.logger.log(.error, "NotificationCenter", "Failed to mark local notifications read", metadata: ["error": error.localizedDescription])
+            }
         }
         await loadHistory(showLoading: false)
     }

@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { api, csrfToken } from './api.ts';
+import { api, ApiError, csrfToken } from './api.ts';
 import { locale } from './i18n.ts';
 
 test('CSRF extraction uses the exact cookie, never the session credential', () => {
@@ -46,4 +46,32 @@ test('server validation failures are not mistaken for saved settings', async (t)
     t.after(() => { Reflect.deleteProperty(globalThis, 'document'); });
     t.mock.method(globalThis, 'fetch', async () => new Response(JSON.stringify({ error: 'revision conflict', code: 'conflict' }), { status: 409 }));
     await assert.rejects(api('/api/local-models/fixture/configuration', { method: 'POST', body: '{}' }), /revision conflict/);
+});
+
+test('ApiError extracts error code from both code and errorCode fields', async (t) => {
+    Object.defineProperty(globalThis, 'document', { configurable: true, value: { cookie: '' } });
+    t.after(() => { Reflect.deleteProperty(globalThis, 'document'); });
+    t.mock.method(globalThis, 'fetch', async () => new Response(JSON.stringify({ error: 'changed', errorCode: 'automation_revision_conflict' }), { status: 409 }));
+    await assert.rejects(api('/api/scheduled-actions/1/run-now', { method: 'POST', body: '{}' }), (err: unknown) => {
+        assert.ok(err instanceof ApiError);
+        assert.equal(err.status, 409);
+        assert.equal(err.code, 'automation_revision_conflict');
+        return true;
+    });
+});
+
+test('apiResponse preserves custom Content-Type and avoids forcing JSON on FormData bodies', async (t) => {
+    Object.defineProperty(globalThis, 'document', { configurable: true, value: { cookie: '' } });
+    t.after(() => { Reflect.deleteProperty(globalThis, 'document'); });
+    const contentTypes: (string | null)[] = [];
+    t.mock.method(globalThis, 'fetch', async (_path: string, options: RequestInit) => {
+        contentTypes.push(new Headers(options.headers).get('Content-Type'));
+        return new Response('{}');
+    });
+    const form = new FormData();
+    form.set('file', 'content');
+    await api('/api/upload', { method: 'POST', body: form });
+    await api('/api/text', { method: 'POST', body: 'hello', headers: { 'Content-Type': 'text/plain' } });
+    await api('/api/json', { method: 'POST', body: '{}' });
+    assert.deepEqual(contentTypes, [null, 'text/plain', 'application/json']);
 });

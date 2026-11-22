@@ -22,6 +22,26 @@
         }
       }
     },
+    "%@ is not ready" : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%@ 尚未就绪"
+          }
+        }
+      }
+    },
+    "%@ is ready" : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%@ 已就绪"
+          }
+        }
+      }
+    },
     "%@ must be at least %@." : {
       "localizations" : {
         "zh-Hans" : {
@@ -38,6 +58,17 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "%1$@ 必须在 %2$@ 到 %3$@ 之间。"
+          }
+        }
+      }
+    },
+    "%lld CPU cores" : {
+      "extractionState" : "stale",
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%lld 个 CPU 核心"
           }
         }
       }
@@ -172,6 +203,9 @@
           }
         }
       }
+    },
+    "Account actions" : {
+
     },
     "Account label" : {
       "localizations" : {
@@ -454,6 +488,12 @@
           }
         }
       }
+    },
+    "Advanced" : {
+
+    },
+    "Advanced Overrides" : {
+
     },
     "Advanced parameters" : {
       "localizations" : {
@@ -1350,6 +1390,9 @@
         }
       }
     },
+    "Automatic (protocol default)" : {
+
+    },
     "Available model" : {
       "extractionState" : "stale",
       "localizations" : {
@@ -1711,12 +1754,128 @@
         }
       }
     },
+    "Cancel Download" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Download abbrechen"
+          }
+        },
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Cancel Download"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Cancelar descarga"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Annuler le téléchargement"
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "ダウンロードをキャンセル"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "다운로드 취소"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Отменить загрузку"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "取消下载"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "取消下載"
+          }
+        }
+      }
+    },
     "Cancel import" : {
       "localizations" : {
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
             "value" : "取消导入"
+          }
+        }
+      }
+    },
+    "Cancel Model Download?" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Modell-Download abbrechen?"
+          }
+        },
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Cancel Model Download?"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "¿Cancelar descarga del modelo?"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Annuler le téléchargement du modèle ?"
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "モデルのダウンロードをキャンセルしますか？"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "모델 다운로드를 취소하시겠습니까?"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Отменить загрузку модели?"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "取消下载模型？"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "取消下載模型？"
           }
         }
       }
@@ -1868,6 +2027,16 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Chat 输出上限字段"
+          }
+        }
+      }
+    },
+    "Chat with this model" : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "用此模型对话"
           }
         }
       }
@@ -2092,6 +2261,16 @@
         }
       }
     },
+    "Check engine again" : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "重新检测引擎"
+          }
+        }
+      }
+    },
     "Check Status" : {
       "localizations" : {
         "de" : {
@@ -2144,6 +2323,16 @@
         }
       }
     },
+    "Check the executable configured by %@." : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "请检查 %@ 指向的可执行文件。"
+          }
+        }
+      }
+    },
     "Check the highlighted generation parameters before saving." : {
       "localizations" : {
         "de" : {
@@ -2192,6 +2381,16 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "請先檢查標紅的生成參數，再儲存。"
+          }
+        }
+      }
+    },
+    "Checking engine…" : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "正在检测引擎…"
           }
         }
       }
@@ -2673,6 +2872,9 @@
         }
       }
     },
+    "Clear" : {
+
+    },
     "Clear settings" : {
       "localizations" : {
         "zh-Hans" : {
@@ -3068,6 +3270,16 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "确认能力设置"
+          }
+        }
+      }
+    },
+    "Confirm download" : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "确认下载"
           }
         }
       }
@@ -4442,6 +4654,9 @@
         }
       }
     },
+    "Dismiss" : {
+
+    },
     "Display name" : {
       "localizations" : {
         "zh-Hans" : {
@@ -4512,6 +4727,7 @@
       }
     },
     "Download" : {
+      "extractionState" : "stale",
       "localizations" : {
         "de" : {
           "stringUnit" : {
@@ -4565,6 +4781,16 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "下載"
+          }
+        }
+      }
+    },
+    "Download a model" : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "下载模型"
           }
         }
       }
@@ -4691,6 +4917,17 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "已暫停下載"
+          }
+        }
+      }
+    },
+    "Download size" : {
+      "extractionState" : "stale",
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "下载大小"
           }
         }
       }
@@ -5208,6 +5445,36 @@
         }
       }
     },
+    "Estimated %@ tokens · meets the 128K target" : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "预计可用 %@ 词元，达到 128K"
+          }
+        }
+      }
+    },
+    "Estimated %@ tokens · native limit %@ (below 128K)" : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "预计可用 %@ 词元，原生上限 %@（低于 128K）"
+          }
+        }
+      }
+    },
+    "Estimated %@ tokens on this Mac · below 128K" : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "本机预计可用 %@ 词元，低于 128K"
+          }
+        }
+      }
+    },
     "Estimated download" : {
       "localizations" : {
         "de" : {
@@ -5266,6 +5533,17 @@
         }
       }
     },
+    "Estimated memory" : {
+      "extractionState" : "stale",
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "预计内存"
+          }
+        }
+      }
+    },
     "Explicit capability settings" : {
       "localizations" : {
         "zh-Hans" : {
@@ -5297,6 +5575,47 @@
         }
       }
     },
+    "Find recommendations" : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "查看推荐"
+          }
+        }
+      }
+    },
+    "Finding compatible models…" : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "正在查找适合本机的模型…"
+          }
+        }
+      }
+    },
+    "Follow the installation guide for this engine." : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "请按安装指南配置此引擎。"
+          }
+        }
+      }
+    },
+    "Free disk space" : {
+      "extractionState" : "stale",
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "磁盘可用"
+          }
+        }
+      }
+    },
     "Generation parameters" : {
       "localizations" : {
         "zh-Hans" : {
@@ -5313,6 +5632,26 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "优先使用高优先级模型。优先级相同时，按下方端点和模型顺序选择。敏感数据必须明确启用，默认关闭。"
+          }
+        }
+      }
+    },
+    "Homebrew can install this engine." : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "可通过 Homebrew 安装此引擎。"
+          }
+        }
+      }
+    },
+    "Homebrew is unavailable on this Mac." : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "此 Mac 未检测到 Homebrew。"
           }
         }
       }
@@ -5481,6 +5820,56 @@
         }
       }
     },
+    "Inference engine" : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "推理引擎"
+          }
+        }
+      }
+    },
+    "Install %@" : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "安装 %@"
+          }
+        }
+      }
+    },
+    "Install %@ and make %@ available in PATH, or set %@ to its executable." : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "请安装 %1$@，将 %2$@ 加入 PATH，或将 %3$@ 设为可执行文件的路径。"
+          }
+        }
+      }
+    },
+    "Installation guide" : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "安装指南"
+          }
+        }
+      }
+    },
+    "Installing %@ with Homebrew…" : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "正在通过 Homebrew 安装 %@…"
+          }
+        }
+      }
+    },
     "Issue Repair" : {
       "localizations" : {
         "zh-Hans" : {
@@ -5497,6 +5886,64 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "保存后，该端点的模型和已保存 API 密钥将被移除。"
+          }
+        }
+      }
+    },
+    "Keep Downloading" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Weiter herunterladen"
+          }
+        },
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Keep Downloading"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Seguir descargando"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Continuer le téléchargement"
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "ダウンロードを続ける"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "계속 다운로드"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Продолжить загрузку"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "继续下载"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "繼續下載"
           }
         }
       }
@@ -5568,6 +6015,9 @@
           }
         }
       }
+    },
+    "Legacy limit parameter (max_tokens)" : {
+
     },
     "Link copied" : {
       "extractionState" : "manual",
@@ -6788,12 +7238,26 @@
         }
       }
     },
+    "Manage Models" : {
+
+    },
     "Maximum output" : {
       "localizations" : {
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
             "value" : "最大输出"
+          }
+        }
+      }
+    },
+    "Memory" : {
+      "extractionState" : "stale",
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "内存"
           }
         }
       }
@@ -7054,6 +7518,16 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "模型 ID"
+          }
+        }
+      }
+    },
+    "Model name" : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "模型名称"
           }
         }
       }
@@ -7394,6 +7868,9 @@
         }
       }
     },
+    "Needs attention" : {
+
+    },
     "New Endpoint" : {
       "localizations" : {
         "zh-Hans" : {
@@ -7469,6 +7946,16 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "没有 API 端点"
+          }
+        }
+      }
+    },
+    "No compatible model found" : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "未找到适合本机的模型"
           }
         }
       }
@@ -8009,6 +8496,17 @@
         }
       }
     },
+    "Optional · recommend a model for this Mac" : {
+      "extractionState" : "stale",
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "选填，留空按本机配置推荐"
+          }
+        }
+      }
+    },
     "Optional for local endpoints" : {
       "localizations" : {
         "zh-Hans" : {
@@ -8019,7 +8517,11 @@
         }
       }
     },
+    "Output length parameter" : {
+
+    },
     "Output token field" : {
+      "extractionState" : "stale",
       "localizations" : {
         "zh-Hans" : {
           "stringUnit" : {
@@ -8277,6 +8779,64 @@
         }
       }
     },
+    "Partial download progress will be discarded." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Der bisherige Download-Fortschritt wird verworfen."
+          }
+        },
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Partial download progress will be discarded."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Se descartará el progreso parcial de la descarga."
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "La progression partielle du téléchargement sera perdue."
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "途中までダウンロードされたデータは破棄されます。"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "진행 중이던 다운로드 내용이 삭제됩니다."
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Частичный прогресс загрузки будет сброшен."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "已下载的部分进度将被丢弃。"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "已下載的部分進度將會被捨棄。"
+          }
+        }
+      }
+    },
     "Pause" : {
       "localizations" : {
         "de" : {
@@ -8337,6 +8897,16 @@
     },
     "Paused until %@" : {
 
+    },
+    "Planned %@ tokens · 128K support unverified" : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "计划使用 %@ 词元，128K 能力待确认"
+          }
+        }
+      }
     },
     "Precise" : {
       "localizations" : {
@@ -8542,6 +9112,7 @@
       }
     },
     "Protocol default" : {
+      "extractionState" : "stale",
       "localizations" : {
         "zh-Hans" : {
           "stringUnit" : {
@@ -8560,6 +9131,9 @@
           }
         }
       }
+    },
+    "Provider preset" : {
+
     },
     "Reasoning" : {
       "localizations" : {
@@ -8647,6 +9221,16 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "推薦適用於此 Mac"
+          }
+        }
+      }
+    },
+    "Recommended from" : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "推荐来源"
           }
         }
       }
@@ -8896,6 +9480,9 @@
           }
         }
       }
+    },
+    "Refresh recommendations and hardware status" : {
+
     },
     "Refresh the preview and try again" : {
       "localizations" : {
@@ -11032,7 +11619,11 @@
         }
       }
     },
+    "Standard completion limit (max_completion_tokens)" : {
+
+    },
     "Start" : {
+      "extractionState" : "stale",
       "localizations" : {
         "de" : {
           "stringUnit" : {
@@ -11276,6 +11867,7 @@
       }
     },
     "Stop" : {
+      "extractionState" : "stale",
       "localizations" : {
         "de" : {
           "stringUnit" : {
@@ -11880,6 +12472,16 @@
         }
       }
     },
+    "The engine did not load this model within five minutes." : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "引擎在五分钟内没有完成模型加载。"
+          }
+        }
+      }
+    },
     "The local model configuration could not be encoded." : {
       "localizations" : {
         "de" : {
@@ -11977,6 +12579,16 @@
         }
       }
     },
+    "The model is downloaded. Chat requires a working engine." : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "模型已下载，引擎就绪后即可对话。"
+          }
+        }
+      }
+    },
     "The provider returned an invalid model catalog." : {
       "localizations" : {
         "de" : {
@@ -12030,6 +12642,7 @@
       }
     },
     "The runtime target controls Start. The default chat model is a separate preference." : {
+      "extractionState" : "stale",
       "localizations" : {
         "de" : {
           "stringUnit" : {
@@ -12437,6 +13050,16 @@
         }
       }
     },
+    "This engine does not support this Mac." : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "此引擎不支持当前 Mac。"
+          }
+        }
+      }
+    },
     "This is Nola’s independent authorization, not your Codex login or a paired Host account. Credentials stay with this Mac’s private runtime." : {
       "extractionState" : "stale",
       "localizations" : {
@@ -12784,6 +13407,16 @@
         }
       }
     },
+    "Unified memory" : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "统一内存"
+          }
+        }
+      }
+    },
     "Unknown local model: %@" : {
       "localizations" : {
         "de" : {
@@ -12914,6 +13547,16 @@
         }
       }
     },
+    "Use built-in MLX" : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "改用内置 MLX"
+          }
+        }
+      }
+    },
     "Use default chat model" : {
       "localizations" : {
         "de" : {
@@ -12967,6 +13610,7 @@
       }
     },
     "Use for Start" : {
+      "extractionState" : "stale",
       "localizations" : {
         "de" : {
           "stringUnit" : {
@@ -13215,6 +13859,16 @@
         }
       }
     },
+    "You can download models now and chat after setup." : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "可以先下载模型，引擎就绪后即可对话。"
+          }
+        }
+      }
+    },
     "Your browser will open automatically. After you approve access, Nola saves this account on this Mac." : {
       "extractionState" : "manual",
       "localizations" : {
@@ -13331,6 +13985,42 @@
           }
         }
       }
+    },
+    "停止" : {
+
+    },
+    "内存紧张" : {
+
+    },
+    "切换并使用" : {
+
+    },
+    "剩余" : {
+
+    },
+    "我的本地模型" : {
+
+    },
+    "技术详情" : {
+
+    },
+    "推荐预设模型" : {
+
+    },
+    "搜索模型，或直接粘贴 Hugging Face / ModelScope 链接或 owner/repo" : {
+
+    },
+    "流畅运行" : {
+
+    },
+    "管理与下载本地模型…" : {
+
+    },
+    "适中运行" : {
+
+    },
+    "预计内存" : {
+
     }
   },
   "version" : "1.0"

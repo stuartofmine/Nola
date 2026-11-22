@@ -82,7 +82,7 @@ enum MacVisualSnapshotHarness {
            !section.isEmpty {
             UserDefaults.standard.set(section, forKey: settingsCategoryKey)
         }
-        let root = content(
+        let root = await content(
             for: page,
             inspectorCaptureTab: environment["NOLA_CAPTURE_INSPECTOR_TAB"],
             hostState: snapshotHostState(environment["NOLA_CAPTURE_HOST_STATE"])
@@ -182,7 +182,7 @@ enum MacVisualSnapshotHarness {
         for page: Page,
         inspectorCaptureTab: String? = nil,
         hostState: MacRemoteHostConnectionState? = nil
-    ) -> AnyView {
+    ) async -> AnyView {
         switch page {
         case .chat:
             return AnyView(MacChatWorkspaceSnapshotContent(
@@ -247,6 +247,14 @@ enum MacVisualSnapshotHarness {
         case .activity:
             return AnyView(MacActivityCenterView())
         case .extensions:
+            if ProcessInfo.processInfo.environment["NOLA_CAPTURE_EXTENSIONS_TAB"] == "plugins" {
+                let repository = MacCanonicalConversationRepository(store: MacApplicationPort.shared)
+                return AnyView(MacExpertsAndSkillsCenterView(
+                    roomWorkspace: MacAgentRoomWorkspace(service: repository.makeAgentRoomService()),
+                    remoteHost: MacRemoteHostService.shared, skillsNavigation: MacExtensionsNavigationState(),
+                    pluginLibrary: try? await MacDesktopPluginClient().library()
+                ))
+            }
             return AnyView(MacExtensionsCenterView(remoteHost: MacRemoteHostService.shared))
         case .diagnostics:
             return AnyView(MacDiagnosticsCenterView())

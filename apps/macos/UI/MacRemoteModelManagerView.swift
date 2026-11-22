@@ -415,7 +415,7 @@ struct MacRemoteModelManagerView: View {
                     LocalizedStringKey(String(localized: "API Models", table: "ModelCenter")),
                     symbol: "network",
                     navigationAction: navigationAction,
-                    navigationSymbol: "chevron.left",
+                    navigationKind: .back,
                     navigationLabel: LocalizedStringKey(String(localized: "Model Center", table: "ModelCenter"))
                 ) {
                     Text(String(localized: "Select a model to edit. Connection settings apply to its models.", table: "ModelCenter"))
@@ -800,7 +800,7 @@ struct MacRemoteModelManagerView: View {
                 )
             }
         }
-        .buttonStyle(.borderedProminent)
+        .buttonStyle(.nolaProminent)
         .disabled(!hasUnsavedChanges || isSaving || loadError != nil || needsReload || draftValidationMessage != nil)
     }
 
@@ -2118,7 +2118,7 @@ struct MacAddRemoteModelSheet: View {
                 Button(primaryActionTitle) {
                     performPrimaryAction()
                 }
-                .buttonStyle(.borderedProminent)
+                .buttonStyle(.nolaProminent)
                 .keyboardShortcut(.defaultAction)
                 .disabled(currentValidationMessage != nil)
                 .accessibilityIdentifier("model-add.primary")
@@ -2370,7 +2370,7 @@ struct MacAddRemoteModelSheet: View {
             Text(value)
                 .fontWeight(.semibold)
                 .monospacedDigit()
-                .contentTransition(.numericText())
+                .contentTransition(reduceMotion ? .identity : .numericText())
         }
         .font(.caption)
         .padding(.horizontal, 8)

@@ -14,6 +14,7 @@ import com.nola.data.remote.api.isAllowedWebHostTransport
 import com.nola.data.local.security.SecureTokenStore
 import com.nola.core.AndroidAgentPermissionMode
 import dagger.hilt.android.qualifiers.ApplicationContext
+import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.map
@@ -61,19 +62,20 @@ class PreferenceDataStore @Inject constructor(
     }
 
     suspend fun saveDefaultModelSelection(model: com.nola.domain.model.ModelInfo) {
-        val hostId = webHostIdentity.first()
-        val hostUrl = webHostBaseUrl.first()
-        val hostPin = webHostCertificateSha256.first()
-        val value = kotlinx.serialization.json.buildJsonObject {
-            put("source", kotlinx.serialization.json.JsonPrimitive(model.source.name))
-            put("selection_id", kotlinx.serialization.json.JsonPrimitive(model.selectionId))
-            if (model.source == com.nola.domain.model.ModelInfo.ModelSource.WebHost) {
-                put("host_id", kotlinx.serialization.json.JsonPrimitive(hostId))
-                put("url", kotlinx.serialization.json.JsonPrimitive(hostUrl))
-                put("pin", kotlinx.serialization.json.JsonPrimitive(hostPin))
+        context.preferenceDataStore.edit { preferences ->
+            val value = kotlinx.serialization.json.buildJsonObject {
+                put("source", kotlinx.serialization.json.JsonPrimitive(model.source.name))
+                put("selection_id", kotlinx.serialization.json.JsonPrimitive(model.selectionId))
+                if (model.source == com.nola.domain.model.ModelInfo.ModelSource.WebHost) {
+                    val id = requireNotNull(preferences[KEY_WEB_HOST_ID]?.takeIf { it.isNotBlank() })
+                    val url = requireNotNull(preferences[KEY_WEB_HOST_BASE_URL]?.takeIf { it.isNotBlank() })
+                    put("host_id", kotlinx.serialization.json.JsonPrimitive(id))
+                    put("url", kotlinx.serialization.json.JsonPrimitive(url))
+                    put("pin", kotlinx.serialization.json.JsonPrimitive(preferences[KEY_WEB_HOST_CERTIFICATE_SHA256].orEmpty()))
+                }
             }
+            preferences[KEY_DEFAULT_MODEL_SELECTION] = value.toString()
         }
-        context.preferenceDataStore.edit { it[KEY_DEFAULT_MODEL_SELECTION] = value.toString() }
     }
 
     suspend fun clearDefaultModelSelection() {
@@ -81,13 +83,18 @@ class PreferenceDataStore @Inject constructor(
     }
 
     suspend fun defaultModelSelection(models: List<com.nola.domain.model.ModelInfo>): com.nola.domain.model.ModelInfo? {
-        val raw = context.preferenceDataStore.data.first()[KEY_DEFAULT_MODEL_SELECTION] ?: return null
-        val value = kotlinx.serialization.json.Json.parseToJsonElement(raw) as? kotlinx.serialization.json.JsonObject ?: return null
-        fun text(key: String) = (value[key] as? kotlinx.serialization.json.JsonPrimitive)?.content
+        val snapshot = context.preferenceDataStore.data.first()
+        val raw = snapshot[KEY_DEFAULT_MODEL_SELECTION] ?: return null
+        val value = runCatching {
+            kotlinx.serialization.json.Json.parseToJsonElement(raw) as? kotlinx.serialization.json.JsonObject
+        }.getOrNull() ?: return null
+        fun text(key: String) = (value[key] as? kotlinx.serialization.json.JsonPrimitive)
+            ?.takeUnless { it is kotlinx.serialization.json.JsonNull }
+            ?.content
         val model = models.singleOrNull { it.source.name == text("source") && it.selectionId == text("selection_id") } ?: return null
         if (model.source == com.nola.domain.model.ModelInfo.ModelSource.WebHost &&
-            (text("host_id").isNullOrBlank() || text("host_id") != webHostIdentity.first() ||
-                text("url") != webHostBaseUrl.first() || text("pin") != webHostCertificateSha256.first())) return null
+            (text("host_id").isNullOrBlank() || text("host_id") != snapshot[KEY_WEB_HOST_ID] ||
+                text("url") != snapshot[KEY_WEB_HOST_BASE_URL] || text("pin") != snapshot[KEY_WEB_HOST_CERTIFICATE_SHA256].orEmpty())) return null
         return model
     }
 
@@ -147,6 +154,13 @@ class PreferenceDataStore @Inject constructor(
         AndroidAgentPermissionMode.fromWireValue(it[KEY_AGENT_PERMISSION_PROFILE])
     }
 
+    internal data class HostDeviceGrants(val identity: String, val enabled: Boolean, val capabilities: Set<String>)
+
+    internal val hostDeviceGrants: Flow<HostDeviceGrants> = context.preferenceDataStore.data.map { preferences ->
+        HostDeviceGrants(preferences[KEY_WEB_HOST_ID].orEmpty(), preferences[KEY_HYBRID_DEVICE_TOOLS_ENABLED] ?: false,
+            preferences[KEY_HYBRID_DEVICE_CAPABILITIES].orEmpty())
+    }.distinctUntilChanged()
+
     val hybridDeviceToolsEnabled: Flow<Boolean> = context.preferenceDataStore.data.map {
         it[KEY_HYBRID_DEVICE_TOOLS_ENABLED] ?: false
     }
@@ -185,6 +199,18 @@ class PreferenceDataStore @Inject constructor(
         }
     }
 
+    internal class WebHostConfiguration(val address: String, val identity: String, val pin: String, val token: String)
+    internal suspend fun pairedWebHost(): WebHostConfiguration? = webHostConfiguration()?.takeIf { it.identity.isNotBlank() }
+
+    internal suspend fun webHostConfiguration(): WebHostConfiguration? = hostConfigurationMutex.withLock {
+        val snapshot = context.preferenceDataStore.data.first()
+        val address = snapshot[KEY_WEB_HOST_BASE_URL].orEmpty()
+        val identity = snapshot[KEY_WEB_HOST_ID].orEmpty()
+        val token = secureTokenStore.readWebHostToken().orEmpty()
+        if (address.isBlank() || token.isBlank()) null
+        else WebHostConfiguration(address, identity, snapshot[KEY_WEB_HOST_CERTIFICATE_SHA256].orEmpty(), token)
+    }
+
     suspend fun saveWebHostConfig(baseUrl: String, token: String, certificateSha256: String = "", verifiedHostId: String? = null) {
         hostConfigurationMutex.withLock {
             val normalized = normalizeWebHostBaseUrl(baseUrl)
@@ -211,12 +237,10 @@ class PreferenceDataStore @Inject constructor(
                 previousToken = secureTokenStore.readWebHostToken()
                 check(secureTokenStore.saveWebHostToken(normalizedToken)) { "Unable to store Web Host token in Android Keystore" }
                 tokenWritten = true
-                if (it[KEY_WEB_HOST_BASE_URL] != normalized) {
-                    it.remove(KEY_WEB_HOST_ID)
-                    it.remove(KEY_WEB_HOST_CERTIFICATE_SHA256)
-                    it[KEY_HYBRID_DEVICE_TOOLS_ENABLED] = false
-                    it.remove(KEY_HYBRID_DEVICE_CAPABILITIES)
+                if (it[KEY_WEB_HOST_BASE_URL] != normalized || it[KEY_WEB_HOST_CERTIFICATE_SHA256].orEmpty() != normalizedCertificate) {
+                    clearHostGrantsAndDefault(it)
                 }
+                if (it[KEY_WEB_HOST_BASE_URL] != normalized) it.remove(KEY_WEB_HOST_ID)
                 it[KEY_WEB_HOST_BASE_URL] = normalized
                 if (verifiedHostId != null) it[KEY_WEB_HOST_ID] = verifiedHostId
                 if (normalizedCertificate.isEmpty()) {
@@ -241,33 +265,36 @@ class PreferenceDataStore @Inject constructor(
         if (identity.length !in 16..128 || identity.any { !it.isLetterOrDigit() && it != '-' && it != '_' }) {
             return false
         }
-        var trusted = false
-        context.preferenceDataStore.edit { preferences ->
-            if (preferences[KEY_WEB_HOST_BASE_URL] != normalizedUrl) return@edit
-            val existing = preferences[KEY_WEB_HOST_ID].orEmpty()
-            trusted = existing.isEmpty() || existing == identity
-            if (trusted && existing.isEmpty()) preferences[KEY_WEB_HOST_ID] = identity
+        return hostConfigurationMutex.withLock {
+            var trusted = false
+            context.preferenceDataStore.edit { preferences ->
+                if (preferences[KEY_WEB_HOST_BASE_URL] != normalizedUrl) return@edit
+                val existing = preferences[KEY_WEB_HOST_ID].orEmpty()
+                trusted = existing.isEmpty() || existing == identity
+                if (trusted && existing.isEmpty()) preferences[KEY_WEB_HOST_ID] = identity
+            }
+            trusted
         }
-        return trusted
     }
 
-    suspend fun forgetWebHostIdentity() {
-        context.preferenceDataStore.edit {
-            it.remove(KEY_WEB_HOST_ID)
-            it.remove(KEY_WEB_HOST_CERTIFICATE_SHA256)
-            it[KEY_HYBRID_DEVICE_TOOLS_ENABLED] = false
-            it.remove(KEY_HYBRID_DEVICE_CAPABILITIES)
-        }
+    private fun clearHostGrantsAndDefault(preferences: androidx.datastore.preferences.core.MutablePreferences) {
+        preferences.remove(KEY_HYBRID_DEVICE_TOOLS_ENABLED)
+        preferences.remove(KEY_HYBRID_DEVICE_CAPABILITIES)
+        val raw = preferences[KEY_DEFAULT_MODEL_SELECTION] ?: return
+        val selection = runCatching { kotlinx.serialization.json.Json.parseToJsonElement(raw) }.getOrNull() as? kotlinx.serialization.json.JsonObject
+        if ((selection?.get("source") as? kotlinx.serialization.json.JsonPrimitive)?.content ==
+            com.nola.domain.model.ModelInfo.ModelSource.WebHost.name) preferences.remove(KEY_DEFAULT_MODEL_SELECTION)
     }
 
     suspend fun clearWebHostConfig() {
         hostConfigurationMutex.withLock {
-        secureTokenStore.deleteWebHostToken()
-        context.preferenceDataStore.edit {
-            it.remove(KEY_WEB_HOST_BASE_URL)
-            it.remove(KEY_WEB_HOST_ID)
-            it.remove(KEY_WEB_HOST_CERTIFICATE_SHA256)
-        }
+            context.preferenceDataStore.edit {
+                it.remove(KEY_WEB_HOST_BASE_URL)
+                it.remove(KEY_WEB_HOST_ID)
+                it.remove(KEY_WEB_HOST_CERTIFICATE_SHA256)
+                clearHostGrantsAndDefault(it)
+            }
+            secureTokenStore.deleteWebHostToken()
         }
     }
 

@@ -102,9 +102,9 @@ nonisolated struct IOSRoomDraft: Codable, Equatable, Sendable {
             }.value
             guard epoch == restoreEpoch, !Task.isCancelled, !isAdmitting else { return }
             if let association = restored.0 {
+                conversationAssociation = association
                 await select(association.room, resumeExecutions: false)
                 guard epoch == restoreEpoch, !Task.isCancelled, !isAdmitting else { return }
-                conversationAssociation = association
             }
             admissionOwner = conversationID
             admissionStorageRevision = restored.1?.1
@@ -565,35 +565,34 @@ nonisolated struct IOSRoomDraft: Codable, Equatable, Sendable {
     func select(_ room: IOSAgentRoomSnapshot, resumeExecutions: Bool = true) async {
         selectionEpoch &+= 1
         let epoch = selectionEpoch
+        let ownerEpoch = restoreEpoch
         selectedRoom = room
         let service = service
         do {
             let loadDraft = !loadedDrafts.contains(room.room.id)
             let beforeDraft = drafts[room.room.id]?.revision
-            let participants = room.room.participants
+            let roomID = room.room.id
+            let ownerID = conversationAssociation.flatMap { $0.roomID == roomID ? $0.conversationID : nil }
             let result = try await Task.detached {
-                var loadedExchanges: [String: AppleExpertPeerView] = [:]
-                for participant in participants {
-                    if let page = try? service.peerExchanges(conversationID: participant.contextConversationID) {
-                        for exchange in page.exchanges { loadedExchanges[exchange.exchangeID] = exchange }
-                    }
+                let exchanges = Result { () throws -> [AppleExpertPeerView] in
+                    guard let ownerID else { return [] }
+                    let page = try service.peerExchanges(conversationID: ownerID)
+                    guard page.exchanges.allSatisfy({ $0.roomID == roomID }) else { throw IOSApplicationRuntimeError.invalidResponse }
+                    return page.exchanges
                 }
                 return (
                     try service.load(id: room.room.id),
                     try service.submissions(roomID: room.room.id),
                     loadDraft ? try service.loadDraft(roomID: room.room.id) : nil,
-                    loadedExchanges.values.sorted {
-                        $0.createdAtMs == $1.createdAtMs ? $0.exchangeID < $1.exchangeID : $0.createdAtMs < $1.createdAtMs
-                    }
+                    exchanges
                 )
             }.value
-            guard epoch == selectionEpoch else { return }
+            guard epoch == selectionEpoch, ownerEpoch == restoreEpoch else { return }
             guard let snapshot = result.0, snapshot.room.id == room.room.id,
                   result.1.allSatisfy({ $0.input.roomID == room.room.id }) else {
                 throw IOSApplicationRuntimeError.rejected("Room response ownership mismatch")
             }
             selectedRoom = snapshot
-            peerExchanges[room.room.id] = result.3
             if loadDraft {
                 loadedDrafts.insert(room.room.id)
                 draftStorageRevisions[room.room.id] = result.2?.revision
@@ -619,9 +618,12 @@ nonisolated struct IOSRoomDraft: Codable, Equatable, Sendable {
                     } else { await startSelected(receipt) }
                 } }
             }
+            if ownerID == conversationAssociation.flatMap({ $0.roomID == roomID ? $0.conversationID : nil }) {
+                peerExchanges[roomID] = try result.3.get()
+            }
             errors[room.room.id] = nil
         } catch {
-            guard epoch == selectionEpoch else { return }
+            guard epoch == selectionEpoch, ownerEpoch == restoreEpoch else { return }
             errors[room.room.id] = error.localizedDescription
         }
     }

@@ -93,6 +93,7 @@ enum ChatComposerAccessibility {
 }
 
 final class ChatPasteAwareTextView: UITextView {
+    var pastedText: ((String) -> Void)?
     var onPasteFiles: (([URL]) -> Void)?
     var onPasteFailure: ((Error) -> Void)?
     var mentionsVisible = false
@@ -128,10 +129,11 @@ final class ChatPasteAwareTextView: UITextView {
             return
         }
         super.paste(sender)
+        pastedText?(text)
     }
 }
 
-private struct ChatPasteAwareEditor: UIViewRepresentable {
+struct ChatPasteAwareEditor: UIViewRepresentable {
     @Binding var text: String
     let isEditable: Bool
     let focus: FocusState<Bool>.Binding
@@ -139,6 +141,7 @@ private struct ChatPasteAwareEditor: UIViewRepresentable {
     let onPasteFailure: (Error) -> Void
     var mentionsVisible = false
     var mentionCommand: (String) -> Bool = { _ in false }
+    var mentionEditor = AppleMentionEditor()
 
     func makeCoordinator() -> Coordinator { Coordinator(parent: self) }
 
@@ -147,7 +150,8 @@ private struct ChatPasteAwareEditor: UIViewRepresentable {
         view.delegate = context.coordinator
         view.backgroundColor = .clear
         ChatComposerAccessibility.configure(view)
-        view.tintColor = UIColor(DesignTokens.primaryColor)
+        view.textColor = UIColor(DesignTokens.contentColor)
+        view.tintColor = UIColor(DesignTokens.actionColor)
         view.textContainerInset = UIEdgeInsets(top: 10, left: 0, bottom: 10, right: 0)
         view.textContainer.lineFragmentPadding = 0
         view.isScrollEnabled = true
@@ -159,9 +163,38 @@ private struct ChatPasteAwareEditor: UIViewRepresentable {
         context.coordinator.parent = self
         view.mentionsVisible = mentionsVisible
         view.mentionCommand = mentionCommand
+        view.pastedText = mentionEditor.pasted
         ChatComposerAccessibility.configure(view)
-        view.tintColor = UIColor(DesignTokens.primaryColor)
-        if view.text != text { view.text = text }
+        let inkColor = UIColor(DesignTokens.contentColor)
+        view.textColor = inkColor
+        view.tintColor = UIColor(DesignTokens.actionColor)
+        if view.markedTextRange == nil {
+            if view.text != text { view.text = text }
+            if let request = mentionEditor.caretRequest, context.coordinator.lastCaret != request.revision {
+                context.coordinator.lastCaret = request.revision
+                if let previous = request.before {
+                    let current = AppleMentionEditor.Snapshot(text: text, mentions: mentionEditor.mentions, caret: request.location)
+                    context.coordinator.undoHistory.registerCompletion(view.undoManager, before: previous, after: current) { [weak view, weak coordinator = context.coordinator] expected, restored in
+                        guard let view, let coordinator, view.text == expected.text else { return false }
+                        coordinator.parent.mentionEditor.restore(restored.text, restored.mentions)
+                        view.text = restored.text
+                        let range = NSRange(location: min(restored.caret, restored.text.utf16.count), length: 0)
+                        view.selectedRange = range
+                        return true
+                    }
+                }
+                view.selectedRange = NSRange(location: min(request.location, view.text.utf16.count), length: 0)
+            }
+            if context.coordinator.styledText != text || context.coordinator.styledMentions != mentionEditor.mentions {
+                context.coordinator.styledText = text
+                context.coordinator.styledMentions = mentionEditor.mentions
+                view.textStorage.addAttribute(.foregroundColor, value: inkColor, range: NSRange(location: 0, length: view.textStorage.length))
+                for mention in mentionEditor.mentions where NSMaxRange(mention.range) <= view.textStorage.length {
+                    view.textStorage.addAttribute(.foregroundColor, value: view.tintColor as Any, range: mention.range)
+                }
+                view.typingAttributes[.foregroundColor] = inkColor
+            }
+        }
         view.isEditable = isEditable
         view.onPasteFiles = onPasteFiles
         view.onPasteFailure = onPasteFailure
@@ -183,7 +216,46 @@ private struct ChatPasteAwareEditor: UIViewRepresentable {
         var parent: ChatPasteAwareEditor
         init(parent: ChatPasteAwareEditor) { self.parent = parent }
 
+        var previousSelection: NSRange?
+        var lastCaret: UUID?
+        var styledText: String?
+        var styledMentions: [AppleDraftMention] = []
+        var undoHistory = AppleMentionUndoHistory()
+        var pendingEdit: (String, NSRange, String)?
+        func textView(_ textView: UITextView, shouldChangeTextIn range: NSRange, replacementText text: String) -> Bool {
+            if text == "\n", textView.markedTextRange == nil, parent.mentionsVisible, parent.mentionCommand("accept") { return false }
+            let full = parent.mentionEditor.deletionRange(range, replacement: text)
+            if full != range, textView.markedTextRange == nil {
+                textView.selectedRange = full
+                textView.deleteBackward()
+                return false
+            }
+            pendingEdit = (textView.text, range, text)
+            return true
+        }
+        func textViewDidChangeSelection(_ textView: UITextView) {
+            let selection = textView.selectedRange, composing = textView.markedTextRange != nil
+            let next = parent.mentionEditor.caretRange(selection, previous: previousSelection)
+            previousSelection = next
+            if !composing, next != selection, NSMaxRange(next) <= textView.text.utf16.count { textView.selectedRange = next; return }
+            Task { @MainActor [weak self, weak textView] in
+                guard textView?.selectedRange == selection else { return }
+                self?.parent.mentionEditor.selectionChanged(selection, composing)
+            }
+        }
         func textViewDidChange(_ textView: UITextView) {
+            if let (old, range, replacement) = pendingEdit,
+               (old as NSString).replacingCharacters(in: range, with: replacement) == textView.text {
+                pendingEdit = nil
+                if undoHistory.restore(before: old, after: textView.text, undo: textView.undoManager, editor: parent.mentionEditor) { return }
+                if parent.mentionEditor.applyEdit(old, range, replacement) {
+                    let original = parent.mentionEditor.mentions
+                    undoHistory.record(before: old, after: textView.text, original: original,
+                        current: AppleDraftMention.replacing(original, range: range, with: replacement))
+                    return
+                }
+            }
+            pendingEdit = nil
             if parent.text != textView.text { parent.text = textView.text }
         }
         func textViewDidBeginEditing(_ textView: UITextView) {
@@ -310,9 +382,10 @@ nonisolated struct ChatAttachmentDraft: Identifiable, Codable, Equatable, Sendab
 
     static func importFiles(
         from result: Result<[URL], Error>,
-        parserHost: ChatAttachmentParserHost? = nil
+        parserHost: ChatAttachmentParserHost? = nil,
+        runtime: IOSApplicationRuntime? = nil
     ) async throws -> ChatAttachmentImportResult {
-        try await ChatAttachmentPipeline.importFiles(from: result, parserHost: parserHost)
+        try await ChatAttachmentPipeline.importFiles(from: result, parserHost: parserHost, runtime: runtime)
     }
 
     static func promptBlock(for attachments: [ChatAttachmentDraft]) -> String {
@@ -560,6 +633,7 @@ struct ChatAttachmentMessagePayload: Codable, Equatable, Sendable {
 struct ChatComposer<ModelControl: View>: View {
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @Environment(\.accessibilityReduceTransparency) private var reduceTransparency
+    @Environment(\.colorScheme) private var colorScheme
     @ScaledMetric(relativeTo: .body) private var editorMinimumHeight: CGFloat = 44
     @Binding var inputText: String
     let attachments: [ChatAttachmentDraft]
@@ -576,10 +650,10 @@ struct ChatComposer<ModelControl: View>: View {
     let onStop: () -> Void
     var mentionsVisible = false
     var mentionCommand: (String) -> Bool = { _ in false }
+    var mentionEditor = AppleMentionEditor()
     let showsModelControl: Bool
     let modelControl: ModelControl
 
-    @State private var pageWidth: CGFloat = 390
     @State private var showAttachmentImporter = false
     @State private var showPhotosPicker = false
     @State private var selectedPhotoItems: [PhotosPickerItem] = []
@@ -615,7 +689,7 @@ struct ChatComposer<ModelControl: View>: View {
                     VStack(spacing: 0) {
                         messageEditor
                             .padding(.horizontal, 12)
-                            .padding(.top, 6)
+                            .padding(.top, 4)
                         HStack(spacing: 0) {
                             attachmentButton
                             modelControl
@@ -623,9 +697,9 @@ struct ChatComposer<ModelControl: View>: View {
                             sendButton
                         }
                     }
-                    .padding(4)
+                    .padding(6)
                     .background(NolaSurfaceBackground(fill: DesignTokens.surfaceColor,
-                                                      border: focus.wrappedValue ? DesignTokens.primaryColor : DesignTokens.borderColor,
+                                                      border: composerBorderColor,
                                                       cornerRadius: 25, raised: false))
                 } else {
                     HStack(alignment: .bottom, spacing: 3) {
@@ -633,17 +707,16 @@ struct ChatComposer<ModelControl: View>: View {
                         messageEditor
                             .padding(.horizontal, 14)
                             .background(NolaSurfaceBackground(fill: DesignTokens.surfaceColor,
-                                                              border: focus.wrappedValue ? DesignTokens.primaryColor : DesignTokens.borderColor,
+                                                              border: composerBorderColor,
                                                               cornerRadius: 22, raised: false))
                         sendButton
                     }
                 }
             }
-            .animation(reduceMotion ? nil : .snappy(duration: 0.22), value: focus.wrappedValue)
+            .animation(reduceMotion ? nil : DesignTokens.disclosureAnimation, value: focus.wrappedValue)
         }
         .padding(.horizontal, 12)
-        .tint(DesignTokens.primaryColor)
-        .background(IOSWorkspaceWidthObserver(width: $pageWidth))
+        .tint(DesignTokens.actionColor)
         .padding(.top, 4)
         .padding(.bottom, 8)
         .animation(reduceMotion ? nil : .snappy(duration: 0.24), value: attachments.count)
@@ -671,6 +744,14 @@ struct ChatComposer<ModelControl: View>: View {
             maxSelectionCount: 10,
             matching: .images
         )
+        .onChange(of: showPhotosPicker) { _, isPresented in
+            guard !isPresented else { return }
+            DispatchQueue.main.async {
+                if !showPhotosPicker && selectedPhotoItems.isEmpty {
+                    cancelAttachmentPicker()
+                }
+            }
+        }
         .onChange(of: selectedPhotoItems) { _, items in
             guard !items.isEmpty else { return }
             let picked = items
@@ -689,11 +770,17 @@ struct ChatComposer<ModelControl: View>: View {
                         }
                     }
                 }
+                guard let completion else {
+                    for url in urls {
+                        try? FileManager.default.removeItem(at: url)
+                    }
+                    return
+                }
                 await MainActor.run {
                     if urls.isEmpty {
-                        completion?(.failure(CocoaError(.fileReadUnknown)))
+                        completion(.failure(CocoaError(.fileReadUnknown)))
                     } else {
-                        completion?(.success(urls))
+                        completion(.success(urls))
                     }
                 }
             }
@@ -701,9 +788,13 @@ struct ChatComposer<ModelControl: View>: View {
     }
 
     private var messageEditor: some View {
-        ZStack(alignment: .leading) {
+        ZStack(alignment: .topLeading) {
             if inputText.isEmpty {
-                composerPrompt.allowsHitTesting(false).accessibilityHidden(true)
+                composerPrompt
+                    .font(.body)
+                    .padding(.top, 10)
+                    .allowsHitTesting(false)
+                    .accessibilityHidden(true)
             }
             ChatPasteAwareEditor(
                 text: $inputText,
@@ -712,12 +803,12 @@ struct ChatComposer<ModelControl: View>: View {
                 onPasteFiles: { onBeginAttachFiles()(.success($0)) },
                 onPasteFailure: { onBeginAttachFiles()(.failure($0)) },
                 mentionsVisible: mentionsVisible,
-                mentionCommand: mentionCommand
+                mentionCommand: mentionCommand, mentionEditor: mentionEditor
             )
             .accessibilityIdentifier("chat.composer.input")
             .focused(focus)
         }
-            .frame(minHeight: editorMinimumHeight, alignment: .center)
+            .frame(minHeight: editorMinimumHeight, alignment: .topLeading)
             .clipped()
     }
 
@@ -731,13 +822,15 @@ struct ChatComposer<ModelControl: View>: View {
         } label: {
             Image(isGenerating ? "nola-stop" : "nola-arrow")
                 .renderingMode(.template).resizable().scaledToFit()
-                .frame(width: 18, height: 18)
-                .foregroundColor(canSend ? (isGenerating ? DesignTokens.onAccentColor : DesignTokens.onActionColor) : inactiveComposerForeground)
-                .frame(width: 44, height: 44)
+                .frame(width: 17, height: 17)
+                .contentTransition(reduceMotion ? .identity : .opacity)
+                .foregroundColor(canSend ? DesignTokens.onActionColor : disabledSendForeground)
+                .frame(width: 36, height: 36)
                 .background(
                     Circle()
-                        .fill(canSend ? DesignTokens.actionColor : DesignTokens.secondaryBackgroundColor)
+                        .fill(canSend ? DesignTokens.actionColor : disabledSendFill)
                 )
+                .frame(width: composerButtonSize, height: composerButtonSize)
         }
         .frame(width: composerButtonSize, height: composerButtonSize)
         .contentShape(Rectangle())
@@ -761,6 +854,21 @@ struct ChatComposer<ModelControl: View>: View {
         let completion = attachmentCompletion
         attachmentCompletion = nil
         completion?(.failure(CocoaError(.userCancelled)))
+    }
+
+    private var composerBorderColor: Color {
+        if colorScheme == .dark {
+            return focus.wrappedValue ? Color.white.opacity(0.22) : Color.white.opacity(0.10)
+        }
+        return focus.wrappedValue ? DesignTokens.actionColor.opacity(0.45) : DesignTokens.borderColor
+    }
+
+    private var disabledSendFill: Color {
+        colorScheme == .dark ? Color.white.opacity(0.10) : Color.black.opacity(0.06)
+    }
+
+    private var disabledSendForeground: Color {
+        colorScheme == .dark ? Color.white.opacity(0.36) : Color.black.opacity(0.32)
     }
 
     private var inactiveComposerForeground: Color {
@@ -885,7 +993,7 @@ struct ChatComposer<ModelControl: View>: View {
                     .padding(.leading, 10)
                     .padding(.trailing, 2)
                     .background(DesignTokens.elevatedColor, in: Capsule())
-                    .overlay(Capsule().stroke(DesignTokens.borderColor, lineWidth: 1))
+                    .overlay(Capsule().stroke(DesignTokens.hairlineBorderColor(for: colorScheme), lineWidth: 0.75))
                     .accessibilityElement(children: .contain)
                     .accessibilityIdentifier("chat.composer.attachment.\(attachment.id.uuidString)")
                 }
@@ -896,7 +1004,14 @@ struct ChatComposer<ModelControl: View>: View {
 }
 
 private struct ComposerSendButtonStyle: ButtonStyle {
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+
     func makeBody(configuration: Configuration) -> some View {
-        configuration.label.opacity(configuration.isPressed ? 0.82 : 1)
+        configuration.label
+            .opacity(configuration.isPressed ? 0.82 : 1)
+            .animation(
+                reduceMotion ? nil : .easeOut(duration: DesignTokens.motionFast),
+                value: configuration.isPressed
+            )
     }
 }

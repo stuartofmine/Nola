@@ -589,6 +589,12 @@ nonisolated struct MacCanonicalConversationMessage: Codable, Equatable, Sendable
     }
 }
 
+nonisolated enum MacConversationTitleSource: String, Codable {
+    case automatic
+    case firstMessage = "first_message"
+    case user
+}
+
 nonisolated struct MacCanonicalConversation: Codable, Equatable, Sendable {
     let id: String
     let title: String
@@ -1135,6 +1141,10 @@ nonisolated struct MacCanonicalConversationProjectionV1: Decodable, Equatable, S
         let binding: String?
         let status: Status
         let fields: [String: Field]
+        var expertMentions: AppleExpertMentions? {
+            guard canonicalKind == "text", case .complete(let value)? = fields["expert_mentions"] else { return nil }
+            return try? JSONDecoder().decode(AppleExpertMentions.self, from: JSONEncoder().encode(value))
+        }
         let canonicalText: TextPreview?
         struct TextPreview: Decodable, Equatable, Sendable {
             let text: String
@@ -3560,13 +3570,18 @@ nonisolated final class MacApplicationPort:
         }
     }
 
-    func renameConversation(_ conversationID: String, title: String, updatedAtMs: Int64) throws -> Bool {
-        try execute(RenameConversationCommand(
+    func renameConversation(_ conversationID: String, title: String, source: MacConversationTitleSource = .user,
+                            expectedRevision: UInt64? = nil, updatedAtMs: Int64) throws -> Bool {
+        let command = RenameConversationCommand(
             type: "rename_conversation",
             conversationID: conversationID,
             title: title,
+            titleSource: source,
             updatedAtMs: updatedAtMs
-        ))
+        )
+        let data = try Self.makeEncoder().encode(command)
+        let response = try serviceClient.execute(commandData: data, expectedRevision: expectedRevision)
+        return try Self.makeDecoder().decode(Bool.self, from: response)
     }
 
     func deleteConversation(_ conversationID: String) throws -> Bool {
@@ -3792,6 +3807,24 @@ nonisolated final class MacApplicationPort:
             let input: MacCanonicalSkillInput
         }
         return try execute(MacSkillCommandEnvelope(command: Payload(input: input)))
+    }
+
+    func updateInstalledSkillInstructions(_ text: String, expected: MacCanonicalSkillEditor) throws -> MacCanonicalSkillEditor {
+        struct Payload: Encodable {
+            let type = "configure_user"
+            let expectedRevision: Int64
+            let input: MacCanonicalSkillInput
+        }
+        let record = expected.record
+        guard record.gitHubSourceURL != nil else { throw MacExtensionsServiceError.contentUnavailable }
+        let input = MacCanonicalSkillInput(
+            id: record.id, source: record.source, version: "user-" + UUID().uuidString,
+            displayName: record.displayName, summary: record.summary, category: record.category,
+            instructionsRef: record.instructionsRef, instructionsText: text, requiredTools: record.requiredTools,
+            defaultMode: record.defaultMode, enabled: record.enabled, createdAtMs: record.createdAtMs,
+            updatedAtMs: Int64(Date().timeIntervalSince1970 * 1_000)
+        )
+        return try execute(MacSkillCommandEnvelope(command: Payload(expectedRevision: expected.revision, input: input)))
     }
 
     func setSkillEnabled(_ expected: MacCanonicalSkillEditor, enabled: Bool, updatedAtMs: Int64) throws -> MacCanonicalSkillEditor {
@@ -4819,6 +4852,7 @@ nonisolated final class MacApplicationPort:
         let type: String
         let conversationID: String
         let title: String
+        let titleSource: MacConversationTitleSource
         let updatedAtMs: Int64
     }
 

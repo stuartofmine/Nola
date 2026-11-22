@@ -2369,3 +2369,23 @@ impl nola_store_port::room_presentation::RoomPresentationRepository for MemoryCr
         nola_store_port::room_presentation::RoomPresentationRepository::read_room_presentation_setting(&*self.models.0.borrow(), key)
     }
 }
+
+// This fixture only opens fresh turns. Deferred edits are covered by the transactional Store suite.
+impl nola_store_port::conversation_revert::ConversationRevertRepository for MemoryCreation {
+    type Error = String;
+    fn delegated_expert_rewind_points(&self, _: &str, _: i64) -> Result<Vec<(String, String)>, String> {
+        Err("no edit boundary in this fixture".into())
+    }
+    fn prepared_in_place_resend(&self, _: &str)
+        -> Result<Option<nola_domain::edited_resend::PreparedInPlaceResend>, String> { Ok(None) }
+    fn put_prepared_in_place_resend(&mut self, _: &nola_domain::edited_resend::PreparedInPlaceResend)
+        -> Result<(), String> { Err("no edit owner in this fixture".into()) }
+    fn conversation_revert_boundary(&self, _: &str, _: &str, _: bool)
+        -> Result<nola_store_port::conversation_revert::ConversationRevertBoundary, String> {
+        Err("no edit boundary in this fixture".into())
+    }
+    fn commit_checkpoint_projection(&mut self, _: &nola_store_port::conversation_revert::CommitCheckpointProjectionInput)
+        -> Result<nola_store_port::conversation_revert::CommitCheckpointProjectionResult, String> {
+        Err("no edit boundary in this fixture".into())
+    }
+}

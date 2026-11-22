@@ -297,17 +297,12 @@ fn mobile_login_response(request: &mut Request) -> Response<Box<dyn Read + Send>
     let token = nola_core::mobile_crypto::generate_mobile_access_token();
     {
         let mut tokens = mobile_tokens().lock().unwrap();
-        mobile_cleanup_locked(&mut tokens);
-        if tokens.len() >= 32 {
-            if let Some(oldest) = tokens
-                .iter()
-                .min_by_key(|(_, seen)| *seen)
-                .map(|(token, _)| token.clone())
-            {
-                tokens.remove(&oldest);
-            }
-        }
-        tokens.insert(token.clone(), Instant::now());
+        insert_mobile_token_locked(
+            &mut tokens,
+            token.clone(),
+            WEB_HOST_ACCESS_TOKEN.get().map(String::as_str),
+            Instant::now(),
+        );
     }
     json_response(
         StatusCode(200),
@@ -322,6 +317,26 @@ fn mobile_login_response(request: &mut Request) -> Response<Box<dyn Read + Send>
             "backend": "cli-rust",
         }),
     )
+}
+
+fn insert_mobile_token_locked(
+    tokens: &mut HashMap<String, Instant>,
+    token: String,
+    host_token: Option<&str>,
+    now: Instant,
+) {
+    mobile_cleanup_locked(tokens);
+    if tokens.len() >= 32 {
+        if let Some(oldest) = tokens
+            .iter()
+            .filter(|(candidate, _)| host_token != Some(candidate.as_str()))
+            .min_by_key(|(_, seen)| *seen)
+            .map(|(candidate, _)| candidate.clone())
+        {
+            tokens.remove(&oldest);
+        }
+    }
+    tokens.insert(token, now);
 }
 
 fn mobile_login_is_rate_limited(key: &str) -> bool {
@@ -402,13 +417,27 @@ fn mobile_agent_settings_response(request: &Request) -> Response<Box<dyn Read + 
             )
         }
     };
+    // Freezing the default model needs the source identity and model revisions.
+    // Catalog reads around admission must not launch installed coding agents.
+    if query_param(request.url(), "view").as_deref() == Some("models") {
+        if read_epoch().ok().as_ref() != Some(&source_store_epoch) {
+            return mobile_encrypted_json_response(StatusCode(409), json!({"code":"room_source_epoch_changed"}), &token);
+        }
+        return mobile_encrypted_json_response(StatusCode(200), json!({
+            "source_store_epoch": source_store_epoch,
+            "host_identity": {"id": host_identity(), "permission_protocol_version": HOST_PERMISSION_PROTOCOL_VERSION},
+            "model_profiles": model_profiles,
+            "default_chat_model_resolution": default_chat_model_resolution,
+            "default_chat_model_revision": default_chat_model_revision,
+        }), &token);
+    }
     let browser_status = native_status_value(NativeBridgeKind::Browser);
     let browser_tools = native_browser_tool_names_from_status(&browser_status);
     let messaging_worker = crate::messaging_channel_worker::config_projection()
         .unwrap_or_else(|error| json!({"enabled": false, "error": error}));
     let messaging_channels = crate::messaging_channel_worker::list_connections()
         .unwrap_or_else(|error| json!({"channels": [], "error": error}));
-    let settings = match NolaStore::open_default().and_then(|store| load_agent_settings(&store)) {
+    let settings = match NolaStore::open_default().and_then(|store| load_agent_settings_from_store(&store)) {
         Ok(settings) => settings,
         Err(error) => return json_response(StatusCode(500), json!({"error":error})),
     };
@@ -430,6 +459,16 @@ fn mobile_agent_settings_response(request: &Request) -> Response<Box<dyn Read + 
                 .map(ToOwned::to_owned)
         })
         .collect::<Vec<_>>();
+        let uploaded_skills = settings
+            .uploaded_skills
+            .iter()
+            .filter_map(|skill| {
+                crate::resource_access::api_projection(
+                    skill,
+                    nola_core::agent::resource_access::AgentResourceKind::Skill,
+                )
+            })
+            .collect::<Vec<_>>();
         mobile_encrypted_json_response(
             StatusCode(200),
             json!({
@@ -437,8 +476,8 @@ fn mobile_agent_settings_response(request: &Request) -> Response<Box<dyn Read + 
                 "skills": builtin_skills::merged_catalog(
                     &settings.builtin_skill_overrides,
                     &settings.uploaded_skills,
-                ).unwrap_or_else(|_| settings.uploaded_skills.clone()),
-                "uploaded_skills": settings.uploaded_skills,
+                ).unwrap_or_else(|_| uploaded_skills.clone()),
+                "uploaded_skills": uploaded_skills,
                 "uploaded_documents": crate::resource_access::data_source_api_projections(&settings.uploaded_documents),
                 "mcp_servers": settings.mcp_servers.iter()
                     .filter_map(crate::resource_access::mcp_api_projection)
@@ -2696,20 +2735,14 @@ fn chat_agent_stream_response_body_with_room_retry(
             "error":"model_intent is only supported by the Nola execution backend"}),
         );
     }
-    let execution_backend_catalog = crate::external_executor::discover_execution_backends();
-    let execution_backend_available = execution_backend_catalog.iter().any(|backend| {
-        backend.id == execution_backend
-            && backend.availability
-                == nola_domain::execution_backend::ExecutionBackendAvailability::Available
-    });
-    if !execution_backend_available {
+    if !crate::external_executor::execution_backend_available(&execution_backend) {
         return json_response(
             StatusCode(422),
             json!({
                 "error": format!("execution backend is unavailable: {execution_backend}"),
                 "code": "execution_backend_unavailable",
                 "execution_backend": execution_backend,
-                "execution_backends": execution_backend_catalog,
+                "execution_backends": crate::external_executor::discover_execution_backends(),
             }),
         );
     }
@@ -2940,7 +2973,7 @@ fn chat_agent_stream_response_body_with_room_retry(
         context_components.retain(|component| component.kind != ContextComponentKind::PromptTemplate);
         context_components.extend(definitions);
     }
-    let (initial_items, input_items) = split_web_core_items(&context_messages);
+    let (initial_items, input_items) = split_web_core_items(&context_messages, &dispatch.identity.user_message_id);
     if input_items.is_empty() {
         return json_response(
             StatusCode(422),
@@ -2962,6 +2995,7 @@ fn chat_agent_stream_response_body_with_room_retry(
         .unwrap_or_default();
     // Keep presentation intent until an exact canonical source receipt proves
     // admission. Preflight success, transport success, and model success do not.
+    let in_place_resend = body.get("in_place_resend_operation_id").is_some();
     let first_message_title_text = (should_persist_trace && edited_prepared.is_none()).then(|| {
         body.get("current_user_display_text").and_then(Value::as_str)
             .unwrap_or(external_prompt.as_str()).to_owned()
@@ -3242,7 +3276,7 @@ fn chat_agent_stream_response_body_with_room_retry(
                     // The receipt fence above observes a committed canonical
                     // admission, so a long-running response gets its title now.
                     // The post-pump check below also covers early provider errors.
-                    let _=adopt_first_message_conversation_title_after_admission(&admitted_title_identity,&admitted_title_digest,text);
+                    let _=adopt_first_message_conversation_title_after_admission(&admitted_title_identity,&admitted_title_digest,text,in_place_resend);
                 }
             }
             if let Some(owner) = &observation_owner {
@@ -3263,11 +3297,7 @@ fn chat_agent_stream_response_body_with_room_retry(
             // CLI and therefore has no transport identity of its own. Mobile
             // scopes it here before forwarding so native clients never guess
             // which conversation owns the measurement.
-            if event_type.as_deref() == Some("context_usage") {
-                event["protocol_version"] = Value::from(2);
-                event["session_id"] = Value::String(usage_conversation_id.clone());
-                event["source_host_id"] = Value::String(event_source_host_id.clone());
-            }
+            bind_mobile_context_usage(&mut event, &usage_conversation_id, &event_source_host_id);
             // Mobile is a canonical Core transport. Presenter-only events are
             // intentionally not part of this protocol and must never be
             // converted into user-visible failures.
@@ -3474,7 +3504,7 @@ fn chat_agent_stream_response_body_with_room_retry(
             }
         });
         if let Some(visible_text)=first_message_title_text.as_deref() {
-            if let Err(error)=adopt_first_message_conversation_title_after_admission(&dispatch.identity,&dispatch.digest,visible_text) {
+            if let Err(error)=adopt_first_message_conversation_title_after_admission(&dispatch.identity,&dispatch.digest,visible_text,in_place_resend) {
                 // The Run may already be admitted and fail at the provider.
                 // Title metadata must neither turn that admission into failure
                 // nor be written from an unconfirmed source request.
@@ -3523,6 +3553,14 @@ fn chat_agent_stream_response_body_with_room_retry(
     sse_response(rx)
 }
 
+fn bind_mobile_context_usage(event: &mut Value, conversation_id: &str, host_id: &str) {
+    if event["type"] == "context_usage" {
+        event["protocol_version"] = json!(1);
+        event["session_id"] = json!(conversation_id);
+        event["source_host_id"] = json!(host_id);
+    }
+}
+
 fn web_event_is_core_projection(event: &Value) -> bool {
     matches!(
         event.get("type").and_then(Value::as_str),
@@ -3532,6 +3570,7 @@ fn web_event_is_core_projection(event: &Value) -> bool {
                 | "core_capabilities_activated"
                 | "core_permission_projection_updated"
                 | "core_memory_runtime_projection_updated"
+                | "external_session_started"
                 | "assistant_journal_committed_v1"
                 | "assistant_run_terminal_committed_v1"
                 | "context_usage"
@@ -4036,6 +4075,13 @@ fn host_permission_safe_review_text(request: &ToolRequest) -> Option<String> {
         Some(text.to_string())
     }
     match request.name.as_str() {
+        "git_worktree_create" => {
+            let root = safe_target(request.args.get("root")?)?;
+            let destination = safe_target(request.args.get("destination")?)?;
+            let head = safe_target(request.args.get("expected_head")?)?;
+            let common = safe_target(request.args.get("expected_common_directory")?)?;
+            Some(format!("Create Git worktree\nRepository: {root}\nCommon directory: {common}\nCommit: {head}\nDestination: {destination}"))
+        }
         "code_mode_wait" => {
             let input: nola_domain::code_mode::CodeCellWaitRequest =
                 serde_json::from_value(Value::Object(request.args.clone())).ok()?;
@@ -4091,6 +4137,34 @@ fn host_permission_safe_review_text(request: &ToolRequest) -> Option<String> {
             Some(format!("agent_plan_file: {action}\nProject: {root}\nPlan: {}\nPreview only: {}\nContent UTF-8 bytes: {}\nContent SHA-256: {:x}",
                 slug, request.args.get("dry_run").and_then(Value::as_bool).unwrap_or(true),
                 content.len(), Sha256::digest(content.as_bytes())))
+        }
+        "edit_file" => {
+            if !request.args.keys().all(|key| matches!(key.as_str(),
+                "path" | "old_text" | "new_text" | "replace_all" | "expected_replacements" | "expected_sha256" | "dry_run"))
+                || ["replace_all", "dry_run"].iter().any(|key|
+                    request.args.get(*key).is_some_and(|value| !value.is_boolean()))
+                || crate::tools::validate_tool_request(request).is_some() { return None; }
+            let path = safe_target(request.args.get("path")?)?;
+            if request.args.get("path")?.as_str()? != path { return None; }
+            let before = request.args.get("old_text")?.as_str()?;
+            let after = request.args.get("new_text")?.as_str()?;
+            if before.is_empty() { return None; }
+            let matches = match (request.args.get("replace_all").and_then(Value::as_bool).unwrap_or(false), request.args.get("expected_replacements")) {
+                (false, None) => 1,
+                (true, Some(value)) => value.as_u64().filter(|n| *n > 0)?,
+                _ => return None,
+            };
+            let version = match request.args.get("expected_sha256") {
+                None => String::new(),
+                Some(value) => {
+                    let digest = value.as_str()?;
+                    if digest.len() != 64 || !digest.bytes().all(|byte| byte.is_ascii_hexdigit()) { return None; }
+                    format!("\nRequired file SHA-256: {digest}")
+                }
+            };
+            let mode = if request.args.get("dry_run") == Some(&Value::Bool(true)) { "preview only" } else { "replace exact text" };
+            Some(format!("edit_file: {}\nMode: {mode}; required matches: {matches}\nPer match: {} UTF-8 bytes removed, {} inserted{version}",
+                serde_json::to_string(&path).ok()?, before.len(), after.len()))
         }
         "write_file" => {
             // Present only the already-bound operation, never its possibly

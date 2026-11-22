@@ -4,6 +4,7 @@
     import { onDestroy } from 'svelte';
     import { api as unscopedApi } from '../lib/api';
     import { locale, t } from '../lib/i18n';
+    import { randomId } from '../lib/randomId';
     import { modelProbeConfirmation, type ConnectionSnapshot, type CatalogModel, type ExecutionCapabilities } from '../lib/modelConnections';
     let { snapshot, model, accountRevision, refresh }: {snapshot: ConnectionSnapshot; model: CatalogModel; accountRevision: number | null; refresh: () => Promise<void>} = $props();
     let confirmed = $state(false), pending = $state(false), message = $state('');
@@ -16,7 +17,7 @@
     async function probe() {
         if (!confirmed || pending || !credentialBinding) return;
         pending = true; message = '';
-        const active = {request_id:crypto.randomUUID(), connection_id:snapshot.document.connection.id, expected_revision:snapshot.revision};
+        const active = {request_id:randomId(), connection_id:snapshot.document.connection.id, expected_revision:snapshot.revision};
         request = active;
         try {
             await api('/api/model-connections/probe', {method:'POST', body:JSON.stringify(
@@ -28,16 +29,20 @@
             request = null; pending = false; confirmed = false; await refresh();
         }
     }
-    async function cancel() {
+    async function cancel(teardown = false) {
         const active = request;
         if (!active) return;
-        const result = await api<{cancelled:boolean}>('/api/model-connections/discover/cancel', {method:'POST', body:JSON.stringify(active)});
+        const result = teardown
+            ? await unscopedApi<{cancelled:boolean}>('/api/model-connections/discover/cancel', {method:'POST', body:JSON.stringify(active), signal: AbortSignal.timeout(15_000)})
+            : await api<{cancelled:boolean}>('/api/model-connections/discover/cancel', {method:'POST', body:JSON.stringify(active)});
+        if (teardown) return;
         message = result.cancelled
             ? t($locale, 'connections.probeCancelled')
             : t($locale, 'connections.probeFinished');
         if (!result.cancelled) await refresh();
     }
     async function saveOverride(clear: boolean) {
+        if (pending) return;
         pending = true;
         try {
             await api('/api/model-connections', {method:'POST', body:JSON.stringify({
@@ -49,7 +54,7 @@
         } catch { message = t($locale, 'connections.overrideFailed'); }
         finally { pending = false; }
     }
-    onDestroy(() => { if (request) void cancel().catch(() => {}); });
+    onDestroy(() => { if (request) void cancel(true).catch(() => {}); });
 </script>
 
 <details class="capability">
@@ -63,18 +68,20 @@
     <details>
         <summary>{t($locale, 'connections.overrideTitle')} · {t($locale, assessment?.user_override ? 'connections.enabled' : 'connections.disabled')}</summary>
         <p>{t($locale, 'connections.overrideHint')}</p>
-        <label><input type="checkbox" bind:checked={override.toolCalls} /> {t($locale, 'remote.execution.tool_calls')}</label>
-        <label><input type="checkbox" bind:checked={override.imageInput} /> {t($locale, 'remote.execution.image_input')}</label>
-        <label><input type="checkbox" bind:checked={override.reasoning} /> {t($locale, 'chatSession.reasoning')}</label>
-        <label><input type="checkbox" bind:checked={override.samplingParameters} /> {t($locale, 'connections.sampling')}</label>
-        <label><input type="checkbox" bind:checked={override.samplingRequiresNoReasoning} /> {t($locale, 'connections.samplingNoReasoning')}</label>
-        <label>{t($locale, 'connections.outputField')}
-            <select bind:value={override.chatOutputTokenField}>
-                <option value="auto">{t($locale, 'chatSession.automatic')}</option>
-                <option value="max_tokens">max_tokens</option>
-                <option value="max_completion_tokens">max_completion_tokens</option>
-            </select>
-        </label>
+        <fieldset disabled={pending}>
+            <label><input type="checkbox" bind:checked={override.toolCalls} /> {t($locale, 'remote.execution.tool_calls')}</label>
+            <label><input type="checkbox" bind:checked={override.imageInput} /> {t($locale, 'remote.execution.image_input')}</label>
+            <label><input type="checkbox" bind:checked={override.reasoning} /> {t($locale, 'chatSession.reasoning')}</label>
+            <label><input type="checkbox" bind:checked={override.samplingParameters} /> {t($locale, 'connections.sampling')}</label>
+            <label><input type="checkbox" bind:checked={override.samplingRequiresNoReasoning} /> {t($locale, 'connections.samplingNoReasoning')}</label>
+            <label>{t($locale, 'connections.outputField')}
+                <select bind:value={override.chatOutputTokenField}>
+                    <option value="auto">{t($locale, 'chatSession.automatic')}</option>
+                    <option value="max_tokens">max_tokens</option>
+                    <option value="max_completion_tokens">max_completion_tokens</option>
+                </select>
+            </label>
+        </fieldset>
         <button disabled={pending} onclick={() => void saveOverride(false)}>{t($locale, 'chatSession.save')}</button>
         <button disabled={pending || !assessment?.user_override} onclick={() => void saveOverride(true)}>{t($locale, 'connections.overrideClear')}</button>
     </details>
@@ -82,6 +89,7 @@
 </details>
 <style>
     .capability { margin: .5rem 0 1rem; padding: .75rem; border: 1px solid var(--border, #8886); border-radius: .5rem; overflow-wrap: anywhere; }
+    fieldset { border: 0; padding: 0; margin: 0; min-width: 0; }
     p { margin: .5rem 0; font-size: .875rem; }
     label { display: block; margin: .5rem 0; }
     button { margin: .25rem; }

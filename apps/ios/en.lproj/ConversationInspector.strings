@@ -42,6 +42,7 @@
 
 "goal.example" = "Example: organize the project material and prepare a summary with sources.";
 
+"goal.constraints" = "Constraints";
 "goal.optional_constraints" = "Constraints (optional)";
 
 "goal.cancel_title" = "End this goal?";

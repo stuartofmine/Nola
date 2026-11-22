@@ -15,7 +15,7 @@ import javax.inject.Inject
 data class NotificationCenterUiState(
     val notifications: List<NotificationEntity> = emptyList(),
     val unreadCount: Int = 0,
-    val isLoading: Boolean = false,
+    val isLoading: Boolean = true,
     val isMarkingAllRead: Boolean = false,
     val hasLoadError: Boolean = false,
     val hasSyncWarning: Boolean = false
@@ -40,21 +40,44 @@ class NotificationCenterViewModel @Inject constructor(
     }
 
     fun markRead(id: String) {
-        val previous = _uiState.value
+        val previousItem = _uiState.value.notifications.firstOrNull { it.id == id }
+        val wasUnread = previousItem?.isRead == false
+        val previousReadAt = previousItem?.readAt
         _uiState.update { state ->
-            val wasUnread = state.notifications.firstOrNull { it.id == id }?.isRead == false
+            val itemUnread = state.notifications.firstOrNull { it.id == id }?.isRead == false
             state.copy(
                 notifications = state.notifications.map { notification ->
                     if (notification.id == id) notification.copy(isRead = true, readAt = System.currentTimeMillis()) else notification
                 },
-                unreadCount = if (wasUnread) (state.unreadCount - 1).coerceAtLeast(0) else state.unreadCount
+                unreadCount = if (itemUnread) (state.unreadCount - 1).coerceAtLeast(0) else state.unreadCount
             )
         }
         viewModelScope.launch {
-            runCatching { repo.markRead(id) }
-                .onFailure {
-                    _uiState.value = previous.copy(hasLoadError = true)
+            try {
+                repo.markRead(id)
+            } catch (cancelled: kotlinx.coroutines.CancellationException) {
+                throw cancelled
+            } catch (_: Exception) {
+                _uiState.update { state ->
+                    val currentItem = state.notifications.firstOrNull { it.id == id }
+                    val shouldRestoreUnread = wasUnread && currentItem?.isRead == true
+                    state.copy(
+                        notifications = if (wasUnread) {
+                            state.notifications.map { notification ->
+                                if (notification.id == id) {
+                                    notification.copy(isRead = false, readAt = previousReadAt)
+                                } else {
+                                    notification
+                                }
+                            }
+                        } else {
+                            state.notifications
+                        },
+                        unreadCount = if (shouldRestoreUnread) state.unreadCount + 1 else state.unreadCount,
+                        hasLoadError = true
+                    )
                 }
+            }
         }
     }
 
@@ -62,6 +85,7 @@ class NotificationCenterViewModel @Inject constructor(
         viewModelScope.launch {
             _uiState.update { it.copy(isMarkingAllRead = true) }
             val result = runCatching { repo.markAllRead() }
+            result.exceptionOrNull()?.let { if (it is kotlinx.coroutines.CancellationException) throw it }
             if (result.isSuccess) {
                 _uiState.update { state ->
                     state.copy(
@@ -80,9 +104,11 @@ class NotificationCenterViewModel @Inject constructor(
     private suspend fun refreshNotifications(showLoading: Boolean) {
         if (showLoading) _uiState.update { it.copy(isLoading = true) }
         val syncResult = runCatching { repo.syncFromBackend() }
+        syncResult.exceptionOrNull()?.let { if (it is kotlinx.coroutines.CancellationException) throw it }
         val localResult = runCatching {
             repo.getNotifications(limit = 100) to repo.unreadCount()
         }
+        localResult.exceptionOrNull()?.let { if (it is kotlinx.coroutines.CancellationException) throw it }
         localResult.onSuccess { (notifications, unread) ->
             _uiState.update {
                 it.copy(

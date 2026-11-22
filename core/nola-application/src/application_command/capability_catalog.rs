@@ -107,6 +107,11 @@ pub(super) fn execute<R: CapabilityCatalogRepositories + nola_store_port::protoc
             let mut documents = store.document_source_repository();
             crate::document_source::execute_document_source_command(&mut documents, command)
         }
+        ApplicationCommand::Model { command: crate::ModelCommand::ApplyFileCatalog { connections, default_connection, default_model, updated_at_ms } } => {
+            crate::assistant_publication_transaction::with_publication_transaction(store, |store| {
+                crate::model_connection::apply_file_catalog(store, connections, &default_connection, &default_model, updated_at_ms)
+            })
+        }
         ApplicationCommand::Model { command } => {
             if matches!(&command, crate::ModelCommand::ImportConnection { .. }) {
                 crate::assistant_publication_transaction::with_publication_transaction(store, |store| {

@@ -150,7 +150,7 @@ nonisolated struct MacLocalAgentOwnedLaunchSnapshot: Sendable {
               configuration["assistant_message_id"] as? String == assistantMessageID else {
             throw MacLocalAgentResumeError.invalidFrame
         }
-        for key in ["prompt", "submission_id", "user_message_id", "assistant_message_id", "expected_configuration_revision", "expected_parent_message_id", "context_components", "selected_experts", "expected_source_store_epoch", "expert_template_authority", "input_origin", "automation_execution_lease", "automation_execution_spec", "automation_artifacts"] {
+        for key in ["prompt", "submission_id", "user_message_id", "assistant_message_id", "expected_configuration_revision", "expected_parent_message_id", "context_components", "selected_experts", "expert_mentions", "expected_source_store_epoch", "expert_template_authority", "input_origin", "automation_execution_lease", "automation_execution_spec", "automation_artifacts"] {
             configuration.removeValue(forKey: key)
         }
         if let attachments = configuration.removeValue(forKey: "attachments") {

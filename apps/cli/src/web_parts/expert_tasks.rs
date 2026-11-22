@@ -95,10 +95,42 @@ fn expert_task_host_configuration_with_host_mode(
     let target = &entry.participant.context_conversation_id;
     let (revision, _) = conversation_configuration_state(target)?
         .ok_or("Expert target configuration is unavailable")?;
-    let profile = store
-        .model_profile(&entry.model_declaration.profile_id)?
-        .ok_or("Expert model profile is unavailable")?;
-    validate_reserved_room_model(entry, &profile, revision)?;
+    let executor = entry.defaults.expert_executor();
+    if let Some(executor) = &executor {
+        if entry.context_configuration_revision != revision
+            || entry.model_declaration
+                != nola_domain::expert_message::expert_executor_declaration(
+                    &entry.participant,
+                    executor,
+                )
+        {
+            return Err("Expert executor or context revision changed".into());
+        }
+        let descriptor =
+            crate::external_executor::discover_execution_backend(executor.backend.id(), false)
+                .ok_or("Unknown expert executor")?;
+        use nola_domain::execution_backend::ExecutionBackendAvailability;
+        match descriptor.availability {
+            ExecutionBackendAvailability::Available => {}
+            ExecutionBackendAvailability::NotInstalled => {
+                return Err(format!(
+                    "Install {} on the execution Host and make its CLI available to Nola, then retry.",
+                    descriptor.display_name
+                ));
+            }
+            ExecutionBackendAvailability::Unauthenticated => {
+                return Err(format!("Sign in to {} on the execution Host, then retry.", descriptor.display_name));
+            }
+            _ => {
+                return Err(format!("Check {} on the execution Host or select another expert executor.", descriptor.display_name));
+            }
+        }
+    } else {
+        let profile = store
+            .model_profile(&entry.model_declaration.profile_id)?
+            .ok_or("Expert model profile is unavailable")?;
+        validate_reserved_room_model(entry, &profile, revision)?;
+    }
     // Fresh application configuration, never the sender's invocation or its
     // one-turn permission grants. Canonical target settings replace the model.
     let mut config = Config::from_args([

@@ -121,7 +121,50 @@ pub(crate) struct AssistantJournalNotificationDelivery {
     pub(crate) observer_error: Option<String>,
     journal_seeded_run: Option<String>,
     pub(crate) permission_update: Option<PermissionControlUpdate>,
+    pub(crate) external_session: Option<CommittedExternalSession>,
     permission_owner: Option<(String, String, Option<String>, u64)>,
+}
+
+#[derive(Debug)]
+pub struct CommittedExternalSession {
+    conversation_id: String,
+    run_id: String,
+    backend_id: String,
+    session_id: String,
+}
+
+impl CommittedExternalSession {
+    pub(crate) fn event_for(&self, owner: Option<&(String, String)>) -> Option<serde_json::Value> {
+        let (conversation, run) = owner?;
+        if conversation != &self.conversation_id || run != &self.run_id {
+            return None;
+        }
+        Some(serde_json::json!({
+            "protocol_version": 1, "type": "external_session_started",
+            "conversation_id": self.conversation_id, "run_id": self.run_id,
+            "backend_id": self.backend_id, "external_session_id": self.session_id,
+        }))
+    }
+}
+
+#[cfg(test)]
+mod committed_external_session_tests {
+    use super::CommittedExternalSession;
+
+    #[test]
+    fn only_the_admitted_conversation_and_run_receive_the_native_session_id() {
+        let session = CommittedExternalSession {
+            conversation_id: "conversation".into(), run_id: "run".into(),
+            backend_id: "antigravity".into(), session_id: "native".into(),
+        };
+        for (conversation, run) in [("other", "run"), ("conversation", "previous")] {
+            assert!(session.event_for(Some(&(conversation.into(), run.into()))).is_none());
+        }
+        assert!(session.event_for(None).is_none());
+        let event = session.event_for(Some(&("conversation".into(), "run".into()))).unwrap();
+        assert_eq!(event["external_session_id"], "native");
+        assert!(event.get("session_id").is_none());
+    }
 }
 
 #[derive(Debug, Deserialize)]
@@ -1391,6 +1434,15 @@ impl CommittedRuntimeApplicationPort for SessionStore {
         let invocation_config_digest = active.invocation_config_digest.ok_or_else(|| {
             "active canonical Core turn has no invocation config digest".to_string()
         })?;
+        let external_session = match &response.payload {
+            nola_core::agent::host::HostResponse::DelegatedAgentEvent {
+                event: nola_host_protocol::DelegatedAgentEventV1::SessionStarted { backend_id, backend_session_id },
+            } => Some(CommittedExternalSession {
+                conversation_id: self.id.clone(), run_id: active.run_id.clone(),
+                backend_id: backend_id.clone(), session_id: backend_session_id.clone(),
+            }),
+            _ => None,
+        };
         let task_result_delivery = self.task_result_delivery(&response)?;
         let promoted_task = match &response.payload {
             nola_core::agent::host::HostResponse::TaskPromoted { task_id, kind, .. }
@@ -1413,6 +1465,11 @@ impl CommittedRuntimeApplicationPort for SessionStore {
                 })?;
         if let Some(active_turn) = self.active_canonical_turn.as_mut() {
             active_turn.next_event_sequence = accepted.commit.next_event_sequence;
+        }
+        if accepted.commit.applied && external_session.is_some()
+            && Arc::strong_count(&self.assistant_journal_notifications) > 1 {
+            self.assistant_journal_notifications.lock().unwrap_or_else(|e| e.into_inner())
+                .external_session = external_session;
         }
         self.capture_assistant_publications(&accepted.commit.assistant_publications);
         // Source acceptance is final even if target admission fails. Replay
@@ -2612,13 +2669,12 @@ mod skill_projection_contract_tests {
     }
 }
 
-pub fn delete_session(id: &str) -> Result<(), String> {
+pub fn delete_session(id: &str) -> Result<bool, String> {
     validate_session_id(id)?;
     let mut canonical = application_port_default()?;
     canonical
         .delete_conversation(id)
-        .map_err(|error| format!("delete canonical conversation failed: {error}"))?;
-    Ok(())
+        .map_err(|error| format!("delete canonical conversation failed: {error}"))
 }
 
 fn validate_session_id(id: &str) -> Result<(), String> {

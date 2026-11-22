@@ -5,8 +5,8 @@
 "room.left" = "退出済み・履歴は保持";
 "room.remove" = "削除";
 "room.add" = "エージェントを追加";
-"room.create_agent" = "エージェントを作成";
-"room.agent_name" = "エージェント名";
+"room.create_agent" = "エキスパートを作成";
+"room.agent_name" = "エキスパート名";
 "room.use_current_model" = "現在のモデルを使用";
 "room.open" = "チャットを開く";
 "room.all" = "すべてのチャット";
@@ -678,6 +678,9 @@
 "chat.host_tool.name.time" = "システム時刻を読む";
 "chat.host_tool.name.browser" = "ブラウザを操作";
 "chat.host_tool.name.computer" = "コンピューターを操作";
+"chat.host_tool.name.find_skill" = "GitHub のスキルを検索";
+"chat.host_tool.name.install_skill" = "スキルをインストールして有効にする";
+"chat.host_tool.name.read_skill_resource" = "スキルのリソースを読む";
 "chat.host_tool.name.skill" = "スキルを使用";
 "chat.host_tool.name.mcp" = "MCP を呼び出す";
 "chat.host_tool.name.background" = "バックグラウンドタスク";
@@ -1641,6 +1644,7 @@
 "common.frequency.weekly" = "毎週";
 "common.no.zh" = "いいえ";
 "common.retry" = "再試行";
+"common.search" = "検索";
 "common.unknown" = "不明";
 "common.yes.zh" = "はい";
 "data.subtitle.local_first" = "デバイス上のデータソース、予定アクション、最近の実行状態。";
@@ -1968,6 +1972,12 @@
 "chat.permission.action.create_calendar" = "予定を作成";
 "chat.hybrid.clipboard" = "クリップボード";
 "model.web_host.connect" = "接続";
+"model.web_host.setup_payload" = "接続情報";
+"model.web_host.paste_setup" = "接続情報をペースト";
+"model.web_host.invalid_setup" = "ホストの Nola で接続情報をコピーして、ここにペーストしてください。";
+"model.web_host.cancel_verification" = "確認をキャンセル";
+"model.web_host.error.rollback" = "トークンを保存できず、新しいホストの識別情報も削除できませんでした。ペアリングを解除してから再試行してください。";
+"model.web_host.recheck" = "再確認";
 "chat.model.not_configured" = "未設定";
 "chat.permission.action.write_clipboard" = "クリップボードを更新";
 "chat.model.group.cloud" = "クラウド";
@@ -2266,7 +2276,7 @@
 /* macOS Settings workspace */
 
 /* Personal intelligence capabilities */
-"personal.capabilities.title" = "スキルと MCP";
+"personal.capabilities.title" = "機能ライブラリ";
 "personal.capabilities.gateway.detail" = "再利用可能なワークフローと外部ツール接続を管理します。";
 "personal.capabilities.gateway.count" = "有効";
 "personal.capabilities.subtitle" = "会話をまたいで利用できるワークフローと接続ツールです。";
@@ -2445,7 +2455,7 @@
 
 "chat.task.guidance.send" = "指示を送信";
 "model.web_host.setup" = "接続する前に";
-"model.web_host.setup.start" = "Mac の Nola で「設定 > ホスト接続」を開き、デバイス接続を有効にします。";
+"model.web_host.setup.start" = "Mac の Nola で「設定 > 接続」を開き、「この Mac を Nola Server として共有」をオンにします。";
 "model.web_host.setup.copy" = "Mac の Nola に表示されるアドレスとペアリングトークンをコピーします。信頼できるプライベートネットワークまたは HTTPS を使用してください。";
 "model.web_host.checking" = "ホストを確認中";
 "model.web_host.checking.detail" = "保存前にトークン、権限プロトコル、ホスト識別情報を検証しています。";
@@ -2706,6 +2716,7 @@
 "chat.history.retry" = "再試行";
 "chat.history.running" = "実行中";
 "chat.history.search" = "会話を検索";
+"chat.history.search.clear" = "検索をクリア";
 "chat.history.stop_before_delete" = "削除する前にタスクを停止してください";
 "chat.response.cancelled" = "応答を停止しました";
 "chat.response.failed" = "応答に失敗しました。詳細は処理を開いてください。";
@@ -2858,6 +2869,7 @@
 
 "room.pending_expert_message" = "専門家の処理が開始を待っています。";
 "room.resume_complete_experts" = "元の専門家メッセージを再開";
+"room.retry_expert_reply" = "専門家の返信を再試行";
 
 // Expert directory management
 "experts.manage" = "エキスパートを管理";
@@ -3162,6 +3174,7 @@
 "chat.context.import.failed_count" = "%d 個のファイルを読み込めませんでした。空ではない UTF-8 テキストファイル（上限 40,000 文字、192 KB）を使用してください。";
 
 /* Expert roles and revision-aware mentions */
+"experts.useModelDefaults" = "モデルのデフォルト設定を使用";
 "experts.reasoning.inherit" = "モデル設定を継承";
 "experts.reasoning.unknown" = "このモデルは推論レベルを宣言していないため、既定の設定を継承します。";
 "experts.role.details" = "プロンプト、ツールと Skill";
@@ -3244,3 +3257,22 @@
 "chat.message.pendingEdit" = "保留中の編集を確認";
 "chat.message.editSavedForReview" = "この画面は閉じられます。この会話で保留中の編集を開き、送信状況を確認できます。";
 "chat.context.documents.blank" = "%@ に本文を入力するか、空の書類を削除してください。";
+
+"chat.history.otherClientReadOnly" = "読み取り専用です。会話を続けるには、作成したクライアントで開いてください。";
+"chat.history.ambiguousIDs" = "大文字と小文字だけが異なる会話 ID が存在します。作成したクライアントで開いてください。";
+"experts.executor.requiresHost" = "このコーディングエージェントを実行するホストに接続し、ホストの会話でエキスパートを選択してください。";
+
+"harness.plugins" = "プラグイン";
+"harness.host" = "デスクトップ Host を選択";
+"harness.device_note" = "プラグインを実行しているコンピュータに接続すると、ここで利用できます。";
+"harness.connect" = "デスクトップホストに接続";
+"harness.pair" = "別の Host に接続";
+
+"Keep names as plain text" = "名前をプレーンテキストのままにする";
+"The expert selection changed. Remove the mention and select the expert again." = "エキスパートの選択が変更されました。メンションを削除してエキスパートを再度選択してください。";
+"Write what you want the expert to do." = "エキスパートに依頼したい内容を入力してください。";
+"View expert history" = "エキスパートの履歴を表示";
+"Icon could not be rendered" = "アイコンを描画できませんでした";
+
+"model.center.selection_error.title" = "モデルを選択できませんでした";
+"prompt.templates.copy_name" = "%@（コピー）";

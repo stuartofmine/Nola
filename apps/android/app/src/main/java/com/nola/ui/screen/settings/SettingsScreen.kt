@@ -1,5 +1,6 @@
 package com.nola.ui.screen.settings
 
+import com.nola.ui.components.NolaRootPageTitle
 import android.content.ClipData
 import android.content.Context
 import android.content.Intent
@@ -9,15 +10,27 @@ import android.provider.Settings
 import android.text.format.Formatter
 import android.widget.Toast
 import androidx.activity.compose.BackHandler
+import androidx.compose.animation.AnimatedContent
+import androidx.compose.animation.core.tween
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.togetherWith
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.draw.clip
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.ColumnScope
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.widthIn
+import com.nola.ui.components.nolaPageGutter
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
@@ -26,7 +39,8 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.selection.selectable
 import androidx.compose.foundation.selection.selectableGroup
-import androidx.compose.material3.RadioButton
+import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.text.rememberTextMeasurer
 import com.nola.data.local.datastore.AppearancePreference
 import com.nola.ui.components.NolaIconButton
 import androidx.compose.foundation.layout.width
@@ -75,7 +89,6 @@ import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
-import androidx.compose.ui.unit.sp
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.compose.LocalLifecycleOwner
@@ -101,6 +114,7 @@ fun SettingsScreen(
     onOpenDataSources: () -> Unit = {},
     onOpenModels: () -> Unit = {},
     onOpenIntelligence: () -> Unit = {},
+    onOpenExperts: () -> Unit = {},
     onOpenConversation: ((String) -> Unit)? = null,
     onOpenChat: () -> Unit = {}
 ) {
@@ -112,21 +126,32 @@ fun SettingsScreen(
         activeScreen = null
     }
 
-    when (activeScreen) {
-        "notifications" -> NotificationCenterScreen(onBack = { activeScreen = null })
-        "scheduled" -> ScheduledActionsScreen(
-            onBack = { activeScreen = null },
-            onOpenConversation = onOpenConversation,
-            onCreateInChat = onOpenChat
-        )
-        else -> pageState.SaveableStateProvider("settings-main") { SettingsMain(
-            detailState = detailState,
-            onNotifications = { activeScreen = "notifications" },
-            onScheduledActions = { activeScreen = "scheduled" },
-            onOpenDataSources = onOpenDataSources,
-            onOpenModels = onOpenModels,
-            onOpenIntelligence = onOpenIntelligence
-        ) }
+    val reduceMotion = com.nola.ui.components.rememberReduceMotionEnabled()
+    AnimatedContent(
+        targetState = activeScreen,
+        transitionSpec = {
+            fadeIn(com.nola.ui.components.nolaTween(com.nola.ui.components.NolaMotion.controlState, reduceMotion)) togetherWith
+                fadeOut(com.nola.ui.components.nolaTween(com.nola.ui.components.NolaMotion.fast, reduceMotion))
+        },
+        label = "settings-active-screen",
+    ) { screen ->
+        when (screen) {
+            "notifications" -> NotificationCenterScreen(onBack = { activeScreen = null })
+            "scheduled" -> ScheduledActionsScreen(
+                onBack = { activeScreen = null },
+                onOpenConversation = onOpenConversation,
+                onCreateInChat = onOpenChat
+            )
+            else -> pageState.SaveableStateProvider("settings-main") { SettingsMain(
+                detailState = detailState,
+                onNotifications = { activeScreen = "notifications" },
+                onScheduledActions = { activeScreen = "scheduled" },
+                onOpenDataSources = onOpenDataSources,
+                onOpenModels = onOpenModels,
+                onOpenIntelligence = onOpenIntelligence,
+                onOpenExperts = onOpenExperts
+            ) }
+        }
     }
 }
 
@@ -138,6 +163,7 @@ fun SettingsMain(
     onOpenDataSources: () -> Unit = {},
     onOpenModels: () -> Unit = {},
     onOpenIntelligence: () -> Unit = {},
+    onOpenExperts: () -> Unit = {},
     viewModel: SettingsViewModel = hiltViewModel(),
     detailState: androidx.compose.runtime.MutableState<String?> = rememberSaveable { mutableStateOf<String?>(null) }
 ) {
@@ -150,11 +176,14 @@ fun SettingsMain(
         onRefresh = viewModel::refresh,
         onClearAllData = viewModel::clearAllData,
         onCreateExportArchive = viewModel::createExportArchive,
+        onStartExportArchive = viewModel::startExportArchive,
+        onConsumeExportResult = viewModel::consumeExportResult,
         onNotifications = onNotifications,
         onScheduledActions = onScheduledActions,
         onOpenDataSources = onOpenDataSources,
         onOpenModels = onOpenModels,
         onOpenIntelligence = onOpenIntelligence,
+        onOpenExperts = onOpenExperts,
         detailState = detailState,
     )
 }
@@ -166,13 +195,16 @@ internal fun SettingsContent(
     appearance: AppearancePreference,
     onAppearanceChange: (AppearancePreference) -> Unit,
     onRefresh: () -> Unit,
-    onClearAllData: suspend () -> Unit = {},
+    onClearAllData: () -> Boolean = { false },
     onCreateExportArchive: suspend () -> java.io.File = { error("Export unavailable") },
+    onStartExportArchive: (() -> Unit)? = null,
+    onConsumeExportResult: () -> Unit = {},
     onNotifications: () -> Unit = {},
     onScheduledActions: () -> Unit = {},
     onOpenDataSources: () -> Unit = {},
     onOpenModels: () -> Unit = {},
     onOpenIntelligence: () -> Unit = {},
+    onOpenExperts: () -> Unit = {},
     detailState: androidx.compose.runtime.MutableState<String?> = rememberSaveable { mutableStateOf<String?>(null) }
 ) {
     val context = LocalContext.current
@@ -182,9 +214,43 @@ internal fun SettingsContent(
     var detailSection by detailState
     BackHandler(enabled = detailSection != null) { detailSection = null }
     var isClearingData by remember { mutableStateOf(false) }
-    var isExportingData by remember { mutableStateOf(false) }
+    var clearError by remember { mutableStateOf(false) }
+    var localExportingData by remember { mutableStateOf(false) }
+    val isExportingData = state.isExportingData || localExportingData
     var operationMessage by rememberSaveable { mutableStateOf<String?>(null) }
     var operationFailed by rememberSaveable { mutableStateOf(false) }
+
+    fun shareExportArchive(exportFile: java.io.File) {
+        val uri = androidx.core.content.FileProvider.getUriForFile(
+            context, "${context.packageName}.fileprovider", exportFile
+        )
+        val shareIntent = Intent(Intent.ACTION_SEND).apply {
+            type = "application/zip"
+            putExtra(Intent.EXTRA_STREAM, uri)
+            addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+        }
+        operationFailed = false
+        operationMessage = context.getString(R.string.settings_export_ready)
+        runCatching {
+            context.startActivity(Intent.createChooser(shareIntent, context.getString(R.string.settings_export_data)))
+        }.onFailure { error ->
+            operationFailed = true
+            operationMessage = context.getString(R.string.settings_export_failed, error.message ?: "")
+        }
+    }
+
+    androidx.compose.runtime.LaunchedEffect(state.exportedArchiveFile, state.exportErrorMessage) {
+        val exportFile = state.exportedArchiveFile
+        val exportError = state.exportErrorMessage
+        if (exportFile != null) {
+            onConsumeExportResult()
+            shareExportArchive(exportFile)
+        } else if (exportError != null) {
+            onConsumeExportResult()
+            operationFailed = true
+            operationMessage = context.getString(R.string.settings_export_failed, exportError)
+        }
+    }
     var notificationsAllowed by remember { mutableStateOf(NotificationManagerCompat.from(context).areNotificationsEnabled()) }
     val lifecycleOwner = LocalLifecycleOwner.current
 
@@ -208,30 +274,37 @@ internal fun SettingsContent(
         AlertDialog(
             onDismissRequest = { if (!isClearingData) showDeleteDialog = false },
             title = { Text(stringResource(R.string.settings_clear_all_data)) },
-            text = { Text(stringResource(R.string.settings_clear_all_data_message)) },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(NolaSpacing.sm)) {
+                    Text(stringResource(R.string.settings_clear_all_data_message))
+                    if (clearError) Text(stringResource(R.string.settings_clear_failed),
+                        color = MaterialTheme.colorScheme.error)
+                }
+            },
             confirmButton = {
                 Button(
                     onClick = {
                         isClearingData = true
-                        scope.launch {
-                            try {
-                                onClearAllData()
-                                showDeleteDialog = false
-                                operationFailed = false
-                                operationMessage = context.getString(R.string.settings_all_data_cleared)
-                            } catch (error: Exception) {
-                                operationFailed = true
-                                operationMessage = context.getString(R.string.settings_clear_failed, error.message ?: "")
-                            } finally {
-                                isClearingData = false
-                            }
+                        clearError = false
+                        val accepted = try {
+                            onClearAllData()
+                        } catch (_: SecurityException) {
+                            false
+                        }
+                        if (!accepted) {
+                            clearError = true
+                            isClearingData = false
                         }
                     },
                     enabled = !isClearingData,
                     colors = ButtonDefaults.buttonColors(containerColor = NolaColors.danger)
                 ) {
                     if (isClearingData) {
-                        CircularProgressIndicator(Modifier.size(18.dp), strokeWidth = 2.dp)
+                        CircularProgressIndicator(
+                            Modifier.size(18.dp),
+                            strokeWidth = 2.dp,
+                            color = MaterialTheme.colorScheme.onError
+                        )
                         Spacer(Modifier.width(8.dp))
                         Text(stringResource(R.string.settings_clearing_data))
                     } else {
@@ -254,26 +327,22 @@ internal fun SettingsContent(
                 Button(
                     onClick = {
                         showExportDialog = false
-                        isExportingData = true
-                        scope.launch {
-                            try {
-                                val exportFile = onCreateExportArchive()
-                                val uri = androidx.core.content.FileProvider.getUriForFile(
-                                    context, "${context.packageName}.fileprovider", exportFile
-                                )
-                                val shareIntent = Intent(Intent.ACTION_SEND).apply {
-                                    type = "application/zip"
-                                    putExtra(Intent.EXTRA_STREAM, uri)
-                                    addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                        if (onStartExportArchive != null) {
+                            onStartExportArchive()
+                        } else {
+                            localExportingData = true
+                            scope.launch {
+                                try {
+                                    val exportFile = onCreateExportArchive()
+                                    shareExportArchive(exportFile)
+                                } catch (cancelled: kotlinx.coroutines.CancellationException) {
+                                    throw cancelled
+                                } catch (e: Exception) {
+                                    operationFailed = true
+                                    operationMessage = context.getString(R.string.settings_export_failed, e.message ?: "")
+                                } finally {
+                                    localExportingData = false
                                 }
-                                operationFailed = false
-                                operationMessage = context.getString(R.string.settings_export_ready)
-                                context.startActivity(Intent.createChooser(shareIntent, context.getString(R.string.settings_export_data)))
-                            } catch (e: Exception) {
-                                operationFailed = true
-                                operationMessage = context.getString(R.string.settings_export_failed, e.message ?: "")
-                            } finally {
-                                isExportingData = false
                             }
                         }
                     }
@@ -285,30 +354,39 @@ internal fun SettingsContent(
         )
     }
 
-    NolaPage(scrollKey = detailSection ?: "root") {
-        Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-            if (detailSection != null) NolaIconButton(label = stringResource(R.string.common_back), onClick = { detailSection = null }) {
-                Icon(painterResource(R.drawable.nola_back), stringResource(R.string.common_back))
-            }
-            Text(stringResource(if (detailSection == "general") R.string.settings_general else if (detailSection == "appearance") R.string.appearance_title else if (detailSection == "privacy") R.string.settings_privacy else if (detailSection == "notifications") R.string.notifications_title else R.string.settings_title),
-                Modifier.weight(1f), style = if (detailSection == null) MaterialTheme.typography.headlineSmall.copy(fontSize = 28.sp, lineHeight = 36.sp) else MaterialTheme.typography.titleMedium,
-                textAlign = if (detailSection == null) TextAlign.Start else TextAlign.Center)
-            if (detailSection != null) Spacer(Modifier.size(48.dp))
-        }
-        if (detailSection == null) {
+    val reduceMotion = com.nola.ui.components.rememberReduceMotionEnabled()
+    val settingsScrollOffsets = rememberSaveable(
+        saver = androidx.compose.runtime.saveable.mapSaver(
+            save = { map -> map.toMap() },
+            restore = { restored -> restored.mapValues { (_, v) -> v as Int }.toMutableMap() },
+        )
+    ) { mutableMapOf<String, Int>() }
+    AnimatedContent(
+        targetState = detailSection,
+        transitionSpec = {
+            fadeIn(tween(if (reduceMotion) 0 else com.nola.ui.components.NolaMotion.controlState)) togetherWith
+                fadeOut(tween(if (reduceMotion) 0 else com.nola.ui.components.NolaMotion.fast))
+        },
+        label = "settings-detail-section"
+    ) { activeDetail ->
+    SettingsPage(activeDetail, settingsScrollOffsets, onBack = { detailSection = null }) {
+        if (activeDetail == null) {
+            NolaRootPageTitle(stringResource(R.string.settings_title))
             MobileSettingsGroup(R.string.settings_group_preferences) {
                 IMSettingsRow(R.drawable.nola_settings, R.string.settings_general) { detailSection = "general" }
             }
             MobileSettingsGroup(R.string.settings_group_connections) {
                 IMSettingsRow(R.drawable.nola_models, R.string.models_title, onOpenModels)
-                HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant, thickness = 0.5.dp, modifier = Modifier.padding(start = 34.dp))
+                HorizontalDivider(color = NolaColors.hairlineBorder, thickness = 0.5.dp, modifier = Modifier.padding(start = 34.dp))
+                IMSettingsRow(R.drawable.nola_person, R.string.chat_experts, onOpenExperts)
+                HorizontalDivider(color = NolaColors.hairlineBorder, thickness = 0.5.dp, modifier = Modifier.padding(start = 34.dp))
                 IMSettingsRow(R.drawable.nola_execution, R.string.settings_capabilities, onOpenIntelligence)
             }
             MobileSettingsGroup(R.string.settings_group_security) {
                 IMSettingsRow(R.drawable.nola_review, R.string.settings_privacy) { detailSection = "privacy" }
             }
             SettingsAutomationCard(onScheduledActions)
-            return@NolaPage
+            return@SettingsPage
         }
 
         if (state.loadFailed) {
@@ -337,28 +415,15 @@ internal fun SettingsContent(
             )
         }
 
-        if (detailSection == "general" || detailSection == "appearance") {
+        if (activeDetail == "general" || activeDetail == "appearance") {
         NolaCard(plain = true) {
             NolaSectionTitle(title = stringResource(R.string.appearance_title))
-            Row(Modifier.fillMaxWidth().background(MaterialTheme.colorScheme.surfaceContainer, NolaContinuousShape(10.dp)).padding(3.dp).selectableGroup(), horizontalArrangement = Arrangement.spacedBy(2.dp)) {
-                AppearancePreference.entries.forEach { choice ->
-                    Box(Modifier.weight(1f).heightIn(min = 44.dp)
-                        .background(if (appearance == choice) MaterialTheme.colorScheme.surface else androidx.compose.ui.graphics.Color.Transparent, NolaContinuousShape(8.dp))
-                        .selectable(selected = appearance == choice, role = Role.RadioButton,
-                            onClick = { onAppearanceChange(choice) }), contentAlignment = Alignment.Center) {
-                        Text(stringResource(when (choice) {
-                            AppearancePreference.System -> R.string.appearance_system
-                            AppearancePreference.Light -> R.string.appearance_light
-                            AppearancePreference.Dark -> R.string.appearance_dark
-                        }), fontSize = 14.sp, maxLines = 1)
-                    }
-                }
-            }
+            AppearanceChoices(appearance, onAppearanceChange)
         }
 
         }
 
-        if (detailSection == "general") {
+        if (activeDetail == "general") {
             SettingsNotificationsCard(onNotifications, { openNotificationSettings(context) }, notificationsAllowed)
         NolaCard(plain = true) {
             NolaSectionTitle(title = stringResource(R.string.settings_about))
@@ -376,14 +441,16 @@ internal fun SettingsContent(
             ) {
                 if (state.clientUuid.isNotBlank()) {
                     val clipboard = context.getSystemService(ClipboardManager::class.java)
-                    clipboard.setPrimaryClip(ClipData.newPlainText(context.getString(R.string.settings_client_uuid), state.clientUuid))
-                    Toast.makeText(context, context.getString(R.string.settings_client_uuid_copied), Toast.LENGTH_SHORT).show()
+                    if (clipboard != null) {
+                        clipboard.setPrimaryClip(ClipData.newPlainText(context.getString(R.string.settings_client_uuid), state.clientUuid))
+                        Toast.makeText(context, context.getString(R.string.settings_client_uuid_copied), Toast.LENGTH_SHORT).show()
+                    }
                 }
             }
         }
         }
 
-        if (detailSection == "privacy") {
+        if (activeDetail == "privacy") {
         NolaCard(plain = true) {
             NolaSectionTitle(title = stringResource(R.string.settings_data_management))
             Row(
@@ -409,10 +476,9 @@ internal fun SettingsContent(
                 enabled = !isExportingData && !isClearingData,
                 onClick = { showExportDialog = true }
             )
-            HorizontalDivider(
-                modifier = Modifier.padding(vertical = NolaSpacing.xs),
-                color = MaterialTheme.colorScheme.outline.copy(alpha = 0.12f)
-            )
+        }
+
+        NolaCard(plain = true) {
             NolaSectionTitle(title = stringResource(R.string.settings_privacy))
             Row(
                 modifier = Modifier
@@ -448,9 +514,106 @@ internal fun SettingsContent(
                 tint = NolaColors.danger,
                 isBusy = isClearingData,
                 enabled = !isExportingData && !isClearingData
-            ) { showDeleteDialog = true }
+            ) { clearError = false; showDeleteDialog = true }
         }
         }
+    }
+    }
+}
+
+@Composable
+private fun AppearanceChoices(selected: AppearancePreference, onSelect: (AppearancePreference) -> Unit) {
+    val choices = listOf(
+        AppearancePreference.System to stringResource(R.string.appearance_system),
+        AppearancePreference.Light to stringResource(R.string.appearance_light),
+        AppearancePreference.Dark to stringResource(R.string.appearance_dark),
+    )
+    val style = MaterialTheme.typography.labelLarge
+    val density = LocalDensity.current
+    val measurer = rememberTextMeasurer()
+    val isDark = NolaColors.isDark
+    val trackShape = NolaContinuousShape(10.dp)
+    BoxWithConstraints(
+        Modifier.fillMaxWidth()
+            .background(NolaColors.segmentTrack, trackShape)
+            .then(if (isDark) Modifier.border(0.75.dp, NolaColors.hairlineBorder, trackShape) else Modifier)
+            .padding(3.dp).selectableGroup()
+    ) {
+        val spacing = 2.dp
+        val padding = 8.dp
+        val segmentWidth = (maxWidth - spacing * (choices.size - 1)) / choices.size
+        val fits = choices.all { (_, label) ->
+            val labelWidth = measurer.measure(label, style = style, softWrap = false).size.width
+            with(density) { labelWidth.toDp() } + padding * 2 <= segmentWidth
+        }
+        val haptics = com.nola.ui.components.rememberNolaHaptics()
+        val option: @Composable (AppearancePreference, String, Modifier) -> Unit = { choice, label, modifier ->
+            val isSelected = selected == choice
+            Box(modifier.heightIn(min = 48.dp)
+                .clip(NolaContinuousShape(8.dp))
+                .background(if (isSelected) NolaColors.segmentSelected else Color.Transparent)
+                .selectable(selected = isSelected, role = Role.RadioButton, onClick = {
+                    if (!isSelected) haptics.selection()
+                    onSelect(choice)
+                })
+                .padding(horizontal = padding, vertical = 4.dp), contentAlignment = Alignment.Center) {
+                Text(
+                    label,
+                    modifier = Modifier.fillMaxWidth(),
+                    style = style,
+                    color = if (isSelected) MaterialTheme.colorScheme.onSurface else MaterialTheme.colorScheme.onSurfaceVariant,
+                    textAlign = TextAlign.Center,
+                )
+            }
+        }
+        if (fits) {
+            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(spacing)) {
+                choices.forEach { (choice, label) -> option(choice, label, Modifier.weight(1f)) }
+            }
+        } else {
+            Column(verticalArrangement = Arrangement.spacedBy(spacing)) {
+                choices.forEach { (choice, label) -> option(choice, label, Modifier.fillMaxWidth()) }
+            }
+        }
+    }
+}
+
+@Composable
+private fun SettingsPage(
+    section: String?,
+    scrollOffsets: MutableMap<String, Int>,
+    onBack: () -> Unit,
+    content: @Composable ColumnScope.() -> Unit,
+) {
+    Column(
+        Modifier.fillMaxSize().background(MaterialTheme.colorScheme.background),
+        horizontalAlignment = Alignment.CenterHorizontally,
+    ) {
+        if (section != null) SettingsDetailHeader(section, onBack)
+        NolaPage(scrollKey = section ?: "root", topPadding = 0.dp, savedScrollOffsets = scrollOffsets,
+            content = content)
+    }
+}
+
+@Composable
+private fun SettingsDetailHeader(section: String, onBack: () -> Unit) {
+    val title = when (section) {
+        "general" -> R.string.settings_general
+        "appearance" -> R.string.appearance_title
+        "privacy" -> R.string.settings_privacy
+        "notifications" -> R.string.notifications_title
+        else -> R.string.settings_title
+    }
+    Row(
+        Modifier.widthIn(max = 840.dp).fillMaxWidth().heightIn(min = 56.dp)
+            .padding(horizontal = nolaPageGutter()),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        NolaIconButton(label = stringResource(R.string.common_back), onClick = onBack) {
+            Icon(painterResource(R.drawable.nola_back), stringResource(R.string.common_back))
+        }
+        Text(stringResource(title), style = MaterialTheme.typography.titleLarge,
+            modifier = Modifier.weight(1f).padding(start = NolaSpacing.xs))
     }
 }
 
@@ -468,6 +631,7 @@ private fun IMSettingsRow(icon: Int, label: Int, onClick: () -> Unit) {
     Row(
         Modifier
             .fillMaxWidth()
+            .clip(RoundedCornerShape(10.dp))
             .clickable(onClick = onClick)
             .heightIn(min = 62.dp)
             .padding(horizontal = 4.dp, vertical = 10.dp),
@@ -558,18 +722,20 @@ internal fun SettingsNotificationsCard(
     }
 }
 
-private fun openNotificationSettings(context: Context) {
+internal fun openNotificationSettings(context: Context) {
     val notificationIntent = Intent(Settings.ACTION_APP_NOTIFICATION_SETTINGS).apply {
         putExtra(Settings.EXTRA_APP_PACKAGE, context.packageName)
     }
     runCatching { context.startActivity(notificationIntent) }
         .onFailure {
-            context.startActivity(
-                Intent(
-                    Settings.ACTION_APPLICATION_DETAILS_SETTINGS,
-                    Uri.parse("package:${context.packageName}")
+            runCatching {
+                context.startActivity(
+                    Intent(
+                        Settings.ACTION_APPLICATION_DETAILS_SETTINGS,
+                        Uri.parse("package:${context.packageName}")
+                    )
                 )
-            )
+            }
         }
 }
 
@@ -622,6 +788,7 @@ fun SettingsNavRow(
     Row(
         modifier = modifier
             .fillMaxWidth()
+            .clip(RoundedCornerShape(10.dp))
             .clickable(enabled = enabled, role = Role.Button) { onClick() }
             .heightIn(min = 56.dp)
             .padding(horizontal = NolaSpacing.sm, vertical = NolaSpacing.sm),
@@ -646,6 +813,13 @@ fun SettingsNavRow(
         }
         if (isBusy) {
             CircularProgressIndicator(Modifier.size(24.dp).padding(3.dp), strokeWidth = 2.dp)
+        } else {
+            Icon(
+                painterResource(R.drawable.nola_chevron),
+                contentDescription = null,
+                modifier = Modifier.size(16.dp),
+                tint = MaterialTheme.colorScheme.onSurfaceVariant
+            )
         }
     }
 }
@@ -691,6 +865,7 @@ fun SettingsCopyRow(label: String, value: String, enabled: Boolean = true, onCli
     BoxWithConstraints(
         modifier = Modifier
             .fillMaxWidth()
+            .clip(RoundedCornerShape(10.dp))
             .clickable(enabled = enabled, role = Role.Button) { onClick() }
             .heightIn(min = 56.dp)
             .padding(vertical = NolaSpacing.sm)
@@ -752,6 +927,7 @@ fun SettingsActionRow(
     Row(
         modifier = Modifier
             .fillMaxWidth()
+            .clip(RoundedCornerShape(10.dp))
             .clickable(enabled = enabled, role = Role.Button) { onClick() }
             .heightIn(min = 56.dp)
             .padding(vertical = NolaSpacing.sm),

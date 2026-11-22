@@ -69,7 +69,16 @@ pub fn normalize_model_context(items: Vec<AgentItem>) -> NormalizedModelContext 
             }
             AgentItem::ToolResult { call_id, .. } => {
                 if open_calls.iter().any(|(candidate, _)| candidate == call_id) {
-                    pending_results.insert(call_id.as_str().to_string(), (result_sequence, item));
+                    // A parallel sibling may still be running when an already settled result is replayed.
+                    // Keep the first terminal record just as we do after a completed single-call batch.
+                    let std::collections::hash_map::Entry::Vacant(slot) =
+                        pending_results.entry(call_id.as_str().to_owned())
+                    else {
+                        stats.dropped_orphan_tool_results =
+                            stats.dropped_orphan_tool_results.saturating_add(1);
+                        continue;
+                    };
+                    slot.insert((result_sequence, item));
                     result_sequence = result_sequence.saturating_add(1);
                     // A settled native batch is a causal boundary. Waiting
                     // for another prose message merges every tool-only model
@@ -204,6 +213,18 @@ mod tests {
         assert_eq!(normalized.stats.reordered_tool_results, 1);
         assert_eq!(normalized.items[2].id().as_str(), "result-a");
         assert_eq!(normalized.items[3].id().as_str(), "result-b");
+    }
+
+    #[test]
+    fn replayed_parallel_result_preserves_the_original_terminal_record() {
+        let original = result("original-b", "b");
+        let normalized = normalize_model_context(vec![
+            call("call-a", "a"), call("call-b", "b"), original.clone(),
+            result("replayed-b", "b"), result("result-a", "a"),
+        ]);
+        assert_eq!(normalized.items.last(), Some(&original));
+        assert_eq!(normalized.stats.dropped_orphan_tool_results, 1);
+        assert_eq!(normalized.stats.inserted_tool_results, 0);
     }
 
     #[test]

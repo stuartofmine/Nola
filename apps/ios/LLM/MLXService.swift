@@ -53,6 +53,7 @@ class MLXService {
     private(set) var activeModelName: String?
     private(set) var loadingModelName: String?
     private(set) var lastStartError: String?
+    private var runtimeEpoch: UInt64 = 0
 
     var isModelRunning: Bool {
         activeModelName != nil
@@ -64,23 +65,36 @@ class MLXService {
 
     func start(model: LMModel) async throws {
         guard activeModelName != model.name else { return }
+        runtimeEpoch &+= 1
+        let startEpoch = runtimeEpoch
         loadingModelName = model.name
         lastStartError = nil
-        defer { loadingModelName = nil }
+        defer {
+            if runtimeEpoch == startEpoch {
+                loadingModelName = nil
+            }
+        }
 
         do {
             if activeModelName != nil {
                 modelCache.removeAllObjects()
             }
-            _ = try await load(model: model)
+            _ = try await load(model: model, expectedEpoch: startEpoch)
+            guard runtimeEpoch == startEpoch else {
+                modelCache.removeObject(forKey: model.name as NSString)
+                throw CancellationError()
+            }
             activeModelName = model.name
         } catch {
-            lastStartError = error.localizedDescription
+            if runtimeEpoch == startEpoch {
+                lastStartError = error.localizedDescription
+            }
             throw error
         }
     }
 
     func stop() {
+        runtimeEpoch &+= 1
         modelCache.removeAllObjects()
         activeModelName = nil
         loadingModelName = nil
@@ -96,7 +110,7 @@ class MLXService {
     /// - Parameter model: The model configuration to load
     /// - Returns: A ModelContainer instance containing the loaded model
     /// - Throws: Errors that might occur during model loading
-    private func load(model: LMModel) async throws -> ModelContainer {
+    private func load(model: LMModel, expectedEpoch: UInt64? = nil) async throws -> ModelContainer {
         // Set GPU memory limit to prevent out of memory issues
         MLX.Memory.cacheLimit = 20 * 1024 * 1024
 
@@ -131,6 +145,10 @@ class MLXService {
                 Task { @MainActor in
                     self.modelDownloadProgress = progress
                 }
+            }
+
+            if let expectedEpoch, runtimeEpoch != expectedEpoch {
+                throw CancellationError()
             }
 
             // Cache the loaded model for future use
@@ -216,8 +234,12 @@ class MLXService {
             
             // Transform Generation stream to String stream
             return AsyncThrowingStream<String, Error> { continuation in
-                Task {
+                let task = Task {
                     for await generation in stream {
+                        if Task.isCancelled {
+                            continuation.finish(throwing: CancellationError())
+                            return
+                        }
                         switch generation {
                         case .chunk(let chunk):
                             continuation.yield(chunk)
@@ -230,7 +252,14 @@ class MLXService {
                             break
                         }
                     }
-                    continuation.finish()
+                    if Task.isCancelled {
+                        continuation.finish(throwing: CancellationError())
+                    } else {
+                        continuation.finish()
+                    }
+                }
+                continuation.onTermination = { @Sendable _ in
+                    task.cancel()
                 }
             }
         }
@@ -286,6 +315,7 @@ class MLXService {
     
     /// Clears the model cache to free memory
     func clearCache() {
+        runtimeEpoch &+= 1
         modelCache.removeAllObjects()
         activeModelName = nil
         loadingModelName = nil

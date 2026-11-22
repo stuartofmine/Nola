@@ -27,18 +27,62 @@ public final class ModelDownloader: ObservableObject {
         case paused
     }
     
-    public enum ModelSource {
-        case huggingface
+    public enum ModelSource: String, CaseIterable, Identifiable, Sendable {
         case modelscope
-        
-        static var preferred: ModelSource {
+        case huggingface
+
+        public var id: String { rawValue }
+
+        private static let defaultsKey = "nola.local_model.download_source"
+
+        public static func defaultSource(
+            timeZone: TimeZone = .current,
+            locale: Locale = .current,
+            preferredLanguages: [String] = Locale.preferredLanguages
+        ) -> ModelSource {
+            let isUTCPlus8 = timeZone.secondsFromGMT() == 8 * 3600
+            let tzID = timeZone.identifier.lowercased()
+            let isChinaTimeZone = tzID == "asia/shanghai"
+                || tzID == "asia/chongqing"
+                || tzID == "asia/harbin"
+                || tzID == "asia/urumqi"
+                || tzID == "asia/beijing"
+            let regionCode = locale.region?.identifier.uppercased()
+            let localeID = locale.identifier.lowercased()
+            let hasChineseLanguage = preferredLanguages.first?.lowercased().hasPrefix("zh-hans") == true
+                || preferredLanguages.first?.lowercased().hasPrefix("zh-cn") == true
+                || localeID.contains("zh_hans")
+                || localeID.contains("zh-hans")
+                || localeID.contains("zh_cn")
+                || localeID.contains("zh-cn")
+            if isUTCPlus8 || isChinaTimeZone || regionCode == "CN" || hasChineseLanguage {
+                return .modelscope
+            }
             return .huggingface
         }
-        
-        var displayName: String {
+
+        public static var preferred: ModelSource {
+            if let stored = UserDefaults.standard.string(forKey: defaultsKey),
+               let source = ModelSource(rawValue: stored) {
+                return source
+            }
+            return defaultSource()
+        }
+
+        static func persistPreferred(_ source: ModelSource) {
+            UserDefaults.standard.set(source.rawValue, forKey: defaultsKey)
+        }
+
+        public var displayName: String {
             switch self {
-            case .huggingface: return "Hugging Face"
-            case .modelscope: return NSLocalizedString("autogen.ModelDownloader.71608408", comment: "AUTOGEN")
+            case .huggingface:
+                return "Hugging Face"
+            case .modelscope:
+                return NSLocalizedString(
+                    "model.download.source.modelscope",
+                    value: "ModelScope（中国推荐）",
+                    comment: "ModelScope download source option"
+                )
             }
         }
     }
@@ -80,13 +124,22 @@ public final class ModelDownloader: ObservableObject {
 
         var recommendedUnifiedMemoryBytes: UInt64 {
             switch self {
-            case .qwen3_5_0_8b: return 8_000_000_000
-            case .qwen3_5_4b: return 16_000_000_000
+            case .qwen3_5_0_8b: return 5_500_000_000 // 6 GB-class iOS devices
+            case .qwen3_5_4b: return 7_500_000_000   // 8 GB+ iOS devices
+            }
+        }
+
+        public func isRecommended(forPhysicalMemoryBytes memoryBytes: UInt64) -> Bool {
+            switch self {
+            case .qwen3_5_0_8b:
+                return memoryBytes < ModelType.qwen3_5_4b.recommendedUnifiedMemoryBytes
+            case .qwen3_5_4b:
+                return memoryBytes >= recommendedUnifiedMemoryBytes
             }
         }
 
         var isRecommendedForCurrentDevice: Bool {
-            ProcessInfo.processInfo.physicalMemory >= recommendedUnifiedMemoryBytes
+            isRecommended(forPhysicalMemoryBytes: ProcessInfo.processInfo.physicalMemory)
         }
         
         var huggingfaceURL: String {
@@ -118,6 +171,17 @@ public final class ModelDownloader: ObservableObject {
             case .qwen3_5_4b: return rawValue
             }
         }
+
+        #if os(iOS)
+        public var canonicalModelInfo: ModelInfo {
+            ModelInfo(
+                id: rawValue,
+                name: displayName,
+                source: "local",
+                isLocal: true
+            )
+        }
+        #endif
         
         var modelscopeRepo: String {
             switch self {
@@ -154,7 +218,7 @@ public final class ModelDownloader: ObservableObject {
             return requiredFiles.reduce(0) { $0 + $1.size }
         }
 
-        func validatesDownloadedFiles(at directory: URL) -> Bool {
+        nonisolated func validatesDownloadedFiles(at directory: URL) -> Bool {
             let fileManager = FileManager.default
             for file in requiredFiles {
                 let url = directory.appendingPathComponent(file.name)
@@ -207,7 +271,14 @@ public final class ModelDownloader: ObservableObject {
     
     @Published public private(set) var state: DownloadState = .notDownloaded
     @Published public private(set) var downloadedModels: Set<ModelType> = []
-    @Published public var preferredSource: ModelSource = .preferred
+    @Published public private(set) var incompleteModels: Set<ModelType> = []
+    @Published public var preferredSource: ModelSource = .preferred {
+        didSet {
+            if preferredSource != oldValue {
+                ModelSource.persistPreferred(preferredSource)
+            }
+        }
+    }
     
     @Published public private(set) var downloadSpeed: Double = 0
     @Published public private(set) var downloadedBytes: Int64 = 0
@@ -248,6 +319,7 @@ public final class ModelDownloader: ObservableObject {
     private var lastDownloadedBytes: Int64 = 0
     private var isCancelled = false
     private var diskUsageUpdateTask: Task<Void, Never>?
+    private var validationTask: Task<Void, Never>?
     // No Rust: Swift-only download implementation
     
     public init(logger: Logger) {
@@ -263,81 +335,103 @@ public final class ModelDownloader: ObservableObject {
         if case .downloading = state {
             return
         }
-        let downloaded = computeDownloadedModels()
-        applyDownloadedModels(downloaded)
+        let scan = Self.scanModelsOnDisk()
+        applyDownloadedModels(scan.downloaded, incomplete: scan.incomplete)
     }
 
     /// Compute downloaded models without mutating published state (safe for background use)
-    public func computeDownloadedModels() -> Set<ModelType> {
-        if case .downloading = state {
-            return downloadedModels
-        }
-        var downloaded: Set<ModelType> = []
-        for modelType in ModelType.allCases {
-            if isModelDownloaded(modelType) {
-                downloaded.insert(modelType)
-            }
-        }
-        return downloaded
+    public nonisolated func computeDownloadedModels() -> Set<ModelType> {
+        Self.scanModelsOnDisk().downloaded
     }
 
     /// Apply downloaded model snapshot to published state
-    public func applyDownloadedModels(_ downloaded: Set<ModelType>) {
+    public func applyDownloadedModels(_ downloaded: Set<ModelType>, incomplete: Set<ModelType> = []) {
         downloadedModels = downloaded
+        incompleteModels = incomplete
+        if case .downloading = state { return }
+        if case .paused = state { return }
         state = downloaded.isEmpty ? .notDownloaded : .downloaded
+        syncDownloadedModelsWithSelectionManager(downloaded)
     }
 
-    /// Refresh downloaded models asynchronously to avoid blocking the main thread
+    private func syncDownloadedModelsWithSelectionManager(_ downloaded: Set<ModelType>) {
+        #if os(iOS)
+        guard !downloaded.isEmpty else { return }
+        let existingLocalIDs = Set(ModelSelectionManager.getAvailableModels().filter(\.isLocal).map(\.id))
+        for model in downloaded where !existingLocalIDs.contains(model.rawValue) {
+            ModelSelectionManager.addModel(model.canonicalModelInfo)
+        }
+        #endif
+    }
+
+    /// Refresh downloaded models off the main thread so large JSON tokenizer/vocab
+    /// validation never blocks SwiftUI rendering or download progress ticks.
     public func refreshDownloadedModelsAsync() {
-        Task { @MainActor [weak self] in
-            guard let self else { return }
-            let downloaded = self.computeDownloadedModels()
-            self.applyDownloadedModels(downloaded)
+        validationTask?.cancel()
+        validationTask = Task.detached(priority: .utility) { [weak self] in
+            let scan = Self.scanModelsOnDisk()
+            guard !Task.isCancelled, let self else { return }
+            await MainActor.run {
+                guard !self.isDownloading else { return }
+                self.applyDownloadedModels(scan.downloaded, incomplete: scan.incomplete)
+            }
         }
     }
     
-    /// Check if a specific model is downloaded (all required files exist and verified)
+    /// Return cached validation state so SwiftUI body and progress ticks never perform disk I/O.
     public func isModelDownloaded(_ model: ModelType) -> Bool {
-        let modelPath = getModelPath(for: model)
+        downloadedModels.contains(model)
+    }
+
+    /// Return cached incomplete-directory state without synchronous FileManager calls in SwiftUI body.
+    public func hasIncompleteDownload(_ model: ModelType) -> Bool {
+        incompleteModels.contains(model) && !downloadedModels.contains(model)
+    }
+
+    /// Validate a model directory on disk (safe to run off @MainActor).
+    public nonisolated static func validateDownloadedModelOnDisk(_ model: ModelType, at modelPath: URL) -> Bool {
         guard model.validatesDownloadedFiles(at: modelPath) else {
             return false
         }
-        
+        let fileManager = FileManager.default
         for fileInfo in model.requiredFiles {
             let filePath = modelPath.appendingPathComponent(fileInfo.name)
-            
-            if !FileManager.default.fileExists(atPath: filePath.path) {
+            if !fileManager.fileExists(atPath: filePath.path) {
                 return false
             }
-            
             if !fileInfo.sha256.isEmpty {
-                do {
-                    let isValid = try verifyFileIntegrity(at: filePath, expectedHash: fileInfo.sha256)
-                    if !isValid {
-                        logger.log(.warn, "ModelDownloader", "File hash mismatch", metadata: [
-                            "model": model.rawValue,
-                            "file": fileInfo.name
-                        ])
-                        return false
-                    }
-                } catch {
-                    logger.log(.error, "ModelDownloader", "Failed to verify file", metadata: [
-                        "model": model.rawValue,
-                        "file": fileInfo.name,
-                        "error": error.localizedDescription
-                    ])
+                guard let actualHash = try? calculateSHA256(for: filePath),
+                      actualHash.lowercased() == fileInfo.sha256.lowercased() else {
                     return false
                 }
             }
         }
-        
         return true
+    }
+
+    private nonisolated static func scanModelsOnDisk() -> (downloaded: Set<ModelType>, incomplete: Set<ModelType>) {
+        let fileManager = FileManager.default
+        var downloaded: Set<ModelType> = []
+        var incomplete: Set<ModelType> = []
+        for modelType in ModelType.allCases {
+            let path = Self.modelPath(for: modelType)
+            if validateDownloadedModelOnDisk(modelType, at: path) {
+                downloaded.insert(modelType)
+            } else if fileManager.fileExists(atPath: path.path) {
+                incomplete.insert(modelType)
+            }
+        }
+        return (downloaded, incomplete)
     }
     
     /// Get the local path for a model
-    public func getModelPath(for model: ModelType) -> URL {
+    public nonisolated static func modelPath(for model: ModelType) -> URL {
         let cacheDir = FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask)[0]
         return cacheDir.appendingPathComponent("models/\(model.rawValue)")
+    }
+
+    public nonisolated func getModelPath(for model: ModelType) -> URL {
+        Self.modelPath(for: model)
     }
     
     /// Download a model
@@ -352,10 +446,18 @@ public final class ModelDownloader: ObservableObject {
         
         isCancelled = false
         
-        // Check if already downloaded
-        if isModelDownloaded(model) {
+        // Check if already downloaded off the main thread
+        let modelDirectory = getModelPath(for: model)
+        let alreadyDownloaded = await Task.detached(priority: .utility) {
+            Self.validateDownloadedModelOnDisk(model, at: modelDirectory)
+        }.value
+        if alreadyDownloaded {
             logger.log(.info, "ModelDownloader", "Model already downloaded")
             await MainActor.run {
+                downloadedModels.insert(model)
+                incompleteModels.remove(model)
+                currentDownloadingFile = nil
+                currentModel = nil
                 state = .downloaded
             }
             return
@@ -366,6 +468,8 @@ public final class ModelDownloader: ObservableObject {
             let error = "磁盘空间不足，需要至少 \(formatBytes(model.estimatedSize * 2))"
             logger.log(.error, "ModelDownloader", error)
             await MainActor.run {
+                currentDownloadingFile = nil
+                currentModel = nil
                 state = .failed(error: error)
             }
             return
@@ -455,7 +559,7 @@ public final class ModelDownloader: ObservableObject {
                         }
                         
                         } catch {
-                        if isCancelled || (error as NSError).code == NSURLErrorCancelled {
+                        if (error as? ControlError) == .paused || isCancelled || (error as NSError).code == NSURLErrorCancelled {
                             throw error
                         }
                         
@@ -478,7 +582,11 @@ public final class ModelDownloader: ObservableObject {
             
             await MainActor.run {
                 downloadedModels.insert(model)
+                incompleteModels.remove(model)
                 state = .downloaded
+                #if os(iOS)
+                ModelSelectionManager.addModel(model.canonicalModelInfo)
+                #endif
                 scheduleDiskUsageUpdate(reason: "downloadCompleted")
             }
 
@@ -504,13 +612,28 @@ public final class ModelDownloader: ObservableObject {
                 return
             }
 
-            logger.log(.error, "ModelDownloader", "Download failed", metadata: ["error": error.localizedDescription])
-            
-            let isCancellationError = (error as NSError).code == NSURLErrorCancelled
+            let isCancellationError = isCancelled || (error as NSError).code == NSURLErrorCancelled || error is CancellationError
             // Pause returns above. A failure or explicit cancellation must not
             // leave an invalid model directory behind as apparent local
             // storage or contaminate the next clean retry.
             try? FileManager.default.removeItem(at: getModelPath(for: model))
+
+            if isCancellationError {
+                logger.log(.info, "ModelDownloader", "Download cancelled")
+                await MainActor.run {
+                    state = .notDownloaded
+                    downloadedBytes = 0
+                    totalBytes = 0
+                    downloadSpeed = 0
+                    lastDownloadedBytes = 0
+                    currentDownloadingFile = nil
+                    currentModel = nil
+                    scheduleDiskUsageUpdate(reason: "downloadCancelled")
+                }
+                return
+            }
+
+            logger.log(.error, "ModelDownloader", "Download failed", metadata: ["error": error.localizedDescription])
             
             await MainActor.run {
                 state = .failed(error: error.localizedDescription)
@@ -518,7 +641,9 @@ public final class ModelDownloader: ObservableObject {
                 totalBytes = 0
                 downloadSpeed = 0
                 lastDownloadedBytes = 0
-                scheduleDiskUsageUpdate(reason: isCancellationError ? "downloadCancelled" : "downloadFailed")
+                currentDownloadingFile = nil
+                currentModel = nil
+                scheduleDiskUsageUpdate(reason: "downloadFailed")
             }
             throw error
         }
@@ -535,6 +660,10 @@ public final class ModelDownloader: ObservableObject {
         
         try FileManager.default.removeItem(at: modelPath)
         downloadedModels.remove(model)
+        incompleteModels.remove(model)
+        #if os(iOS)
+        ModelSelectionManager.removeModel(model.canonicalModelInfo)
+        #endif
         
         if downloadedModels.isEmpty {
             state = .notDownloaded
@@ -581,19 +710,21 @@ public final class ModelDownloader: ObservableObject {
         isPaused = true
 
         let resumeHandler: (Data?) -> Void = { data in
-            if let d = data, let model = self.currentModel, let fileName = self.currentDownloadingFile {
-                do {
-                    try self.saveResumeDataToDisk(d, for: model, fileName: fileName)
-                    self.logger.log(.info, "ModelDownloader", "Saved resumeData to disk", metadata: ["model": model.rawValue, "file": fileName])
-                } catch {
-                    self.logger.log(.warn, "ModelDownloader", "Failed to save resumeData", metadata: ["error": error.localizedDescription])
+            Task { @MainActor in
+                if let d = data, let model = self.currentModel, let fileName = self.currentDownloadingFile {
+                    do {
+                        try self.saveResumeDataToDisk(d, for: model, fileName: fileName)
+                        self.logger.log(.info, "ModelDownloader", "Saved resumeData to disk", metadata: ["model": model.rawValue, "file": fileName])
+                    } catch {
+                        self.logger.log(.warn, "ModelDownloader", "Failed to save resumeData", metadata: ["error": error.localizedDescription])
+                    }
+                } else {
+                    self.logger.log(.warn, "ModelDownloader", "No resumeData produced when pausing or missing context")
                 }
-            } else {
-                self.logger.log(.warn, "ModelDownloader", "No resumeData produced when pausing or missing context")
+                self.progressObservation?.invalidate()
+                self.progressObservation = nil
+                self.activeDownloadTask = nil
             }
-            self.progressObservation?.invalidate()
-            self.progressObservation = nil
-            self.activeDownloadTask = nil
         }
 
         task.cancel(byProducingResumeData: resumeHandler)
@@ -894,7 +1025,7 @@ public final class ModelDownloader: ObservableObject {
     }
     
     /// Calculate SHA256 hash of a file
-    private func calculateSHA256(for fileURL: URL) throws -> String {
+    private nonisolated static func calculateSHA256(for fileURL: URL) throws -> String {
         let bufferSize = 1024 * 1024 // 1 MB buffer
         
         guard let fileHandle = try? FileHandle(forReadingFrom: fileURL) else {
@@ -928,7 +1059,7 @@ public final class ModelDownloader: ObservableObject {
             return true
         }
 
-        let actualHash = try calculateSHA256(for: fileURL)
+        let actualHash = try Self.calculateSHA256(for: fileURL)
         let isValid = actualHash.lowercased() == expectedHash.lowercased()
 
         if !isValid {

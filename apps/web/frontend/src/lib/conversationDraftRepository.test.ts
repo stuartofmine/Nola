@@ -216,3 +216,16 @@ test('cold receipt reconciliation restores a consumed ticket without erasing a s
     await assert.rejects(cold.updateSubmission(changed), /durable draft submission/);
     assert.equal(writes, 1);
 });
+
+test('frozen inline identities and epoch restore with the original draft after reopening',async()=>{
+    const repository=new MemoryDraftRepository();
+    const first=createWorkspaceDrafts(repository).forHost('home');
+    await first.load('parent');
+    const mentions={epoch:'store',occurrences:[{start:1,text:'@审查',selection:{agent_id:'review',agent_revision:2,participant_id:null,context_conversation_id:null}}]};
+    first.writeComposer('parent','请@审查',mentions);
+    await first.flush();
+    const restored=createWorkspaceDrafts(repository).forHost('home');await restored.load('parent');
+    assert.deepEqual(restored.mentions.get('parent'),mentions);assert.equal(restored.text.read('parent'),'请@审查');
+    restored.writeComposer('parent','请@审查');await restored.flush();
+    const plain=createWorkspaceDrafts(repository).forHost('home');await plain.load('parent');assert.equal(plain.mentions.has('parent'),false);
+});

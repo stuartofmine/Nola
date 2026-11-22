@@ -5,6 +5,7 @@
     import { locale, t } from '../lib/i18n';
     let {resource}: {resource: ConversationPdfResource} = $props();
     let url = $state(''), error = $state(false), loading = $state(true);
+    let desktop = $state(false);
     let controller: AbortController | null = null;
     let request = 0;
     async function load() {
@@ -20,12 +21,12 @@
         } catch { if (!signal.aborted && sequence === request) error = true; }
         finally { if (!signal.aborted && sequence === request) loading = false; }
     }
-    onMount(() => { void load(); return () => { ++request; controller?.abort(); if (url) URL.revokeObjectURL(url); }; });
+    onMount(() => { desktop = 'NolaDesktop' in window; void load(); return () => { ++request; controller?.abort(); if (url) URL.revokeObjectURL(url); }; });
 </script>
 <div class="document-tab">
     {#if loading}<p role="status">{t($locale, 'chatResource.loadingPreview')}</p>{/if}
     {#if error}<div role="alert"><p>{t($locale, 'chatResource.previewFailed')}</p><button onclick={load}>{t($locale, 'chatResource.refresh')}</button></div>{/if}
-    {#if url}<div class="preview-actions"><p>{t($locale, 'chatResource.fallback')}</p><a href={url} target="_blank" rel="noopener noreferrer">{t($locale, 'chatResource.openSeparate')}</a><a href={url} download={resource.displayName}>{t($locale, 'chatResource.download')}</a></div><iframe sandbox="allow-scripts" src={url} title={t($locale, 'chatResource.previewTitle', {name: resource.displayName})}></iframe>{/if}
+    {#if url}<div class="preview-actions"><p>{t($locale, 'chatResource.fallback')}</p>{#if !desktop}<a href={url} target="_blank" rel="noopener noreferrer">{t($locale, 'chatResource.openSeparate')}</a>{/if}<a href={url} download={resource.displayName}>{t($locale, 'chatResource.download')}</a></div><iframe sandbox="allow-scripts" src={url} title={t($locale, 'chatResource.previewTitle', {name: resource.displayName})}></iframe>{/if}
 </div>
 <style>
     .document-tab { display: flex; flex: 1; flex-direction: column; min-width: 0; min-height: 0; height: 100%; padding: 16px; gap: 12px; }

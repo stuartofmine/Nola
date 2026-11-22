@@ -975,7 +975,20 @@
       }
     },
     "Cancel" : {
-
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Cancel"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "取消"
+          }
+        }
+      }
     },
     "Cancel task" : {
       "localizations" : {
@@ -1035,6 +1048,64 @@
         }
       }
     },
+    "Cancel this task?" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Diese Aufgabe abbrechen?"
+          }
+        },
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Cancel this task?"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "¿Cancelar esta tarea?"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Annuler cette tâche ?"
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "このタスクをキャンセルしますか？"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "이 작업을 취소하시겠습니까?"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Отменить эту задачу?"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "取消此任务？"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "取消此任務？"
+          }
+        }
+      }
+    },
     "Cancel unfinished task" : {
       "localizations" : {
         "zh-Hans" : {
@@ -1073,7 +1144,20 @@
       }
     },
     "Cancellation requested. Waiting for the remote run to confirm its final state." : {
-
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Cancellation requested. Waiting for the remote run to confirm its final state."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "已请求取消，正在等待远程运行确认最终状态。"
+          }
+        }
+      }
     },
     "Changed" : {
       "localizations" : {
@@ -1193,7 +1277,20 @@
       }
     },
     "Check cancellation status" : {
-
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Check cancellation status"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "检查取消状态"
+          }
+        }
+      }
     },
     "Check execution status" : {
       "extractionState" : "manual",
@@ -1213,7 +1310,20 @@
       }
     },
     "Check run status" : {
-
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Check run status"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "检查运行状态"
+          }
+        }
+      }
     },
     "Checked on use" : {
       "extractionState" : "stale",
@@ -2201,6 +2311,64 @@
         }
       }
     },
+    "Couldn’t load remote task updates" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Status der entfernten Aufgabe konnte nicht geladen werden"
+          }
+        },
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Couldn’t load remote task updates"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "No se pudieron cargar las actualizaciones de la tarea remota"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Impossible de charger les mises à jour de la tâche distante"
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "リモートタスクの更新を読み込めませんでした"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "원격 작업 업데이트를 불러오지 못했습니다"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Не удалось получить обновления удалённой задачи"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "无法获取远程任务进度"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "無法取得遠端任務進度"
+          }
+        }
+      }
+    },
     "Current Page" : {
       "extractionState" : "stale",
       "localizations" : {
@@ -3070,6 +3238,9 @@
           }
         }
       }
+    },
+    "Guidance recorded. Explicit approval is still required." : {
+
     },
     "Guidance recorded. Tool arguments are unchanged; explicit approval is still required." : {
       "extractionState" : "manual",
@@ -4212,6 +4383,64 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "保持封鎖並停止任務"
+          }
+        }
+      }
+    },
+    "Keep Running" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Weiter ausführen"
+          }
+        },
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Keep Running"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Seguir ejecutando"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Continuer l’exécution"
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "実行を続ける"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "계속 실행"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Продолжить выполнение"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "继续运行"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "繼續執行"
           }
         }
       }
@@ -6186,7 +6415,11 @@
     "Refresh" : {
 
     },
+    "Remember" : {
+
+    },
     "Remember This Approval" : {
+      "extractionState" : "stale",
       "localizations" : {
         "de" : {
           "stringUnit" : {
@@ -6239,6 +6472,7 @@
       }
     },
     "Remembering this approval applies only to the requested operation and resource in this conversation, not every command or file." : {
+      "extractionState" : "stale",
       "localizations" : {
         "de" : {
           "stringUnit" : {
@@ -6289,6 +6523,9 @@
           }
         }
       }
+    },
+    "Remembering this approval applies only to the requested operation and resource in this conversation." : {
+
     },
     "Remote run changed. Confirm its current state before resuming." : {
       "extractionState" : "manual",
@@ -6622,7 +6859,21 @@
       }
     },
     "Retry" : {
-
+      "extractionState" : "stale",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Retry"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "重试"
+          }
+        }
+      }
     },
     "Retry an operation with an unknown result?" : {
       "localizations" : {
@@ -7667,64 +7918,6 @@
         }
       }
     },
-    "Couldn’t load remote task updates" : {
-      "localizations" : {
-        "de" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Status der entfernten Aufgabe konnte nicht geladen werden"
-          }
-        },
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Couldn’t load remote task updates"
-          }
-        },
-        "es" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "No se pudieron cargar las actualizaciones de la tarea remota"
-          }
-        },
-        "fr" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Impossible de charger les mises à jour de la tâche distante"
-          }
-        },
-        "ja" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "リモートタスクの更新を読み込めませんでした"
-          }
-        },
-        "ko" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "원격 작업 업데이트를 불러오지 못했습니다"
-          }
-        },
-        "ru" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Не удалось получить обновления удалённой задачи"
-          }
-        },
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "无法获取远程任务进度"
-          }
-        },
-        "zh-Hant" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "無法取得遠端任務進度"
-          }
-        }
-      }
-    },
     "Task guidance" : {
       "localizations" : {
         "de" : {
@@ -8632,7 +8825,20 @@
       }
     },
     "Waiting for the host to confirm this submission." : {
-
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Waiting for the host to confirm this submission."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "正在等待主机确认本次提交。"
+          }
+        }
+      }
     },
     "Waiting for thinking content…" : {
       "localizations" : {
@@ -8965,6 +9171,9 @@
           }
         }
       }
+    },
+    "正在处理中…" : {
+
     }
   },
   "version" : "1.0"

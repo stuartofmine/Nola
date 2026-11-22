@@ -123,6 +123,16 @@ struct IOSNotificationStoreAndManagerSuiteTests {
 }
 
 final class SettingsNotificationPresentationTests: XCTestCase {
+    func testReturningFromNotificationSettingsRespectsPermissionAndEnableIntent() {
+        for status: UNAuthorizationStatus in [.authorized, .provisional, .ephemeral] {
+            XCTAssertTrue(SettingsNotificationPresentation.refreshedPreference(current: false, requestedFromSettings: true, authorizationStatus: status))
+            XCTAssertFalse(SettingsNotificationPresentation.refreshedPreference(current: false, requestedFromSettings: false, authorizationStatus: status))
+        }
+        for status: UNAuthorizationStatus in [.denied, .notDetermined] {
+            XCTAssertFalse(SettingsNotificationPresentation.refreshedPreference(current: true, requestedFromSettings: true, authorizationStatus: status))
+        }
+    }
+
     func testSettingsNotificationAuthorizationPresentationPolicy() {
         XCTAssertTrue(SettingsNotificationPresentation.requiresSystemSettings(requestedEnabled: true, authorizationStatus: .denied))
         XCTAssertFalse(SettingsNotificationPresentation.requiresSystemSettings(requestedEnabled: true, authorizationStatus: .authorized))

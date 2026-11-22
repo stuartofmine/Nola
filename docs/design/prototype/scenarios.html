@@ -7,7 +7,9 @@
     <meta name="description" content="Nola 全业务场景原型：按业务、平台和状态审阅正常流程、异常与恢复。仅本地合成演示。">
     <title>Nola · 全业务场景</title>
     <link rel="stylesheet" href="business-scenarios.css">
-    <script defer src="business-scenarios.js"></script>
+    <script defer src="shared-icons.js"></script>
+    <script defer src="github-skill-preview.js"></script>
+    <script defer src="plugin-library-preview.js"></script><script defer src="host-connection-preview.js"></script><script defer src="business-scenarios.js"></script>
 </head>
 <body>
     <a class="skip" href="#preview-title">跳到场景预览</a>
@@ -32,6 +34,7 @@
                 <section class="preview-area" aria-label="平台界面预览"><div id="device"></div></section>
                 <aside class="review-notes" aria-label="设计与状态说明">
                     <h3>状态与分支</h3><p>先直接操作界面；也可选择任一状态检查边界。切换状态不会执行真实操作。</p>
+                    <label id="host-outcome" hidden>下次演示回执<select aria-label="下次演示回执" id="host-result"></select></label>
                     <nav id="state-list" aria-label="状态选择"></nav>
                     <details open><summary>交互合同</summary><p id="contract"></p></details>
                     <details><summary>生产源码依据</summary><ul id="sources"></ul><p>路径表示业务依据，不表示原型状态均已落地。</p></details>

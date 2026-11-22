@@ -7,12 +7,14 @@ import com.nola.data.local.db.entity.ScheduledActionEntity
 import com.nola.data.repository.ScheduledActionRepository
 import com.nola.work.ScheduledActionScheduler
 import dagger.hilt.android.lifecycle.HiltViewModel
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import kotlinx.coroutines.CancellationException
 import javax.inject.Inject
 
@@ -31,11 +33,15 @@ data class ScheduledActionsUiState(
 @HiltViewModel
 class ScheduledActionsViewModel internal constructor(
     private val repo: ScheduledActionRepository,
-    private val schedule: (ScheduledActionEntity) -> Unit,
-    private val cancel: (String) -> Unit,
+    private val schedule: suspend (ScheduledActionEntity) -> Unit,
+    private val cancel: suspend (String) -> Unit,
 ) : ViewModel() {
     @Inject constructor(repo: ScheduledActionRepository, scheduler: ScheduledActionScheduler) :
-        this(repo, scheduler::schedule, scheduler::cancel)
+        this(
+            repo,
+            schedule = { action -> withContext(Dispatchers.IO) { scheduler.schedule(action) } },
+            cancel = { id -> withContext(Dispatchers.IO) { scheduler.cancel(id) } },
+        )
 
     private val _uiState = MutableStateFlow(ScheduledActionsUiState())
     val uiState: StateFlow<ScheduledActionsUiState> = _uiState.asStateFlow()
@@ -100,7 +106,7 @@ class ScheduledActionsViewModel internal constructor(
         }
     }
 
-    fun toggle(id: String, enabled: Boolean) {
+    fun toggle(id: String, enabled: Boolean, onToggled: () -> Unit = {}) {
         mutate(id) {
             repo.setEnabled(id, enabled)
             val action = repo.getById(id)
@@ -109,6 +115,7 @@ class ScheduledActionsViewModel internal constructor(
             } else {
                 cancel(id)
             }
+            onToggled()
         }
     }
 

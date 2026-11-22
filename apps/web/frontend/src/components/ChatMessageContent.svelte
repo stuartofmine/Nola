@@ -3,7 +3,7 @@
     import {MESSAGE_PART_READING,MessageReadingScope,readingPartKey,type MessagePartReading,type MessageTextSnapshot} from '../lib/messagePartReading';
     import ChatTextReaderDialog from './ChatTextReaderDialog.svelte';
     import { locale, t } from '../lib/i18n';
-    import { messagePresentation, messageFlowPresentation, executionProcessChoice } from '../lib/chatMessagePresentation';
+    import { messagePresentation, messageFlowPresentation, executionProcessChoice, modelFailureHelpKey } from '../lib/chatMessagePresentation';
     import ChatExecutionProcess from './ChatExecutionProcess.svelte';
     import { timelinePartText, timelineReasoningParts } from '../lib/chatTimeline';
     import type { TimelineMessage, TimelinePart } from '../lib/chatTimeline';
@@ -129,7 +129,8 @@
 
 <div class="message-parts" bind:this={container}>
 {#if message.role === 'assistant' && message.state === 'failed' && !message.parts.some(part => part.value.kind === 'error')}
-    <ChatReplyError />
+    {@const help = modelFailureHelpKey(message.parts)}
+    <ChatReplyError detail={help ? t($locale, help) : ''} />
 {/if}
 {#each groups as group (group.id)}
     {#if group.kind === 'process'}
@@ -154,7 +155,13 @@
             {@const reading=controls([part])}
             <ChatToolPart {part} expandedChoice={Object.hasOwn(toolChoices, part.id) ? toolChoices[part.id] : undefined} onexpandedchange={expanded => reading.tool(part.id,expanded)} />
         {:else if reasoning.has(part.id) || historicalReasoning}
-            <details><summary>{typeof part.value.title === 'string' && part.value.title.length ? part.value.title : t($locale, 'chatPage.thinking')}</summary><Markdown source={historicalReasoning || timelinePartText(part, 'reasoning')} /></details>
+            <details class="standalone-reasoning">
+                <summary>
+                    <svg class="reasoning-chevron" viewBox="0 0 16 16" aria-hidden="true"><path d="m6 3 5 5-5 5" /></svg>
+                    <span class="reasoning-title">{typeof part.value.title === 'string' && part.value.title.length ? part.value.title : t($locale, 'chatPage.thinking')}</span>
+                </summary>
+                <div class="reasoning-body"><Markdown source={historicalReasoning || timelinePartText(part, 'reasoning')} /></div>
+            </details>
         {:else if reference}<ChatReferenceCard {reference} />
         {:else if part.source !== 'optimistic' && !['text', 'reasoning', 'ui_surface'].includes(part.value.kind)}
             <ChatJournalDetails {part} live={message.state === 'running' || message.state === 'pending'} taskNumber={taskNumbers.get(String(part.value.task_id)) ?? 1}
@@ -167,4 +174,18 @@
 {#if textSnapshot}{@const shown=textSnapshot}{#key shown}<ChatTextReaderDialog snapshot={shown} onclose={()=>void closeTextReader(shown)} />{/key}{/if}
 </div>
 
-<style>.message-parts { display: contents; }</style>
+<style>
+    .message-parts { display: contents; }
+    .standalone-reasoning { margin-bottom: 12px; min-width: 0; border-radius: 12px; transition: background-color var(--motion-base) var(--motion-disclosure); }
+    .standalone-reasoning[open] { background: var(--panel); }
+    .standalone-reasoning > summary { display: flex; align-items: center; gap: 8px; min-height: max(32px, var(--control-hit-size)); box-sizing: border-box; padding: 8px 10px; cursor: pointer; color: var(--muted); border-radius: 12px; list-style: none; font-size: .875rem; font-weight: 500; transition: background-color 140ms ease, color 140ms ease; }
+    .standalone-reasoning > summary::-webkit-details-marker { display: none; }
+    .standalone-reasoning > summary:hover { background: color-mix(in srgb, currentColor 5%, transparent); color: var(--content); }
+    .standalone-reasoning > summary:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; border-radius: 12px; }
+    .reasoning-chevron { flex: none; width: 14px; height: 14px; fill: none; stroke: currentColor; stroke-width: 1.6; stroke-linecap: round; stroke-linejoin: round; transition: transform var(--motion-base) var(--motion-disclosure); }
+    .standalone-reasoning[open] > summary .reasoning-chevron { transform: rotate(90deg); }
+    .reasoning-title { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .reasoning-body { margin: 0 12px 14px 18px; padding-inline-start: 12px; border-inline-start: 2px solid var(--border); overflow-wrap: anywhere; max-height: min(360px, 45dvh); overflow: auto; }
+    @media (pointer: coarse) { .standalone-reasoning > summary { min-height: 44px; } }
+    @media (prefers-reduced-motion: reduce) { .standalone-reasoning > summary, .reasoning-chevron { transition: none; } }
+</style>

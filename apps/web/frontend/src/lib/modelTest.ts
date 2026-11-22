@@ -36,6 +36,8 @@ export function modelTestRunRequest(conversation: ChatConversation, clientId: st
     }
     return {
         conversationId: conversation.conversationId,
+        expected_configuration_revision: conversation.configurationRevision,
+        expected_parent_message_id: null,
         client_id: clientId,
         submission_id: submissionId,
         user_message_id: `${submissionId}:user`,

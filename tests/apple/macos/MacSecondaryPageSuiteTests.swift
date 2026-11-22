@@ -736,8 +736,8 @@ final class MacSecondaryPageVisualEndToEndTests: XCTestCase {
     }
 
     func testSettingsSectionsAndUtilityPagesRenderInBothAppearances() async throws {
-        for section in ["general", "providers", "agent", "connections", "notifications", "data", "diagnostics"] {
-            for width: CGFloat in [520, 1_040] {
+        for section in ["general", "providers", "agent", "connections", "data", "diagnostics"] {
+            for width: CGFloat in [MacSettingsView.minimumWidth, 1_040] {
                 try await assertRenderedPage(
                     MacSettingsView(snapshotHostState: .notConfigured, initialCategory: section),
                     name: "settings-\(section)-\(Int(width))",
@@ -884,7 +884,7 @@ final class MacSecondaryPageVisualEndToEndTests: XCTestCase {
 @MainActor
 final class MacSecondaryPageNavigationTests: XCTestCase {
     func testSecondaryPageInitialLaunchAndNavigationStateMachines() {
-        for section in MacWorkspaceSection.allCases {
+        for section in MacWorkspaceSection.sidebarSections {
             XCTAssertEqual(
                 MacWorkspaceSection.initialSection(environment: ["NOLA_MAC_INITIAL_SECTION": section.rawValue]),
                 section
@@ -954,6 +954,444 @@ final class MacSecondaryPageNavigationTests: XCTestCase {
         }
     }
 
+    func testSourceNavigationPreservesCachedManualSourceAndRefreshButtonFrame() async throws {
+        let accessibility = try MacHostedAccessibilitySession()
+        defer { accessibility.restore() }
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let registry = MacDataSourceRegistry(storeURL: root.appendingPathComponent("registry.json"))
+        let configuration = URLSessionConfiguration.ephemeral
+        configuration.protocolClasses = [SnapshotSourceURLProtocol.self]
+        let session = URLSession(configuration: configuration)
+        defer { session.invalidateAndCancel() }
+        let store = MacWebSourceStore(storeURL: root.appendingPathComponent("sources.json"),
+            registry: registry, urlSession: session)
+        let hostname = UUID().uuidString.lowercased() + ".test"
+        let source = MacWebSource(id: UUID(), name: "Design notes", url: "https://\(hostname)/notes",
+            format: .text, isEnabled: true, cachedText: "Last saved notes", lastFetchedAt: .now,
+            lastError: nil, createdAt: .now)
+        var first = source
+        first.id = UUID()
+        first.name = "Archive"
+        first.isEnabled = false
+        store.upsert(first)
+        store.upsert(source)
+        let (finish, gate) = AsyncStream<Void>.makeStream()
+        var requests = 0
+        SnapshotSourceURLProtocol.handlers[hostname] = { _ in
+            requests += 1
+            for await _ in finish { break }
+        }
+        defer {
+            gate.finish()
+            SnapshotSourceURLProtocol.handlers[hostname] = nil
+        }
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: hostname))
+        defer { defaults.removePersistentDomain(forName: hostname) }
+        let service = MacPlatformDataService(registry: registry, startsPeriodicRefresh: false, preferences: defaults)
+        let navigation = MacDataCenterNavigationState()
+        let view = MacDataCenterView(navigation: navigation, service: service, registry: registry, webSources: store,
+            initialSection: "sources").environment(\.macUsesGlobalWorkspaceChrome, true)
+            .environment(\.accessibilityEnabled, true).frame(width: 900, height: 680)
+        let host = NSHostingView(rootView: view)
+        let window = NSWindow(contentViewController: NSViewController())
+        window.isReleasedWhenClosed = false
+        window.contentView = host
+        window.setContentSize(NSSize(width: 900, height: 680))
+        window.orderFrontRegardless()
+        defer { window.close() }
+
+        func frame(_ identifier: String) throws -> NSRect {
+            host.layoutSubtreeIfNeeded()
+            let button = try XCTUnwrap(accessibilityObjects(host).first {
+                $0.accessibilityIdentifier?() == identifier
+            })
+            return try XCTUnwrap(button.accessibilityFrame?())
+        }
+        func capture(_ name: String, view: NSView) throws {
+            let image = try MacVisualPixelAssertions.captureCGImage(of: view)
+            let png = try XCTUnwrap(NSBitmapImageRep(cgImage: image).representation(using: .png, properties: [:]))
+            let attachment = XCTAttachment(data: png, uniformTypeIdentifier: "public.png")
+            attachment.name = "mac-source-" + name
+            attachment.lifetime = .keepAlways
+            add(attachment)
+        }
+
+        try await pressIdentifier("data.sources.edit." + source.id.uuidString, in: host)
+        let sheetDeadline = Date().addingTimeInterval(3)
+        while window.attachedSheet?.contentView == nil, Date() < sheetDeadline {
+            try await Task.sleep(for: .milliseconds(20))
+        }
+        let editor = try XCTUnwrap(window.attachedSheet?.contentView)
+        let nameField = try XCTUnwrap(accessibilityObjects(editor).first {
+            $0.accessibilityIdentifier?() == "webSources.editor.name"
+        })
+        let nameValue = (nameField as? any NSAccessibilityProtocol)?.accessibilityValue() as? String
+        XCTAssertEqual(nameValue, source.name)
+        try capture("editor", view: editor)
+        try await pressIdentifier("webSources.editor.cancel", in: editor)
+        XCTAssertEqual(navigation.route, .overview)
+        try await pressIdentifier("data.sources.manage", in: host)
+        XCTAssertEqual(navigation.route, .webSources)
+        XCTAssertEqual(requests, 0)
+        let idleFrame = try frame("webSources.refreshAll")
+        let attentionMetric = try frame("page.metric.web-sources-attention")
+        XCTAssertGreaterThan(idleFrame.width, 24)
+        try capture("idle", view: host)
+        try await pressIdentifier("webSources.refreshAll", in: host)
+        XCTAssertEqual(requests, 1)
+        XCTAssertTrue(store.refreshingIDs.contains(source.id))
+        XCTAssertEqual(try frame("webSources.refreshAll"), idleFrame)
+        XCTAssertEqual(try frame("page.metric.web-sources-attention"), attentionMetric)
+        try capture("refreshing", view: host)
+        gate.finish()
+        let deadline = Date().addingTimeInterval(3)
+        while store.refreshingIDs.contains(source.id), Date() < deadline {
+            try await Task.sleep(for: .milliseconds(15))
+        }
+        XCTAssertEqual(store.sources.first { $0.id == source.id }?.cachedText, "fetched original content")
+        try await pressIdentifier("page.navigation.back", in: host)
+        XCTAssertEqual(navigation.route, .overview)
+        try await pressIdentifier("data.sources.manage", in: host)
+        XCTAssertEqual(try frame("webSources.refreshAll"), idleFrame)
+        XCTAssertEqual(try frame("page.metric.web-sources-attention"), attentionMetric)
+        XCTAssertEqual(requests, 1)
+    }
+
+    func testNotificationHistoryReadsAndWritesOnlyItsApplicationSupportRoot() async throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let firstRoot = directory.appendingPathComponent("first")
+        let first = MacNotificationHistoryRepository(supportRoot: firstRoot)
+        let second = MacNotificationHistoryRepository(supportRoot: directory.appendingPathComponent("second"))
+        let item = MacNotificationInboxItem(identifier: "source", title: "Saved here", body: "",
+            date: Date(), deliveryState: .history, conversationID: nil, isRead: false)
+        try await first.recordCommitted(item)
+        let initial = await second.items()
+        XCTAssertTrue(initial.isEmpty)
+        await second.clear()
+        let restored = await MacNotificationHistoryRepository(supportRoot: firstRoot).items()
+        XCTAssertEqual(restored.map(\.id), [item.id])
+        XCTAssertTrue(FileManager.default.fileExists(atPath: firstRoot.appendingPathComponent("Notifications/history.json").path))
+    }
+
+    func testOpeningNotificationCenterDoesNotReadUntilAUserSelectsAnItem() async throws {
+        let session = try MacHostedAccessibilitySession()
+        defer { session.restore() }
+        let history = MacNotificationHistoryRepository.shared
+        let first = MacNotificationInboxItem(identifier: UUID().uuidString, title: "Audit A", body: "First",
+            date: Date(), deliveryState: .history, conversationID: nil, isRead: false)
+        let second = MacNotificationInboxItem(identifier: UUID().uuidString, title: "Audit B", body: "Second",
+            date: Date().addingTimeInterval(-1), deliveryState: .history, conversationID: nil, isRead: false)
+        try await history.recordCommitted(first)
+        try await history.recordCommitted(second)
+
+        let host = NSHostingView(rootView: MacNotificationCenterView()
+            .frame(width: 1040, height: 680).environment(\.accessibilityEnabled, true))
+        let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 1040, height: 680),
+            styleMask: [.titled, .closable, .resizable], backing: .buffered, defer: false)
+        window.isReleasedWhenClosed = false
+        window.contentView = host
+        window.orderFrontRegardless()
+        defer { window.close() }
+        let identifier = "mac.notification.item." + first.id
+        let deadline = Date().addingTimeInterval(4)
+        while !accessibilityObjects(host).contains(where: { $0.accessibilityIdentifier?() == identifier }),
+              Date() < deadline { try await Task.sleep(for: .milliseconds(30)) }
+        let displayed = await history.items()
+        XCTAssertEqual(displayed.first { $0.id == first.id }?.isRead, false)
+        try await pressIdentifier(identifier, in: host)
+        let marked = await history.items()
+        XCTAssertEqual(marked.first { $0.id == first.id }?.isRead, true)
+        XCTAssertEqual(marked.first { $0.id == second.id }?.isRead, false)
+        await history.remove(identifier: first.id)
+        await history.remove(identifier: second.id)
+    }
+
+    func testNotificationSearchHasOneRecoveryActionAtEachWindowWidth() async throws {
+        let session = try MacHostedAccessibilitySession()
+        defer { session.restore() }
+        let history = MacNotificationHistoryRepository.shared
+        let item = MacNotificationInboxItem(identifier: UUID().uuidString, title: "Inbox fixture", body: "First",
+            date: Date(), deliveryState: .history, conversationID: nil, isRead: false)
+        try await history.recordCommitted(item)
+        do {
+            for width: CGFloat in [560, 1040] {
+                let host = NSHostingView(rootView: MacNotificationCenterView()
+                    .frame(width: width, height: 680).environment(\.accessibilityEnabled, true))
+                let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: width, height: 680),
+                    styleMask: [.titled, .closable], backing: .buffered, defer: false)
+                window.isReleasedWhenClosed = false
+                window.contentView = host
+                window.makeKeyAndOrderFront(nil)
+                defer { window.close() }
+
+                func waitForControl(_ identifier: String) async throws -> AnyObject {
+                    let deadline = Date().addingTimeInterval(5)
+                    repeat {
+                        host.layoutSubtreeIfNeeded()
+                        if let control = session.element(identifier, in: host) { return control }
+                        try await Task.sleep(for: .milliseconds(30))
+                    } while Date() < deadline
+                    return try XCTUnwrap(session.element(identifier, in: host), identifier)
+                }
+                let rowID = "mac.notification.item." + item.id
+                _ = try await waitForControl(rowID)
+                _ = try await waitForControl("mac.notifications.search")
+                let field = try XCTUnwrap(accessibilityObjects(host).compactMap { $0 as? NSTextField }
+                    .first { $0.isEditable }, "Search field")
+                field.selectText(nil)
+                let editor = try XCTUnwrap(field.currentEditor() as? NSTextView)
+                editor.insertText(UUID().uuidString, replacementRange: editor.selectedRange())
+                let resetID = "mac.notifications.resetFilters"
+                _ = try await waitForControl(resetID)
+                let actions = accessibilityObjects(host).filter { $0.accessibilityIdentifier?() == resetID }
+                let distinctFrames = Set(actions.compactMap { $0.accessibilityFrame?() }.map(NSStringFromRect))
+                XCTAssertEqual(distinctFrames.count, 1)
+                let image = try MacVisualPixelAssertions.captureCGImage(of: host)
+                let png = try XCTUnwrap(NSBitmapImageRep(cgImage: image).representation(using: .png, properties: [:]))
+                let attachment = XCTAttachment(data: png, uniformTypeIdentifier: "public.png")
+                attachment.name = "mac-notification-filtered-\(Int(width))"
+                attachment.lifetime = .keepAlways
+                add(attachment)
+                try await pressIdentifier(resetID, in: host)
+                _ = try await waitForControl(rowID)
+                XCTAssertNil(session.element(resetID, in: host))
+            }
+        } catch {
+            await history.remove(identifier: item.id)
+            throw error
+        }
+        await history.remove(identifier: item.id)
+    }
+
+    func testEmbeddedSecondaryPagesKeepTheirBackActionInsideWorkspaceChrome() async throws {
+        let accessibility = try MacHostedAccessibilitySession()
+        defer { accessibility.restore() }
+        let data = MacDataCenterNavigationState()
+        let automation = MacAutomationCenterNavigationState()
+        for route in [MacDataCenterNavigationState.Route.webSources, .health] {
+            data.route = route
+            try await pressEmbeddedBack(in: MacDataCenterView(navigation: data))
+            XCTAssertEqual(data.route, .overview)
+        }
+        automation.showRunHistory()
+        try await pressEmbeddedBack(in: MacAutomationCenterView(navigation: automation))
+        XCTAssertFalse(automation.showsRunHistory)
+    }
+
+    private func pressEmbeddedBack<Content: View>(in content: Content) async throws {
+        let view = content.environment(\.macUsesGlobalWorkspaceChrome, true)
+            .environment(\.accessibilityEnabled, true).frame(width: 900, height: 720)
+        let host = NSHostingView(rootView: view)
+        let window = NSWindow(contentViewController: NSViewController())
+        window.isReleasedWhenClosed = false
+        window.contentView = host
+        window.setContentSize(NSSize(width: 900, height: 720))
+        window.orderFrontRegardless()
+        defer { window.close() }
+        try await pressIdentifier("page.navigation.back", in: host)
+    }
+
+    func testCancellingHostVerificationAndLeavingSettingsProtectsTheSavedConnection() async throws {
+        let session = try MacHostedAccessibilitySession()
+        defer { session.restore() }
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent("host-cancellation-" + UUID().uuidString)
+        let environment = MacAppEnvironment(applicationSupportRoot: root, cachesRoot: root.appendingPathComponent("cache"))
+        try environment.prepare()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let store = MacRemoteHostConfigurationStore(applicationPort: try MacApplicationPort(databaseURL: root.appendingPathComponent("store.db")))
+        let server = MacManagedNolaServer(environment: environment, bindAddress: "127.0.0.1", port: 0)
+        let board = NSPasteboard.withUniqueName()
+        defer { board.releaseGlobally() }
+        let suite = "host-cancel-" + UUID().uuidString
+        let preferences = try XCTUnwrap(UserDefaults(suiteName: suite))
+        defer { preferences.removePersistentDomain(forName: suite) }
+
+        let fd = socket(AF_INET, SOCK_STREAM, 0)
+        XCTAssertGreaterThanOrEqual(fd, 0)
+        defer { Darwin.close(fd) }
+        var local = sockaddr_in()
+        local.sin_len = UInt8(MemoryLayout<sockaddr_in>.size)
+        local.sin_family = sa_family_t(AF_INET)
+        local.sin_addr.s_addr = inet_addr("127.0.0.1")
+        var length = socklen_t(MemoryLayout<sockaddr_in>.size)
+        try withUnsafeMutablePointer(to: &local) { pointer in
+            try pointer.withMemoryRebound(to: sockaddr.self, capacity: 1) { addr in
+                guard Darwin.bind(fd, addr, length) == 0, listen(fd, SOMAXCONN) == 0, getsockname(fd, addr, &length) == 0
+                else { throw POSIXError(.EADDRNOTAVAIL) }
+            }
+        }
+        let origin = "http://127.0.0.1:" + String(UInt16(bigEndian: local.sin_port))
+        let json = try JSONSerialization.data(withJSONObject: ["type": "nola.server.connection", "protocol_version": 1,
+            "origin": origin, "host_id": "fixture-host-identity", "access_token": "fixture"] as [String: Any])
+        board.setString(String(decoding: json, as: UTF8.self), forType: .string)
+        let host = NSHostingView(rootView: MacSettingsView(snapshotHostState: .notConfigured, initialCategory: "connections",
+            managedServer: server, connectionPasteboard: board, hostConfigurationStore: store).defaultAppStorage(preferences))
+        let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 1000, height: 850),
+                              styleMask: [.titled, .closable], backing: .buffered, defer: false)
+        window.isReleasedWhenClosed = false; window.contentView = host; window.orderFrontRegardless()
+        defer { window.close() }
+        try await pressIdentifier("mac.host.pasteSetup", in: host)
+        try await pressIdentifier("mac.host.verify", in: host)
+        try await pressIdentifier("mac.host.cancelVerification", in: host)
+        XCTAssertEqual(store.displayValues().url, "")
+        XCTAssertTrue(accessibilityObjects(host).contains { $0.accessibilityIdentifier?() == "mac.host.status.unsaved" })
+        let bitmap = try XCTUnwrap(host.bitmapImageRepForCachingDisplay(in: host.bounds))
+        host.cacheDisplay(in: host.bounds, to: bitmap)
+        let image = try XCTUnwrap(bitmap.representation(using: .png, properties: [:]))
+        let evidence = XCTAttachment(data: image, uniformTypeIdentifier: "public.png")
+        evidence.name = "mac-host-verification-cancelled"
+        evidence.lifetime = .keepAlways
+        add(evidence)
+        try await pressIdentifier("mac.host.verify", in: host)
+        try await pressIdentifier("settings.category.general", in: host)
+        try await pressIdentifier("settings.category.connections", in: host)
+        XCTAssertEqual(store.displayValues().url, "")
+        let fields = accessibilityObjects(host)
+        XCTAssertFalse(fields.contains { $0.accessibilityIdentifier?() == "mac.host.cancelVerification" })
+        let displayedAddresses = fields.compactMap { element -> String? in
+            if let field = element as? NSTextField, !(field is NSSecureTextField) { return field.stringValue }
+            guard element.accessibilityIdentifier?() == "mac.host.url", let object = element as? NSObject,
+                  object.responds(to: NSSelectorFromString("accessibilityValue")) else { return nil }
+            return object.perform(NSSelectorFromString("accessibilityValue"))?.takeUnretainedValue() as? String
+        }
+        XCTAssertTrue(displayedAddresses.contains(origin), "The original draft address remains visible after navigating back")
+        try await pressIdentifier("mac.host.verify", in: host)
+        XCTAssertTrue(accessibilityObjects(host).contains { $0.accessibilityIdentifier?() == "mac.host.cancelVerification" })
+        window.close()
+        window.orderFrontRegardless()
+        let deadline = Date().addingTimeInterval(4)
+        while !accessibilityObjects(host).contains(where: { $0.accessibilityIdentifier?() == "mac.host.status.unsaved" }), Date() < deadline {
+            try await Task.sleep(for: .milliseconds(20))
+            host.layoutSubtreeIfNeeded()
+        }
+        XCTAssertTrue(accessibilityObjects(host).contains { $0.accessibilityIdentifier?() == "mac.host.status.unsaved" })
+        XCTAssertFalse(accessibilityObjects(host).contains { $0.accessibilityIdentifier?() == "mac.host.cancelVerification" })
+        XCTAssertEqual(store.displayValues().url, "")
+    }
+
+    func testShareSettingsCopiesUsablePhoneSetupFromRunningServer() async throws {
+        let session = try MacHostedAccessibilitySession()
+        defer { session.restore() }
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent("share-phone-" + UUID().uuidString)
+        let app = MacAppEnvironment(applicationSupportRoot: root, cachesRoot: root.appendingPathComponent("cache"))
+        try app.prepare()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let server = MacManagedNolaServer(environment: app, bindAddress: "127.0.0.1", port: 0)
+        defer { server.stop() }
+        await server.start()
+        guard case .ready(let info) = server.state else { return XCTFail("Isolated server is unavailable") }
+        let board = NSPasteboard.withUniqueName()
+        defer { board.releaseGlobally() }
+        let suite = "sharing-settings-" + UUID().uuidString
+        let preferences = try XCTUnwrap(UserDefaults(suiteName: suite))
+        defer { preferences.removePersistentDomain(forName: suite) }
+        preferences.set(true, forKey: MacManagedNolaServer.enabledKey)
+        let host = NSHostingView(rootView: MacSettingsView(snapshotHostState: .notConfigured, initialCategory: "connections",
+            managedServer: server, connectionPasteboard: board).defaultAppStorage(preferences))
+        let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 1000, height: 760),
+                              styleMask: [.titled, .closable], backing: .buffered, defer: false)
+        window.isReleasedWhenClosed = false
+        window.contentView = host
+        window.orderFrontRegardless()
+        defer { window.close() }
+        try await pressIdentifier("mac.server.copySetup", in: host)
+        let setup = try XCTUnwrap(board.string(forType: .string).flatMap(AppleHostConnectionSetup.decode))
+        XCTAssertEqual(setup.hostID, info.hostID)
+        let bitmap = try XCTUnwrap(host.bitmapImageRepForCachingDisplay(in: host.bounds))
+        host.cacheDisplay(in: host.bounds, to: bitmap)
+        let attachment = XCTAttachment(data: try XCTUnwrap(bitmap.representation(using: .png, properties: [:])),
+                                      uniformTypeIdentifier: "public.png")
+        attachment.name = "mac-share-connection-setup-copied"
+        attachment.lifetime = .keepAlways
+        add(attachment)
+        try await pressIdentifier("mac.host.pasteSetup", in: host)
+        let ids = accessibilityObjects(host).compactMap { $0.accessibilityIdentifier?() }
+        XCTAssertTrue(ids.contains("mac.host.status.unsaved"), "Pasting only edits the draft")
+        XCTAssertFalse(ids.contains("mac.host.remove"), "An unsaved draft has no stored connection to delete")
+        let connected = try await MacRemoteHostService.shared.testConnection(configuration:
+            .init(baseURL: setup.origin, token: setup.accessToken, expectedHostID: setup.hostID))
+        XCTAssertEqual(connected.hostID, info.hostID)
+    }
+
+    func testNewPromptTemplateKeepsVariablesVisibleAndSavesTypedContent() async throws {
+        let ax = try MacHostedAccessibilitySession()
+        defer { ax.restore() }
+        let service = PromptTemplateService(logger: Logger())
+        let host = NSHostingView(rootView: MacPromptLibraryView(service: service)
+            .environment(\.accessibilityEnabled, true).frame(width: 760, height: 680))
+        let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 760, height: 680),
+                              styleMask: [.titled, .closable], backing: .buffered, defer: false)
+        window.isReleasedWhenClosed = false
+        window.contentView = host
+        window.makeKeyAndOrderFront(nil)
+        defer { window.close() }
+        try await pressIdentifier("mac.prompt.new", in: host)
+        let sheet = try XCTUnwrap(window.attachedSheet)
+        let form = try XCTUnwrap(sheet.contentView)
+        let deadline = Date().addingTimeInterval(3)
+        while sheet.firstResponder as? NSTextView == nil, Date() < deadline {
+            try await Task.sleep(for: .milliseconds(30))
+        }
+        let nodes = accessibilityObjects(form)
+        let save = try XCTUnwrap(nodes.first { $0.accessibilityIdentifier?() == "mac.prompt.save" })
+        XCTAssertFalse(save.isAccessibilityEnabled?() ?? true)
+        let footer = try XCTUnwrap(save.accessibilityFrame?())
+        let nameEditor = try XCTUnwrap(sheet.firstResponder as? NSTextView, "New template should focus its name")
+        let name = "Reading " + UUID().uuidString.prefix(6)
+        nameEditor.insertText(name, replacementRange: nameEditor.selectedRange())
+        let expected = PromptVariable.allCases.map(\.rawValue)
+        var rows = Set<Int>()
+        for variable in expected {
+            let button = try XCTUnwrap(accessibilityObjects(form).first {
+                $0.accessibilityRole?() == .button && $0.accessibilityLabel?() == variable
+            })
+            let frame = try XCTUnwrap(button.accessibilityFrame?())
+            XCTAssertGreaterThan(frame.minY, footer.maxY, "Variable covered by footer: " + variable)
+            rows.insert(Int(frame.midY.rounded()))
+            XCTAssertTrue(button.accessibilityPerformPress?() ?? false, variable)
+            await Task.yield()
+        }
+        XCTAssertLessThan(rows.count, expected.count, "Chips must wrap across columns")
+        try await MacVisualPixelAssertions.settleLayout(window: sheet, hostingView: form)
+        let image = try MacVisualPixelAssertions.captureCGImage(of: form)
+        let png = try XCTUnwrap(NSBitmapImageRep(cgImage: image).representation(using: .png, properties: [:]))
+        let shot = XCTAttachment(data: png, uniformTypeIdentifier: "public.png")
+        shot.name = "prompt-variables-narrow"; shot.lifetime = .keepAlways; add(shot)
+        try await pressIdentifier("mac.prompt.save", in: form)
+        let saved = try XCTUnwrap(service.templates.first { $0.name == name })
+        XCTAssertEqual(saved.content, "{{context}}" + expected.joined())
+    }
+
+    func testDuplicatePromptShowsLocalizedNameAndPreservesContent() async throws {
+        let ax = try MacHostedAccessibilitySession()
+        defer { ax.restore() }
+        let service = PromptTemplateService(logger: Logger())
+        let original = try XCTUnwrap(service.templates.first)
+        let host = NSHostingView(rootView: MacPromptLibraryView(service: service)
+            .environment(\.accessibilityEnabled, true).frame(width: 1040, height: 760))
+        let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 1040, height: 760),
+            styleMask: [.titled, .closable, .resizable], backing: .buffered, defer: false)
+        window.isReleasedWhenClosed = false
+        window.contentView = host
+        window.orderFrontRegardless()
+        defer { window.close() }
+        try await pressIdentifier("mac.prompt.duplicate", in: host)
+        let copy = try XCTUnwrap(service.templates.first { !$0.isBuiltIn })
+        let expected = String.localizedStringWithFormat(NSLocalizedString("prompt.templates.copy_name", comment: ""), original.name)
+        XCTAssertEqual(copy.name, expected)
+        XCTAssertEqual(copy.content, original.content)
+        XCTAssertNotEqual(copy.id, original.id)
+        XCTAssertTrue(accessibilityObjects(host).contains { $0.accessibilityLabel?()?.contains(expected) == true })
+        let image = try MacVisualPixelAssertions.captureCGImage(of: host)
+        let png = try XCTUnwrap(NSBitmapImageRep(cgImage: image).representation(using: .png, properties: [:]))
+        let shot = XCTAttachment(data: png, uniformTypeIdentifier: "public.png")
+        shot.name = "localized-prompt-copy"
+        shot.lifetime = .keepAlways
+        add(shot)
+    }
+
     func testEverySettingsCategoryCanOpenAndReturnInBothThemes() async throws {
         let session = try MacHostedAccessibilitySession()
         defer { session.restore() }
@@ -961,7 +1399,7 @@ final class MacSecondaryPageNavigationTests: XCTestCase {
         let preferences = try XCTUnwrap(UserDefaults(suiteName: preferencesName))
         defer { preferences.removePersistentDomain(forName: preferencesName) }
         for dark in [false, true] {
-            for width: CGFloat in [820, 1040] {
+            for width: CGFloat in [MacSettingsView.minimumWidth, 1040] {
                 let host = NSHostingView(rootView: MacSettingsView(snapshotHostState: .notConfigured)
                     .defaultAppStorage(preferences)
                     .environment(\.colorScheme, dark ? .dark : .light)
@@ -973,12 +1411,199 @@ final class MacSecondaryPageNavigationTests: XCTestCase {
                 window.contentView = host
                 window.orderFrontRegardless()
                 defer { window.close() }
-                for section in ["general", "providers", "agent", "connections", "data", "diagnostics"] {
-                    try await pressIdentifier("settings.category." + section, in: host)
+                try await pressIdentifier("settings.category.general", in: host)
+                let prefix = "settings.category."
+                let categories = Set(accessibilityObjects(host).compactMap { object -> String? in
+                    guard let identifier = object.accessibilityIdentifier?() ?? nil, identifier.hasPrefix(prefix) else { return nil }
+                    return String(identifier.dropFirst(prefix.count))
+                })
+                XCTAssertEqual(categories, ["general", "providers", "agent", "connections", "data", "diagnostics"])
+                for section in categories.sorted() + ["general"] {
+                    try await pressIdentifier(prefix + section, in: host)
+                    let heading = "settings.heading." + section
+                    let elements = accessibilityObjects(host)
+                    XCTAssertTrue(elements.contains { $0.accessibilityIdentifier?() == heading }, heading)
+                    if width == MacSettingsView.minimumWidth, !dark {
+                        let data = try JSONEncoder().encode(session.visibleControls(in: host))
+                        let tree = XCTAttachment(data: data, uniformTypeIdentifier: "public.json")
+                        tree.name = "mac-settings-" + section + "-accessibility"
+                        tree.lifetime = .keepAlways
+                        add(tree)
+                    }
+                    if width == MacSettingsView.minimumWidth, section != "general" {
+                        let image = try MacVisualPixelAssertions.captureCGImage(of: host)
+                        let png = try XCTUnwrap(NSBitmapImageRep(cgImage: image).representation(using: .png, properties: [:]))
+                        let attachment = XCTAttachment(data: png, uniformTypeIdentifier: "public.png")
+                        attachment.name = "mac-settings-\(section)-\(dark ? "dark" : "light")"
+                        attachment.lifetime = .keepAlways
+                        add(attachment)
+                    }
                 }
                 window.close()
             }
         }
+    }
+
+    func testLocalModelLibraryHasOneRefreshInTheWindowAndTheEmbeddedPage() async throws {
+        let ax = try MacHostedAccessibilitySession()
+        defer { ax.restore() }
+        for showsHeader in [true, false] {
+            let host = NSHostingView(rootView: MacLocalModelManagerView(showsHeader: showsHeader)
+                .environment(\.accessibilityEnabled, true).frame(width: 900, height: 660))
+            let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 900, height: 660),
+                                  styleMask: [.titled], backing: .buffered, defer: false)
+            window.isReleasedWhenClosed = false
+            window.contentView = host
+            window.orderFrontRegardless()
+            defer { window.close() }
+            try await MacVisualPixelAssertions.settleLayout(window: window, hostingView: host)
+            let controls = ax.visibleControls(in: host).filter { $0.identifier == "local-model-refresh" }
+            XCTAssertEqual(controls.count, 1)
+            try await pressIdentifier("local-model-refresh", in: host)
+            XCTAssertTrue(ax.visibleControls(in: host).contains { $0.identifier == "local-model-search" })
+        }
+    }
+
+    func testLocalModelsOpensEngineAndSourcePickerBeforeDownloading() async throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent("model-sheet-\(UUID())")
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let helper = directory.appendingPathComponent("model-host")
+        try """
+        #!/bin/sh
+        case "$3" in
+          engine-status) printf '{"engineStatus":{"engine":"%s","ready":true,"canInstall":false,"reason":"ready"}}\\n' "$4";;
+          hardware) echo '{"hardware":{"cpu":"Test CPU","cores":8,"memoryBytes":17179869184,"unifiedMemory":true,"freeDiskBytes":16000000000}}';;
+          recommend) sleep 3; echo '{"candidates":[],"recommendationSource":"hub"}';;
+          *) exit 4;;
+        esac
+        """.write(to: helper, atomically: true, encoding: .utf8)
+        try FileManager.default.setAttributes([.posixPermissions: 0o700], ofItemAtPath: helper.path)
+        let flow = MacLocalModelAcquisition(client: .init(executable: helper, root: directory, environment: [:]))
+        defer { flow.reset() }
+        let view = MacLocalModelManagerView(acquisition: flow)
+            .environment(\.accessibilityEnabled, true).frame(width: 840, height: 640)
+        let host = NSHostingView(rootView: view)
+        let window = NSWindow(contentViewController: NSViewController())
+        window.isReleasedWhenClosed = false
+        window.contentView = host
+        window.setContentSize(NSSize(width: 840, height: 640))
+        window.orderFrontRegardless()
+        defer { window.close() }
+        try await pressIdentifier("local-acquire-open", in: host)
+        let deadline = ContinuousClock.now + .seconds(3)
+        while window.attachedSheet == nil && ContinuousClock.now < deadline {
+            try await Task.sleep(for: .milliseconds(20))
+        }
+        let panel = try XCTUnwrap(window.attachedSheet)
+        let sheet = try XCTUnwrap(panel.contentView)
+        try await MacVisualPixelAssertions.settleLayout(window: panel, hostingView: sheet)
+        XCTAssertEqual(flow.phase, .searching)
+        let fields = accessibilityObjects(sheet)
+        for id in ["local-acquire-engine", "local-acquire-source"] {
+            XCTAssertNotNil(fields.first { $0.accessibilityIdentifier?() == id }, id)
+        }
+        let field = try XCTUnwrap(fields.compactMap { $0 as? NSTextField }.first { $0.isEditable })
+        XCTAssertNotNil(fields.first { $0.accessibilityIdentifier?() == "local-acquire-hardware" })
+        XCTAssertTrue(panel.makeFirstResponder(field))
+        let editor = try XCTUnwrap(field.currentEditor() as? NSTextView)
+        editor.insertText("Qwen3", replacementRange: editor.selectedRange())
+        try await MacVisualPixelAssertions.settleLayout(window: panel, hostingView: sheet)
+        XCTAssertEqual(flow.phase, .idle)
+        let updatedSubmit = try XCTUnwrap(accessibilityObjects(sheet).first { $0.accessibilityIdentifier?() == "local-acquire-submit" })
+        XCTAssertEqual(updatedSubmit.isAccessibilityEnabled?(), true)
+        let image = try MacVisualPixelAssertions.captureCGImage(of: sheet.superview ?? sheet)
+        let data = try XCTUnwrap(NSBitmapImageRep(cgImage: image).representation(using: .png, properties: [:]))
+        let evidence = XCTAttachment(data: data, uniformTypeIdentifier: "public.png")
+        evidence.name = "local-model-engine-and-source"
+        evidence.lifetime = .keepAlways
+        add(evidence)
+    }
+
+    func testEngineSetupCanRetryAndSwitchToAvailableMLX() async throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent("engine-ui-\(UUID())")
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let helper = root.appendingPathComponent("test-engine-host")
+        try """
+        #!/bin/sh
+        echo "$3 $4" >> "$HOME/actions"
+        case "$3" in
+          hardware) echo '{"hardware":{"cpu":"Fixture","cores":8,"memoryBytes":17179869184,"unifiedMemory":true,"freeDiskBytes":16000000000}}'; exit;;
+          recommend) echo '{"candidates":[],"recommendationSource":"hub"}'; exit;;
+          setup-engine)
+            [ "$4" = llama.cpp ] || exit 9
+            if [ ! -e "$HOME/attempt" ]; then touch "$HOME/attempt"; echo 'Fixture installation failed' >&2; exit 1; fi
+            touch "$HOME/installed";;
+          engine-status) ;;
+          *) exit 6;;
+        esac
+        case "$4" in
+          mlx) state=ready;;
+          vllm) state=homebrew_missing;;
+          llama.cpp) if [ -e "$HOME/installed" ]; then state=ready; else state=installable; fi;;
+        esac
+        ready=false; install=false
+        if [ "$state" = ready ]; then ready=true; fi
+        if [ "$state" = installable ]; then install=true; fi
+        printf '{"engineStatus":{"engine":"%s","ready":%s,"canInstall":%s,"reason":"%s","guideUrl":"https://brew.sh/"}}\\n' "$4" "$ready" "$install" "$state"
+        """.write(to: helper, atomically: true, encoding: .utf8)
+        try FileManager.default.setAttributes([.posixPermissions: 0o700], ofItemAtPath: helper.path)
+        let model = MacLocalModelAcquisition(client: .init(executable: helper, root: root, environment: ["HOME": root.path, "PATH": "/usr/bin:/bin"]))
+        let suite = "engine-setup-\(UUID())"
+        let preferences = try XCTUnwrap(UserDefaults(suiteName: suite))
+        defer { preferences.removePersistentDomain(forName: suite) }
+        let ax = try MacHostedAccessibilitySession()
+        defer { ax.restore(); model.reset() }
+        func wait(_ predicate: () -> Bool) async throws {
+            let deadline = ContinuousClock.now + .seconds(6)
+            while !predicate(), ContinuousClock.now < deadline { try await Task.sleep(for: .milliseconds(30)) }
+            XCTAssertTrue(predicate())
+        }
+        func show(_ engine: String) -> (NSWindow, NSView) {
+            preferences.set(engine, forKey: "nola.local-model.engine")
+            let content = MacModelAcquisitionSheet(acquisition: model, source: .constant("huggingface"))
+                .defaultAppStorage(preferences).environment(\.accessibilityEnabled, true)
+                .background(Color(nsColor: .windowBackgroundColor))
+            let host = NSHostingView(rootView: content)
+            let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 660, height: 580),
+                styleMask: [.titled, .closable], backing: .buffered, defer: false)
+            window.isReleasedWhenClosed = false
+            window.contentView = host
+            window.orderFrontRegardless()
+            return (window, host)
+        }
+        func screenshot(_ name: String, window: NSWindow, host: NSView) async throws {
+            try await MacVisualPixelAssertions.settleLayout(window: window, hostingView: host)
+            let image = try MacVisualPixelAssertions.captureCGImage(of: host.superview ?? host)
+            let bytes = try XCTUnwrap(NSBitmapImageRep(cgImage: image).representation(using: .png, properties: [:]))
+            let attachment = XCTAttachment(data: bytes, uniformTypeIdentifier: "public.png")
+            attachment.name = name; attachment.lifetime = .keepAlways; add(attachment)
+        }
+        let (window, host) = show("llama.cpp")
+        defer { window.close() }
+        try await wait { if case .detected = model.engines[.llamaCpp] { return true }; return false }
+        let actions = root.appendingPathComponent("actions")
+        XCTAssertFalse(try String(contentsOf: actions, encoding: .utf8).contains("setup-engine"))
+        try await screenshot("engine-install-available", window: window, host: host)
+        try await pressIdentifier("local-engine-install", in: host)
+        try await wait { if case .failed = model.engines[.llamaCpp] { return true }; return false }
+        try await pressIdentifier("local-engine-install", in: host)
+        try await wait { model.engines[.llamaCpp]?.ready == true }
+        try await pressIdentifier("local-engine-refresh", in: host)
+        try await wait { model.engines[.llamaCpp]?.ready == true }
+        XCTAssertEqual(try String(contentsOf: actions, encoding: .utf8).components(separatedBy: "setup-engine llama.cpp").count - 1, 2)
+        window.orderOut(nil)
+        window.contentView = nil
+        let (fallback, secondHost) = show("vllm")
+        defer { fallback.close() }
+        try await wait { if case .detected = model.engines[.vllm] { return true }; return false }
+        try await screenshot("engine-unavailable-mlx-alternative", window: fallback, host: secondHost)
+        #if arch(arm64)
+        try await pressIdentifier("local-engine-use-mlx", in: secondHost)
+        try await wait { model.engines[.mlx]?.ready == true }
+        XCTAssertEqual(preferences.string(forKey: "nola.local-model.engine"), "mlx")
+        #endif
     }
 
     private func pressIdentifier(_ identifier: String, in host: NSView) async throws {
@@ -986,7 +1611,9 @@ final class MacSecondaryPageNavigationTests: XCTestCase {
         repeat {
             host.layoutSubtreeIfNeeded()
             if let button = accessibilityObjects(host).first(where: { ($0.accessibilityIdentifier?() ?? nil) == identifier }) {
-                XCTAssertTrue(button.accessibilityPerformPress?() ?? false, identifier)
+                XCTContext.runActivity(named: "Press " + identifier) { _ in
+                    XCTAssertTrue(button.accessibilityPerformPress?() ?? false, identifier)
+                }
                 try await Task.sleep(for: .milliseconds(60))
                 return
             }

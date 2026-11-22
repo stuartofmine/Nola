@@ -132,10 +132,10 @@ final class MacWebSourceStore {
         registry = .shared
         urlSession = .shared
         storeURLOverride = nil
-        synchronizesLaunchAgents = true
+        synchronizesLaunchAgents = MacProcessRuntimePolicy.allowsStartupIntegrations
         load()
         let backgroundRefresh = CommandLine.arguments.contains("--nola-background-refresh-web-source")
-        if !backgroundRefresh {
+        if synchronizesLaunchAgents && !backgroundRefresh {
             synchronizeLaunchAgents()
         }
     }
@@ -176,8 +176,7 @@ final class MacWebSourceStore {
             errorMessage = macWebSourceText("mac.web_sources.delete.denied", "You do not have permission to delete this source.")
             return
         }
-        unload(source)
-        try? fileManager.removeItem(at: plistURL(for: source))
+        if synchronizesLaunchAgents { synchronize(source) }
         sources.removeAll { $0.id == source.id }
         registry.removeSource(sourceID(for: source))
         persist()
@@ -199,17 +198,26 @@ final class MacWebSourceStore {
     }
 
     func replaceAll(_ restored: [MacWebSource]) {
+        try? replaceAllThrowing(restored)
+    }
+
+    func replaceAllThrowing(_ restored: [MacWebSource]) throws {
         guard sources.allSatisfy({ registry.canAccess(sourceID(for: $0), permission: .delete) }) else {
-            errorMessage = macWebSourceText("mac.web_sources.replace.denied", "You do not have permission to replace these sources.")
-            return
+            let message = macWebSourceText("mac.web_sources.replace.denied", "You do not have permission to replace these sources.")
+            errorMessage = message
+            throw NSError(domain: "MacWebSourceStore", code: 5, userInfo: [NSLocalizedDescriptionKey: message])
         }
-        for source in sources {
-            unload(source)
-            try? fileManager.removeItem(at: plistURL(for: source))
+        let sorted = restored.sorted { $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending }
+        for source in sorted { registry.ensureOwnedResource(sourceID(for: source)) }
+        do {
+            try registry.replaceWebSourcesThrowing(sorted)
+        } catch {
+            errorMessage = error.localizedDescription
+            throw error
         }
-        sources = restored.sorted { $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending }
-        for source in sources { registry.ensureOwnedResource(sourceID(for: source)) }
-        persist()
+        if synchronizesLaunchAgents { synchronizeLaunchAgents() }
+        sources = sorted
+        errorMessage = nil
         if synchronizesLaunchAgents { synchronizeLaunchAgents() }
     }
 
@@ -256,7 +264,18 @@ final class MacWebSourceStore {
 
     func validateAndUpsert(_ source: MacWebSource) async throws {
         try Task.checkCancellation()
-        guard !refreshingIDs.contains(source.id) else { return }
+        guard !refreshingIDs.contains(source.id) else {
+            let message = macWebSourceText(
+                "mac.web_sources.save.refreshing",
+                "Wait for the current refresh to finish before saving changes."
+            )
+            errorMessage = message
+            throw NSError(
+                domain: "MacWebSourceStore",
+                code: 4,
+                userInfo: [NSLocalizedDescriptionKey: message]
+            )
+        }
         refreshingIDs.insert(source.id)
         defer { refreshingIDs.remove(source.id) }
         do {
@@ -534,28 +553,41 @@ final class MacWebSourceStore {
         guard let data = try? Data(contentsOf: storeURL) else { return }
         let decoder = JSONDecoder()
         decoder.dateDecodingStrategy = .iso8601
-        sources = (try? decoder.decode([MacWebSource].self, from: data)) ?? []
+        do {
+            sources = try decoder.decode([MacWebSource].self, from: data)
+        } catch {
+            errorMessage = error.localizedDescription
+            return
+        }
         registry.replaceWebSources(sources)
         if registry.persistenceError == nil { try? fileManager.removeItem(at: storeURL) }
     }
 
+    private static let launchctlQueue = DispatchQueue(label: "com.gaojc.Nola.web-source.launchctl", qos: .utility)
+
     private func synchronizeLaunchAgents() {
-        for source in sources {
-            unload(source)
-            try? fileManager.removeItem(at: plistURL(for: source))
-        }
+        let targets = sources.map { (label: launchAgentLabel(for: $0), plistURL: plistURL(for: $0)) }
+        Self.cleanupLegacyLaunchAgents(targets)
     }
 
     private func synchronize(_ source: MacWebSource) {
-        unload(source)
-        try? fileManager.removeItem(at: plistURL(for: source))
+        Self.cleanupLegacyLaunchAgents([(label: launchAgentLabel(for: source), plistURL: plistURL(for: source))])
     }
 
-    private func unload(_ source: MacWebSource) {
-        try? launchctl(["bootout", "gui/\(getuid())/\(launchAgentLabel(for: source))"])
+    private nonisolated static func cleanupLegacyLaunchAgents(_ targets: [(label: String, plistURL: URL)]) {
+        guard !targets.isEmpty else { return }
+        launchctlQueue.async {
+            let fileManager = FileManager.default
+            let uid = getuid()
+            for target in targets {
+                guard fileManager.fileExists(atPath: target.plistURL.path) else { continue }
+                try? runLaunchctl(["bootout", "gui/\(uid)/\(target.label)"])
+                try? fileManager.removeItem(at: target.plistURL)
+            }
+        }
     }
 
-    private func launchctl(_ arguments: [String]) throws {
+    private nonisolated static func runLaunchctl(_ arguments: [String]) throws {
         let process = Process()
         process.executableURL = URL(fileURLWithPath: "/bin/launchctl")
         process.arguments = arguments
@@ -600,10 +632,8 @@ final class MacWebSourceStore {
 
     private var storeURL: URL {
         if let storeURLOverride { return storeURLOverride }
-        let support = fileManager.urls(for: .applicationSupportDirectory, in: .userDomainMask).first
-            ?? fileManager.temporaryDirectory
-        return support
-            .appendingPathComponent("Nola/DataSources", isDirectory: true)
+        return MacAppEnvironment.shared.supportRoot
+            .appendingPathComponent("DataSources", isDirectory: true)
             .appendingPathComponent("web-sources.json")
     }
 }

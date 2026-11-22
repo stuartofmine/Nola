@@ -110,22 +110,25 @@ enum MacResponseStyle: String, CaseIterable, Identifiable {
     }
 }
 
-enum MacWorkspaceSection: String, CaseIterable, Identifiable {
+enum MacWorkspaceSection: String, Identifiable {
     case chat
     case extensions
     case automations
     case memory
+    case pluginPage
 
+    static let sidebarSections: [Self] = [.chat, .extensions, .automations, .memory]
     var id: String { rawValue }
 
     static func initialSection(environment: [String: String] = ProcessInfo.processInfo.environment) -> Self {
-        environment["NOLA_MAC_INITIAL_SECTION"].flatMap(Self.init(rawValue:)) ?? .chat
+        sidebarSections.first { $0.rawValue == environment["NOLA_MAC_INITIAL_SECTION"] } ?? .chat
     }
 
     var title: LocalizedStringKey {
         switch self {
         case .chat: return "Conversations"
-        case .extensions: return "Experts & Skills"
+        case .extensions: return "Capability library"
+        case .pluginPage: return "Runtime plugins"
         case .memory: return "Memory & Sources"
         case .automations: return "Automations"
         }
@@ -135,6 +138,7 @@ enum MacWorkspaceSection: String, CaseIterable, Identifiable {
         switch self {
         case .chat: return "bubble.left.and.bubble.right"
         case .extensions: return "puzzlepiece.extension"
+        case .pluginPage: return "rectangle.on.rectangle"
         case .memory: return "brain.head.profile"
         case .automations: return "clock.arrow.circlepath"
         }

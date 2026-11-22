@@ -9,13 +9,20 @@
 <section class="citation-row">
     <span class="citation-number">[{number}]</span>
     <div class="citation-copy">
-        {#if reference.href}<a href={reference.href} title={reference.uri} target="_blank" rel="noopener noreferrer">{reference.title || reference.uri}</a>{:else}<span>{reference.title || t($locale, 'chatPage.reference')}</span>{/if}
-        {#if reference.section || reference.page || reference.lineStart}<small>{[reference.section, reference.page && `${t($locale, 'chatPage.referencePage')} ${reference.page}`, reference.lineStart && `${reference.lineStart}–${reference.lineEnd || reference.lineStart}`].filter(Boolean).join(' · ')}</small>{/if}
-        <details class="citation-detail"><summary>{t($locale, 'chatPage.details')}</summary>
-            <p>{reference.uri}</p>{#if reference.snippet}<p>{reference.snippet}</p>{/if}
-            {#if reference.rangeStart || reference.rangeEnd}<p>[{reference.rangeStart}, {reference.rangeEnd})</p>{/if}
-            {#if reference.uri && !reference.href}<p>{t($locale, 'chatPage.referenceUnavailable')}</p>{/if}
-        </details>
+        <div class="citation-inline">
+            {#if reference.href}<a href={reference.href} title={reference.uri} target="_blank" rel="noopener noreferrer">{reference.title || reference.uri}</a>{:else}<span class="citation-title">{reference.title || t($locale, 'chatPage.reference')}</span>{/if}
+            {#if reference.section || reference.page || reference.lineStart}<small class="citation-loc">{[reference.section, reference.page && `${t($locale, 'chatPage.referencePage')} ${reference.page}`, reference.lineStart && `${reference.lineStart}–${reference.lineEnd || reference.lineStart}`].filter(Boolean).join(' · ')}</small>{/if}
+            {#if reference.uri || reference.snippet || reference.rangeStart || reference.rangeEnd}
+                <details class="citation-detail"><summary>{t($locale, 'chatPage.details')}</summary>
+                    <div class="citation-detail-body">
+                        {#if reference.uri}<p>{reference.uri}</p>{/if}
+                        {#if reference.snippet}<p>{reference.snippet}</p>{/if}
+                        {#if reference.rangeStart || reference.rangeEnd}<p>[{reference.rangeStart}, {reference.rangeEnd})</p>{/if}
+                        {#if reference.uri && !reference.href}<p>{t($locale, 'chatPage.referenceUnavailable')}</p>{/if}
+                    </div>
+                </details>
+            {/if}
+        </div>
     </div>
 </section>
 {:else}
@@ -44,19 +51,24 @@
 {/if}
 
 <style>
-    .citation-row { display: flex; gap: 6px; align-items: baseline; min-height: 32px; padding-block: 3px; color: var(--muted); font-size: .8125rem; overflow-wrap: anywhere; }
-    .citation-number { font-variant-numeric: tabular-nums; flex: none; }
+    .citation-row { display: flex; gap: 6px; align-items: baseline; min-height: 28px; padding-block: 2px; color: var(--muted); font-size: .8125rem; overflow-wrap: anywhere; }
+    .citation-number { font-variant-numeric: tabular-nums; flex: none; color: var(--accent); font-weight: 500; }
     .citation-copy { min-width: 0; flex: 1; }
-    .citation-copy > a { color: inherit; text-decoration: none; display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; line-clamp: 2; overflow: hidden; }
-    .citation-copy > a:hover { color: var(--content); text-decoration: underline; }
-    .citation-copy > small { display: block; font: inherit; }
-    .citation-detail { margin-top: 4px; width: 100%; }
-    .citation-detail > summary { min-height: 32px; width: 100%; justify-content: space-between; padding: 4px 10px; border: 1px solid var(--border); border-radius: 7px; background: var(--surface); }
+    .citation-inline { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 8px; }
+    .citation-inline > a { color: inherit; text-decoration: none; display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 1; line-clamp: 1; overflow: hidden; }
+    .citation-inline > a:hover { color: var(--content); text-decoration: underline; }
+    .citation-title { color: var(--content); }
+    .citation-loc { font: inherit; color: var(--muted); }
+    .citation-detail { display: inline-block; }
+    .citation-detail[open] { display: block; flex-basis: 100%; }
+    .citation-detail > summary { display: inline-flex; align-items: center; gap: 4px; min-height: 24px; padding: 1px 8px; border: 0; border-radius: 999px; background: var(--panel); color: var(--muted); font-size: 11px; }
+    .citation-detail > summary:hover { color: var(--content); background: var(--accent-subtle); }
     .citation-detail > summary::before { content: none; }
-    .citation-detail > summary::after { content: '›'; transform: rotate(90deg); font-size: 14px; color: var(--muted); }
+    .citation-detail > summary::after { content: '›'; transform: rotate(90deg); font-size: 12px; color: currentColor; }
     .citation-detail[open] > summary::after { transform: rotate(270deg); }
-    .citation-detail p { font-size: inherit; user-select: text; }
-    @media (pointer: coarse) { .citation-row, .citation-detail > summary { min-height: 44px; } }
+    .citation-detail-body { margin-top: 6px; padding-inline-start: 10px; border-inline-start: 2px solid var(--border); }
+    .citation-detail p { font-size: inherit; user-select: text; margin: 4px 0 0; }
+    @media (pointer: coarse) { .citation-row { min-height: 36px; } .citation-detail > summary { min-height: 32px; padding: 4px 10px; } }
     .reference-card { margin: 8px 0; padding: 12px; border: 1px solid var(--border); border-radius: var(--radius); min-width: 0; overflow-wrap: anywhere; }
     p { margin: 6px 0 0; }
     .hint, .uri, dl { font-size: 12px; color: var(--muted); }

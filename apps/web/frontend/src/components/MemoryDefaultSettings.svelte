@@ -45,7 +45,7 @@
     <header><h2 id="memory-default-title">{t($locale, 'settings.memory.title')}</h2><button disabled={loading || saving} onclick={reload}>{t($locale, 'agentAccess.reload')}</button></header>
     <p class="muted">{t($locale, 'settings.memory.scope')}</p>
     {#if loading}<p role="status">{t($locale, 'chatPage.loading')}</p>{/if}
-    {#if error}<p role="alert">{t($locale, error)}</p>{/if}
+    {#if error}<p role="alert" class="error">{t($locale, error)}</p>{/if}
     {#if snapshot}
         <label><input type="checkbox" role="switch" checked={draft} onchange={change} disabled={loading || saving || uncertain || (!snapshot.hostAllowed && !draft)} />{t($locale, 'settings.memory.enabled')}</label>
         {#if !snapshot.hostAllowed}<p role="status">{t($locale, 'settings.memory.denied')}</p>{/if}
@@ -53,5 +53,5 @@
     {/if}
 </section>
 <style>
-    section{display:grid;gap:14px;margin-bottom:20px}header{display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap}h2,p{margin:0}label{display:flex;align-items:center;gap:8px}input{width:auto;flex-shrink:0}
+    section{display:grid;gap:14px}header{display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap}h2,p{margin:0}label{display:flex;align-items:center;gap:8px}input{width:auto;flex-shrink:0}
 </style>

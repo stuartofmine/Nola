@@ -256,6 +256,14 @@ final class MacSecurityScopedBookmarkStore {
         defaults.removeObject(forKey: key)
     }
 
+    func clearAllWorkspaces() {
+        close()
+        let prefix = "nola.mac.workspace.access.v2."
+        for key in defaults.dictionaryRepresentation().keys where key.hasPrefix(prefix) {
+            defaults.removeObject(forKey: key)
+        }
+    }
+
     func removeWorkspace(conversationID: String) { clearWorkspace(conversationID: conversationID) }
 
     func isAuthorizedWorkspace(_ url: URL, conversationID: String? = nil) -> Bool {

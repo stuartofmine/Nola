@@ -19,6 +19,26 @@ class ConversationDraftRepositoryTest {
     @Before fun installDispatcher() { Dispatchers.setMain(UnconfinedTestDispatcher()) }
     @OptIn(kotlinx.coroutines.ExperimentalCoroutinesApi::class)
     @After fun removeDispatcher() { Dispatchers.resetMain() }
+    @Test fun sameVisibleTextCanChangeMentionIdentityAndSurviveAnOlderAck() = runBlocking {
+        val root = Files.createTempDirectory("nola-mention-draft").toFile()
+        val drafts = ConversationComposerDrafts(ConversationDraftRepository(root, "fixture"))
+        val restored = ConversationComposerDrafts(ConversationDraftRepository(root, "fixture"))
+        try {
+            drafts.initialize()
+            val draft = drafts.awaitReady("parent")
+            val first = InlineExpertMention(1, "@审查", "expert-a", 3)
+            val second = first.copy(agentId = "expert-b", revision = 6)
+            draft.setContent("请@审查", listOf(first))
+            val ticket = drafts.prepareSubmission(drafts.captureSubmission("conversation:parent"))
+            draft.setContent("请@审查", listOf(second))
+            drafts.flush()
+            assertFalse(drafts.submitted(ticket))
+            restored.initialize()
+            assertEquals(listOf(second), restored.awaitReady("parent").mentions)
+            assertTrue(restored.awaitReady("other").mentions.isEmpty())
+        } finally { restored.close(); drafts.close(); root.deleteRecursively() }
+    }
+
     @Test fun preparingConversationKeepsExactDraftAndRestoresBindingWithoutCopyingInput() = runBlocking {
         val root = Files.createTempDirectory("nola-draft-bind").toFile()
         val drafts = ConversationComposerDrafts(ConversationDraftRepository(root, "fixture"))

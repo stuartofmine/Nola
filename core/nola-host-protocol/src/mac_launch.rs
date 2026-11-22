@@ -50,6 +50,15 @@ pub struct HostMacLaunchAttachment {
     pub byte_count: u64,
 }
 
+/// A registered Skill identity that can be resolved within a Host's managed directory.
+pub fn valid_custom_skill_id(id: &str) -> bool {
+    !id.is_empty()
+        && id != "."
+        && id != ".."
+        && id.len() <= 128
+        && id.bytes().all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'.' | b'_' | b'-'))
+}
+
 impl HostMacLaunchDescriptor {
     pub fn validate(&self) -> Result<(), &'static str> {
         if self.version != 1 || !self.project_path.starts_with('/')
@@ -68,7 +77,13 @@ impl HostMacLaunchDescriptor {
         }
         for (arguments, flag) in [(&self.allowed_directory_arguments, "--allow-dir"), (&self.skill_directory_arguments, "--skill-dir")] {
             if flag == "--skill-dir" && arguments.as_slice() == ["--no-skills"] { continue; }
-            if arguments.len() % 2 != 0 || arguments.chunks_exact(2).any(|pair| pair[0] != flag || !pair[1].starts_with('/')) {
+            if arguments.len() % 2 != 0 || !arguments.chunks_exact(2).all(|pair| {
+                if flag == "--skill-dir" && pair[0] == "--github-skill" {
+                    valid_custom_skill_id(&pair[1])
+                } else {
+                    pair[0] == flag && pair[1].starts_with('/')
+                }
+            }) {
                 return Err("invalid Mac frozen launch path arguments");
             }
         }
@@ -100,6 +115,17 @@ mod tests {
             parsed.validate().unwrap();
             assert_eq!(serde_json::to_value(parsed).unwrap()["input_origin"], valid["input_origin"]);
         }
+        let mut with_package = descriptor.clone();
+        with_package.skill_directory_arguments = ["--skill-dir", "/bundled", "--github-skill", "paper-card"]
+            .map(str::to_owned).to_vec();
+        with_package.validate().unwrap();
+        for id in ["", ".", "..", "../escape", "/private", "owner/skill", "two words"] {
+            with_package.skill_directory_arguments[3] = id.into();
+            assert!(with_package.validate().is_err());
+        }
+        with_package.allowed_directory_arguments = vec!["--github-skill".into(), "paper-card".into()];
+        with_package.skill_directory_arguments = vec![];
+        assert!(with_package.validate().is_err());
         let mut missing = input.clone();
         missing.as_object_mut().unwrap().remove("input_origin");
         assert!(serde_json::from_value::<HostMacLaunchDescriptor>(missing).is_err());

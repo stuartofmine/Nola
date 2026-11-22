@@ -176,7 +176,34 @@ struct ChatView: View {
     @State private var composerDrafts = ConversationComposerDraftStore(repository: FileConversationDraftRepository.application())
     private var inputText: String {
         get { composerDrafts.current.text }
-        nonmutating set { composerDrafts.current.text = newValue }
+        nonmutating set {
+            var draft = composerDrafts.current
+            if newValue != draft.text {
+                if !(newValue.utf16.count >= draft.text.utf16.count && newValue.hasPrefix(draft.text)) {
+                    draft.mentions = []
+                }
+                draft.text = newValue
+                composerDrafts.current = draft
+            }
+        }
+    }
+
+    private func appendSkillInvocation(_ invocation: String) {
+        var draft = composerDrafts.current
+        if draft.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            draft.text = invocation
+            draft.mentions = []
+        } else {
+            let minLength = draft.mentions.map { $0.range.location + $0.range.length }.max() ?? 0
+            var base = draft.text
+            while base.utf16.count > minLength, let last = base.last, last.isWhitespace || last.isNewline {
+                let nextLen = base.utf16.count - last.utf16.count
+                if nextLen < minLength { break }
+                base.removeLast()
+            }
+            draft.text = "\(base)\n\(invocation)"
+        }
+        composerDrafts.current = draft
     }
     @State private var selectedModel: ModelInfo?
     @State private var highlightedCommandID: String?
@@ -187,17 +214,66 @@ struct ChatView: View {
     @State private var expertSourceOwner: AppleConversationSourceOwner = .unavailable
     @State private var showExpertSourceNotice = false
     @State private var showLocalExpertManagement = false
-    @State private var expertSelection: Set<String> = []
-    @State private var expertSelectionRevisions: [String: Int64] = [:]
+    private var expertSelection: Set<String> { Set(composerDrafts.current.mentions.map { $0.expert.agentID }) }
+    @State private var mentionCaret: AppleMentionEditor.Caret?
+    @State private var editorSelection: NSRange?
+    @State private var editorComposing = false
+    private var currentMentionQuery: ExpertMentionQuery? {
+        guard !editorComposing else { return nil }
+        return .atCaret(in: inputText, selection: editorSelection ?? NSRange(location: inputText.utf16.count, length: 0), mentions: composerDrafts.current.mentions)
+    }
     @State private var expertRemoteSource: ChatManager.ExpertRoomSource?
     @State private var expertRemoteRoom: IOSConversationRoomAssociation?
-    @State private var expertSelectionReferences: [String: AppleMainExpertSelectionEntry] = [:]
-    @State private var expertSelectionRemoteSources: [String: ChatManager.ExpertRoomSource] = [:]
     @State private var expertJoinOperations: [String: UUID] = [:]
     private var joiningExpertIDs: Set<String> { Set(expertJoinOperations.keys) }
     @State private var pendingExpertRejoin: IOSExpertMentionRejoinRequest?
     @State private var highlightedExpertID: String?
     @State private var dismissedExpertMention: String?
+    private struct MentionHistory: Identifiable {
+        let parent: String
+        let room: String
+        let child: AppleExpertChildConversation
+        let source: ChatManager.ExpertRoomSource?
+        var id: String { child.id }
+    }
+    @State private var mentionHistory: MentionHistory?
+
+    private var mentionProfile: AppleMentionProfileActions {
+        var actions = AppleMentionProfileActions()
+        actions.description = mentionDescription
+        if expertSourceOwner != .unavailable { actions.history = { expert in openMentionHistory(expert) } }
+        return actions
+    }
+
+    private func mentionDescription(_ expert: AppleMainExpertSelectionEntry) -> String? {
+        let association = expertRemoteSource == nil ? expertSubmission?.conversationAssociation : expertRemoteRoom
+        guard let association, association.conversationID == container.chatManager.currentConversationId?.uuidString else { return nil }
+        return association.room.room.participants.first(where: { member in
+            member.id == expert.participantID && member.contextConversationID == expert.contextConversationID && member.agentRevision == expert.agentRevision
+        })?.description
+    }
+
+    private func openMentionHistory(_ expert: AppleMainExpertSelectionEntry) {
+        guard let owner = container.chatManager.currentConversationId else { return }
+        let parent = owner.uuidString
+        Task { @MainActor in
+            do {
+                let source = try container.chatManager.expertRoomSource(owner: owner)
+                let service = IOSAgentRoomService(runtime: container.applicationRuntime)
+                let (room, child) = try await AppleExpertChildConversations.child(for: expert, parentID: parent) { offset in
+                    if let source {
+                        return try await container.chatManager.scopedExpertHistoryCommand(owner: owner, source: source, command: [
+                            "type": .string("child_conversations"), "conversation_id": .string(parent),
+                            "limit": .signedInteger(32), "offset": .signedInteger(Int64(offset))])
+                    }
+                    guard try container.applicationRuntime.conversationSourceOwner(conversationID: parent) == .local else { throw IOSApplicationRuntimeError.invalidResponse }
+                    return try await Task.detached { try service.childConversations(conversationID: parent, offset: offset) }.value
+                }
+                guard container.chatManager.currentConversationId == owner else { return }
+                mentionHistory = .init(parent: parent, room: room, child: child, source: source)
+            } catch { if container.chatManager.currentConversationId == owner { expertSendError = error.localizedDescription } }
+        }
+    }
     @State private var expertDirectory: [IOSPersistentAgent] = []
     @State private var expertDirectoryError: String?
     @State private var expertSubmission: IOSRoomSubmissionWorkspace?
@@ -216,8 +292,6 @@ struct ChatView: View {
         let owner: UUID?
     }
     @State private var workToolsPresentation: WorkToolsPresentation?
-    @State private var queuedWorkDestination: (owner: UUID, destination: IOSConversationWorkDestination)?
-    @State private var queuedRenameOwner: (id: UUID, baseline: String)?
     @State private var renameTarget: (id: UUID, baseline: String)?
     @State private var renameDraft = ""
     private struct ParameterEditorOwner {
@@ -528,19 +602,16 @@ struct ChatView: View {
             && (processingState.showsInlineStatus || container.chatManager.retrievalInProgress)
     }
 
-    private var conversationParticipantSummary: String {
-        let names = expertDirectory.filter { expertSelection.contains($0.id) }.map(\.name)
-        return names.isEmpty ? "Nola" : names.joined(separator: " · ")
-    }
-
     private var conversationSettingsSheet: some View {
         NavigationStack {
-            ChatMoreSettingsSheet(
+            conversationSettingsContent(embeddedInNavigationStack: false)
+        }
+    }
+
+    private func conversationSettingsContent(embeddedInNavigationStack: Bool) -> some View {
+        ChatMoreSettingsSheet(
                 selectedModel: parameterEditorOwner?.model ?? selectedModel ?? container.chatManager.getCurrentModel(),
                 contextUsage: currentContextUsage,
-                hostUploadedSkills: mergedSkillDisplayList(local: [], host: currentHostUploadedSkills),
-                hostUploadedDocuments: currentHostUploadedDocuments,
-                hostMCPServers: currentHostMCPServers,
                 hostComputerUseStatus: currentHostComputerUseStatus,
                 hostNativeBrowserStatus: currentHostNativeBrowserStatus,
                 pairedHostIdentity: selectedModel
@@ -609,35 +680,6 @@ struct ChatView: View {
                     get: { conversationResponseStyle },
                     set: { setConversationResponseStyle($0) }
                 ),
-                sessionMemory: $currentSessionMemory,
-                longTermMemory: $currentLongTermMemory,
-                userPreferences: $currentUserPreferences,
-                uploadedSkills: $currentUploadedSkills,
-                onSaveMemoryProfile: {
-                    guard let expected = memoryEditorBaseline else {
-                        throw IOSApplicationRuntimeError.rejected("Reload the memory profile before saving")
-                    }
-                    let saved = try await container.chatManager.updateContextMemoryText(
-                        sessionMemory: currentSessionMemory,
-                        longTermMemory: currentLongTermMemory,
-                        userPreferences: currentUserPreferences,
-                        expected: expected
-                    )
-                    memoryEditorBaseline = saved
-                    currentLongTermMemory = saved.longTermMemory
-                    currentUserPreferences = saved.userPreferences
-                },
-                onSetSkillEnabled: { id, enabled in
-                    guard let store = container.chatMemoryProfileStore as? any ChatSkillEditingStore else {
-                        throw IOSApplicationRuntimeError.rejected("Skill editor unavailable")
-                    }
-                    let expected = try store.loadSkillEditor(id: id)
-                    let saved = try store.setSkillEnabled(enabled, expected: expected)
-                    if let index = currentUploadedSkills.firstIndex(where: { $0.id == id }),
-                       let item = saved.record.uploadedContextItem {
-                        currentUploadedSkills[index] = item
-                    }
-                },
                 onOpenContextSettings: {
                     showContextSheet = true
                 },
@@ -668,10 +710,30 @@ struct ChatView: View {
                         promptTemplateID: id, dataSourceOverrides: currentDataSourceOverrides,
                         for: container.chatManager.currentConversationId)
                     currentPromptTemplateID = id
-                }
+                },
+                embeddedInNavigationStack: embeddedInNavigationStack,
+                contextDestination: {
+                    AnyView(contextSheetContent(embeddedInNavigationStack: true))
+                },
+                skillLibraryDestination: {
+                    AnyView(
+                        PersonalCapabilitiesLibraryView(hostSkills: currentHostUploadedSkills) { invocation in
+                            appendSkillInvocation(invocation)
+                            showMoreSettingsSheet = false
+                            workToolsPresentation = nil
+                            composerFocused = true
+                        }
+                        .environmentObject(container)
+                    )
+                },
+                onDismissSheet: embeddedInNavigationStack ? {
+                    workToolsPresentation = nil
+                } : nil,
+                executionBackendPicker: currentHostExecutionBackends.isEmpty ? nil : AnyView(
+                    chatTopBar(showsHistoryToggle: false).executionBackendMenu(fillsRow: true)
+                )
             )
             .environmentObject(container)
-        }
     }
 
     private func prepareChatPresentation() {
@@ -897,6 +959,16 @@ struct ChatView: View {
         taskResultDestination = destination
     }
 
+    private func receiveConversationRewound(_ notification: Notification) {
+        guard let owner = notification.object as? UUID else { return }
+        submittedTurns[owner] = nil
+        responseAssistantIDs[owner] = nil
+        guard container.chatManager.currentConversationId == owner else { return }
+        activeAssistantMessageID = nil
+        activeResponseConversationID = nil
+        loadMessages(for: owner)
+    }
+
     private func receiveConversationRenamed(_ notification: Notification) {
         guard let renamedID = notification.object as? UUID,
               renamedID == container.chatManager.currentConversationId,
@@ -942,7 +1014,7 @@ struct ChatView: View {
                             .frame(width: 10, height: 10).foregroundStyle(.secondary)
                             .accessibilityHidden(true)
                     }
-                    Text(verbatim: conversationParticipantSummary).font(.caption2).foregroundStyle(.secondary).lineLimit(1)
+                    Text(verbatim: "Nola").font(.caption2).foregroundStyle(.secondary).lineLimit(1)
                 }
                 .padding(.horizontal, 8)
                 .frame(maxWidth: .infinity, minHeight: 44)
@@ -971,9 +1043,11 @@ struct ChatView: View {
                 selectChatModel(model)
             }
             .background { ChatNavigationGestureBridge().frame(width: 0, height: 0) }
-            .navigationTitle(horizontalSizeClass == .compact ? "" : currentConversationSubtitle)
+            .navigationTitle("")
             .navigationBarTitleDisplayMode(.inline)
-            .toolbar(.hidden, for: .navigationBar)
+            .navigationBarBackButtonHidden(true)
+            .toolbar(horizontalSizeClass == .compact ? .hidden : .visible, for: .navigationBar)
+            .toolbarBackground(.hidden, for: .navigationBar)
             .safeAreaInset(edge: .top, spacing: 0) {
                 if horizontalSizeClass == .compact {
                     compactConversationHeader
@@ -981,12 +1055,22 @@ struct ChatView: View {
                     chatTopBar(showsHistoryToggle: false)
                 }
             }
+            .task(id: "\(selectedModel?.id ?? ""):\(container.chatManager.currentConversationId?.uuidString ?? String(describing: composerDrafts.selected))") {
+                refreshComposerReasoning()
+            }
+            .onReceive(ModelParametersStore.shared.$lastUpdated) { _ in
+                refreshComposerReasoning()
+            }
+            .task(id: "\(container.chatManager.currentConversationId?.uuidString ?? "")/\(!expertSelection.isEmpty)/\(selectedModel?.id ?? "")") {
+                guard !expertSelection.isEmpty, container.chatManager.getCurrentModel()?.isWebBackend == true,
+                      expertRemoteSource?.owner != container.chatManager.currentConversationId || expertRemoteSource == nil else { return }
+                await reloadExpertDirectory()
+            }
             .task(id: container.chatManager.currentConversationId) {
                 guard let id = container.chatManager.currentConversationId else { return }
                 prepareExpertWorkspace()
                 await expertSubmission?.restoreConversation(id.uuidString)
                 guard !Task.isCancelled else { return }
-                expertSelection = Set(expertSubmission?.pendingExpertIDs ?? [])
                 applyExpertHistoryContinuation()
                 if inputText.isEmpty, let text = expertSubmission?.pendingAdmissionText { inputText = text }
                 if let association = expertSubmission?.conversationAssociation {
@@ -1011,14 +1095,15 @@ struct ChatView: View {
                     && newOwner.flatMap { submittedTurns[$0] } != nil
                 if transfersSubmittedDraft, let owner = newOwner {
                     if let source = expertRemoteSource { expertRemoteSource = .init(owner: owner, provider: source.provider, epoch: source.epoch) }
-                    expertSelectionRemoteSources = expertSelectionRemoteSources.mapValues { .init(owner: owner, provider: $0.provider, epoch: $0.epoch) }
                 } else {
-                    expertSelection = []; expertSelectionRevisions = [:]
-                    expertRemoteSource = nil; expertRemoteRoom = nil; expertSelectionReferences = [:]; expertSelectionRemoteSources = [:]
+                    editorSelection = nil; mentionCaret = nil
+                    expertRemoteSource = nil; expertRemoteRoom = nil
                 }
                 expertJoinOperations = [:]
                 pendingExpertRejoin = nil
-                queuedWorkDestination = nil; workToolsPresentation = nil
+                if workToolsPresentation?.owner != newOwner {
+                    workToolsPresentation = nil
+                }
                 showExpertPicker = false
                 refreshExpertSourceOwner()
             }
@@ -1054,6 +1139,14 @@ struct ChatView: View {
     var body: some View {
         Group {
             chatPrimaryContent
+            .environment(\.expertMentionProfile, mentionProfile)
+            .environment(\.iosSourceAllowsMessageEditing, expertSourceOwner == .local)
+            .sheet(item: $mentionHistory) { selection in
+                IOSExpertChildHistory(parentID: selection.parent, roomID: selection.room, child: selection.child, runtime: container.applicationRuntime, remoteSource: selection.source) { request in
+                    mentionHistory = nil
+                    applyExpertHistoryContinuation(request)
+                }
+            }
             .onChange(of: hybridDeviceToolsEnabled) { _, _ in saveHybridCapabilitySettings() }
             .onChange(of: hybridFilesEnabled) { _, _ in saveHybridCapabilitySettings() }
             .onChange(of: hybridClipboardEnabled) { _, _ in saveHybridCapabilitySettings() }
@@ -1072,19 +1165,21 @@ struct ChatView: View {
             }
             .onReceive(NotificationCenter.default.publisher(for: .nolaOpenChatTab)) { _ in }
             .onReceive(NotificationCenter.default.publisher(for: .nolaConversationRenamed), perform: receiveConversationRenamed)
-            .sheet(item: $workToolsPresentation, onDismiss: openQueuedWorkDestination) { presentation in
-                IOSConversationWorkTools(conversationTitle: currentConversationTitle,
-                    modelLabel: currentModelConnectionLabel, hasOwner: presentation.owner != nil,
-                    onRename: presentation.owner.map { owner in {
-                        let baseline = currentConversationSubtitle
-                        queuedRenameOwner = (owner, baseline)
-                        workToolsPresentation = nil
-                    } }) { destination in
-                    if let owner = presentation.owner ?? container.chatManager.ensureCurrentConversation() {
-                        queuedWorkDestination = (owner, destination)
+            .onReceive(NotificationCenter.default.publisher(for: .nolaConversationRewound), perform: receiveConversationRewound)
+            .sheet(item: $workToolsPresentation, onDismiss: {
+                loadConversationState(for: container.chatManager.currentConversationId)
+            }) { presentation in
+                IOSConversationWorkTools(
+                    conversationTitle: currentConversationTitle,
+                    modelLabel: currentModelConnectionLabel,
+                    hasOwner: presentation.owner != nil,
+                    onConfirmRename: presentation.owner.map { owner in { draft in
+                        confirmRenameConversation((id: owner, baseline: currentConversationSubtitle), draft: draft)
+                    } },
+                    destination: { destination in
+                        workToolsDestinationView(destination, owner: presentation.owner)
                     }
-                    workToolsPresentation = nil
-                }
+                )
                 .toggleStyle(NolaSwitchToggleStyle())
             }
             .modifier(IOSRenameConversationAlert(target: $renameTarget, draft: $renameDraft, confirm: confirmRenameConversation))
@@ -1110,102 +1205,7 @@ struct ChatView: View {
             }
             .sheet(isPresented: $showContextSheet, onDismiss: { loadConversationState(for: container.chatManager.currentConversationId) }) {
                 NavigationStack {
-                    ChatContextSheet(
-                        displayMode: .context,
-                        conversationID: container.chatManager.currentConversationId,
-                        conversationTitle: currentConversationTitle,
-                        contextUsage: currentContextUsage,
-                        sessionMemory: $currentSessionMemory,
-                        knowledgePoints: $currentKnowledgePoints,
-                        conversationWiki: $currentConversationWiki,
-                        longTermMemory: $currentLongTermMemory,
-                        userPreferences: $currentUserPreferences,
-                        mcpServers: $currentMCPServers,
-                        uploadedSkills: $currentUploadedSkills,
-                        hostUploadedSkills: mergedSkillDisplayList(local: [], host: currentHostUploadedSkills),
-                        hostUploadedDocuments: currentHostUploadedDocuments,
-                        hostMCPServers: currentHostMCPServers,
-                        uploadedDocuments: $currentUploadedDocuments,
-                        documentsReadable: memoryEditorBaseline?.uploadedDocumentsReadable == true,
-                        dataSources: availableContextDataSources,
-                        selectedDataSourceIDs: $currentDataSourceIDs,
-                        selectedSystemDataSourceTypes: $currentSystemDataSourceTypes
-                    ) {
-                        _ = try container.chatManager.updateConversationContext(
-                            promptTemplateID: currentPromptTemplateID,
-                            dataSourceOverrides: currentDataSourceOverrides,
-                            for: container.chatManager.currentConversationId
-                        )
-                    } onSaveMemoryProfile: {
-                        guard let expected = memoryEditorBaseline else {
-                            throw IOSApplicationRuntimeError.rejected("Reload the memory profile before saving")
-                        }
-                        let saved = try await container.chatManager.updateContextMemoryText(
-                            sessionMemory: currentSessionMemory,
-                            longTermMemory: currentLongTermMemory,
-                            userPreferences: currentUserPreferences,
-                            expected: expected
-                        )
-                        memoryEditorBaseline = saved
-                        currentLongTermMemory = saved.longTermMemory
-                        currentUserPreferences = saved.userPreferences
-                    } onSaveUploadedDocuments: { items in
-                        guard let baseline = memoryEditorBaseline else {
-                            throw IOSApplicationRuntimeError.rejected(String(localized: "chat.context.documents.read_error"))
-                        }
-                        let saved = try container.chatManager.updateUploadedDocuments(items, expected: baseline)
-                        memoryEditorBaseline = saved
-                        return saved.uploadedDocuments
-                    } onSaveConversationKnowledge: { snapshot in
-                        let conversationId = try container.chatManager.updateConversationKnowledge(
-                            knowledgePoints: snapshot.knowledgePoints,
-                            wiki: snapshot.wiki,
-                            for: snapshot.conversationID
-                        )
-                        if conversationId == container.chatManager.currentConversationId {
-                            loadConversationState(for: conversationId)
-                        }
-                    } onCompact: {
-                        let result = try await container.chatManager.compactConversationContext()
-                        guard container.chatManager.currentConversationId == result.conversationID else { return result.notice }
-                        loadMessages(for: result.conversationID)
-                        loadConversationState(for: result.conversationID)
-                        return result.notice
-                    } onReload: {
-                        guard let conversationID = container.chatManager.currentConversationId else {
-                            loadConversationState(for: nil)
-                            return nil
-                        }
-                        guard let service = container.llmClient as? ModelService else {
-                            loadConversationState(for: conversationID)
-                            return tr("chat.context.auxiliary.refresh_unavailable", "已加载本地状态；当前模型适配器不能刷新原辅助来源。", comment: "Local state loaded; the current model adapter cannot refresh original auxiliary sources.")
-                        }
-                        do {
-                            let report = try await service.refreshConversationAuxiliarySources(conversationID: conversationID)
-                            guard container.chatManager.currentConversationId == conversationID else { return nil }
-                            loadConversationState(for: conversationID)
-                            let format = tr("chat.context.auxiliary.refresh_report", "辅助来源：已刷新 %d，仍未确认 %d，其他 Host 跳过 %d，刷新失败 %d。", comment: "Auxiliary sources: refreshed %d, still unconfirmed %d, other hosts skipped %d, failed %d.")
-                            let result = String(format: format, report.refreshed, report.pending, report.skipped, report.failed)
-                            return report.hasMore
-                                ? result + " " + tr("chat.context.auxiliary.refresh_more", "还有其他来源；再次重载继续下一批。", comment: "More sources remain; reload again for the next batch.")
-                                : result
-                        } catch {
-                            guard container.chatManager.currentConversationId == conversationID else { return nil }
-                            loadConversationState(for: conversationID)
-                            throw error
-                        }
-                    } onDiscard: {
-                        loadConversationState(for: container.chatManager.currentConversationId)
-                    } onUseSkill: { invocation in
-                        inputText = inputText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-                            ? invocation
-                            : "\(inputText.trimmingCharacters(in: .whitespacesAndNewlines))\n\(invocation)"
-                        showContextSheet = false
-                        composerFocused = true
-                    } onSearchMemory: { query in
-                        try await container.chatManager.searchConversationRawMemory(query, limit: 12)
-                    }
-                    .environmentObject(container)
+                    contextSheetContent(embeddedInNavigationStack: false)
                 }
                 .toggleStyle(NolaSwitchToggleStyle())
             }
@@ -1214,9 +1214,7 @@ struct ChatView: View {
             }) {
                 NavigationStack {
                     PersonalCapabilitiesLibraryView(hostSkills: currentHostUploadedSkills) { invocation in
-                        inputText = inputText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-                            ? invocation
-                            : "\(inputText.trimmingCharacters(in: .whitespacesAndNewlines))\n\(invocation)"
+                        appendSkillInvocation(invocation)
                         showSkillsSheet = false
                         composerFocused = true
                     }
@@ -1255,7 +1253,16 @@ struct ChatView: View {
         let permissionDecision = execution?.permissionDecisionHandler(
             localRequest: localPermission, hostRequest: hostPermission)
         return VStack(spacing: 0) {
-            if let expertSendError { Text(expertSendError).font(.callout).foregroundStyle(.red).padding(8) }
+            if let expertSendError {
+                VStack(alignment: .leading, spacing: 4) {
+                    Text(expertSendError).font(.callout).foregroundStyle(.red)
+                    if !composerDrafts.current.mentions.isEmpty {
+                        Button(String(localized: "Keep names as plain text")) {
+                            composerDrafts.current.mentions = []; self.expertSendError = nil
+                        }
+                    }
+                }.padding(8)
+            }
             if let submission = expertSubmission,
                submission.conversationAssociation?.conversationID == container.chatManager.currentConversationId?.uuidString {
                 IOSUnifiedExpertConversation(workspace: agentRoomWorkspace, submission: submission,
@@ -1269,6 +1276,9 @@ struct ChatView: View {
             ChatMessageTimeline(
                 conversationID: container.chatManager.currentConversationId,
                 messages: messages,
+                isHydrating: container.chatManager.currentConversationId != nil
+                    && conversationLoadRecovery.confirmedConversationID != container.chatManager.currentConversationId
+                    && messages.isEmpty,
                 activeAssistantMessageID: activeAssistantMessageID,
                 retrievalInProgress: container.chatManager.retrievalInProgress,
                 hasModels: !availableModels.isEmpty,
@@ -1333,30 +1343,51 @@ struct ChatView: View {
                     .accessibilityIdentifier("chat.permission.submission_error")
             }
 
-            if remoteSubmissionPending {
-                Button(NSLocalizedString("chat.host.cancel_submission", value: "Cancel pending submission", comment: "Cancel without sending a new request")) {
-                    container.chatManager.cancelPendingRemoteSubmission()
-                }
-            }
-            if remoteRunNeedsResume {
-                Button(NSLocalizedString("chat.host.resume_existing_run", value: "Resume existing task", comment: "Resume the exact interrupted Host Run")) {
-                    container.chatManager.resumeObservedRemoteRun()
-                }
-                .accessibilityIdentifier("chat.host.resume_existing_run")
-            } else if let message = remoteRunObservationError {
-                VStack(alignment: .leading, spacing: 4) {
-                    Text(message).font(.caption).foregroundStyle(.secondary)
-                    if container.chatManager.canCancelRejectedUIQueue {
-                        Button(NSLocalizedString("a2ui.queue.cancel_rejected", value: "Remove unexecuted form action", comment: "Cancel rejected UI queue action")) {
-                            container.chatManager.cancelRejectedUIQueue()
+            if remoteSubmissionPending || remoteRunNeedsResume || remoteRunObservationError != nil {
+                VStack(alignment: .leading, spacing: 8) {
+                    if remoteSubmissionPending {
+                        Button(NSLocalizedString("chat.host.cancel_submission", value: "Cancel pending submission", comment: "Cancel without sending a new request")) {
+                            container.chatManager.cancelPendingRemoteSubmission()
                         }
-                            .accessibilityIdentifier("chat.ui.cancelRejectedQueue")
+                        .buttonStyle(.bordered)
+                        .frame(minHeight: 44)
                     }
-                    Button(NSLocalizedString("chat.host.retry_observation", value: "Reconnect to task", comment: "Read the existing Host Run without new input")) {
-                        container.chatManager.retryRemoteRunObservation()
+                    if remoteRunNeedsResume {
+                        Button(NSLocalizedString("chat.host.resume_existing_run", value: "Resume existing task", comment: "Resume the exact interrupted Host Run")) {
+                            container.chatManager.resumeObservedRemoteRun()
+                        }
+                        .buttonStyle(.bordered)
+                        .frame(minHeight: 44)
+                        .accessibilityIdentifier("chat.host.resume_existing_run")
+                    } else if let message = remoteRunObservationError {
+                        VStack(alignment: .leading, spacing: 8) {
+                            Text(message).font(.caption).foregroundStyle(.secondary)
+                            if container.chatManager.canCancelRejectedUIQueue {
+                                Button(NSLocalizedString("a2ui.queue.cancel_rejected", value: "Remove unexecuted form action", comment: "Cancel rejected UI queue action")) {
+                                    container.chatManager.cancelRejectedUIQueue()
+                                }
+                                .buttonStyle(.bordered)
+                                .frame(minHeight: 44)
+                                .accessibilityIdentifier("chat.ui.cancelRejectedQueue")
+                            }
+                            Button(NSLocalizedString("chat.host.retry_observation", value: "Reconnect to task", comment: "Read the existing Host Run without new input")) {
+                                container.chatManager.retryRemoteRunObservation()
+                            }
+                            .buttonStyle(.bordered)
+                            .frame(minHeight: 44)
+                        }
+                        .accessibilityIdentifier("chat.host.retry_observation")
                     }
                 }
-                .accessibilityIdentifier("chat.host.retry_observation")
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(12)
+                .background(DesignTokens.surfaceColor, in: RoundedRectangle(cornerRadius: DesignTokens.radius_md, style: .continuous))
+                .overlay(
+                    RoundedRectangle(cornerRadius: DesignTokens.radius_md, style: .continuous)
+                        .stroke(DesignTokens.borderColor, lineWidth: 1)
+                )
+                .padding(.horizontal, DesignTokens.spacing_lg)
+                .padding(.top, DesignTokens.spacing_xs)
             }
 
             if let message = errorPresentation.message,
@@ -1441,28 +1472,175 @@ struct ChatView: View {
 
     private func openWorkTools() {
         composerFocused = false
-        queuedWorkDestination = nil
-        workToolsPresentation = .init(owner: container.chatManager.currentConversationId)
+        let owner = container.chatManager.currentConversationId ?? container.chatManager.ensureCurrentConversation()
+        prepareParameterEditorOwnerIfPossible()
+        workToolsPresentation = .init(owner: owner)
     }
 
-    private func openQueuedWorkDestination() {
-        if let pendingRename = queuedRenameOwner {
-            queuedRenameOwner = nil
-            renameDraft = pendingRename.baseline
-            renameTarget = pendingRename
-            return
+    private func prepareParameterEditorOwnerIfPossible() {
+        if let owner = container.chatManager.currentConversationId,
+           let model = selectedModel ?? container.chatManager.getCurrentModel(),
+           let store = container.conversationStore as? any ConversationGenerationOverrideStore,
+           let baseline = try? store.generationOverride(conversationId: owner, modelKey: IOSConversationGenerationOverride.modelKey(for: model)) {
+            parameterEditorOwner = .init(conversationID: owner, model: model, baseline: baseline)
         }
-        let request = queuedWorkDestination
-        queuedWorkDestination = nil
-        guard let request, request.owner == container.chatManager.currentConversationId else { return }
-        switch request.destination {
-        case .progress: conversationInspectorPane = .progress
-        case .goals: conversationInspectorPane = .goals
-        case .resources: conversationInspectorPane = .resources
-        case .context: showContextSheet = true
-        case .experts: openExpertPicker()
-        case .execution: openConversationSettings()
+    }
+
+    private func workToolsDestinationView(_ destination: IOSConversationWorkDestination, owner: UUID?) -> AnyView {
+        let resolvedOwner = owner ?? container.chatManager.currentConversationId
+        switch destination {
+        case .progress:
+            return AnyView(IOSConversationInspector(
+                pane: .progress,
+                conversationID: resolvedOwner?.uuidString,
+                loadProgress: { try await container.chatManager.loadConversationProgress(conversationID: $0) },
+                submitGoalControl: { try await container.chatManager.controlConversationGoal(conversationID: $0, control: $1) },
+                discardGoalControl: { try await container.chatManager.discardConversationGoalControl(conversationID: $0) },
+                documents: currentUploadedDocuments + currentHostUploadedDocuments,
+                processingState: container.chatManager.processingState,
+                initialObjective: initialGoalObjective,
+                embeddedInNavigationStack: true
+            ))
+        case .goals:
+            return AnyView(IOSConversationInspector(
+                pane: .goals,
+                conversationID: resolvedOwner?.uuidString,
+                loadProgress: { try await container.chatManager.loadConversationProgress(conversationID: $0) },
+                submitGoalControl: { try await container.chatManager.controlConversationGoal(conversationID: $0, control: $1) },
+                discardGoalControl: { try await container.chatManager.discardConversationGoalControl(conversationID: $0) },
+                documents: currentUploadedDocuments + currentHostUploadedDocuments,
+                processingState: container.chatManager.processingState,
+                initialObjective: initialGoalObjective,
+                embeddedInNavigationStack: true
+            ))
+        case .resources:
+            return AnyView(IOSConversationInspector(
+                pane: .resources,
+                conversationID: resolvedOwner?.uuidString,
+                loadProgress: { try await container.chatManager.loadConversationProgress(conversationID: $0) },
+                submitGoalControl: { try await container.chatManager.controlConversationGoal(conversationID: $0, control: $1) },
+                discardGoalControl: { try await container.chatManager.discardConversationGoalControl(conversationID: $0) },
+                documents: currentUploadedDocuments + currentHostUploadedDocuments,
+                processingState: container.chatManager.processingState,
+                initialObjective: initialGoalObjective,
+                embeddedInNavigationStack: true
+            ))
+        case .context:
+            return AnyView(contextSheetContent(embeddedInNavigationStack: true))
+        case .experts:
+            return AnyView(expertPickerContent(embeddedInNavigationStack: true))
+        case .execution:
+            return AnyView(conversationSettingsContent(embeddedInNavigationStack: true))
         }
+    }
+
+    private func contextSheetContent(embeddedInNavigationStack: Bool) -> some View {
+        ChatContextSheet(
+            displayMode: .context,
+            conversationID: container.chatManager.currentConversationId,
+            conversationTitle: currentConversationTitle,
+            contextUsage: currentContextUsage,
+            sessionMemory: $currentSessionMemory,
+            knowledgePoints: $currentKnowledgePoints,
+            conversationWiki: $currentConversationWiki,
+            longTermMemory: $currentLongTermMemory,
+            userPreferences: $currentUserPreferences,
+            mcpServers: $currentMCPServers,
+            uploadedSkills: $currentUploadedSkills,
+            hostUploadedSkills: mergedSkillDisplayList(local: [], host: currentHostUploadedSkills),
+            hostUploadedDocuments: currentHostUploadedDocuments,
+            hostMCPServers: currentHostMCPServers,
+            uploadedDocuments: $currentUploadedDocuments,
+            documentsReadable: memoryEditorBaseline?.uploadedDocumentsReadable == true,
+            dataSources: availableContextDataSources,
+            selectedDataSourceIDs: $currentDataSourceIDs,
+            selectedSystemDataSourceTypes: $currentSystemDataSourceTypes,
+            onSave: {
+                _ = try container.chatManager.updateConversationContext(
+                    promptTemplateID: currentPromptTemplateID,
+                    dataSourceOverrides: currentDataSourceOverrides,
+                    for: container.chatManager.currentConversationId
+                )
+            },
+            onSaveMemoryProfile: {
+                guard let expected = memoryEditorBaseline else {
+                    throw IOSApplicationRuntimeError.rejected("Reload the memory profile before saving")
+                }
+                let saved = try await container.chatManager.updateContextMemoryText(
+                    sessionMemory: currentSessionMemory,
+                    longTermMemory: currentLongTermMemory,
+                    userPreferences: currentUserPreferences,
+                    expected: expected
+                )
+                memoryEditorBaseline = saved
+                currentLongTermMemory = saved.longTermMemory
+                currentUserPreferences = saved.userPreferences
+            },
+            onSaveUploadedDocuments: { items in
+                guard let baseline = memoryEditorBaseline else {
+                    throw IOSApplicationRuntimeError.rejected(String(localized: "chat.context.documents.read_error"))
+                }
+                let saved = try container.chatManager.updateUploadedDocuments(items, expected: baseline)
+                memoryEditorBaseline = saved
+                return saved.uploadedDocuments
+            },
+            onSaveConversationKnowledge: { snapshot in
+                let conversationId = try container.chatManager.updateConversationKnowledge(
+                    knowledgePoints: snapshot.knowledgePoints,
+                    wiki: snapshot.wiki,
+                    for: snapshot.conversationID
+                )
+                if conversationId == container.chatManager.currentConversationId {
+                    loadConversationState(for: conversationId)
+                }
+            },
+            onCompact: {
+                let result = try await container.chatManager.compactConversationContext()
+                guard container.chatManager.currentConversationId == result.conversationID else { return result.notice }
+                loadMessages(for: result.conversationID)
+                loadConversationState(for: result.conversationID)
+                return result.notice
+            },
+            onReload: {
+                guard let conversationID = container.chatManager.currentConversationId else {
+                    loadConversationState(for: nil)
+                    return nil
+                }
+                guard let service = container.llmClient as? ModelService else {
+                    loadConversationState(for: conversationID)
+                    return tr("chat.context.auxiliary.refresh_unavailable", "已加载本地状态；当前模型适配器不能刷新原辅助来源。", comment: "Local state loaded; the current model adapter cannot refresh original auxiliary sources.")
+                }
+                do {
+                    let report = try await service.refreshConversationAuxiliarySources(conversationID: conversationID)
+                    guard container.chatManager.currentConversationId == conversationID else { return nil }
+                    loadConversationState(for: conversationID)
+                    let format = tr("chat.context.auxiliary.refresh_report", "辅助来源：已刷新 %d，仍未确认 %d，其他 Host 跳过 %d，刷新失败 %d。", comment: "Auxiliary sources: refreshed %d, still unconfirmed %d, other hosts skipped %d, failed %d.")
+                    let result = String(format: format, report.refreshed, report.pending, report.skipped, report.failed)
+                    return report.hasMore
+                        ? result + " " + tr("chat.context.auxiliary.refresh_more", "还有其他来源；再次重载继续下一批。", comment: "More sources remain; reload again for the next batch.")
+                        : result
+                } catch {
+                    guard container.chatManager.currentConversationId == conversationID else { return nil }
+                    loadConversationState(for: conversationID)
+                    throw error
+                }
+            },
+            onDiscard: {
+                loadConversationState(for: container.chatManager.currentConversationId)
+            },
+            onUseSkill: { invocation in
+                appendSkillInvocation(invocation)
+                showContextSheet = false
+                workToolsPresentation = nil
+                showMoreSettingsSheet = false
+                composerFocused = true
+            },
+            onSearchMemory: { query in
+                try await container.chatManager.searchConversationRawMemory(query, limit: 12)
+            },
+            embeddedInNavigationStack: embeddedInNavigationStack
+        )
+        .environmentObject(container)
     }
 
     private func modelConfigurationBanner(_ message: String) -> some View {
@@ -1480,9 +1658,9 @@ struct ChatView: View {
             } label: {
                 Text(tr("chat.model.configuration.action", "配置", comment: "Open model configuration action"))
                     .font(.caption.weight(.semibold))
+                    .frame(minHeight: 44)
             }
             .buttonStyle(.bordered)
-            .controlSize(.small)
             .accessibilityIdentifier("chat.model.configuration.action")
         }
         .padding(.horizontal, 12)
@@ -1597,6 +1775,7 @@ struct ChatView: View {
                     expandedErrorIdentity = expanded ? nil : identity
                 } label: {
                     Label(tr("history.detail.diagnostics", "Technical details", comment: "Technical details"), systemImage: expanded ? "chevron.up" : "chevron.down")
+                        .frame(minHeight: 44)
                 }
                 Button {
                     UIPasteboard.general.string = message
@@ -1606,6 +1785,7 @@ struct ChatView: View {
                         ? tr("chat.message.copied", "Copied", comment: "Copied")
                         : tr("common.copy", "Copy", comment: "Copy"),
                         systemImage: copiedErrorIdentity == identity ? "checkmark" : "doc.on.doc")
+                        .frame(minHeight: 44)
                 }
             }
             .font(.footnote)
@@ -1615,13 +1795,16 @@ struct ChatView: View {
                     restoreLastPromptForEditing(occurrenceID)
                 } label: {
                     Label(tr("chat.error.edit_retry", "Edit and try again", comment: "Edit failed prompt action"), systemImage: "pencil")
+                        .frame(minHeight: 44)
                 }
                 .buttonStyle(.borderedProminent)
+                .foregroundStyle(DesignTokens.onActionColor)
                 Button {
                     guard dismissChatError(occurrenceID) else { return }
                     openModelTab()
                 } label: {
                     Label(tr("chat.error.switch_model", "Switch model", comment: "Switch model after error action"), systemImage: "arrow.triangle.2.circlepath")
+                        .frame(minHeight: 44)
                 }
                 .buttonStyle(.bordered)
             }
@@ -1676,35 +1859,21 @@ struct ChatView: View {
                     ExpertMentionCandidate(id: $0.rawValue, name: "/" + $0.rawValue, detail: $0.title)
                 }, highlightedID: highlightedCommandID ?? ComposerCommand.candidates(inputText).first?.rawValue,
                 error: nil, select: completeCommand, accessibilityTitle: "composer.command.help", identifierPrefix: "chat.command.", showsAvatar: false)
+                .padding(.horizontal, DesignTokens.spacing_md)
+                .padding(.bottom, 6)
             }
             if expertMentionsVisible {
                 ExpertMentionPanel(candidates: expertMentionCandidates, highlightedID: highlightedExpertID ?? expertMentionCandidates.first?.id,
                                    error: canBrowseExpertDirectory ? expertDirectoryError : String(localized: "chat.experts.sourceUnavailable.detail"), select: selectExpertMention)
+                    .padding(.horizontal, DesignTokens.spacing_md)
+                    .padding(.bottom, 6)
                     .task {
                         guard requireLocalExpertOwner() else { return }
                         await reloadExpertDirectory()
                     }
                 if !joiningExpertIDs.isEmpty {
                     ProgressView("experts.mention.joining").font(.footnote).frame(maxWidth: .infinity, alignment: .leading)
-                }
-            }
-            if !expertSelection.isEmpty {
-                ScrollView(.horizontal) {
-                    HStack {
-                        ForEach(expertSelection.sorted(), id: \.self) { agentID in
-                            Button {
-                                expertSelection.remove(agentID); expertSelectionRevisions.removeValue(forKey: agentID)
-                                expertSelectionReferences.removeValue(forKey: agentID); expertSelectionRemoteSources.removeValue(forKey: agentID)
-                            } label: {
-                                Label(selectedExpertName(agentID), systemImage: "xmark.circle")
-                                    .padding(.horizontal, 8).frame(minHeight: 44)
-                                    .contentShape(Rectangle())
-                            }
-                            .buttonStyle(.plain)
-                            .accessibilityHint(Text("room.remove_mention"))
-                            .accessibilityIdentifier("chat.expert.selected." + agentID)
-                        }
-                    }
+                        .padding(.horizontal, DesignTokens.spacing_md)
                 }
             }
             ChatComposer(
@@ -1726,18 +1895,31 @@ struct ChatView: View {
                 onStop: stopGeneration,
                 mentionsVisible: commandsVisible || expertMentionsVisible,
                 mentionCommand: handleComposerKey,
+                mentionEditor: .init(mentions: composerDrafts.current.mentions, caretRequest: mentionCaret,
+                    selectionChanged: { range, marked in editorSelection = range; editorComposing = marked },
+                    applyEdit: { old, range, replacement in
+                        guard old == inputText else { return false }
+                        var draft = composerDrafts.current
+                        draft.mentions = AppleDraftMention.replacing(draft.mentions, range: range, with: replacement)
+                        draft.text = (old as NSString).replacingCharacters(in: range, with: replacement)
+                        composerDrafts.current = draft
+                        return true
+                    }, restore: { value, mentions in
+                        var draft = composerDrafts.current
+                        draft.text = value; draft.mentions = mentions
+                        composerDrafts.current = draft
+                    }, pasted: { dismissedExpertMention = $0 }),
                 showsModelControl: horizontalSizeClass == .compact,
                 modelControl: composerModelControl
             )
-            .onChange(of: inputText) { _, _ in highlightedCommandID = nil; dismissedCommand = nil; commandError = nil; highlightedExpertID = nil; dismissedExpertMention = nil }
+            .id(composerDrafts.selected)
+            .onChange(of: inputText) { _, _ in highlightedCommandID = nil; dismissedCommand = nil; commandError = nil; highlightedExpertID = nil; if dismissedExpertMention != inputText { dismissedExpertMention = nil } }
         }
     }
 
     @ViewBuilder private var composerModelControl: some View {
         if horizontalSizeClass == .compact {
             chatTopBar(showsHistoryToggle: false, presentation: .composer)
-                .task(id: "\(selectedModel?.id ?? ""):\(container.chatManager.currentConversationId?.uuidString ?? String(describing: composerDrafts.selected))") { refreshComposerReasoning() }
-                .onReceive(ModelParametersStore.shared.$lastUpdated) { _ in refreshComposerReasoning() }
         }
     }
 
@@ -1829,20 +2011,8 @@ struct ChatView: View {
         return true
     }
 
-    private func selectedExpertName(_ agentID: String) -> String {
-        let room = expertRemoteRoom ?? expertSubmission?.conversationAssociation
-        let reference = expertSelectionReferences[agentID]
-        if let member = room?.room.room.participants.first(where: { member in
-            member.active && member.agentID == agentID &&
-                member.agentRevision == expertSelectionRevisions[agentID] &&
-                (reference?.participantID == nil || reference?.participantID == member.id) &&
-                (reference?.contextConversationID == nil || reference?.contextConversationID == member.contextConversationID)
-        }) { return member.displayName }
-        return expertDirectory.first(where: { $0.id == agentID })?.name ?? String(localized: "expert.history.peerName")
-    }
-
-    private func applyExpertHistoryContinuation() {
-        guard let request = expertHistoryContinuation,
+    private func applyExpertHistoryContinuation(_ continuation: IOSExpertHistoryContinuation? = nil) {
+        guard let request = continuation ?? expertHistoryContinuation,
               container.chatManager.currentConversationId == request.parentID else { return }
         do {
             guard try container.applicationRuntime.conversationSourceOwner(conversationID: request.parentID.uuidString) == .local,
@@ -1850,31 +2020,25 @@ struct ChatView: View {
                 throw IOSApplicationRuntimeError.rejected(String(localized: "expert.history.unavailable"))
             }
             let member = try request.participant(in: association)
-            expertSelection.insert(member.agentID)
-            expertSelectionRevisions[member.agentID] = member.agentRevision
-            expertSelectionReferences[member.agentID] = .init(agentID: member.agentID, agentRevision: member.agentRevision,
-                participantID: member.id, contextConversationID: member.contextConversationID)
+            insertMention(.init(agentID: member.agentID, agentRevision: member.agentRevision, participantID: member.id,
+                contextConversationID: member.contextConversationID), name: member.displayName, at: insertionRange)
         } catch { expertSendError = error.localizedDescription }
     }
 
     private var expertPickerSheet: some View {
+        expertPickerContent(embeddedInNavigationStack: false)
+    }
+
+    private func expertPickerContent(embeddedInNavigationStack: Bool) -> some View {
         VStack {
-            IOSChatExpertPicker(agents: expertDirectory, allowsManagement: container.chatManager.getCurrentModel()?.isWebBackend != true, onManagementClosed: {
+            IOSChatExpertPicker(agents: expertDirectory, allowsManagement: container.chatManager.getCurrentModel()?.isWebBackend != true || expertRemoteSource != nil, remoteSource: expertRemoteSource, onManagementClosed: {
                 Task { await reloadExpertDirectory() }
-            }, selection: Binding(get: { expertSelection }, set: { value in
+            }, selection: .constant(expertSelection), onMention: { agent in
                 guard requireLocalExpertOwner() else { return }
-                let previous = expertSelection
-                expertSelection = value
-                expertSelectionRevisions = expertSelectionRevisions.filter { value.contains($0.key) }
-                for agent in expertDirectory where value.contains(agent.id) && !previous.contains(agent.id) {
-                    expertSelectionRevisions[agent.id] = agent.revision
-                    let member = expertRemoteRoom?.room.room.participants.first { $0.agentID == agent.id && $0.active && $0.agentRevision == agent.revision }
-                    if let source = expertRemoteSource { expertSelectionRemoteSources[agent.id] = source }
-                    else { expertSelectionRemoteSources.removeValue(forKey: agent.id) }
-                    expertSelectionReferences[agent.id] = .init(agentID: agent.id, agentRevision: agent.revision,
-                        participantID: member?.id, contextConversationID: member?.contextConversationID)
-                }
-            }))
+                selectCandidate(agent, range: insertionRange, choosingDirectoryVersion: true)
+                showExpertPicker = false
+                workToolsPresentation = nil
+            }, embeddedInNavigationStack: embeddedInNavigationStack)
             if let expertDirectoryError { Text(expertDirectoryError).foregroundStyle(.red).padding() }
         }.task { await reloadExpertDirectory() }
     }
@@ -1890,7 +2054,7 @@ struct ChatView: View {
             if let source {
                 let capability = try await source.provider.expertRooms(command: .object(["type": .string("role_templates")]), expectedEpoch: source.epoch)
                 let catalog = try JSONDecoder().decode(AppleExpertRoleTemplateCatalog.self, from: JSONEncoder().encode(capability.result))
-                guard catalog.features.mainAgentDelegation else { throw IOSApplicationRuntimeError.rejected(String(localized: "experts.mainHostUpgrade")) }
+                guard catalog.features.mainAgentDelegation, catalog.features.inlineExpertMentions else { throw IOSApplicationRuntimeError.rejected(String(localized: "experts.mainHostUpgrade")) }
                 let read = try await source.provider.expertRooms(command: .object(["type": .string("directory")]), expectedEpoch: capability.sourceStoreEpoch)
                 directory = try JSONDecoder().decode(IOSAgentDirectory.self, from: JSONEncoder().encode(read.result))
                 confirmedSource = .init(owner: owner, provider: source.provider, epoch: read.sourceStoreEpoch)
@@ -1912,6 +2076,7 @@ struct ChatView: View {
         catch {
             guard IOSExpertMentionCompletionPolicy.accepts(owner: owner, draftOwner: draftOwner,
                 currentOwner: container.chatManager.currentConversationId, currentDraftOwner: composerDrafts.selected) else { return }
+            expertRemoteSource = nil; expertRemoteRoom = nil; expertDirectory = []
             expertDirectoryError = error.localizedDescription
         }
     }
@@ -1950,84 +2115,63 @@ struct ChatView: View {
     }
 
     private var expertMentionsVisible: Bool {
-        composerFocused && dismissedExpertMention != inputText && ExpertMentionQuery.atEnd(of: inputText) != nil
+        composerFocused && dismissedExpertMention != inputText && currentMentionQuery != nil
     }
     private var expertMentionCandidates: [ExpertMentionCandidate] {
-        guard canBrowseExpertDirectory, let query = ExpertMentionQuery.atEnd(of: inputText)?.query else { return [] }
+        guard canBrowseExpertDirectory, let query = currentMentionQuery?.query else { return [] }
         if container.chatManager.getCurrentModel()?.isWebBackend == true { guard let _ = expertRemoteSource else { return [] } }
-        return expertDirectory.filter { $0.availability == "active" && !expertSelection.contains($0.id) &&
-            (query.isEmpty || $0.name.localizedCaseInsensitiveContains(query)) }
+        let candidates = expertDirectory.filter { $0.availability == "active" &&
+            (query.isEmpty || $0.name.localizedCaseInsensitiveContains(query) || $0.description.localizedCaseInsensitiveContains(query)) }
             .map { ExpertMentionCandidate(id: $0.id, name: $0.name, detail: $0.description) }
+        let association = expertRemoteSource == nil ? expertSubmission?.conversationAssociation : expertRemoteRoom
+        let members = association.flatMap { $0.conversationID == container.chatManager.currentConversationId?.uuidString ? $0.room.room.participants : nil } ?? []
+        return ExpertMentionCandidate.ordered(candidates, members: Set(members.filter(\.active).map(\.agentID)))
     }
     private func selectExpertMention(_ id: String) {
         guard requireLocalExpertOwner(), !joiningExpertIDs.contains(id),
               expertMentionCandidates.contains(where: { $0.id == id }),
               let candidate = expertDirectory.first(where: { $0.id == id }),
-              let query = ExpertMentionQuery.atEnd(of: inputText) else { return }
-        let capturedText = inputText
+              let query = currentMentionQuery else { return }
+        selectCandidate(candidate, range: query.range)
+    }
+
+    private var insertionRange: NSRange {
+        if let selection = editorSelection, NSMaxRange(selection) <= inputText.utf16.count { return selection }
+        return NSRange(location: inputText.utf16.count, length: 0)
+    }
+
+    private func selectCandidate(_ agent: IOSPersistentAgent, range: NSRange, choosingDirectoryVersion: Bool = false) {
         let owner = container.chatManager.currentConversationId
-        let draftOwner = composerDrafts.selected
-        if let source = expertRemoteSource {
-            do {
-                guard try container.chatManager.matchesExpertRoomSource(source), source.owner == owner else { throw CancellationError() }
-                let member = expertRemoteRoom?.room.room.participants.first { $0.agentID == id && $0.active }
-                if let owner, let member, member.agentRevision != candidate.revision {
-                    pendingExpertRejoin = .init(agent: candidate, owner: owner, draftOwner: draftOwner, text: capturedText, query: query)
-                    return
-                }
-                expertSelectionRemoteSources[id] = source
-                expertSelectionReferences[id] = .init(agentID: id, agentRevision: candidate.revision,
-                    participantID: member?.id, contextConversationID: member?.contextConversationID)
-                finishExpertMention(id: id, revision: candidate.revision, owner: owner, draftOwner: draftOwner, text: capturedText, query: query)
-            } catch { expertDirectoryError = error.localizedDescription }
+        let association = expertRemoteSource != nil ? expertRemoteRoom : expertSubmission?.conversationAssociation
+        let member = association.flatMap { $0.conversationID == owner?.uuidString ? $0.room.room.participants.first { $0.active && $0.agentID == agent.id } : nil }
+        if choosingDirectoryVersion, let owner, let member, member.agentRevision != agent.revision {
+            pendingExpertRejoin = .init(agent: agent, owner: owner, draftOwner: composerDrafts.selected, text: inputText, query: .init(range: range, query: ""))
             return
         }
         if container.chatManager.getCurrentModel()?.isWebBackend == true {
-            expertDirectoryError = "Reload the Host expert directory before selecting an expert."
-            return
-        }
-        let service = IOSAgentRoomService(runtime: container.applicationRuntime)
-        let operation = UUID()
-        expertJoinOperations[id] = operation
-        Task { @MainActor in
-            defer { if expertJoinOperations[id] == operation { expertJoinOperations.removeValue(forKey: id) } }
-            do {
-                if let owner {
-                    _ = try await Task.detached {
-                        try service.joinMention(agentID: id, expectedAgentRevision: candidate.revision, conversationID: owner.uuidString)
-                    }.value
-                } else {
-                    _ = try await Task.detached {
-                        try service.validateMention(agentID: id, expectedAgentRevision: candidate.revision)
-                    }.value
-                }
-                finishExpertMention(id: id, revision: candidate.revision, owner: owner, draftOwner: draftOwner, text: capturedText, query: query)
-            } catch {
-                let refreshed = try? await Task.detached { try service.directory().agents }.value
-                guard IOSExpertMentionCompletionPolicy.accepts(owner: owner, draftOwner: draftOwner,
-                    currentOwner: container.chatManager.currentConversationId, currentDraftOwner: composerDrafts.selected) else { return }
-                if let refreshed { expertDirectory = refreshed }
-                expertDirectoryError = error.localizedDescription
-                if let owner, case IOSExpertMentionFailure.requiresRejoin = error {
-                    pendingExpertRejoin = .init(agent: candidate, owner: owner, draftOwner: draftOwner, text: capturedText, query: query)
-                }
+            guard let source = expertRemoteSource, source.epoch != nil,
+                  (try? container.chatManager.matchesExpertRoomSource(source)) == true else {
+                expertDirectoryError = String(localized: "experts.mainHostUpgrade")
+                return
             }
         }
+        insertMention(.init(agentID: agent.id, agentRevision: member?.agentRevision ?? agent.revision,
+            participantID: member?.id, contextConversationID: member?.contextConversationID), name: member?.displayName ?? agent.name, at: range)
     }
 
-    private func finishExpertMention(id: String, revision: Int64, owner: UUID?, draftOwner: ConversationComposerDraftStore.Owner,
-                                     text: String, query: ExpertMentionQuery) {
-        guard IOSExpertMentionCompletionPolicy.accepts(owner: owner, draftOwner: draftOwner,
-            currentOwner: container.chatManager.currentConversationId, currentDraftOwner: composerDrafts.selected) else { return }
-        expertSelection.insert(id)
-        if container.chatManager.getCurrentModel()?.isWebBackend != true { expertSelectionRemoteSources.removeValue(forKey: id) }
-        expertSelectionRevisions[id] = revision
-        if inputText == text { inputText = query.removing(from: text) }
+    private func insertMention(_ expert: AppleMainExpertSelectionEntry, name: String, at range: NSRange) {
+        var draft = composerDrafts.current
+        let insertion = AppleDraftMention.insertion(text: draft.text, range: range, name: name, expert: expert,
+            mentions: draft.mentions, sourceID: expertRemoteSource?.provider.remoteAuxiliarySourceHostID, epoch: expertRemoteSource?.epoch)
+        let previous = AppleMentionEditor.Snapshot(text: draft.text, mentions: draft.mentions, caret: NSMaxRange(range))
+        draft.text = insertion.text; draft.mentions = insertion.mentions
+        composerDrafts.current = draft
+        mentionCaret = .init(location: insertion.caret, before: previous)
+        editorSelection = NSRange(location: insertion.caret, length: 0)
         expertDirectoryError = nil
         highlightedExpertID = nil
         composerFocused = true
     }
-
     private func confirmExpertRejoin(_ request: IOSExpertMentionRejoinRequest) {
         pendingExpertRejoin = nil
         guard requireLocalExpertOwner(), IOSExpertMentionCompletionPolicy.accepts(owner: request.owner, draftOwner: request.draftOwner,
@@ -2054,11 +2198,9 @@ struct ChatView: View {
                             currentOwner: container.chatManager.currentConversationId, currentDraftOwner: composerDrafts.selected),
                           let member = room.room.room.participants.first(where: { $0.agentID == request.agent.id && $0.active && $0.agentRevision == request.agent.revision }) else { throw CancellationError() }
                     expertRemoteRoom = room
-                    expertSelectionRemoteSources[request.agent.id] = source
-                    expertSelectionReferences[request.agent.id] = .init(agentID: member.agentID, agentRevision: member.agentRevision,
-                        participantID: member.id, contextConversationID: member.contextConversationID)
-                    finishExpertMention(id: member.agentID, revision: member.agentRevision, owner: request.owner,
-                        draftOwner: request.draftOwner, text: request.text, query: request.query)
+                    guard request.text == inputText else { return }
+                    insertMention(.init(agentID: member.agentID, agentRevision: member.agentRevision, participantID: member.id,
+                        contextConversationID: member.contextConversationID), name: member.displayName, at: request.query.range)
                 } catch is CancellationError { }
                 catch { expertDirectoryError = error.localizedDescription }
             }
@@ -2070,12 +2212,14 @@ struct ChatView: View {
         Task { @MainActor in
             defer { if expertJoinOperations[request.agent.id] == operation { expertJoinOperations.removeValue(forKey: request.agent.id) } }
             do {
-                _ = try await Task.detached {
-                    try service.rejoinMention(agentID: request.agent.id, expectedAgentRevision: request.agent.revision,
-                        conversationID: request.owner.uuidString)
+                let updated = try await Task.detached {
+                    try service.rejoinMention(agentID: request.agent.id, expectedAgentRevision: request.agent.revision, conversationID: request.owner.uuidString)
                 }.value
-                finishExpertMention(id: request.agent.id, revision: request.agent.revision,
-                    owner: request.owner, draftOwner: request.draftOwner, text: request.text, query: request.query)
+                guard request.text == inputText, request.draftOwner == composerDrafts.selected,
+                      request.owner == container.chatManager.currentConversationId,
+                      let member = updated.room.room.participants.first(where: { $0.active && $0.agentID == request.agent.id }) else { return }
+                insertMention(.init(agentID: member.agentID, agentRevision: member.agentRevision, participantID: member.id,
+                    contextConversationID: member.contextConversationID), name: member.displayName, at: request.query.range)
             } catch {
                 let refreshed = try? await Task.detached { try service.directory().agents }.value
                 guard IOSExpertMentionCompletionPolicy.accepts(owner: request.owner, draftOwner: request.draftOwner,
@@ -2177,35 +2321,12 @@ struct ChatView: View {
     /// Selection is captured as typed guidance for the ordinary main Run.
     /// Core validates revision pins and admits any missing room membership.
     private func capturedMainExperts() throws -> [AppleMainExpertSelectionEntry] {
-        guard !expertSelection.isEmpty else { return [] }
-        if let source = expertRemoteSource {
-            guard source.owner == container.chatManager.currentConversationId,
-                  try container.chatManager.matchesExpertRoomSource(source) else { throw IOSApplicationRuntimeError.rejected("The expert Host changed. Select the experts again.") }
-            let entries = try expertSelection.sorted().map { id in
-                guard let value = expertSelectionReferences[id], let captured = expertSelectionRemoteSources[id],
-                      captured.owner == source.owner, captured.epoch == source.epoch,
-                      captured.provider.sameExpertConnection(as: source.provider) else {
-                    throw IOSApplicationRuntimeError.rejected("The expert Host changed. Select this expert again before sending.")
-                }
-                return value
-            }
-            try AppleMainExpertSelectionContext(selectedExperts: entries).validate()
-            return entries
+        guard !composerDrafts.current.mentions.isEmpty else { return [] }
+        let source = try container.chatManager.expertRoomSource(owner: container.chatManager.currentConversationId)
+        guard (source == nil) == (expertRemoteSource == nil), expertRemoteSource.map({ (try? container.chatManager.matchesExpertRoomSource($0)) == true }) ?? true else {
+            throw IOSApplicationRuntimeError.rejected(String(localized: "The expert selection changed. Remove the mention and select the expert again."))
         }
-        if let _ = try container.chatManager.expertRoomSource(owner: container.chatManager.currentConversationId) {
-            throw IOSApplicationRuntimeError.rejected("Reload this Host's expert directory before sending.")
-        }
-        guard expertSelection.isDisjoint(with: Set(expertSelectionRemoteSources.keys)) else {
-            throw IOSApplicationRuntimeError.rejected("The expert source changed. Select the experts again before sending.")
-        }
-        let service = IOSAgentRoomService(runtime: container.applicationRuntime)
-        let room = try container.chatManager.currentConversationId.flatMap { try service.forConversation($0.uuidString) }
-        let joined = (room?.room.room.participants ?? []).filter(\.active).map {
-            AppleExpertParticipantReference(participant_id: $0.id, agent_id: $0.agentID,
-                agent_revision: $0.agentRevision, context_conversation_id: $0.contextConversationID)
-        }
-        return try AppleMainExpertSelectionContext.capture(agentIDs: expertSelection,
-            observedRevisions: expertSelectionRevisions, joined: joined).selectedExperts
+        return try AppleDraftMention.selected(composerDrafts.current.mentions, sourceID: source?.provider.remoteAuxiliarySourceHostID, epoch: expertRemoteSource?.epoch)
     }
 
     private func sendMessage() {
@@ -2217,11 +2338,18 @@ struct ChatView: View {
             Task { await container.chatManager.discoverUnknownEffectRecovery() }
             return
         }
+        expertSendError = nil
         let selectedExpertSourceEpoch = expertRemoteSource?.epoch
         let selectedExperts: [AppleMainExpertSelectionEntry]
         do { selectedExperts = try capturedMainExperts() }
         catch { expertSendError = error.localizedDescription; return }
-        let typedMessage = inputText.trimmingCharacters(in: .whitespacesAndNewlines)
+        let mentionSegments = AppleDraftMention.segments(composerDrafts.current.mentions, in: inputText)
+        if !selectedExperts.isEmpty, pendingAttachments.isEmpty,
+           mentionSegments?.segments.contains(where: { $0.agentID == nil && !$0.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }) != true {
+            expertSendError = String(localized: "Write what you want the expert to do.")
+            return
+        }
+        let typedMessage = mentionSegments == nil ? inputText.trimmingCharacters(in: .whitespacesAndNewlines) : inputText
         let attachmentsToSend = pendingAttachments
         guard !isImportingAttachments else { return }
         guard !typedMessage.isEmpty || !attachmentsToSend.isEmpty else { return }
@@ -2238,19 +2366,13 @@ struct ChatView: View {
         NolaHaptics.primaryAction()
 
         let attachmentPrompt = ChatAttachmentDraft.promptBlock(for: attachmentsToSend)
-        let userMessage = composedDisplayMessage(text: typedMessage, attachmentCount: attachmentsToSend.count)
+        let userMessage = mentionSegments == nil ? composedDisplayMessage(text: typedMessage, attachmentCount: attachmentsToSend.count) : typedMessage
         let promptMessage = composedPromptMessage(text: typedMessage, attachmentPrompt: attachmentPrompt)
         let userAttachmentMeta = attachmentMeta(for: attachmentsToSend)
 
-        let shouldDeriveTitleFromThisInput = currentConversationTitle == L10n.chatConversationDefaultTitle
-            && !messages.contains { $0.role == .user }
-        let initialTitle = shouldDeriveTitleFromThisInput
-            ? smartConversationTitle(from: typedMessage.isEmpty ? userMessage : typedMessage)
-            : nil
         let prepared: SendConversationTurnUseCase.Prepared
         do {
             prepared = try container.chatManager.submissionUseCase.prepare(
-                title: initialTitle?.isEmpty == false ? initialTitle! : L10n.chatConversationDefaultTitle,
                 initialParameters: container.chatManager.currentConversationId == nil ? composerDrafts.current.configuration?.parameters : nil,
                 drafts: &composerDrafts)
         } catch { attachmentImportMessage = error.localizedDescription; return }
@@ -2273,10 +2395,6 @@ struct ChatView: View {
             includeInContext: true,
             metadata: userAttachmentMeta ?? [:]
         ))
-
-        if let initialTitle, shouldDeriveTitleFromThisInput {
-            currentConversationTitle = initialTitle
-        }
 
         messages.append(ChatMessage(id: assistantMessageId, role: .assistant, content: "", includeInContext: true))
         submittedTurns[conversationId] = messages.filter { $0.id == userMessageId || $0.id == assistantMessageId }
@@ -2332,7 +2450,7 @@ struct ChatView: View {
             attachments: ChatAttachmentDraft.modelAttachments(for: attachmentsToSend),
             responseStyle: selectedResponseStyle, retrievalEnabled: enableRetrieval,
             preferredHostID: container.chatManager.preferredNativeAppHostId,
-            hybridToolsEnabled: hybridSurfaceActive, hybridCapabilities: capabilities, selectedExperts: selectedExperts, expertSelectionSourceEpoch: selectedExpertSourceEpoch),
+            hybridToolsEnabled: hybridSurfaceActive, hybridCapabilities: capabilities, selectedExperts: selectedExperts, expertMentions: mentionSegments, expertSelectionSourceEpoch: selectedExpertSourceEpoch),
             observers: [responseStateCancellable].compactMap { $0 }) { result in
             // Completion below applies final state synchronously. Cancel any queued
             // intermediate frame first so it cannot overwrite the result/error.
@@ -2414,15 +2532,35 @@ struct ChatView: View {
         container.chatManager.submissionUseCase.cancel(conversationID: conversationID)
     }
 
+    private static func cleanupComposerStagingFiles(from result: Result<[URL], Error>) {
+        guard case .success(let urls) = result else { return }
+        let tempRoot = FileManager.default.temporaryDirectory.standardizedFileURL
+        for url in urls {
+            let standardized = url.standardizedFileURL
+            let name = standardized.lastPathComponent
+            guard standardized.deletingLastPathComponent() == tempRoot,
+                  name.hasPrefix("nola-pasted-image-") || name.hasPrefix("photo-") else { continue }
+            try? FileManager.default.removeItem(at: standardized)
+        }
+    }
+
     private func beginAttachmentImport() -> (Result<[URL], Error>) -> Void {
-        guard let operation = composerDrafts.beginImport() else { return { _ in } }
+        guard let operation = composerDrafts.beginImport() else {
+            return { result in Self.cleanupComposerStagingFiles(from: result) }
+        }
         let parserHost = currentAttachmentParserHost()
         return { result in
-            guard composerDrafts.accepts(operation), attachmentImportTasks[operation.id] == nil else { return }
+            guard composerDrafts.accepts(operation), attachmentImportTasks[operation.id] == nil else {
+                Self.cleanupComposerStagingFiles(from: result)
+                return
+            }
             attachmentImportTasks[operation.id] = Task { @MainActor in
-                defer { attachmentImportTasks[operation.id] = nil }
+                defer {
+                    attachmentImportTasks[operation.id] = nil
+                    Self.cleanupComposerStagingFiles(from: result)
+                }
                 do {
-                    let importResult = try await ChatAttachmentDraft.importFiles(from: result, parserHost: parserHost)
+                    let importResult = try await ChatAttachmentDraft.importFiles(from: result, parserHost: parserHost, runtime: container.applicationRuntime)
                     guard !Task.isCancelled, composerDrafts.accepts(operation),
                           attachmentOwnerStillExists(operation.owner) else { return }
                     let imported = importResult.attachments
@@ -2521,14 +2659,6 @@ struct ChatView: View {
             : trimmed
         guard !attachmentPrompt.isEmpty else { return base }
         return "\(base)\n\(attachmentPrompt)"
-    }
-
-    private func smartConversationTitle(from input: String) -> String {
-        let normalized = input
-            .replacingOccurrences(of: "\\s+", with: " ", options: .regularExpression)
-            .trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !normalized.isEmpty else { return L10n.chatConversationDefaultTitle }
-        return normalized
     }
 
     private func attachmentMeta(for attachments: [ChatAttachmentDraft]) -> [String: String]? {
@@ -2867,7 +2997,7 @@ struct ChatView: View {
         permissionChangeID = nil
         permissionApplicationStatus = container.chatManager.permissionConfigurationStatus(conversationID: convId)
         let profile = container.chatManager.chatMemoryProfile()
-        if !showMoreSettingsSheet && !showContextSheet {
+        if !showContextSheet {
             memoryEditorBaseline = profile
             currentLongTermMemory = profile.longTermMemory
             currentUserPreferences = profile.userPreferences
@@ -3060,7 +3190,8 @@ struct ChatView: View {
                             name: name,
                             content: hostSkill.content,
                             description: "\(tr("chat.host_skill.description_prefix", "From Web host.", comment: "Prefix for host skill description")) \(hostSkill.description ?? "")".trimmingCharacters(in: .whitespacesAndNewlines),
-                            enabled: hostSkill.enabled ?? true
+                            enabled: hostSkill.enabled ?? true,
+                            packageReference: hostSkill.packageReference
                         )
                     }
                 currentHostUploadedDocuments = settings.uploaded_documents

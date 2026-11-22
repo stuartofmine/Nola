@@ -351,12 +351,14 @@ nonisolated enum AppleAssistantJournalReadRequest<JSON: JournalJSONValue>: Encod
     case records(after: AppleAssistantJournalCursor, through: AppleAssistantJournalCursor)
     case open(AppleAssistantJournalCursor)
     case chunk(AppleAssistantJournalSnapshot, AppleAssistantJournalContentNeed)
+    case parts(AppleAssistantJournalSnapshot, after: String?)
+    case range(AppleAssistantJournalSnapshot, partID: String, content: AppleAssistantJournalContentReference, offset: String)
     case release(AppleAssistantJournalSnapshot)
 
     private enum CodingKeys: String, CodingKey {
         case operation, at, snapshot, part_id, content, chunk_index, after, through, max_records, max_encoded_bytes
         case conversation_id, run_id, after_message_id, limit
-        case seal, after_entry, identity
+        case seal, after_entry, identity, after_part_id, offset_bytes, limit_bytes
     }
     func encode(to encoder: Encoder) throws {
         var value = encoder.container(keyedBy: CodingKeys.self)
@@ -399,6 +401,19 @@ nonisolated enum AppleAssistantJournalReadRequest<JSON: JournalJSONValue>: Encod
         case .open(let cursor):
             try value.encode("open_snapshot", forKey: .operation)
             try value.encode(cursor, forKey: .at)
+        case .parts(let snapshot, let after):
+            try value.encode("parts", forKey: .operation)
+            try value.encode(snapshot, forKey: .snapshot)
+            try value.encodeIfPresent(after, forKey: .after_part_id)
+            try value.encode(64, forKey: .max_records)
+            try value.encode(262144, forKey: .max_encoded_bytes)
+        case .range(let snapshot, let partID, let content, let offset):
+            try value.encode("range", forKey: .operation)
+            try value.encode(snapshot, forKey: .snapshot)
+            try value.encode(partID, forKey: .part_id)
+            try value.encode(content, forKey: .content)
+            try value.encode(offset, forKey: .offset_bytes)
+            try value.encode(32768, forKey: .limit_bytes)
         case .chunk(let snapshot, let need):
             try value.encode("record_chunk", forKey: .operation)
             try value.encode(snapshot, forKey: .snapshot)

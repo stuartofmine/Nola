@@ -72,6 +72,10 @@ public enum DataSourceType: String, CaseIterable, Codable, Hashable, Sendable {
     }
 }
 
+public extension Notification.Name {
+    static let nolaSystemDataSourcePolicyUpdated = Notification.Name("nola.systemDataSourcePolicyUpdated")
+}
+
 public struct SystemDataSourceAccessPolicyStore {
     public static let shared = SystemDataSourceAccessPolicyStore(
         applicationRuntime: IOSApplicationRuntime.shared
@@ -105,9 +109,16 @@ public struct SystemDataSourceAccessPolicyStore {
         return .conversationOptIn
     }
 
-    public func setPolicy(_ policy: URLDataSourceAccessPolicy, for type: DataSourceType) {
+    public func setPolicy(_ policy: URLDataSourceAccessPolicy, for type: DataSourceType) throws {
         guard type != .url else { return }
-        persistCanonical(policy, for: type)
+        guard let applicationRuntime else { throw IOSApplicationRuntimeError.applicationUnavailable }
+        let data = try JSONEncoder().encode(StoredPolicy(schemaVersion: 1, policy: policy.rawValue))
+        _ = try applicationRuntime.putProductSetting(
+            key: canonicalKey(for: type),
+            valueJSON: String(decoding: data, as: UTF8.self),
+            updatedAtMs: Int64(Date().timeIntervalSince1970 * 1_000)
+        )
+        NotificationCenter.default.post(name: .nolaSystemDataSourcePolicyUpdated, object: type)
     }
 
     public func conversationOverrideKey(for type: DataSourceType) -> String {
@@ -116,17 +127,6 @@ public struct SystemDataSourceAccessPolicyStore {
 
     private func canonicalKey(for type: DataSourceType) -> String {
         "data-source.system-policy.ios.\(type.rawValue)"
-    }
-
-    private func persistCanonical(_ policy: URLDataSourceAccessPolicy, for type: DataSourceType) {
-        guard let applicationRuntime,
-              let data = try? JSONEncoder().encode(StoredPolicy(schemaVersion: 1, policy: policy.rawValue)),
-              let valueJSON = String(data: data, encoding: .utf8) else { return }
-        _ = try? applicationRuntime.putProductSetting(
-            key: canonicalKey(for: type),
-            valueJSON: valueJSON,
-            updatedAtMs: Int64(Date().timeIntervalSince1970 * 1_000)
-        )
     }
 
     public func isEnabledForConversation(type: DataSourceType, explicitOverride: Bool?) -> Bool {

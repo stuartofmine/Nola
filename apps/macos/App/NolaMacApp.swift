@@ -157,7 +157,8 @@ final class NolaMacApplicationDelegate: NSObject, NSApplicationDelegate {
     }
 
     func applicationWillTerminate(_ notification: Notification) {
-        MacManagedNolaServer.shared.stop()
+        // stopAll also owns the managed sharing server during application exit.
+        MacMLXOpenAIService.shared.stop()
         MacApplicationServiceSupervisor.shared.stopOwnedProcesses()
         MacOwnedChildProcessRegistry.shared.stopAll()
         if ProcessInfo.processInfo.environment["NOLA_CAPTURE_UI"] == nil {
@@ -230,7 +231,10 @@ struct NolaMacApp: App {
         if !MacProcessRuntimePolicy.isRunningTests,
            UserDefaults.standard.bool(forKey: MacManagedNolaServer.enabledKey),
            ProcessInfo.processInfo.environment["NOLA_CAPTURE_UI"] == nil {
-            Task { @MainActor in await MacManagedNolaServer.shared.start() }
+            Task { @MainActor in
+                guard UserDefaults.standard.bool(forKey: MacManagedNolaServer.enabledKey) else { return }
+                await MacManagedNolaServer.shared.start()
+            }
         }
         if !MacProcessRuntimePolicy.isRunningTests,
            ProcessInfo.processInfo.environment["NOLA_CAPTURE_UI"] == nil {
@@ -389,6 +393,7 @@ struct NolaMacApp: App {
         }
         .defaultSize(width: 1180, height: 780)
         .windowStyle(.hiddenTitleBar)
+        .restorationBehavior(MacProcessRuntimePolicy.isRunningTests ? .disabled : .automatic)
 
         Window("mac.welcome.title", id: "welcome") {
             MacApplicationStartupGate { MacWelcomeHelpWindow() }
@@ -679,20 +684,24 @@ private struct NolaMacCommands: Commands {
             Button("mac.command.open_data_center") {
                 openWindow(id: "data-center")
             }
+            .keyboardShortcut("d", modifiers: [.command, .shift])
 
             Button("mac.command.automations") {
                 openWindow(id: "automation-center")
             }
+            .keyboardShortcut("a", modifiers: [.command, .shift])
 
             Divider()
 
             Button("mac.window.model_center") {
                 openWindow(id: "model-center")
             }
+            .keyboardShortcut("m", modifiers: [.command, .shift])
 
             Button("mac.command.extensions") {
                 openWindow(id: "extensions-center")
             }
+            .keyboardShortcut("e", modifiers: [.command, .shift])
 
             Button("System Access") {
                 openWindow(id: "capability-center")
@@ -820,6 +829,7 @@ enum MacNotificationAuthorizationPolicy {
 }
 
 struct MacSettingsView: View {
+    static let minimumWidth: CGFloat = 760
     @StateObject private var defaultChatModel = MacDefaultChatModelPresentation()
     @Environment(\.openURL) private var openURL
     @AppStorage("nola.mac.settings.category") private var selectedCategory = MacSettingsCategory.general
@@ -830,15 +840,19 @@ struct MacSettingsView: View {
     @State private var hasSavedHostToken = false
     @State private var hostExpectedID = ""
     @State private var importedHostOrigin: URL?
-    @State private var hostConnectionState = MacRemoteHostConnectionState.initial
-    @State private var managedServer = MacManagedNolaServer.shared
+    @State private var hostConnectionState = MacRemoteHostConnectionState.notConfigured
+    @State private var managedServer: MacManagedNolaServer
+    private let connectionPasteboard: NSPasteboard
+    private let hostConfigurationStore: MacRemoteHostConfigurationStore
     @AppStorage(MacManagedNolaServer.enabledKey) private var managedServerEnabled = false
     @AppStorage(MacManagedNolaServer.permissionProfileKey)
     private var managedServerPermissionProfile = MacPermissionMode.cautious.permissionProfile
     @State private var hostVerificationRevision = 0
+    @State private var hostVerificationTask: Task<Void, Never>?
     @State private var showsRemoveHostConfirmation = false
     @State private var settingsError: String?
     @State private var serverCopyFeedback: String?
+    @State private var serverCopyRevision = 0
     @State private var isOpeningHostManagement = false
     @State private var isUpdatingNotificationSettings = false
     @State private var notificationAuthorizationStatus: UNAuthorizationStatus = .notDetermined
@@ -847,6 +861,8 @@ struct MacSettingsView: View {
     @State private var retrievalEnabled = MacAssistantPreferences.retrievalEnabled
     @State private var memoryEnabled = MacAssistantPreferences.memoryEnabled
     @State private var contextLimit = MacAssistantPreferences.contextLimit
+    @State private var usesCustomContextLimit = ![32_768, 65_536, 131_072, 200_000].contains(MacAssistantPreferences.contextLimit)
+    @FocusState private var contextLimitFocused: Bool
     @AppStorage(MacRunNotificationPreferenceKeys.agentCompletion) private var agentCompletionNotifications = false
     @AppStorage(MacRunNotificationPreferenceKeys.notificationsEnabled) private var notificationsEnabled = true
     private let skipsAutomaticHostVerification: Bool
@@ -854,19 +870,14 @@ struct MacSettingsView: View {
     private let openModels: ((String?) -> Void)?
 
     init(snapshotHostState: MacRemoteHostConnectionState? = nil,
-         initialCategory: String? = nil, openModels: ((String?) -> Void)? = nil) {
+         initialCategory: String? = nil, managedServer: MacManagedNolaServer? = nil,
+         connectionPasteboard: NSPasteboard? = nil, hostConfigurationStore: MacRemoteHostConfigurationStore = .shared,
+         openModels: ((String?) -> Void)? = nil) {
+        _managedServer = State(initialValue: managedServer ?? .shared)
+        self.connectionPasteboard = connectionPasteboard ?? .general
+        self.hostConfigurationStore = hostConfigurationStore
         self.initialCategory = initialCategory
         self.openModels = openModels
-        if let initialCategory, let destination = MacSettingsCategory(rawValue: initialCategory) {
-            UserDefaults.standard.set(destination.navigationCategory.rawValue, forKey: "nola.mac.settings.category")
-        }
-        if !MacProcessRuntimePolicy.usesEphemeralCredentials {
-            let host = MacRemoteHostConfigurationStore.shared.displayValues()
-            _hostURL = State(initialValue: host.url)
-            _savedHostURL = State(initialValue: URL(string: host.url))
-            _hasSavedHostToken = State(initialValue: !host.token.isEmpty)
-            _hostExpectedID = State(initialValue: host.hostID)
-        }
         skipsAutomaticHostVerification = snapshotHostState != nil
         guard let snapshotHostState else { return }
         _hostConnectionState = State(initialValue: snapshotHostState)
@@ -876,7 +887,8 @@ struct MacSettingsView: View {
             _hostToken = State(initialValue: "")
         default:
             _hostURL = State(initialValue: "https://studio-mac.local:5001")
-            _hostToken = State(initialValue: "snapshot-token")
+            _savedHostURL = State(initialValue: URL(string: "https://studio-mac.local:5001"))
+            _hasSavedHostToken = State(initialValue: true)
         }
     }
     @AppStorage(MacRunNotificationPreferenceKeys.stepGuidance) private var stepGuidanceEnabled = true
@@ -923,7 +935,7 @@ struct MacSettingsView: View {
             .background(MacPageBackground())
         }
         .frame(
-            minWidth: 760,
+            minWidth: Self.minimumWidth,
             idealWidth: 820,
             minHeight: 540,
             idealHeight: 620
@@ -939,15 +951,21 @@ struct MacSettingsView: View {
             if selectedCategory == .providers {
                 defaultChatModel.reload()
             }
-            if selectedCategory == .connections, !skipsAutomaticHostVerification {
-                await verifySavedHostConnection()
+            if selectedCategory == .connections, !skipsAutomaticHostVerification, hostVerificationRevision == 0 {
+                let task = startHostVerification(saved: true)
+                await withTaskCancellationHandler { await task.value } onCancel: { task.cancel() }
             }
             if selectedCategory == .notifications || selectedCategory == .general {
                 await synchronizeNotificationAuthorization()
             }
         }
+        .onChange(of: selectedCategory) { old, _ in
+            if old == .connections { leaveHostVerification() }
+        }
+        .background { MacWindowCloseObserver(onClose: leaveHostVerification).frame(width: 0, height: 0) }
+        .onDisappear(perform: leaveHostVerification)
         .confirmationDialog(
-            macSettingsText("mac.settings.host.remove.confirm.title", "Remove connected host?"),
+            macSettingsText("mac.settings.host.remove.confirm.title", "Remove Nola Server connection?"),
             isPresented: $showsRemoveHostConfirmation
         ) {
             Button(
@@ -957,10 +975,10 @@ struct MacSettingsView: View {
             )
             Button(macSettingsText("mac.settings.action.cancel", "Cancel"), role: .cancel) {}
         } message: {
-            Text(macSettingsText(
+            Text(verbatim: [macSettingsText(
                 "mac.settings.host.remove.confirm.message",
                 "This removes the saved address and access token from this Mac."
-            ))
+            ), savedHostURL?.absoluteString].compactMap { $0 }.joined(separator: "\n"))
         }
     }
 
@@ -1045,6 +1063,8 @@ struct MacSettingsView: View {
                 .frame(width: 22, height: 22)
             Text(selectedCategory.title)
                 .font(.system(size: 15, weight: .semibold))
+                .accessibilityAddTraits(.isHeader)
+                .accessibilityIdentifier("settings.heading." + selectedCategory.rawValue)
             Spacer()
 
         }
@@ -1065,6 +1085,8 @@ struct MacSettingsView: View {
         switch hostConnectionState {
         case .notConfigured:
             return macSettingsText("mac.settings.host.status.not_configured", "Not configured")
+        case .unverified where hasUnsavedHostChanges:
+            return macSettingsText("mac.settings.host.status.draft", "Changes not saved")
         case .unverified:
             return macSettingsText("mac.settings.host.status.unverified", "Saved, not verified")
         case .checking:
@@ -1080,6 +1102,8 @@ struct MacSettingsView: View {
         switch hostConnectionState {
         case .notConfigured:
             return macSettingsText("mac.settings.host.detail.not_configured", "Start Nola Server, then add its address and access token.")
+        case .unverified where hasUnsavedHostChanges:
+            return macSettingsText("mac.settings.host.detail.draft", "Verify this Nola Server to save the connection.")
         case .unverified:
             return macSettingsText("mac.settings.host.detail.unverified", "Test the saved connection before selecting it in a conversation.")
         case .checking:
@@ -1105,30 +1129,35 @@ struct MacSettingsView: View {
         switch hostConnectionState {
         case .notConfigured: return .secondary
         case .unverified: return .orange
-        case .checking: return .blue
+        case .checking: return MacDesignColor.brand
         case .connected: return .green
         case .failed: return .red
         }
     }
 
-    private var hasHostDraft: Bool {
-        !hostURL.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+    private var hasUnsavedHostChanges: Bool {
+        hostURL.trimmingCharacters(in: .whitespacesAndNewlines) != (savedHostURL?.absoluteString ?? "")
             || !hostToken.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
     }
 
+    private var checkingHost: Bool {
+        if case .checking = hostConnectionState { return true }
+        return false
+    }
+
+    private var draftMatchesSavedHost: Bool {
+        guard let url = AppleHostConnectionSetup.endpoint(hostURL), let savedHostURL else { return false }
+        return AppleHostConnectionSetup.sameEndpoint(url, savedHostURL)
+    }
+
     private var canVerifyHostDraft: Bool {
-        guard let url = URL(string: hostURL.trimmingCharacters(in: .whitespacesAndNewlines)),
-              ["http", "https"].contains(url.scheme?.lowercased() ?? ""),
-              !hostToken.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-                || (hasSavedHostToken && savedHostURL == url) else {
-            return false
-        }
-        return true
+        AppleHostConnectionSetup.endpoint(hostURL) != nil &&
+            (!hostToken.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || (hasSavedHostToken && draftMatchesSavedHost))
     }
 
     private var hostPrimaryActionTitle: String {
         switch hostConnectionState {
-        case .connected:
+        case .unverified where !hasUnsavedHostChanges && hasSavedHostToken, .connected:
             return macSettingsText("mac.settings.host.verify_again", "Verify Again")
         case .failed:
             return macSettingsText("mac.settings.host.retry", "Retry Connection")
@@ -1142,7 +1171,7 @@ struct MacSettingsView: View {
             ZStack {
                 Circle()
                     .fill(hostStatusColor.opacity(0.12))
-                if case .checking = hostConnectionState {
+                if checkingHost && !reduceMotion {
                     ProgressView()
                         .controlSize(.small)
                 } else {
@@ -1156,6 +1185,8 @@ struct MacSettingsView: View {
             VStack(alignment: .leading, spacing: 3) {
                 Text(hostStatusTitle)
                     .font(.callout.weight(.semibold))
+                    .accessibilityIdentifier(hostConnectionState == .unverified && hasUnsavedHostChanges
+                        ? "mac.host.status.unsaved" : "mac.host.status")
                 Text(hostStatusDetail)
                     .font(.caption)
                     .foregroundStyle(.secondary)
@@ -1174,7 +1205,7 @@ struct MacSettingsView: View {
     private var managedServerStatusColor: Color {
         switch managedServer.state {
         case .stopped: return .secondary
-        case .starting: return .blue
+        case .starting: return MacDesignColor.brand
         case .ready: return .green
         case .failed: return .red
         }
@@ -1193,6 +1224,16 @@ struct MacSettingsView: View {
         }
     }
 
+    private var isManagedServerStarting: Bool {
+        if case .starting = managedServer.state { return true }
+        return false
+    }
+
+    private func commitContextLimit() {
+        contextLimit = min(max(contextLimit, 16_384), 2_000_000)
+        MacAssistantPreferences.setContextLimit(contextLimit)
+    }
+
     private var managedServerControlCard: some View {
         VStack(alignment: .leading, spacing: 12) {
             Toggle(
@@ -1201,26 +1242,32 @@ struct MacSettingsView: View {
             )
             .font(.callout.weight(.semibold))
             .toggleStyle(.macSwitch)
+            .disabled(isManagedServerStarting)
             .onChange(of: managedServerEnabled) { _, enabled in
-                Task {
-                    if enabled {
+                if enabled {
+                    Task {
+                        guard managedServerEnabled else { return }
                         await managedServer.start()
-                    } else {
-                        managedServer.stop()
                     }
+                } else {
+                    managedServer.stop()
                 }
             }
 
-            Picker(
-                macSettingsText("mac.settings.server.permission_mode", "Server permission mode"),
-                selection: $managedServerPermissionProfile
-            ) {
-                ForEach(MacPermissionMode.allCases) { mode in
-                    Text(mode.title).tag(mode.permissionProfile)
+            if managedServerPermissionModeIsEditable {
+                Picker(macSettingsText("mac.settings.server.permission_mode", "Server permission mode"),
+                       selection: $managedServerPermissionProfile) {
+                    ForEach(MacPermissionMode.allCases) { mode in
+                        Text(mode.title).tag(mode.permissionProfile)
+                    }
+                }
+                .pickerStyle(.segmented)
+            } else if let mode = managedServerPermissionMode {
+                LabeledContent(macSettingsText("mac.settings.server.permission_mode", "Server permission mode")) {
+                    Label(mode.title, systemImage: "shield")
+                        .foregroundStyle(.primary)
                 }
             }
-            .pickerStyle(.segmented)
-            .disabled(!managedServerPermissionModeIsEditable)
 
             Text(managedServerPermissionMode?.detail ?? String(localized: "Invalid permission configuration. Select a valid permission mode before starting."))
                 .font(.caption)
@@ -1247,41 +1294,43 @@ struct MacSettingsView: View {
                 VStack(alignment: .leading, spacing: 4) {
                     Text(managedServerStatusTitle)
                         .font(.callout.weight(.semibold))
+                        .contentTransition(reduceMotion ? .identity : .opacity)
                     switch managedServer.state {
                     case .ready(let info):
                         Text(info.origin.absoluteString)
                             .font(.system(.caption, design: .monospaced))
                             .textSelection(.enabled)
                         HStack(spacing: 8) {
-                            Button(macSettingsText("mac.settings.server.copy_address", "Copy Address")) {
-                                copyServerValue(
-                                    info.origin.absoluteString,
-                                    feedback: macSettingsText("mac.settings.server.address_copied", "Address copied")
-                                )
-                            }
-                            Button(macSettingsText("mac.settings.server.copy_token", "Copy Access Token")) {
-                                copyServerValue(
-                                    info.accessToken,
-                                    feedback: macSettingsText("mac.settings.server.token_copied", "Access token copied")
-                                )
-                            }
                             if let setup = info.connectionSetupText {
-                                Button(macSettingsText("mac.settings.server.copy_setup", "Copy Connection Setup")) {
-                                    copyServerValue(
-                                        setup,
-                                        feedback: macSettingsText("mac.settings.server.setup_copied", "Connection setup copied")
-                                    )
+                                Button {
+                                    copyServerValue(setup, feedback: macSettingsText("mac.settings.server.setup_copied", "Connection setup copied"))
+                                } label: {
+                                    Label(macSettingsText("mac.settings.server.copy_setup", "Copy Connection Setup"), systemImage: "doc.on.doc")
+                                }
+                                .buttonStyle(.nolaProminent)
+                                .tint(MacDesignColor.brand)
+                                .accessibilityIdentifier("mac.server.copySetup")
+                            }
+                            Menu(macSettingsText("mac.settings.server.manual_copy", "Copy separately")) {
+                                Button(macSettingsText("mac.settings.server.copy_address", "Copy Address")) {
+                                    copyServerValue(info.origin.absoluteString, feedback: macSettingsText("mac.settings.server.address_copied", "Address copied"))
+                                }
+                                Button(macSettingsText("mac.settings.server.copy_token", "Copy Access Token")) {
+                                    copyServerValue(info.accessToken, feedback: macSettingsText("mac.settings.server.token_copied", "Access token copied"))
                                 }
                             }
+                            .fixedSize()
                         }
-                        .buttonStyle(.bordered)
-                        .controlSize(.small)
-                        if let serverCopyFeedback {
-                            Label(serverCopyFeedback, systemImage: "checkmark.circle.fill")
-                                .font(.caption)
-                                .foregroundStyle(.green)
-                                .transition(.opacity)
-                        }
+                        Text(serverCopyFeedback ?? " ")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                            .accessibilityHidden(serverCopyFeedback == nil)
+                            .task(id: serverCopyRevision) {
+                                guard serverCopyFeedback != nil else { return }
+                                do { try await Task.sleep(for: .seconds(1.8)) } catch { return }
+                                withAnimation(reduceMotion ? nil : MacDesignTokens.Motion.reveal) { serverCopyFeedback = nil }
+                            }
+                            .onDisappear { serverCopyFeedback = nil }
                     case .failed(let message):
                         Text(message)
                             .font(.caption)
@@ -1304,6 +1353,7 @@ struct MacSettingsView: View {
                 }
                 Spacer(minLength: 8)
             }
+            .animation(reduceMotion ? nil : MacDesignTokens.Motion.reveal, value: managedServer.state)
             Label(
                 macSettingsText(
                     "mac.settings.server.security",
@@ -1317,24 +1367,11 @@ struct MacSettingsView: View {
         .padding(.vertical, 4)
     }
 
-    private func copyToPasteboard(_ value: String) {
-        NSPasteboard.general.clearContents()
-        NSPasteboard.general.setString(value, forType: .string)
-    }
-
     private func copyServerValue(_ value: String, feedback: String) {
-        copyToPasteboard(value)
-        withAnimation(.easeOut(duration: 0.16)) {
-            serverCopyFeedback = feedback
-        }
-        Task {
-            try? await Task.sleep(for: .seconds(1.8))
-            await MainActor.run {
-                withAnimation(.easeOut(duration: 0.16)) {
-                    if serverCopyFeedback == feedback { serverCopyFeedback = nil }
-                }
-            }
-        }
+        connectionPasteboard.clearContents()
+        guard connectionPasteboard.setString(value, forType: .string) else { return }
+        serverCopyRevision &+= 1
+        withAnimation(reduceMotion ? nil : MacDesignTokens.Motion.reveal) { serverCopyFeedback = feedback }
     }
 
     private var managedServerPermissionMode: MacPermissionMode? {
@@ -1380,31 +1417,42 @@ struct MacSettingsView: View {
             }
             Spacer(minLength: 12)
             if let url = report.messagingManagementURL {
-                Button(macSettingsText("mac.settings.messaging.manage", "Manage on Host")) {
+                Button {
                     isOpeningHostManagement = true
-                    let target = url.path
-                        + (url.query.map { "?\($0)" } ?? "")
-                        + (url.fragment.map { "#\($0)" } ?? "")
-                    Task {
-                        do {
-                            let managementURL = try await MacRemoteHostService.shared
-                                .requestWebManagementURL(target: target)
-                            await MainActor.run { openURL(managementURL) }
-                        } catch {
-                            await MainActor.run {
-                                settingsError = macRemoteHostUserFacingError(error)
+                } label: {
+                    HStack(spacing: 6) {
+                        ZStack {
+                            Image(systemName: "arrow.up.right.square")
+                                .opacity(isOpeningHostManagement ? 0 : 1)
+                            if isOpeningHostManagement {
+                                ProgressView().controlSize(.small)
                             }
                         }
-                        await MainActor.run { isOpeningHostManagement = false }
+                        .frame(width: 16, height: 16)
+                        .accessibilityHidden(true)
+                        Text(macSettingsText("mac.settings.messaging.manage", "Manage on Nola Server"))
                     }
                 }
                 .buttonStyle(.bordered)
                 .disabled(isOpeningHostManagement)
-                .overlay {
-                    if isOpeningHostManagement {
-                        ProgressView().controlSize(.small)
+                .task(id: isOpeningHostManagement) {
+                    guard isOpeningHostManagement else { return }
+                    defer { isOpeningHostManagement = false }
+                    let revision = hostVerificationRevision
+                    let target = url.path
+                        + (url.query.map { "?\($0)" } ?? "")
+                        + (url.fragment.map { "#\($0)" } ?? "")
+                    do {
+                        let managementURL = try await MacRemoteHostService.shared
+                            .requestWebManagementURL(target: target)
+                        guard !Task.isCancelled, revision == hostVerificationRevision else { return }
+                        openURL(managementURL)
+                    } catch {
+                        guard !Task.isCancelled, revision == hostVerificationRevision else { return }
+                        settingsError = macRemoteHostUserFacingError(error)
                     }
                 }
+                .onDisappear { isOpeningHostManagement = false }
             }
         }
         .padding(12)
@@ -1415,7 +1463,33 @@ struct MacSettingsView: View {
         }
     }
 
+    @discardableResult
+    private func startHostVerification(saved: Bool) -> Task<Void, Never> {
+        hostVerificationTask?.cancel()
+        let task = Task {
+            guard !Task.isCancelled else { return }
+            if saved { await verifySavedHostConnection() }
+            else { await saveAndVerifyHostConnection() }
+            if !Task.isCancelled { hostVerificationTask = nil }
+        }
+        hostVerificationTask = task
+        return task
+    }
+
+    private func leaveHostVerification() {
+        hostVerificationTask?.cancel()
+        hostVerificationTask = nil
+        if checkingHost {
+            hostVerificationRevision = 0
+            let hasValues = !hostURL.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+                || !hostToken.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            hostConnectionState = hasValues ? .unverified : .notConfigured
+        }
+    }
+
     private func markHostConfigurationEdited() {
+        hostVerificationTask?.cancel()
+        hostVerificationTask = nil
         hostVerificationRevision &+= 1
         let hasValues = !hostURL.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
             || !hostToken.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
@@ -1425,36 +1499,41 @@ struct MacSettingsView: View {
     private func verifySavedHostConnection() async {
         hostVerificationRevision &+= 1
         let revision = hostVerificationRevision
-        guard MacRemoteHostConfigurationStore.shared.load() != nil else {
+        defer {
+            if Task.isCancelled, revision == hostVerificationRevision {
+                hostVerificationRevision = 0
+                hostConnectionState = savedHostURL == nil ? .notConfigured : .unverified
+            }
+        }
+        // Loading the credential and saved address may involve Keychain and
+        // the local service. Only the Connections page needs either of them.
+        let saved = await Task.detached(priority: .userInitiated) { [hostConfigurationStore] in
+            hostConfigurationStore.displayValues()
+        }.value
+        guard !Task.isCancelled, revision == hostVerificationRevision else { return }
+        hostURL = saved.url
+        savedHostURL = saved.url.isEmpty ? nil : URL(string: saved.url)
+        hasSavedHostToken = !saved.token.isEmpty
+        hostExpectedID = saved.hostID
+        guard let url = savedHostURL, hasSavedHostToken else {
             hostConnectionState = .notConfigured
             return
         }
         hostConnectionState = .checking
         do {
-            let report = try await MacRemoteHostService.shared.testSavedConnection()
-            guard revision == hostVerificationRevision else { return }
+            let report = try await MacRemoteHostService.shared.testConnection(configuration: .init(
+                baseURL: url, token: saved.token, expectedHostID: saved.hostID))
+            guard !Task.isCancelled, revision == hostVerificationRevision else { return }
             hostConnectionState = .connected(report)
         } catch {
-            guard revision == hostVerificationRevision else { return }
+            guard !Task.isCancelled, revision == hostVerificationRevision else { return }
             hostConnectionState = .failed(macRemoteHostUserFacingError(error))
         }
     }
 
-    private func expectedHostIdentity(for url: URL) -> String? {
-        if let importedHostOrigin, AppleHostConnectionSetup.sameOrigin(importedHostOrigin, url) {
-            return hostExpectedID
-        }
-        if let saved = MacRemoteHostConfigurationStore.shared.load(), let savedIdentity = saved.expectedHostID,
-           saved.baseURL == url { return savedIdentity }
-        return nil
-    }
-
     private func saveAndVerifyHostConnection() async {
         let normalizedURL = hostURL.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard let url = URL(string: normalizedURL),
-              ["http", "https"].contains(url.scheme?.lowercased() ?? ""),
-              let normalizedToken = MacRemoteHostConfigurationStore.shared.tokenForDraft(
-                url: url, enteredToken: hostToken) else {
+        guard let url = AppleHostConnectionSetup.endpoint(normalizedURL) else {
             hostConnectionState = .failed(
                 macSettingsText("mac.settings.host.invalid", "Enter a valid Host URL and access token.")
             )
@@ -1463,18 +1542,25 @@ struct MacSettingsView: View {
         hostVerificationRevision &+= 1
         let revision = hostVerificationRevision
         hostConnectionState = .checking
+        let enteredToken = hostToken
+        let importedIdentity = importedHostOrigin.flatMap {
+            AppleHostConnectionSetup.sameOrigin($0, url) ? hostExpectedID : nil
+        }
         do {
-            let report = try await MacRemoteHostService.shared.testConnection(
-                configuration: MacRemoteHostConfiguration(
-                    baseURL: url,
-                    token: normalizedToken,
-                    expectedHostID: expectedHostIdentity(for: url)
-                )
-            )
-            guard revision == hostVerificationRevision else { return }
-            try MacRemoteHostConfigurationStore.shared.save(
+            let draft = try await Task.detached(priority: .userInitiated) { [hostConfigurationStore] in
+                try hostConfigurationStore.configurationForDraft(
+                    url: url, enteredToken: enteredToken, importedIdentity: importedIdentity)
+            }.value
+            guard !Task.isCancelled, revision == hostVerificationRevision else { return }
+            guard let draft else {
+                hostConnectionState = .failed(macSettingsText("mac.settings.host.invalid", "Enter a valid Host URL and access token."))
+                return
+            }
+            let report = try await MacRemoteHostService.shared.testConnection(configuration: draft)
+            guard !Task.isCancelled, revision == hostVerificationRevision else { return }
+            try hostConfigurationStore.save(
                 url: normalizedURL,
-                token: normalizedToken,
+                token: draft.token,
                 hostID: report.hostID
             )
             hostURL = normalizedURL
@@ -1482,11 +1568,11 @@ struct MacSettingsView: View {
             savedHostURL = url
             hasSavedHostToken = true
             hostExpectedID = report.hostID
-            withAnimation(.easeOut(duration: 0.18)) {
+            withAnimation(reduceMotion ? nil : MacDesignTokens.Motion.reveal) {
                 hostConnectionState = .connected(report)
             }
         } catch {
-            guard revision == hostVerificationRevision else { return }
+            guard !Task.isCancelled, revision == hostVerificationRevision else { return }
             hostConnectionState = .failed(macRemoteHostUserFacingError(error))
         }
     }
@@ -1494,7 +1580,7 @@ struct MacSettingsView: View {
     private func removeHostConnection() {
         hostVerificationRevision &+= 1
         do {
-            try MacRemoteHostConfigurationStore.shared.save(url: "", token: "", hostID: nil)
+            try hostConfigurationStore.save(url: "", token: "", hostID: nil)
         } catch {
             hostConnectionState = .failed(error.localizedDescription)
             return
@@ -1505,13 +1591,13 @@ struct MacSettingsView: View {
         hasSavedHostToken = false
         hostExpectedID = ""
         importedHostOrigin = nil
-        withAnimation(.easeOut(duration: 0.18)) {
+        withAnimation(reduceMotion ? nil : MacDesignTokens.Motion.reveal) {
             hostConnectionState = .notConfigured
         }
     }
 
     private func importHostConnectionSetupFromPasteboard() {
-        guard let text = NSPasteboard.general.string(forType: .string),
+        guard let text = connectionPasteboard.string(forType: .string),
               let setup = MacNolaServerConnectionSetup.decode(text) else {
             hostConnectionState = .failed(
                 macSettingsText(
@@ -1555,10 +1641,12 @@ struct MacSettingsView: View {
                 ))
                     .font(.callout)
                     .foregroundStyle(.secondary)
-                let endpoints = MacAppleChatConfigurationStore.shared.endpoints()
+                let legacyEndpoints = MacAppleChatConfigurationStore.shared.endpoints()
+                let managedConnections = (try? MacModelConnectionService(application: .shared).connections()) ?? []
+                let endpointCount = legacyEndpoints.count + managedConnections.count
                 let models = MacAppleChatConfigurationStore.shared.configuredModels()
                 LabeledContent(macSettingsText("mac.settings.provider.endpoints", "Endpoints")) {
-                    Text(endpoints.count, format: .number)
+                    Text(endpointCount, format: .number)
                 }
                 LabeledContent(macSettingsText("mac.settings.provider.chat_models", "Chat models")) {
                     Text(models.count, format: .number)
@@ -1583,7 +1671,7 @@ struct MacSettingsView: View {
                             systemImage: "arrow.up.forward.app"
                         )
                     }
-                    .buttonStyle(.borderedProminent)
+                    .buttonStyle(.nolaProminent)
 
                     Button {
                         MacModelCenterNavigationState.shared.showLocalModels()
@@ -1627,18 +1715,51 @@ struct MacSettingsView: View {
                 .toggleStyle(.macSwitch)
             }
             Section(macSettingsText("mac.settings.section.context_window", "Context Window")) {
-                LabeledContent(macSettingsText("mac.settings.agent.context_default", "Default context window")) {
-                    TextField(macSettingsText("mac.settings.agent.tokens", "Tokens"), value: $contextLimit, format: .number)
-                        .frame(minWidth: 100, idealWidth: 120, maxWidth: 160)
-                        .multilineTextAlignment(.trailing)
-                        .onSubmit {
-                            contextLimit = min(max(contextLimit, 16_384), 2_000_000)
-                            MacAssistantPreferences.setContextLimit(contextLimit)
+                Picker(
+                    macSettingsText("mac.settings.agent.context_default", "Default context window"),
+                    selection: Binding<Int>(
+                        get: {
+                            usesCustomContextLimit ? -1 : ([32_768, 65_536, 131_072, 200_000].contains(contextLimit) ? contextLimit : -1)
+                        },
+                        set: { value in
+                            if value == -1 {
+                                usesCustomContextLimit = true
+                            } else {
+                                usesCustomContextLimit = false
+                                contextLimit = value
+                                commitContextLimit()
+                            }
                         }
+                    )
+                ) {
+                    Text(verbatim: "32K").tag(32_768)
+                    Text(verbatim: "64K").tag(65_536)
+                    Text(verbatim: "128K").tag(131_072)
+                    Text(verbatim: "200K").tag(200_000)
+                    Text(macSettingsText("mac.settings.agent.context_custom", "Custom")).tag(-1)
                 }
-                Text(macSettingsText("mac.settings.agent.context_commit", "Press Return to save. Supported range: 16,384–2,000,000 tokens."))
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
+                if usesCustomContextLimit {
+                    LabeledContent(macSettingsText("mac.settings.agent.tokens", "Tokens")) {
+                        TextField(macSettingsText("mac.settings.agent.tokens", "Tokens"), value: $contextLimit, format: .number)
+                            .frame(minWidth: 100, idealWidth: 120, maxWidth: 160)
+                            .multilineTextAlignment(.trailing)
+                            .focused($contextLimitFocused)
+                            .onSubmit {
+                                commitContextLimit()
+                            }
+                            .onChange(of: contextLimitFocused) { wasFocused, isFocused in
+                                if wasFocused && !isFocused {
+                                    commitContextLimit()
+                                }
+                            }
+                            .onDisappear {
+                                commitContextLimit()
+                            }
+                    }
+                    Text(macSettingsText("mac.settings.agent.context_commit", "Press Return to save. Supported range: 16,384–2,000,000 tokens."))
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
             }
             Section(macSettingsText("mac.settings.section.long_term_memory", "Long-term Memory")) {
                 VStack(alignment: .leading, spacing: 7) {
@@ -1683,9 +1804,104 @@ struct MacSettingsView: View {
                 managedServerControlCard
             }
             Section(macSettingsText("mac.settings.section.connected_host", "Connect to a Nola Server")) {
-                Text(macSettingsText("mac.settings.host.detail", "Configure a host only when remote execution is needed."))
-                    .font(.body)
+                hostConnectionStatusCard
+                if case .connected(let report) = hostConnectionState {
+                    messagingChannelStatusCard(report)
+                }
+                Button {
+                    importHostConnectionSetupFromPasteboard()
+                } label: {
+                    Label(
+                        macSettingsText("mac.settings.host.paste_setup", "Paste Connection Setup"),
+                        systemImage: "doc.on.clipboard"
+                    )
+                }
+                .buttonStyle(.bordered)
+                .accessibilityIdentifier("mac.host.pasteSetup")
+                VStack(alignment: .leading, spacing: 7) {
+                    Text(macSettingsText("mac.settings.host.url", "Nola Server URL"))
+                        .font(.callout.weight(.semibold))
+                    TextField(macSettingsText("mac.settings.host.url", "Nola Server URL"), text: Binding(get: { hostURL }, set: { value in
+                        guard value != hostURL else { return }
+                        hostToken = ""
+                        hostExpectedID = ""
+                        importedHostOrigin = nil
+                        hostURL = value
+                        markHostConfigurationEdited()
+                    }), prompt: Text("https://studio-mac.local:5001"))
+                        .labelsHidden()
+                        .accessibilityLabel(macSettingsText("mac.settings.host.url", "Nola Server URL"))
+                        .accessibilityIdentifier("mac.host.url")
+                        .textContentType(.URL)
+                        .textFieldStyle(.roundedBorder)
+                        .multilineTextAlignment(.leading)
+                        .frame(maxWidth: .infinity)
+                        .controlSize(.large)
+                }
+                VStack(alignment: .leading, spacing: 7) {
+                    Text(macSettingsText("mac.settings.host.token", "Access token"))
+                        .font(.callout.weight(.semibold))
+                    SecureField(macSettingsText("mac.settings.host.token", "Access token"), text: Binding(get: { hostToken }, set: { value in
+                            hostToken = value
+                            markHostConfigurationEdited()
+                        }),
+                        prompt: Text(hasSavedHostToken && draftMatchesSavedHost
+                            ? "••••••••" : macSettingsText("mac.settings.host.token", "Access token")))
+                        .labelsHidden()
+                        .accessibilityLabel(macSettingsText("mac.settings.host.token", "Access token"))
+                        .textContentType(.password)
+                        .textFieldStyle(.roundedBorder)
+                        .multilineTextAlignment(.leading)
+                        .frame(maxWidth: .infinity)
+                        .controlSize(.large)
+                }
+                Label(
+                    macSettingsText("mac.settings.host.security", "The access token is stored in Keychain and is sent only to this Nola Server."),
+                    systemImage: "lock.shield"
+                )
+                    .font(.caption)
                     .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+                HStack(spacing: 10) {
+                    if savedHostURL != nil {
+                        Button(role: .destructive) {
+                            showsRemoveHostConfirmation = true
+                        } label: {
+                            Label(
+                                macSettingsText("mac.settings.host.remove", "Remove Connection"),
+                                systemImage: "trash"
+                            )
+                        }
+                        .buttonStyle(.bordered)
+                        .disabled(checkingHost)
+                        .accessibilityIdentifier("mac.host.remove")
+                        .controlSize(.regular)
+                    }
+                    Spacer(minLength: 12)
+                    if checkingHost {
+                        Button(macSettingsText("mac.settings.host.cancel_verification", "Cancel Verification")) {
+                            markHostConfigurationEdited()
+                        }
+                        .accessibilityIdentifier("mac.host.cancelVerification")
+                    }
+                    Button {
+                        startHostVerification(saved: false)
+                    } label: {
+                        if case .checking = hostConnectionState {
+                            Label(
+                                macSettingsText("mac.settings.host.status.checking", "Verifying connection…"),
+                                systemImage: "network"
+                            )
+                        } else {
+                            Label(hostPrimaryActionTitle, systemImage: "checkmark.shield")
+                        }
+                    }
+                    .buttonStyle(.nolaProminent)
+                    .tint(MacDesignColor.brand)
+                    .controlSize(.large)
+                    .disabled(checkingHost || !canVerifyHostDraft)
+                    .accessibilityIdentifier("mac.host.verify")
+                }
                 DisclosureGroup {
                     VStack(alignment: .leading, spacing: 9) {
                         Text("nola server --host 0.0.0.0 --port 5001")
@@ -1708,7 +1924,7 @@ struct MacSettingsView: View {
                     Label(
                         macSettingsText(
                             "mac.settings.host.guide.start",
-                            "On the host device, start Nola Web Host and keep it running."
+                            "On the server device, start Nola Server and keep it running."
                         ),
                         systemImage: "terminal"
                     )
@@ -1716,96 +1932,6 @@ struct MacSettingsView: View {
                 .disclosureGroupStyle(MacRowDisclosureStyle())
                 .font(.callout)
                 .foregroundStyle(.secondary)
-                hostConnectionStatusCard
-                if case .connected(let report) = hostConnectionState {
-                    messagingChannelStatusCard(report)
-                }
-                Button {
-                    importHostConnectionSetupFromPasteboard()
-                } label: {
-                    Label(
-                        macSettingsText("mac.settings.host.paste_setup", "Paste Connection Setup"),
-                        systemImage: "doc.on.clipboard"
-                    )
-                }
-                .buttonStyle(.bordered)
-                VStack(alignment: .leading, spacing: 7) {
-                    Text(macSettingsText("mac.settings.host.url", "Connected host URL"))
-                        .font(.callout.weight(.semibold))
-                    TextField(macSettingsText("mac.settings.host.url", "Connected host URL"), text: Binding(get: { hostURL }, set: { value in
-                        guard value != hostURL else { return }
-                        hostToken = ""
-                        hostExpectedID = ""
-                        importedHostOrigin = nil
-                        hostURL = value
-                        markHostConfigurationEdited()
-                    }), prompt: Text("https://studio-mac.local:5001"))
-                        .labelsHidden()
-                        .accessibilityLabel(macSettingsText("mac.settings.host.url", "Connected host URL"))
-                        .textContentType(.URL)
-                        .textFieldStyle(.roundedBorder)
-                        .multilineTextAlignment(.leading)
-                        .frame(maxWidth: .infinity)
-                        .controlSize(.large)
-                }
-                VStack(alignment: .leading, spacing: 7) {
-                    Text(macSettingsText("mac.settings.host.token", "Access token"))
-                        .font(.callout.weight(.semibold))
-                    SecureField(macSettingsText("mac.settings.host.token", "Access token"), text: Binding(get: { hostToken }, set: { value in
-                            hostToken = value
-                            markHostConfigurationEdited()
-                        }),
-                        prompt: Text(hasSavedHostToken && URL(string: hostURL.trimmingCharacters(in: .whitespacesAndNewlines)) == savedHostURL
-                            ? "••••••••" : macSettingsText("mac.settings.host.token", "Access token")))
-                        .labelsHidden()
-                        .accessibilityLabel(macSettingsText("mac.settings.host.token", "Access token"))
-                        .textContentType(.password)
-                        .textFieldStyle(.roundedBorder)
-                        .multilineTextAlignment(.leading)
-                        .frame(maxWidth: .infinity)
-                        .controlSize(.large)
-                }
-                Label(
-                    macSettingsText("mac.settings.host.security", "The access token is stored in Keychain and is sent only to this host."),
-                    systemImage: "lock.shield"
-                )
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-                    .fixedSize(horizontal: false, vertical: true)
-                HStack(spacing: 10) {
-                    if hasHostDraft {
-                        Button(role: .destructive) {
-                            showsRemoveHostConfirmation = true
-                        } label: {
-                            Label(
-                                macSettingsText("mac.settings.host.remove", "Remove Connection"),
-                                systemImage: "trash"
-                            )
-                        }
-                        .buttonStyle(.bordered)
-                        .controlSize(.regular)
-                    }
-                    Spacer(minLength: 12)
-                    Button {
-                        Task { await saveAndVerifyHostConnection() }
-                    } label: {
-                        if case .checking = hostConnectionState {
-                            Label(
-                                macSettingsText("mac.settings.host.status.checking", "Verifying connection…"),
-                                systemImage: "network"
-                            )
-                        } else {
-                            Label(hostPrimaryActionTitle, systemImage: "checkmark.shield")
-                        }
-                    }
-                    .buttonStyle(.borderedProminent)
-                    .tint(MacDesignColor.brand)
-                    .controlSize(.large)
-                    .disabled({
-                        if case .checking = hostConnectionState { return true }
-                        return !canVerifyHostDraft
-                    }())
-                }
             }
 
         case .data:
@@ -1842,6 +1968,8 @@ struct MacSettingsView: View {
                         MacDebugLoggingConfiguration.apply()
                     }
                 Picker(macSettingsText("mac.settings.diagnostics.log_detail", "Log detail"), selection: $debugLoggingLevel) {
+                    Text(String(localized: "Errors")).tag("error")
+                    Text(String(localized: "Warnings")).tag("warn")
                     Text(macSettingsText("mac.settings.diagnostics.info", "Info")).tag("info")
                     Text(macSettingsText("mac.settings.diagnostics.debug", "Debug")).tag("debug")
                     Text(macSettingsText("mac.settings.diagnostics.trace", "Trace")).tag("trace")
@@ -2297,16 +2425,8 @@ struct MacApplicationStartupGate<Content: View>: View {
                                 attempt += 1
                             } label: {
                                 Text("mac.startup.incompatible.recover", tableName: "Startup")
-                                    .font(.body.weight(.medium))
-                                    .foregroundStyle(MacDesignColor.onPrimaryAction)
-                                    .padding(.horizontal, 18)
-                                    .padding(.vertical, 9)
-                                    .background(
-                                        MacDesignColor.primaryAction,
-                                        in: RoundedRectangle(cornerRadius: 8)
-                                    )
                             }
-                            .buttonStyle(.plain)
+                            .buttonStyle(.nolaProminent)
                             .accessibilityIdentifier("mac.startup.recover")
                             .keyboardShortcut(.defaultAction)
                         }

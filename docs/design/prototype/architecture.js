@@ -3,7 +3,7 @@ window.architectureModule = (() => {
     const media = window.matchMedia?.('(max-width: 700px)');
     let mode = media?.matches ? 'mobile' : 'desktop';
     const states = {
-        mobile: {page: 'conversations', id: 'design', settings: ''},
+        mobile: {page: new URLSearchParams(location.search).get('demo')==='expert-mention'?'chat':'conversations', id: 'design', settings: ''},
         desktop: {page: 'workspace', id: 'design', settings: ''}
     };
     let sidebarVisible = true,
@@ -12,6 +12,8 @@ window.architectureModule = (() => {
         extTab = 'experts',
         dataPane = 'memory',
         inspector = 'task',
+        knowledgeTab = 'points',
+        knowledgeEditing = false,
         showInspector = new URLSearchParams(location.search).get('models') !== 'empty',
         settingsOpen = false,
         settingsCategory = '',
@@ -69,13 +71,13 @@ window.architectureModule = (() => {
     }
 
     function extensionsHub() {
-        const tabs = [['experts', '专家'], ['skills', '技能'], ['mcp', 'MCP']];
+        const tabs = [['experts', '专家'], ['skills', '技能'], ['mcp', 'MCP'], ['plugins', '插件']];
         return `<section class="studio-document center-hub" aria-label="专家与技能"><header class="hub-header"><div class="tabs" role="tablist" aria-label="专家与技能分类">${tabs.map(([id, title]) => `<button type="button" role="tab" aria-selected="${extTab === id}" class="${extTab === id ? 'selected' : ''}" data-action="dk-ext-tab:${id}">${title}</button>`).join('')}</div></header><div class="hub-body">${extTab === 'experts' ? window.expertRolesModule.embeddedView() : window.manageModule.capabilitiesForKind(extTab)}</div></section>`;
     }
 
     function memoryHub() {
-        const tabs = [['memory', '记忆'], ['sources', '来源'], ['usage', '使用记录']];
-        return `<section class="prototype-data-center studio-document center-hub" aria-label="记忆与数据源"><header class="hub-header"><div class="tabs" role="tablist" aria-label="数据中心分类">${tabs.map(([id, title]) => `<button type="button" role="tab" aria-selected="${dataPane === id}" class="${dataPane === id ? 'selected' : ''}" data-action="dk-data-pane:${id}">${title}</button>`).join('')}</div></header><div class="hub-body">${dataPane === 'memory' ? workspaceModule.view('memory') : dataPane === 'sources' ? enhancedModule.view('data') : usageCenterView()}</div></section>`;
+        const tabs = [['memory', '记忆'], ['knowledge', '知识'], ['sources', '来源'], ['usage', '使用记录']];
+        return `<section class="prototype-data-center studio-document center-hub" aria-label="记忆与数据源"><header class="hub-header"><div class="tabs" role="tablist" aria-label="数据中心分类">${tabs.map(([id, title]) => `<button type="button" role="tab" aria-selected="${dataPane === id}" class="${dataPane === id ? 'selected' : ''}" data-action="dk-data-pane:${id}">${title}</button>`).join('')}</div></header><div class="hub-body">${dataPane === 'memory' ? workspaceModule.view('memory') : dataPane === 'knowledge' ? workspaceModule.view('workspace') : dataPane === 'sources' ? enhancedModule.view('data') : usageCenterView()}</div></section>`;
     }
 
     function content() {
@@ -104,22 +106,32 @@ window.architectureModule = (() => {
     function knowledgeEditors(r, c) {
         const owner = c.id,
             draftsMap = knowledgeDrafts[owner] || {},
-            expanded = knowledgeExpanded[owner] || new Set(),
             hasSummary = !!(r?.summary && r.summary !== '尚无压缩摘要。');
-        return `<div class="inspector-knowledge" data-knowledge-owner="${esc(owner)}"><div class="knowledge-counts" aria-label="会话消息与摘要统计"><span>${c.messages.length} 条原始消息</span><span>${hasSummary ? 1 : 0} 份摘要</span></div><details data-knowledge-pane="keyPointsMarkdown" ${expanded.has('keyPointsMarkdown') ? 'open' : ''}><summary>知识点</summary><label for="knowledge-${encodeURIComponent(owner)}-points">知识点草稿</label><textarea id="knowledge-${encodeURIComponent(owner)}-points" data-knowledge-field="keyPointsMarkdown" data-owner="${esc(owner)}" rows="4" placeholder="每行添加一条知识点…">${esc(draftsMap.keyPointsMarkdown ?? r?.keyPointsMarkdown ?? '')}</textarea><button class="text-action" data-action="dk-knowledge-save:keyPointsMarkdown">保存知识点演示稿</button></details><details data-knowledge-pane="wiki" ${expanded.has('wiki') ? 'open' : ''}><summary>会话 Wiki</summary><label for="knowledge-${encodeURIComponent(owner)}-wiki">Wiki草稿</label><textarea id="knowledge-${encodeURIComponent(owner)}-wiki" data-knowledge-field="wiki" data-owner="${esc(owner)}" rows="5" placeholder="用 Markdown 编写会话 Wiki…">${esc(draftsMap.wiki ?? r?.wiki ?? '')}</textarea><button class="text-action" data-action="dk-knowledge-save:wiki">保存Wiki演示稿</button></details><details data-knowledge-pane="recall" ${expanded.has('recall') ? 'open' : ''}><summary>会话回忆</summary><label for="knowledge-${encodeURIComponent(owner)}-recall">搜索原始会话</label><input id="knowledge-${encodeURIComponent(owner)}-recall" type="search" data-recall-owner="${esc(owner)}" placeholder="检索原始消息，不包含压缩摘要" value="${esc(recallQueries[owner] || '')}"><div class="recall-list">${recallMatchesHTML(c, r, recallQueries[owner] || '')}</div></details><p class="meta">仅本页演示草稿；不会修改真实会话或记忆。</p></div>`;
+        const activeField = knowledgeTab === 'wiki' ? 'wiki' : 'keyPointsMarkdown';
+        const activeText = draftsMap[activeField] ?? r?.[activeField] ?? '';
+        const tabs = [['points', '知识点'], ['wiki', 'Wiki'], ['recall', '回忆']];
+        let paneHTML = '';
+        if (knowledgeTab === 'recall') {
+            paneHTML = `<input id="knowledge-${encodeURIComponent(owner)}-recall" type="search" data-recall-owner="${esc(owner)}" placeholder="搜索本会话原始消息" value="${esc(recallQueries[owner] || '')}"><div class="recall-list">${recallMatchesHTML(c, r, recallQueries[owner] || '')}</div>`;
+        } else if (knowledgeEditing) {
+            paneHTML = `<textarea id="knowledge-${encodeURIComponent(owner)}-${activeField}" data-knowledge-field="${activeField}" data-owner="${esc(owner)}" rows="5" placeholder="${knowledgeTab === 'wiki' ? '用 Markdown 编写会话 Wiki…' : '每行添加一条知识点…'}">${esc(activeText)}</textarea><div class="action-wrap" style="margin-top:8px"><button class="primary" data-action="dk-knowledge-save:${activeField}">保存</button><button class="text-action" data-action="dk-knowledge-edit:off">取消</button></div>`;
+        } else {
+            paneHTML = `${activeText ? `<div class="prose" style="font-size:13px;line-height:1.6">${esc(activeText).split('\n\n').map(p => `<p>${p.replace(/\n/g, '<br>')}</p>`).join('')}</div>` : '<p class="meta">还没有整理内容，点击编辑开始记录。</p>'}<div class="action-wrap" style="margin-top:8px"><button class="text-action" data-action="dk-knowledge-edit:on">编辑${knowledgeTab === 'wiki' ? ' Wiki' : '知识点'}</button></div>`;
+        }
+        return `<div class="inspector-knowledge" data-knowledge-owner="${esc(owner)}"><div class="inspector-row-head"><h3>会话知识</h3><span class="meta">${c.messages.length} 条消息 · ${hasSummary ? 1 : 0} 份摘要</span></div><div class="segment" role="tablist" aria-label="会话知识切换" style="margin:8px 0 10px">${tabs.map(([id, label]) => `<button type="button" role="tab" aria-selected="${knowledgeTab === id}" class="${knowledgeTab === id ? 'selected' : ''}" data-action="dk-knowledge-tab:${id}">${label}</button>`).join('')}</div>${paneHTML}</div>`;
     }
 
     function contextPane() {
         const r = record(), c = current();
         let body = '';
         if (inspector === 'task') {
-            body = `<section class="inspector-block" aria-label="进度">${organizerModule.panel('进度')}</section><hr class="inspector-divider"><section class="inspector-block" aria-label="目标">${organizerModule.panel('目标')}</section>${c.experts.length ? `<hr class="inspector-divider"><section class="inspector-block" aria-label="协作参与者"><div class="inspector-row-head"><h3>协作参与者</h3>${btn('调整', 'experts')}</div><p class="muted" style="margin-top:4px;font-size:12px">Nola · ${esc(c.experts.join(' · '))}</p></section>` : ''}${window.expertHistoryModule?.rows(c.id) ? `<hr class="inspector-divider"><section class="inspector-block" aria-label="专家会话">${window.expertHistoryModule.rows(c.id)}</section>` : ''}`;
+            body = `<section class="inspector-block" aria-label="任务与进度">${organizerModule.panel('进度')}<details class="local-tech-details" style="margin-top:12px"><summary>阶段目标与安排</summary><div style="margin-top:8px">${organizerModule.panel('目标')}</div></details></section>${c.experts.length ? `<hr class="inspector-divider"><section class="inspector-block" aria-label="协作参与者"><div class="inspector-row-head"><h3>协作参与者</h3>${btn('调整', 'experts')}</div><p class="muted" style="margin-top:4px;font-size:12px">Nola · ${esc(c.experts.join(' · '))}</p></section>` : ''}${window.expertHistoryModule?.rows(c.id) ? `<hr class="inspector-divider"><section class="inspector-block" aria-label="专家会话">${window.expertHistoryModule.rows(c.id)}</section>` : ''}`;
         } else if (inspector === 'artifacts') {
             body = `<section class="inspector-block" aria-label="产物与资料">${deliverablesModule.panel('产物')}<div class="inspector-subsection"><div class="inspector-row-head"><h3>会话资料</h3>${btn('添加引用', 'attach')}</div>${documents.filter(d => !d.sourceId || d.sourceId === c.id).slice(0, 3).map(d => btn(esc(d.name), 'ex-source:' + documents.indexOf(d), 'desk-resource')).join('')}</div></section><hr class="inspector-divider"><section class="inspector-block" aria-label="工作区变更">${deliverablesModule.panel('审阅')}</section>`;
         } else {
             const mem = memoryMode[c.id] || '默认', ret = retrievalOn[c.id] !== false;
             const dsList = documents.map((d, idx) => ({d, idx})).filter(x => x.d.type === '数据源');
-            body = `<section class="inspector-block" aria-label="记忆与检索"><div class="inspector-kv"><label for="ctx-memory-${esc(c.id)}">长期记忆</label><select id="ctx-memory-${esc(c.id)}" data-action-change="dk-memory-mode">${['默认', '启用', '停用'].map(m => `<option ${mem === m ? 'selected' : ''}>${m}</option>`).join('')}</select></div><div class="inspector-kv"><span>使用检索</span><button role="switch" class="toggle" aria-label="在此对话中使用检索" aria-checked="${ret}" data-action="dk-retrieval-toggle"></button></div></section><hr class="inspector-divider"><section class="inspector-block" aria-label="上下文用量"><div class="context-usage"><strong>上下文用量</strong><span>尚未测量</span></div><div class="context-usage"><span>窗口上限</span><span>128k tokens（演示）</span></div><div class="context-usage"><span>缓存命中率（本会话）</span><span>未知（未上报）</span></div><details class="context-diagnostics"><summary>详细信息</summary><p>请求 #1 · 尝试 #1 · 提示缓存未上报。当前为本地静态演示，不记录内部摘要哈希。</p></details></section><hr class="inspector-divider"><section class="inspector-block" aria-label="会话知识">${knowledgeEditors(r, c)}</section><hr class="inspector-divider"><section class="inspector-block" aria-label="数据源"><div class="inspector-row-head"><h3>数据源</h3>${btn('管理', 'dk-open-sources')}</div>${dsList.map(({d, idx}) => `<div class="inspector-kv"><span>${esc(d.name)}</span><button role="switch" class="toggle" aria-label="在此对话中启用${esc(d.name)}" aria-checked="${sourceEnabled[c.id + ':' + idx] !== false}" data-action="dk-source-toggle:${idx}"></button></div>`).join('')}</section>${!browserStates[activeId] ? `<hr class="inspector-divider"><section class="inspector-block inspector-browser-setup" aria-label="托管浏览器"><div class="inspector-row-head"><h3>托管浏览器</h3><span class="badge">需要设置</span></div><p class="muted" style="font-size:12px;margin:4px 0 8px">Chrome 扩展尚未连接。仅在未连接或出错时显示此提示。</p>${btn('连接演示扩展', 'dk-browser')}</section>` : ''}`;
+            body = `<section class="inspector-block" aria-label="上下文用量"><div class="context-usage"><strong>上下文窗口</strong><span>约 12% · 128k 上限</span></div><div class="local-progress-track" style="margin:6px 0 0"><div class="local-progress-fill" style="width:12%"></div></div></section><hr class="inspector-divider"><section class="inspector-block" aria-label="会话知识">${knowledgeEditors(r, c)}</section><hr class="inspector-divider"><section class="inspector-block" aria-label="记忆与数据源"><div class="inspector-kv"><label for="ctx-memory-${esc(c.id)}">长期记忆</label><select id="ctx-memory-${esc(c.id)}" data-action-change="dk-memory-mode">${['默认', '启用', '停用'].map(m => `<option ${mem === m ? 'selected' : ''}>${m}</option>`).join('')}</select></div><div class="inspector-kv"><span>使用检索</span><button role="switch" class="toggle" aria-label="在此对话中使用检索" aria-checked="${ret}" data-action="dk-retrieval-toggle"></button></div>${dsList.map(({d, idx}) => `<div class="inspector-kv"><span>${esc(d.name)}</span><button role="switch" class="toggle" aria-label="在此对话中启用${esc(d.name)}" aria-checked="${sourceEnabled[c.id + ':' + idx] !== false}" data-action="dk-source-toggle:${idx}"></button></div>`).join('')}<div style="margin-top:8px">${btn('管理数据源…', 'dk-open-sources')}</div></section>${!browserStates[activeId] ? `<hr class="inspector-divider"><section class="inspector-block inspector-browser-setup" aria-label="托管浏览器"><div class="inspector-row-head"><h3>托管浏览器</h3><span class="badge">未连接</span></div><p class="muted" style="font-size:12px;margin:4px 0 8px">Chrome 扩展尚未连接，连接后可直接浏览网页上下文。</p>${btn('连接扩展', 'dk-browser')}</section>` : ''}<hr class="inspector-divider"><details class="context-diagnostics"><summary>诊断详情</summary><p class="meta" style="margin-top:6px">缓存命中率：未上报 · 请求 #1 · 演示模式不记录内部摘要哈希。</p></details>`;
         }
         return `<aside class="studio-inspector" aria-label="当前工作上下文" style="--inspector-width:${inspectorWidth}px"><div class="inspector-resize" role="separator" tabindex="0" aria-label="调整工作面板宽度" aria-orientation="vertical" aria-valuemin="320" aria-valuemax="480" aria-valuenow="${inspectorWidth}"></div>${window.sidebarNavigation.right(inspector)}<div class="inspector-content" data-panel-key="${activeId}:${inspector}" data-inspector-area="${inspector}">${body}<p class="desk-footnote">本地演示 · 与真实执行、文件和仓库无连接</p></div></aside>`;
     }
@@ -228,6 +240,8 @@ window.architectureModule = (() => {
         if (a === 'dk-open-sources') {openSection('memory', 'sources'); return true;}
         if (a.startsWith('dk-ext-tab:')) {extTab = a.split(':')[1]; render(); return true;}
         if (a.startsWith('dk-data-pane:')) {dataPane = a.split(':')[1]; render(); return true;}
+        if (a.startsWith('dk-knowledge-tab:')) {knowledgeTab = a.split(':')[1]; knowledgeEditing = false; render(); return true;}
+        if (a.startsWith('dk-knowledge-edit:')) {knowledgeEditing = a.split(':')[1] === 'on'; render(); return true;}
         const [key, v] = a.split(':');
         saveDraft();
         if (key === 'dk-area' || key === 'dk-panel') {
@@ -241,6 +255,8 @@ window.architectureModule = (() => {
             if (r && draft !== undefined) {
                 r[v] = draft;
                 r.version = (r.version || 1) + 1;
+                knowledgeEditing = false;
+                render();
                 toast('已保存本页演示稿');
             }
             return true;

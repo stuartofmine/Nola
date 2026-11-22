@@ -3,6 +3,7 @@ package com.nola.data.repository
 import com.nola.data.local.db.dao.NotificationDao
 import com.nola.data.local.db.entity.NotificationEntity
 import com.nola.data.remote.api.BackendApiService
+import kotlinx.coroutines.CancellationException
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
 import java.time.Instant
@@ -43,6 +44,8 @@ class NotificationRepositoryImpl @Inject constructor(
         notificationDao.markRead(id)
         try {
             api.markNotificationRead(id)
+        } catch (cancelled: CancellationException) {
+            throw cancelled
         } catch (_: Exception) { }
     }
 
@@ -50,28 +53,28 @@ class NotificationRepositoryImpl @Inject constructor(
         notificationDao.markAllRead()
         try {
             api.markAllNotificationsRead()
+        } catch (cancelled: CancellationException) {
+            throw cancelled
         } catch (_: Exception) { }
     }
 
     override suspend fun syncFromBackend() {
-        try {
-            val response = api.getNotifications(limit = 100)
-            response.notifications.forEach { dto ->
-                val now = System.currentTimeMillis()
-                notificationDao.upsert(NotificationEntity(
-                    id = dto.id,
-                    title = dto.title,
-                    body = dto.body,
-                    source = dto.source ?: "system",
-                    notificationType = dto.type ?: "message",
-                    dedupeKey = dto.dedupeKey,
-                    payloadJson = dto.payload?.let { json.encodeToString(it) } ?: "{}",
-                    isRead = dto.isRead,
-                    createdAt = parseTimestamp(dto.createdAt) ?: now,
-                    readAt = parseTimestamp(dto.readAt)
-                ))
-            }
-        } catch (_: Exception) { }
+        val response = api.getNotifications(limit = 100)
+        response.notifications.forEach { dto ->
+            val now = System.currentTimeMillis()
+            notificationDao.upsert(NotificationEntity(
+                id = dto.id,
+                title = dto.title,
+                body = dto.body,
+                source = dto.source ?: "system",
+                notificationType = dto.type ?: "message",
+                dedupeKey = dto.dedupeKey,
+                payloadJson = dto.payload?.let { json.encodeToString(it) } ?: "{}",
+                isRead = dto.isRead,
+                createdAt = parseTimestamp(dto.createdAt) ?: now,
+                readAt = parseTimestamp(dto.readAt)
+            ))
+        }
     }
 
     private fun parseTimestamp(value: String?): Long? {

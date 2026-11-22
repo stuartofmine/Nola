@@ -133,13 +133,36 @@ fn web_goal_invocation(
     crate::goal_runtime::restore_goal_execution_request(session, &goal.id)
 }
 
-// Only a new Goal may resolve the user's current explicit conversation
-// selection. Existing Goals restore their own immutable execution binding.
+const GOAL_HOST_DEFAULT_UNAVAILABLE: &str = "Choose an available default chat model in the Host model settings, then retry this Goal";
+
+// An explicitly reconfigured session can rebind on resume. When a session inherits
+// its model, only a new Goal resolves the Host default; resumed work keeps its binding.
 fn new_web_goal_invocation(
     config: &Config,
     session: &str,
 ) -> Result<crate::host_invocation_request::HostInvocationRequest, String> {
-    let body = apply_conversation_request_configuration(json!({"conversationId":session}))?;
+    web_goal_invocation_for_selection(config, session, None)
+}
+
+fn web_goal_invocation_for_selection(
+    config: &Config,
+    session: &str,
+    existing_goal: Option<&str>,
+) -> Result<crate::host_invocation_request::HostInvocationRequest, String> {
+    let mut body = conversation_request_model_configuration(json!({"conversationId":session}), true)?;
+    if body.get("modelProfileId").is_none() && body.get("model").is_none() {
+        if let Some(goal_id) = existing_goal {
+            return crate::goal_runtime::restore_goal_execution_request(session, goal_id);
+        }
+        let store = NolaStore::open_default()?;
+        let (selection, _) = host_default_chat_model(&store)?;
+        let nola_application::model_selection::ChatModelResolution::Resolved { profile_id, .. } = selection else {
+            return Err(GOAL_HOST_DEFAULT_UNAVAILABLE.into());
+        };
+        let profile = store.model_profile(&profile_id)?.ok_or(GOAL_HOST_DEFAULT_UNAVAILABLE)?;
+        body["model_intent"] = json!({"profile_id":profile.id,"expected_revision":profile.revision,
+            "tier":"balanced","overrides":{}});
+    }
     let resolved = resolve_llm_settings(&body, config, None, Some(session)).map_err(|_| {
         "Goal model configuration is unavailable; select a model in this conversation"
     })?;

@@ -34,7 +34,9 @@ internal data class ActivityDetail(val entry: ActivityEntry, val explanation: St
     val source_conversation_id: String?, val review_in_source: Boolean, val result_text: String? = null, val result_has_more: Boolean = false,
     val execution_host_id: String?, val context_scope: String)
 internal data class ActivityState(val entries: List<ActivityEntry> = emptyList(), val cursor: ActivityCursor? = null,
-    val loading: Boolean = false, val failed: Boolean = false)
+    val loading: Boolean = false, val hasLoaded: Boolean = false, val failedRequest: ActivityQuery? = null) {
+    val failed: Boolean get() = failedRequest != null
+}
 internal data class ActivityDetailState(val entry: ActivityEntry, val detail: ActivityDetail? = null,
     val loading: Boolean = true, val failed: Boolean = false)
 
@@ -74,7 +76,7 @@ internal class ActivityViewModel internal constructor(
         query = requested
         listGeneration++
         listJob?.cancel()
-        mutableState.value = if (sameQuery) mutableState.value.copy(loading = true, failed = false)
+        mutableState.value = if (sameQuery) mutableState.value.copy(loading = true, failedRequest = null)
             else ActivityState(loading = true)
         load(query, append = false)
     }
@@ -82,8 +84,14 @@ internal class ActivityViewModel internal constructor(
     fun loadMore() {
         if (mutableState.value.loading) return
         val cursor = mutableState.value.cursor ?: return
-        mutableState.value = mutableState.value.copy(loading = true, failed = false)
+        mutableState.value = mutableState.value.copy(loading = true, failedRequest = null)
         load(query.copy(cursor = cursor), append = true)
+    }
+
+    fun retry() {
+        val request = mutableState.value.failedRequest ?: return
+        if (request.cursor == null) refresh(request.source, request.needs_response, request.query)
+        else loadMore()
     }
 
     private fun load(input: ActivityQuery, append: Boolean) {
@@ -99,10 +107,11 @@ internal class ActivityViewModel internal constructor(
                 lastLoadedAt = elapsedRealtime()
                 mutableState.value = ActivityState(
                     entries = if (append) (mutableState.value.entries + page.entries).distinctBy { it.run_id } else page.entries,
-                    cursor = page.next_cursor)
+                    cursor = page.next_cursor,
+                    hasLoaded = true)
             } catch (cancel: CancellationException) { throw cancel }
             catch (_: Exception) {
-                if (generation == listGeneration) mutableState.value = mutableState.value.copy(loading = false, failed = true)
+                if (generation == listGeneration) mutableState.value = mutableState.value.copy(loading = false, failedRequest = input)
             }
         }
     }

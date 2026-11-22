@@ -299,7 +299,7 @@
     {#if notice}<p class="notice" role="status">{t($locale, notice)}</p>{/if}
     {#if busy}<p class="muted">{t($locale, 'chatPermissionMode.nextMessage')}</p>{/if}
     <label class="field">{t($locale, 'chatSession.model')}
-        <select value={modelChoice} onchange={chooseModel} disabled={modelState.disabled}>
+        <select value={modelChoice} onchange={chooseModel} disabled={modelState.disabled || !modelState.options.length}>
             <option value="auto" disabled={!modelState.options.length}>{t($locale, modelState.options.length ? 'chatSession.autoModel' : 'chatSession.invalidModel')}</option>
             {#if modelChoice.startsWith('local:') && !localModels.some(model => model.installed && `local:${model.id}` === modelChoice)}<option value={modelChoice}>{t($locale, 'chatSession.unavailableModel')}</option>{/if}
             {#if modelChoice.startsWith('cloud:') && !profiles.some(value => `cloud:${value.id}` === modelChoice)}<option value={modelChoice}>{t($locale, 'chatSession.unavailableModel')}</option>{/if}
@@ -307,7 +307,11 @@
             {#each localModels.filter(model => model.installed) as model (model.id)}<option value={`local:${model.id}`}>{model.name} · {t($locale, model.running ? 'models.running' : 'models.installed')}</option>{/each}
         </select>
     </label>
-    <p class="muted">{t($locale, 'chatSession.modelScope')}</p>
+    {#if snapshot && !loading && !catalogError && !modelState.options.length}
+        <a class="configure-model" href="/models">{t($locale, 'chatSession.configureModel')}</a>
+    {:else}
+        <p class="muted">{t($locale, 'chatSession.modelScope')}</p>
+    {/if}
     {#if loading}<p role="status">{t($locale, 'chatPage.loading')}</p>{/if}
     {#if snapshot && draft}
         <form onsubmit={save} aria-busy={saving}>
@@ -360,5 +364,6 @@
     {/if}
 </section>
 <style>
+    .configure-model { justify-self: start; display: inline-flex; align-items: center; min-height: 44px; text-decoration: underline; text-underline-offset: .2em; }
     .session-settings{display:grid;gap:12px;min-width:0}.session-settings h2{margin:0;font-size:1rem}.session-settings p{margin:0}.muted{font-size:.8125rem;color:var(--muted,#aab0bb);line-height:1.6}.field{display:grid;gap:8px;min-width:0;font-size:.8125rem;font-weight:600}.field input,.field select{width:100%;min-width:0}.numbers{display:grid;grid-template-columns:repeat(auto-fit,minmax(135px,1fr));gap:16px}.actions{display:flex;justify-content:flex-end;gap:8px;margin-top:14px}.error{color:var(--danger,#f28484);font-size:12px}.notice{color:var(--accent,#76c7ad);font-size:12px}
 </style>

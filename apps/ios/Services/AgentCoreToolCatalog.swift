@@ -50,9 +50,10 @@ public enum AgentCoreToolCatalog {
         case .deviceLocal, .hybrid: candidates = deviceTools
         }
         let manifests = candidates.compactMap { manifest(for: $0) }
-        var capabilities = Set(["none", "files_read", "files_write"])
+        var capabilities = Set(["none", "files_read", "files_write", "network"])
         var authorizations: [String: String] = [
             "none": "granted",
+            "network": "granted",
             "files_read": "ask",
             "files_write": "ask",
             "clipboard": isForeground ? "ask" : "unavailable",
@@ -81,6 +82,7 @@ public enum AgentCoreToolCatalog {
                 tools: manifests
             ),
             conversation: AgentCoreConversationToolPolicy(
+                mode: mode.rawValue,
                 allowedTools: allowedTools.sorted(),
                 deniedTools: deniedTools.sorted()
             ),
@@ -158,6 +160,19 @@ public enum AgentCoreToolCatalog {
     }
 
     static let deviceTools: [AgentCoreJSONValue] = [
+        tool(id: "device.skills.find_github", name: "device_github_skill_find",
+             description: "Search public GitHub repositories by Skill name, or inspect a GitHub URL for installable Skill packages on this device. If more than one matches, ask which the user wants.",
+             capability: "network", effect: "read", risk: "safe", permissionRisk: "ordinary_read",
+             properties: ["query": stringProperty("Skill repository search or HTTPS GitHub repository or directory URL")], required: ["query"]),
+        tool(id: "device.skills.install_github", name: "device_github_skill_install",
+             description: "Download and enable a public GitHub Skill on this device so it is available in future local conversations. A collection URL may return choices.",
+             capability: "network", effect: "write", risk: "destructive", permissionRisk: "overwrite",
+             properties: ["url": stringProperty("HTTPS GitHub repository, directory or SKILL.md link")], required: ["url"]),
+        tool(id: "device.skills.read_resource", name: "device_skill_read_resource",
+             description: "Read one UTF-8 file from a GitHub Skill already invoked in this session. Use for package scripts, templates, references and manifest dependencies.",
+             capability: "none", effect: "read", risk: "safe", permissionRisk: "ordinary_read",
+             properties: ["skill": stringProperty("Exact invoked Skill name"), "path": stringProperty("Resource path relative to the Skill directory")],
+             required: ["skill", "path"]),
         tool(
             id: "device.skills.invoke",
             name: "skill_invoke",

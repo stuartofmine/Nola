@@ -237,6 +237,12 @@ pub fn download(source: &UpdateSource, target: &str, expected_id: &str, director
     };
     fs::create_dir_all(directory).map_err(|_| error("write_failed", "Cannot create update download directory"))?;
     let final_path = directory.join(format!("{}-{}", &offer.release_id[..16], filename));
+    const ALREADY_EXISTS: &str = "A package already exists; choose another directory or remove that update download explicitly";
+    match fs::symlink_metadata(&final_path) {
+        Ok(_) => return Err(error("write_failed", ALREADY_EXISTS)),
+        Err(cause) if cause.kind() == std::io::ErrorKind::NotFound => {}
+        Err(_) => return Err(error("write_failed", "Cannot inspect update package destination")),
+    }
     let mut temporary = tempfile::NamedTempFile::new_in(directory).map_err(|_| error("write_failed", "Cannot stage update package"))?;
     let mut reader = transport.get(&https_url(url)?)?;
     let mut hasher = Sha256::new(); let mut total = 0_u64; let mut chunk = [0_u8; 65536];
@@ -250,7 +256,10 @@ pub fn download(source: &UpdateSource, target: &str, expected_id: &str, director
     }
     if total != size || hex::encode(hasher.finalize()) != *digest { return Err(error("package_invalid", "Downloaded package failed size or SHA-256 verification")); }
     temporary.as_file().sync_all().map_err(|_| error("write_failed", "Cannot flush update package"))?;
-    temporary.persist_noclobber(&final_path).map_err(|_| error("write_failed", "A package already exists; choose another directory or remove that update download explicitly"))?;
+    temporary.persist_noclobber(&final_path).map_err(|failure| {
+        if failure.error.kind() == std::io::ErrorKind::AlreadyExists { error("write_failed", ALREADY_EXISTS) }
+        else { error("write_failed", "Cannot publish verified update package") }
+    })?;
     Ok(final_path)
 }
 

@@ -20,6 +20,7 @@ struct MacCommandPaletteView: View {
     @FocusState private var searchFocused: Bool
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @Environment(\.openWindow) private var openWindow
+    @Environment(\.openSettings) private var openSettings
 
     private var normalizedQuery: String {
         query.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -121,6 +122,13 @@ struct MacCommandPaletteView: View {
                                 Text(String(localized: "No matching conversations or commands"))
                                     .font(.system(size: 11.5))
                                     .foregroundStyle(.secondary)
+                                if !query.isEmpty {
+                                    Button(String(localized: "Clear Search")) {
+                                        query = ""
+                                    }
+                                    .buttonStyle(MacActionButtonStyle())
+                                    .foregroundStyle(MacDesignColor.brand)
+                                }
                             }
                             .frame(maxWidth: .infinity)
                             .padding(.vertical, 44)
@@ -143,12 +151,6 @@ struct MacCommandPaletteView: View {
         }
         .frame(width: paletteWidth, height: paletteHeight)
         .background(MacDesignColor.chrome)
-        .clipShape(RoundedRectangle(cornerRadius: MacDesignTokens.Radius.floating, style: .continuous))
-        .overlay {
-            RoundedRectangle(cornerRadius: MacDesignTokens.Radius.floating, style: .continuous)
-                .stroke(MacDesignColor.borderSubtle, lineWidth: 0.5)
-        }
-        .shadow(color: Color.black.opacity(0.16), radius: 24, y: 10)
         .onAppear {
             searchFocused = true
             resetSelection()
@@ -219,7 +221,7 @@ struct MacCommandPaletteView: View {
                 shortcut: "⇧⌘O"
             ) {
                 dismiss()
-                model.chooseWorkspace()
+                Task { await model.chooseWorkspace() }
             },
             PaletteCommand(
                 id: "execution-local",
@@ -309,7 +311,7 @@ struct MacCommandPaletteView: View {
                 shortcut: "⌘,"
             ) {
                 dismiss()
-                NSApp.sendAction(Selector(("showSettingsWindow:")), to: nil, from: nil)
+                openSettings()
             },
         ]
     }
@@ -340,7 +342,7 @@ struct MacCommandPaletteView: View {
     }
 
     private func sectionLabel(_ title: String) -> some View {
-        Text(String(localized: String.LocalizationValue(title)))
+        Text(title)
             .font(.system(size: 10.5, weight: .semibold))
             .foregroundStyle(.tertiary)
             .padding(.horizontal, 10)

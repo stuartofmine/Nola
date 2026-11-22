@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 //! Compare fresh execution facts against the immutable Core-owned Run policy.
 use nola_agent_engine::agent::{
-    context_window::ContextWindowConfig, host::HostCapabilityCatalog,
+    context_window::ContextWindowConfig, host::{HostCapabilityCatalog, HostCapabilityRoute},
     permissions::PermissionRuleSet, protocol::AgentCoreConfig,
 };
 use nola_host_protocol::HostInvocationBinding;
@@ -64,7 +64,7 @@ fn validate_recovery_authority<R: RunRecoveryInspectionRepository + ?Sized>(
     if exact.invocation_config_digest != expected_invocation_config_digest || exact.status == "sealed" {
         return Err("Recovery invocation witness changed".into());
     }
-    if mobile { restore_core_delegation_observation(&frozen, &mut current)?; }
+    if mobile { prepare_mobile_observation(&frozen, &mut current)?; }
     let now_ms = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .map_err(|_| "Recovery clock is unavailable")?.as_millis() as u64;
@@ -75,9 +75,21 @@ fn validate_recovery_authority<R: RunRecoveryInspectionRepository + ?Sized>(
     })
 }
 
-fn restore_core_delegation_observation(
+fn prepare_mobile_observation(
     frozen: &AgentCoreConfig, current: &mut RunRecoveryAuthority,
 ) -> Result<(), String> {
+    // A Goal admitted from a terminal conversation can have the history
+    // projection: no model tools and only non-tool Host routes. Re-observe
+    // exactly that projection of the live device. Only the comparison input
+    // is narrowed; the committed Run and its pending effects stay untouched.
+    if frozen.tools.is_empty() && frozen.turn_identity.host_recovery.as_ref()
+        .is_some_and(|reference| reference.adapter == "embedded-goal-invocation")
+        && frozen.host_catalog.as_ref().is_some_and(|catalog| catalog.capabilities.values()
+            .all(|capability| capability.route != HostCapabilityRoute::Tool)) {
+        if let Some(catalog) = current.host_catalog.as_mut() {
+            catalog.capabilities.retain(|_, capability| capability.route != HostCapabilityRoute::Tool);
+        }
+    }
     if frozen.turn_identity.delegation.is_some() {
         // capture_parent installs this Core handler. It does not require an
         // expiring device manifest and is never synthesized from user text.
@@ -125,9 +137,10 @@ pub(crate) fn validate_facts(
     if frozen.permission_rules != current.permission_rules {
         return Err("Recovery permission authority changed".into());
     }
-    if serde_json::to_value(&frozen.context_window).map_err(|_| "Invalid frozen context policy")?
-        != serde_json::to_value(&current.context_window)
-            .map_err(|_| "Invalid current context policy")?
+    // The Run captures the effective Core budget. A Host may still present the
+    // original declaration (e.g. a prompt limit above window minus output).
+    if frozen.context_window.clone().normalized().budget_facts()
+        != current.context_window.clone().normalized().budget_facts()
     {
         return Err("Recovery context policy changed".into());
     }
@@ -285,6 +298,39 @@ mod tests {
     }
 
     #[test]
+    fn mobile_catalog_projection_is_limited_to_tool_free_embedded_goals() {
+        let mut device = crate::user_input_wait_tests::config();
+        device.turn_identity.host_invocation = Some(crate::run_recovery_port_tests::recovery_host_binding("fixture"));
+        let current = RunRecoveryAuthority {
+            host_catalog: device.host_catalog.clone(), tools: device.tools.clone(),
+            permission_rules: device.permission_rules.clone(), context_window: device.context_window.clone(),
+            host_invocation: device.turn_identity.host_invocation.clone().unwrap(),
+        };
+        let validate = |frozen: &AgentCoreConfig, mut observed: RunRecoveryAuthority| -> Result<(), String> {
+            prepare_mobile_observation(frozen, &mut observed)?;
+            validate_facts(frozen, &observed, 0)
+        };
+        let mut narrow = device.clone();
+        narrow.tools.clear();
+        narrow.host_catalog.as_mut().unwrap().capabilities.retain(|_, cap| cap.route != HostCapabilityRoute::Tool);
+        assert!(validate(&narrow, current.clone()).is_err(), "ordinary Runs require their original catalog");
+        narrow.turn_identity.host_recovery = Some(nola_host_protocol::HostRunRecoveryReference {
+            adapter: "embedded-goal-invocation".into(), handle: "conversation:goal".into(), sha256: "a".repeat(64),
+        });
+        validate(&narrow, current.clone()).unwrap();
+        let mut other_host = current.clone();
+        other_host.host_catalog.as_mut().unwrap().host_id = nola_host_protocol::HostId("another-host".into());
+        assert!(validate(&narrow, other_host).is_err());
+        let mut extra_internal = current.clone();
+        extra_internal.host_catalog.as_mut().unwrap().capabilities.get_mut("read_file").unwrap().route = HostCapabilityRoute::Storage;
+        assert!(validate(&narrow, extra_internal).is_err());
+        device.turn_identity.host_recovery = narrow.turn_identity.host_recovery;
+        let mut missing_tool = current;
+        missing_tool.host_catalog.as_mut().unwrap().capabilities.remove("read_file");
+        assert!(validate(&device, missing_tool).is_err(), "a tool-enabled Goal requires every admitted native descriptor");
+    }
+
+    #[test]
     fn mobile_parent_restores_only_its_frozen_core_capability() {
         let mut base = crate::user_input_wait_tests::config();
         base.turn_identity.host_invocation = Some(crate::run_recovery_port_tests::recovery_host_binding("fixture"));
@@ -301,16 +347,16 @@ mod tests {
             }).unwrap();
         assert!(frozen.turn_identity.delegation.is_some());
         assert!(validate_facts(&frozen, &current, 0).is_err());
-        restore_core_delegation_observation(&frozen, &mut current).unwrap();
+        prepare_mobile_observation(&frozen, &mut current).unwrap();
         validate_facts(&frozen, &current, 0).unwrap();
         assert_eq!(current.tools, frozen.tools);
         let mut missing_native = current.clone();
         missing_native.tools.retain(|t| t.pointer("/function/name").and_then(Value::as_str) != Some("read_file"));
-        assert!(restore_core_delegation_observation(&frozen, &mut missing_native).is_err());
+        assert!(prepare_mobile_observation(&frozen, &mut missing_native).is_err());
         for name in ["spawn_agent", "send_agent_message", "read_task", "wait_task"] {
             let mut changed = current.clone();
             changed.host_catalog.as_mut().unwrap().capabilities.get_mut(name).unwrap().title = "changed".into();
-            assert!(restore_core_delegation_observation(&frozen, &mut changed).is_err());
+            assert!(prepare_mobile_observation(&frozen, &mut changed).is_err());
         }
     }
 
@@ -352,6 +398,19 @@ mod tests {
             "b".repeat(64)
         );
     }
+    #[test]
+    fn accepts_original_budget_after_core_clamps_the_prompt_limit() {
+        let (mut frozen, mut current) = fixture();
+        current.context_window.context_window_tokens = 64_000;
+        current.context_window.reserved_output_tokens = 16_384;
+        current.context_window.prompt_token_limit = Some(48_000);
+        frozen.context_window = current.context_window.clone().normalized();
+        assert_eq!(frozen.context_window.prompt_token_limit, Some(47_616));
+        validate_facts(&frozen, &current, 0).unwrap();
+        current.context_window.prompt_token_limit = Some(47_615);
+        assert!(validate_facts(&frozen, &current, 0).is_err());
+    }
+
     #[test]
     fn rejects_real_permission_schema_host_and_context_changes() {
         let (frozen, current) = fixture();

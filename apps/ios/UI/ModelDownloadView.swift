@@ -19,12 +19,14 @@ import Combine
 
 struct ModelDownloadView: View {
     var embedded = false
+    var onSelectModel: ((ModelInfo) -> Void)? = nil
     @Environment(\.dismiss) private var dismiss
     @EnvironmentObject private var container: ServiceContainer
     @State private var showingDeleteAlert = false
     @State private var modelToDelete: ModelDownloader.ModelType?
     @State private var refreshTrigger = false
     @State private var operationError: String?
+    @State private var selectedModelID: String? = nil
     
     private var downloader: ModelDownloader {
         container.modelDownloader
@@ -51,6 +53,32 @@ struct ModelDownloadView: View {
                     }
                     
                     statusCard
+
+                    HStack(spacing: 10) {
+                        Label(
+                            NSLocalizedString("model.download.source.label", value: "Download Source", comment: "Local model download source label"),
+                            systemImage: "globe"
+                        )
+                        .font(.caption.weight(.medium))
+                        .foregroundStyle(.secondary)
+                        Spacer(minLength: 8)
+                        Picker(
+                            NSLocalizedString("model.download.source.label", value: "Download Source", comment: "Local model download source label"),
+                            selection: Binding(
+                                get: { downloader.preferredSource },
+                                set: { downloader.preferredSource = $0 }
+                            )
+                        ) {
+                            ForEach(ModelDownloader.ModelSource.allCases) { source in
+                                Text(source.displayName).tag(source)
+                            }
+                        }
+                        .pickerStyle(.menu)
+                        .labelsHidden()
+                        .disabled(downloader.isDownloading)
+                        .accessibilityIdentifier("model.download.source.picker")
+                    }
+                    .padding(.top, 2)
                 }
             }
             
@@ -59,6 +87,10 @@ struct ModelDownloadView: View {
                     ModelRow(
                         model: model,
                         downloader: downloader,
+                        isSelected: selectedModelID == model.rawValue,
+                        onSelect: {
+                            selectLocalModel(model)
+                        },
                         onDelete: {
                             modelToDelete = model
                             showingDeleteAlert = true
@@ -87,6 +119,13 @@ struct ModelDownloadView: View {
                     Button(L10n.close) { dismiss() }
                 }
             }
+        }
+        .onAppear {
+            let current = container.chatManager.getCurrentModel() ?? ModelSelectionManager.getLastSelectedModel()
+            selectedModelID = current?.isLocal == true ? current?.id : nil
+        }
+        .onReceive(container.chatManager.$selectedModelInfo) { info in
+            selectedModelID = info?.isLocal == true ? info?.id : nil
         }
         .onReceive(container.modelDownloader.objectWillChange) { _ in
             refreshTrigger.toggle()
@@ -121,32 +160,36 @@ struct ModelDownloadView: View {
                         .foregroundColor(.orange)
                 case .downloading(let progress):
                     VStack(alignment: .leading, spacing: 8) {
-                        Label(L10n.modelStatusDownloading, systemImage: "arrow.down.circle.fill")
-                            .foregroundColor(DesignTokens.primaryColor)
+                        Label(
+                            downloader.activeModel.map { "\(L10n.modelStatusDownloading) · \($0.displayName)" } ?? L10n.modelStatusDownloading,
+                            systemImage: "arrow.down.circle.fill"
+                        )
+                        .foregroundColor(DesignTokens.primaryColor)
                         
                         ProgressView(value: progress)
                             .tint(DesignTokens.primaryColor)
                         
-                            HStack {
+                        HStack {
                             Text(String(format: L10n.modelDownloadProgressFormat, Int(progress * 100)))
                                 .font(.caption)
                                 .fontWeight(.medium)
+                                .monospacedDigit()
                             
                             Spacer()
                             
-                            // Comment in English.
                             if downloader.totalBytes > 0 {
-                                Text(String(format: L10n.modelDownloadByteProgressFormat, DisplayFormatters.byteSize(downloader.downloadedBytes), DisplayFormatters.byteSize(downloader.totalBytes)))
+                                Text(String(format: L10n.modelDownloadByteProgressFormat, DisplayFormatters.gigabyteSize(downloader.downloadedBytes), DisplayFormatters.gigabyteSize(downloader.totalBytes)))
                                     .font(.caption2)
                                     .foregroundColor(.secondary)
+                                    .monospacedDigit()
                             }
                         }
                         
-                        // Comment in English.
                         if downloader.downloadSpeed > 0 {
                             Text(String(format: L10n.modelDownloadSpeedFormat, DisplayFormatters.transferRate(downloader.downloadSpeed)))
                                 .font(.caption2)
                                 .foregroundColor(.secondary)
+                                .monospacedDigit()
                         }
                     }
                 case .downloaded:
@@ -179,6 +222,7 @@ struct ModelDownloadView: View {
                             .accessibilityLabel(NSLocalizedString("model.action.pause", value: "Pause download", comment: "Local model action"))
                             .font(.title2)
                     }
+                    .buttonStyle(.borderless)
                     
                     Button {
                         downloader.cancelDownload()
@@ -189,6 +233,7 @@ struct ModelDownloadView: View {
                             .font(.title2)
                             .foregroundColor(.red)
                     }
+                    .buttonStyle(.borderless)
                 }
             } else if case .paused = downloader.state {
                 Button {
@@ -200,6 +245,7 @@ struct ModelDownloadView: View {
                         .font(.title2)
                         .foregroundColor(DesignTokens.primaryColor)
                 }
+                .buttonStyle(.borderless)
             }
         }
         .padding()
@@ -207,6 +253,24 @@ struct ModelDownloadView: View {
         .cornerRadius(10)
     }
     
+    private func selectLocalModel(_ model: ModelDownloader.ModelType) {
+        operationError = nil
+        let info = model.canonicalModelInfo
+        ModelSelectionManager.addModel(info)
+        if let onSelectModel {
+            onSelectModel(info)
+            selectedModelID = info.id
+            return
+        }
+        do {
+            try ModelSelectionManager.commitSelectedModel(info, using: container.applicationRuntime)
+            container.chatManager.selectModel(info, persistAsDefault: false)
+            selectedModelID = info.id
+        } catch {
+            operationError = error.localizedDescription
+        }
+    }
+
     private func deleteModel(_ model: ModelDownloader.ModelType) {
         operationError = nil
         do {
@@ -242,9 +306,8 @@ struct ModelDownloadView: View {
             } label: {
                 HStack {
                     Image(systemName: "play.circle.fill")
-                            .frame(minWidth: 44, minHeight: 44)
-                            .accessibilityLabel(NSLocalizedString("model.action.resume", value: "Resume download", comment: "Local model action"))
                         .foregroundColor(.green)
+                        .accessibilityHidden(true)
                     VStack(alignment: .leading, spacing: 2) {
                         Text(L10n.modelLocalTestTitle)
                             .fontWeight(.medium)
@@ -288,11 +351,13 @@ struct ModelDownloadView: View {
                 Text(L10n.modelDiskDownloadedSize)
                 Spacer()
                 if downloader.isDownloading {
-                    Text(DisplayFormatters.byteSize(downloader.downloadedBytes))
+                    Text(DisplayFormatters.gigabyteSize(downloader.downloadedBytes))
                         .foregroundColor(DesignTokens.primaryColor)
+                        .monospacedDigit()
                 } else {
-                    Text(DisplayFormatters.byteSize(downloader.diskUsage))
+                    Text(DisplayFormatters.gigabyteSize(downloader.diskUsage))
                         .foregroundColor(.secondary)
+                        .monospacedDigit()
                 }
             }
             
@@ -339,12 +404,12 @@ struct ModelDownloadView: View {
 struct ModelRow: View {
     let model: ModelDownloader.ModelType
     @ObservedObject var downloader: ModelDownloader
+    let isSelected: Bool
+    let onSelect: () -> Void
     let onDelete: () -> Void
     
-    // Comment in English.
-    private var modelDirectoryExists: Bool {
-        let modelPath = downloader.getModelPath(for: model)
-        return FileManager.default.fileExists(atPath: modelPath.path)
+    private var hasIncompleteDirectory: Bool {
+        downloader.hasIncompleteDownload(model)
     }
     
     var body: some View {
@@ -358,9 +423,10 @@ struct ModelRow: View {
                         .foregroundColor(.secondary)
                         .fixedSize(horizontal: false, vertical: true)
 
-                    Text(String(format: L10n.modelDownloadSizeFormat, DisplayFormatters.byteSize(model.totalSize)))
+                    Text(String(format: L10n.modelDownloadSizeFormat, DisplayFormatters.gigabyteSize(model.totalSize)))
                         .font(.caption)
                         .foregroundColor(.secondary)
+                        .monospacedDigit()
                 }
                 
                 Spacer()
@@ -398,17 +464,36 @@ struct ModelRow: View {
                     }
                     .buttonStyle(.borderless)
                 } else if downloader.isModelDownloaded(model) {
-                    // Comment in English.
-                    Button(role: .destructive) {
-                        onDelete()
-                    } label: {
-                        Image(systemName: "trash")
-                            .frame(minWidth: 44, minHeight: 44)
-                            .accessibilityLabel(NSLocalizedString("model.delete.confirm", value: "Delete model", comment: "Local model action"))
-                            .foregroundColor(.red)
+                    HStack(spacing: 8) {
+                        if isSelected {
+                            Label(
+                                NSLocalizedString("model.center.selected", value: "Selected", comment: "Selected model badge"),
+                                systemImage: "checkmark.circle.fill"
+                            )
+                            .font(.caption.weight(.medium))
+                            .foregroundStyle(DesignTokens.successColor)
+                        } else {
+                            Button {
+                                onSelect()
+                            } label: {
+                                Text(L10n.modelActionUse)
+                            }
+                            .buttonStyle(.borderedProminent)
+                            .controlSize(.small)
+                            .accessibilityIdentifier("model.download.use.\(model.rawValue)")
+                        }
+
+                        Button(role: .destructive) {
+                            onDelete()
+                        } label: {
+                            Image(systemName: "trash")
+                                .frame(minWidth: 44, minHeight: 44)
+                                .accessibilityLabel(NSLocalizedString("model.delete.confirm", value: "Delete model", comment: "Local model action"))
+                                .foregroundColor(.red)
+                        }
+                        .buttonStyle(.borderless)
                     }
-                    .buttonStyle(.borderless)
-                } else if modelDirectoryExists {
+                } else if hasIncompleteDirectory {
                     // Comment in English.
                     HStack(spacing: 8) {
                         Button(role: .destructive) {
@@ -449,9 +534,10 @@ struct ModelRow: View {
                     systemImage: "text.line.first.and.arrowtriangle.forward"
                 )
                 Label(
-                    String(format: NSLocalizedString("model.download.runtime_memory_format", value: "~%@ at 64K", comment: "Estimated local model runtime memory at 64K context"), DisplayFormatters.byteSize(model.estimatedRuntimeBytesAt64K)),
+                    String(format: NSLocalizedString("model.download.runtime_memory_format", value: "~%@ at 64K", comment: "Estimated local model runtime memory at 64K context"), DisplayFormatters.gigabyteSize(model.estimatedRuntimeBytesAt64K)),
                     systemImage: "memorychip"
                 )
+                .monospacedDigit()
                 if model.isRecommendedForCurrentDevice {
                     Label(
                         NSLocalizedString("model.download.recommended", value: "Recommended", comment: "Local model recommendation badge"),
@@ -464,39 +550,19 @@ struct ModelRow: View {
             .font(.caption2.weight(.medium))
             .foregroundStyle(.secondary)
             
-            // Comment in English.
             if downloader.isTransferring(model), case .downloading(let progress) = downloader.state {
-                VStack(alignment: .leading, spacing: 6) {
-                    ProgressView(value: progress)
-                        .tint(DesignTokens.primaryColor)
-                    
-                    HStack {
-                        Text(String(format: L10n.modelDownloadProgressFormat, Int(progress * 100)))
-                            .font(.caption)
-                            .fontWeight(.medium)
-                        
-                        Spacer()
-                        
-                        if downloader.totalBytes > 0 {
-                                Text(String(format: L10n.modelDownloadByteProgressFormat, DisplayFormatters.byteSize(downloader.downloadedBytes), DisplayFormatters.byteSize(downloader.totalBytes)))
-                                .font(.caption2)
-                                .foregroundColor(.secondary)
-                        }
-                    }
-                    
-                    if downloader.downloadSpeed > 0 {
-                        Text(String(format: L10n.modelDownloadSpeedFormat, DisplayFormatters.transferRate(downloader.downloadSpeed)))
-                            .font(.caption2)
-                            .foregroundColor(.secondary)
-                    }
-                }
-                .padding(.top, 4)
+                Label(
+                    String(format: L10n.modelDownloadProgressFormat, Int(progress * 100)),
+                    systemImage: "arrow.down.circle.fill"
+                )
+                .font(.caption.weight(.medium))
+                .foregroundStyle(DesignTokens.primaryColor)
+                .monospacedDigit()
             } else if downloader.isModelDownloaded(model) {
                 Label(L10n.modelDownloadAvailableOffline, systemImage: "checkmark.circle.fill")
                     .font(.caption)
                     .foregroundColor(.green)
-            } else if modelDirectoryExists {
-                // Comment in English.
+            } else if hasIncompleteDirectory {
                 Label(L10n.modelDownloadIncomplete, systemImage: "exclamationmark.triangle.fill")
                     .font(.caption)
                     .foregroundColor(.orange)

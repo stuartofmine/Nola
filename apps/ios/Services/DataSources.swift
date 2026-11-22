@@ -121,6 +121,12 @@ public final class ContactsDataSource: DataSource, @unchecked Sendable {
             throw DataSourceError.permissionDenied(source: "Contacts")
         }
         
+        return try await readBirthdays(in: range)
+    }
+
+    func readBirthdays(in range: DateInterval) async throws -> [RawEvent] {
+        guard DataSourcePermissionManager.shared.checkContactsPermission().isAuthorized else { return [] }
+        let logger = Logger()
         // Perform contact enumeration on background thread (blocking operation)
         // CNContactStore is safe to use off main thread
         let result = try await Task.detached { [store] in
@@ -216,9 +222,12 @@ public final class CalendarsDataSource: DataSource, @unchecked Sendable {
             }
         }
         
-        let status = EKEventStore.authorizationStatus(for: .event)
-        Logger().log(.debug, "CalendarsDataSource", "Permission status", metadata: ["status": "\(status.rawValue)"])
-        
+        return readCalendarEvents(in: range, store: store)
+    }
+
+    @MainActor
+    func readCalendarEvents(in range: DateInterval, store: EKEventStore = EKEventStore()) -> [RawEvent] {
+        guard AuthorizationStatus(from: EKEventStore.authorizationStatus(for: .event)).isAuthorized else { return [] }
         let predicate = store.predicateForEvents(withStart: range.start, end: range.end, calendars: nil)
         let ekEvents = store.events(matching: predicate)
         
@@ -276,9 +285,12 @@ public final class RemindersDataSource: DataSource, @unchecked Sendable {
             }
         }
         
-        let status = EKEventStore.authorizationStatus(for: .reminder)
-        Logger().log(.debug, "RemindersDataSource", "Permission status", metadata: ["status": "\(status.rawValue)"])
-        
+        return try await readReminders(in: range, store: store)
+    }
+
+    @MainActor
+    func readReminders(in range: DateInterval, store: EKEventStore = EKEventStore()) async throws -> [RawEvent] {
+        guard AuthorizationStatus(from: EKEventStore.authorizationStatus(for: .reminder)).isAuthorized else { return [] }
         let predicate = store.predicateForReminders(in: nil) // All calendars
         
         // fetchReminders callback executes on main thread

@@ -375,7 +375,7 @@ mod local {
                 .map_err(|error| format!("create service socket directory failed: {error}"))?;
         }
         #[cfg(windows)]
-        nola_credential_host::windows_permissions::protect_private_path(
+        nola_windows_permissions::protect_private_path(
             socket_path.parent().ok_or_else(|| "service socket must have a private directory".to_string())?
         )?;
         if socket_path.exists() {

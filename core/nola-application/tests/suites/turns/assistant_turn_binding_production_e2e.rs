@@ -1409,20 +1409,40 @@ fn goal_step_admits_once_recovers_exact_round_and_consumes_its_seal() {
 }
 
 #[test]
-fn goal_step_pause_persists_interrupt_before_native_executor_attaches() {
-    assert_goal_pause_interrupt(false);
+fn goal_pause_then_cancel_keeps_the_original_run_until_host_acknowledgement() {
+    assert_goal_pause_interrupt(GoalPauseEntry::Direct);
 }
 
 #[test]
-fn queued_goal_pause_uses_the_same_interrupt_before_model_dispatch() {
-    assert_goal_pause_interrupt(true);
+fn queued_goal_pause_then_cancel_keeps_the_original_run_until_host_acknowledgement() {
+    assert_goal_pause_interrupt(GoalPauseEntry::Queued);
 }
 
-fn assert_goal_pause_interrupt(queued_boundary: bool) {
+#[test]
+fn unavailable_host_goal_pause_then_cancel_keeps_the_original_run_until_host_acknowledgement() {
+    assert_goal_pause_interrupt(GoalPauseEntry::HostUnavailable);
+}
+
+enum GoalPauseEntry { Direct, Queued, HostUnavailable }
+
+fn assert_goal_pause_interrupt(entry: GoalPauseEntry) {
     use nola_application::{execute_application_command,ApplicationCommand};
     let directory=tempfile::tempdir().unwrap();
     let mut store=NolaStore::open(directory.path().join("goal-stop.db")).unwrap();
-    let previous=begin_assistant_turn(&mut store,memory_begin_command("goal-stop-owner",1000,false,(None,None))).unwrap();
+    let mut previous_input = memory_begin_command("goal-stop-owner",1000,false,(None,None));
+    let device = &mut previous_input.core_config;
+    device.turn_identity.host_recovery = None;
+    let capabilities = &mut device.host_catalog.as_mut().unwrap().capabilities;
+    let mut cancel = capabilities["model.stream"].clone();
+    cancel.id = "host.cancel".into();
+    cancel.route = HostCapabilityRoute::Tool;
+    capabilities.insert(cancel.id.clone(), cancel);
+    let observed = nola_application::RunRecoveryAuthority {
+        host_catalog: device.host_catalog.clone(), tools: device.tools.clone(),
+        permission_rules: device.permission_rules.clone(), context_window: device.context_window.clone(),
+        host_invocation: device.turn_identity.host_invocation.clone().unwrap(),
+    };
+    let previous=begin_assistant_turn(&mut store,previous_input).unwrap();
     complete_begun(&mut store,&previous,1100);
     let step=|control:serde_json::Value|serde_json::from_value::<ApplicationCommand>(serde_json::json!({
         "type":"step_goal","conversation_id":CONVERSATION,"source_host_id":"isolated-host","control":if control.is_null(){serde_json::Value::Null}else{serde_json::to_value(nola_application::goal_control_intent::prepare(serde_json::from_value(control).unwrap(), chrono::Utc::now().timestamp_millis()).unwrap()).unwrap()}})).unwrap();
@@ -1434,7 +1454,16 @@ fn assert_goal_pause_interrupt(queued_boundary: bool) {
     let pause=step(serde_json::json!({
         "conversation_id":CONVERSATION,"operation_id":"goal-stop-pause","action":"pause","expected_goal_id":observation["goal_id"],
         "expected_control_token":observation["control_token"],"objective":"","constraints":[],"wake_at_epoch_ms":null}));
-    let stopped=if queued_boundary {
+    let stopped=if matches!(entry, GoalPauseEntry::HostUnavailable) {
+        let command = serde_json::from_value(serde_json::json!({
+            "type":"step_goal", "conversation_id":CONVERSATION, "source_host_id":"isolated-host", "host_available":false
+        })).unwrap();
+        let unavailable = execute_application_command(&mut store, command).unwrap();
+        assert_eq!(unavailable["goal"]["status"], "paused");
+        assert_eq!(unavailable["interrupted_run_id"], run);
+        assert_eq!(unavailable["instruction"], serde_json::json!({"type":"wait","reason":"host_unavailable"}));
+        execute_application_command(&mut store, step(serde_json::Value::Null)).unwrap()
+    } else if matches!(entry, GoalPauseEntry::Queued) {
         let ApplicationCommand::StepGoal {control:Some(envelope),..}=pause else {unreachable!()};
         let active=store.active_run(CONVERSATION).unwrap().unwrap();
         let accepted=execute_application_command(&mut store,ApplicationCommand::ReduceAndCommitActiveSubmission {
@@ -1462,8 +1491,119 @@ fn assert_goal_pause_interrupt(queued_boundary: bool) {
     assert!(seal.is_null());
     let checkpoint=execute_application_command(&mut store,ApplicationCommand::LoadCheckpoint{conversation_id:CONVERSATION.into()}).unwrap();
     let checkpoint:serde_json::Value=serde_json::from_str(checkpoint["checkpoint_json"].as_str().unwrap()).unwrap();
-    assert_eq!(checkpoint["state"]["execution"]["requirements"]["cancellation_id"],"goal-control:goal-stop-pause");
+    let original_stop = checkpoint["state"]["execution"]["requirements"]["cancellation_id"].as_str().unwrap();
+    match entry {
+        GoalPauseEntry::HostUnavailable => assert!(original_stop.starts_with("goal-control:goal-host-unavailable:")),
+        _ => assert_eq!(original_stop, "goal-control:goal-stop-pause"),
+    }
     let still_paused=execute_application_command(&mut store,step(serde_json::Value::Null)).unwrap();
     assert_eq!(still_paused["instruction"]["run_id"],run,"pending cancellation must recover the original Run until Host ACK");
     assert_eq!(still_paused["goal"]["contracts"].as_array().unwrap().len(),1);
+
+    let controls = |store: &mut NolaStore| {
+        execute_application_command(store, ApplicationCommand::LoadGoalControlObservation {
+            conversation_id: CONVERSATION.into(),
+        }).unwrap()
+    };
+    let control = |action: &str, operation: &str, observed: &serde_json::Value| step(serde_json::json!({
+        "conversation_id": CONVERSATION, "operation_id": operation, "action": action,
+        "expected_goal_id": observed["goal_id"], "expected_control_token": observed["control_token"],
+        "objective": "", "constraints": [], "wake_at_epoch_ms": null
+    }));
+    let paused = controls(&mut store);
+    let resume_error = execute_application_command(&mut store, control("resume", "premature-resume", &paused)).unwrap_err();
+    assert!(resume_error.contains("pending exact Run stop confirmation"), "{resume_error}");
+    let stale = execute_application_command(&mut store, control("cancel", "stale-cancel", &observation)).unwrap();
+    assert!(stale["error"].as_str().unwrap().contains("refresh"));
+    assert_eq!(stale["goal"]["status"], "paused");
+
+    let cancel = control("cancel", "cancel-while-draining", &paused);
+    let replay = serde_json::to_value(&cancel).unwrap();
+    let cancelled = execute_application_command(&mut store, cancel).unwrap();
+    assert!(cancelled["error"].is_null(), "{cancelled}");
+    assert_eq!(cancelled["goal"]["status"], "cancelled");
+    assert!(cancelled["interrupted_run_id"].is_null(), "Host should drain the first interrupt, not dispatch a second stop");
+    drop(store);
+    let mut store = NolaStore::open(directory.path().join("goal-stop.db")).unwrap();
+    let replayed = execute_application_command(&mut store, serde_json::from_value(replay).unwrap()).unwrap();
+    assert_eq!(replayed, cancelled);
+    let draining = execute_application_command(&mut store, step(serde_json::Value::Null)).unwrap();
+    assert_eq!(draining["goal"], cancelled["goal"]);
+    assert_eq!(draining["instruction"], serde_json::json!({"type":"execute_run","run_id":run}));
+    let cold = execute_application_command(&mut store, ApplicationCommand::LoadCheckpoint { conversation_id: CONVERSATION.into() }).unwrap();
+    let cold: serde_json::Value = serde_json::from_str(cold["checkpoint_json"].as_str().unwrap()).unwrap();
+    assert_eq!(cold["state"]["execution"]["requirements"]["cancellation_id"], original_stop);
+    let pending = checkpoint["state"]["host"]["pending_host_effects"]["effects"].as_object().unwrap();
+    let recovered = cold["state"]["host"]["pending_host_effects"]["effects"].as_object().unwrap();
+    assert_eq!(pending.len(), 2, "expected the model effect and its physical stop");
+    assert_eq!(pending.keys().collect::<Vec<_>>(), recovered.keys().collect::<Vec<_>>());
+    for (id, original) in pending {
+        for field in ["request_id", "turn_id", "target_effect_id", "cancel_effect_id"] {
+            assert_eq!(recovered[id][field], original[field], "physical stop binding changed at {id}.{field}");
+        }
+    }
+    let active = store.active_run(CONVERSATION).unwrap().unwrap();
+    assert_eq!(active.run_id, run);
+    let digest = active.invocation_config_digest.unwrap();
+    let recovery = |current| ApplicationCommand::ValidateMobileRunRecoveryAuthority {
+        conversation_id: CONVERSATION.into(), expected_run_id: run.clone(),
+        assistant_message_id: active.assistant_message_id.clone().unwrap(), expected_invocation_config_digest: digest.clone(), current,
+    };
+    // The prior terminal checkpoint omitted native tool routes when this Goal
+    // was admitted. Recovery sees the real device again, without adding those
+    // tools to the previously admitted Run.
+    let immutable = store.load_run_invocation_config(&run).unwrap().unwrap().invocation_config_json;
+    let policy: AgentCoreConfig = serde_json::from_str(&immutable).unwrap();
+    assert!(!policy.host_catalog.unwrap().capabilities.contains_key("host.cancel"));
+    assert!(policy.tools.is_empty());
+    let proof = execute_application_command(&mut store, recovery(observed.clone())).unwrap();
+    assert_eq!(proof["invocation_config_digest"], digest);
+    assert_eq!(store.load_run_invocation_config(&run).unwrap().unwrap().invocation_config_json, immutable);
+    let mut changed = observed.clone();
+    changed.host_catalog.as_mut().unwrap().capabilities.remove("model.stream");
+    assert!(execute_application_command(&mut store, recovery(changed)).is_err());
+    let mut changed = observed.clone();
+    changed.host_catalog.as_mut().unwrap().capabilities.get_mut("model.stream").unwrap().availability = CapabilityAvailability::Disabled;
+    assert!(execute_application_command(&mut store, recovery(changed)).is_err());
+    let mut changed = observed;
+    changed.host_catalog.as_mut().unwrap().availability_epoch += 1;
+    assert!(execute_application_command(&mut store, recovery(changed)).is_err());
+    let now = chrono::Utc::now().timestamp_millis();
+    let claimed = claim_committed_host_requests(&mut store, ClaimCommittedHostRequests {
+        run_id: run.clone(), worker_generation: "goal-stop-worker".into(), lease_owner: "goal-stop-worker".into(),
+        claimed_at_ms: now, lease_expires_at_ms: now + 60_000, limit: 64,
+    }).unwrap();
+    assert_eq!(claimed.requests.len(), 1, "only the original physical cancellation should be dispatchable");
+    let request = &claimed.requests[0];
+    let HostRequest::Cancel { target_effect_id, .. } = &request.payload else { panic!("expected the physical stop request"); };
+    accept(&mut store, &run, &digest, request, 1, HostResponse::ExecutionStarted, now + 1);
+    let wrong = reduce_and_accept_host_response(&mut store, ReduceAndAcceptHostResponse {
+        conversation_id: CONVERSATION.into(), run_id: run.clone(), invocation_config_digest: digest.clone(),
+        response: response(request, 2, HostResponse::CancellationConfirmed { target_effect_id: HostEffectId("other-effect".into()) }),
+        received_at_ms: now + 2,
+    });
+    assert!(wrong.is_err());
+    assert_eq!(store.active_run(CONVERSATION).unwrap().unwrap().run_id, run);
+    accept(&mut store, &run, &digest, request, 2, HostResponse::CancellationConfirmed { target_effect_id: target_effect_id.clone() }, now + 3);
+    drop(store);
+    let mut store = NolaStore::open(directory.path().join("goal-stop.db")).unwrap();
+    let finished = execute_application_command(&mut store, step(serde_json::Value::Null)).unwrap();
+    assert_eq!(finished["instruction"], serde_json::json!({"type":"terminal","outcome":"cancelled"}));
+    assert_eq!(finished["goal"]["contracts"].as_array().unwrap().len(), 1);
+    assert_eq!(finished["goal"]["contracts"][0]["execution_run_id"], run);
+    assert!(store.active_run(CONVERSATION).unwrap().is_none());
+    let sealed = execute_application_command(&mut store, ApplicationCommand::CanonicalRunTerminal { conversation_id: CONVERSATION.into(), run_id: run.clone() }).unwrap();
+    assert_eq!(sealed["status"], "sealed");
+    assert_eq!(sealed["result"]["value"]["kind"], "cancelled");
+    assert_eq!(sealed["result"]["value"]["cancellation_id"], original_stop);
+    let next = execute_application_command(&mut store, step(serde_json::json!({
+        "conversation_id": CONVERSATION, "operation_id":"fresh-goal-after-stop", "action":"start",
+        "expected_goal_id": null, "expected_control_token": null, "objective": "Begin a second bounded task",
+        "constraints": [], "wake_at_epoch_ms": null
+    }))).unwrap();
+    assert!(next["error"].is_null(), "{next}");
+    assert_eq!(next["instruction"]["type"], "execute_run");
+    let next_run = next["instruction"]["run_id"].as_str().unwrap();
+    assert_ne!(next_run, run);
+    assert_eq!(store.active_run(CONVERSATION).unwrap().unwrap().run_id, next_run);
 }

@@ -9,6 +9,7 @@
 //   - none
 //
 import Foundation
+import os
 import UserNotifications
 
 // Minimal unified notification service skeleton. Integrates with UNUserNotificationCenter
@@ -24,7 +25,7 @@ public final class DefaultUnifiedNotificationService: UnifiedNotificationService
     private let center: UNUserNotificationCenter
     private let logger = Logger.shared
     // In-memory dedupe set for this process; persistent dedupe should be added.
-    private var scheduledKeys = Set<String>()
+    private let scheduledKeys = OSAllocatedUnfairLock<Set<String>>(initialState: [])
 
     public init(center: UNUserNotificationCenter = .current()) {
         self.center = center
@@ -53,13 +54,14 @@ public final class DefaultUnifiedNotificationService: UnifiedNotificationService
     }
 
     public func scheduleNotification(for event: ProcessedEvent, at date: Date? = nil) async -> Bool {
-        if scheduledKeys.contains(event.dedupeKey) { return false }
+        guard UserDefaults.standard.object(forKey: "enableNotifications") as? Bool ?? true else { return false }
+        if scheduledKeys.withLock({ $0.contains(event.dedupeKey) }) { return false }
         let authorized = await ensureAuthorization()
         guard authorized else { return false }
 
         let content = UNMutableNotificationContent()
         content.title = event.title
-        content.body = event.provenance?["summary"]?.stringValue ?? event.title
+        content.body = event.provenance?["summary"]?.stringValue ?? event.provenance?["explain"]?.stringValue ?? event.title
         content.sound = .default
         content.badge = NSNumber(value: 1)
         content.userInfo = ["dedupeKey": event.dedupeKey, "eventId": event.id]
@@ -86,14 +88,14 @@ public final class DefaultUnifiedNotificationService: UnifiedNotificationService
             }
         }
         if didSchedule {
-            scheduledKeys.insert(event.dedupeKey)
+            scheduledKeys.withLock { _ = $0.insert(event.dedupeKey) }
         }
         return didSchedule
     }
 
     public func cancelNotifications(for dedupeKey: String) {
         center.removePendingNotificationRequests(withIdentifiers: [dedupeKey])
-        scheduledKeys.remove(dedupeKey)
+        scheduledKeys.withLock { _ = $0.remove(dedupeKey) }
     }
 }
 

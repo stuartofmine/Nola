@@ -71,8 +71,12 @@ nonisolated struct ApplePrepareInPlaceResend: Codable, Equatable, Sendable {
     let expected_message_revision: UInt64
     let edited_text: String
     let created_at_ms: Int64
+    var selected_experts: [AppleMainExpertSelectionEntry]? = nil
+    var expert_mentions: AppleExpertMentions? = nil
+    var expected_source_store_epoch: String? = nil
 }
 nonisolated struct ApplePreparedInPlaceResend: Codable, Equatable, Sendable {
+    var deferred_rewind: Bool? = nil
     let input: ApplePrepareInPlaceResend
     let run_id: String
     let user_message_id: String

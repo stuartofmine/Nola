@@ -194,7 +194,10 @@ struct AppleActivityView: View {
                 }
                 if cursor != nil && !waitingForCurrentQuery {
                     Button("activity.loadMore") { requestReload(more: true) }
-                        .disabled(busy).accessibilityIdentifier("activity.loadMore")
+                        .frame(maxWidth: .infinity, minHeight: actionSize)
+                        .disabled(busy)
+                        .listRowBackground(Color.clear)
+                        .accessibilityIdentifier("activity.loadMore")
                 }
             }.listStyle(.plain).scrollContentBackground(.hidden)
                 .overlay(alignment: .bottom) {

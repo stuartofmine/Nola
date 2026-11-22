@@ -9,6 +9,7 @@ struct IOSCanonicalMessageSurface: View {
     let messageID: String
     let part: IOSConversationProjectionV1.Part
     var allowsInteraction = true
+    var readOnlyHistoryOwner: String?
     private var manager: ChatManager? { container.chatManager }
     private var reference: AppleUISurfaceReference? {
         switch part {
@@ -18,7 +19,7 @@ struct IOSCanonicalMessageSurface: View {
         }
     }
     private func accepts(_ identity: AppleUISurfaceIdentity) -> Bool {
-        identity == reference?.identity && identity.owner.conversation_id == conversationID?.uuidString
+        identity == reference?.identity && identity.owner.conversation_id == (readOnlyHistoryOwner ?? conversationID?.uuidString)
             && identity.owner.message_id == messageID
     }
     @MainActor private func pendingUI(_ identity: AppleUISurfaceIdentity) throws -> AppleUISubmission<AgentCoreJSONValue>? {
@@ -37,7 +38,14 @@ struct IOSCanonicalMessageSurface: View {
     }
 
     @MainActor private func readUIRevision(_ reference: AppleUISurfaceReference) async throws -> AppleUISnapshot<AgentCoreJSONValue>? {
-        guard accepts(reference.identity), let manager else { throw IOSApplicationRuntimeError.invalidResponse }
+        guard accepts(reference.identity) else { throw IOSApplicationRuntimeError.invalidResponse }
+        if readOnlyHistoryOwner != nil {
+            let runtime = container.applicationRuntime
+            return try await Task.detached {
+                try runtime.readUISurfaceRevision(identity: reference.identity, revision: reference.revision)
+            }.value
+        }
+        guard let manager else { throw IOSApplicationRuntimeError.invalidResponse }
         return try await manager.readUISurfaceRevision(reference)
     }
 
@@ -50,7 +58,7 @@ struct IOSCanonicalMessageSurface: View {
 
 
     private func belongs(_ reference: AppleUISurfaceReference) -> Bool {
-        reference.identity.owner.conversation_id == conversationID?.uuidString
+        reference.identity.owner.conversation_id == (readOnlyHistoryOwner ?? conversationID?.uuidString)
             && reference.identity.owner.message_id == messageID
     }
     var body: some View {
@@ -59,7 +67,7 @@ struct IOSCanonicalMessageSurface: View {
             case .uiSurface(let value):
                 if belongs(value.surface), !allowsInteraction {
                     AppleUIReadOnlyReferencedSurfaceView<AgentCoreJSONValue>(reference: value.surface, summary: value.summary,
-                        notice: String(localized: "chat.expert.ui.read_only"), readRevision: readUIRevision)
+                        notice: readOnlyHistoryOwner == nil ? String(localized: "chat.expert.ui.read_only") : String(localized: "a2ui.history.readOnly"), readRevision: readUIRevision)
                         .id(value.surface.identity)
                 } else if belongs(value.surface) {
                     AppleUIReferencedSurfaceView<AgentCoreJSONValue>(reference: value.surface, summary: value.summary,

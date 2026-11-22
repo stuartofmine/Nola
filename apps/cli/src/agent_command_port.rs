@@ -149,6 +149,32 @@ pub fn acknowledge_agent_command(
     })
 }
 
+/// Only named inputs accepted by the just-finished listener belong to its
+/// handoff. The ordinary boundary consumer may already have applied some of
+/// them. Never skip an earlier owner's entry or enqueue the text again.
+pub(crate) fn claim_authored_followup(
+    session: &str,
+    admitted: &std::collections::BTreeSet<String>,
+) -> Result<Option<AgentCommandLease>, String> {
+    if admitted.is_empty() { return Ok(None); }
+    let mut application = CliApplicationPort::persistent_default()?;
+    if application.active_run(session)?.is_some() { return Ok(None); }
+    let head: Option<nola_application::AgentCommandHead> = application.execute(
+        ApplicationCommand::PeekAgentCommand { session_id: session.into() },
+    )?;
+    let Some(_) = head.filter(|head| head.kind == nola_application::AgentCommandKind::UserInput
+        && admitted.contains(&head.command_id)) else { return Ok(None); };
+    let owner = format!("composer-consumer:{}:{}", std::process::id(), uuid::Uuid::new_v4());
+    let now = chrono::Utc::now().timestamp_millis();
+    let Some(lease) = claim_next_agent_command(session, &owner, now, now.saturating_add(300_000))?
+        else { return Ok(None); };
+    if !admitted.contains(&lease.command_id) {
+        release_agent_command_lease(session, &lease.command_id, &owner)?;
+        return Ok(None);
+    }
+    Ok(Some(lease))
+}
+
 pub fn release_agent_command_lease(
     session_id: &str,
     command_id: &str,

@@ -29,6 +29,7 @@
 
 "goal.example" = "Beispiel: Projektmaterial ordnen und eine Zusammenfassung mit Quellen erstellen.";
 
+"goal.constraints" = "Vorgaben";
 "goal.optional_constraints" = "Vorgaben (optional)";
 
 "goal.cancel_title" = "Dieses Ziel beenden?";

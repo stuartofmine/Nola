@@ -263,6 +263,75 @@ pub(crate) fn import_connection(
     configure_models(store, &input.id, refreshed.revision, &keys, selected.as_deref(), at)
 }
 
+/// Publish all routes and the default together. A later rejection rolls back earlier routes.
+pub(crate) fn apply_file_catalog(
+    store: &mut impl crate::repositories::CapabilityCatalogRepositories,
+    connections: Vec<crate::FileCatalogConnection>,
+    default_connection: &str,
+    default_model: &str,
+    at: i64,
+) -> Result<Value, String> {
+    use nola_store_port::product_setting::ProductSettingRepository;
+    let mut ids = BTreeSet::new();
+    let mut applied = Vec::new();
+    let mut selected = None;
+    if connections.is_empty() || connections.len() > 64 { return Err("invalid file connection count".into()); }
+    let mut repository = store.model_repository();
+    for entry in connections {
+        let id = &entry.input.id;
+        if !ids.insert(id.clone()) || entry.models.is_empty() || entry.models.len() > 256
+            || entry.input.source != ModelSourceKind::Manual
+            || !id.strip_prefix("config-").is_some_and(|key| entry.input.source_id.as_deref() == Some(&format!("config:{key}"))) {
+            return Err("invalid file connection identity or catalog".into());
+        }
+        if id == default_connection {
+            selected = entry.models.iter().find(|m| m.model_id == default_model)
+                .map(|model| profile_id(id, &model.catalog_key()));
+        }
+        let current = repository.model_connection(id).map_err(|e| e.to_string())?;
+        if current.as_ref().map(|s| s.revision) != entry.expected_revision {
+            return Err(format!("{id}: model_connection_revision_conflict"));
+        }
+        if entry.account.is_none() {
+            if let Some(account_id) = entry.input.account_id.as_ref() {
+                let account = repository.model_account(account_id).map_err(|e| e.to_string())?
+                    .ok_or("configured account is unavailable")?;
+                if Some(account.revision) != entry.expected_account_revision
+                    || account.account.state != ModelAccountState::Ready
+                    || account.account.credential_ref.is_none()
+                    || !current.as_ref().is_some_and(|s| s.document.connection.same_route(&entry.input)) {
+                    return Err("configured credential binding changed".into());
+                }
+            }
+        }
+        let unchanged = entry.account.is_none() && current.as_ref().is_some_and(|s|
+            s.document.connection == entry.input && s.document.catalog.as_ref().is_some_and(|c| c.models == entry.models));
+        applied.push(id.clone());
+        if unchanged {
+            let enabled: BTreeSet<_> = profiles(&repository, id)?.into_iter()
+                .filter(|profile| profile.enabled).map(|profile| profile.id).collect();
+            if entry.models.iter().all(|model| enabled.contains(&profile_id(id, &model.catalog_key()))) {
+                continue;
+            }
+        }
+        let revision = entry.account.as_ref().and(entry.expected_account_revision);
+        import_connection(&mut repository, entry.input, entry.expected_revision, entry.account,
+            revision, entry.models, true, at)?;
+    }
+    let id = selected.ok_or("file default must refer to a declared connection and model")?;
+    let profile = repository.model_profile(&id).map_err(|e| e.to_string())?
+        .filter(|p| p.enabled && p.deleted_at_ms.is_none()).ok_or("configured default is unavailable")?;
+    drop(repository);
+    let key = crate::model_selection::DEFAULT_CHAT_MODEL_KEY;
+    let mut settings = store.product_setting_repository();
+    let current = settings.product_setting(key).map_err(|e| e.to_string())?;
+    let selection = json!({"version":1,"selection":{"kind":"profile","profile_id":id}});
+    if !current.as_ref().is_some_and(|s| serde_json::from_str::<Value>(&s.value_json).ok().as_ref() == Some(&selection)) {
+        crate::product_setting::put_checked(&mut settings, key, &selection.to_string(), current.map(|s| s.revision), at)?;
+    }
+    Ok(json!({"connections":applied, "default_profile_id":id, "default_profile_revision":profile.revision}))
+}
+
 pub(crate) fn set_capability_assessment(
     store: &mut impl ModelRepository,
     id: &str,

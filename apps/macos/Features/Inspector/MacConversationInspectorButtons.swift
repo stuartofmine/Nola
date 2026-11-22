@@ -4,23 +4,76 @@ import SwiftUI
 struct MacConversationInspectorButtons: View {
     let selection: MacChatInspector.InspectorTab
     let isVisible: Bool
+    var showsLabels: Bool = true
     let select: (MacChatInspector.InspectorTab) -> Void
+    @Environment(\.colorScheme) private var colorScheme
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+
+    private var trackFill: Color {
+        colorScheme == .dark ? Color.white.opacity(0.045) : MacDesignColor.subtleFill.opacity(0.75)
+    }
+
+    private var trackBorder: Color {
+        colorScheme == .dark ? Color.white.opacity(0.08) : MacDesignColor.borderSubtle
+    }
+
+    private var activeFill: Color {
+        colorScheme == .dark ? Color.white.opacity(0.13) : Color.white
+    }
+
+    private var activeBorder: Color {
+        colorScheme == .dark ? Color.white.opacity(0.16) : MacDesignColor.borderSubtle
+    }
+
+    @ViewBuilder
+    private func tabButton(for group: MacChatInspector.InspectorArea) -> some View {
+        let active = isVisible && selection.area == group
+        let pillShape = RoundedRectangle(cornerRadius: 7, style: .continuous)
+        Button {
+            withAnimation(reduceMotion ? nil : .easeOut(duration: MacDesignTokens.Motion.selection)) {
+                select(selection.area == group ? selection : group.sections[0])
+            }
+        } label: {
+            HStack(spacing: 5) {
+                Image(systemName: group.symbol)
+                    .font(.system(size: 12, weight: active ? .semibold : .medium))
+                if showsLabels {
+                    Text(group.title)
+                        .font(.system(size: 12, weight: active ? .semibold : .medium))
+                        .lineLimit(1)
+                }
+            }
+            .foregroundStyle(active ? Color.primary : Color.secondary)
+            .padding(.horizontal, showsLabels ? 9 : 0)
+            .frame(minWidth: showsLabels ? nil : 28, minHeight: 26)
+            .background {
+                if active {
+                    pillShape
+                        .fill(activeFill)
+                        .overlay(pillShape.strokeBorder(activeBorder, lineWidth: 0.75))
+                }
+            }
+            .contentShape(pillShape)
+        }
+        .buttonStyle(.plain)
+        .help(group.title)
+        .accessibilityLabel(group.title)
+        .accessibilityIdentifier("mac-inspector-group-\(group.id)")
+    }
 
     var body: some View {
-        HStack(spacing: 4) {
+        let trackShape = RoundedRectangle(cornerRadius: 9, style: .continuous)
+        HStack(spacing: 2) {
             ForEach(MacChatInspector.InspectorArea.allCases) { group in
-                let active = isVisible && selection.area == group
-                Button {
-                    select(selection.area == group ? selection : group.sections[0])
-                } label: {
-                    Image(group.icon).renderingMode(.template).resizable().scaledToFit()
-                        .frame(width: 18, height: 18).frame(width: 36, height: 36)
-                }
-                .macToolbarIcon(isActive: active)
-                .help(group.title)
-                .accessibilityLabel(group.title)
-                .accessibilityIdentifier("mac-inspector-group-\(group.id)")
+                tabButton(for: group)
             }
-        }.fixedSize(horizontal: true, vertical: false)
+        }
+        .padding(2)
+        .background(
+            trackShape
+                .fill(trackFill)
+                .overlay(trackShape.strokeBorder(trackBorder, lineWidth: 0.75))
+        )
+        .fixedSize(horizontal: true, vertical: false)
     }
 }

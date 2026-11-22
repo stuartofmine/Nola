@@ -68,7 +68,7 @@ struct MacNotificationCenterView: View {
                     compactContent
                 } else {
                     HSplitView {
-                        notificationSidebar
+                        notificationSidebar(showsEmptyState: false)
                             .frame(minWidth: 280, idealWidth: 320, maxWidth: 390)
                         detail
                             .frame(minWidth: 420, maxWidth: .infinity, maxHeight: .infinity)
@@ -79,7 +79,6 @@ struct MacNotificationCenterView: View {
         .background(MacPageBackground())
         .task {
             await store.refresh()
-            if selection == nil { selection = matchingItems.first?.id }
         }
         .onReceive(NotificationCenter.default.publisher(for: .nolaMacNotificationsDidChange)) { _ in
             Task { await store.refresh() }
@@ -87,13 +86,21 @@ struct MacNotificationCenterView: View {
         .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in
             Task { await store.refresh() }
         }
-        .onChange(of: selection) { _, _ in
-            guard let selectedItem, !selectedItem.isRead else { return }
-            Task { await store.markRead(selectedItem) }
+        .onChange(of: filter) { _, _ in
+            selection = nil
+            compactDetailIsPresented = false
         }
-        .onChange(of: matchingItems.map(\.id)) { _, ids in
-            if let selection, ids.contains(selection) { return }
-            selection = ids.first
+        .onChange(of: query) { _, _ in
+            if let selection, !matchingItems.contains(where: { $0.id == selection }) {
+                self.selection = nil
+                compactDetailIsPresented = false
+            }
+        }
+        .onChange(of: store.items.map(\.id)) { _, ids in
+            if let selection, !ids.contains(selection) {
+                self.selection = nil
+                compactDetailIsPresented = false
+            }
         }
         .confirmationDialog(
             macNotificationText("mac.notifications.clear.confirm.title", "Clear Notification History?"),
@@ -171,7 +178,7 @@ struct MacNotificationCenterView: View {
             }
             .transition(.move(edge: .trailing).combined(with: .opacity))
         } else {
-            notificationSidebar
+            notificationSidebar(showsEmptyState: true)
                 .transition(.move(edge: .leading).combined(with: .opacity))
         }
     }
@@ -231,7 +238,7 @@ struct MacNotificationCenterView: View {
         .background(MacDesignColor.chrome)
     }
 
-    private var notificationSidebar: some View {
+    private func notificationSidebar(showsEmptyState: Bool) -> some View {
         VStack(spacing: 10) {
             Picker(macNotificationText("mac.notifications.filter.label", "Filter"), selection: $filter) {
                 ForEach(Filter.allCases) { filter in
@@ -243,6 +250,7 @@ struct MacNotificationCenterView: View {
 
             TextField(macNotificationText("mac.notifications.search", "Search notifications"), text: $query)
                 .textFieldStyle(.roundedBorder)
+                .accessibilityIdentifier("mac.notifications.search")
 
             List {
                 if needsAuthorizationAttention {
@@ -262,25 +270,9 @@ struct MacNotificationCenterView: View {
                         }
                     }
                 }
-                if matchingItems.isEmpty, !store.items.isEmpty, !store.isLoading {
-                    Section {
-                        VStack(alignment: .leading, spacing: 8) {
-                            Label(
-                                macNotificationText("mac.notifications.empty.filtered.title", "No Matching Notifications"),
-                                systemImage: "line.3.horizontal.decrease.circle"
-                            )
-                            .font(.system(size: 13, weight: .semibold))
-                            Text(macNotificationText("mac.notifications.empty.filtered.detail", "Adjust the search or filter to see more notifications."))
-                                .font(.system(size: 11.5))
-                                .foregroundStyle(.secondary)
-                            Button(macNotificationText("mac.notifications.empty.filtered.reset", "Reset Filters")) {
-                                query = ""
-                                filter = .all
-                            }
-                            .buttonStyle(.borderless)
-                        }
-                        .padding(.vertical, 8)
-                    }
+                if showsEmptyState, matchingItems.isEmpty, !store.isLoading {
+                    notificationEmptyState
+                        .listRowBackground(Color.clear)
                 }
             }
             .listStyle(.sidebar)
@@ -307,7 +299,7 @@ struct MacNotificationCenterView: View {
                 Spacer()
                 if store.authorizationStatus == .notDetermined {
                     Button(macNotificationText("mac.notifications.permission.enable", "Enable")) { Task { await store.requestAuthorization() } }
-                        .buttonStyle(.borderedProminent)
+                        .buttonStyle(.nolaProminent)
                         .controlSize(.small)
                 } else if store.authorizationStatus == .denied {
                     Button(macNotificationText("mac.notifications.permission.settings", "Open Settings")) {
@@ -358,7 +350,16 @@ struct MacNotificationCenterView: View {
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
             .background(MacPageBackground())
-        } else if store.items.isEmpty && !store.isLoading {
+        } else if matchingItems.isEmpty && !store.isLoading {
+            notificationEmptyState
+        } else {
+            ContentUnavailableView(macNotificationText("mac.notifications.select", "Select a Notification"), systemImage: "bell")
+        }
+    }
+
+    @ViewBuilder
+    private var notificationEmptyState: some View {
+        if store.items.isEmpty {
             VStack(spacing: MacDesignTokens.Spacing.lg) {
                 Image(systemName: "bell.slash")
                     .font(.system(size: 21, weight: .medium))
@@ -374,7 +375,7 @@ struct MacNotificationCenterView: View {
                     .frame(maxWidth: 420)
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity)
-        } else if matchingItems.isEmpty && !store.isLoading {
+        } else {
             ContentUnavailableView {
                 Label(
                     macNotificationText("mac.notifications.empty.filtered.title", "No Matching Notifications"),
@@ -387,10 +388,9 @@ struct MacNotificationCenterView: View {
                     query = ""
                     filter = .all
                 }
-                .buttonStyle(.borderedProminent)
+                .buttonStyle(.nolaProminent)
+                .accessibilityIdentifier("mac.notifications.resetFilters")
             }
-        } else {
-            ContentUnavailableView(macNotificationText("mac.notifications.select", "Select a Notification"), systemImage: "bell")
         }
     }
 
@@ -431,14 +431,14 @@ struct MacNotificationCenterView: View {
     private func detailActionButtons(_ item: MacNotificationInboxItem) -> some View {
         if let conversationID = item.conversationID {
             Button {
-                openWindow(value: conversationID)
+                openConversation(conversationID, from: item)
             } label: {
                 Label(
                     macNotificationText("mac.notifications.open_conversation", "Open Conversation"),
                     systemImage: "arrow.up.forward"
                 )
             }
-            .buttonStyle(.borderedProminent)
+            .buttonStyle(.nolaProminent)
         }
         if !item.isRead, item.deliveryState != .scheduled {
             Button(macNotificationText("mac.notifications.mark_read", "Mark Read")) {
@@ -507,13 +507,13 @@ struct MacNotificationCenterView: View {
         .padding(.vertical, 6)
         .onTapGesture(count: 2) {
             if let conversationID = item.conversationID {
-                openWindow(value: conversationID)
+                openConversation(conversationID, from: item)
             }
         }
         .contextMenu {
             if let conversationID = item.conversationID {
                 Button {
-                    openWindow(value: conversationID)
+                    openConversation(conversationID, from: item)
                 } label: {
                     Label(
                         macNotificationText("mac.notifications.open_conversation", "Open Conversation"),
@@ -531,10 +531,21 @@ struct MacNotificationCenterView: View {
         }
     }
 
+    private func markOpened(_ item: MacNotificationInboxItem) {
+        guard !item.isRead, item.deliveryState != .scheduled else { return }
+        Task { await store.markRead(item) }
+    }
+
+    private func openConversation(_ id: String, from item: MacNotificationInboxItem) {
+        markOpened(item)
+        openWindow(value: id)
+    }
+
     private func selectableRow(_ item: MacNotificationInboxItem) -> some View {
         Button {
             selection = item.id
             compactDetailIsPresented = true
+            markOpened(item)
         } label: {
             row(item)
                 .contentShape(Rectangle())
@@ -542,6 +553,7 @@ struct MacNotificationCenterView: View {
             .buttonStyle(.plain)
             .macSelectableListRow(isSelected: selection == item.id)
             .accessibilityAddTraits(selection == item.id ? .isSelected : [])
+            .accessibilityIdentifier("mac.notification.item.\(item.id)")
     }
 
     private var selectedItem: MacNotificationInboxItem? {

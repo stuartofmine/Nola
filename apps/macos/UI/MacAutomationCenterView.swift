@@ -203,7 +203,7 @@ struct MacAutomationCenterView: View {
             } label: {
                 Label(String(localized: "New Automation", table: "AutomationCenter"), systemImage: "plus")
             }
-            .buttonStyle(.borderedProminent)
+            .buttonStyle(.nolaProminent)
         }
     }
 
@@ -232,7 +232,7 @@ struct MacAutomationCenterView: View {
                 Label(String(localized: "New Automation", table: "AutomationCenter"), systemImage: "plus")
             }
         }
-        .buttonStyle(.borderedProminent)
+        .buttonStyle(.nolaProminent)
         .help(String(localized: "New Automation", table: "AutomationCenter"))
     }
 
@@ -467,7 +467,7 @@ struct MacAutomationCenterView: View {
 
     @ViewBuilder
     private func nextRun(_ automation: MacAutomation, isRunning: Bool) -> some View {
-        if let nextRun = automation.nextRun, automation.isEnabled, !isRunning {
+        if let nextRun = store.nextRun(for: automation), automation.isEnabled, !isRunning {
             Label {
                 Text(nextRun, style: .relative)
             } icon: {
@@ -482,7 +482,7 @@ struct MacAutomationCenterView: View {
         Button { store.runNow(automation) } label: {
             Label(String(localized: "Run Now", table: "AutomationCenter"), systemImage: "play.fill")
         }
-        .buttonStyle(.borderedProminent)
+        .buttonStyle(.nolaProminent)
         .controlSize(.regular)
         .disabled(isRunning)
     }
@@ -709,7 +709,9 @@ private struct MacAutomationEditor: View {
                         }
                     }
                 }
-                DatePicker(String(localized: "Time", table: "AutomationCenter"), selection: $time, displayedComponents: .hourAndMinute)
+                if frequency != .hourly {
+                    DatePicker(String(localized: "Time", table: "AutomationCenter"), selection: $time, displayedComponents: .hourAndMinute)
+                }
                 Toggle(String(localized: "Run when selected data changes", table: "AutomationCenter"), isOn: $runWhenDataChanges)
                     .toggleStyle(.macSwitch)
                 HStack {
@@ -778,18 +780,40 @@ private struct MacAutomationEditor: View {
 
                 Section(String(localized: "Reliability", table: "AutomationCenter")) {
                     LabeledContent(String(localized: "Timeout", table: "AutomationCenter")) {
-                        HStack(spacing: 6) {
-                            TextField("30", text: $timeoutMinutes)
-                                .textFieldStyle(.roundedBorder)
-                                .frame(width: 72)
-                            Text(String(localized: "minutes", table: "AutomationCenter"))
-                                .foregroundStyle(.secondary)
+                        HStack(spacing: 8) {
+                            let currentTimeout = Int(timeoutMinutes) ?? 30
+                            Text("\(currentTimeout) \(String(localized: "minutes", table: "AutomationCenter"))")
+                                .monospacedDigit()
+                                .foregroundStyle(.primary)
+                            Stepper(
+                                String(localized: "Timeout", table: "AutomationCenter"),
+                                value: Binding(
+                                    get: { min(max(Int(timeoutMinutes) ?? 30, 1), 720) },
+                                    set: { timeoutMinutes = String($0) }
+                                ),
+                                in: 1...720,
+                                step: 5
+                            )
+                            .labelsHidden()
                         }
                     }
                     LabeledContent(String(localized: "Retries after failure", table: "AutomationCenter")) {
-                        TextField("0", text: $retryCount)
-                            .textFieldStyle(.roundedBorder)
-                            .frame(width: 72)
+                        HStack(spacing: 8) {
+                            let currentRetries = Int(retryCount) ?? 0
+                            Text("\(currentRetries)")
+                                .monospacedDigit()
+                                .foregroundStyle(.primary)
+                            Stepper(
+                                String(localized: "Retries after failure", table: "AutomationCenter"),
+                                value: Binding(
+                                    get: { min(max(Int(retryCount) ?? 0, 0), 3) },
+                                    set: { retryCount = String($0) }
+                                ),
+                                in: 0...3,
+                                step: 1
+                            )
+                            .labelsHidden()
+                        }
                     }
                 }
             }
@@ -841,7 +865,7 @@ private struct MacAutomationEditor: View {
                     ))
                 }
                 .keyboardShortcut(.defaultAction)
-                .buttonStyle(.borderedProminent)
+                .buttonStyle(.nolaProminent)
                 .disabled(!canSave)
             }
         }
@@ -854,6 +878,7 @@ private struct MacAutomationEditor: View {
             idealHeight: 720,
             maxHeight: 820
         )
+        .background(MacDesignColor.canvas)
         .task {
             if initialEditorValues == nil { initialEditorValues = editorValues }
             do {

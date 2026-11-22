@@ -34,22 +34,16 @@ fn interactive_room_completions(rest: &str) -> Vec<SlashCompletion> {
     let Ok(room)=interactive_room_snapshot(id) else { return vec![]; };
     room.room.participants().iter().filter(|member|member.active)
         .filter(|member|member.display_name.to_lowercase().starts_with(&query.to_lowercase()) || member.id.starts_with(query))
-        .map(|member|SlashCompletion {name:format!("/room {id} @{} ",room_mention_token(member,room.room.participants()))})
+        .map(|member| {
+            let token = room_mention_token(member, room.room.participants());
+            let label = if token == member.display_name {
+                format!("@{}", member.display_name)
+            } else {
+                format!("@{} · {token}", member.display_name)
+            };
+            SlashCompletion { name: format!("/room {id} @{token} "), label: Some(label) }
+        })
         .take(4).collect()
-}
-
-fn interactive_room_completion_label(completion: &str) -> Option<String> {
-    let rest=completion.strip_prefix("/room ")?;
-    let (id,tail)=rest.split_once(' ')?;
-    let token=tail.trim().strip_prefix('@')?;
-    let room=interactive_room_snapshot(id).ok()?;
-    let member=room.room.participants().iter().find(|member|member.active && room_mention_token(member,room.room.participants())==token)?;
-    Some(if token == member.display_name {
-        format!("@{}", member.display_name)
-    } else {
-        // Equal public names must remain distinguishable in the candidate row.
-        format!("@{} · {}", member.display_name, token)
-    })
 }
 
 fn interactive_room_command(rest: &str, config: &Config) -> Result<(),String> {
@@ -57,8 +51,14 @@ fn interactive_room_command(rest: &str, config: &Config) -> Result<(),String> {
     let mut app=application_port::CliApplicationPort::persistent_default()?;
     if rest.is_empty() {
         let rooms:Vec<RoomSnapshot>=app.execute(ApplicationCommand::AgentRoom {command:AgentRoomCommand::List {limit:100,offset:0}})?;
+        if rooms.is_empty() {
+            terminal_notice!("  {}", ui_text(UiText::NoRooms));
+            terminal_notice!(r#"  nola room create "Team""#);
+            return Ok(());
+        }
         for room in rooms { terminal_notice!("  {}  {}",room.room.id(),room.room.title()); }
-        terminal_notice!("  /room <room-id> [@recipient] <message> · Tab chooses a candidate; no @ uses the coordinator");
+        terminal_notice!("  /room <room-id> [@recipient] <message>");
+        terminal_notice!("  {}", ui_text(UiText::HelpRoom));
         return Ok(());
     }
     let (id,text)=rest.split_once(char::is_whitespace).unwrap_or((rest,""));
@@ -70,7 +70,8 @@ fn interactive_room_command(rest: &str, config: &Config) -> Result<(),String> {
             if token == member.display_name { terminal_notice!("  @{}", member.display_name); }
             else { terminal_notice!("  @{} — {}", token, member.display_name); }
         }
-        terminal_notice!("  Type /room {id} @ then a name prefix and Tab; omit @ for automatic routing");
+        terminal_notice!("  /room {id} [@recipient] <message>");
+        terminal_notice!("  {}", ui_text(UiText::HelpRoom));
         return Ok(());
     }
     let (participant_id,text)=room_explicit_recipient(text.trim_start(),room.room.participants())?;

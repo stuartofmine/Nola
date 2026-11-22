@@ -12,6 +12,7 @@ struct MacExecutionBackendOption: Identifiable, Hashable {
         switch id {
         case "codex": return Self(id: id, displayName: "Codex")
         case "claude_code": return Self(id: id, displayName: "Claude Code")
+        case "antigravity": return Self(id: id, displayName: "Antigravity")
         case "opencode": return Self(id: id, displayName: "OpenCode")
         case "nola": return Self(id: id, displayName: "Nola")
         default: return Self(id: id, displayName: id)

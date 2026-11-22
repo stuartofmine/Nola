@@ -74,7 +74,7 @@ struct PermissionsSetupView: View {
                 Text("\(currentStep + 1)/\(steps.count + 1)")
                     .font(.caption.monospacedDigit())
                     .foregroundStyle(.secondary)
-                    .contentTransition(.numericText())
+                    .contentTransition(reduceMotion ? .identity : .numericText())
             }
             .padding(.horizontal, 20)
             .padding(.top, 14)
@@ -119,7 +119,7 @@ struct PermissionsSetupView: View {
                             if isRequestingPermissions {
                                 ProgressView()
                                     .progressViewStyle(.circular)
-                                    .tint(.white)
+                                    .tint(DesignTokens.onActionColor)
                             } else {
                                 Image(systemName: "hand.raised.fill")
                                 Text(permissionResults[steps[currentStep].type] == true ? L10n.permissionGranted : L10n.permissionGrant)
@@ -129,13 +129,14 @@ struct PermissionsSetupView: View {
                         .frame(minHeight: 46)
                     }
                     .buttonStyle(.borderedProminent)
+                    .foregroundStyle(DesignTokens.onActionColor)
                     .controlSize(.large)
-                    .tint(permissionResults[steps[currentStep].type] == true ? .green : .accentColor)
+                    .tint(permissionResults[steps[currentStep].type] == true ? .green : DesignTokens.actionColor)
                     .disabled(isRequestingPermissions || permissionResults[steps[currentStep].type] == true)
                     
                     // Comment in English.
                     Button {
-                        withAnimation {
+                        withAnimation(reduceMotion ? nil : DesignTokens.responsiveAnimation) {
                             currentStep += 1
                         }
                     } label: {
@@ -159,6 +160,7 @@ struct PermissionsSetupView: View {
                         .frame(minHeight: 46)
                     }
                     .buttonStyle(.borderedProminent)
+                    .foregroundStyle(DesignTokens.onActionColor)
                     .controlSize(.large)
                 }
             }

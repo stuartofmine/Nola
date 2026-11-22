@@ -875,6 +875,10 @@ impl CoreAgentHost {
         emitter: &mut dyn crate::runtime_output::RuntimeOutputPort,
         queued: Option<QueuedUserAdmission>,
     ) -> Result<CoreRunOutcome, String> {
+        if queued.is_some() && (self.resume_pending_once
+            || crate::application_port::CliApplicationPort::persistent_default()?.active_run(&self.session_id)?.is_some()) {
+            return Err("The conversation already has an active run; queued input remains pending".into());
+        }
         if config.session.user_delegation.is_some() {
             if queued.is_some() || crate::application_port::CliApplicationPort::persistent_default()?.active_run(&self.session_id)?.is_some() {
                 return Err("The conversation is busy; /agent was not queued or executed".into());

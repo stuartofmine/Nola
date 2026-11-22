@@ -29,7 +29,11 @@ impl InputRetention {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-struct SessionInputOwner { session_id: String, retention: InputRetention }
+struct SessionInputOwner {
+    session_id: String,
+    retention: InputRetention,
+    admitted: Vec<String>,
+}
 
 pub(crate) trait UserInstructionHandoff: Send + Sync + std::fmt::Debug {
     fn handoff(&self, text: String) -> Result<(), String>;
@@ -64,12 +68,11 @@ impl Default for RuntimeExecutionControl {
 
 struct ApplicationInputPort;
 impl DurableInputPort for ApplicationInputPort {
-    fn admit(&mut self, session: &str, text: &str) -> Result<(), String> {
+    fn admit(&mut self, session: &str, text: &str) -> Result<String, String> {
         crate::boundary_input_intent::execute(
             session,
             crate::boundary_input_intent::InputOperation::NewSubmit(text),
         )
-        .map(|_| ())
     }
 }
 
@@ -144,34 +147,42 @@ impl RuntimeExecutionControl {
             .input_owner
             .lock()
             .map_err(|_| "execution input owner poisoned")?;
-        let next = SessionInputOwner { session_id: session, retention };
         match owner.as_ref() {
-            Some(existing) if existing != &next => {
+            Some(existing) if existing.session_id != session || existing.retention != retention => {
                 Err("execution input owner cannot change".into())
             }
-            _ => {
-                *owner = Some(next);
+            Some(_) => Ok(()),
+            None => {
+                *owner = Some(SessionInputOwner { session_id: session, retention, admitted: Vec::new() });
                 Ok(())
             }
         }
     }
+
+    pub(crate) fn take_admitted_followups(&self, session: &str) -> Vec<String> {
+        let mut owner = self.input_owner.lock().unwrap_or_else(|p| p.into_inner());
+        owner.as_mut().filter(|owner| owner.session_id == session)
+            .map(|owner| std::mem::take(&mut owner.admitted)).unwrap_or_default()
+    }
+
     pub(crate) fn queue_runtime_input(&self, input: RuntimeInput) -> Result<InputReceipt, String> {
-        let owner = self
-            .input_owner
-            .lock()
-            .map_err(|_| "execution input owner poisoned")?;
+        let mut owner = self.input_owner.lock().map_err(|_| "execution input owner poisoned")?;
         let mut mailbox = self
             .mailbox
             .lock()
             .map_err(|_| "execution input mailbox poisoned")?;
-        crate::runtime_input::deliver(
+        let receipt = crate::runtime_input::deliver(
             input,
             owner.as_ref().filter(|owner| owner.retention == InputRetention::Persistent)
                 .map(|owner| owner.session_id.as_str()),
             self.is_requested(),
             &mut mailbox,
             &mut ApplicationInputPort,
-        )
+        )?;
+        if let (Some(owner), InputReceipt::Durable(id)) = (owner.as_mut(), &receipt) {
+            owner.admitted.push(id.clone());
+        }
+        Ok(receipt)
     }
     pub(crate) fn enqueue_local(&self, input: RuntimeInput) -> Result<InputReceipt, String> {
         self.mailbox

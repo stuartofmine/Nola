@@ -4,10 +4,24 @@ import SwiftUI
 import UIKit
 
 struct ChatNavigationGestureBridge: UIViewControllerRepresentable {
-    func makeUIViewController(context: Context) -> Controller { Controller() }
-    func updateUIViewController(_ controller: Controller, context: Context) {}
+    var isEnabled: Bool = true
+
+    func makeUIViewController(context: Context) -> Controller {
+        let controller = Controller()
+        controller.gestureEnabled = isEnabled
+        return controller
+    }
+
+    func updateUIViewController(_ controller: Controller, context: Context) {
+        controller.gestureEnabled = isEnabled
+    }
 
     final class Controller: UIViewController, UIGestureRecognizerDelegate {
+        var gestureEnabled: Bool = true {
+            didSet {
+                recognizer?.isEnabled = gestureEnabled
+            }
+        }
         private weak var recognizer: UIGestureRecognizer?
         private weak var originalDelegate: (any UIGestureRecognizerDelegate)?
         private var originallyEnabled = false
@@ -20,12 +34,15 @@ struct ChatNavigationGestureBridge: UIViewControllerRepresentable {
         override func viewDidAppear(_ animated: Bool) {
             super.viewDidAppear(animated)
             guard let gesture = navigationController?.interactivePopGestureRecognizer,
-                  gesture.delegate !== self else { return }
+                  gesture.delegate !== self else {
+                recognizer?.isEnabled = gestureEnabled
+                return
+            }
             recognizer = gesture
             originalDelegate = gesture.delegate
             originallyEnabled = gesture.isEnabled
             gesture.delegate = self
-            gesture.isEnabled = true
+            gesture.isEnabled = gestureEnabled
         }
 
         override func viewDidDisappear(_ animated: Bool) {
@@ -41,7 +58,7 @@ struct ChatNavigationGestureBridge: UIViewControllerRepresentable {
         }
 
         func gestureRecognizerShouldBegin(_ gestureRecognizer: UIGestureRecognizer) -> Bool {
-            guard let navigationController else { return false }
+            guard gestureEnabled, let navigationController else { return false }
             return navigationController.viewControllers.count > 1
                 && navigationController.transitionCoordinator == nil
                 && navigationController.presentedViewController == nil

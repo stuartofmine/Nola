@@ -8,10 +8,10 @@ test('initial layout preserves exact conversation and Host links and adapts mana
         assert.equal(desktop.pathname, '/chat');
         assert.equal(desktop.searchParams.get('content'), path);
         assert.equal(initialWorkspaceLocation(desktop.href, 390).pathname, path);
-        assert.equal(initialWorkspaceLocation(`http://local${path}`, 700).pathname, path);
+        assert.equal(initialWorkspaceLocation(`http://local${path}`, 760).pathname, path);
     }
-    assert.equal(initialWorkspaceLocation('http://local/chat', 700).pathname, '/conversations');
-    assert.equal(initialWorkspaceLocation('http://local/chat', 701).pathname, '/chat');
+    assert.equal(initialWorkspaceLocation('http://local/chat', 760).pathname, '/conversations');
+    assert.equal(initialWorkspaceLocation('http://local/chat', 761).pathname, '/chat');
     const exact = 'http://local/chat?conversation=original&sourceHost=host';
     assert.equal(initialWorkspaceLocation(exact, 390).href, exact);
     assert.equal(initialWorkspaceLocation('http://local/chat?sourceHost=host', 390).pathname, '/chat');
@@ -41,4 +41,15 @@ test('activity source focus keeps exact child ownership and a bounded return des
     const completed = new URL(activitySourcePath({...detail,review_in_source:false,entry:{...entry,needs_response:false}})!, 'http://local');
     assert.equal(activityFocusOwner(completed), null);
     assert.equal(activitySourcePath({...detail,source_conversation_id:null}), null);
+});
+
+test('installed plugin destinations keep opaque identity on desktop reload and compact routing', () => {
+    const id = 'pi/npm:@example/board#weekly';
+    const path = '/plugin-page?' + new URLSearchParams({id});
+    const desktop = initialWorkspaceLocation('https://nola.test' + path, 1160);
+    assert.equal(desktop.pathname, '/chat');
+    assert.equal(desktop.searchParams.get('content'), path);
+    const restored = initialWorkspaceLocation(desktop.href, 690);
+    assert.equal(restored.pathname, '/plugin-page');
+    assert.equal(restored.searchParams.get('id'), id);
 });

@@ -77,6 +77,7 @@ internal class AndroidAttachmentImportCoordinator(
 ) : AndroidAttachmentImporter {
     private val applicationContext = context.applicationContext
     private val contentResolver: ContentResolver = applicationContext.contentResolver
+    private val intelligence by lazy { PersonalIntelligenceCore.from(applicationContext) }
 
     override suspend fun import(request: AndroidAttachmentImportRequest): AndroidAttachmentImportResult =
         withContext(ioDispatcher) {
@@ -189,7 +190,7 @@ internal class AndroidAttachmentImportCoordinator(
             attachment.name.lowercase(),
         )
         val excerpt = attachment.content.trim().take(1_600)
-        PersonalIntelligenceCore.ingest(
+        intelligence.ingest(
             IntelligenceIngestRequest(
                 events = listOf(
                     IntelligenceEvent(
@@ -225,7 +226,7 @@ internal class AndroidAttachmentImportCoordinator(
 
     private fun recordFailure(name: String, error: Throwable) {
         val reason = error.message ?: error::class.java.simpleName
-        PersonalIntelligenceCore.ingest(
+        intelligence.ingest(
             IntelligenceIngestRequest(
                 events = listOf(
                     IntelligenceEvent(

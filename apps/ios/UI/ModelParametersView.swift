@@ -33,27 +33,26 @@ struct ModelParametersView: View {
     @Environment(\.dismiss) private var dismiss
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
 
-    @State private var maxContextLength: Int = 65_536
-    @State private var maxOutputTokens: Int = 16_384
-    @State private var topK: Double = 40
-    @State private var topP: Double = 0.9
-    @State private var temperature: Double = 0.7
-    @State private var presencePenalty: Double = 0.0
-    @State private var frequencyPenalty: Double = 0.0
-    @State private var repetitionPenalty: Double = 1.0
-    @State private var seedText: String = ""
-    @State private var stopSequences: String = ""
-    @State private var reasoningPreference: String = "automatic"
-    @State private var reasoningEfforts: [String] = []
-    @State private var showThinking: Bool = true
-    @State private var streamOutput: Bool = true
-    @State private var responseStyle: PromptResponseStyle = .casual
-    @State private var customSystemPrompt: String = ""
+    @State private var maxContextLength: Int
+    @State private var maxOutputTokens: Int
+    @State private var topK: Double
+    @State private var topP: Double
+    @State private var temperature: Double
+    @State private var presencePenalty: Double
+    @State private var frequencyPenalty: Double
+    @State private var repetitionPenalty: Double
+    @State private var seedText: String
+    @State private var stopSequences: String
+    @State private var reasoningPreference: String
+    @State private var reasoningEfforts: [String]
+    @State private var showThinking: Bool
+    @State private var streamOutput: Bool
+    @State private var responseStyle: PromptResponseStyle
+    @State private var customSystemPrompt: String
     @State private var initialSignature: ModelParameterDraftFingerprint?
     @State private var showDiscardConfirmation = false
     @State private var saveError: String?
     @State private var editingSnapshot: ModelParametersStore.ParameterSnapshot?
-    @State private var loaded = false
     @State private var numericText: [NumericField: String] = [:]
     @State private var reloadAfterDiscard = false
     private enum InputField: Hashable {
@@ -61,6 +60,63 @@ struct ModelParametersView: View {
         case numeric(NumericField)
     }
     @FocusState private var inputField: InputField?
+
+    init(modelID: String, displayName: String, isLocal: Bool) {
+        self.modelID = modelID
+        self.displayName = displayName
+        self.isLocal = isLocal
+        var loadedSnapshot: ModelParametersStore.ParameterSnapshot?
+        var loadedEfforts: [String] = []
+        var loadedError: String?
+        do {
+            let snapshot = try ModelParametersStore.shared.parameterSnapshot(for: modelID)
+            loadedEfforts = try ModelParametersStore.shared.reasoningEfforts(for: snapshot)
+            loadedSnapshot = snapshot
+        } catch {
+            loadedError = error.localizedDescription
+        }
+        let params = loadedSnapshot?.parameters ?? ModelParameters.defaults(isLocal: isLocal)
+        let topKValue = Double(LocalSamplingSettings(parameters: params).topK)
+        let repetitionValue = LocalSamplingSettings(parameters: params).repetitionPenalty
+        let seedValue = params.seed.map(String.init) ?? ""
+        let reasoningValue = params.reasoningPreference ?? "automatic"
+        _maxContextLength = State(initialValue: params.maxContextLength)
+        _maxOutputTokens = State(initialValue: params.maxOutputTokens)
+        _topK = State(initialValue: topKValue)
+        _topP = State(initialValue: params.topP)
+        _temperature = State(initialValue: params.temperature)
+        _presencePenalty = State(initialValue: params.presencePenalty)
+        _frequencyPenalty = State(initialValue: params.frequencyPenalty)
+        _repetitionPenalty = State(initialValue: repetitionValue)
+        _seedText = State(initialValue: seedValue)
+        _stopSequences = State(initialValue: params.stopSequences)
+        _reasoningPreference = State(initialValue: reasoningValue)
+        _reasoningEfforts = State(initialValue: loadedEfforts)
+        _showThinking = State(initialValue: params.showThinking)
+        _streamOutput = State(initialValue: params.streamOutput)
+        _responseStyle = State(initialValue: params.responseStyle)
+        _customSystemPrompt = State(initialValue: params.customSystemPrompt)
+        _editingSnapshot = State(initialValue: loadedSnapshot)
+        _saveError = State(initialValue: loadedError)
+        _initialSignature = State(initialValue: loadedSnapshot == nil ? nil : Self.signature(
+            maxContextLength: params.maxContextLength,
+            maxOutputTokens: params.maxOutputTokens,
+            topK: topKValue,
+            topP: params.topP,
+            temperature: params.temperature,
+            presencePenalty: params.presencePenalty,
+            frequencyPenalty: params.frequencyPenalty,
+            repetitionPenalty: repetitionValue,
+            seedText: seedValue,
+            stopSequences: params.stopSequences,
+            reasoningPreference: reasoningValue,
+            showThinking: params.showThinking,
+            streamOutput: params.streamOutput,
+            responseStyle: params.responseStyle,
+            customSystemPrompt: params.customSystemPrompt,
+            numericText: [:]
+        ))
+    }
 
     var body: some View {
         ScrollView {
@@ -120,7 +176,7 @@ struct ModelParametersView: View {
         }
         .toolbar {
             ToolbarItem(placement: .cancellationAction) {
-                Button(L10n.done) {
+                Button(L10n.close) {
                     reloadAfterDiscard = false
                     if hasUnsavedChanges {
                         showDiscardConfirmation = true
@@ -129,11 +185,6 @@ struct ModelParametersView: View {
                     }
                 }
             }
-        }
-        .onAppear {
-            guard !loaded else { return }
-            loaded = true
-            reloadParameters()
         }
     }
 
@@ -260,13 +311,14 @@ struct ModelParametersView: View {
             TextField(NSLocalizedString("model.parameters.seed.optional", value: "Seed（可选）", comment: "Optional seed text field"), text: $seedText)
                 .keyboardType(.numbersAndPunctuation)
                 .focused($inputField, equals: .seed)
+                .nolaInputFieldSurface()
                 .textInputAutocapitalization(.never)
                 .autocorrectionDisabled()
                 .accessibilityIdentifier("model-parameter-seed")
             TextField(NSLocalizedString("model.parameters.stop_sequences", value: "停止词，每行一个", comment: "Stop sequences text field"), text: $stopSequences, axis: .vertical)
                 .focused($inputField, equals: .stopSequences)
                 .lineLimit(2...5)
-                .textFieldStyle(.roundedBorder)
+                .nolaInputFieldSurface()
                 .textInputAutocapitalization(.never)
                 .autocorrectionDisabled()
             Text(NSLocalizedString("model.parameters.stop_sequences.hint", value: "停止词最多会取前 8 个；Seed 留空表示不固定随机种子。", comment: "Stop sequences and seed hint"))
@@ -359,7 +411,7 @@ struct ModelParametersView: View {
                     .textInputAutocapitalization(.never)
                     .autocorrectionDisabled()
                     .multilineTextAlignment(.trailing)
-                    .textFieldStyle(.roundedBorder)
+                    .nolaInputFieldSurface()
                     .frame(width: 104)
                     .monospacedDigit()
                     .accessibilityIdentifier("model-parameter-\(field.rawValue)")
@@ -396,7 +448,7 @@ struct ModelParametersView: View {
                     .keyboardType(.numberPad)
                     .focused($inputField, equals: .numeric(field))
                     .multilineTextAlignment(.trailing)
-                    .textFieldStyle(.roundedBorder)
+                    .nolaInputFieldSurface()
                     .frame(width: 112)
                     .monospacedDigit()
                     .accessibilityIdentifier("model-parameter-\(field.rawValue)")
@@ -502,6 +554,44 @@ struct ModelParametersView: View {
     }
 
     private var parameterSignature: ModelParameterDraftFingerprint {
+        Self.signature(
+            maxContextLength: maxContextLength,
+            maxOutputTokens: maxOutputTokens,
+            topK: topK,
+            topP: topP,
+            temperature: temperature,
+            presencePenalty: presencePenalty,
+            frequencyPenalty: frequencyPenalty,
+            repetitionPenalty: repetitionPenalty,
+            seedText: seedText,
+            stopSequences: stopSequences,
+            reasoningPreference: reasoningPreference,
+            showThinking: showThinking,
+            streamOutput: streamOutput,
+            responseStyle: responseStyle,
+            customSystemPrompt: customSystemPrompt,
+            numericText: numericText
+        )
+    }
+
+    private static func signature(
+        maxContextLength: Int,
+        maxOutputTokens: Int,
+        topK: Double,
+        topP: Double,
+        temperature: Double,
+        presencePenalty: Double,
+        frequencyPenalty: Double,
+        repetitionPenalty: Double,
+        seedText: String,
+        stopSequences: String,
+        reasoningPreference: String,
+        showThinking: Bool,
+        streamOutput: Bool,
+        responseStyle: PromptResponseStyle,
+        customSystemPrompt: String,
+        numericText: [NumericField: String]
+    ) -> ModelParameterDraftFingerprint {
         ModelParameterDraftFingerprint(values: [
             String(maxContextLength),
             String(maxOutputTokens),

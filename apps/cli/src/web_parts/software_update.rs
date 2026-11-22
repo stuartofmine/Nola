@@ -32,8 +32,42 @@ fn software_update_response_for_source(request: &mut Request, method: &Method, p
     if method != if package_request { &Method::Get } else { &Method::Post } { return method_not_allowed(); }
     // Native same-origin navigation streams a verified package directly to the
     // browser download manager, avoiding a multi-gigabyte JavaScript Blob.
-    let same_origin_navigation = package_request && request_header(request, "Sec-Fetch-Site") == Some("same-origin");
-    if !same_origin_navigation && !web_request_is_same_origin(request) { return json_response(StatusCode(403), json!({"error":"same_origin_required"})); }
+    // Plain HTTP LAN browsers omit both `Sec-Fetch-Site` (restricted to
+    // trustworthy origins) and `Origin` (omitted on same-origin GET), so allow
+    // authenticated same-origin GET requests (or valid X-Nola-CSRF) when no
+    // cross-origin Fetch Metadata / Origin / Referer header is present.
+    let package_same_origin = if package_request {
+        if request_header(request, "Origin").is_some() {
+            web_request_is_same_origin(request)
+        } else if let Some(fetch_site) = request_header(request, "Sec-Fetch-Site") {
+            fetch_site.eq_ignore_ascii_case("same-origin")
+        } else {
+            let referer_ok = request_header(request, "Referer").is_none_or(|referer| {
+                let Some(host) = request_header(request, "Host") else {
+                    return false;
+                };
+                reqwest::Url::parse(referer)
+                    .ok()
+                    .and_then(|url| {
+                        let scheme = url.scheme();
+                        let h = url.host_str()?;
+                        let origin = match url.port() {
+                            Some(port) => format!("{scheme}://{h}:{port}"),
+                            None => format!("{scheme}://{h}"),
+                        };
+                        Some(
+                            origin.eq_ignore_ascii_case(&format!("http://{host}"))
+                                || origin.eq_ignore_ascii_case(&format!("https://{host}")),
+                        )
+                    })
+                    .unwrap_or(false)
+            });
+            referer_ok && (web_csrf_token_matches_session(request) || web_session_is_authenticated(request))
+        }
+    } else {
+        web_request_is_same_origin(request)
+    };
+    if !package_same_origin { return json_response(StatusCode(403), json!({"error":"same_origin_required"})); }
     if !package_request {
         #[derive(Deserialize)] #[serde(deny_unknown_fields)] struct CheckRequest {}
         if let Err(response) = read_json::<CheckRequest>(request) { return response; }
@@ -95,5 +129,30 @@ mod software_update_web_tests {
         assert_eq!(request("GET","/api/software-update/check",true,"").0,405);
         assert_eq!(request("GET","/api/software-update/package?release_id=bad",true,"").0,400);
         assert_eq!(request("GET",&format!("/api/software-update/package?release_id={}","a".repeat(64)),false,"").0,403);
+    }
+    #[test] fn package_download_allows_authenticated_plain_http_lan_get_without_origin_or_fetch_metadata() {
+        let (session, _csrf) = create_web_session().unwrap();
+        let server = Server::http("127.0.0.1:0").unwrap();
+        let origin = format!("http://{}", server.server_addr());
+        let worker = std::thread::spawn(move || {
+            let mut request = server.recv().unwrap();
+            let method = request.method().clone();
+            let url = request.url().to_string();
+            let path = url.split('?').next().unwrap();
+            let mut source = nola_update_host::UpdateSource::bundled().unwrap();
+            source.feed_url = None;
+            source.public_key = None;
+            let response = software_update_response_for_source(&mut request, &method, path, &source);
+            request.respond(response).unwrap();
+        });
+        let client = reqwest::blocking::Client::new();
+        let response = client
+            .get(format!("{origin}/api/software-update/package?release_id=bad"))
+            .header("Cookie", format!("{WEB_SESSION_COOKIE}={session}"))
+            .send()
+            .unwrap();
+        // Passes same-origin check (reaches release_id validation 400 instead of 403 same_origin_required).
+        assert_eq!(response.status().as_u16(), 400);
+        worker.join().unwrap();
     }
 }

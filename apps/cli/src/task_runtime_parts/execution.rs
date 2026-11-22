@@ -1537,7 +1537,8 @@ mod execution_scheduling_admission_tests {
             let id = format!("policy-{}", uuid::Uuid::new_v4());
             let marker = root.path().join(format!("{id}.effect"));
             let task = DbBackgroundTask {
-        process_sandbox: None,
+                local_execution: None,
+                process_sandbox: None,
                 terminal: None,
                 id: id.clone(),
                 project_root: root.path().to_string_lossy().into_owned(),
@@ -1656,7 +1657,7 @@ fn durable_required_process_sandbox_missing_never_launches_or_drops_policy() {
     let store=NolaStore::open(&database).unwrap();
     let marker=root.join("must-not-run");let now=unix_epoch_millis();
     let spec=crate::process_sandbox::unavailable_process_sandbox_fixture(&root);
-    let task=DbBackgroundTask {process_sandbox:Some(spec.clone()),terminal:None,id:"required-sandbox".into(),
+    let task=DbBackgroundTask {local_execution: None, process_sandbox:Some(spec.clone()),terminal:None,id:"required-sandbox".into(),
         project_root:root.to_string_lossy().into_owned(),command:format!("printf unsafe > '{}'",marker.display()),
         cwd:root.to_string_lossy().into_owned(),pid:0,stdout_path:root.join("stdout").to_string_lossy().into_owned(),
         stderr_path:root.join("stderr").to_string_lossy().into_owned(),status_path:root.join("status").to_string_lossy().into_owned(),
@@ -1729,7 +1730,7 @@ fn run_shell_task(request: ShellTaskProcessRequest) -> i32 {
     let dispatch_is_bound = (|| -> Result<bool,String> {
         let durable = crate::store::background_task_from_runtime(persisted_task.clone())?;
         if durable.command != task.command || durable.cwd != task.cwd || durable.terminal != task.terminal
-            || durable.process_sandbox!=task.process_sandbox
+            || durable.process_sandbox!=task.process_sandbox || durable.local_execution != task.local_execution
             || durable.owner_session_id != task.owner_session_id || durable.stdout_path != task.stdout_path
             || durable.stderr_path != task.stderr_path || durable.status_path != task.status_path {
             return Err("Shell launch payload differs from the durable task".into());
@@ -1939,8 +1940,8 @@ fn run_shell_task(request: ShellTaskProcessRequest) -> i32 {
         &json!({"pid": command_pid, "worker_id": request.worker_id}).to_string(),
         unix_epoch_millis(),
     );
-    let mut observed = ProcessGroupUsage::default();
-    let mut has_resource_observation = false;
+    // spawn returned a child, even when it exits before the first OS sample.
+    let mut observed = ProcessGroupUsage { processes: 1, ..Default::default() };
     let mut budget_failure = None::<String>;
     let mut cancelled = false;
     let exit_status = loop {
@@ -2008,7 +2009,6 @@ fn run_shell_task(request: ShellTaskProcessRequest) -> i32 {
             }
         };
         {
-            has_resource_observation = true;
             observed.cpu_time_ms = observed.cpu_time_ms.max(usage.cpu_time_ms);
             observed.memory_bytes = observed.memory_bytes.max(usage.memory_bytes);
             observed.processes = observed.processes.max(usage.processes.saturating_sub(1));
@@ -2129,10 +2129,12 @@ fn run_shell_task(request: ShellTaskProcessRequest) -> i32 {
     let terminal_error = budget_failure.clone().or_else(|| {
         (signal.is_some() || semantic_error).then(|| format!("Shell command finished with {status_label}: {semantic_note}"))
     });
+    let local_stop = task.local_execution.clone().zip(child.confirmed_local_stop_scope())
+        .map(|(identity, scope)| nola_domain::execution_evidence::LocalExecutionStop { identity, scope });
     let terminal_at_ms = unix_epoch_millis();
     let final_observation = nola_application::RuntimeTaskFinalObservation {
         output_bytes,
-        resource_usage: has_resource_observation.then_some(nola_application::RuntimeTaskResourceUsage {
+        resource_usage: Some(nola_application::RuntimeTaskResourceUsage {
             cpu_time_ms: observed.cpu_time_ms,
             peak_memory_bytes: observed.memory_bytes,
             peak_processes: observed.processes,
@@ -2144,6 +2146,7 @@ fn run_shell_task(request: ShellTaskProcessRequest) -> i32 {
             "semantic_note": semantic_note,
             "residual_processes_stopped": child.residual_processes_stopped(),
             "process_tree_stop": child.stop_fact(),
+            "local_stop": local_stop,
             "process_tree_stop_request_error": child.stop_request_error(),
             "safe_to_retry": false,
         })))]),
@@ -3569,7 +3572,8 @@ mod bound_worker_authority_tests {
         let store=NolaStore::open(&database).unwrap();
         let now=unix_epoch_millis();
         let task=DbBackgroundTask {
-        process_sandbox: None,id:"blocked-agent-observer".into(),
+            local_execution: None,
+            process_sandbox: None,id:"blocked-agent-observer".into(),
             terminal: None,
             project_root:root.path().to_string_lossy().into_owned(),command:"not-executed".into(),
             cwd:root.path().to_string_lossy().into_owned(),pid:0,
@@ -3650,7 +3654,8 @@ mod bound_worker_authority_tests {
         let database = root.path().join("nola.db");
         let store = NolaStore::open(&database).unwrap();
         let task = DbBackgroundTask {
-        process_sandbox: None,
+            local_execution: None,
+            process_sandbox: None,
             terminal: None,
             id: "original-shell-task".into(),
             project_root: root.path().to_string_lossy().into_owned(),
@@ -3763,7 +3768,8 @@ mod bound_worker_authority_tests {
             let task_id = format!("stale-transport-{}", uuid::Uuid::new_v4());
             let marker = root.join(format!("{task_id}.side-effect"));
             let task = DbBackgroundTask {
-        process_sandbox: None,
+                local_execution: None,
+                process_sandbox: None,
                 terminal: None,
                 id: task_id.clone(),
                 project_root: root.to_string_lossy().into_owned(),

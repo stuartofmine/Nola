@@ -115,6 +115,14 @@ nonisolated struct IOSResolvedCloudRunProfile {
     var reasoningTier: String = "balanced"
 }
 
+enum WebHostPairingFailure: Error {
+    case unsupportedPermissionProtocol
+    case identityChanged
+    case secureStorageFailed
+    case identityStorageFailed
+    case rollbackFailed
+}
+
 public final class ModelSelectionManager {
     nonisolated public static let webBackendIdPrefix = "web-backend:"
     public static var webBackendSource: String {
@@ -439,12 +447,18 @@ public final class ModelSelectionManager {
         return updated
     }
 
+    public static func clearSessionCredentials() {
+        sessionCredentialLock.lock()
+        sessionWebHostTokens.removeAll()
+        sessionWebHostIdentities.removeAll()
+        sessionCredentialLock.unlock()
+    }
+
     public static func removeModel(_ model: ModelInfo) {
         guard let store = IOSApplicationRuntime.shared else { return }
         _ = try? store.deleteModelProfile(id: model.id)
-        if model.isWebBackend, let baseURL = model.baseURL {
-            deleteWebHostToken(for: baseURL)
-            forgetWebHostIdentity(for: URL(string: baseURL) ?? URL(fileURLWithPath: "/"))
+        if model.isWebBackend, let baseURL = model.baseURL, let url = URL(string: baseURL) {
+            forgetWebHostIdentity(for: url)
         }
     }
 
@@ -511,15 +525,35 @@ public final class ModelSelectionManager {
         return saved
     }
 
+    static func saveVerifiedHostPairing(
+        _ identity: String, token: String, for url: URL,
+        storeToken: (String, String) -> Bool = ModelSelectionManager.saveWebHostToken(_:for:)
+    ) throws {
+        let existing = pairedWebHostIdentity(for: url)
+        if let existing, existing != identity { throw WebHostPairingFailure.identityChanged }
+        guard existing != nil || trustWebHostIdentity(identity, for: url) else {
+            throw WebHostPairingFailure.identityStorageFailed
+        }
+        guard storeToken(token, url.absoluteString) else {
+            // A refused credential write leaves the old token intact. Only
+            // remove a pin created by this attempt; existing pins stay trusted.
+            if existing == nil, !removeWebHostIdentity(for: url) { throw WebHostPairingFailure.rollbackFailed }
+            throw WebHostPairingFailure.secureStorageFailed
+        }
+    }
+
     public static func forgetWebHostIdentity(for baseURL: URL) {
+        deleteWebHostToken(for: baseURL.absoluteString)
+        _ = removeWebHostIdentity(for: baseURL)
+    }
+
+    private static func removeWebHostIdentity(for baseURL: URL) -> Bool {
         let key = webHostIdentityKey(baseURL)
+        guard KeychainService.delete(service: pairedWebHostIdentityService, account: key) else { return false }
         sessionCredentialLock.lock()
         sessionWebHostIdentities.removeValue(forKey: key)
         sessionCredentialLock.unlock()
-        _ = KeychainService.delete(
-            service: pairedWebHostIdentityService,
-            account: key
-        )
+        return true
     }
 
     #if DEBUG

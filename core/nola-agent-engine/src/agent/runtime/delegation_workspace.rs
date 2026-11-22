@@ -759,7 +759,7 @@ mod tests {
             .snapshot()
             .unwrap();
         let builtins = nola_domain::delegation::effective_agent_profiles(&Default::default());
-        for name in ["codex", "claude_code", "opencode"] {
+        for name in ["codex", "claude_code", "opencode", "antigravity"] {
             parent.profiles.insert(name.into(), builtins[name].clone());
             let mut args = json!({"agent_type":name,"prompt":"Synthetic engineering task"});
             assert!(

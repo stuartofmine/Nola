@@ -4,6 +4,8 @@ package com.nola.ui.screen.chat
 import android.graphics.Bitmap
 import androidx.compose.ui.test.*
 import androidx.compose.ui.test.junit4.createEmptyComposeRule
+import androidx.compose.ui.semantics.SemanticsActions
+import androidx.compose.ui.text.TextLayoutResult
 import androidx.compose.ui.semantics.SemanticsProperties
 import androidx.test.core.app.ActivityScenario
 import androidx.test.ext.junit.runners.AndroidJUnit4
@@ -35,15 +37,60 @@ class RealAndroidRemoteLongTaskTest {
         return try { JSONObject(connection.inputStream.bufferedReader().use { it.readText() }) }
         finally { connection.disconnect() }
     }
-    private fun screenshot(name: String) {
-        File(context.filesDir, name).outputStream().use {
-            InstrumentationRegistry.getInstrumentation().uiAutomation.takeScreenshot().compress(Bitmap.CompressFormat.PNG, 100, it)
+    private fun screenshot(name: String, waitForTransition: Boolean = false) {
+        val automation = InstrumentationRegistry.getInstrumentation().uiAutomation
+        if (waitForTransition) {
+            // Dialog windows animate on the platform compositor after Compose is idle.
+            var previous: IntArray? = null
+            var stableFrames = 0
+            compose.waitUntil(5000) {
+                android.os.SystemClock.sleep(100)
+                val frame = automation.takeScreenshot()
+                val preview = Bitmap.createScaledBitmap(frame, 40, 60, true)
+                val pixels = IntArray(40 * 48)
+                preview.getPixels(pixels, 0, 40, 0, 6, 40, 48)
+                preview.recycle()
+                frame.recycle()
+                val prior = previous
+                stableFrames = if (prior != null && pixels.indices.count { pixels[it] != prior[it] } <= 4) stableFrames + 1 else 0
+                previous = pixels
+                stableFrames >= 3
+            }
+        }
+        val image = automation.takeScreenshot()
+        try {
+            File(context.filesDir, name).outputStream().use { image.compress(Bitmap.CompressFormat.PNG, 100, it) }
+        } finally {
+            image.recycle()
+        }
+    }
+    private fun assertHeaderTextFits(text: String) {
+        val label = hasText(text) and hasAnyAncestor(hasTestTag("chat.topbar.title"))
+        var measured = "no layout"
+        try {
+            compose.waitUntil(5000) {
+                val layouts = mutableListOf<TextLayoutResult>()
+                compose.onNode(label, useUnmergedTree = true)
+                    .performSemanticsAction(SemanticsActions.GetTextLayoutResult) { it(layouts) }
+                val layout = layouts.single()
+                val last = layout.lineCount - 1
+                val end = layout.getLineEnd(last, visibleEnd = true)
+                val ellipsized = (0..last).any { layout.isLineEllipsized(it) }
+                val clipped = (0..last).any { layout.getLineLeft(it) < -1f || layout.getLineRight(it) > layout.size.width + 1f }
+                measured = "size=${layout.size}, visibleEnd=$end, textLength=${text.length}, ellipsis=$ellipsized, clipped=$clipped"
+                !ellipsized && !clipped && end == text.length
+            }
+        } catch (error: androidx.compose.ui.test.ComposeTimeoutException) {
+            throw AssertionError("Clipped conversation header '$text': $measured", error)
         }
     }
     private fun approveExactJob() {
         val once = compose.onAllNodesWithText(context.getString(R.string.permission_action_allow_once))
         if (once.fetchSemanticsNodes().isNotEmpty()) {
-            compose.onAllNodesWithText(context.getString(R.string.canonical_details)).onLast().performClick()
+            val allow = once.onFirst()
+            val identity = allow.fetchSemanticsNode().config[SemanticsProperties.TestTag].removePrefix("permission.allow-once.")
+            assertHeaderTextFits(context.getString(R.string.conversations_waiting))
+            compose.onNodeWithTag("permission.details.$identity").performTouchInput { click() }
             compose.waitUntil(5000) {
                 compose.onAllNodes(hasText("python3 remote_job.py", substring = true) and hasAnyAncestor(isDialog())).fetchSemanticsNodes().isNotEmpty()
             }
@@ -53,40 +100,108 @@ class RealAndroidRemoteLongTaskTest {
             assertTrue("Job must run in its isolated project", review.lines().any {
                 it == "Working directory: Project directory" || it == "Working directory: " + config().getString("project")
             })
-            screenshot("remote-long-permission-review.png")
+            compose.waitForIdle()
+            screenshot("remote-long-permission-review.png", waitForTransition = true)
             compose.onNode(hasText(context.getString(R.string.common_close)) and hasAnyAncestor(isDialog())).performClick()
             once.onFirst().performClick()
         }
+    }
+
+    private fun connectToFixture(fixture: JSONObject) {
+        val preferences = PreferenceDataStore(context, SecureTokenStore(context))
+        runBlocking {
+            preferences.setOnboardingCompleted()
+            preferences.saveWebHostConfig(fixture.getString("url"), fixture.getString("token"), verifiedHostId = fixture.getString("hostId"))
+        }
+    }
+
+    private fun submitOnSelectedHost(fixture: JSONObject) {
+        compose.onNodeWithContentDescription(context.getString(R.string.tab_settings)).performClick()
+        compose.onNodeWithText(context.getString(R.string.models_title)).performClick()
+        compose.onNode(hasText(context.getString(R.string.models_web_host)) and hasClickAction()).performClick()
+        val hostRow = hasTestTag("models.row.web-host")
+        compose.waitUntil(60_000) { compose.onAllNodes(hostRow).fetchSemanticsNodes().isNotEmpty() }
+        val use = hasText(context.getString(R.string.models_use)) and hasAnyAncestor(hostRow)
+        if (compose.onAllNodes(use).fetchSemanticsNodes().isNotEmpty()) compose.onNode(use).performScrollTo().performClick()
+        compose.waitUntil(30_000) { compose.onAllNodes(hasText(context.getString(R.string.models_selected)) and hasAnyAncestor(hostRow)).fetchSemanticsNodes().isNotEmpty() }
+        compose.onNodeWithContentDescription(context.getString(R.string.tab_chat)).performClick()
+        compose.onNodeWithTag("chat.conversations.new").performClick()
+        val readyComposer = hasTestTag("chat.composer.input") and isEnabled()
+        compose.waitUntil(30_000) { compose.onAllNodes(readyComposer).fetchSemanticsNodes().isNotEmpty() }
+        assertHeaderTextFits(context.getString(R.string.chat_new_chat))
+        screenshot("remote-long-new-chat.png")
+        val composer = compose.onNode(readyComposer)
+        composer.performTouchInput { click() }
+        composer.performTextInput(fixture.getString("prompt"))
+        compose.onNodeWithContentDescription(context.getString(R.string.chat_send)).assertIsEnabled().performClick()
+    }
+
+    @Test fun installSkillOnPairedHost() {
+        requireIsolatedProductTestUser(context)
+        org.junit.Assume.assumeTrue(InstrumentationRegistry.getArguments().getString("realRemoteLong") == "1")
+        val fixture = config()
+        val database = com.nola.data.local.AndroidApplicationRuntime.defaultDatabaseFile(context)
+        val packages = File(database.parentFile, "${database.nameWithoutExtension}.skill-packages")
+        fun localRecords(): List<List<String>> {
+            if (!database.isFile) return emptyList()
+            return android.database.sqlite.SQLiteDatabase.openDatabase(database.path, null, android.database.sqlite.SQLiteDatabase.OPEN_READONLY).use { db ->
+                db.rawQuery("SELECT id, current_version, enabled, revision FROM skill_definitions WHERE source='user' ORDER BY id", null).use { rows ->
+                    buildList { while (rows.moveToNext()) add((0 until rows.columnCount).map { rows.getString(it) }) }
+                }
+            }
+        }
+        val originalRecords = localRecords()
+        val localFiles = packages.walkTopDown().filter { it.isFile }.map { it.relativeTo(packages).path }.toSet()
+        connectToFixture(fixture)
+        ActivityScenario.launch(MainActivity::class.java).use {
+            submitOnSelectedHost(fixture)
+            compose.waitUntil(210_000) {
+                val once = compose.onAllNodesWithText(context.getString(R.string.permission_action_allow_once))
+                if (once.fetchSemanticsNodes().isNotEmpty()) {
+                    val identity = once.onFirst().fetchSemanticsNode().config[SemanticsProperties.TestTag].removePrefix("permission.allow-once.")
+                    compose.onNodeWithTag("permission.details.$identity").performClick()
+                    compose.waitUntil(5000) {
+                        compose.onAllNodes(hasText(fixture.getString("skillUrl"), substring = true) and hasAnyAncestor(isDialog()))
+                            .fetchSemanticsNodes().isNotEmpty()
+                    }
+                    compose.onNode(hasText(context.getString(R.string.common_close)) and hasAnyAncestor(isDialog())).performClick()
+                    once.onFirst().performClick()
+                }
+                val observed = state()
+                if (observed.optBoolean("runFinished")) {
+                    screenshot("remote-skill-installed.png")
+                    assertTrue("Host finished without enabling the requested Skill", observed.getBoolean("skillInstalled"))
+                    true
+                } else false
+            }
+        }
+        assertEquals(originalRecords, localRecords())
+        assertEquals(localFiles, packages.walkTopDown().filter { it.isFile }.map { it.relativeTo(packages).path }.toSet())
     }
 
     @Test fun submitRealLongTaskThenDetachClient() {
         requireIsolatedProductTestUser(context)
         org.junit.Assume.assumeTrue(InstrumentationRegistry.getArguments().getString("realRemoteLong") == "1")
         val fixture = config()
-        val preferences = PreferenceDataStore(context, SecureTokenStore(context))
-        runBlocking {
-            preferences.setOnboardingCompleted()
-            preferences.saveWebHostConfig(fixture.getString("url"), fixture.getString("token"), verifiedHostId = fixture.getString("hostId"))
-        }
+        connectToFixture(fixture)
         ActivityScenario.launch(MainActivity::class.java).use {
-            compose.onNodeWithContentDescription(context.getString(R.string.tab_settings)).performClick()
-            compose.onNodeWithText(context.getString(R.string.models_title)).performClick()
-            compose.onNode(hasText(context.getString(R.string.models_web_host)) and hasClickAction()).performClick()
-            val hostRow = hasTestTag("models.row.web-host")
-            compose.waitUntil(60_000) { compose.onAllNodes(hostRow).fetchSemanticsNodes().isNotEmpty() }
-            val use = hasText(context.getString(R.string.models_use)) and hasAnyAncestor(hostRow)
-            if (compose.onAllNodes(use).fetchSemanticsNodes().isNotEmpty()) compose.onNode(use).performScrollTo().performClick()
-            compose.waitUntil(30_000) { compose.onAllNodes(hasText(context.getString(R.string.models_selected)) and hasAnyAncestor(hostRow)).fetchSemanticsNodes().isNotEmpty() }
-            compose.onNodeWithContentDescription(context.getString(R.string.tab_chat)).performClick()
-            compose.onNodeWithTag("chat.conversations.new").performClick()
-            compose.onNodeWithTag("chat.composer.input").performTextInput(fixture.getString("prompt"))
-            compose.onNodeWithContentDescription(context.getString(R.string.chat_send)).assertIsEnabled().performClick()
-            compose.waitUntil(180_000) { approveExactJob(); state().optInt("ticks") >= 2 }
-            val running = state()
-            assertEquals("running", running.getString("runStatus"))
-            assertEquals(1, running.getInt("starts"))
-            screenshot("remote-long-running.png")
-            File(context.filesDir, "remote-long-original.json").writeText(running.toString())
+            try {
+                submitOnSelectedHost(fixture)
+                compose.waitUntil(180_000) { approveExactJob(); state().optInt("ticks") >= 2 }
+                val running = state()
+                assertEquals("running", running.getString("runStatus"))
+                assertEquals(1, running.getInt("starts"))
+                screenshot("remote-long-running.png")
+                File(context.filesDir, "remote-long-original.json").writeText(running.toString())
+            } catch (failure: Throwable) {
+                runCatching {
+                    screenshot("remote-long-failed-in-app.png")
+                    File(context.filesDir, "remote-long-failed-tree.txt").writeText(
+                        compose.onAllNodes(isRoot(), useUnmergedTree = true).printToString()
+                    )
+                }.onFailure(failure::addSuppressed)
+                throw failure
+            }
         }
         val before = state()
         Thread.sleep(5000)
@@ -111,13 +226,19 @@ class RealAndroidRemoteLongTaskTest {
             }
             if (compose.onAllNodesWithTag(tag).fetchSemanticsNodes().isNotEmpty())
                 compose.onNodeWithTag(tag).performScrollTo().performClick()
+            var completed: JSONObject? = null
             compose.waitUntil(240_000) {
-                val observed = state()
+                val observed = try {
+                    state()
+                } catch (_: java.net.SocketTimeoutException) {
+                    return@waitUntil false
+                }
                 assertEquals(original.getString("runId"), observed.getString("runId"))
                 assertEquals(1, observed.getInt("runCount"))
-                observed.optString("outcome") == "answered"
+                completed = observed.takeIf { it.optString("outcome") == "answered" }
+                completed != null
             }
-            val final = state()
+            val final = requireNotNull(completed)
             assertEquals(1, final.getInt("starts"))
             assertEquals(config().getInt("steps"), final.getInt("ticks"))
             assertTrue(final.getBoolean("resultValid"))
@@ -133,7 +254,8 @@ class RealAndroidRemoteLongTaskTest {
                         compose.onAllNodesWithContentDescription(context.getString(R.string.chat_send)).fetchSemanticsNodes().isNotEmpty()
                 }
             } finally {
-                screenshot("remote-long-restored-result.png")
+                compose.waitForIdle()
+                screenshot("remote-long-restored-result.png", waitForTransition = true)
                 File(context.filesDir, "remote-long-restored-tree.txt").writeText(compose.onRoot(useUnmergedTree = true).printToString())
             }
             File(context.filesDir, "remote-long-result.json").writeText(final.toString())

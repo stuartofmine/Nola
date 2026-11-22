@@ -232,11 +232,28 @@ fn exchange(
     decrypt_mobile_json(&envelope, token)
 }
 
+fn verify_host(status: &Value, expected_host: &str) -> Result<(), String> {
+    if status["hostId"].as_str() != Some(expected_host) {
+        return Err("Could not match the Host identity. Check the Host address and --expected-host-id.".into());
+    }
+    if status["localTrust"] != false {
+        return Err("Connect to the Host listener started with --tailcat-ingress.".into());
+    }
+    if status["tailcatAvailable"] != true {
+        return Err("The Host has no available Tailcat helper. Configure --tailcat-helper and --tailcat-helper-sha256 on the Host, then reconnect.".into());
+    }
+    Ok(())
+}
+
 pub(crate) fn run_if_requested(args: &[String]) -> Option<Result<(), String>> {
     if args.first().map(String::as_str) != Some("web")
         || !args.iter().any(|arg| arg == "--connect-host")
     {
         return None;
+    }
+    if args.iter().any(|arg| matches!(arg.as_str(), "-h" | "--help")) {
+        println!("{USAGE}");
+        return Some(Ok(()));
     }
     Some(run(args))
 }
@@ -301,12 +318,7 @@ fn run(args: &[String]) -> Result<(), String> {
         }
         serde_json::from_slice(&bytes).map_err(|_| "Invalid Host identity response".into())
     })()?;
-    if status["hostId"].as_str() != Some(&options.host)
-        || status["localTrust"] != false
-        || status["tailcatAvailable"] != true
-    {
-        return Err("Expected authenticated Tailcat Host was not verified".into());
-    }
+    verify_host(&status, &options.host)?;
     let mut bridge = Bridge::start(crate::tailcat_transport::verified_command(
         &options.program,
         &options.digest,
@@ -401,6 +413,20 @@ fn run(args: &[String]) -> Result<(), String> {
 mod tests {
     use super::*;
     #[test]
+    fn host_admission_explains_how_to_recover_each_refusal() {
+        let expected = "paired";
+        let valid = json!({"hostId": expected, "localTrust": false, "tailcatAvailable": true});
+        assert!(verify_host(&valid, expected).is_ok());
+        assert!(verify_host(&valid, "other").unwrap_err().contains("--expected-host-id"));
+        let mut direct = valid.clone();
+        direct["localTrust"] = json!(true);
+        assert!(verify_host(&direct, expected).unwrap_err().contains("--tailcat-ingress"));
+        let mut missing_helper = valid;
+        missing_helper["tailcatAvailable"] = json!(false);
+        assert!(verify_host(&missing_helper, expected).unwrap_err().contains("--tailcat-helper"));
+    }
+
+    #[test]
     fn cli_web_origin_is_exact_and_does_not_accept_credentials_or_public_http() {
         for raw in ["http://10.0.2.2:5001", "https://host.example"] {
             assert!(validated_origin(raw).is_ok());
@@ -415,5 +441,6 @@ mod tests {
             assert!(validated_origin(raw).is_err());
         }
         assert!(run_if_requested(&["web".into()]).is_none());
+        assert_eq!(run_if_requested(&["web".into(), "--connect-host".into(), "--help".into()]), Some(Ok(())));
     }
 }

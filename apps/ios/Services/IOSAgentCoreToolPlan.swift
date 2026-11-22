@@ -29,6 +29,9 @@ public final class IOSAgentScopedGrantStore {
 public extension IOSAgentHostExecutor {
     nonisolated static let installedToolCapabilities: [String: AgentCoreCapability] = [
         "skill_invoke": .none,
+        "device_skill_read_resource": .none,
+        "device_github_skill_find": .network,
+        "device_github_skill_install": .network,
         // Executed by the Core-bound publisher in DeviceAgentCoordinator.
         "render_ui": .none,
         "delegate_expert": .none,
@@ -264,12 +267,15 @@ public extension AgentCoreToolCatalog {
                 tools: manifests
             ),
             conversation: .init(
+                mode: mode.rawValue,
                 allowedTools: allowedTools.sorted(),
-                deniedTools: deniedTools.sorted(),
-                allowedCapabilities: allowedCapabilities.sorted(),
-                deniedCapabilities: deniedCapabilities.sorted()
+                deniedTools: deniedTools.sorted()
             ),
-            userPolicy: .init(allowResultEgressRoutes: receipts.isEmpty ? [] : [route]),
+            userPolicy: .init(
+                allowedCapabilities: allowedCapabilities.sorted(),
+                deniedCapabilities: deniedCapabilities.sorted(),
+                allowResultEgressRoutes: receipts.isEmpty ? [] : [route]
+            ),
             scopedGrants: scopedGrants,
             resultEgressGrants: egressGrants
         )
@@ -303,6 +309,7 @@ public extension AgentCoreToolCatalog {
     static func authorizationSnapshot(isForeground: Bool) -> [String: String] {
         var result: [String: String] = [
             AgentCoreCapability.none.rawValue: "granted",
+            AgentCoreCapability.network.rawValue: "granted",
             AgentCoreCapability.filesRead.rawValue: "ask",
             AgentCoreCapability.filesWrite.rawValue: "ask",
             AgentCoreCapability.clipboard.rawValue: isForeground ? "granted" : "unavailable",

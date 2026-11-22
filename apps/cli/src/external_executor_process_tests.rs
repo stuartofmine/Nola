@@ -166,12 +166,7 @@ mod tests {
         assert!(writer.wait().unwrap().success());
         fs::set_permissions(&executable, fs::Permissions::from_mode(0o755)).unwrap();
         let mut descriptor = ExecutionBackendDescriptor::built_in_nola();
-        descriptor.id = match kind {
-            ExecutionBackendKind::Codex => "codex",
-            ExecutionBackendKind::OpenCode => "opencode",
-            _ => "claude_code",
-        }
-        .into();
+        descriptor.id = kind.id().to_owned();
         descriptor.kind = kind;
         descriptor.executable_path = Some(executable.to_string_lossy().into_owned());
         // A protocol fixture has no reason to load the developer's daily
@@ -206,7 +201,7 @@ mod tests {
     #[cfg(unix)]
     #[test]
     fn delegated_cancel_after_session_stops_owned_processes_before_ack() {
-        for kind in [ExecutionBackendKind::ClaudeCode, ExecutionBackendKind::OpenCode, ExecutionBackendKind::Codex] {
+        for kind in [ExecutionBackendKind::ClaudeCode, ExecutionBackendKind::OpenCode, ExecutionBackendKind::Antigravity, ExecutionBackendKind::Codex] {
           for during_setup in [true, false] {
             let body = if during_setup { "while IFS= read -r line; do :; done\nwait" } else if kind == ExecutionBackendKind::ClaudeCode {
                 r#"while IFS= read -r line; do
@@ -221,7 +216,7 @@ wait"#
 while IFS= read -r line; do
   echo "$line" >> requests.jsonl
   case "$line" in
-    *'"method":"initialize"'*) echo '{"id":1,"result":{"protocolVersion":1}}' ;;
+    *'"method":"initialize"'*) echo '{"id":1,"result":{"protocolVersion":1,"agentCapabilities":{"loadSession":true}}}' ;;
     *'"method":"session/load"'*) echo '{"id":2,"result":{}}' ;;
     *'"method":"thread/resume"'*) echo '{"id":2,"result":{"thread":{"id":"original-session"}}}' ;;
     *'"method":"session/prompt"'*|*'"method":"turn/start"'*) echo dispatched_after_stop > forbidden ;;
@@ -244,7 +239,7 @@ wait
             let mut observer = TestExternalObserver { cancel_on_session: (!during_setup).then(|| control.clone()), ..Default::default() };
             let result = match kind {
                 ExecutionBackendKind::ClaudeCode => run_stream_json_process(&config, "fixture", true, &mut observer, Some(control), &descriptor),
-                ExecutionBackendKind::OpenCode => run_opencode_acp(&config, "fixture", true, &mut observer, Some(control), &descriptor),
+                ExecutionBackendKind::OpenCode | ExecutionBackendKind::Antigravity => run_acp_executor(&config, "fixture", true, &mut observer, Some(control), &descriptor),
                 _ => run_codex_app_server(&config, "fixture", true, &mut observer, Some(control), &descriptor),
             };
             if let Some(cancel) = setup_cancel { cancel.join().unwrap(); }
@@ -312,15 +307,44 @@ wait
 
     #[cfg(unix)]
     #[test]
+    fn antigravity_selects_the_exact_native_variant_and_requires_a_completed_turn() {
+        let script = r#"
+while IFS= read -r line; do
+  echo "$line" >> requests.jsonl
+  case "$line" in
+    *'"method":"initialize"'*) echo '{"id":1,"result":{"protocolVersion":1,"agentCapabilities":{"sessionCapabilities":{"resume":{}}}}}' ;;
+    *'"method":"session/resume"'*) echo '{"id":2,"result":{}}' ;;
+    *'"method":"session/set_model"'*) echo '{"id":5,"result":{}}' ;;
+    *'"method":"session/prompt"'*) echo '{"id":4,"result":{"stopReason":"max_tokens"}}' ;;
+  esac
+done
+wait"#;
+        let (mut config, descriptor) = protocol_fixture(ExecutionBackendKind::Antigravity, script);
+        config.external_execution_model = Some("provider-variant-low".into());
+        let error = run_acp_executor(&config, "test", true, &mut TestExternalObserver::default(),
+            None, &descriptor).unwrap_err();
+        assert!(error.contains("max_tokens"), "{error}");
+        let raw = fs::read_to_string(config.project_root.join("requests.jsonl")).unwrap();
+        let requests: Vec<Value> = raw.lines().map(|line| serde_json::from_str(line).unwrap()).collect();
+        assert_eq!(requests[1]["method"], "session/resume");
+        assert_eq!(requests[2]["method"], "session/set_model");
+        assert_eq!(requests[2]["params"]["modelId"], "provider-variant-low");
+        assert_eq!(requests[3]["method"], "session/prompt");
+        assert_protocol_fixture_reaped(&config);
+        fs::remove_dir_all(config.project_root).unwrap();
+    }
+
+    #[cfg(unix)]
+    #[test]
     fn delegated_strict_resume_protocol_failure_never_starts_a_new_session() {
-        for kind in [ExecutionBackendKind::OpenCode, ExecutionBackendKind::Codex] {
+        for kind in [ExecutionBackendKind::OpenCode, ExecutionBackendKind::Antigravity, ExecutionBackendKind::Codex] {
             let (config, descriptor) = protocol_fixture(
                 kind.clone(),
                 r#"
 while IFS= read -r line; do
   echo "$line" >> requests.jsonl
   case "$line" in
-    *'"method":"initialize"'*) echo '{"jsonrpc":"2.0","id":1,"result":{"protocolVersion":1}}' ;;
+    *'"method":"initialize"'*) echo '{"jsonrpc":"2.0","id":1,"result":{"protocolVersion":1,"agentCapabilities":{"loadSession":true}}}' ;;
     *'"method":"session/load"'*|*'"method":"session/resume"'*|*'"method":"thread/resume"'*) echo '{"jsonrpc":"2.0","id":2,"error":{"code":-32000,"message":"unknown original session"}}' ;;
     *'"method":"session/new"'*|*'"method":"thread/start"'*) echo fallback > forbidden ;;
   esac
@@ -330,8 +354,8 @@ wait
             );
             let mut observer = TestExternalObserver::default();
             let error = match kind {
-                ExecutionBackendKind::OpenCode => {
-                    run_opencode_acp(&config, "fixture", true, &mut observer, None, &descriptor)
+                ExecutionBackendKind::OpenCode | ExecutionBackendKind::Antigravity => {
+                    run_acp_executor(&config, "fixture", true, &mut observer, None, &descriptor)
                 }
                 _ => {
                     run_codex_app_server(&config, "fixture", true, &mut observer, None, &descriptor)
@@ -372,7 +396,7 @@ wait"#
 while IFS= read -r line; do
   echo "$line" >> requests.jsonl
   case "$line" in
-    *'"method":"initialize"'*) echo '{"jsonrpc":"2.0","id":1,"result":{"protocolVersion":1}}' ;;
+    *'"method":"initialize"'*) echo '{"jsonrpc":"2.0","id":1,"result":{"protocolVersion":1,"agentCapabilities":{"loadSession":true}}}' ;;
     *'"method":"session/load"'*|*'"method":"session/resume"'*) echo '{"jsonrpc":"2.0","id":2,"result":{}}' ;;
     *'"method":"thread/resume"'*) echo '{"id":2,"result":{"thread":{"id":"original-session"}}}' ;;
     *'"method":"session/prompt"'*|*'"method":"turn/start"'*) echo forbidden > forbidden ;;
@@ -395,8 +419,8 @@ wait
                     None,
                     &descriptor,
                 ),
-                ExecutionBackendKind::OpenCode => {
-                    run_opencode_acp(&config, "fixture", true, &mut observer, None, &descriptor)
+                ExecutionBackendKind::OpenCode | ExecutionBackendKind::Antigravity => {
+                    run_acp_executor(&config, "fixture", true, &mut observer, None, &descriptor)
                 }
                 _ => {
                     run_codex_app_server(&config, "fixture", true, &mut observer, None, &descriptor)
@@ -417,7 +441,7 @@ trap 'kill "$(cat descendant.pid)" 2>/dev/null; wait' EXIT
 while IFS= read -r line; do
   echo "$line" >> requests.jsonl
   case "$line" in
-    *'"method":"initialize"'*) echo '{"id":1,"result":{"protocolVersion":1}}' ;;
+    *'"method":"initialize"'*) echo '{"id":1,"result":{"protocolVersion":1,"agentCapabilities":{"loadSession":true}}}' ;;
     *'"method":"session/load"'*) echo '{"id":2,"result":{}}' ;;
     *'"method":"session/prompt"'*) echo '{"method":"session/update","params":{"sessionId":"original-session","update":{"sessionUpdate":"agent_message_chunk","content":{"type":"text","text":"fictional output"}}}}' ;;
     *'"method":"session/cancel"'*) echo '{"id":4,"result":{"stopReason":"cancelled"}}'; exit 0 ;;
@@ -427,7 +451,7 @@ done
         let (config, descriptor) = protocol_fixture(ExecutionBackendKind::OpenCode, body);
         let token = RuntimeExecutionControl::default();
         let mut observer = TestExternalObserver {cancel_on_rejected_text:Some(token.clone()),..Default::default()};
-        let error = run_opencode_acp(&config,"fictional output",true,&mut observer,Some(token),&descriptor).unwrap_err();
+        let error = run_acp_executor(&config,"fictional output",true,&mut observer,Some(token),&descriptor).unwrap_err();
         assert_eq!(error,"external execution cancelled");
         assert!(observer.stop_confirmed);
         let wire=fs::read_to_string(config.project_root.join("requests.jsonl")).unwrap();
@@ -443,7 +467,7 @@ done
 trap 'kill "$(cat descendant.pid)" 2>/dev/null; wait' EXIT
 while IFS= read -r line; do
   case "$line" in
-    *'"method":"initialize"'*) echo '{"jsonrpc":"2.0","id":1,"result":{"protocolVersion":1}}' ;;
+    *'"method":"initialize"'*) echo '{"jsonrpc":"2.0","id":1,"result":{"protocolVersion":1,"agentCapabilities":{"loadSession":true}}}' ;;
     *'"method":"session/load"'*) echo '{"jsonrpc":"2.0","id":2,"result":{}}' ;;
     *'"method":"session/prompt"'*) printf '%s\n' 'error="AI_APICallError: Free usage limit reached. fictional-secret"' >&2 ;;
   esac
@@ -452,7 +476,7 @@ done
         let (config, descriptor) = protocol_fixture(ExecutionBackendKind::OpenCode, body);
         let mut observer = TestExternalObserver::default();
         let started = Instant::now();
-        let message = run_opencode_acp(&config, "fictional quota fixture", true, &mut observer, None, &descriptor).unwrap_err();
+        let message = run_acp_executor(&config, "fictional quota fixture", true, &mut observer, None, &descriptor).unwrap_err();
         assert!(message.contains("no remaining free quota"), "{message}");
         assert!(!message.contains("fictional-secret"));
         assert!(!message.contains("sampler"));
@@ -470,7 +494,7 @@ done
 while IFS= read -r line; do
   echo "$line" >> requests.jsonl
   case "$line" in
-    *'"method":"initialize"'*) echo '{"id":1,"result":{"protocolVersion":1}}' ;;
+    *'"method":"initialize"'*) echo '{"id":1,"result":{"protocolVersion":1,"agentCapabilities":{"loadSession":true}}}' ;;
     *'"method":"session/load"'*) echo '{"id":2,"result":{}}' ;;
     *'"method":"session/prompt"'*) echo '{"id":"permission-37","method":"session/request_permission","params":{"sessionId":"original-session","toolCall":{"toolCallId":"call-9","kind":"read","rawInput":{"path":"/private/file"},"locations":[{"path":"/private/file"}]},"options":[{"optionId":"yes","kind":"allow_once"},{"optionId":"no","kind":"reject_once"}]}}' ;;
     *'"id":"permission-37"'*) echo unauthorized > forbidden ;;
@@ -480,7 +504,7 @@ wait
 "#,
         );
         let mut observer = TestExternalObserver::default();
-        let error = run_opencode_acp(&config, "fixture", true, &mut observer, None, &descriptor)
+        let error = run_acp_executor(&config, "fixture", true, &mut observer, None, &descriptor)
             .unwrap_err();
         assert!(error.contains("no decision received"), "{error}");
         assert_eq!(observer.permissions.len(), 1);
@@ -506,6 +530,8 @@ wait
         for (kind, reject_claim) in [
             (ExecutionBackendKind::OpenCode, true),
             (ExecutionBackendKind::OpenCode, false),
+            (ExecutionBackendKind::Antigravity, true),
+            (ExecutionBackendKind::Antigravity, false),
             (ExecutionBackendKind::Codex, true),
             (ExecutionBackendKind::Codex, false),
         ] {
@@ -515,7 +541,7 @@ wait
 while IFS= read -r line; do
   echo "$line" >> requests.jsonl
   case "$line" in
-    *'"method":"initialize"'*) echo '{"id":1,"result":{"protocolVersion":1}}' ;;
+    *'"method":"initialize"'*) echo '{"id":1,"result":{"protocolVersion":1,"agentCapabilities":{"loadSession":true}}}' ;;
     *'"method":"session/load"'*) echo '{"id":2,"result":{}}' ;;
     *'"method":"thread/resume"'*) echo '{"id":2,"result":{"thread":{"id":"original-session"}}}' ;;
     *'"method":"session/prompt"'*) echo '{"id":"permission-37","method":"session/request_permission","params":{"sessionId":"original-session","toolCall":{"toolCallId":"call-9","rawInput":{"path":"/private/file"}},"options":[{"optionId":"yes","kind":"allow_once"}]}}' ;;
@@ -532,8 +558,8 @@ wait
                 ..Default::default()
             };
             let result = match kind {
-                ExecutionBackendKind::OpenCode => {
-                    run_opencode_acp(&config, "fixture", true, &mut observer, None, &descriptor)
+                ExecutionBackendKind::OpenCode | ExecutionBackendKind::Antigravity => {
+                    run_acp_executor(&config, "fixture", true, &mut observer, None, &descriptor)
                 }
                 _ => {
                     run_codex_app_server(&config, "fixture", true, &mut observer, None, &descriptor)
@@ -563,7 +589,8 @@ wait
     #[test]
     fn catalog_is_stable_even_when_optional_clis_are_absent() {
         let catalog = discover_execution_backends();
-        assert_eq!(catalog.len(), 4);
+        assert_eq!(catalog.len(), ExecutionBackendKind::ALL.len());
+        assert!(catalog.iter().any(|item| item.id == "antigravity" && item.transport == ExecutionBackendTransport::JsonRpcStdio));
         assert_eq!(catalog[0].id, "nola");
         assert!(catalog.iter().any(|item| item.id == "codex"));
         assert!(catalog.iter().any(|item| item.id == "claude_code"));
@@ -598,7 +625,7 @@ wait
     fn catalog_machine_contract_serializes_diagnostics_and_capabilities() {
         let encoded = serde_json::to_value(discover_execution_backends()).unwrap();
         let entries = encoded.as_array().unwrap();
-        assert_eq!(entries.len(), 4);
+        assert_eq!(entries.len(), ExecutionBackendKind::ALL.len());
         for entry in entries {
             assert_eq!(entry["schema_version"], EXECUTION_BACKEND_SCHEMA_VERSION);
             assert!(entry["id"].is_string());
@@ -617,7 +644,7 @@ wait
     #[test]
     fn opencode_acp_updates_preserve_stream_and_tool_lifecycle() {
         assert_eq!(
-            parse_opencode_acp_update(&serde_json::json!({
+            parse_acp_update(&serde_json::json!({
                 "sessionUpdate":"agent_message_chunk",
                 "content":{"type":"text","text":"hello"}
             })),
@@ -626,7 +653,7 @@ wait
             }]
         );
         assert_eq!(
-            parse_opencode_acp_update(&serde_json::json!({
+            parse_acp_update(&serde_json::json!({
                 "sessionUpdate":"agent_thought_chunk",
                 "content":{"type":"text","text":"inspect"}
             })),
@@ -635,7 +662,7 @@ wait
             }]
         );
         assert_eq!(
-            parse_opencode_acp_update(&serde_json::json!({
+            parse_acp_update(&serde_json::json!({
                 "sessionUpdate":"tool_call",
                 "toolCallId":"call-1",
                 "title":"Read file",
@@ -648,7 +675,7 @@ wait
             }]
         );
         assert_eq!(
-            parse_opencode_acp_update(&serde_json::json!({
+            parse_acp_update(&serde_json::json!({
                 "sessionUpdate":"usage_update",
                 "used":53000,
                 "size":200000
@@ -659,7 +686,7 @@ wait
             }]
         );
         assert_eq!(
-            parse_opencode_acp_update(&serde_json::json!({
+            parse_acp_update(&serde_json::json!({
                 "sessionUpdate":"tool_call_update",
                 "toolCallId":"call-1",
                 "title":"Read file",
@@ -679,16 +706,16 @@ wait
     fn opencode_acp_permission_requires_an_explicit_decision() {
         let params = serde_json::json!({"toolCall":{"kind":"read","rawInput":{"path":"/tmp/file"}},
             "options":[{"optionId":"yes","kind":"allow_once"},{"optionId":"no","kind":"reject_once"}]});
-        assert!(opencode_acp_permission_outcome(&params, None).is_err());
+        assert!(acp_permission_outcome(&params, None).is_err());
         assert_eq!(
-            opencode_acp_permission_outcome(&params, Some(true)).unwrap(),
+            acp_permission_outcome(&params, Some(true)).unwrap(),
             serde_json::json!({"outcome":"selected","optionId":"yes"})
         );
         assert_eq!(
-            opencode_acp_permission_outcome(&params, Some(false)).unwrap(),
+            acp_permission_outcome(&params, Some(false)).unwrap(),
             serde_json::json!({"outcome":"selected","optionId":"no"})
         );
-        assert!(opencode_acp_permission_outcome(&serde_json::json!({}), Some(true)).is_err());
+        assert!(acp_permission_outcome(&serde_json::json!({}), Some(true)).is_err());
     }
 
     #[test]

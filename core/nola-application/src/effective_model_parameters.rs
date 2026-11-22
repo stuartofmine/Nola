@@ -80,7 +80,7 @@ pub(crate) fn resolve_profile_parameters(
     if profile.deleted_at_ms.is_some() || !profile.enabled || profile.revision <= 0 {
         return Err("effective_model_profile_unavailable".into());
     }
-    if matches!(profile.runtime.as_str(), "mlx" | "llama.cpp") {
+    if matches!(profile.runtime.as_str(), "mlx" | "llama.cpp" | "vllm") {
         return Ok(EffectiveModelResolution::Unavailable {
             reason: EffectiveModelUnavailableReason::LocalBaselineUnavailable,
         });

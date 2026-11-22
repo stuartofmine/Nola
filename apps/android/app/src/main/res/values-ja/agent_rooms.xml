@@ -2,8 +2,8 @@
 <resources>
     <string name="room_sent_to">あなた → %1$s</string>
     <string name="room_stop">停止</string>
-    <string name="room_agent_name">Agent 名</string>
-    <string name="room_create_agent">Agent を作成</string>
+    <string name="room_agent_name">エキスパート名</string>
+    <string name="room_create_agent">エキスパートを作成</string>
     <string name="room_controls">モデルと権限</string>
     <string name="room_send">送信</string>
     <string name="room_title">エージェントチャット</string>

@@ -23,11 +23,11 @@ internal object ApplicationCommandEffect {
         "read_assistant_journal_record_chunk", "next_assistant_journal_content", "assistant_journal_reception_state",
         "trace_events_after", "trace_runs_for_conversation", "latest_trace_id", "resolve_model_reasoning", "resolve_remote_model_profile", "query_automation_occurrences", "resolve_chat_model", "admit_host_output",
         "command_receipt", "get_product_setting", "pending_sync_changes", "get_sync_cursor", "load_checkpoint",
-        "load_prepared_in_place_resend", "load_prepared_edited_resend", "load_today_facts", "load_conversation", "list_conversations", "list_root_conversations", "load_conversation_settings", "load_session_projection", "load_goal_control_observation",
+        "load_prepared_in_place_resend", "load_prepared_edited_resend", "load_today_facts", "load_conversation", "list_conversations", "list_root_conversations", "load_conversation_export_page", "read_conversation_export_range", "load_conversation_settings", "load_session_projection", "load_session_goal_projection", "load_goal_control_observation",
         "load_task_child_conversation_window", "load_conversation_projection_v1", "load_conversation_projection_page_v1",
         "capture_mobile_delegation_configuration", "load_mobile_task_child_configuration",
         "load_mobile_task_wake_plan", "inspect_mobile_permission_request", "inspect_mobile_mcp_request", "load_conversation_source_owner", "load_conversation_projection_window_v1", "load_conversation_projection_window_update_v1",
-        "load_conversation_tail_snapshot", "load_conversation_tail_snapshot_v1", "load_conversation_context_usage_v1",
+        "load_conversation_tail_snapshot_v1", "load_conversation_context_usage_v1",
         "read_remote_submission_intent", "read_admitted_remote_run_identity", "read_remote_submission_request", "list_open_user_input_waits",
         "load_user_input_wait", "load_conversation_permission_projection_v1"
     )
@@ -35,7 +35,7 @@ internal object ApplicationCommandEffect {
         "conversation_plan" to setOf("get"),
         "runtime_task" to setOf("get"),
         "auxiliary_invocation" to setOf("inspect", "inspect_source"),
-        "agent_room" to setOf("child_history", "child_conversations", "for_conversation", "role_templates", "directory", "read", "list", "submission", "submissions", "execution_intent"),
+        "agent_room" to setOf("peer_exchanges", "child_history", "child_conversations", "for_conversation", "role_templates", "directory", "read", "list", "submission", "submissions", "execution_intent"),
         "model" to setOf("get_profile", "list_profiles", "get_runtime", "list_connections", "get_connection", "list_accounts", "get_account", "list_gateway_attempts"),
         "skill" to setOf("list", "list_editors", "get_editor", "load_catalog"),
         "mcp" to setOf("list"),

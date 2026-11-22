@@ -193,7 +193,10 @@ class TestCheckDesignTokens(unittest.TestCase):
         workspace = self.make_workspace()
         diagram_ts = workspace / "apps/web/frontend/src/lib/diagramDocument.ts"
         diagram_ts.write_text(
-            diagram_ts.read_text(encoding="utf-8").replace("#131312", "#14161b"),
+            diagram_ts.read_text(encoding="utf-8").replace(
+                json.loads((workspace / "shared/design-tokens/tokens.json").read_text())["color"]["dark"]["canvas"].lower(),
+                "#14161b",
+            ),
             encoding="utf-8",
         )
 

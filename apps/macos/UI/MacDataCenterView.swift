@@ -22,7 +22,7 @@ final class MacDataCenterNavigationState: ObservableObject {
     }
 
     @Published var route: Route = .overview
-    @Published var section: MacDataCenterSection = .memory
+    @Published var section: MacDataCenterSection = .sources
 
     func showOverview() { route = .overview }
     func showWebSources() { route = .webSources }
@@ -50,6 +50,7 @@ struct MacDataCenterView: View {
     @State private var service: MacPlatformDataService
     @State private var registry: MacDataSourceRegistry
     @State private var webSources: MacWebSourceStore
+    @State private var editingWebSource: MacWebSource?
     private var section: MacDataCenterSection {
         get { navigation.section }
         nonmutating set { navigation.section = newValue }
@@ -79,12 +80,29 @@ struct MacDataCenterView: View {
     }
 
     var body: some View {
-        Group {
+        VStack(spacing: 0) {
             switch navigation.route {
             case .overview: center
-            case .webSources: MacWebSourcesView(navigationAction: navigation.showOverview)
+            case .webSources: MacWebSourcesView(store: webSources, navigationAction: navigation.showOverview)
             case .health: MacHealthSummaryView(navigationAction: navigation.showOverview)
             }
+        }
+        .sheet(item: $editingWebSource) { source in
+            MacWebSourceEditor(source: source) { updated in
+                try await webSources.validateAndUpsert(updated)
+                editingWebSource = nil
+            } cancel: { editingWebSource = nil }
+        }
+        .task {
+            async let platformRefresh: Void = service.refresh()
+            async let scheduledReads: Void = webSources.refreshDueSources()
+            _ = await (platformRefresh, scheduledReads)
+        }
+        .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in
+            Task { await service.refresh(synchronizeAutomations: false) }
+        }
+        .onReceive(NotificationCenter.default.publisher(for: NSUbiquitousKeyValueStore.didChangeExternallyNotification)) { _ in
+            Task { await service.refresh() }
         }
     }
 
@@ -106,14 +124,12 @@ struct MacDataCenterView: View {
             }
 
             HStack(spacing: 12) {
-                Picker(macDataCenterText("mac.data_center.title", "Data Center"), selection: $navigation.section) {
-                    ForEach(MacDataCenterSection.allCases.filter { $0 != .overview }) { item in
-                        Text(item.title).tag(item)
-                    }
-                }
-                .pickerStyle(.segmented)
-                .labelsHidden()
-                .fixedSize()
+                MacSegmentedTabBar(
+                    options: MacDataCenterSection.allCases.filter { $0 != .overview },
+                    selection: $navigation.section,
+                    title: { $0.title }
+                )
+                .accessibilityLabel(macDataCenterText("mac.data_center.title", "Data Center"))
                 Spacer(minLength: 0)
             }
             .padding(.horizontal, MacDesignTokens.Layout.pageGutter)
@@ -139,13 +155,6 @@ struct MacDataCenterView: View {
             }
         }
         .background(MacPageBackground())
-        .task { await refreshAll() }
-        .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in
-            Task { await service.refresh(synchronizeAutomations: false) }
-        }
-        .onReceive(NotificationCenter.default.publisher(for: NSUbiquitousKeyValueStore.didChangeExternallyNotification)) { _ in
-            Task { await service.refresh() }
-        }
     }
 
     private var overview: some View {
@@ -224,6 +233,13 @@ struct MacDataCenterView: View {
 
     private var sources: some View {
         LazyVStack(alignment: .leading, spacing: 12) {
+            MacDataCenterHealthCard(
+                ready: readyCount,
+                total: totalSourceCount,
+                attention: attentionCount,
+                defaultCount: defaultEnabledCount,
+                isRefreshing: isRefreshing
+            )
             MacSectionLabel(LocalizedStringKey(macDataCenterText("mac.data_center.section.sources", "Sources")))
             if sourceSnapshots.isEmpty && webSources.sources.isEmpty {
                 MacEmptyState(
@@ -329,7 +345,7 @@ struct MacDataCenterView: View {
             isTesting: webSources.refreshingIDs.contains(source.id),
             testConnection: { Task { await webSources.refresh(source) } },
             setPolicy: { registry.setPolicy($0, for: source.dataSourceID) },
-            openEditor: navigation.showWebSources
+            openEditor: { editingWebSource = source }
         )
     }
 
@@ -418,6 +434,7 @@ struct MacDataCenterView: View {
         }
         .accessibilityLabel(macDataCenterText("mac.data_center.manage_sources", "Manage Web Sources"))
         .help(macDataCenterText("mac.data_center.manage_sources", "Manage Web Sources"))
+        .accessibilityIdentifier("data.sources.manage")
     }
 
     @ViewBuilder
@@ -454,6 +471,7 @@ private struct MacDataCenterHealthCard: View {
     let attention: Int
     let defaultCount: Int
     let isRefreshing: Bool
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     var body: some View {
         ViewThatFits(in: .horizontal) {
@@ -496,7 +514,7 @@ private struct MacDataCenterHealthCard: View {
         VStack(alignment: .trailing, spacing: 5) {
             Text("\(ready)/\(total)")
                 .font(.system(size: 16, weight: .semibold, design: .rounded))
-                .contentTransition(.numericText())
+                .contentTransition(reduceMotion ? .identity : .numericText())
             Text(
                 String(
                     format: macDataCenterText("mac.data_center.health.default_count", "%d available by default"),
@@ -564,6 +582,7 @@ private struct MacWebDataSourceCard: View {
                         .font(.system(size: 11, weight: .medium))
                 }
                 .macToolbarIcon()
+                .accessibilityIdentifier("data.sources.edit." + source.id.uuidString)
                 .help(macDataCenterText("mac.data_center.contract.edit", "Edit Source"))
                 .accessibilityLabel(macDataCenterText("mac.data_center.contract.edit", "Edit Source"))
                 if hasAdditionalDetails {
@@ -809,7 +828,7 @@ private struct MacDataSourceCard: View {
                             Text(macDataCenterText("mac.data_center.permission.continue", "Continue"))
                         }
                     }
-                        .buttonStyle(.borderedProminent)
+                        .buttonStyle(.nolaProminent)
                         .controlSize(.small)
                         .disabled(isRequestingPermission)
                 } else if snapshot.authorization == .denied || snapshot.authorization == .restricted {
@@ -1025,7 +1044,7 @@ private struct MacDataSourceContractSummary: View {
                         )
                     }
                 }
-                .buttonStyle(.borderedProminent)
+                .buttonStyle(.nolaProminent)
                 .controlSize(.small)
                 .disabled(isTesting)
                 .help(macDataCenterText("mac.data_center.contract.test", "Test Connection"))

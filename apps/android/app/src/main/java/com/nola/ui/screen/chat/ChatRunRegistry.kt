@@ -5,6 +5,7 @@ import com.nola.data.remote.api.RemoteRunKey
 import com.nola.data.remote.api.RemoteSubmissionIntent
 import com.nola.data.remote.api.RemoteSubmissionReceipt
 import com.nola.data.local.AndroidJournalTurn
+import com.nola.domain.model.ProcessingState
 import com.nola.domain.projection.ConversationProjectionV1
 import com.nola.llm.provider.WebAgentProvider
 import kotlinx.coroutines.CoroutineScope
@@ -60,11 +61,19 @@ internal class ChatRunSession(
     @Volatile var retired = false
     var presentationJob: kotlinx.coroutines.Job? = null
     var loadingPresentation = false
-    fun retainsLoadedPresentation(): Boolean = loadingPresentation || runtime.hasOutstandingGeneration() ||
-        state.value.processingState.blocksInput || state.value.permissionSaving
+    fun retainsLoadedPresentation(): Boolean {
+        val snapshot = state.value
+        if (loadingPresentation || runtime.hasOutstandingGeneration() || snapshot.permissionSaving) return true
+        // The first frame restored from disk may still show an old in-progress
+        // message. Rehydrate it unless an observer will deliver its next state.
+        if (observer.isObserving) return snapshot.processingState.blocksInput
+        return snapshot.processingState == ProcessingState.AwaitingRecovery && snapshot.executionHostBinding == null
+    }
     fun dispose() {
         retired = true
+        val hasGeneration = runtime.hasOutstandingGeneration()
         runtime.cancelGeneration()
+        if (!hasGeneration) ChatDeviceExecutionLease.release(this)
         observer.reset()
         taskObservation.reset()
         permission.clear()

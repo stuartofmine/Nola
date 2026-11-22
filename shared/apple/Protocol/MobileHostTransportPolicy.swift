@@ -28,6 +28,29 @@ nonisolated struct AppleHostConnectionSetup: Sendable {
                     accessToken: value.access_token.trimmingCharacters(in: .whitespacesAndNewlines))
     }
 
+    static func endpoint(_ raw: String) -> URL? {
+        guard let url = URL(string: raw.trimmingCharacters(in: .whitespacesAndNewlines)),
+              let components = URLComponents(url: url, resolvingAgainstBaseURL: false),
+              ["http", "https"].contains(components.scheme?.lowercased() ?? ""),
+              components.host?.isEmpty == false,
+              components.user == nil, components.password == nil,
+              components.query == nil, components.fragment == nil,
+              components.port.map({ (1...65535).contains($0) }) ?? true else { return nil }
+        return url
+    }
+
+    static func sameEndpoint(_ url: URL, _ approved: URL) -> Bool {
+        guard sameOrigin(url, approved) else { return false }
+        // Hosts currently use root origins. Preserve path identity for any
+        // previously configured routed endpoint instead of broadening trust.
+        func path(_ value: URL) -> String {
+            var result = URLComponents(url: value, resolvingAgainstBaseURL: false)?.percentEncodedPath ?? value.path
+            while result.last == "/" { result.removeLast() }
+            return result
+        }
+        return path(url) == path(approved)
+    }
+
     static func sameOrigin(_ first: URL, _ second: URL) -> Bool {
         guard ["http", "https"].contains(first.scheme?.lowercased() ?? ""),
               first.host?.isEmpty == false, second.host?.isEmpty == false else { return false }

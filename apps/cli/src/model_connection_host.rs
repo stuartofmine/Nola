@@ -145,12 +145,18 @@ pub(crate) fn jsonc_options() -> jsonc_parser::ParseOptions {
     }
 }
 
+pub(crate) fn parse_config_jsonc(text: &str) -> Result<Value, String> {
+    if let Ok(value) = serde_json::from_str(text) {
+        return Ok(value);
+    }
+    let root = jsonc_parser::cst::CstRootNode::parse(text, &jsonc_options())
+        .map_err(|error| format!("invalid JSON at line {}, column {}", error.line_display(), error.column_display()))?;
+    root.to_serde_value().ok_or_else(|| "empty JSON document".into())
+}
+
 fn parse_jsonc(bytes: &[u8]) -> Result<Value, String> {
     let text = std::str::from_utf8(bytes).map_err(|_| "source_must_be_utf8")?;
-    let root = jsonc_parser::cst::CstRootNode::parse(text, &jsonc_options())
-        .map_err(|_| "invalid_source_json")?;
-    root.to_serde_value()
-        .ok_or_else(|| "invalid_source_json".into())
+    parse_config_jsonc(text).map_err(|_| "invalid_source_json".into())
 }
 
 fn parse_document(source: ModelSourceKind, bytes: &[u8]) -> Result<Value, String> {
@@ -676,6 +682,14 @@ pub fn commit_import(
 }
 
 pub(crate) trait ImportCredentialSink {
+    fn discard_staged(&mut self, _store: &NolaStore, _keys: &[String]) -> Result<(), String> {
+        Ok(())
+    }
+
+    fn matches_binding(&self, _store: &NolaStore, _connection: &ModelConnection,
+        _reference: &str, secret: Option<&str>) -> Result<bool, String> {
+        Ok(secret.is_none())
+    }
     fn store(
         &mut self,
         store: &NolaStore,
@@ -686,6 +700,27 @@ pub(crate) trait ImportCredentialSink {
 }
 struct VaultImportCredentialSink;
 impl ImportCredentialSink for VaultImportCredentialSink {
+    fn discard_staged(&mut self, store: &NolaStore, keys: &[String]) -> Result<(), String> {
+        if keys.is_empty() { return Ok(()); }
+        let mut vault = HostCredentialVault::open(store.path())?;
+        for key in keys {
+            vault.purge_deleted_endpoint(key)?;
+        }
+        Ok(())
+    }
+
+    fn matches_binding(&self, store: &NolaStore, connection: &ModelConnection,
+        reference: &str, secret: Option<&str>) -> Result<bool, String> {
+        let vault = HostCredentialVault::open(store.path())?;
+        for protocol in &connection.protocols {
+            let bound = crate::host_credentials::identity(&connection.base_url, protocol.as_str())?;
+            let Some(record) = vault.record(&format!("{reference}:{}", protocol.as_str()))? else { return Ok(false); };
+            if record.identity != bound || record.secret.is_none() || secret.is_some_and(|key| Some(key) != record.secret.as_deref()) {
+                return Ok(false);
+            }
+        }
+        Ok(true)
+    }
     fn store(
         &mut self,
         store: &NolaStore,
@@ -799,9 +834,20 @@ fn import_candidate(
     if current.as_ref().map(|snapshot| snapshot.revision) != candidate.public.existing_revision {
         return Err("connection_changed_refresh_preview".into());
     }
-    let now = chrono::Utc::now().timestamp_millis();
+    let entry = prepare_import_account(store, candidate, connection, sink)?;
+    let _: ModelConnectionSnapshot = execute(store, ModelCommand::ImportConnection {
+        input: entry.input, expected_revision: entry.expected_revision,
+        expected_account_revision: entry.account.as_ref().and(entry.expected_account_revision),
+        account: entry.account, models: entry.models, enable_models: selection.enable_models,
+        updated_at_ms: chrono::Utc::now().timestamp_millis(),
+    })?;
+    Ok(())
+}
+
+fn prepare_import_account(
+    store: &NolaStore, candidate: &PrivateCandidate, mut connection: ModelConnection, sink: &mut impl ImportCredentialSink,
+) -> Result<nola_application::FileCatalogConnection, String> {
     let mut account_update = None;
-    let mut account_revision = None;
     if let Some(secret) = &candidate.secret {
         if candidate
             .existing_account
@@ -823,25 +869,12 @@ fn import_candidate(
             credential_ref: Some(reference),
             state: ModelAccountState::Ready,
         });
-        account_revision = candidate
-            .existing_account
-            .as_ref()
-            .map(|snapshot| snapshot.revision);
         connection.account_id = Some(account_id);
     }
-    let _: ModelConnectionSnapshot = execute(
-        store,
-        ModelCommand::ImportConnection {
-            input: connection,
-            expected_revision: candidate.public.existing_revision,
-            account: account_update,
-            expected_account_revision: account_revision,
-            models: candidate.public.models.clone(),
-            enable_models: selection.enable_models,
-            updated_at_ms: now,
-        },
-    )?;
-    Ok(())
+    Ok(nola_application::FileCatalogConnection { input: connection,
+        expected_revision: candidate.public.existing_revision, account: account_update,
+        expected_account_revision: candidate.existing_account.as_ref().map(|snapshot| snapshot.revision),
+        models: candidate.public.models.clone() })
 }
 
 /// Frozen profile identity selects one account and exact protocol binding.

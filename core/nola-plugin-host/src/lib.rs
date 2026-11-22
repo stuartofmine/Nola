@@ -29,12 +29,12 @@ impl InspectedPackage {
     /// records installation. Failed admission may leave an unreferenced package,
     /// never a registry row that points to a half-written directory.
     pub fn publish(&self, package_store: &Path) -> Result<PathBuf, String> {
-        let stage = self.stage(package_store)?;
         let destination = package_store.join(&self.digest);
         if destination.exists() {
             verify_installed(package_store, &self.digest)?;
             return Ok(destination);
         }
+        let stage = self.stage(package_store)?;
         // Flush child directories as well as files before publishing the root.
         #[cfg(unix)] {
             let mut directories = std::collections::BTreeSet::new();
@@ -218,6 +218,21 @@ mod tests {
         fs::remove_file(source.path().join("skills/test/SKILL.md")).unwrap();
         assert!(inspect(source.path()).is_err());
     }
+    #[cfg(unix)]
+    #[test]
+    fn repeat_publication_reuses_verified_snapshot_in_read_only_store() {
+        use std::os::unix::fs::PermissionsExt;
+        let source = fixture();
+        let package = inspect(source.path()).unwrap();
+        let store = tempfile::tempdir().unwrap();
+        let published = package.publish(store.path()).unwrap();
+        let original = fs::metadata(store.path()).unwrap().permissions();
+        fs::set_permissions(store.path(), fs::Permissions::from_mode(0o500)).unwrap();
+        let result = package.publish(store.path());
+        fs::set_permissions(store.path(), original).unwrap();
+        assert_eq!(result.unwrap(), published);
+    }
+
     #[test]
     fn deterministic_digest_includes_unlisted_resources() {
         let source = fixture(); let before = inspect(source.path()).unwrap().digest;

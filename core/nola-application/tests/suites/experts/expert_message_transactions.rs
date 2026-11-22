@@ -878,7 +878,8 @@ fn in_place_resend_rejects_unsettled_experts_then_rewinds_the_complete_set() {
     let (mut store, source) = setup();
     let manifest = admit(&mut store, source.clone()).unwrap();
     let input = PrepareInPlaceResend {
-        operation_id: uuid::Uuid::new_v4().to_string(), conversation_id: "parent".into(),
+        defer_until_admission: false, selected_experts: vec![], expert_mentions: None, expected_source_store_epoch: None,
+            operation_id: uuid::Uuid::new_v4().to_string(), conversation_id: "parent".into(),
         message_id: source.user_message_id.clone(),
         expected_revision: store.load_conversation("parent").unwrap().unwrap().revision,
         expected_message_revision: nola_application::load_conversation_projection_v1(&store,"parent").unwrap().messages[0].revision,

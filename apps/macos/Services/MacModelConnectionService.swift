@@ -164,4 +164,74 @@ nonisolated final class MacModelConnectionService: Sendable {
             "updated_at_ms": now])
         NotificationCenter.default.post(name: .nolaMacConfigurationDidChange, object: nil)
     }
+
+    func clearAllConnectionsAndAccounts() async throws {
+        let credentialStore = MacAppleChatConfigurationStore(applicationPort: application)
+        let currentConnections = try connections()
+        for connection in currentConnections {
+            try enable(connection, modelIDs: [])
+            let latest: MacModelConnectionSnapshot? = try command([
+                "type": .string("get_connection"),
+                "id": .string(connection.id),
+            ])
+            if let latest, latest.document.connection.enabled {
+                _ = try disconnect(latest)
+            }
+        }
+        let currentAccounts = try accounts()
+        for account in currentAccounts {
+            if account.account.source == "nola_chatgpt" {
+                if let bridge = try? MacSiwcAccountBridge(application: application) {
+                    defer { bridge.close() }
+                    if let status = try? await bridge.manage("account_status", account: account, sessionRevision: nil),
+                       let session = status.session, session.signed_in {
+                        _ = try? await bridge.manage(
+                            "sign_out",
+                            account: status.account,
+                            sessionRevision: session.session_revision,
+                            acknowledgeSignOut: true
+                        )
+                    }
+                }
+                let latest: MacModelAccountSnapshot? = try command([
+                    "type": .string("get_account"),
+                    "id": .string(account.id),
+                ])
+                if let latest,
+                   latest.account.state != "disconnected" || latest.account.credential_ref != nil {
+                    let _: MacModelAccountSnapshot = try command([
+                        "type": .string("save_account"),
+                        "input": .object([
+                            "id": .string(latest.account.id),
+                            "display_name": .string(latest.account.display_name),
+                            "source": .string(latest.account.source),
+                            "credential_ref": .null,
+                            "state": .string("disconnected"),
+                        ]),
+                        "expected_revision": .signedInteger(latest.revision),
+                        "updated_at_ms": now,
+                    ])
+                }
+            } else {
+                if let reference = account.account.credential_ref, !reference.isEmpty {
+                    credentialStore.deleteAccountSecret(reference)
+                }
+                if account.account.state != "disconnected" || account.account.credential_ref != nil {
+                    let _: MacModelAccountSnapshot = try command([
+                        "type": .string("save_account"),
+                        "input": .object([
+                            "id": .string(account.account.id),
+                            "display_name": .string(account.account.display_name),
+                            "source": .string(account.account.source),
+                            "credential_ref": .null,
+                            "state": .string("disconnected"),
+                        ]),
+                        "expected_revision": .signedInteger(account.revision),
+                        "updated_at_ms": now,
+                    ])
+                }
+            }
+        }
+        NotificationCenter.default.post(name: .nolaMacConfigurationDidChange, object: nil)
+    }
 }

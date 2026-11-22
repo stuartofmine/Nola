@@ -294,9 +294,12 @@ class WebAgentProvider @Inject constructor(
     }
 
     suspend fun expertRoomReply(command: JsonObject, configuration: Config, expectedStoreEpoch: String?): JsonObject {
-        require(command["type"]?.jsonPrimitive?.content in setOf("directory", "role_templates", "read", "for_conversation", "ensure_for_conversation", "join", "rejoin", "configure_agent", "submission", "submissions", "child_conversations", "child_history"))
+        val operation = command["type"]?.jsonPrimitive?.content
+        val readOnly = operation in setOf("directory", "role_templates", "read", "for_conversation", "submission",
+            "submissions", "child_conversations", "child_history", "peer_exchanges")
+        require(readOnly || operation in setOf("ensure_for_conversation", "join", "rejoin", "configure_agent"))
         require(configuration.expectedHostId.isNotBlank())
-        if (expectedStoreEpoch == null) require(command["type"]?.jsonPrimitive?.content in setOf("directory", "role_templates", "read", "for_conversation", "submission", "submissions", "child_conversations", "child_history")) { "Read the source catalog before changing experts" }
+        if (expectedStoreEpoch == null) require(readOnly) { "Read the source catalog before changing experts" }
         val response = webHostApi.agentRoomCommand(configuration.hostBaseUrl, configuration.token,
             buildJsonObject { put("expected_host_id", configuration.expectedHostId); put("command", command); expectedStoreEpoch?.let { put("expected_source_store_epoch", it) } }, configuration.pinnedCertificateSha256)
         require(response["host_id"]?.jsonPrimitive?.content == configuration.expectedHostId) { "Expert Room Host changed" }
@@ -311,7 +314,7 @@ class WebAgentProvider @Inject constructor(
 
     /** Read only Room history through the captured, encrypted Host connection. */
     suspend fun readExpertHistoryCommand(command: JsonObject, configuration: Config, expectedStoreEpoch: String? = null): JsonObject {
-        require(command["type"]?.jsonPrimitive?.content in setOf("child_conversations", "child_history", "for_conversation"))
+        require(command["type"]?.jsonPrimitive?.content in setOf("child_conversations", "child_history", "peer_exchanges", "for_conversation"))
         require(configuration.expectedHostId.isNotBlank())
         return expertRoomCommand(command, configuration, expectedStoreEpoch).jsonObject
     }
@@ -438,6 +441,7 @@ class WebAgentProvider @Inject constructor(
         expectedParentMessageId: String? = null,
         queuedUserCommandId: String? = null,
         selectedExperts: JsonArray? = null,
+        expertMentions: JsonObject? = null,
         expertSourceEpoch: String? = null,
     ): JsonObject {
         val cfg = checkNotNull(configuration)
@@ -475,6 +479,7 @@ class WebAgentProvider @Inject constructor(
             "expected_parent_message_id" to (expectedParentMessageId?.let(::JsonPrimitive) ?: kotlinx.serialization.json.JsonNull),
         ))
         return JsonObject(request + (currentUserDisplayText?.let { mapOf("current_user_display_text" to JsonPrimitive(it)) } ?: emptyMap()) +
+            (expertMentions?.let { mapOf("expert_mentions" to it) } ?: emptyMap()) +
             (selectedExperts?.takeIf { it.isNotEmpty() }?.let { mapOf("selected_experts" to it, "expected_source_store_epoch" to JsonPrimitive(checkNotNull(expertSourceEpoch))) } ?: emptyMap()))
     }
 
@@ -548,9 +553,12 @@ class WebAgentProvider @Inject constructor(
     }
 
     override suspend fun generateSummary(input: ModelInput, timeout: Duration?): ModelOutput {
-        val builder = StringBuilder()
-        generateSummaryStream(input).collect { builder.append(it) }
-        return ModelOutput(builder.toString().trim())
+        val collectSummary: suspend () -> ModelOutput = {
+            val builder = StringBuilder()
+            generateSummaryStream(input).collect { builder.append(it) }
+            ModelOutput(builder.toString().trim())
+        }
+        return if (timeout != null) kotlinx.coroutines.withTimeout(timeout) { collectSummary() } else collectSummary()
     }
 
     override fun generateSummaryStream(input: ModelInput): Flow<String> = flow {

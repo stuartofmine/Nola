@@ -18,6 +18,17 @@ class TaskChildDetailReaderTest {
         assertTrue(result.exceptionOrNull() is IllegalArgumentException)
         assertEquals(1,calls)
     }
+    @Test fun expertTaskRejectsAnExchangeFromADifferentParentRun() = runBlocking {
+        val result = runCatching {
+            readTaskChildDetail("parent", "current-run", "exchange", "child", null, true,
+                expertCallId = "call", expertQuery = { command ->
+                    assertEquals("child_history", command["type"]?.jsonPrimitive?.content)
+                    Json.parseToJsonElement("""{"version":1,"conversation_id":"parent","child_conversation_id":"child","room_id":"room","expert_exchanges":[{"exchange_id":"exchange","parent_conversation_id":"parent","source_run_id":"other-run","source_call_id":"call","room_id":"room","target":{"context_conversation_id":"child"}}]}""").jsonObject
+                }) { error("No journal body should be read for a foreign exchange") }
+        }
+        assertTrue(result.exceptionOrNull() is IllegalArgumentException)
+    }
+
     @Test fun userConversationCannotBeOpenedAsTaskDetail() = runBlocking {
         val result = runCatching {
             readTaskChildDetail("parent","run","task","child",null,false) {

@@ -31,6 +31,7 @@ test = false
 bench = false
 
 [dependencies]
+nola_skill_host = { path = "../../core/nola-skill-host" }
 nola_update_host = { path = "../../core/nola-update-host" }
 nola_mcp_host = { path = "../../core/nola-mcp-host" }
 nola_measurement = { path = "../../core/nola-measurement" }
@@ -81,6 +82,7 @@ unicode-segmentation = { version = "1.12", optional = true }
 uuid = { version = "1.8", features = ["v4"] }
 url = "2.5"
 tempfile = "3"
+shlex = "2"
 nola_store_port = { path = "../../core/nola-store-port" }
 
 [dev-dependencies]
@@ -106,5 +108,6 @@ windows-sys = { version = "0.61", features = [
     "Win32_System_Diagnostics_ToolHelp",
     "Win32_System_JobObjects",
     "Win32_System_ProcessStatus",
+    "Win32_System_SystemInformation",
     "Win32_System_Threading",
 ] }

@@ -25,6 +25,7 @@
     let savedDraft = $state('');
     let copyNotice = $state('');
     let workerUncertain = $state(false);
+    const channelsConfigured = $derived(!!settings?.backend_url.trim() && settings.has_access_token);
     let disposed = false, workerVersion = 0, channelsVersion = 0, editorVersion = 0;
     const workerRead = latestRequest<WorkerSettings>(), channelsRead = latestRequest<Channel[]>();
     const busy = $derived(saving || confirming);
@@ -53,7 +54,7 @@
     }
     async function loadChannels() {
         if (!settings || workerLoading || workerError || workerUncertain) return;
-        if (!settings.backend_url.trim() || !settings.has_access_token) {
+        if (!channelsConfigured) {
             channelsRead.cancel(); ++channelsVersion; channelsLoading = false;
             channels = []; channelsLoaded = false; connectionError = '';
             connectionNotice = 'messaging.setupRequired';
@@ -95,7 +96,8 @@
     }
     async function open(channel?: Channel) {
         if (busy || editing || workerLoading || workerUncertain) return;
-        baseline = channel ? structuredClone(channel) : undefined; editing = channelDraft(channel); savedDraft = JSON.stringify(editing); editorError = ''; connectionNotice = ''; copyNotice = ''; ++editorVersion;
+        const snapshot = channel ? $state.snapshot(channel) : undefined;
+        baseline = snapshot ? structuredClone(snapshot) : undefined; editing = channelDraft(snapshot); savedDraft = JSON.stringify(editing); editorError = ''; connectionNotice = ''; copyNotice = ''; ++editorVersion;
         await tick(); if (!disposed) dialog.showModal();
     }
     async function close(event?: Event) {
@@ -108,7 +110,7 @@
     async function saveChannel(event: SubmitEvent) {
         event.preventDefault(); if (busy || !editing) return;
         let payload;
-        try { payload = channelPayload(editing, baseline); } catch (cause) { editorError = messagingErrorKey(cause); return; }
+        try { payload = channelPayload($state.snapshot(editing), baseline ? $state.snapshot(baseline) : undefined); } catch (cause) { editorError = messagingErrorKey(cause); return; }
         const version = editorVersion;
         if (payload.enabled) {
             confirming = true;
@@ -133,23 +135,26 @@
 <ConfirmationDialog bind:this={confirmation} />
 <section class="card" id="channels">
     <h2>{t($locale, 'messaging.title')}</h2><p class="muted">{t($locale, 'messaging.hint')}</p>
-    <form onsubmit={saveWorker} aria-busy={workerLoading || saving}>
-        <div class="row between"><h3>{t($locale, 'messaging.worker')}</h3><button type="button" disabled={busy || workerLoading || !!editing} onclick={reloadWorker}>{t($locale, 'models.reload')}</button></div>
-        {#if workerLoading}<p role="status">{t($locale, 'remote.loading')}</p>{/if}
-        {#if workerError}<p class="error" role="alert">{t($locale, workerError)}</p>{/if}
-        {#if workerNotice}<p role="status">{t($locale, workerNotice)}</p>{/if}
-        {#if draft && settings}<fieldset disabled={busy || workerLoading || !!editing}>
-            <label class="toggle"><input type="checkbox" role="switch" bind:checked={draft.enabled} />{t($locale, 'messaging.enabled')}</label>
-            <label>{t($locale, 'messaging.backend_url')}<input bind:value={draft.backend_url} placeholder="https://api.example.com" autocomplete="off" /></label>
-            <label>{t($locale, 'messaging.token')}<input type="password" bind:value={token} disabled={clearToken} autocomplete="new-password" spellcheck="false" /></label>
-            <label class="toggle"><input type="checkbox" role="switch" bind:checked={clearToken} onchange={() => { if (clearToken) token = ''; }} />{t($locale, 'messaging.clearToken')}</label>
-            <p class="muted">{t($locale, settings.has_access_token ? 'messaging.tokenSaved' : 'messaging.tokenMissing')} · {t($locale, 'messaging.tokenHint')}</p>
-            <label>{t($locale, 'messaging.execution_backend')}<select bind:value={draft.execution_backend}><option value="nola">Nola</option>{#if draft.execution_backend !== 'nola'}<option value={draft.execution_backend}>{draft.execution_backend}</option>{/if}</select></label>
-            <div class="fields">{#each workerFields as field}<label>{t($locale, `messaging.${field}`)}<input bind:value={draft[field]} inputmode={field === 'project_root' ? 'text' : 'numeric'} /></label>{/each}</div>
-            <p class="muted">{t($locale, 'messaging.workerHint')}</p><button class="primary" disabled={!workerDirty}>{t($locale, saving ? 'models.saving' : 'models.save')}</button>
-        </fieldset>{/if}
-    </form>
-    <div class="row between"><h3>{t($locale, 'messaging.connections')}</h3><div class="actions"><button disabled={busy || channelsLoading || workerLoading || workerUncertain} onclick={loadChannels}>{t($locale, 'models.reload')}</button><button disabled={busy || workerLoading || workerUncertain || !channelsLoaded} onclick={() => open()}>{t($locale, 'messaging.add')}</button></div></div>
+    <details class="disclosure" open={!!draft?.enabled || workerDirty || !!workerError}>
+        <summary>{t($locale, 'messaging.worker')}</summary>
+        <form onsubmit={saveWorker} aria-busy={workerLoading || saving}>
+            <div class="row between"><span class="muted">{t($locale, 'messaging.workerHint')}</span><button type="button" disabled={busy || workerLoading || !!editing} onclick={reloadWorker}>{t($locale, 'models.reload')}</button></div>
+            {#if workerLoading}<p role="status">{t($locale, 'remote.loading')}</p>{/if}
+            {#if workerError}<p class="error" role="alert">{t($locale, workerError)}</p>{/if}
+            {#if workerNotice}<p role="status">{t($locale, workerNotice)}</p>{/if}
+            {#if draft && settings}<fieldset disabled={busy || workerLoading || !!editing}>
+                <label class="toggle"><input type="checkbox" role="switch" bind:checked={draft.enabled} />{t($locale, 'messaging.enabled')}</label>
+                <label>{t($locale, 'messaging.backend_url')}<input bind:value={draft.backend_url} placeholder="https://api.example.com" autocomplete="off" /></label>
+                <label>{t($locale, 'messaging.token')}<input type="password" bind:value={token} disabled={clearToken} autocomplete="new-password" spellcheck="false" /></label>
+                <label class="toggle"><input type="checkbox" role="switch" bind:checked={clearToken} onchange={() => { if (clearToken) token = ''; }} />{t($locale, 'messaging.clearToken')}</label>
+                <p class="muted">{t($locale, settings.has_access_token ? 'messaging.tokenSaved' : 'messaging.tokenMissing')} · {t($locale, 'messaging.tokenHint')}</p>
+                <label>{t($locale, 'messaging.execution_backend')}<select bind:value={draft.execution_backend}><option value="nola">Nola</option>{#if draft.execution_backend !== 'nola'}<option value={draft.execution_backend}>{draft.execution_backend}</option>{/if}</select></label>
+                <div class="fields">{#each workerFields as field}<label>{t($locale, `messaging.${field}`)}<input bind:value={draft[field]} inputmode={field === 'project_root' ? 'text' : 'numeric'} /></label>{/each}</div>
+                <button class="primary" disabled={!workerDirty}>{t($locale, saving ? 'models.saving' : 'models.save')}</button>
+            </fieldset>{/if}
+        </form>
+    </details>
+    <div class="row between"><h3>{t($locale, 'messaging.connections')}</h3><div class="actions"><button disabled={busy || channelsLoading || workerLoading || workerUncertain || !!workerError || !channelsConfigured} onclick={loadChannels}>{t($locale, 'models.reload')}</button><button disabled={busy || workerLoading || workerUncertain || !channelsLoaded} onclick={() => open()}>{t($locale, 'messaging.add')}</button></div></div>
     {#if channelsLoading}<p role="status">{t($locale, 'remote.loading')}</p>{/if}
     {#if connectionError}<p role="alert" class="error">{t($locale, connectionError)}</p>{/if}
     {#if connectionNotice}<p role="status">{t($locale, connectionNotice)}</p>{/if}
@@ -157,7 +162,7 @@
         <button class="card connection" disabled={busy || workerLoading} onclick={() => open(channel)}><span class="row between"><strong>{channel.display_name || channel.connection_id}</strong><span>{channel.enabled ? ['connected','degraded','awaiting_verification'].includes(channel.state) ? t($locale, `messaging.${channel.state}`) : channel.state : t($locale, 'remote.disabled')}</span></span><span>{providerName(channel.kind)} · {channel.connection_id}</span><small class="muted">{resultTime(channel.last_received_at, $locale)}</small></button>
     {:else}<p class="muted">{t($locale, 'messaging.empty')}</p>{/each}{/if}
 </section>
-<dialog use:ownDialog bind:this={dialog} oncancel={close} aria-labelledby="messaging-editor-title">
+<dialog use:ownDialog bind:this={dialog} oncancel={close} onclick={event => { if (event.target === dialog && !busy) void close(); }} aria-labelledby="messaging-editor-title">
     {#if editing}<form onsubmit={saveChannel} aria-busy={saving}><h2 id="messaging-editor-title">{t($locale, 'messaging.title')}</h2><p class="muted">{t($locale, 'messaging.refsHint')}</p>
         {#if editorError}<p class="error" role="alert">{t($locale, editorError)}</p>{/if}
         <fieldset disabled={busy}><label>{t($locale, 'messaging.kind')}<select value={editing.kind} disabled={!!baseline} onchange={event => { editing = channelDraft(undefined, event.currentTarget.value); }}>

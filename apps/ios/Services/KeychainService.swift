@@ -58,6 +58,6 @@ nonisolated public enum KeychainService {
             kSecAttrAccount as String: account
         ]
         let status = SecItemDelete(query as CFDictionary)
-        return status == errSecSuccess
+        return status == errSecSuccess || status == errSecItemNotFound
     }
 }

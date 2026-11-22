@@ -168,13 +168,6 @@ final class DataSourceStatusStore: ObservableObject {
         states.values.filter { [.needsPermission, .stale, .error, .unavailable].contains($0.phase) }.count
     }
 
-    var syncingCount: Int {
-        if isRefreshing {
-            return states.isEmpty ? systemTypes.count : states.values.filter { [.checking, .syncing].contains($0.phase) }.count
-        }
-        return states.values.filter { [.checking, .syncing].contains($0.phase) }.count
-    }
-
     var lastSuccessfulRead: Date? {
         states.values.compactMap(\.lastReadAt).max()
     }
@@ -195,20 +188,9 @@ final class DataSourceStatusStore: ObservableObject {
         isRefreshing = true
         defer { isRefreshing = false }
 
-        var syncingStates = states
-        for type in systemTypes {
-            let previous = state(for: type)
-            syncingStates[type] = DataSourceRuntimeState(
-                phase: .syncing,
-                permission: previous.permission,
-                itemCount: previous.itemCount,
-                lastReadAt: previous.lastReadAt,
-                errorMessage: nil
-            )
-        }
-        states = syncingStates
-
-        var refreshedStates = syncingStates
+        // Keep the last completed read visible while probing. The refresh
+        // control owns progress; individual rows change when results arrive.
+        var refreshedStates = states
         for type in systemTypes {
             refreshedStates[type] = await probe(type, container: container, healthDashboard: healthDashboard)
         }
@@ -407,8 +389,14 @@ struct DataSourcesView: View {
     @State private var refreshSourcesError: String? = nil
     @State private var showRefreshSourcesError = false
     @State private var lastAutomaticRefresh = Date.distantPast
+    @State private var policyRefreshNonce = 0
     @StateObject private var sourceStatusStore = DataSourceStatusStore.shared
     @StateObject private var healthDashboard = HealthDashboardStore.shared
+
+    private func systemPolicy(for type: DataSourceType) -> URLDataSourceAccessPolicy {
+        _ = policyRefreshNonce
+        return SystemDataSourceAccessPolicyStore.shared.policy(for: type)
+    }
     
     var body: some View {
         ScrollView {
@@ -431,7 +419,7 @@ struct DataSourcesView: View {
                                     subtitle: L10n.dataSourceContactsSubtitle,
                                     color: .blue,
                                     state: sourceStatusStore.state(for: .contacts),
-                                    policy: SystemDataSourceAccessPolicyStore.shared.policy(for: .contacts)
+                                    policy: systemPolicy(for: .contacts)
                                 )
                                 .contentShape(Rectangle())
                             }
@@ -450,7 +438,7 @@ struct DataSourcesView: View {
                                     subtitle: L10n.dataSourceCalendarsSubtitle,
                                     color: .orange,
                                     state: sourceStatusStore.state(for: .calendars),
-                                    policy: SystemDataSourceAccessPolicyStore.shared.policy(for: .calendars)
+                                    policy: systemPolicy(for: .calendars)
                                 )
                                 .contentShape(Rectangle())
                             }
@@ -469,7 +457,7 @@ struct DataSourcesView: View {
                                     subtitle: L10n.dataSourceRemindersSubtitle,
                                     color: .green,
                                     state: sourceStatusStore.state(for: .reminders),
-                                    policy: SystemDataSourceAccessPolicyStore.shared.policy(for: .reminders)
+                                    policy: systemPolicy(for: .reminders)
                                 )
                                 .contentShape(Rectangle())
                             }
@@ -485,7 +473,7 @@ struct DataSourcesView: View {
                                 HealthDataSourceRow(
                                     dashboard: healthDashboard,
                                     runtimeState: sourceStatusStore.state(for: .health),
-                                    policy: SystemDataSourceAccessPolicyStore.shared.policy(for: .health)
+                                    policy: systemPolicy(for: .health)
                                 )
                                     .contentShape(Rectangle())
                             }
@@ -494,8 +482,17 @@ struct DataSourcesView: View {
                         }
                     }
                     DataSourcesCardSection(title: NSLocalizedString("data_sources.readable_sources.title", value: "Readable sources", comment: "Readable sources section title")) {
-                        InlineURLSourcesList()
-                            .environmentObject(container)
+                        if let fetcher = container.urlFetcher {
+                            InlineURLSourcesList(fetcher: fetcher)
+                                .environmentObject(container)
+                        } else {
+                            NolaInlineEmptyState(
+                                icon: "tray.full",
+                                title: NSLocalizedString("data_sources.inline.unavailable.title", value: "Data source service unavailable", comment: "Inline data source unavailable title"),
+                                message: NSLocalizedString("data_sources.inline.unavailable.message", value: "Cannot load custom data source configuration right now.", comment: "Inline data source unavailable message"),
+                                tint: DesignTokens.primaryColor
+                            )
+                        }
                     }
 
                     DataSourceAccessGuide()
@@ -520,7 +517,7 @@ struct DataSourcesView: View {
             .accessibilityIdentifier("data.center.screen")
             .background(DesignTokens.backgroundColor)
             .navigationTitle(L10n.dataSourcesTitle)
-            .navigationBarTitleDisplayMode(.large)
+            .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .topBarTrailing) {
                     Button {
@@ -543,8 +540,14 @@ struct DataSourcesView: View {
                     .accessibilityIdentifier("data.center.refresh")
                 }
             }
+            .onAppear {
+                policyRefreshNonce += 1
+            }
             .task {
                 await refreshDataSources(force: false, showErrors: false)
+            }
+            .onReceive(NotificationCenter.default.publisher(for: .nolaSystemDataSourcePolicyUpdated)) { _ in
+                policyRefreshNonce += 1
             }
             .onChange(of: scenePhase) { _, newPhase in
                 guard newPhase == .active else { return }
@@ -604,27 +607,11 @@ struct DataSourceStatusInlineSummary: View {
                     tint: .green
                 )
 
-                if store.syncingCount > 0 {
-                    statusPill(
-                        value: store.syncingCount,
-                        label: NSLocalizedString(
-                            "data_sources.runtime.status.syncing",
-                            value: "Updating",
-                            comment: "Updating data source count"
-                        ),
-                        tint: DesignTokens.primaryColor
-                    )
-                } else {
-                    statusPill(
-                        value: store.attentionCount,
-                        label: NSLocalizedString(
-                            "data_sources.runtime.metric.attention",
-                            value: "Attention",
-                            comment: "Data sources needing attention count"
-                        ),
-                        tint: store.attentionCount > 0 ? .orange : .secondary
-                    )
-                }
+                statusPill(
+                    value: store.attentionCount,
+                    label: NSLocalizedString("data_sources.runtime.metric.attention", value: "Attention", comment: "Data sources needing attention count"),
+                    tint: store.attentionCount > 0 ? .orange : .secondary
+                )
             }
 
             if let lastRead = store.lastSuccessfulRead {
@@ -726,9 +713,7 @@ struct DataSourceOverviewHero: View {
             value: "\(store.attentionCount)",
             tint: store.attentionCount > 0 ? .orange : .secondary
         )
-        if store.syncingCount > 0 {
-            OverviewPill(icon: "arrow.triangle.2.circlepath", label: NSLocalizedString("data_sources.runtime.metric.updating", value: "Updating", comment: "Updating source metric"), value: "\(store.syncingCount)", tint: DesignTokens.primaryColor)
-        }
+
     }
 }
 
@@ -1099,12 +1084,37 @@ private struct DataSourceAccessGuide: View {
 
 private struct InlineURLSourcesList: View {
     @EnvironmentObject var container: ServiceContainer
+    @ObservedObject var fetcher: URLFetcherService
     @State private var editingSource: URLDataSource? = nil
     @State private var showingAdd: Bool = false
     @State private var saveConfirmation: String? = nil
+    @State private var sourcePendingDeletion: URLDataSource? = nil
+    @State private var deleteErrorMessage: String? = nil
 
     var body: some View {
         VStack(spacing: 0) {
+            if let deleteErrorMessage {
+                Button {
+                    self.deleteErrorMessage = nil
+                } label: {
+                    HStack(spacing: 9) {
+                        Image(systemName: "exclamationmark.triangle.fill")
+                            .foregroundStyle(.red)
+                        Text(deleteErrorMessage)
+                            .font(.subheadline.weight(.semibold))
+                            .foregroundStyle(.primary)
+                        Spacer()
+                        Image(systemName: "xmark")
+                            .font(.caption.weight(.bold))
+                            .foregroundStyle(.secondary)
+                    }
+                    .padding(.horizontal, 12)
+                    .padding(.vertical, 11)
+                    .background(Color.red.opacity(0.09), in: RoundedRectangle(cornerRadius: 13, style: .continuous))
+                }
+                .buttonStyle(.plain)
+                .padding(.bottom, 10)
+            }
             if let saveConfirmation {
                 Button {
                     self.saveConfirmation = nil
@@ -1128,9 +1138,8 @@ private struct InlineURLSourcesList: View {
                 .padding(.bottom, 10)
             }
 
-            if let fetcher = container.urlFetcher {
-                let sources = fetcher.sources
-                if sources.isEmpty {
+            let sources = fetcher.sources
+            if sources.isEmpty {
                     NolaInlineEmptyState(
                         icon: "tray.full",
                         title: NSLocalizedString("data_sources.inline.empty.title", value: "No readable sources yet", comment: "Inline data source empty title"),
@@ -1142,52 +1151,87 @@ private struct InlineURLSourcesList: View {
                     }
                     .accessibilityIdentifier("data.center.empty")
                     .padding(.vertical, 4)
-                } else {
+            } else {
                     VStack(spacing: 0) {
                         ForEach(Array(sources.enumerated()), id: \.element.id) { idx, source in
-                            Button {
-                                editingSource = source
-                            } label: {
-                                HStack(spacing: 12) {
-                                    Image(systemName: source.kind.iconSystemName)
-                                        .font(.system(size: 17, weight: .semibold))
-                                        .foregroundStyle(DesignTokens.primaryColor)
-                                        .frame(width: 24)
-                                    VStack(alignment: .leading, spacing: 6) {
-                                        Text(source.name)
-                                            .font(.headline)
-                                        Text(source.contextDisplaySubtitle)
-                                            .font(.caption)
+                            HStack(spacing: 8) {
+                                Button {
+                                    editingSource = source
+                                } label: {
+                                    HStack(spacing: 12) {
+                                        Image(systemName: source.kind.iconSystemName)
+                                            .font(.system(size: 17, weight: .semibold))
+                                            .foregroundStyle(DesignTokens.primaryColor)
+                                            .frame(width: 24)
+                                        VStack(alignment: .leading, spacing: 6) {
+                                            Text(source.name)
+                                                .font(.headline)
+                                            Text(source.contextDisplaySubtitle)
+                                                .font(.caption)
+                                                .foregroundColor(.secondary)
+                                                .lineLimit(1)
+                                            HStack(spacing: 7) {
+                                                Text(source.kind.displayName)
+                                                Text("·")
+                                                Text(source.accessPolicy.displayName)
+                                                Text("·")
+                                                Label(
+                                                    source.validationContract?.isUsable == true
+                                                        ? NSLocalizedString("data_source.contract.verified", value: "Verified", comment: "Verified source contract")
+                                                        : NSLocalizedString("data_source.contract.needs_validation", value: "Needs validation", comment: "Unverified source contract"),
+                                                    systemImage: source.validationContract?.isUsable == true ? "checkmark.seal.fill" : "exclamationmark.triangle.fill"
+                                                )
+                                                .foregroundColor(source.validationContract?.isUsable == true ? .green : .orange)
+                                            }
+                                            .font(.caption2.weight(.medium))
                                             .foregroundColor(.secondary)
                                             .lineLimit(1)
-                                        HStack(spacing: 7) {
-                                            Text(source.kind.displayName)
-                                            Text("·")
-                                            Text(source.accessPolicy.displayName)
-                                            Text("·")
-                                            Label(
-                                                source.validationContract?.isUsable == true
-                                                    ? NSLocalizedString("data_source.contract.verified", value: "Verified", comment: "Verified source contract")
-                                                    : NSLocalizedString("data_source.contract.needs_validation", value: "Needs validation", comment: "Unverified source contract"),
-                                                systemImage: source.validationContract?.isUsable == true ? "checkmark.seal.fill" : "exclamationmark.triangle.fill"
-                                            )
-                                            .foregroundColor(source.validationContract?.isUsable == true ? .green : .orange)
+                                            if source.validationContract?.isUsable == true {
+                                                InlineDataSourceContractSummary(source: source)
+                                            }
                                         }
-                                        .font(.caption2.weight(.medium))
-                                        .foregroundColor(.secondary)
-                                        .lineLimit(1)
-                                        if source.validationContract?.isUsable == true {
-                                            InlineDataSourceContractSummary(source: source)
-                                        }
+                                        Spacer()
                                     }
-                                    Spacer()
+                                    .padding(.vertical, 10)
+                                    .contentShape(Rectangle())
                                 }
-                                .padding(.vertical, 10)
-                                .contentShape(Rectangle())
+                                .buttonStyle(.plain)
+                                .accessibilityElement(children: .combine)
+                                .accessibilityIdentifier("data.center.source.\(source.id.uuidString)")
+
+                                Menu {
+                                    Button {
+                                        editingSource = source
+                                    } label: {
+                                        Label(L10n.edit, systemImage: "pencil")
+                                    }
+                                    Button(role: .destructive) {
+                                        sourcePendingDeletion = source
+                                    } label: {
+                                        Label(L10n.commonDelete, systemImage: "trash")
+                                    }
+                                } label: {
+                                    Image(systemName: "ellipsis.circle")
+                                        .font(.body)
+                                        .foregroundStyle(.secondary)
+                                        .frame(width: 36, height: 36)
+                                        .contentShape(Rectangle())
+                                }
+                                .accessibilityLabel(L10n.commonDelete)
+                                .accessibilityIdentifier("data.center.source.menu.\(source.id.uuidString)")
                             }
-                            .buttonStyle(.plain)
-                            .accessibilityElement(children: .combine)
-                            .accessibilityIdentifier("data.center.source.\(source.id.uuidString)")
+                            .contextMenu {
+                                Button {
+                                    editingSource = source
+                                } label: {
+                                    Label(L10n.edit, systemImage: "pencil")
+                                }
+                                Button(role: .destructive) {
+                                    sourcePendingDeletion = source
+                                } label: {
+                                    Label(L10n.commonDelete, systemImage: "trash")
+                                }
+                            }
 
                             if idx != sources.count - 1 {
                                 NolaDivider(leading: 12)
@@ -1211,14 +1255,6 @@ private struct InlineURLSourcesList: View {
                         .foregroundStyle(DesignTokens.primaryColor)
                         .accessibilityIdentifier("data.center.add")
                     }
-                }
-            } else {
-                NolaInlineEmptyState(
-                    icon: "tray.full",
-                    title: NSLocalizedString("data_sources.inline.unavailable.title", value: "Data source service unavailable", comment: "Inline data source unavailable title"),
-                    message: NSLocalizedString("data_sources.inline.unavailable.message", value: "Cannot load custom data source configuration right now.", comment: "Inline data source unavailable message"),
-                    tint: DesignTokens.primaryColor
-                )
             }
 
         }
@@ -1239,6 +1275,37 @@ private struct InlineURLSourcesList: View {
                 )
             }
                 .environmentObject(container)
+        }
+        .alert(
+            L10n.urlSourcesDeleteTitle,
+            isPresented: Binding(
+                get: { sourcePendingDeletion != nil },
+                set: { if !$0 { sourcePendingDeletion = nil } }
+            ),
+            presenting: sourcePendingDeletion
+        ) { source in
+            Button(L10n.urlSourcesDeleteCancel, role: .cancel) {
+                sourcePendingDeletion = nil
+            }
+            Button(L10n.urlSourcesDeleteConfirm, role: .destructive) {
+                deleteSource(source)
+            }
+        } message: { source in
+            Text(source.name)
+        }
+    }
+
+    private func deleteSource(_ source: URLDataSource) {
+        guard let fetcher = container.urlFetcher else { return }
+        deleteErrorMessage = nil
+        sourcePendingDeletion = nil
+        Task { @MainActor in
+            do {
+                try await fetcher.removeSourceConfirmed(id: source.id, expectedRevision: source.canonicalRevision)
+                container.scheduler.scheduleNextRefresh()
+            } catch {
+                deleteErrorMessage = error.localizedDescription
+            }
         }
     }
 }
@@ -1385,20 +1452,12 @@ struct HealthDataSourceRow: View {
                         Text(L10n.homeFeatureHealthTitle)
                             .font(.body.weight(.semibold))
                         Spacer(minLength: 6)
-                        if dashboard.isLoading && dashboard.snapshot == nil {
-                            ProgressView().controlSize(.small)
-                        } else {
-                            DataSourceStatusPill(state: runtimeState)
-                        }
+                        DataSourceStatusPill(state: runtimeState)
                     }
                     VStack(alignment: .leading, spacing: 5) {
                         Text(L10n.homeFeatureHealthTitle)
                             .font(.body.weight(.semibold))
-                        if dashboard.isLoading && dashboard.snapshot == nil {
-                            ProgressView().controlSize(.small)
-                        } else {
-                            DataSourceStatusPill(state: runtimeState)
-                        }
+                        DataSourceStatusPill(state: runtimeState)
                     }
                 }
                 Text(summaryText)

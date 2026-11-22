@@ -8,12 +8,16 @@ nonisolated struct IOSPreparedHostInvocation: Sendable {
     let outputAdmission: AgentCoreJSONValue
 
     static func skillIdentity(_ skills: [IOSAgentSkillSnapshot]) -> AgentCoreJSONValue {
-        .array(skills.sorted { $0.id < $1.id }.map { skill in .object([
-            "id": .string(skill.id), "name": .string(skill.name), "summary": .string(skill.summary),
-            "instructions": .string(skill.instructions), "version": skill.version.map(AgentCoreJSONValue.string) ?? .null,
-            "required_tools": .array(skill.requiredTools.map(AgentCoreJSONValue.string)),
-            "validation_steps": .array(skill.validationSteps.map(AgentCoreJSONValue.string)),
-        ]) })
+        .array(skills.sorted { $0.id < $1.id }.map { skill in
+            var fields: [String: AgentCoreJSONValue] = [
+                "id": .string(skill.id), "name": .string(skill.name), "summary": .string(skill.summary),
+                "instructions": .string(skill.instructions), "version": skill.version.map(AgentCoreJSONValue.string) ?? .null,
+                "required_tools": .array(skill.requiredTools.map(AgentCoreJSONValue.string)),
+                "validation_steps": .array(skill.validationSteps.map(AgentCoreJSONValue.string)),
+            ]
+            if let reference = skill.packageReference { fields["package_reference"] = .string(reference) }
+            return .object(fields)
+        })
     }
 
     static func decodeSkillIdentity(_ value: AgentCoreJSONValue) throws -> [IOSAgentSkillSnapshot] {
@@ -21,7 +25,8 @@ nonisolated struct IOSPreparedHostInvocation: Sendable {
         var seen = Set<String>()
         return try values.map { entry in
             guard let fields = entry.objectFields,
-                  Set(fields.keys) == Set(["id", "name", "summary", "instructions", "version", "required_tools", "validation_steps"]),
+                  Set(fields.keys).subtracting(["package_reference"]) == Set(["id", "name", "summary", "instructions", "version", "required_tools", "validation_steps"]),
+                  fields["package_reference"] == nil || IOSGitHubSkillPackages.sourceURL(reference: fields["package_reference"]?.stringScalar) != nil,
                   let id = fields["id"]?.stringScalar, !id.isEmpty, seen.insert(id).inserted,
                   let name = fields["name"]?.stringScalar, let summary = fields["summary"]?.stringScalar,
                   let instructions = fields["instructions"]?.stringScalar,
@@ -32,7 +37,7 @@ nonisolated struct IOSPreparedHostInvocation: Sendable {
                 throw IOSApplicationRuntimeError.invalidResponse
             }
             return .init(id: id, name: name, summary: summary, instructions: instructions, version: version.stringScalar,
-                requiredTools: required.compactMap(\.stringScalar), validationSteps: validation.compactMap(\.stringScalar))
+                requiredTools: required.compactMap(\.stringScalar), validationSteps: validation.compactMap(\.stringScalar), packageReference: fields["package_reference"]?.stringScalar)
         }
     }
 

@@ -1163,6 +1163,8 @@ final class AgentCoreToolCatalogTests: XCTestCase {
 
     func testNativeCatalogDeclaresSemanticRiskWithoutGuessingOperationNames() throws {
         let expected = ["skill_invoke": "ordinary_read", "memory_search": "ordinary_read",
+            "device_skill_read_resource": "ordinary_read", "device_github_skill_find": "ordinary_read",
+            "device_github_skill_install": "overwrite",
             "device_read_file": "ordinary_read", "device_write_file": "unknown",
             "device_clipboard_read": "sensitive_read", "device_clipboard_write": "overwrite",
             "device_get_location": "sensitive_read", "device_search_calendar_events": "sensitive_read",
@@ -1337,6 +1339,7 @@ final class AgentCoreToolCatalogTests: XCTestCase {
         XCTAssertTrue(resolved.contains { $0.name == "device_get_location" })
     }
 
+    @MainActor
     func testCatalogAndExecutorShareOnlyCanonicalDeviceToolIDs() throws {
         let expected: Set<String> = [
             "device_read_file",
@@ -1348,6 +1351,9 @@ final class AgentCoreToolCatalogTests: XCTestCase {
             "device_create_calendar_event",
             "memory_search",
             "skill_invoke",
+            "device_skill_read_resource",
+            "device_github_skill_find",
+            "device_github_skill_install",
             "render_ui",
             "delegate_expert",
         ]
@@ -1358,6 +1364,16 @@ final class AgentCoreToolCatalogTests: XCTestCase {
             isForeground: true
         )
         XCTAssertEqual(Set((plan.enabledTools + plan.disabledTools).map(\.toolId)), expected.subtracting(["render_ui", "delegate_expert"]))
+        let publicPackageTools: Set<String> = ["device_github_skill_find", "device_github_skill_install", "device_skill_read_resource"]
+        let identity = AgentCoreExpectedIdentity(hostId: "ios-local", clientId: "tests", sessionId: "github-plan")
+        let defaults = try AgentCoreToolCatalog.prepareBoundPlan(for: .deviceLocal, expectedIdentity: identity, isForeground: true)
+        XCTAssertTrue(publicPackageTools.isSubset(of: Set(defaults.output.enabledTools.map(\.toolId))),
+            "Ordinary device chats must advertise GitHub tools without an unrelated private data-egress receipt.")
+        let offline = try AgentCoreToolCatalog.prepareBoundPlan(for: .deviceLocal, expectedIdentity: identity,
+            isForeground: true, deniedCapabilities: ["network"])
+        let denied = Set(offline.output.disabledTools.filter { $0.reason == "capability_denied_by_user" }.map(\.toolId))
+        XCTAssertTrue(["device_github_skill_find", "device_github_skill_install"].allSatisfy(denied.contains))
+        XCTAssertTrue(offline.output.enabledTools.contains { $0.toolId == "device_skill_read_resource" })
         XCTAssertTrue(expected.isDisjoint(with: [
             "device_read_clipboard",
             "device_write_clipboard",

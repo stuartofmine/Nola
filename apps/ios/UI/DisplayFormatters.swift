@@ -19,6 +19,14 @@ enum DisplayFormatters {
         fileSizeFormatter.string(fromByteCount: bytes)
     }
 
+    static func gigabyteSize(_ bytes: Int64) -> String {
+        let gigabytes = max(0, Double(bytes)) / 1_000_000_000.0
+        if gigabytes >= 10 {
+            return String(format: "%.1f GB", gigabytes)
+        }
+        return String(format: "%.2f GB", gigabytes)
+    }
+
     static func transferRate(_ bytesPerSecond: Double) -> String {
         "\(fileSizeFormatter.string(fromByteCount: Int64(bytesPerSecond)))/s"
     }

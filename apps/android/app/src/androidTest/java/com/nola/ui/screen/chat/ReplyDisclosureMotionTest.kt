@@ -36,6 +36,30 @@ import org.junit.runner.RunWith
 class ReplyDisclosureMotionTest {
     @get:Rule val compose = createAndroidComposeRule<ComponentActivity>()
 
+    @Test fun screenReaderNamesTheAvailableDisclosureAndDropdownAction() {
+        val details = mutableStateOf(false)
+        val options = mutableStateOf(false)
+        compose.setContent {
+            MaterialTheme {
+                Column {
+                    com.nola.ui.components.NolaDisclosureBar("Details", details.value, { details.value = !details.value })
+                    com.nola.ui.components.NolaDropdownBar("Options", options.value, { options.value = !options.value })
+                }
+            }
+        }
+        val open = compose.activity.getString(com.nola.R.string.common_expand)
+        val close = compose.activity.getString(com.nola.R.string.common_collapse)
+        for (title in listOf("Details", "Options")) {
+            val control = compose.onNodeWithText(title)
+            fun actionLabel() = control.fetchSemanticsNode().config[androidx.compose.ui.semantics.SemanticsActions.OnClick].label
+            assertEquals(open, actionLabel())
+            control.performClick()
+            assertEquals(close, actionLabel())
+            control.performClick()
+            assertEquals(open, actionLabel())
+        }
+    }
+
     @Test fun inlineReferencesInProseAndTablesUseCaptionColorAndKeepTargets() {
         val dark = mutableStateOf(false)
         val expectedColor = java.util.concurrent.atomic.AtomicInteger()

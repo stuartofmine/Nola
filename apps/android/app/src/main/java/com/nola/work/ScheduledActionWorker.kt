@@ -73,7 +73,8 @@ class ScheduledActionWorker @AssistedInject constructor(
                 val action = actionId?.let { scheduledActionRepo.getById(it) } ?: return Result.success()
                 val key = inputData.getString(KEY_OCCURRENCE_ID) ?: return Result.failure()
                 val run = applicationRuntime.findAutomationOccurrence(action.id, key) ?: return Result.failure()
-                val receipt = applicationRuntime.reconcileAutomationExecution(run.id) ?: return Result.retry()
+                val receipt = applicationRuntime.reconcileAutomationExecution(run.id)
+                    ?: return if (runAttemptCount >= MAX_RETRY_ATTEMPTS) Result.failure() else Result.retry()
                 val delivered = applicationRuntime.observeAutomationExecution(run.id)["notification_delivered"]?.jsonPrimitive?.boolean == true
                 publishReceipt(action, key, run.id, receipt, delivered)
                 return Result.success()
@@ -97,11 +98,15 @@ class ScheduledActionWorker @AssistedInject constructor(
                     scheduledAt = scheduledAt,
                 )
             }
-            return workResultForScheduledOutcomes(outcomes)
+            return workResultForScheduledOutcomes(outcomes, runAttemptCount)
         } catch (cancelled: kotlinx.coroutines.CancellationException) {
             throw cancelled
-        } catch (_: Exception) {
-            Result.retry()
+        } catch (error: Exception) {
+            if (isPermanentScheduledError(error) || runAttemptCount >= MAX_RETRY_ATTEMPTS) {
+                Result.failure(workDataOf("error" to (error.message ?: error.javaClass.simpleName)))
+            } else {
+                Result.retry()
+            }
         }
     }
     private suspend fun executeCanonicalRun(
@@ -170,8 +175,30 @@ class ScheduledActionWorker @AssistedInject constructor(
                 }.toString()))
             ScheduledActionOutcome.Deferred
         } catch (error: Exception) {
-            lease?.let { applicationRuntime.observeAutomationWorker(it, error.message ?: error.javaClass.simpleName) }
-            ScheduledActionOutcome.Deferred
+            val reason = error.message ?: error.javaClass.simpleName
+            lease?.let { applicationRuntime.observeAutomationWorker(it, reason) }
+            val existing = runCatching { scheduledActionRepo.getResult(scheduledExecutionResultId(occurrenceID)) }.getOrNull()
+            if (existing != null && existing.status.lowercase() in setOf("pending", "running")) {
+                runCatching {
+                    scheduledActionRepo.recordResult(
+                        existing.copy(
+                            status = "failed",
+                            failureReason = reason,
+                            eventsJson = buildJsonObject {
+                                existing.journal?.get("trace")?.let { put("trace", it) }
+                                existing.journalSessionId?.let { put("session_id", it) }
+                                put("schema_version", 1)
+                                put("state", "failed")
+                            }.toString(),
+                        ),
+                    )
+                }
+            }
+            if (isPermanentScheduledError(error) || runAttemptCount >= MAX_RETRY_ATTEMPTS) {
+                ScheduledActionOutcome.Failed
+            } else {
+                ScheduledActionOutcome.Deferred
+            }
         }
     }
 
@@ -400,10 +427,21 @@ internal fun scheduledActionMimeType(format: String): String = when (format.trim
     else -> "text/plain"
 }
 
+internal const val MAX_RETRY_ATTEMPTS = 3
+
+internal fun isPermanentScheduledError(error: Throwable): Boolean =
+    error is IllegalArgumentException ||
+        error is IllegalStateException ||
+        error is SecurityException ||
+        error is UnsupportedOperationException ||
+        error is java.net.MalformedURLException ||
+        error is java.net.URISyntaxException
+
 internal enum class ScheduledActionOutcome {
     Success,
     NeedsAttention,
     Deferred,
+    Failed,
     AlreadyHandled;
 }
 
@@ -419,8 +457,12 @@ internal fun shouldAutoDisableAfterReceipt(scheduleFrequency: String): Boolean =
 
 internal fun workResultForScheduledOutcomes(
     outcomes: List<ScheduledActionOutcome>,
+    runAttemptCount: Int = 0,
 ): androidx.work.ListenableWorker.Result = when {
-    outcomes.any { it == ScheduledActionOutcome.Deferred } -> androidx.work.ListenableWorker.Result.retry()
+    outcomes.any { it == ScheduledActionOutcome.Deferred } ->
+        if (runAttemptCount >= MAX_RETRY_ATTEMPTS) androidx.work.ListenableWorker.Result.failure()
+        else androidx.work.ListenableWorker.Result.retry()
+    outcomes.any { it == ScheduledActionOutcome.Failed } -> androidx.work.ListenableWorker.Result.failure()
     else -> androidx.work.ListenableWorker.Result.success()
 }
 

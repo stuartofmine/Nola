@@ -54,6 +54,8 @@ pub struct DbSessionInfoWithFirstUserMessage {
 
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct DbBackgroundTask {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) local_execution: Option<nola_domain::execution_evidence::LocalExecutionIdentity>,
     #[serde(default,skip_serializing_if="Option::is_none")]
     pub(crate) process_sandbox: Option<crate::process_sandbox::FrozenProcessSandbox>,
     pub terminal: Option<nola_domain::terminal_input::TerminalSessionConfiguration>,

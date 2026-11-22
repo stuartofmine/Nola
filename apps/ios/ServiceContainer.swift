@@ -450,6 +450,11 @@ public final class ServiceContainer: ObservableObject {
         self.baseURLString = "https://api-inference.modelscope.cn/v1"
         self.apiKey = ""
         self.model = "deepseek-ai/DeepSeek-V3.2"
+        self.dataManager.attachCanonicalServices(
+            applicationRuntime: applicationRuntime,
+            conversationStore: self.conversationStore,
+            promptTemplates: self.promptTemplates
+        )
         if !isRunningUnitTests {
             loadInitialConfig()
             reconfigureIfPossible()

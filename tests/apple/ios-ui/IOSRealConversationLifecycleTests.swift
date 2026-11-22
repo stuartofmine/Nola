@@ -112,6 +112,46 @@ final class IOSRealConversationLifecycleTests: XCTestCase {
         capture("local-cold-stop-next-turn-completed")
     }
 
+    func testRealEditedReplyReplacesOldOutputInSameConversationAfterRelaunch() throws {
+        let model = try launchAndImport()
+        app.buttons["chat.conversations.new"].tap()
+        chooseModel(model)
+        let prompt = "Reply with only the sum of 70+2"
+        send(prompt)
+        assertCompletedLine("72")
+        capture("edit-original-real-answer")
+        returnToList()
+        let owners = app.buttons.matching(NSPredicate(format: "identifier MATCHES %@", "chat\\.conversation\\.[0-9a-fA-F-]{36}"))
+        XCTAssertEqual(owners.count, 1)
+        let owner = owners.element.identifier
+        XCTAssertTrue(owners.element.label.contains(prompt))
+        owners.element.tap()
+        let edit = app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH %@", "chat.message.edit."))
+        XCTAssertEqual(edit.count, 1)
+        edit.element.tap()
+        let editor = app.textViews["chat.message.editor"]
+        XCTAssertEqual(editor.value as? String, prompt)
+        editor.coordinate(withNormalizedOffset: CGVector(dx: 0.8, dy: 0.7)).tap()
+        editor.typeText("0")
+        XCTAssertEqual(editor.value as? String, prompt + "0")
+        app.buttons["chat.message.editor.save"].tap()
+        assertCompletedLine("90")
+        XCTAssertFalse(app.staticTexts["72"].exists)
+        XCTAssertEqual(edit.count, 1)
+        capture("edit-replacement-real-answer")
+        app.terminate()
+        app.launch()
+        app.tapRootTab("chat")
+        XCTAssertTrue(app.buttons[owner].waitForExistence(timeout: 8))
+        XCTAssertEqual(owners.count, 1)
+        XCTAssertTrue(app.buttons[owner].label.contains(prompt + "0"), "The persisted first-message title must track its edited text")
+        app.buttons[owner].tap()
+        assertCompletedLine("90")
+        XCTAssertFalse(app.staticTexts["72"].exists)
+        XCTAssertEqual(edit.count, 1)
+        capture("edit-same-owner-after-relaunch")
+    }
+
     func testRealKeyboardDismissalAndCommittedHistorySurviveTabNavigation() throws {
         let model = try launchAndImport()
         app.buttons["chat.conversations.new"].tap()
@@ -626,12 +666,10 @@ final class IOSRealConversationLifecycleTests: XCTestCase {
         let model = try launchAndImport()
         app.buttons["chat.conversations.new"].tap()
         chooseModel(model)
-        send("Remember the private test token ORCHID731. Reply exactly FIRST_ACK ORCHID731.")
-        assertReply("FIRST_ACK ORCHID731")
-        waitForTerminal()
-        send("What token did I ask you to remember? Reply SECOND_ACK followed by that token.")
-        assertReply("SECOND_ACK ORCHID731")
-        waitForTerminal()
+        send("The fictional observatory in this conversation is named ORCHID731. Reply exactly FIRST_ACK ORCHID731.")
+        assertCompletedLine("FIRST_ACK ORCHID731")
+        send("What is the name of our fictional observatory? Reply SECOND_ACK followed by its name.")
+        assertCompletedLine("SECOND_ACK ORCHID731")
         capture("real-multiturn-confirmed")
 
         let naturalMarker = "NATURAL_TASK_ACK_" + UUID().uuidString
@@ -670,17 +708,15 @@ final class IOSRealConversationLifecycleTests: XCTestCase {
         capture("real-long-run-cancelled")
 
         send("Reply exactly POST_CANCEL_ACK ORCHID731.")
-        assertReply("POST_CANCEL_ACK ORCHID731")
-        waitForTerminal()
+        assertCompletedLine("POST_CANCEL_ACK ORCHID731")
         capture("real-send-after-cancellation")
 
         returnToList()
         app.buttons["chat.conversations.new"].tap()
         chooseModel(model)
-        send("Have I given you a private test token in THIS conversation? If none, reply exactly ISOLATED_NONE. Do not invent a token.")
-        assertReply("ISOLATED_NONE")
-        waitForTerminal()
-        XCTAssertFalse(assistantText("ORCHID731").exists, "New conversation must not display or inherit the first conversation's private token")
+        send("Have I named a fictional observatory in THIS conversation? If so, give its name. Otherwise reply exactly ISOLATED_NONE.")
+        assertCompletedLine("ISOLATED_NONE")
+        XCTAssertFalse(assistantText("ORCHID731").exists, "New conversation must not display or inherit the first conversation's observatory name")
         capture("real-new-conversation-isolated")
         returnToList()
         app.buttons[originalID].tap()
@@ -1108,6 +1144,14 @@ final class IOSRealConversationLifecycleTests: XCTestCase {
         app.otherElements.matching(identifier: "chat.assistant.bubble").descendants(matching: .staticText).matching(NSPredicate(format: "label CONTAINS %@", text)).firstMatch
     }
 
+    // The prompt contains the expected marker within a longer sentence. Only the
+    // assistant's complete, standalone line can satisfy this equality check.
+    private func assertCompletedLine(_ line: String) {
+        waitForTerminal()
+        let answer = app.staticTexts.matching(NSPredicate(format: "label == %@", line)).firstMatch
+        XCTAssertTrue(answer.waitForExistence(timeout: 15), "Expected visible reply line: \(line)")
+    }
+
     private func assertReply(_ text: String) {
         let result = assistantText(text)
         XCTAssertTrue(result.waitForExistence(timeout: 240), "Expected real assistant reply: \(text)\n\(app.debugDescription)")
@@ -1208,27 +1252,33 @@ final class IOSRealConversationLifecycleTests: XCTestCase {
         // AX exposes destination geometry before UIKit finishes painting a push
         // and SwiftUI updates the bottom inset. Require matching frames AND
         // painted pixels within a bounded wait; do not disable the animations.
-        let painted = XCTNSPredicateExpectation(predicate: NSPredicate { [self] _, _ in
-            let controls = ["chat.topbar.modelPicker", "chat.composer.send"].compactMap { identifier -> XCUIElement? in
-                let control = app.buttons[identifier]
-                return control.exists && control.isHittable ? control : nil
-            }
+        let deadline = Date().addingTimeInterval(5)
+        var painted = false
+        repeat {
+            let controls = ["chat.topbar.modelPicker", "chat.composer.send"].map { app.buttons[$0] }
+                .filter { $0.exists && $0.isHittable }
             let frames = controls.map(\.frame)
             let window = app.windows.firstMatch.frame
             screenshot = app.screenshot()
             let ranges = frames.map { controlPaintRange($0, in: screenshot, window: window) }
-            regions = zip(controls, zip(frames, ranges)).map { "\($0.0.identifier): \($0.1.0), range=\($0.1.1)" }.joined(separator: "\n")
-            return frames == controls.map(\.frame) && ranges.allSatisfy { $0 > 40 }
-        }, object: nil)
-        let result = XCTWaiter.wait(for: [painted], timeout: 5)
+            let after = controls.map(\.frame)
+            let tolerance = screenshot.image.scale > 0 ? 1 / screenshot.image.scale : 1
+            let steady = zip(frames, after).allSatisfy { before, after in
+                abs(before.minX - after.minX) <= tolerance && abs(before.maxX - after.maxX) <= tolerance &&
+                    abs(before.minY - after.minY) <= tolerance && abs(before.maxY - after.maxY) <= tolerance
+            }
+            regions = "frames=\(frames) after=\(after) contrast=\(ranges)"
+            painted = steady && ranges.allSatisfy { $0 > 40 }
+            if !painted { Thread.sleep(forTimeInterval: 0.1) }
+        } while !painted && Date() < deadline
         let image = XCTAttachment(screenshot: screenshot)
         image.name = name; image.lifetime = .keepAlways; add(image)
         let tree = XCTAttachment(string: app.debugDescription)
         tree.name = name + "-accessibility"; tree.lifetime = .keepAlways; add(tree)
-        if result != .completed {
+        if !painted {
             let diagnostic = XCTAttachment(string: regions)
             diagnostic.name = name + "-pixel-region"; diagnostic.lifetime = .keepAlways; add(diagnostic)
         }
-        XCTAssertEqual(result, .completed, "\(name): visible controls must settle and paint within five seconds")
+        XCTAssertTrue(painted, "\(name): visible controls must settle and paint; \(regions)")
     }
 }

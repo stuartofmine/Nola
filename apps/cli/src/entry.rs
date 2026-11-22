@@ -25,6 +25,10 @@ fn run_with_expanded_stack(name: &str, f: impl FnOnce() + Send + 'static) {
 pub fn run_cli() {
     run_with_expanded_stack("nola-cli-main", || {
         let arguments = std::env::args().skip(1).collect::<Vec<_>>();
+        if let Some(result) = crate::model_acquisition::cli(&arguments) {
+            if let Err(error) = result { eprintln!("{error}"); std::process::exit(1); }
+            return;
+        }
         // Administrative commands (`version`, `update`, `memory`, `skills`, `mcp`)
         // work even when model configuration is absent or invalid.
         if let Some(result) = crate::cli_admin::run_if_requested(&arguments) {
@@ -32,6 +36,10 @@ pub fn run_cli() {
                 eprintln!("{error}");
                 std::process::exit(1);
             }
+            return;
+        }
+        if let Some(result) = crate::harness_plugin::desktop_command(&arguments) {
+            if let Err(error) = result { eprintln!("{error}"); std::process::exit(1); }
             return;
         }
         if let Some(result) = crate::tailcat_web_client::run_if_requested(&arguments) {
@@ -49,6 +57,14 @@ pub fn run_cli() {
 pub fn run_agent_host() {
     run_with_expanded_stack("nola-host-main", || {
         let arguments = std::env::args().skip(1).collect::<Vec<_>>();
+        if let Some(result) = crate::model_acquisition::cli(&arguments) {
+            if let Err(error) = result { eprintln!("{error}"); std::process::exit(1); }
+            return;
+        }
+        if let Some(result) = crate::harness_plugin::desktop_command(&arguments) {
+            if let Err(error) = result { eprintln!("{error}"); std::process::exit(1); }
+            return;
+        }
         if crate::native_host_launch::is_native_run(&arguments) {
             crate::native_host_launch::configure_surface();
             if let Err(error) = crate::native_host_launch::run(&arguments) {

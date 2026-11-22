@@ -110,6 +110,7 @@ struct MacUnknownEffectRecoveryView: View {
                         // Deliberately no Return/default-action shortcut for risk authorization.
                     }
                 }.font(.system(size: 13)).padding(24).frame(minWidth: 400, idealWidth: 460)
+                    .background(MacDesignColor.canvas)
             }
         }
         .accessibilityIdentifier("chat.unknown.recovery")
@@ -124,7 +125,7 @@ struct MacUnknownEffectRecoveryView: View {
         Button(String(localized: "Keep blocked & stop task", table: "Chat")) {
             if let decision = try? presentation.decision(targetIndex: nil, reason: reason) { submit(decision) }
         }
-        .disabled(!validReason || presentation.inspection.independentPendingEffects != 0)
+        .disabled(!validReason || presentation.inspection.independentPendingEffects != 0 || presentation.inspection.targets.isEmpty)
         .accessibilityIdentifier("chat.unknown.keepBlocked")
     }
 

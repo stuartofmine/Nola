@@ -117,6 +117,14 @@ pub fn canonical_resend_value_sha256(value: &Value) -> Result<String, String> {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct PrepareInPlaceResend {
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub defer_until_admission: bool,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub selected_experts: Vec<crate::expert_task_target::MainExpertSelectionV1>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub expert_mentions: Option<crate::expert_task_target::ExpertMentions>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub expected_source_store_epoch: Option<String>,
     pub operation_id: String,
     pub conversation_id: String,
     pub message_id: String,
@@ -128,6 +136,8 @@ pub struct PrepareInPlaceResend {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct PreparedInPlaceResend {
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub deferred_rewind: bool,
     pub input: PrepareInPlaceResend,
     pub run_id: String,
     pub user_message_id: String,

@@ -83,22 +83,15 @@ struct MacWorkspaceReviewView: View {
                     .listStyle(.sidebar)
                     .scrollContentBackground(.hidden)
                     .background(MacDesignColor.canvas)
-                    .overlay {
-                        if snapshot.changes.isEmpty {
-                            ContentUnavailableView(
-                                macWorkspaceReviewText("mac.workspace.clean.title", "Workspace Is Clean"),
-                                systemImage: "checkmark.circle",
-                                description: Text(macWorkspaceReviewText("mac.workspace.clean.detail", "Git reports no staged, modified, or untracked files."))
-                            )
-                        }
-                    }
 
-                    Divider()
                     if let feedback {
-                        operationFeedback(feedback)
                         Divider()
+                        operationFeedback(feedback)
                     }
-                    commitComposer(snapshot)
+                    if !snapshot.changes.isEmpty {
+                        Divider()
+                        commitComposer(snapshot)
+                    }
                 } else if isLoading {
                     ProgressView(macWorkspaceReviewText("mac.workspace.loading", "Reading workspace…"))
                         .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -116,12 +109,20 @@ struct MacWorkspaceReviewView: View {
             Group {
                 if let change = selectedChange, let snapshot {
                     MacGitDiffDetail(change: change, snapshot: snapshot, diff: diff, isLoading: isLoadingDiff)
-                } else {
+                } else if snapshot?.changes.isEmpty == true {
+                    ContentUnavailableView(
+                        macWorkspaceReviewText("mac.workspace.clean.title", "Workspace Is Clean"),
+                        systemImage: "checkmark.circle",
+                        description: Text(macWorkspaceReviewText("mac.workspace.clean.detail", "Git reports no staged, modified, or untracked files."))
+                    )
+                } else if snapshot != nil {
                     ContentUnavailableView(
                         macWorkspaceReviewText("mac.workspace.review.title", "Review Changes"),
                         systemImage: "doc.text.magnifyingglass",
                         description: Text(macWorkspaceReviewText("mac.workspace.review.detail", "Select a changed file to inspect its diff."))
                     )
+                } else {
+                    Color.clear.accessibilityHidden(true)
                 }
             }
             .frame(minWidth: 520, maxWidth: .infinity, maxHeight: .infinity)
@@ -135,8 +136,13 @@ struct MacWorkspaceReviewView: View {
                     Button {
                         showsPushConfirmation = true
                     } label: {
-                        Label(macWorkspaceReviewText("mac.workspace.push", "Push"), systemImage: "arrow.up.circle")
+                        if operation == .push {
+                            ProgressView().controlSize(.small)
+                        } else {
+                            Label(macWorkspaceReviewText("mac.workspace.push", "Push"), systemImage: "arrow.up.circle")
+                        }
                     }
+                    .accessibilityLabel(macWorkspaceReviewText("mac.workspace.push", "Push"))
                     .disabled(operation != nil || !snapshot.canPush)
                     .help(macWorkspaceReviewText("mac.workspace.push.help", "Push the current branch"))
                     Button {
@@ -220,73 +226,56 @@ struct MacWorkspaceReviewView: View {
     @ViewBuilder
     private func commitComposer(_ snapshot: MacGitWorkspaceSnapshot) -> some View {
         VStack(alignment: .leading, spacing: 9) {
-            if snapshot.changes.isEmpty {
-                HStack(spacing: 8) {
-                    Image(systemName: publishStatusSymbol(snapshot))
-                        .foregroundStyle(publishStatusColor(snapshot))
-                    Text(publishStatus(snapshot))
-                        .font(.system(size: 11.5, weight: .medium))
-                    Spacer()
-                    if operation == .push {
-                        ProgressView().controlSize(.small)
-                    } else if snapshot.canPush {
-                        Button(macWorkspaceReviewText("mac.workspace.push", "Push")) { showsPushConfirmation = true }
-                            .buttonStyle(.borderedProminent)
-                            .controlSize(.small)
+            HStack {
+                Label(macWorkspaceReviewText("mac.workspace.commit.summary", "Commit summary"), systemImage: "text.badge.checkmark")
+                    .font(.system(size: 11, weight: .semibold))
+                Spacer()
+                Button {
+                    Task {
+                        guard !isSuggestingCommit else { return }
+                        isSuggestingCommit = true
+                        defer { isSuggestingCommit = false }
+                        let suggestion = await MacWorkspaceGitService.shared.suggestedCommitMessage(for: snapshot)
+                        commitMessage = suggestion
+                        lastSuggestedCommitMessage = suggestion
                     }
-                }
-            } else {
-                HStack {
-                    Label(macWorkspaceReviewText("mac.workspace.commit.summary", "Commit summary"), systemImage: "text.badge.checkmark")
-                        .font(.system(size: 11, weight: .semibold))
-                    Spacer()
-                    Button {
-                        Task {
-                            guard !isSuggestingCommit else { return }
-                            isSuggestingCommit = true
-                            defer { isSuggestingCommit = false }
-                            let suggestion = await MacWorkspaceGitService.shared.suggestedCommitMessage(for: snapshot)
-                            commitMessage = suggestion
-                            lastSuggestedCommitMessage = suggestion
-                        }
-                    } label: {
-                        if isSuggestingCommit {
-                            ProgressView()
-                                .controlSize(.mini)
-                        } else {
-                            Image(systemName: "wand.and.stars")
-                        }
-                    }
-                    .macToolbarIcon()
-                    .disabled(isSuggestingCommit || operation != nil)
-                    .help(macWorkspaceReviewText("mac.workspace.commit.regenerate", "Regenerate commit summary"))
-                    .accessibilityLabel(macWorkspaceReviewText("mac.workspace.commit.regenerate", "Regenerate commit summary"))
-                }
-                TextField(macWorkspaceReviewText("mac.workspace.commit.placeholder", "Describe these changes"), text: $commitMessage, axis: .vertical)
-                    .textFieldStyle(.roundedBorder)
-                    .lineLimit(2...4)
-                    .accessibilityIdentifier("mac-git-commit-summary")
-                    .onSubmit { if canCommit(snapshot) { showsCommitConfirmation = true } }
-                HStack {
-                    if operation == .commit {
+                } label: {
+                    if isSuggestingCommit {
                         ProgressView()
-                            .controlSize(.small)
-                        Text(macWorkspaceReviewText("mac.workspace.commit.creating", "Creating commit…"))
-                            .font(.system(size: 10.5))
-                            .foregroundStyle(.secondary)
+                            .controlSize(.mini)
                     } else {
-                        Label("\(snapshot.changes.count)", systemImage: "doc.on.doc")
-                            .font(.system(size: 10.5, weight: .medium))
-                            .foregroundStyle(.secondary)
-                            .help(macWorkspaceReviewText("mac.workspace.files", "Files"))
+                        Image(systemName: "wand.and.stars")
                     }
-                    Spacer()
-                    Button(macWorkspaceReviewText("mac.workspace.commit.all", "Commit All Changes")) { showsCommitConfirmation = true }
-                        .buttonStyle(.borderedProminent)
-                        .controlSize(.small)
-                        .disabled(!canCommit(snapshot))
-                        .accessibilityIdentifier("mac-git-commit-all")
                 }
+                .macToolbarIcon()
+                .disabled(isSuggestingCommit || operation != nil)
+                .help(macWorkspaceReviewText("mac.workspace.commit.regenerate", "Regenerate commit summary"))
+                .accessibilityLabel(macWorkspaceReviewText("mac.workspace.commit.regenerate", "Regenerate commit summary"))
+            }
+            TextField(macWorkspaceReviewText("mac.workspace.commit.placeholder", "Describe these changes"), text: $commitMessage, axis: .vertical)
+                .textFieldStyle(.roundedBorder)
+                .lineLimit(2...4)
+                .accessibilityIdentifier("mac-git-commit-summary")
+                .onSubmit { if canCommit(snapshot) { showsCommitConfirmation = true } }
+            HStack {
+                if operation == .commit {
+                    ProgressView()
+                        .controlSize(.small)
+                    Text(macWorkspaceReviewText("mac.workspace.commit.creating", "Creating commit…"))
+                        .font(.system(size: 10.5))
+                        .foregroundStyle(.secondary)
+                } else {
+                    Label("\(snapshot.changes.count)", systemImage: "doc.on.doc")
+                        .font(.system(size: 10.5, weight: .medium))
+                        .foregroundStyle(.secondary)
+                        .help(macWorkspaceReviewText("mac.workspace.files", "Files"))
+                }
+                Spacer()
+                Button(macWorkspaceReviewText("mac.workspace.commit.all", "Commit All Changes")) { showsCommitConfirmation = true }
+                    .buttonStyle(.nolaProminent)
+                    .controlSize(.small)
+                    .disabled(!canCommit(snapshot))
+                    .accessibilityIdentifier("mac-git-commit-all")
             }
         }
         .padding(12)
@@ -576,7 +565,7 @@ private struct MacGitDiffDetail: View {
             } label: {
                 Label(macWorkspaceReviewText("mac.workspace.open", "Open"), systemImage: "arrow.up.forward.app")
             }
-            .buttonStyle(.borderedProminent)
+            .buttonStyle(.nolaProminent)
             Button {
                 MacQuickLookController.shared.preview([fileURL])
             } label: {

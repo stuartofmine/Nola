@@ -67,6 +67,8 @@ internal fun expertChildExchangeSenders(value: kotlinx.serialization.json.JsonEl
         val main = source.string("kind") == "main_agent"
         require(source.string("kind") == null || main)
         require(if (main) source.string("context_conversation_id") == parent else !source.string("agent_id").isNullOrBlank())
+        val targetName = peer.string("target_display_name").orEmpty().ifBlank { child.title }
+        require(result.put("$id:assistant", ExpertHistorySender(targetName, child.agentId)) == null)
         require(result.put("$id:user", ExpertHistorySender(peer.string("source_display_name").orEmpty().ifBlank { if (main) "Nola" else "" }, if (main) parent else checkNotNull(source.string("agent_id")))) == null)
     }
     return result

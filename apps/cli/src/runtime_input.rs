@@ -12,13 +12,13 @@ impl RuntimeInput {
     fn text(&self) -> &str { match self { Self::UserFollowUp(text) | Self::ClientControl(text) => text } }
     fn into_text(self) -> String { match self { Self::UserFollowUp(text) | Self::ClientControl(text) => text } }
 }
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum InputReceipt { Durable, Local }
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) enum InputReceipt { Durable(String), Local }
 
 pub(crate) trait DurableInputPort {
     /// Return success only after Application has committed its existing FIFO
     /// entry. This is producer admission, not consumer acknowledgement.
-    fn admit(&mut self, session: &str, text: &str) -> Result<(), String>;
+    fn admit(&mut self, session: &str, text: &str) -> Result<String, String>;
 }
 
 #[derive(Debug, Default)]
@@ -54,8 +54,7 @@ pub(crate) fn deliver(
 ) -> Result<InputReceipt, String> {
     if input.text().trim().is_empty() { return Err("empty execution input".into()); }
     if let (RuntimeInput::UserFollowUp(text), Some(session), false) = (&input, durable_session, cancelled) {
-        durable.admit(session, text)?;
-        return Ok(InputReceipt::Durable);
+        return durable.admit(session, text).map(InputReceipt::Durable);
     }
     local.enqueue(input)
 }
@@ -65,9 +64,9 @@ mod tests {
     use super::*;
     struct Port { fail: bool, calls: Vec<(String, String)> }
     impl DurableInputPort for Port {
-        fn admit(&mut self, session: &str, text: &str) -> Result<(), String> {
+        fn admit(&mut self, session: &str, text: &str) -> Result<String, String> {
             self.calls.push((session.into(), text.into()));
-            if self.fail { Err("unconfirmed".into()) } else { Ok(()) }
+            if self.fail { Err("unconfirmed".into()) } else { Ok("original-command-id".into()) }
         }
     }
     #[test]

@@ -223,7 +223,7 @@ pub use model_connection::remote_profile_parameters;
 mod model_generation;
 mod run_generation_intent;
 pub use model::{
-    validate_model_reasoning, ChatOutputTokenField, ModelCommand, ModelExecutionCapabilities,
+    validate_model_reasoning, ChatOutputTokenField, FileCatalogConnection, ModelCommand, ModelExecutionCapabilities,
     ModelProfile, ModelRuntime, ModelRuntimePhase,
 };
 pub use model_generation::{

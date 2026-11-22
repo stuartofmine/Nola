@@ -7,6 +7,25 @@ import XCTest
 @testable import Nola
 
 final class MacWorkspaceGitServiceEndToEndTests: XCTestCase {
+    func testTemporaryWorkspaceShowsOnlyItsOwnGitRepository() async throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent("nola-review-\(UUID())")
+        let workspace = root.appendingPathComponent("sessions/chat", isDirectory: true)
+        try FileManager.default.createDirectory(at: workspace, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        _ = try runGit(["init", "-q"], at: root)
+        try Data("outside".utf8).write(to: root.appendingPathComponent("outside.txt"))
+        do {
+            _ = try await MacWorkspaceGitService.shared.snapshot(at: workspace, allowEnclosingRepository: false)
+            XCTFail("A temporary conversation workspace must never show its parent repository")
+        } catch MacWorkspaceGitError.notRepository {}
+        let selectedFolder = try await MacWorkspaceGitService.shared.snapshot(at: workspace)
+        XCTAssertTrue(selectedFolder.changes.contains { $0.path == "outside.txt" })
+        _ = try runGit(["init", "-q"], at: workspace)
+        try Data("inside".utf8).write(to: workspace.appendingPathComponent("inside.txt"))
+        let local = try await MacWorkspaceGitService.shared.snapshot(at: workspace, allowEnclosingRepository: false)
+        XCTAssertEqual(local.changes.map(\.path), ["inside.txt"])
+    }
+
     func testSuggestCommitAndFirstPushRoundTripThroughRealRepositories() async throws {
         let root = FileManager.default.temporaryDirectory
             .appendingPathComponent("nola-git-e2e-\(UUID().uuidString)", isDirectory: true)

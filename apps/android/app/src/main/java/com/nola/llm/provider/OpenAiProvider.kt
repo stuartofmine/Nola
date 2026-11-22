@@ -27,6 +27,7 @@ import java.net.URI
 import java.security.MessageDigest
 import java.util.UUID
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withTimeout
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.flow.emitAll
@@ -172,9 +173,17 @@ class OpenAiProvider @Inject constructor(
     override suspend fun generateSummary(input: ModelInput, timeout: Duration?): ModelOutput {
         val cfg = config ?: return ModelOutput("No model configured")
         validateExecution(input, cfg)
-        if (cfg.wireProtocol == ModelWireProtocol.Responses) {
-            return OpenAiResponsesAdapter(httpClient, cfg).summary(input)
+        val run: suspend () -> ModelOutput = {
+            if (cfg.wireProtocol == ModelWireProtocol.Responses) {
+                OpenAiResponsesAdapter(httpClient, cfg).summary(input)
+            } else {
+                generateChatCompletionsSummary(input, cfg)
+            }
         }
+        return if (timeout != null) withTimeout(timeout) { run() } else run()
+    }
+
+    private suspend fun generateChatCompletionsSummary(input: ModelInput, cfg: Config): ModelOutput {
         val messages = input.providerMessages()
         val enableThinking = input.userPrefs["enable_thinking"] != "false"
 
@@ -207,11 +216,9 @@ class OpenAiProvider @Inject constructor(
             throw llmRequestException(response.status.value, responseBody)
         }
         val obj = json.decodeFromString<JsonObject>(responseBody)
-        val content = obj["choices"]?.jsonArray?.get(0)?.jsonObject
-            ?.get("message")?.jsonObject?.get("content")
-            ?.jsonPrimitive?.contentOrNull ?: ""
-        val responseMessage = obj["choices"]?.jsonArray?.get(0)?.jsonObject
-            ?.get("message")?.jsonObject
+        val firstChoice = obj["choices"]?.jsonArray?.firstOrNull() as? JsonObject
+        val responseMessage = firstChoice?.get("message") as? JsonObject
+        val content = responseMessage?.get("content")?.jsonPrimitive?.contentOrNull ?: ""
         val reasoning = responseMessage?.get("reasoning_content")?.jsonPrimitive?.contentOrNull
             ?: responseMessage?.get("reasoning")?.jsonPrimitive?.contentOrNull
             ?: ""
@@ -228,8 +235,7 @@ class OpenAiProvider @Inject constructor(
                 put("arguments", arguments)
             }
         }.orEmpty()
-        val finishReason = obj["choices"]?.jsonArray?.get(0)?.jsonObject
-            ?.get("finish_reason")?.jsonPrimitive?.contentOrNull ?: "unknown"
+        val finishReason = firstChoice?.get("finish_reason")?.jsonPrimitive?.contentOrNull ?: "unknown"
         val usage = (obj["usage"] as? JsonObject)?.get("total_tokens")?.toString()?.toIntOrNull()
 
         return ModelOutput(
@@ -245,14 +251,29 @@ class OpenAiProvider @Inject constructor(
         val cfg = config ?: return@flow
         validateExecution(input, cfg)
         if (cfg.wireProtocol == ModelWireProtocol.Responses) {
+            val enableThinking = input.userPrefs["enable_thinking"] != "false"
+            var thinkingOpen = false
             OpenAiResponsesAdapter(httpClient, cfg).events(input).collect { event ->
                 when (event) {
-                    is LlmStreamEvent.TextDelta -> emit(event.text)
-                    is LlmStreamEvent.ReasoningDelta -> if (input.userPrefs["enable_thinking"] != "false") {
-                        emit("<think>${event.text}</think>\n")
+                    is LlmStreamEvent.ReasoningDelta -> if (enableThinking && event.text.isNotEmpty()) {
+                        if (!thinkingOpen) {
+                            emit("<think>")
+                            thinkingOpen = true
+                        }
+                        emit(event.text)
+                    }
+                    is LlmStreamEvent.TextDelta -> {
+                        if (thinkingOpen) {
+                            emit("</think>\n")
+                            thinkingOpen = false
+                        }
+                        emit(event.text)
                     }
                     else -> Unit
                 }
+            }
+            if (thinkingOpen) {
+                emit("</think>\n")
             }
             return@flow
         }
@@ -311,8 +332,8 @@ class OpenAiProvider @Inject constructor(
                             }) {
                             sawExplicitTerminal = true
                         }
-                        val delta = obj["choices"]?.jsonArray?.get(0)?.jsonObject
-                            ?.get("delta")?.jsonObject
+                        val delta = (choices.firstOrNull() as? JsonObject)
+                            ?.get("delta") as? JsonObject
                         val reasoning = delta?.get("reasoning_content")?.jsonPrimitive?.contentOrNull
                             ?: delta?.get("reasoning")?.jsonPrimitive?.contentOrNull
                         if (enableThinking && !reasoning.isNullOrEmpty()) {
@@ -323,7 +344,7 @@ class OpenAiProvider @Inject constructor(
                             emit(reasoning)
                         }
                         val content = delta?.get("content")?.jsonPrimitive?.contentOrNull
-                        if (!content.isNullOrEmpty() && content != "null") {
+                        if (!content.isNullOrEmpty()) {
                             if (thinkingOpen) {
                                 emit("</think>\n")
                                 thinkingOpen = false
@@ -422,7 +443,7 @@ class OpenAiProvider @Inject constructor(
                         emit(LlmStreamEvent.ReasoningDelta(reasoning))
                     }
                     delta["content"]?.jsonPrimitive?.contentOrNull
-                        ?.takeIf { it.isNotEmpty() && it != "null" }
+                        ?.takeIf { it.isNotEmpty() }
                         ?.let { emit(LlmStreamEvent.TextDelta(it)) }
                     val calls = runCatching { delta["tool_calls"]?.jsonArray }.getOrNull().orEmpty()
                     calls.forEach callsLoop@{ callElement ->
@@ -435,11 +456,7 @@ class OpenAiProvider @Inject constructor(
                         val function = call["function"] as? JsonObject
                         function?.get("name")?.jsonPrimitive?.contentOrNull
                             ?.takeIf(String::isNotEmpty)?.let { name ->
-                                state.capabilityId = when {
-                                    name.startsWith(state.capabilityId) -> name
-                                    state.capabilityId.endsWith(name) -> state.capabilityId
-                                    else -> state.capabilityId + name
-                                }
+                                state.capabilityId = mergeStreamedToolName(state.capabilityId, name)
                             }
                         function?.get("arguments")?.jsonPrimitive?.contentOrNull
                             ?.takeIf(String::isNotEmpty)?.let(state.pendingArguments::append)
@@ -480,11 +497,14 @@ class OpenAiProvider @Inject constructor(
         enableThinking: Boolean,
         timeout: Duration?
     ): String {
-        val result = generateSummary(ModelInput(
-            messages = listOf(mapOf("role" to "user", "content" to message)),
-            systemPrompt = systemPrompt,
-            userPrefs = mapOf("enable_thinking" to enableThinking.toString()),
-        ))
+        val result = generateSummary(
+            ModelInput(
+                messages = listOf(mapOf("role" to "user", "content" to message)),
+                systemPrompt = systemPrompt,
+                userPrefs = mapOf("enable_thinking" to enableThinking.toString()),
+            ),
+            timeout = timeout,
+        )
         return result.text
     }
 }
@@ -590,4 +610,11 @@ internal fun openAiChatCompletionsUrl(configuredUrl: String): String {
 internal fun openAiModelsUrl(configuredUrl: String): String {
     val completionsUrl = openAiChatCompletionsUrl(configuredUrl)
     return completionsUrl.removeSuffix("/chat/completions") + "/models"
+}
+
+internal fun mergeStreamedToolName(current: String, delta: String): String = when {
+    current.isEmpty() -> delta
+    delta.length > current.length && delta.startsWith(current) -> delta
+    delta == current && current.length > 1 -> current
+    else -> current + delta
 }

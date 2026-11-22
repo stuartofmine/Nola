@@ -62,6 +62,7 @@ nonisolated struct MacLocalAgentRunRequest: Sendable {
     let authorizedWorkspaceURLs: [URL]
     var skillDirectoryArguments: [String]
     let activeSkillDescriptors: [MacBuiltInSkillDescriptor]
+    let activeSkillIDs: [String]
     let activeExternalSkillDirectories: [URL]
     let activeMCPServerConfigurationData: Data?
     var submissionTicket: MacRunSubmissionTicket?
@@ -198,11 +199,12 @@ nonisolated struct MacLocalAgentRunRequest: Sendable {
                 store: skillRegistryStore
             )
         }
+        let skills = modelTestMode ? [] : try skillRegistryStore.listSkills()
         let activeSkills: [MacBuiltInSkillDescriptor]
         if modelTestMode {
             activeSkills = []
         } else {
-            activeSkills = try MacBuiltInSkillRegistry.activeDescriptors(store: skillRegistryStore)
+            activeSkills = try MacBuiltInSkillRegistry.activeDescriptors(store: skillRegistryStore, skills: skills)
         }
         self.activeSkillDescriptors = activeSkills
         self.allowedDirectoryArguments = MacBuiltInSkillRegistry.allowedDirectoryArguments(
@@ -213,7 +215,11 @@ nonisolated struct MacLocalAgentRunRequest: Sendable {
         let builtInSkillArguments = MacBuiltInSkillRegistry.skillDirectoryArguments(
             activeSkills: activeSkills
         )
+        let installedSkillIDs = skills
+            .filter { $0.gitHubSourceURL != nil && $0.enabled }.map(\.id).sorted()
+        self.activeSkillIDs = activeSkills.map { $0.id.rawValue } + installedSkillIDs
         let externalSkillArguments = activeExternalSkillDirectories.flatMap { ["--skill-dir", $0.path] }
+            + installedSkillIDs.flatMap { ["--github-skill", $0] }
         let enabledSkillArguments = builtInSkillArguments == ["--no-skills"]
             ? externalSkillArguments
             : builtInSkillArguments + externalSkillArguments
@@ -1029,13 +1035,14 @@ actor MacAgentHostRuntime: MacLocalAgentRuntime {
             localEndpoint = nil
             first = nil
         } else if primary["kind"] as? String == "native" {
-            guard let primaryProfile, primary["adapter"] as? String == "mlx",
+            guard let primaryProfile,
                   primary["adapter_contract_revision"] as? Int == 1,
                   primary["model_id"] as? String == primaryProfile,
                   let reference = primary["profile_ref"] as? [String: Any],
                   reference["profile_id"] as? String == primaryProfile,
                   let revision = reference["admitted_revision"] as? Int64,
-                  let profile = MacLocalModelProfile.resolve(primaryProfile) else {
+                  let profile = MacLocalModelProfile.resolve(primaryProfile),
+                  let adapter = profile.engine?.adapter, primary["adapter"] as? String == adapter else {
                 throw MacLocalAgentResumeError.credentialUnavailable
             }
             let endpoint = try await MacMLXOpenAIService.shared.start(profile,
@@ -1080,7 +1087,7 @@ actor MacAgentHostRuntime: MacLocalAgentRuntime {
             // additional automation workspace grants.
             request.allowedDirectoryArguments = ["--allow-dir", request.projectURL.standardizedFileURL.path]
         }
-        guard request.activeSkillDescriptors.map({ $0.id.rawValue }) == descriptor.active_skill_ids,
+        guard request.activeSkillIDs == descriptor.active_skill_ids,
               request.allowedDirectoryArguments == descriptor.allowed_directory_arguments,
               request.skillDirectoryArguments == descriptor.skill_directory_arguments else {
             throw MacLocalAgentResumeError.authorizationChanged
@@ -1150,7 +1157,7 @@ actor MacAgentHostRuntime: MacLocalAgentRuntime {
         environment["NOLA_LONG_TERM_MEMORY_ENABLED"] = descriptor.memory_enabled ? "1" : "0"
         environment["NOLA_DB_PATH"] = applicationPort.databaseURL.path
         let manifest: [String: Any] = ["schema_version": 1, "memory_enabled": descriptor.memory_enabled,
-            "skills_enabled": !request.activeSkillDescriptors.isEmpty || !request.activeExternalSkillDirectories.isEmpty,
+            "skills_enabled": !request.activeSkillIDs.isEmpty || !request.activeExternalSkillDirectories.isEmpty,
             "enabled_skill_ids": descriptor.active_skill_ids,
             "enabled_external_skill_paths": request.activeExternalSkillDirectories.map(\.path),
             "native_computer_enabled": true, "native_browser_enabled": true, "managed_browser_enabled": true]
@@ -1631,9 +1638,9 @@ actor MacAgentHostRuntime: MacLocalAgentRuntime {
             let capabilityManifest: [String: Any] = [
                 "schema_version": 1,
                 "memory_enabled": request.memoryEnabled,
-                "skills_enabled": !request.activeSkillDescriptors.isEmpty
+                "skills_enabled": !request.activeSkillIDs.isEmpty
                     || !request.activeExternalSkillDirectories.isEmpty,
-                "enabled_skill_ids": request.activeSkillDescriptors.map { $0.id.rawValue },
+                "enabled_skill_ids": request.activeSkillIDs,
                 "enabled_external_skill_paths": request.activeExternalSkillDirectories.map(\.path),
                 "native_computer_enabled": true,
                 "native_browser_enabled": chromeConfiguration != nil,
@@ -1815,13 +1822,13 @@ actor MacAgentHostRuntime: MacLocalAgentRuntime {
                                   let frozen = try JSONSerialization.jsonObject(with: port.preparedGoalNativeRoute(
                                     conversationID: request.conversationID, goalID: goalID)) as? [String: Any],
                                   NSDictionary(dictionary: frozen).isEqual(to: proposed),
-                                  proposed["adapter"] as? String == "mlx",
                                   proposed["adapter_contract_revision"] as? Int == 1,
                                   let modelID = proposed["model_id"] as? String,
                                   let reference = proposed["profile_ref"] as? [String: Any],
                                   reference["profile_id"] as? String == modelID,
                                   let revision = reference["admitted_revision"] as? Int64,
-                                  let profile = MacLocalModelProfile.resolve(modelID) else {
+                                  let profile = MacLocalModelProfile.resolve(modelID),
+                                  let adapter = profile.engine?.adapter, proposed["adapter"] as? String == adapter else {
                                 throw MacLocalAgentResumeError.credentialUnavailable
                             }
                             let endpoint = try await MacMLXOpenAIService.shared.start(profile,
@@ -2340,6 +2347,7 @@ actor MacAgentHostRuntime: MacLocalAgentRuntime {
                 ]
             },
         ]
+        payload["expert_mentions"] = try MacRemoteContextPayload.mentions(request.contextComponents)
         payload["selected_experts"] = try MacRemoteContextPayload.selectedExperts(request.contextComponents)
         if let epoch = try MacRemoteContextPayload.selectionEpoch(request.contextComponents) { payload["expected_source_store_epoch"] = epoch }
         if usesNolaModel { payload["expert_template_authority"] = try JSONSerialization.jsonObject(with: JSONEncoder().encode(AppleExpertTemplateAuthority.local())) }
@@ -2504,7 +2512,7 @@ actor MacAgentHostRuntime: MacLocalAgentRuntime {
             descriptor["authorized_workspace_paths"] = authorizedPaths
             descriptor["allowed_directory_arguments"] = request.allowedDirectoryArguments
             descriptor["skill_directory_arguments"] = request.skillDirectoryArguments
-            descriptor["active_skill_ids"] = request.activeSkillDescriptors.map { $0.id.rawValue }
+            descriptor["active_skill_ids"] = request.activeSkillIDs
             descriptor["model_profile_id"] = profileID.map { $0 as Any } ?? NSNull()
             descriptor["model_profile_revision"] = (request.modelProfileRevision ?? request.siwcProfile?.revision).map { $0 as Any } ?? NSNull()
             descriptor["fallback_profile_ids"] = fallbackProfileIDs

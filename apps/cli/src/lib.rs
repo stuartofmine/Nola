@@ -30,6 +30,7 @@ mod session_projection_output;
 mod session_process_observation;
 mod native_tool_policy;
 mod config_paths;
+mod config_files;
 mod configuration_setup;
 #[cfg(any(feature = "terminal-ui", test))]
 mod cli_config_setup;
@@ -91,7 +92,9 @@ mod composer_media;
 mod llm;
 mod room_routing;
 mod local_models;
+mod model_acquisition;
 mod mcp_catalog_port;
+pub mod harness_plugin;
 mod plugin_manager;
 pub mod plugin_runtime;
 mod mcp_host;
@@ -115,6 +118,7 @@ mod session;
 mod source_journal;
 #[cfg(any(feature = "terminal-ui", test))]
 mod terminal_journal_presentation;
+mod github_skills;
 mod skill_catalog_port;
 mod skill_runtime;
 mod store;

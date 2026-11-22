@@ -39,25 +39,27 @@
         return Math.max(0, Math.min(length, visiblePrefix - snapshot.offsetOf(node)));
     }
     let copyNotice = $state('');
+    let copiedBlock = $state<MarkdownBlock | null>(null);
     let copyGeneration = 0;
     let copyTimer: ReturnType<typeof setTimeout> | undefined;
     $effect.pre(() => {
         source;
-        copyGeneration++; clearTimeout(copyTimer); copyNotice = '';
+        copyGeneration++; clearTimeout(copyTimer); copyNotice = ''; copiedBlock = null;
     });
     onDestroy(() => { copyGeneration++; clearTimeout(copyTimer); });
-    async function copy(text: string) {
+    async function copy(text: string, block: MarkdownBlock) {
         const generation = ++copyGeneration, captured = source;
-        clearTimeout(copyTimer); copyNotice = '';
+        clearTimeout(copyTimer); copyNotice = ''; copiedBlock = null;
         const current = () => generation === copyGeneration && captured === source;
         try {
             await navigator.clipboard.writeText(text);
             if (current()) {
+                copiedBlock = block;
                 copyNotice = 'shell.markdown.copied';
-                copyTimer = setTimeout(() => { if (current()) copyNotice = ''; }, 1800);
+                copyTimer = setTimeout(() => { if (current()) { copyNotice = ''; copiedBlock = null; } }, 1800);
             }
         }
-        catch { if (current()) copyNotice = 'shell.markdown.copy_failed'; }
+        catch { if (current()) { copyNotice = 'shell.markdown.copy_failed'; copiedBlock = null; } }
     }
 </script>
 
@@ -89,7 +91,7 @@
             {#if node.language?.toLowerCase() === 'mermaid' && !streaming}
                 <MermaidDiagram source={node.text} />
             {:else}
-            <div class="code-block"><div class="code-header"><span>{node.language || t($locale, 'shell.markdown.code')}</span><button type="button" onclick={() => copy(node.text)}>{t($locale, 'shell.markdown.copy')}</button></div>
+            <div class="code-block"><div class="code-header"><span>{node.language || t($locale, 'shell.markdown.code')}</span><button type="button" onclick={() => copy(node.text, node)}>{t($locale, copiedBlock === node ? 'shell.markdown.copied' : 'shell.markdown.copy')}</button></div>
                 <!-- svelte-ignore a11y_no_noninteractive_tabindex (Keyboard users need to focus this overflow region to scroll code.) -->
                 <pre tabindex="0" role="region" aria-label={t($locale, 'shell.markdown.code')}><code>{#if streaming || hasStreamed}<StreamingText text={node.text} {streaming} visiblePrefix={prefix(node, node.text.length)} />{:else}{node.text}{/if}</code></pre>
             </div>
@@ -114,7 +116,7 @@
 <div class="markdown" bind:this={container}>{@render renderBlocks(content)}{#if copyNotice}<p class="copy-notice" role="status">{t($locale, copyNotice)}</p>{/if}</div>
 
 <style>
-    .markdown { min-width: 0; line-height: 1.5625; overflow-wrap: anywhere; }
+    .markdown { min-width: 0; line-height: 1.625; overflow-wrap: anywhere; }
     .markdown > :global(:first-child) { margin-top: 0; }
     .markdown > :global(:last-child) { margin-bottom: 0; }
     .markdown :global(p) { margin: 12px 0; }
@@ -130,17 +132,17 @@
     .code-block { margin: 1em 0; border: 1px solid var(--border); border-radius: 10px; overflow: hidden; }
     .code-header { display: flex; justify-content: space-between; align-items: center; gap: 12px; padding: 6px 12px; background: var(--panel); font-size: .85em; color: var(--muted); }
     .code-header button { padding: 3px 8px; min-height: max(32px, var(--control-hit-size)); min-width: 44px; }
-    pre { margin: 0; padding: 12px; overflow: auto; max-height: 480px; white-space: pre; line-height: 1.5; tab-size: 4; }
+    pre { margin: 0; padding: 12px; overflow: auto; max-height: 480px; white-space: pre; line-height: 1.5; tab-size: 4; background: var(--surface); }
     .markdown pre code { padding: 0; background: none; border-radius: 0; }
     .markdown :global(a.inline-reference) { color: var(--muted); font-size: .8125rem; font-weight: 400; text-decoration: none; text-underline-offset: .15em; }
     .markdown :global(a.inline-reference:hover), .markdown :global(a.inline-reference:focus-visible) { color: var(--content); text-decoration: underline; }
     .markdown :global(a.inline-reference strong) { font-weight: 400; }
     .table-scroll { overflow-x: auto; margin: 1em 0; border: 1px solid var(--border); border-radius: 8px; }
     table { border-collapse: collapse; min-width: 100%; font-size: .95em; }
-    th, td { padding: 8px 12px; border-bottom: 1px solid var(--border); min-width: 100px; vertical-align: top; }
+    th, td { padding: 8px 12px; border-bottom: 1px solid var(--border); min-width: 64px; vertical-align: top; }
     th { background: var(--panel); font-weight: 600; } tbody tr:last-child td { border-bottom: 0; }
     hr { border: 0; border-top: 1px solid var(--border); margin: 1.3em 0; }
-    .copy-notice { font-size: .85em; color: var(--muted); }
+    .copy-notice { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; margin: 0; }
     @media (pointer: coarse) { .code-header button { min-height: 44px; } }
-    @media (max-width: 700px) { .markdown { line-height: 1.6470588235; } }
+    @media (max-width: 760px) { .markdown { line-height: 1.6470588235; } }
 </style>

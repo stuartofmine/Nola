@@ -1,5 +1,6 @@
 package com.nola.ui.screen.settings
 
+import android.app.ActivityManager
 import android.content.Context
 import com.nola.data.local.AndroidApplicationRuntime
 import androidx.lifecycle.ViewModel
@@ -7,8 +8,7 @@ import androidx.lifecycle.viewModelScope
 import com.nola.data.local.datastore.MemoryProfileDataStore
 import com.nola.data.local.datastore.ModelParametersStore
 import com.nola.data.local.datastore.PreferenceDataStore
-import com.nola.data.local.db.NolaDatabase
-import com.nola.work.ScheduledActionScheduler
+import com.nola.domain.model.ChatMemoryProfile
 import dagger.hilt.android.lifecycle.HiltViewModel
 import dagger.hilt.android.qualifiers.ApplicationContext
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -21,11 +21,7 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.io.File
 import java.io.FileOutputStream
-import java.text.SimpleDateFormat
-import java.net.URI
-import java.net.URLDecoder
 import java.util.Date
-import java.util.Locale
 import java.util.zip.ZipEntry
 import java.util.zip.ZipOutputStream
 import kotlinx.serialization.encodeToString
@@ -50,7 +46,10 @@ data class SettingsUiState(
     val webHostIdentity: String = "",
     val webHostCertificateSha256: String = "",
     val clientUuid: String = "",
-    val localDataSizeBytes: Long? = null
+    val localDataSizeBytes: Long? = null,
+    val isExportingData: Boolean = false,
+    val exportedArchiveFile: File? = null,
+    val exportErrorMessage: String? = null,
 )
 
 @HiltViewModel
@@ -59,8 +58,7 @@ class SettingsViewModel @Inject constructor(
     private val prefs: PreferenceDataStore,
     private val memoryProfileDataStore: MemoryProfileDataStore,
     private val modelParametersStore: ModelParametersStore,
-    private val database: NolaDatabase,
-    private val scheduledActionScheduler: ScheduledActionScheduler
+    private val runtime: AndroidApplicationRuntime
 ) : ViewModel() {
 
     val appearance = prefs.appearance
@@ -108,7 +106,13 @@ class SettingsViewModel @Inject constructor(
                     localDataSizeBytes = dataSize
                 )
             }.onSuccess { loaded ->
-                _uiState.value = loaded
+                _uiState.update { current ->
+                    loaded.copy(
+                        isExportingData = current.isExportingData,
+                        exportedArchiveFile = current.exportedArchiveFile,
+                        exportErrorMessage = current.exportErrorMessage,
+                    )
+                }
             }.onFailure { error ->
                 if (error is kotlinx.coroutines.CancellationException) throw error
                 _uiState.update { it.copy(isLoading = false, loadFailed = true) }
@@ -117,119 +121,90 @@ class SettingsViewModel @Inject constructor(
     }
 
     fun localDataSizeBytes(): Long {
-        val dbFile = context.getDatabasePath("nola.db")
-        val canonicalDatabaseFile = AndroidApplicationRuntime.defaultDatabaseFile(context)
-        val prefsDir = File(context.filesDir.parent, "shared_prefs")
-        val datastoreDir = File(context.filesDir, "datastore")
-
-        var bytes = 0L
-        if (dbFile.exists()) bytes += dbFile.length()
-        if (canonicalDatabaseFile.exists()) bytes += canonicalDatabaseFile.length()
-        prefsDir.listFiles()?.forEach { bytes += it.length() }
-        datastoreDir.walkTopDown().filter { it.isFile }.forEach { bytes += it.length() }
-        return bytes
+        val privateRoots = setOf(context.dataDir, context.createDeviceProtectedStorageContext().dataDir)
+        return privateRoots.sumOf { root ->
+            root.walkTopDown().onEnter { !java.nio.file.Files.isSymbolicLink(it.toPath()) }
+                .filter { it.isFile && !java.nio.file.Files.isSymbolicLink(it.toPath()) }.sumOf { it.length() }
+        }
     }
 
     suspend fun createExportArchive(): File = withContext(Dispatchers.IO) {
-        prepareDatabaseForExport()
-
         val exportDir = File(context.cacheDir, "export").apply { mkdirs() }
-        exportDir.listFiles()
-            ?.filter { it.name.startsWith("nola_backup_") && it.extension == "zip" }
-            ?.forEach { it.delete() }
-
-        val exportFile = File(
-            exportDir,
-            "nola_backup_${SimpleDateFormat("yyyyMMdd_HHmmss", Locale.US).format(Date())}.zip"
-        )
-
-        ZipOutputStream(FileOutputStream(exportFile)).use { zip ->
-            addFileIfExists(zip, context.getDatabasePath("nola.db"), "database/nola.db")
-            addFileIfExists(
-                zip,
-                AndroidApplicationRuntime.defaultDatabaseFile(context),
-                "database/nola-product.db",
-            )
-            val json = Json { prettyPrint = true; encodeDefaults = true }
-            var structuredCredentialRedactions = 0
-            val memoryProfile = memoryProfileDataStore.getSnapshot()
-            val exportableMemoryProfile = memoryProfile.copy(
-                mcpServers = memoryProfile.mcpServers.map { server ->
-                    val sanitized = sanitizeMcpUrlForExport(server.url)
-                    structuredCredentialRedactions += sanitized.redactionCount
-                    server.copy(url = sanitized.url)
+        val now = System.currentTimeMillis()
+        exportDir.listFiles()?.filter {
+            it.isFile && it.extension == "zip" && now - it.lastModified() > 24 * 60 * 60 * 1000L
+        }?.forEach { it.delete() }
+        val exportFile = File.createTempFile("nola_export_", ".zip", exportDir)
+        try {
+            ZipOutputStream(FileOutputStream(exportFile).buffered()).use { zip ->
+                writeConversationDocuments(zip, runtime)
+                val json = Json { prettyPrint = true; encodeDefaults = true }
+                addTextEntry(zip, "manifest.json", """{"format":"nola.android.personal-export","version":2,"transcripts":"markdown"}""")
+                val profile = memoryProfileDataStore.getSnapshot()
+                addTextEntry(zip, "profile/memory.json", json.encodeToString(exportableProfile(profile)))
+                addTextEntry(zip, "settings/model_parameters.json", json.encodeToString(modelParametersStore.exportSnapshot()))
+                val preferences = buildJsonObject {
+                    put("auto_compact_percent", memoryProfileDataStore.autoCompactTriggerPercent.first())
+                    put("agent_mode_enabled", prefs.isAgentModeEnabled.first())
+                    put("permission_profile", prefs.agentPermissionMode.first().wireValue)
+                    put("hybrid_device_tools_enabled", prefs.hybridDeviceToolsEnabled.first())
+                    put("hybrid_device_capabilities", JsonArray(prefs.hybridDeviceCapabilities.first().sorted().map(::JsonPrimitive)))
                 }
-            )
-            addTextEntry(zip, "profile/memory.json", json.encodeToString(exportableMemoryProfile))
-            addTextEntry(zip, "settings/model_parameters.json", json.encodeToString(modelParametersStore.exportSnapshot()))
-            val safeSettings = buildJsonObject {
-                put("auto_compact_percent", memoryProfileDataStore.autoCompactTriggerPercent.first())
-                put("agent_mode_enabled", prefs.isAgentModeEnabled.first())
-                put("permission_profile", prefs.agentPermissionMode.first().wireValue)
-                put("hybrid_device_tools_enabled", prefs.hybridDeviceToolsEnabled.first())
-                put("hybrid_device_capabilities", JsonArray(prefs.hybridDeviceCapabilities.first().sorted().map(::JsonPrimitive)))
-                put("web_host_url", prefs.webHostBaseUrl.first())
-                put("web_host_identity", prefs.webHostIdentity.first())
-                put("web_host_certificate_sha256", prefs.webHostCertificateSha256.first())
-                put("backend_url", prefs.backendBaseUrl.first())
-                put("backend_user_id", prefs.backendUserId.first())
+                addTextEntry(zip, "settings/preferences.json", json.encodeToString(preferences))
+                addTextEntry(zip, "README.txt", """
+                    Nola Android personal export
+                    created_at=${Date()}
+                    format=nola.android.personal-export
+                    format_version=2
+                    conversations/*.md contains user and assistant text. Markdown can be opened in a text editor or added to the document library.
+                    profile/memory.json contains memories, preferences, user documents and skills.
+                    settings/ contains model parameters and local agent preferences.
+                    Connection details, tool inputs and outputs, credentials and raw databases are excluded.
+                    User text is preserved as entered and may include private information.
+                """.trimIndent() + "\n")
             }
-            addTextEntry(zip, "settings/preferences.json", json.encodeToString(safeSettings))
-            addTextEntry(
-                zip,
-                "redactions.json",
-                json.encodeToString(buildJsonObject {
-                    put("structured_mcp_url_credentials", structuredCredentialRedactions)
-                    put("free_text_scanned", false)
-                })
-            )
-
-            val metadata = """
-                Nola Android user-initiated export
-                created_at=${Date()}
-                format_version=1
-                includes=conversation database, memory profile, model parameters, safe preferences
-                excludes=stored service access tokens, model API keys, Keystore material, secure preferences, client UUID, WAL/SHM files, structured MCP URL credentials
-                redactions=See redactions.json. Free-text content is preserved and is not scanned or rewritten.
-                warning=This archive can contain private conversations, memories, documents, custom prompts, and tool history. Store it securely.
-            """.trimIndent() + "\n"
-            addTextEntry(zip, "README.txt", metadata)
-        }
-
-        exportFile
-    }
-
-    suspend fun clearAllData() {
-        scheduledActionScheduler.cancelAll()
-        withContext(Dispatchers.IO) {
-            database.clearAllTables()
-        }
-        prefs.clearAll()
-        memoryProfileDataStore.clearAll()
-        modelParametersStore.clearAll()
-        val clientUuid = prefs.getOrCreateClientUuid()
-        _uiState.update {
-            SettingsUiState(
-                isLoading = false,
-                clientUuid = clientUuid,
-                localDataSizeBytes = 0
-            )
+            exportFile
+        } catch (error: Throwable) {
+            exportFile.delete()
+            throw error
         }
     }
 
-    private fun prepareDatabaseForExport() {
-        runCatching {
-            val db = database.openHelper.writableDatabase
-            db.query("PRAGMA wal_checkpoint(TRUNCATE)").close()
-            db.execSQL("VACUUM")
+    fun startExportArchive() {
+        if (_uiState.value.isExportingData) return
+        _uiState.update { it.copy(isExportingData = true, exportedArchiveFile = null, exportErrorMessage = null) }
+        viewModelScope.launch {
+            try {
+                val exportFile = createExportArchive()
+                _uiState.update {
+                    it.copy(
+                        isExportingData = false,
+                        exportedArchiveFile = exportFile,
+                        exportErrorMessage = null,
+                    )
+                }
+            } catch (cancelled: kotlinx.coroutines.CancellationException) {
+                _uiState.update { it.copy(isExportingData = false) }
+                throw cancelled
+            } catch (e: Exception) {
+                _uiState.update {
+                    it.copy(
+                        isExportingData = false,
+                        exportErrorMessage = e.message ?: "",
+                    )
+                }
+            }
         }
     }
 
-    private fun addFileIfExists(zip: ZipOutputStream, file: File, entryName: String) {
-        if (!file.exists() || !file.isFile) return
-        zip.putNextEntry(ZipEntry(entryName))
-        file.inputStream().use { input -> input.copyTo(zip) }
-        zip.closeEntry()
+    fun consumeExportResult() {
+        _uiState.update { it.copy(exportedArchiveFile = null, exportErrorMessage = null) }
+    }
+
+    fun clearAllData(): Boolean {
+        // Android stops the process and clears all private stores together,
+        // including the live Core database, credentials and WorkManager state.
+        return context.getSystemService(ActivityManager::class.java).clearApplicationUserData()
     }
 
     private fun addTextEntry(zip: ZipOutputStream, entryName: String, content: String) {
@@ -239,36 +214,10 @@ class SettingsViewModel @Inject constructor(
     }
 }
 
-internal data class SanitizedMcpExportUrl(
-    val url: String,
-    val redactionCount: Int
+/** Export text the user authored, without serializing connection configuration or authority records. */
+internal fun exportableProfile(profile: ChatMemoryProfile): ChatMemoryProfile = ChatMemoryProfile(
+    longTermMemory = profile.longTermMemory,
+    userPreferences = profile.userPreferences,
+    uploadedSkills = profile.uploadedSkills.map { it.copy(accessGrants = emptyList(), accessOwnerId = null) },
+    uploadedDocuments = profile.uploadedDocuments.map { it.copy(accessGrants = emptyList(), accessOwnerId = null) },
 )
-
-internal fun sanitizeMcpUrlForExport(raw: String): SanitizedMcpExportUrl {
-    val uri = runCatching { URI(raw.trim()) }.getOrNull()
-        ?: return SanitizedMcpExportUrl(raw, 0)
-    if (uri.scheme.isNullOrBlank() || uri.host.isNullOrBlank()) {
-        return SanitizedMcpExportUrl(raw, 0)
-    }
-    var redactions = if (uri.userInfo.isNullOrEmpty()) 0 else 1
-    val sensitiveKeys = setOf(
-        "token", "accesstoken", "apikey", "key", "secret",
-        "password", "authorization", "auth", "bearertoken"
-    )
-    val query = uri.rawQuery?.split('&')?.joinToString("&") { item ->
-        val rawKey = item.substringBefore('=')
-        val decodedKey = runCatching { URLDecoder.decode(rawKey, "UTF-8") }.getOrDefault(rawKey)
-        val normalizedKey = decodedKey.lowercase().filter(Char::isLetterOrDigit)
-        if (normalizedKey in sensitiveKeys) {
-            redactions += 1
-            "$rawKey=REDACTED"
-        } else {
-            item
-        }
-    }
-    if (!uri.rawFragment.isNullOrEmpty()) redactions += 1
-    val sanitized = runCatching {
-        URI(uri.scheme, null, uri.host, uri.port, uri.path, query, null).toString()
-    }.getOrDefault(raw)
-    return SanitizedMcpExportUrl(sanitized, redactions)
-}

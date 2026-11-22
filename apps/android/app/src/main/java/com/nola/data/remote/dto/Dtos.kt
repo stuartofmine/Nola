@@ -106,6 +106,8 @@ data class UnreadCountResponse(
     val unreadCount: Int = 0
 )
 
+enum class VerifiedHostTransport { Direct, DirectWithoutTailcat, Tailcat }
+
 @Serializable
 data class AgentSettingsResponse(
     @SerialName("source_store_epoch") val sourceStoreEpoch: String? = null,
@@ -129,7 +131,8 @@ data class AgentSettingsResponse(
     @SerialName("model_profiles") val modelProfiles: List<HostModelProfileDto> = emptyList(),
     @SerialName("default_chat_model_revision") val defaultChatModelRevision: Long? = null,
     @SerialName("default_chat_model_resolution") val defaultChatModelResolution: HostModelResolutionDto? = null,
-    val messaging: MessagingStatusDto? = null
+    val messaging: MessagingStatusDto? = null,
+    @kotlinx.serialization.Transient val verifiedTransport: VerifiedHostTransport? = null
 )
 
 @Serializable
@@ -157,13 +160,21 @@ data class MessagingChannelDto(
 )
 
 @Serializable
+data class ExecutionBackendModelDto(
+    val id: String,
+    @SerialName("display_name") val displayName: String,
+    @SerialName("provider_id") val providerId: String? = null,
+)
+
+@Serializable
 data class ExecutionBackendDto(
     val id: String,
     @SerialName("display_name") val displayName: String,
     val availability: String,
     @SerialName("executable_path") val executablePath: String? = null,
     val version: String? = null,
-    val capabilities: ExecutionBackendCapabilitiesDto
+    val capabilities: ExecutionBackendCapabilitiesDto,
+    val models: List<ExecutionBackendModelDto> = emptyList(),
 ) {
     val availabilityState: ExecutionBackendAvailability
         get() = when (availability) {

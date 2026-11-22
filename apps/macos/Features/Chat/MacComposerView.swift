@@ -13,6 +13,8 @@ final class MacAttachmentPasteTextView: NSTextView {
 
     // Draw the hint through TextKit with the same container geometry as input.
     // A SwiftUI overlay has different font metrics and ignores native padding.
+    var submitsReturn = true
+    var pastedText: ((String) -> Void)?
     var placeholder: String = "" { didSet { needsDisplay = true } }
 
     override func didChangeText() {
@@ -71,6 +73,7 @@ final class MacAttachmentPasteTextView: NSTextView {
             return
         }
         super.paste(sender)
+        pastedText?(string)
     }
 
     override func draggingEntered(_ sender: any NSDraggingInfo) -> NSDragOperation {
@@ -104,7 +107,7 @@ final class MacAttachmentPasteTextView: NSTextView {
         if editingModifiers.isEmpty, !hasMarkedText(),
            let command = [126: "up", 125: "down", 53: "dismiss", 48: "accept", 36: "accept", 76: "accept"][Int(event.keyCode)],
            mentionHandler?(command) == true { return }
-        if isReturn, editingModifiers.isEmpty, !hasMarkedText() {
+        if submitsReturn, isReturn, editingModifiers.isEmpty, !hasMarkedText() {
             submitHandler?()
             return
         }
@@ -116,7 +119,7 @@ final class MacAttachmentPasteTextView: NSTextView {
 /// reenter its enclosing SwiftUI layout while a proposal is being evaluated.
 @MainActor
 enum MacComposerTextMeasurement {
-    static func size(for textView: NSTextView, width: CGFloat) -> CGSize {
+    static func size(for textView: NSTextView, width: CGFloat, maxHeight: CGFloat = 132) -> CGSize {
         let storage = NSTextStorage(attributedString: textView.attributedString())
         let manager = NSLayoutManager()
         let container = NSTextContainer(size: NSSize(width: width, height: .greatestFiniteMagnitude))
@@ -130,18 +133,53 @@ enum MacComposerTextMeasurement {
             manager.defaultLineHeight(for: textView.font ?? NSFont.systemFont(ofSize: 16))
         )
         let height = max(lineHeight, manager.usedRect(for: container).height) + insets
-        return CGSize(width: width, height: min(132, max(30, height)))
+        return CGSize(width: width, height: min(maxHeight, max(30, height)))
     }
 }
 
-private struct MacComposerTextEditor: NSViewRepresentable {
+private struct MacComposerEditorPlaceholderKey: EnvironmentKey {
+    static let defaultValue: String? = nil
+}
+
+private struct MacComposerEditorMaxHeightKey: EnvironmentKey {
+    static let defaultValue: CGFloat? = nil
+}
+
+extension EnvironmentValues {
+    var macComposerEditorPlaceholder: String? {
+        get { self[MacComposerEditorPlaceholderKey.self] }
+        set { self[MacComposerEditorPlaceholderKey.self] = newValue }
+    }
+
+    var macComposerEditorMaxHeight: CGFloat? {
+        get { self[MacComposerEditorMaxHeightKey.self] }
+        set { self[MacComposerEditorMaxHeightKey.self] = newValue }
+    }
+}
+
+struct MacComposerTextEditor: NSViewRepresentable {
     @Binding var text: String
     let conversationID: String
     let focused: FocusState<Bool>.Binding
     let onPasteAttachments: () -> Bool
     let onDropAttachments: (NSPasteboard) -> Bool
     let onSubmit: () -> Void
+    var submitsReturn = true
     var mentionCommand: (String) -> Bool = { _ in false }
+    var mentionEditor = AppleMentionEditor()
+    var editorAccessibilityIdentifier: String?
+    var placeholder: String? = nil
+    var maxHeight: CGFloat? = nil
+    @Environment(\.macComposerEditorPlaceholder) private var environmentPlaceholder
+    @Environment(\.macComposerEditorMaxHeight) private var environmentMaxHeight
+
+    private var resolvedPlaceholder: String {
+        placeholder ?? environmentPlaceholder ?? String(localized: "Message Nola")
+    }
+
+    private var resolvedMaxHeight: CGFloat {
+        maxHeight ?? environmentMaxHeight ?? 132
+    }
 
     func makeCoordinator() -> Coordinator {
         Coordinator(parent: self)
@@ -156,11 +194,15 @@ private struct MacComposerTextEditor: NSViewRepresentable {
         scrollView.autohidesScrollers = true
 
         let textView = MacAttachmentPasteTextView()
+        if let editorAccessibilityIdentifier {
+            textView.setAccessibilityIdentifier(editorAccessibilityIdentifier)
+        }
         textView.registerForDraggedTypes([.fileURL, .png, .tiff])
         textView.delegate = context.coordinator
         textView.isRichText = false
         textView.importsGraphics = false
         textView.drawsBackground = false
+        textView.insertionPointColor = NSColor(named: "AccentColor") ?? .textColor
         textView.allowsUndo = true
         textView.isAutomaticQuoteSubstitutionEnabled = false
         textView.isAutomaticDashSubstitutionEnabled = false
@@ -172,7 +214,7 @@ private struct MacComposerTextEditor: NSViewRepresentable {
             height: CGFloat.greatestFiniteMagnitude
         )
         textView.textContainer?.lineFragmentPadding = 0
-        textView.placeholder = String(localized: "Message Nola")
+        textView.placeholder = resolvedPlaceholder
         textView.textContainer?.widthTracksTextView = true
         textView.textContainer?.containerSize = NSSize(
             width: 0,
@@ -183,8 +225,10 @@ private struct MacComposerTextEditor: NSViewRepresentable {
         context.coordinator.conversationID = conversationID
         textView.attachmentPasteHandler = onPasteAttachments
         textView.attachmentDropHandler = onDropAttachments
+        textView.submitsReturn = submitsReturn
         textView.submitHandler = onSubmit
         textView.mentionHandler = mentionCommand
+        textView.pastedText = mentionEditor.pasted
         textView.focusChangeHandler = { [weak coordinator = context.coordinator] in
             coordinator?.publishFocus($0)
         }
@@ -201,22 +245,54 @@ private struct MacComposerTextEditor: NSViewRepresentable {
             context.coordinator.isReplacingConversation = true
             textView.unmarkText()
             textView.undoManager?.removeAllActions()
+            context.coordinator.undoHistory = AppleMentionUndoHistory()
             textView.string = text
             textView.setSelectedRange(NSRange(location: (text as NSString).length, length: 0))
             textView.needsDisplay = true
             context.coordinator.isReplacingConversation = false
         }
+        if textView.placeholder != resolvedPlaceholder {
+            textView.placeholder = resolvedPlaceholder
+        }
         if !focused.wrappedValue { context.coordinator.nativeFocusLostAwaitingPublication = false }
         textView.attachmentPasteHandler = onPasteAttachments
         textView.attachmentDropHandler = onDropAttachments
+        textView.submitsReturn = submitsReturn
         textView.submitHandler = onSubmit
         textView.mentionHandler = mentionCommand
+        textView.pastedText = mentionEditor.pasted
         textView.focusChangeHandler = { [weak coordinator = context.coordinator] in
             coordinator?.publishFocus($0)
         }
         if textView.string != text, !textView.hasMarkedText() {
             textView.string = text
             textView.needsDisplay = true
+        }
+        if !textView.hasMarkedText() {
+            if let request = mentionEditor.caretRequest, context.coordinator.lastCaret != request.revision {
+                context.coordinator.lastCaret = request.revision
+                if let previous = request.before {
+                    let current = AppleMentionEditor.Snapshot(text: text, mentions: mentionEditor.mentions, caret: request.location)
+                    context.coordinator.undoHistory.registerCompletion(textView.undoManager, before: previous, after: current) { [weak textView, weak coordinator = context.coordinator] expected, restored in
+                        guard let textView, let coordinator, textView.string == expected.text else { return false }
+                        coordinator.parent.mentionEditor.restore(restored.text, restored.mentions)
+                        textView.string = restored.text
+                        let range = NSRange(location: min(restored.caret, restored.text.utf16.count), length: 0)
+                        textView.setSelectedRange(range)
+                        return true
+                    }
+                }
+                textView.setSelectedRange(NSRange(location: min(request.location, textView.string.utf16.count), length: 0))
+            }
+            if let layout = textView.layoutManager, context.coordinator.styledText != textView.string || context.coordinator.styledMentions != mentionEditor.mentions {
+                context.coordinator.styledText = textView.string
+                context.coordinator.styledMentions = mentionEditor.mentions
+                layout.removeTemporaryAttribute(.foregroundColor, forCharacterRange: NSRange(location: 0, length: textView.string.utf16.count))
+                let mentionAccent = NSColor(named: "AccentColor") ?? .controlAccentColor
+                for mention in mentionEditor.mentions where NSMaxRange(mention.range) <= textView.string.utf16.count {
+                    layout.addTemporaryAttributes([.foregroundColor: mentionAccent], forCharacterRange: mention.range)
+                }
+            }
         }
         if focused.wrappedValue, !context.coordinator.nativeFocusLostAwaitingPublication,
            textView.window?.firstResponder !== textView {
@@ -231,7 +307,8 @@ private struct MacComposerTextEditor: NSViewRepresentable {
     ) -> CGSize? {
         guard let textView = scrollView.documentView as? NSTextView else { return nil }
         let width = max(120, proposal.width ?? scrollView.bounds.width)
-        return MacComposerTextMeasurement.size(for: textView, width: width)
+        let effectiveMaxHeight = proposal.height.map { min(resolvedMaxHeight, max(30, $0)) } ?? resolvedMaxHeight
+        return MacComposerTextMeasurement.size(for: textView, width: width, maxHeight: effectiveMaxHeight)
     }
 
     @MainActor
@@ -244,6 +321,33 @@ private struct MacComposerTextEditor: NSViewRepresentable {
             self.parent = parent
         }
 
+        var previousSelection: NSRange?
+        var lastCaret: UUID?
+        var styledText: String?
+        var styledMentions: [AppleDraftMention] = []
+        var undoHistory = AppleMentionUndoHistory()
+        var pendingEdit: (String, NSRange, String)?
+        func textView(_ textView: NSTextView, shouldChangeTextIn affectedCharRange: NSRange, replacementString: String?) -> Bool {
+            guard !isReplacingConversation, let replacementString else { return true }
+            let range = parent.mentionEditor.deletionRange(affectedCharRange, replacement: replacementString)
+            if range != affectedCharRange, !textView.hasMarkedText() {
+                textView.insertText("", replacementRange: range)
+                return false
+            }
+            pendingEdit = (textView.string, affectedCharRange, replacementString)
+            return true
+        }
+        func textViewDidChangeSelection(_ notification: Notification) {
+            guard !isReplacingConversation, let view = notification.object as? NSTextView else { return }
+            let selection = view.selectedRange(), composing = view.hasMarkedText()
+            let next = parent.mentionEditor.caretRange(selection, previous: previousSelection)
+            previousSelection = next
+            if !composing, next != selection, NSMaxRange(next) <= view.string.utf16.count { view.setSelectedRange(next); return }
+            Task { @MainActor [weak self, weak view] in
+                guard let view, view.selectedRange() == selection else { return }
+                self?.parent.mentionEditor.selectionChanged(selection, composing)
+            }
+        }
         func textDidChange(_ notification: Notification) {
             guard !isReplacingConversation, let textView = notification.object as? NSTextView else { return }
             // Delegate edits originate from the native event, not a SwiftUI
@@ -252,6 +356,18 @@ private struct MacComposerTextEditor: NSViewRepresentable {
             // The binding getter may still read the previous display snapshot.
             // Do not use it to suppress a native edit: insert then delete can
             // return to that old value before SwiftUI renders either change.
+            if let (old, range, replacement) = pendingEdit,
+               (old as NSString).replacingCharacters(in: range, with: replacement) == textView.string {
+                pendingEdit = nil
+                if undoHistory.restore(before: old, after: textView.string, undo: textView.undoManager, editor: parent.mentionEditor) { return }
+                if parent.mentionEditor.applyEdit(old, range, replacement) {
+                    let original = parent.mentionEditor.mentions
+                    undoHistory.record(before: old, after: textView.string, original: original,
+                        current: AppleDraftMention.replacing(original, range: range, with: replacement))
+                    return
+                }
+            }
+            pendingEdit = nil
             parent.text = textView.string
         }
 
@@ -276,40 +392,110 @@ private struct MacComposerTextEditor: NSViewRepresentable {
     }
 }
 
+private struct MacCircularComposerButtonStyle: ButtonStyle {
+    var baseFill: Color = Color.primary.opacity(0.055)
+    @Environment(\.isEnabled) private var isEnabled
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+
+    func makeBody(configuration: Configuration) -> some View {
+        MacCircularComposerButtonBody(
+            label: configuration.label,
+            baseFill: baseFill,
+            isPressed: configuration.isPressed,
+            isEnabled: isEnabled,
+            reduceMotion: reduceMotion
+        )
+    }
+}
+
+private struct MacCircularComposerButtonBody<Label: View>: View {
+    let label: Label
+    let baseFill: Color
+    let isPressed: Bool
+    let isEnabled: Bool
+    let reduceMotion: Bool
+    @State private var isHovering = false
+
+    var body: some View {
+        label
+            .frame(width: 30, height: 30)
+            .background {
+                Circle()
+                    .fill(baseFill)
+                    .overlay {
+                        if isEnabled && isPressed {
+                            Circle().fill(Color.primary.opacity(0.12))
+                        } else if isEnabled && isHovering {
+                            Circle().fill(Color.primary.opacity(0.06))
+                        }
+                    }
+            }
+            .contentShape(Circle())
+            .opacity(isEnabled ? (isPressed ? 0.86 : 1) : 0.45)
+            .onHover { isHovering = isEnabled && $0 }
+            .onChange(of: isEnabled) { _, enabled in if !enabled { isHovering = false } }
+            .animation(reduceMotion ? nil : .easeOut(duration: MacDesignTokens.Motion.hover), value: isHovering)
+            .animation(reduceMotion ? nil : .easeOut(duration: MacDesignTokens.Motion.hover), value: isPressed)
+    }
+}
+
 struct MacComposerView: View {
     let state: MacComposerDisplayState
     let actions: MacComposerActionSink
     var composerFocused: FocusState<Bool>.Binding
     var isModelConfigured = true
+    var leadingControls: AnyView = AnyView(EmptyView())
+    var trailingControls: AnyView = AnyView(EmptyView())
     var mentionCommand: (String) -> Bool = { _ in false }
+    var mentionEditor = AppleMentionEditor()
     var localCommand: () -> Bool = { false }
     @State private var fileImporterPresented = false
     @State private var fileImporterConversationID: String?
     @State private var fileImportFailure: (conversationID: String, message: String)?
     @State private var dropTargeted = false
     @State private var voiceInput = MacVoiceInputService()
-    @State private var isSendHovering = false
+    @State private var isInputHovered = false
+    @Environment(\.colorScheme) private var colorScheme
+    @Environment(\.colorSchemeContrast) private var contrast
     @State private var dictationDraft = MacDictationDraft()
     @State private var dictationActive = false
     @State private var dictationConversationID: String?
+    @State private var attachmentThumbnails: [MacAttachment.ID: NSImage] = [:]
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     var body: some View {
-        VStack(spacing: 8) {
+        VStack(spacing: 6) {
+            HStack(spacing: 6) {
+                leadingControls
+                Spacer(minLength: 0)
+            }
+            .padding(.horizontal, 6)
+            .opacity(0.78)
+
             inputSurface
             if let failure = fileImportFailure, failure.conversationID == state.conversationID {
                 MacInlineNotice(message: failure.message, kind: .failure, dismiss: { fileImportFailure = nil })
                     .accessibilityIdentifier("chat.attachments.import-error")
             }
             if let error = voiceInput.errorMessage {
-                Text(error)
-                    .font(.caption)
-                    .foregroundStyle(.red)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .textSelection(.enabled)
+                MacInlineNotice(message: error, kind: .failure, dismiss: { voiceInput.errorMessage = nil })
                     .accessibilityIdentifier("chat.dictation.error")
             }
-            quickBar
+            if state.permissionConfigurationState == .failed {
+                HStack(spacing: 8) {
+                    Text(state.permissionConfigurationState.title)
+                        .font(.caption)
+                        .foregroundStyle(MacDesignColor.warning)
+                        .accessibilityIdentifier("mac-composer-permission-status")
+                    Button(String(localized: "Refresh", table: "Chat")) {
+                        actions.perform(.reloadPermissionConfiguration(conversationID: state.conversationID))
+                    }
+                    .controlSize(.small)
+                    .accessibilityIdentifier("mac-composer-permission-refresh")
+                    Spacer(minLength: 0)
+                }
+                .padding(.horizontal, 4)
+            }
             if let reason = state.submissionBlockReason {
                 Text(reason)
                     .font(.callout)
@@ -325,16 +511,26 @@ struct MacComposerView: View {
         VStack(spacing: 0) {
             attachmentTray
             inputRow
+            bottomToolbar
         }
-        .background(NolaSurfaceBackground(fill: MacDesignColor.panel,
-                                          border: MacDesignColor.borderSubtle,
-                                          cornerRadius: MacDesignTokens.Radius.message))
+        .background(
+            colorScheme == .dark ? Color(red: 0.082, green: 0.082, blue: 0.092) : MacDesignColor.panel,
+            in: RoundedRectangle(cornerRadius: 18, style: .continuous)
+        )
         .overlay {
-            RoundedRectangle(cornerRadius: MacDesignTokens.Radius.message, style: .continuous)
-                .strokeBorder(composerStrokeColor, lineWidth: dropTargeted || composerFocused.wrappedValue ? 2 : 1)
+            RoundedRectangle(cornerRadius: 18, style: .continuous)
+                .strokeBorder(composerStrokeColor, lineWidth: dropTargeted ? 1.5 : 1)
+                .allowsHitTesting(false)
         }
-        .animation(reduceMotion ? nil : .easeOut(duration: 0.16), value: dropTargeted)
-        .animation(reduceMotion ? nil : .easeOut(duration: 0.16), value: composerFocused.wrappedValue)
+        .shadow(
+            color: Color.black.opacity(colorScheme == .dark ? 0.36 : 0.05),
+            radius: colorScheme == .dark ? 16 : 8,
+            y: colorScheme == .dark ? 6 : 2
+        )
+        .onHover { isInputHovered = $0 }
+        .animation(reduceMotion ? nil : MacDesignTokens.Motion.responsive, value: dropTargeted)
+        .animation(reduceMotion ? nil : MacDesignTokens.Motion.responsive, value: composerFocused.wrappedValue)
+        .animation(reduceMotion ? nil : MacDesignTokens.Motion.responsive, value: isInputHovered)
         .fileImporter(
             isPresented: $fileImporterPresented,
             allowedContentTypes: [.item],
@@ -408,12 +604,29 @@ struct MacComposerView: View {
                 .padding(.horizontal, 12)
                 .padding(.top, 10)
             }
+            .task(id: state.attachments.map(\.id)) {
+                let currentIDs = Set(state.attachments.map(\.id))
+                attachmentThumbnails = attachmentThumbnails.filter { currentIDs.contains($0.key) }
+                let pending = state.attachments.filter { attachmentThumbnails[$0.id] == nil }
+                guard !pending.isEmpty else { return }
+                let targets = pending.map { (id: $0.id, url: $0.url) }
+                let loaded: [(MacAttachment.ID, NSImage)] = await Task.detached(priority: .utility) {
+                    targets.compactMap { item in
+                        guard let image = NSImage(contentsOf: item.url) else { return nil }
+                        return (item.id, image)
+                    }
+                }.value
+                guard !Task.isCancelled else { return }
+                for (id, image) in loaded where currentIDs.contains(id) {
+                    attachmentThumbnails[id] = image
+                }
+            }
         }
     }
 
     private func attachmentChip(_ attachment: MacAttachment) -> some View {
         HStack(spacing: 7) {
-            if let image = NSImage(contentsOf: attachment.url) {
+            if let image = attachmentThumbnails[attachment.id] {
                 Image(nsImage: image)
                     .resizable()
                     .scaledToFill()
@@ -436,6 +649,7 @@ struct MacComposerView: View {
             Text(attachment.name)
                 .font(.system(size: 11.5, weight: .medium))
                 .lineLimit(1)
+                .truncationMode(.middle)
             attachmentStatus(attachment)
             Button {
                 actions.perform(.removeAttachment(
@@ -457,7 +671,9 @@ struct MacComposerView: View {
         }
         .padding(.horizontal, 9)
         .padding(.vertical, 7)
-        .background(Color.primary.opacity(0.055), in: RoundedRectangle(cornerRadius: 8))
+        .frame(maxWidth: 180, alignment: .leading)
+        .background(Color.primary.opacity(0.055), in: RoundedRectangle(cornerRadius: 8, style: .continuous))
+        .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
         .accessibilityElement(children: .contain)
         .accessibilityLabel("\(attachment.name), \(attachmentAccessibilityStatus(attachment))")
         .contextMenu {
@@ -481,31 +697,17 @@ struct MacComposerView: View {
         case .ready:
             Image(systemName: "checkmark.circle.fill")
                 .font(.system(size: 9))
-                .foregroundStyle(.green)
+                .foregroundStyle(MacDesignColor.success)
         case .failed:
             Image(systemName: "exclamationmark.circle.fill")
                 .font(.system(size: 9))
-                .foregroundStyle(.orange)
+                .foregroundStyle(MacDesignColor.warning)
                 .help(attachment.errorMessage ?? String(localized: "Extraction failed"))
         }
     }
 
     private var inputRow: some View {
-        HStack(alignment: .center, spacing: 9) {
-            Button {
-                fileImportFailure = nil
-                fileImporterConversationID = state.conversationID
-                fileImporterPresented = true
-            } label: {
-                Image(systemName: "plus")
-                    .font(.system(size: 13.5, weight: .semibold))
-                    .frame(width: 30, height: 30)
-            }
-            .buttonStyle(MacPressFeedbackButtonStyle(contentInsets: .init()))
-            .background(Color.primary.opacity(0.055), in: Circle())
-            .help("Attach Files")
-            .accessibilityLabel(String(localized: "Attach Files"))
-
+        HStack(alignment: .bottom, spacing: 9) {
             ZStack(alignment: .leading) {
                 MacComposerTextEditor(
                     text: draftBinding,
@@ -533,164 +735,173 @@ struct MacComposerView: View {
                         dictationActive = false
                         voiceInput.stop()
                     },
-                    mentionCommand: mentionCommand
+                    mentionCommand: mentionCommand, mentionEditor: mentionEditor
                 )
                 .focused(composerFocused)
                 .accessibilityLabel(String(localized: "Message Nola"))
             }
-            .frame(minHeight: 30, maxHeight: 132, alignment: .center)
+            .frame(minHeight: 30, maxHeight: 132, alignment: .bottom)
             .fixedSize(horizontal: false, vertical: true)
-
-            Button {
-                if voiceInput.isRecording || voiceInput.isStarting {
-                    dictationActive = false
-                    voiceInput.stop()
-                } else {
-                    dictationConversationID = state.conversationID
-                    dictationDraft = MacDictationDraft(draft: state.draft, conversationID: state.conversationID)
-                    dictationActive = true
-                    Task { await voiceInput.start() }
-                }
-            } label: {
-                Image(systemName: voiceInput.isRecording ? "waveform" : voiceInput.isStarting ? "hourglass" : "mic")
-                    .font(.system(size: 13, weight: .semibold))
-                    .foregroundStyle(voiceInput.isRecording ? Color.red : Color.secondary)
-                    .frame(width: 30, height: 30)
-                    .background {
-                        Circle().fill(voiceInput.isRecording ? Color.red.opacity(0.10) : Color.primary.opacity(0.045))
-                    }
-            }
-            .buttonStyle(MacPressFeedbackButtonStyle(contentInsets: .init()))
-            .help(
-                (voiceInput.isRecording || voiceInput.isStarting)
-                    ? String(localized: "Stop Dictation")
-                    : String(localized: "Start Dictation")
-            )
-            .accessibilityLabel(
-                (voiceInput.isRecording || voiceInput.isStarting)
-                    ? String(localized: "Stop Dictation")
-                    : String(localized: "Start Dictation")
-            )
-
-            Button {
-                if localCommand() { return }
-                if state.isVisiblyRunning {
-                    actions.perform(.stop(conversationID: state.conversationID))
-                } else if state.canSend && isModelConfigured {
-                    dictationActive = false
-                    voiceInput.stop()
-                    actions.perform(.submit(conversationID: state.conversationID))
-                }
-            } label: {
-                Image(systemName: (state.isVisiblyRunning && !state.draft.hasPrefix("/")) ? "stop.fill" : "arrow.up")
-                    .contentTransition(.opacity)
-                    .animation(reduceMotion ? nil : .easeOut(duration: 0.16), value: state.isVisiblyRunning)
-                    .font(.system(size: 13, weight: .bold))
-                    .foregroundStyle((state.canSend && isModelConfigured) || state.isVisiblyRunning ? MacDesignColor.onPrimaryAction : Color.secondary)
-                    .frame(width: 30, height: 30)
-                    .background {
-                        Circle().fill((state.canSend && isModelConfigured) || state.isVisiblyRunning ? MacDesignColor.primaryAction : Color.primary.opacity(0.07))
-                    }
-            }
-            .buttonStyle(MacPressFeedbackButtonStyle(contentInsets: .init()))
-            .disabled(!state.draft.hasPrefix("/") && (state.isPrimaryActionDisabled || (!isModelConfigured && !state.isVisiblyRunning)))
-            .accessibilityIdentifier(state.isVisiblyRunning ? "mac-composer-stop" : "mac-composer-send")
-            .opacity(isSendHovering && ((state.canSend && isModelConfigured) || state.isVisiblyRunning) ? 0.85 : 1)
-            .onHover { hovering in
-                guard isSendHovering != hovering else { return }
-                if reduceMotion {
-                    isSendHovering = hovering
-                } else {
-                    withAnimation(.easeOut(duration: 0.14)) {
-                        isSendHovering = hovering
-                    }
-                }
-            }
-            .help(
-                state.isVisiblyRunning
-                    ? String(localized: "Stop")
-                    : String(localized: "Send")
-            )
-            .accessibilityLabel(
-                state.isVisiblyRunning
-                    ? String(localized: "Stop")
-                    : String(localized: "Send")
-            )
         }
         .padding(.horizontal, 12)
-        .padding(.vertical, 10)
+        .padding(.top, 12)
+        .padding(.bottom, 8)
     }
 
-    private var quickBar: some View {
-        ViewThatFits(in: .horizontal) {
-            HStack(spacing: 10) { quickBarControls; Spacer(minLength: 0) }
-                .fixedSize(horizontal: true, vertical: false)
-            VStack(alignment: .leading, spacing: 4) { quickBarControls }
+    private var bottomToolbar: some View {
+        HStack(alignment: .center, spacing: 6) {
+            // Left: Attach button
+            Button {
+                fileImportFailure = nil
+                fileImporterConversationID = state.conversationID
+                fileImporterPresented = true
+            } label: {
+                Image(systemName: "plus")
+                    .font(.system(size: 13.5, weight: .semibold))
+                    .foregroundStyle(.secondary)
+            }
+            .buttonStyle(MacCircularComposerButtonStyle(
+                baseFill: colorScheme == .dark ? Color.white.opacity(0.06) : Color.primary.opacity(0.055)
+            ))
+            .help("Attach Files")
+            .accessibilityLabel(String(localized: "Attach Files"))
+
+            Spacer(minLength: 6)
+
+            // Right: Execution (Model picker, Reasoning effort, Permission mode, Mic, Send/Stop)
+            HStack(alignment: .center, spacing: 4) {
+                trailingControls
+                reasoningMenu
+                permissionModeMenu
+                micButton
+                sendOrStopButton
+            }
         }
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .menuStyle(.borderlessButton)
-        .font(.system(size: 11, weight: .medium))
-        .foregroundStyle(.secondary)
-        .padding(.horizontal, 4)
+        .padding(.horizontal, 10)
+        .padding(.bottom, 9)
+        .padding(.top, 2)
     }
 
-    @ViewBuilder private var quickBarControls: some View {
+    private var micButton: some View {
+        Button {
+            if voiceInput.isRecording || voiceInput.isStarting {
+                dictationActive = false
+                voiceInput.stop()
+            } else {
+                dictationConversationID = state.conversationID
+                dictationDraft = MacDictationDraft(draft: state.draft, conversationID: state.conversationID)
+                dictationActive = true
+                Task { await voiceInput.start() }
+            }
+        } label: {
+            Image(systemName: voiceInput.isRecording ? "waveform" : voiceInput.isStarting ? "hourglass" : "mic")
+                .font(.system(size: 13, weight: .semibold))
+                .foregroundStyle(voiceInput.isRecording ? MacDesignColor.danger : Color.secondary)
+        }
+        .buttonStyle(MacCircularComposerButtonStyle(
+            baseFill: voiceInput.isRecording ? MacDesignColor.danger.opacity(0.12) : Color.primary.opacity(0.045)
+        ))
+        .help(
+            (voiceInput.isRecording || voiceInput.isStarting)
+                ? String(localized: "Stop Dictation")
+                : String(localized: "Start Dictation")
+        )
+        .accessibilityLabel(
+            (voiceInput.isRecording || voiceInput.isStarting)
+                ? String(localized: "Stop Dictation")
+                : String(localized: "Start Dictation")
+        )
+    }
+
+    @ViewBuilder
+    private var sendOrStopButton: some View {
+        let showsStopAction = state.isVisiblyRunning && !state.draft.hasPrefix("/")
+        let isActiveAction = (state.canSend && isModelConfigured) || state.isVisiblyRunning
+        Button {
+            if localCommand() { return }
+            if state.isVisiblyRunning {
+                actions.perform(.stop(conversationID: state.conversationID))
+            } else if state.canSend && isModelConfigured {
+                dictationActive = false
+                voiceInput.stop()
+                actions.perform(.submit(conversationID: state.conversationID))
+            }
+        } label: {
+            Image(systemName: showsStopAction ? "stop.fill" : "arrow.up")
+                .contentTransition(reduceMotion ? .identity : .symbolEffect(.replace))
+                .animation(reduceMotion ? nil : .easeOut(duration: MacDesignTokens.Motion.selection), value: showsStopAction)
+                .font(.system(size: 13, weight: .bold))
+                .foregroundStyle(isActiveAction ? MacDesignColor.onPrimaryAction : Color.secondary)
+        }
+        .buttonStyle(MacCircularComposerButtonStyle(
+            baseFill: isActiveAction ? MacDesignColor.primaryAction : Color.primary.opacity(0.07)
+        ))
+        .disabled(!state.draft.hasPrefix("/") && (state.isPrimaryActionDisabled || (!isModelConfigured && !state.isVisiblyRunning)))
+        .accessibilityIdentifier(showsStopAction ? "mac-composer-stop" : "mac-composer-send")
+        .help(
+            showsStopAction
+                ? String(localized: "Stop")
+                : String(localized: "Send")
+        )
+        .accessibilityLabel(
+            showsStopAction
+                ? String(localized: "Stop")
+                : String(localized: "Send")
+        )
+    }
+
+    private var permissionModeMenu: some View {
+        Menu {
+            ForEach(MacPermissionMode.allCases) { mode in
+                Button {
+                    actions.perform(.selectPermissionMode(conversationID: state.conversationID, mode))
+                } label: {
+                    Label(mode.title, systemImage: state.permissionMode == mode ? "checkmark" : "shield")
+                }
+                .help(mode.detail)
+            }
+        } label: {
+            Label(state.permissionMode.title, systemImage: "shield.lefthalf.filled")
+                .font(.system(size: 11.5, weight: .medium))
+                .foregroundStyle(state.permissionMode == .allowAll ? MacDesignColor.warning : Color.secondary)
+        }
+        .menuStyle(MacPillMenuStyle(height: 28))
+        .fixedSize(horizontal: true, vertical: false)
+        .help(state.activePermissionMode.map { "\(state.permissionMode.detail) (\(String(localized: "Permissions active", table: "Permissions")): \($0.title))" }
+            ?? state.permissionMode.detail)
+        .accessibilityLabel(String(localized: "Permission Mode"))
+        .accessibilityIdentifier("mac-composer-permission-mode")
+        .disabled(state.permissionConfigurationState == .saving)
+    }
+
+    @ViewBuilder
+    private var reasoningMenu: some View {
+        if !state.reasoningOptions.isEmpty {
             Menu {
-                ForEach(MacPermissionMode.allCases) { mode in
+                ForEach(["automatic"] + state.reasoningOptions, id: \.self) { preference in
                     Button {
-                        actions.perform(.selectPermissionMode(conversationID: state.conversationID, mode))
+                        actions.perform(.selectReasoningPreference(conversationID: state.conversationID, preference))
                     } label: {
-                        Label(mode.title, systemImage: state.permissionMode == mode ? "checkmark" : "shield")
+                        if state.reasoningPreference == preference {
+                            Label { Text(verbatim: reasoningTitle(preference)) } icon: { Image(systemName: "checkmark") }
+                        } else { Text(verbatim: reasoningTitle(preference)) }
                     }
-                    .help(mode.detail)
                 }
             } label: {
-                Label(state.permissionMode.title, systemImage: "shield.lefthalf.filled")
+                Label {
+                    Text(verbatim: reasoningTitle(state.reasoningPreference))
+                } icon: {
+                    Image(systemName: "brain")
+                }
+                .font(.system(size: 11.5, weight: .medium))
+                .foregroundStyle(.secondary)
             }
-            .menuStyle(MacPillMenuStyle(height: 26))
+            .menuStyle(MacPillMenuStyle(height: 28))
             .fixedSize(horizontal: true, vertical: false)
-            .help(state.permissionMode.detail)
-            .accessibilityLabel(String(localized: "Permission Mode"))
-            .accessibilityIdentifier("mac-composer-permission-mode")
-            .disabled(state.permissionConfigurationState == .saving)
-
-            Text(state.permissionConfigurationState.title)
-                .fixedSize(horizontal: false, vertical: true)
-                .accessibilityIdentifier("mac-composer-permission-status")
-                .help(state.activePermissionMode.map { "\(String(localized: "Permissions active", table: "Permissions")): \($0.title)" }
-                    ?? state.permissionConfigurationState.title)
-            if state.permissionConfigurationState == .failed {
-                Button(String(localized: "Refresh", table: "Chat")) {
-                    actions.perform(.reloadPermissionConfiguration(conversationID: state.conversationID))
-                }
-                .frame(minHeight: 28)
-                .accessibilityIdentifier("mac-composer-permission-refresh")
-            }
-
-            if !state.reasoningOptions.isEmpty {
-                Menu {
-                    ForEach(["automatic"] + state.reasoningOptions, id: \.self) { preference in
-                        Button {
-                            actions.perform(.selectReasoningPreference(conversationID: state.conversationID, preference))
-                        } label: {
-                            if state.reasoningPreference == preference {
-                                Label { Text(verbatim: reasoningTitle(preference)) } icon: { Image(systemName: "checkmark") }
-                            } else { Text(verbatim: reasoningTitle(preference)) }
-                        }
-                    }
-                } label: {
-                    Label {
-                        Text(verbatim: reasoningTitle(state.reasoningPreference))
-                    } icon: {
-                        Image(systemName: "brain")
-                    }
-                }
-                .menuStyle(MacPillMenuStyle(height: 26))
-                .fixedSize(horizontal: true, vertical: false)
-                .accessibilityLabel(String(localized: "Reasoning", table: "ModelCenter"))
-                .accessibilityIdentifier("mac-composer-reasoning")
-                .disabled(state.isRunning || state.isSubmissionBlocked)
-            }
+            .accessibilityLabel(String(localized: "Reasoning", table: "ModelCenter"))
+            .accessibilityIdentifier("mac-composer-reasoning")
+            .disabled(state.isRunning || state.isSubmissionBlocked)
+        }
     }
 
     private func reasoningTitle(_ preference: String) -> String {
@@ -711,8 +922,13 @@ struct MacComposerView: View {
 
     private var composerStrokeColor: Color {
         if dropTargeted { return MacDesignColor.brand }
-        if composerFocused.wrappedValue { return MacDesignColor.brand }
-        return MacDesignColor.controlOutline
+        if colorScheme == .dark {
+            if contrast == .increased { return Color.white.opacity(composerFocused.wrappedValue ? 0.50 : 0.28) }
+            if composerFocused.wrappedValue { return Color.white.opacity(0.22) }
+            return isInputHovered ? Color.white.opacity(0.15) : Color.white.opacity(0.09)
+        }
+        if composerFocused.wrappedValue { return Color.primary.opacity(0.28) }
+        return contrast == .increased || isInputHovered ? MacDesignColor.controlOutline : MacDesignColor.borderSubtle
     }
 
     private func attachmentAccessibilityStatus(_ attachment: MacAttachment) -> String {

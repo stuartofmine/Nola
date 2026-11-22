@@ -2,6 +2,28 @@ import XCTest
 @testable import Nola
 
 final class CanonicalConversationStoreEndToEndTests: XCTestCase {
+    func testTitleProvenanceProtectsManualNamesAndSubsequentMessages() throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent("title-source-\(UUID())")
+        defer { try? FileManager.default.removeItem(at: root) }
+        let runtime = try IOSApplicationRuntime(databaseURL: root.appendingPathComponent("fixture.db"))
+        let store = try LocalConversationStore(applicationRuntime: runtime)
+        let owner = try store.createConversation(title: nil, language: nil).id
+        XCTAssertEqual(try runtime.conversationTitleSource(id: owner.uuidString), "automatic")
+        let first = ConversationMessage(conversationId: owner, role: .user, text: " First   question ")
+        try store.importMessages(conversationId: owner, messages: [first], source: .externalArchive)
+        XCTAssertEqual(try store.refreshFirstMessageTitle(conversationId: owner), "First question")
+        XCTAssertEqual(try runtime.conversationTitleSource(id: owner.uuidString), "first_message")
+        let later = ConversationMessage(conversationId: owner, role: .user, text: "Second question")
+        try store.importMessages(conversationId: owner, messages: [later], source: .externalArchive)
+        XCTAssertNil(try store.refreshFirstMessageTitle(conversationId: owner))
+        let revision = try runtime.loadConversationTitlePage(id: owner.uuidString, offset: 0).revision
+        try store.updateConversationTitle(conversationId: owner, title: "Conversation")
+        XCTAssertThrowsError(try runtime.renameConversation(id: owner.uuidString, title: "Stale", updatedAtMs: 1, firstMessageAtRevision: revision))
+        XCTAssertEqual(try runtime.conversationTitleSource(id: owner.uuidString), "user")
+        XCTAssertNil(try store.refreshFirstMessageTitle(conversationId: owner))
+        XCTAssertEqual(try runtime.loadConversation(id: owner.uuidString)?.title, "Conversation")
+    }
+
     func testDirectoryReadsMetadataAndKnowledgeWithoutRewritingConversations() throws {
         let root = FileManager.default.temporaryDirectory.appendingPathComponent("directory-\(UUID())")
         defer { try? FileManager.default.removeItem(at: root) }

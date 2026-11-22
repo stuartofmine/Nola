@@ -18,6 +18,8 @@ export function initializeAppearance() {
         if (value === 'system') delete document.documentElement.dataset.appearance;
         else document.documentElement.dataset.appearance = value;
         try { localStorage.setItem(key, value); } catch { /* Keep the current page preference. */ }
+        const desktop = (window as Window & { NolaDesktop?: { setTheme?: (theme: Appearance) => Promise<unknown> } }).NolaDesktop;
+        void desktop?.setTheme?.(value)?.catch(() => {});
     });
     return () => { unsubscribe(); media.removeEventListener('change', changed); };
 }

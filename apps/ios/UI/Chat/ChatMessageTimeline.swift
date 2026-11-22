@@ -322,6 +322,7 @@ struct ChatMessageTimeline: View {
 
     let conversationID: UUID?
     let messages: [ChatMessage]
+    var isHydrating: Bool = false
     let activeAssistantMessageID: UUID?
     let retrievalInProgress: Bool
     let hasModels: Bool
@@ -362,7 +363,7 @@ struct ChatMessageTimeline: View {
                 messageIDs: messages.map(\.id), restore: readingRestore, viewport: readingViewport))
             .clipped()
             .accessibilityIdentifier("chat.timeline.viewport")
-            .scrollDismissesKeyboard(.immediately)
+            .scrollDismissesKeyboard(.interactively)
             .coordinateSpace(name: "chat-timeline-viewport")
             .onChange(of: messages.map(\.id), initial: true) { _, ids in
                 knownMessageIDs = ids
@@ -472,7 +473,13 @@ struct ChatMessageTimeline: View {
                     }
                 }
             }
-            .onChange(of: conversationID) { _, _ in
+            .onChange(of: conversationID) { oldID, _ in
+                if let oldID, restoredReadingPosition {
+                    let previousFirstLoadedID = knownMessageConversationID == oldID ? knownMessageIDs?.first : messages.first?.id
+                    readingPositions?.conversations[oldID] = .init(
+                        firstLoadedID: previousFirstLoadedID, visibleID: readingViewport.visibleID,
+                        offset: readingViewport.offset, followsLatest: followsLatest)
+                }
                 // Do not treat the first hydrated history for a newly selected
                 // conversation as a live append from the previous transcript.
                 knownMessageIDs = nil
@@ -485,12 +492,16 @@ struct ChatMessageTimeline: View {
                 sourceLookupMessage = nil
                 cancelFollow()
                 userScrolling = false
+                readingRestore = nil
                 restoredReadingPosition = false
                 followsLatest = conversationID.flatMap { readingPositions?.conversations[$0]?.followsLatest } ?? true
-                scheduleSmoothFollow(with: proxy)
+                if followsLatest {
+                    scheduleSmoothFollow(with: proxy)
+                }
             }
             .overlay(alignment: .bottomTrailing) {
                 latestMessageButton(with: proxy)
+                    .animation(reduceMotion ? nil : DesignTokens.responsiveAnimation, value: showsLatestButton)
             }
             .onDisappear {
                 if let conversationID, restoredReadingPosition {
@@ -531,7 +542,7 @@ struct ChatMessageTimeline: View {
         userScrolling = false
         followsLatest = false
         withAnimation(reduceMotion ? nil : DesignTokens.responsiveAnimation) {
-            proxy.scrollTo(messageID, anchor: .center)
+            proxy.scrollTo(ChatTimelineMessageIdentity(conversationID: conversationID, messageID: messageID), anchor: .center)
         }
     }
 
@@ -545,18 +556,23 @@ struct ChatMessageTimeline: View {
         )
         let enteringIDs = activeAssistantMessageID == nil ? Set<UUID>() : appendedMessageIDs
         if messages.isEmpty {
-            ChatEmptyStateCard(
-                hasModels: hasModels,
-                selectedModel: selectedModel,
-                hybridDeviceToolsEnabled: hybridDeviceToolsEnabled,
-                hostConnectionPhase: hostConnectionPhase,
-                onSuggestion: onSuggestion,
-                onPrimaryAction: onPrimaryAction
-            )
-            .frame(maxWidth: .infinity, maxHeight: .infinity)
-            .padding(.top, 40)
-            .padding(.horizontal, 16)
-            .transition(.opacity.combined(with: .move(edge: .bottom)))
+            if isHydrating {
+                Color.clear
+                    .frame(maxWidth: .infinity, minHeight: 1)
+            } else {
+                ChatEmptyStateCard(
+                    hasModels: hasModels,
+                    selectedModel: selectedModel,
+                    hybridDeviceToolsEnabled: hybridDeviceToolsEnabled,
+                    hostConnectionPhase: hostConnectionPhase,
+                    onSuggestion: onSuggestion,
+                    onPrimaryAction: onPrimaryAction
+                )
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+                .padding(.top, 40)
+                .padding(.horizontal, 16)
+                .transition(reduceMotion ? .identity : .opacity.combined(with: .move(edge: .bottom)))
+            }
         } else {
             LazyVStack(alignment: .leading, spacing: 20) {
                 ForEach(messages) { message in
@@ -604,10 +620,15 @@ struct ChatMessageTimeline: View {
         }
     }
 
+    private var showsLatestButton: Bool {
+        (!followsLatest || !isAtLatest) && !messages.isEmpty
+    }
+
     @ViewBuilder
     private func latestMessageButton(with proxy: ScrollViewProxy) -> some View {
-        if (!followsLatest || !isAtLatest), !messages.isEmpty {
+        if showsLatestButton {
             Button {
+                NolaHaptics.selection()
                 cancelFollow()
                 userScrolling = false
                 followsLatest = true
@@ -618,14 +639,17 @@ struct ChatMessageTimeline: View {
                     .font(.system(size: 14, weight: .semibold))
                     .foregroundStyle(.secondary)
                     .frame(width: 44, height: 44)
-                    .contentShape(Rectangle())
+                    .background(.regularMaterial, in: Circle())
+                    .overlay(Circle().stroke(DesignTokens.borderColor, lineWidth: 0.5))
+                    .contentShape(Circle())
             }
-            .buttonStyle(.plain)
+            .buttonStyle(NolaPressableButtonStyle())
+            .clipShape(Circle())
             .padding(.horizontal, 10)
             .padding(.bottom, 6)
             .accessibilityLabel(NSLocalizedString("chat.scroll.latest", value: "Jump to latest message", comment: "Jump to latest chat message"))
             .accessibilityIdentifier("chat.scroll.latest")
-            .transition(.opacity.combined(with: .move(edge: .bottom)))
+            .transition(reduceMotion ? .identity : .opacity.combined(with: .move(edge: .bottom)))
         }
     }
 
@@ -663,7 +687,7 @@ struct ChatMessageTimeline: View {
             success: true,
             userCorrected: true
         )
-        let response = PersonalIntelligenceCore.ingest(
+        let response = container.applicationRuntime.ingestIntelligence(
             IntelligenceIngestRequest(
                 events: [event],
                 memoryCandidates: candidates,

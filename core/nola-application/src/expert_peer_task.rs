@@ -58,48 +58,160 @@ fn response(task:&nola_store_port::runtime_task::StoredRuntimeTask,admitted:bool
             parent_call_id:Some(call),permission_scope_id:Some(format!("task:{}",task.id)),cancellation_scope_id:Some(format!("task:{}",task.id)),
             title:Some(task.title.clone())}})
 }
-fn target_snapshot<S:ApplicationCommandRepositories>(store:&mut S,material:&PeerMaterial,config:&mut AgentCoreConfig,
-    supplied:Option<DelegatedInvocationSnapshot>,project:&str)->Result<DelegatedInvocationSnapshot,String> {
-    let child=&material.view.target.context_conversation_id;
-    use nola_domain::expert_task_target::{expert_leaf_control,schema_tool_name};
-    if config.tools.iter().any(|tool|schema_tool_name(tool).is_some_and(expert_leaf_control))
-        || config.host_catalog.as_ref().is_some_and(|catalog|catalog.capabilities.keys().any(|name|expert_leaf_control(name))) {
+fn target_snapshot<S: ApplicationCommandRepositories>(
+    store: &mut S,
+    material: &PeerMaterial,
+    config: &mut AgentCoreConfig,
+    supplied: Option<DelegatedInvocationSnapshot>,
+    project: &str,
+) -> Result<DelegatedInvocationSnapshot, String> {
+    let child = &material.view.target.context_conversation_id;
+    use nola_domain::expert_task_target::{expert_leaf_control, schema_tool_name};
+    if config
+        .tools
+        .iter()
+        .any(|tool| schema_tool_name(tool).is_some_and(expert_leaf_control))
+        || config.host_catalog.as_ref().is_some_and(|catalog| {
+            catalog
+                .capabilities
+                .keys()
+                .any(|name| expert_leaf_control(name))
+        })
+    {
         return Err("expert_task_configuration_must_be_leaf".into());
     }
-    if project.trim().is_empty() || project.len()>4096 {return Err("expert_task_target_workspace_missing".into());}
-    if config.session_id.as_ref().is_some_and(|id|id.0!=*child) {return Err("expert_task_target_config_owner_changed".into());}
-    if config.initial_items.iter().any(|item|!matches!(item,AgentItem::Message{role:AgentRole::System,..})) {
+    if project.trim().is_empty() || project.len() > 4096 {
+        return Err("expert_task_target_workspace_missing".into());
+    }
+    if config.session_id.as_ref().is_some_and(|id| id.0 != *child) {
+        return Err("expert_task_target_config_owner_changed".into());
+    }
+    if config.initial_items.iter().any(|item| {
+        !matches!(
+            item,
+            AgentItem::Message {
+                role: AgentRole::System,
+                ..
+            }
+        )
+    }) {
         return Err("expert_task_cannot_copy_caller_history".into());
     }
-    config.session_id=Some(SessionId::from_string(child.clone()));
-    let binding=config.turn_identity.host_invocation.as_ref().ok_or("expert_task_target_invocation_missing")?;
+    config.session_id = Some(SessionId::from_string(child.clone()));
+    let binding = config
+        .turn_identity
+        .host_invocation
+        .as_ref()
+        .ok_or("expert_task_target_invocation_missing")?;
     binding.validate().map_err(str::to_owned)?;
-    let profile=store.model_repository().model_profile(&material.entry.model_declaration.profile_id).map_err(|e|e.to_string())?.ok_or("expert_task_target_profile_missing")?;
-    if profile.revision!=material.entry.model_declaration.profile_revision || !profile.enabled || profile.deleted_at_ms.is_some() {return Err("expert_task_target_profile_changed".into());}
-    let source:Value=serde_json::from_str(&profile.source_json).map_err(|_|"expert_task_target_source_invalid")?;
-    nola_domain::expert_message::validate_expert_model_route(&material.entry.model_declaration,&source,&material.entry.defaults,
-        &serde_json::to_value(&binding.primary).map_err(|e|e.to_string())?)?;
-    let mut snapshot=if let Some(value)=supplied {value} else {
-        let mut parent=config.turn_identity.delegation.as_ref().ok_or("expert_task_target_snapshot_unavailable")?.snapshot()?;
-        let profile=parent.profiles.get_mut("general").ok_or("expert_task_general_profile_missing")?;
-        profile.model=None;profile.executor=None;profile.prompt.clear();
-        if parent.project_root!=project {return Err("expert_task_target_workspace_changed".into());}
-        crate::delegation_preparation::capture_delegated_invocation(store,&parent,material.view.source.context_conversation_id(),"general")?
+    let executor = material.entry.defaults.expert_executor();
+    let profile_name = executor
+        .as_ref()
+        .map_or("general", |value| value.backend.id());
+    let source = if let Some(executor) = &executor {
+        if material.entry.model_declaration
+            != nola_domain::expert_message::expert_executor_declaration(
+                &material.entry.participant,
+                executor,
+            )
+        {
+            return Err("expert_task_executor_revision_changed".into());
+        }
+        Value::Null
+    } else {
+        let profile = store
+            .model_repository()
+            .model_profile(&material.entry.model_declaration.profile_id)
+            .map_err(|e| e.to_string())?
+            .ok_or("expert_task_target_profile_missing")?;
+        if profile.revision != material.entry.model_declaration.profile_revision
+            || !profile.enabled
+            || profile.deleted_at_ms.is_some()
+        {
+            return Err("expert_task_target_profile_changed".into());
+        }
+        serde_json::from_str(&profile.source_json)
+            .map_err(|_| "expert_task_target_source_invalid")?
     };
-    if snapshot.owner_session_id!=material.view.source.context_conversation_id() || snapshot.execution_backend!="nola"
-        || snapshot.runtime.selected_profile.as_ref().is_none_or(|pin|pin.profile_id!=material.entry.model_declaration.profile_id || pin.admitted_revision!=material.entry.model_declaration.profile_revision)
-        || !snapshot.runtime.llm_fallbacks.is_empty() || !binding.fallbacks.is_empty() {
+    nola_domain::expert_message::validate_expert_model_route(
+        &material.entry.model_declaration,
+        &source,
+        &material.entry.defaults,
+        &serde_json::to_value(&binding.primary).map_err(|e| e.to_string())?,
+    )?;
+    let mut snapshot = if let Some(value) = supplied {
+        // New external tasks must derive their scope from the owning Host. A replay
+        // of an existing Task returns its immutable capture before reaching here.
+        if executor.is_some() {
+            return Err("external_expert_requires_execution_host_capture".into());
+        }
+        value
+    } else {
+        let mut parent = config
+            .turn_identity
+            .delegation
+            .as_ref()
+            .ok_or("expert_task_target_snapshot_unavailable")?
+            .snapshot()?;
+        let profile = parent
+            .profiles
+            .get_mut(profile_name)
+            .ok_or("expert_task_delegation_profile_missing")?;
+        profile.model = None;
+        profile.executor = executor.clone();
+        profile.prompt.clear();
+        if parent.project_root != project {
+            return Err("expert_task_target_workspace_changed".into());
+        }
+        crate::delegation_preparation::capture_delegated_invocation(
+            store,
+            &parent,
+            material.view.source.context_conversation_id(),
+            profile_name,
+        )?
+    };
+    let route_matches = if let Some(executor) = &executor {
+        snapshot.execution_backend == executor.backend.id()
+            && snapshot.external_execution_model == executor.model
+            && snapshot.external_execution_model_provider == executor.model_provider
+            && snapshot.profile.executor.as_ref() == Some(executor)
+            && snapshot.runtime.selected_profile.is_none()
+            && snapshot.credential.is_none()
+            && snapshot.fallback_credentials.is_empty()
+            && snapshot.model.endpoint.is_empty()
+            && snapshot.model.model.is_empty()
+    } else {
+        snapshot.execution_backend == "nola"
+            && snapshot
+                .runtime
+                .selected_profile
+                .as_ref()
+                .is_some_and(|pin| {
+                    pin.profile_id == material.entry.model_declaration.profile_id
+                        && pin.admitted_revision
+                            == material.entry.model_declaration.profile_revision
+                })
+    };
+    if snapshot.owner_session_id != material.view.source.context_conversation_id()
+        || !route_matches
+        || !snapshot.runtime.llm_fallbacks.is_empty()
+        || !binding.fallbacks.is_empty()
+    {
         return Err("expert_task_target_snapshot_or_fallback_changed".into());
     }
-    if let nola_host_protocol::HostModelRouteBinding::Http(route)=&binding.primary {
-        if snapshot.model.model!=route.model || snapshot.model.endpoint.trim_end_matches('/')!=route.endpoint.trim_end_matches('/') {
+    if let nola_host_protocol::HostModelRouteBinding::Http(route) = &binding.primary {
+        if snapshot.model.model != route.model
+            || snapshot.model.endpoint.trim_end_matches('/') != route.endpoint.trim_end_matches('/')
+        {
             return Err("expert_task_snapshot_model_route_changed".into());
         }
     }
-    snapshot.profile.name="general".into();snapshot.profile.prompt.clear();
-    snapshot.profile.model=None;snapshot.profile.executor=None;
-    snapshot.runtime.core_permission_rules=config.permission_rules.rules.clone();
-    snapshot.runtime.reasoning_selection=binding.generation.reasoning_selection.clone();
+    snapshot.profile.name = profile_name.into();
+    snapshot.profile.prompt.clear();
+    snapshot.profile.model = None;
+    snapshot.profile.executor = executor;
+    snapshot.runtime.core_permission_rules = config.permission_rules.rules.clone();
+    snapshot.runtime.reasoning_selection = binding.generation.reasoning_selection.clone();
     Ok(snapshot)
 }
 
@@ -133,11 +245,11 @@ pub fn prepare<S:ApplicationCommandRepositories>(store:&mut S,input:PreparePeerT
         room_id:material.view.room_id.clone(),source:material.view.source.clone(),target:material.view.target.clone(),source_run_id:run.clone(),source_call_id:call.0.clone()};
     pin.validate()?;
     let metadata=json!({EXPERT_TASK_TARGET_METADATA_KEY:pin,"expert_target_configuration":config,"expert_target_prompt_definitions":material.prompt_definitions,"expert_exchange_context":material.view,
-        "delegated_invocation":snapshot,"delegation_origin":origin,"max_turns":config.max_model_iterations,"execution_backend":"nola","model_notified":false});
+        "delegated_invocation":snapshot,"delegation_origin":origin,"max_turns":config.max_model_iterations,"execution_backend":snapshot.execution_backend,"model_notified":false});
     let source_task=store.runtime_task_binding_for_run(pin.source.context_conversation_id(),&pin.source_run_id).map_err(|e|e.to_string())?;
     let task=crate::CreateRuntimeTask{id:input.exchange_id.clone(),kind:"agent".into(),title:format!("{} → {}",material.view.source_display_name,material.view.target_display_name),
         project_root:input.project_root,owner_session_id:Some(owner),parent_task_id:source_task.map(|binding|binding.task_id),parent_tool_call_id:Some(call.0.clone()),child_session_id:Some(pin.target.context_conversation_id.clone()),
-        agent_type:Some("general".into()),prompt:Some(material.view.text.clone()),initial_progress_summary:Some(material.view.text.chars().take(200).collect()),initial_activity:None,output_path:None,initially_unread:false,
+        agent_type:Some(snapshot.profile.name.clone()),prompt:Some(material.view.text.clone()),initial_progress_summary:Some(material.view.text.chars().take(200).collect()),initial_activity:None,output_path:None,initially_unread:false,
         input_watermark:Some(now),metadata,scheduling:crate::RuntimeTaskScheduling{priority:Default::default(),queued_at_ms:now,resource_budget:Default::default(),resource_usage:Default::default(),output_bytes:0,budget_exhaustion:None},created_at_ms:now};
     crate::assistant_publication_transaction::with_publication_transaction(store,|store| {
         expert_peer::freeze_task_configuration(store,&input.exchange_id,&config,&material.prompt_definitions,&input.authority,now)?;

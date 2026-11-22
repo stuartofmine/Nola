@@ -429,13 +429,20 @@ fn expert_resend_load_response(url:&str,target:&str)->Response<Box<dyn Read+Send
     expert_http_result(result)
 }
 fn expert_source_response(url:&str,conversation:&str,message:&str)->Response<Box<dyn Read+Send>> {
+    if conversation.is_empty() {
+        return json_response(StatusCode(400), json!({"code":"invalid_conversation_id","error":"invalid conversation id"}));
+    }
+    let conversation_id = conversation.to_string();
+    let Some(message_id) = decode_path_segment(message) else {
+        return json_response(StatusCode(400), json!({"code":"invalid_message_id","error":"invalid message id"}));
+    };
     let result=(||->Result<Value,ExpertHostFailure>{
         let (host,client)=expert_web_query_owner(url)?;
         validate_edited_resend_web_owner(&host,&client)?;
         let mut app=crate::application_port::CliApplicationPort::persistent_default()?;
         let manifest:Option<nola_domain::expert_message::ExpertMessageManifest>=app.execute_expert_host_operation(
             &uuid::Uuid::new_v4().to_string(), HostExpertTemplateOperation::LoadManifest {
-                conversation_id:conversation.into(),message_id:percent_decode(message),authority:expert_host_authority()})?;
+                conversation_id,message_id,authority:expert_host_authority()})?;
         Ok(json!({"host_id":host_identity(),"client_id":client,"manifest":manifest}))
     })();
     expert_http_result(result)
@@ -519,6 +526,7 @@ fn validate_web_in_place_resend_shape(body: &Value, p: &nola_domain::edited_rese
         "in_place_resend_operation_id"|"conversationId"|"client_id"|"expected_host_id"|"submission_id"|
         "user_message_id"|"assistant_message_id"|"messages"|"current_user_display_text"|"timezone"|"language"|
         "execution_backend"|"expected_configuration_revision"|"expected_parent_message_id"|"tool_plan_ref"|"request_digest"|
+        "selected_experts"|"expected_source_store_epoch"|"expert_mentions"|
         "context_components"|"context_messages"|"history"|"permission_profile"|"model_test_mode")) {
         return Err("resend_renderer_configuration_forbidden".into());
     }
@@ -538,7 +546,9 @@ mod in_place_resend_web_tests {
     fn in_place_resend_keeps_owner_and_binds_exact_prepared_text_without_renderer_credentials() {
         let operation = uuid::Uuid::new_v4().to_string();
         let p = nola_domain::edited_resend::PreparedInPlaceResend {
-            input: nola_domain::edited_resend::PrepareInPlaceResend { operation_id: operation.clone(), conversation_id:"same".into(),
+            deferred_rewind: false,
+            input: nola_domain::edited_resend::PrepareInPlaceResend { defer_until_admission: false, selected_experts: vec![], expert_mentions: None, expected_source_store_epoch: None,
+            operation_id: operation.clone(), conversation_id:"same".into(),
                 message_id:"original".into(), expected_revision:3, expected_message_revision:2, edited_text:"new text".into(), created_at_ms:1 },
             run_id:operation.clone(), user_message_id:format!("{operation}:user"), experts:vec![],
         };

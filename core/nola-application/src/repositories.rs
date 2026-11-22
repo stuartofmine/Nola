@@ -68,6 +68,7 @@ impl<T: ?Sized> AssistantPublicationRepositories for T where
 /// New turn admission validates frozen Goal execution and selected model authority.
 pub trait AssistantAdmissionRepositories: AssistantPublicationRepositories
     + nola_store_port::goal_execution::GoalExecutionRepository + ModelRepositoryProvider
+    + ConversationRevertRepository
     + nola_store_port::product_setting::ProductSettingRepositoryProvider
     + nola_store_port::conversation_profile::ConversationWriteRepositoryProvider
     + nola_store_port::conversation_query::ConversationQueryRepository
@@ -75,6 +76,7 @@ pub trait AssistantAdmissionRepositories: AssistantPublicationRepositories
     + nola_store_port::room_presentation::RoomPresentationRepository {}
 impl<T: ?Sized> AssistantAdmissionRepositories for T where T: AssistantPublicationRepositories
     + nola_store_port::goal_execution::GoalExecutionRepository + ModelRepositoryProvider
+    + ConversationRevertRepository
     + nola_store_port::product_setting::ProductSettingRepositoryProvider
     + nola_store_port::conversation_profile::ConversationWriteRepositoryProvider
     + nola_store_port::conversation_query::ConversationQueryRepository

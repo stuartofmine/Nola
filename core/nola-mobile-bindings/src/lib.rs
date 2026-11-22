@@ -23,11 +23,15 @@ pub use child_pump::*;
 mod intelligence;
 mod mcp_host;
 pub use mcp_host::{nola_core_mobile_mcp_host,nola_core_mobile_mcp_retain};
+mod github_skill;
+pub use github_skill::nola_mobile_github_skill_package_json;
 mod software_update;
 pub use software_update::nola_core_software_update_json;
 mod projection;
 mod submission;
 pub use intelligence::{
+    nola_core_application_intelligence_ingest, nola_core_application_intelligence_recall,
+    nola_core_application_intelligence_snapshot, nola_core_application_intelligence_clear,
     nola_core_intelligence_abi_version, nola_core_intelligence_clear,
     nola_core_intelligence_ingest, nola_core_intelligence_recall,
     nola_core_intelligence_snapshot,
@@ -172,40 +176,24 @@ impl EmbeddedApplication {
 #[derive(Default)]
 struct RuntimeRegistry {
     by_identity: HashMap<PathBuf, Weak<EmbeddedApplication>>,
-    recency: Vec<Weak<EmbeddedApplication>>,
+    anonymous: Vec<Weak<EmbeddedApplication>>,
 }
 
 static RUNTIMES: OnceLock<Mutex<RuntimeRegistry>> = OnceLock::new();
 
-#[cfg(test)]
-thread_local! {
-    static TEST_PINNED_APPLICATION: RefCell<Option<Weak<EmbeddedApplication>>> = const { RefCell::new(None) };
-}
-
-#[cfg(test)]
-pub(crate) fn set_test_pinned_application(app: Option<&Arc<EmbeddedApplication>>) {
-    TEST_PINNED_APPLICATION.with(|slot| {
-        *slot.borrow_mut() = app.map(Arc::downgrade);
-    });
-}
-
-/// Returns the most recently opened live file-backed `EmbeddedApplication` in this process.
-pub(crate) fn active_embedded_application() -> Option<Arc<EmbeddedApplication>> {
-    #[cfg(test)]
-    if let Some(pinned) =
-        TEST_PINNED_APPLICATION.with(|slot| slot.borrow().as_ref().and_then(Weak::upgrade))
-    {
-        return Some(pinned);
+/// Handle-less v1 calls may use a sole owner. Opening an unrelated store must
+/// never redirect a read, write, or clear to that store based on recency.
+fn sole_embedded_application() -> Result<Option<Arc<EmbeddedApplication>>, String> {
+    let mut registry = RUNTIMES.get_or_init(Default::default).lock()
+        .map_err(|_| "runtime registry lock poisoned".to_string())?;
+    registry.by_identity.retain(|_, value| value.strong_count() > 0);
+    registry.anonymous.retain(|value| value.strong_count() > 0);
+    let mut live = registry.by_identity.values().chain(&registry.anonymous).filter_map(Weak::upgrade);
+    let first = live.next();
+    if live.next().is_some() {
+        return Err("multiple application databases are open; use the application-scoped intelligence API".into());
     }
-    let mut registry = RUNTIMES
-        .get_or_init(Default::default)
-        .lock()
-        .unwrap_or_else(|poisoned| poisoned.into_inner());
-    registry
-        .by_identity
-        .retain(|_, value| value.strong_count() > 0);
-    registry.recency.retain(|value| value.strong_count() > 0);
-    registry.recency.iter().rev().find_map(Weak::upgrade)
+    Ok(first)
 }
 
 fn open_owned_runtime(
@@ -285,7 +273,13 @@ pub extern "C" fn nola_core_application_open(
     // Handles for the same canonical database share both hot Core state and
     // its command-admission mutex. In-memory databases remain independent.
     let application = if path == ":memory:" {
-        open_owned_runtime(&path, None)
+        open_owned_runtime(&path, None).and_then(|runtime| {
+            let mut registry = RUNTIMES.get_or_init(Default::default).lock()
+                .map_err(|_| "runtime registry lock poisoned".to_string())?;
+            registry.anonymous.retain(|value| value.strong_count() > 0);
+            registry.anonymous.push(Arc::downgrade(&runtime));
+            Ok(runtime)
+        })
     } else {
         let raw = PathBuf::from(&path);
         if let Some(parent) = raw.parent().filter(|value| !value.as_os_str().is_empty()) {
@@ -315,7 +309,6 @@ pub extern "C" fn nola_core_application_open(
                 registry
                     .by_identity
                     .retain(|_, value| value.strong_count() > 0);
-                registry.recency.retain(|value| value.strong_count() > 0);
                 use std::os::unix::fs::MetadataExt;
                 let identity_key = |path: &std::path::Path| {
                     std::fs::metadata(path)
@@ -327,19 +320,13 @@ pub extern "C" fn nola_core_application_open(
                     .get(&identity_key(&key))
                     .and_then(Weak::upgrade)
                 {
-                    let weak = Arc::downgrade(&runtime);
-                    registry
-                        .recency
-                        .retain(|entry| !Weak::ptr_eq(entry, &weak));
-                    registry.recency.push(weak);
                     Ok(runtime)
                 } else {
                     open_owned_runtime(&path, Some(&key)).map(|runtime| {
                         let weak = Arc::downgrade(&runtime);
                         registry
                             .by_identity
-                            .insert(identity_key(&key), weak.clone());
-                        registry.recency.push(weak);
+                            .insert(identity_key(&key), weak);
                         runtime
                     })
                 }

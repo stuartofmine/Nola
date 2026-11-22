@@ -21,11 +21,14 @@ extension AppleExpertConfigurationDraft {
         default: throw MacApplicationPortError.invalidResponse
         }
         self.init(modelID: model, templateID: template, reasoningEffort: effort)
+        if let binding = fields["expertExecutor"], binding != .null {
+            executor = try JSONDecoder().decode(AppleExpertExecutor.self, from: JSONEncoder().encode(binding))
+        }
     }
 
     nonisolated func applying(to defaults: MacCanonicalJSONValue) throws -> MacCanonicalJSONValue {
         guard case .object(let fields) = defaults else { throw MacApplicationPortError.invalidResponse }
         let original = try Self(defaults: defaults)
-        return .object(applying(to: fields, originalSelection: original, makeString: { .string($0) }))
+        return .object(try applying(to: fields, originalSelection: original, makeString: { .string($0) }))
     }
 }

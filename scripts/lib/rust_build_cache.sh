@@ -194,6 +194,16 @@ nola_rust_cache_needs_short_tmpdir() (
     [ "${#TMPDIR}" -gt 60 ]
 )
 
+# A shared compiler cache outlives XCTest's per-run temporary directory.
+nola_sccache_tmpdir() {
+    case "${TMPDIR:-}" in
+        */nola-xctest-run.*)
+            nola_guard_tmp=${TMPDIR%/}
+            printf '%s\n' "${nola_guard_tmp%/*}" ;;
+        *) printf '%s\n' "${TMPDIR:-/tmp}" ;;
+    esac
+}
+
 nola_rust_target_storage_warning() {
     [ "${NOLA_RUST_TARGET_SIZE_CHECKED:-0}" = 0 ] || return 0
     nola_rust_cache_wraps_command "$@" || return 0
@@ -220,7 +230,7 @@ nola_cargo() {
             CARGO="$NOLA_RUST_CARGO_COMMAND" "$NOLA_RUST_CACHE_MBX" "$@"
         fi
     elif [ "$NOLA_RUST_CACHE_BACKEND" = sccache ] && nola_rust_cache_wraps_command "$@"; then
-        RUSTC_WRAPPER="$NOLA_RUST_CACHE_SCCACHE" SCCACHE_CACHE_SIZE="${SCCACHE_CACHE_SIZE:-4G}" "$NOLA_RUST_CARGO_COMMAND" "$@"
+        TMPDIR="$(nola_sccache_tmpdir)" RUSTC_WRAPPER="$NOLA_RUST_CACHE_SCCACHE" SCCACHE_CACHE_SIZE="${SCCACHE_CACHE_SIZE:-4G}" "$NOLA_RUST_CARGO_COMMAND" "$@"
     else
         "$NOLA_RUST_CARGO_COMMAND" "$@"
     fi
@@ -235,7 +245,7 @@ nola_cargo_exec() {
             CARGO="$NOLA_RUST_CARGO_COMMAND" exec "$NOLA_RUST_CACHE_MBX" "$@"
         fi
     elif [ "$NOLA_RUST_CACHE_BACKEND" = sccache ] && nola_rust_cache_wraps_command "$@"; then
-        RUSTC_WRAPPER="$NOLA_RUST_CACHE_SCCACHE" SCCACHE_CACHE_SIZE="${SCCACHE_CACHE_SIZE:-4G}" exec "$NOLA_RUST_CARGO_COMMAND" "$@"
+        TMPDIR="$(nola_sccache_tmpdir)" RUSTC_WRAPPER="$NOLA_RUST_CACHE_SCCACHE" SCCACHE_CACHE_SIZE="${SCCACHE_CACHE_SIZE:-4G}" exec "$NOLA_RUST_CARGO_COMMAND" "$@"
     else
         exec "$NOLA_RUST_CARGO_COMMAND" "$@"
     fi

@@ -1,8 +1,8 @@
 <resources>
     <string name="room_sent_to">你 → %1$s</string>
     <string name="room_stop">停止</string>
-    <string name="room_agent_name">Agent 名称</string>
-    <string name="room_create_agent">创建 Agent</string>
+    <string name="room_agent_name">专家名称</string>
+    <string name="room_create_agent">创建专家</string>
     <string name="room_controls">模型与权限</string>
     <string name="room_send">发送</string>
     <string name="room_title">Agent 群聊</string>

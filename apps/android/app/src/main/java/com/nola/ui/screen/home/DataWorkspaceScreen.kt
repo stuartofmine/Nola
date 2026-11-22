@@ -1,5 +1,7 @@
 package com.nola.ui.screen.home
 
+import com.nola.ui.components.dismissImeOnBlankTap
+import com.nola.ui.components.NolaRootPageTitle
 import android.text.format.DateUtils
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.compose.animation.AnimatedContent
@@ -22,14 +24,15 @@ import androidx.compose.foundation.layout.ExperimentalLayoutApi
 import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.imePadding
+import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.IntrinsicSize
 import androidx.compose.foundation.layout.widthIn
@@ -64,13 +67,17 @@ import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.Surface
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.RadioButton
 import androidx.compose.foundation.selection.toggleable
 import com.nola.ui.components.NolaSwitch
+import com.nola.ui.components.NolaTopAppBar
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.LaunchedEffect
@@ -131,12 +138,13 @@ fun DataWorkspaceScreen(onCreateInChat: () -> Unit = {}, initialPage: Int = 0, o
         modifier = Modifier
             .fillMaxSize()
             .background(MaterialTheme.colorScheme.background)
-            .statusBarsPadding()
             .testTag("data.workspace")
     ) {
-        if (onBack != null) TextButton(onClick = onBack, modifier = Modifier.padding(horizontal = 12.dp).heightIn(min = 48.dp)) {
-            Icon(androidx.compose.material.icons.Icons.AutoMirrored.Filled.ArrowBack, contentDescription = null)
-            Text(stringResource(if (backToInformation) R.string.tab_information else R.string.common_back))
+        if (onBack != null) {
+            NolaTopAppBar(
+                title = stringResource(if (backToInformation) R.string.tab_information else R.string.data_sources_screen_title),
+                onBack = onBack,
+            )
         }
         if (showSwitcher) WorkspaceSwitcher(
             selected = page,
@@ -173,19 +181,21 @@ fun DataWorkspaceScreen(onCreateInChat: () -> Unit = {}, initialPage: Int = 0, o
 @Composable
 internal fun InformationOverview(onOpen: (Int) -> Unit) {
     val sections = listOf(4 to R.string.workspace_knowledge, 1 to R.string.workspace_memory,
-        0 to R.string.workspace_sources)
+        0 to R.string.data_sources_screen_title)
     LazyColumn(Modifier.fillMaxSize().background(MaterialTheme.colorScheme.background)
-        .statusBarsPadding().testTag("information.overview"),
-        contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = nolaPageGutter(), vertical = 16.dp),
+        .testTag("information.overview"),
+        contentPadding = androidx.compose.foundation.layout.PaddingValues(start = nolaPageGutter(), end = nolaPageGutter(), bottom = 16.dp),
         verticalArrangement = Arrangement.spacedBy(8.dp)) {
         item {
-            Text(stringResource(R.string.tab_information), style = MaterialTheme.typography.headlineMedium.copy(fontSize = 17.sp, lineHeight = 24.sp),
-                modifier = Modifier.padding(bottom = 16.dp))
+            NolaRootPageTitle(stringResource(R.string.tab_information))
         }
         items(sections, key = { it.first }) { (page, label) ->
             Row(Modifier.fillMaxWidth().heightIn(min = 64.dp)
+                .clip(RoundedCornerShape(14.dp))
+                .background(MaterialTheme.colorScheme.surface)
                 .clickable(role = Role.Button) { onOpen(page) }
-                .testTag("information.category.$page").background(MaterialTheme.colorScheme.surface, RoundedCornerShape(14.dp)).padding(horizontal = 14.dp, vertical = 12.dp),
+                .testTag("information.category.$page")
+                .padding(horizontal = 14.dp, vertical = 12.dp),
                 verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.spacedBy(12.dp)) {
                 Box(Modifier.size(36.dp).background(MaterialTheme.colorScheme.surfaceContainer, RoundedCornerShape(8.dp)),
@@ -215,7 +225,7 @@ internal fun WorkspaceSwitcher(
     modifier: Modifier = Modifier
 ) {
     val scrollState = rememberLazyListState()
-    val sections = listOf(4 to R.string.workspace_knowledge, 0 to R.string.workspace_sources,
+    val sections = listOf(4 to R.string.workspace_knowledge, 0 to R.string.data_sources_screen_title,
         1 to R.string.workspace_memory, 2 to R.string.workspace_plans, 3 to R.string.workspace_records)
     LaunchedEffect(selected) { scrollState.animateScrollToItem(sections.indexOfFirst { it.first == selected }.coerceAtLeast(0)) }
     Surface(
@@ -240,10 +250,11 @@ internal fun WorkspaceSegment(
     onClick: () -> Unit,
     modifier: Modifier = Modifier
 ) {
+    val haptics = com.nola.ui.components.rememberNolaHaptics()
     val reduceMotion = rememberReduceMotionEnabled()
     val selectionBackground by animateColorAsState(
         targetValue = if (selected) MaterialTheme.colorScheme.primaryContainer else Color.Transparent,
-        animationSpec = tween(if (reduceMotion) 0 else NolaMotion.fast),
+        animationSpec = com.nola.ui.components.nolaTween(NolaMotion.fast, reduceMotion),
         label = "workspace-segment-background"
     )
     val contentColor by animateColorAsState(
@@ -252,7 +263,7 @@ internal fun WorkspaceSegment(
         } else {
             MaterialTheme.colorScheme.onSurfaceVariant
         },
-        animationSpec = tween(if (reduceMotion) 0 else NolaMotion.fast, easing = NolaMotion.emphasizedEasing),
+        animationSpec = com.nola.ui.components.nolaTween(NolaMotion.fast, reduceMotion),
         label = "workspace-segment-content"
     )
     Surface(
@@ -262,7 +273,10 @@ internal fun WorkspaceSegment(
             .clip(RoundedCornerShape(12.dp))
             .selectable(
                 selected = selected,
-                onClick = onClick,
+                onClick = {
+                    if (!selected) haptics.selection()
+                    onClick()
+                },
                 role = Role.Tab
             ),
         shape = RoundedCornerShape(12.dp),
@@ -345,12 +359,13 @@ internal fun DataSourcesContent(
                     style = MaterialTheme.typography.bodyMedium,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
-                Row(
+                @OptIn(ExperimentalLayoutApi::class)
+                FlowRow(
                     modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.End,
-                    verticalAlignment = Alignment.CenterVertically
+                    horizontalArrangement = Arrangement.spacedBy(8.dp, Alignment.End),
+                    verticalArrangement = Arrangement.spacedBy(8.dp)
                 ) {
-                    TextButton(onClick = onRefresh, enabled = !state.isRefreshing) {
+                    TextButton(onClick = onRefresh, enabled = !state.isRefreshing, modifier = Modifier.heightIn(min = 48.dp)) {
                         if (state.isRefreshing) {
                             CircularProgressIndicator(modifier = Modifier.size(16.dp), strokeWidth = 2.dp)
                         } else {
@@ -856,7 +871,8 @@ private fun DataSourceContractSummary(source: CustomDataSourceConfig) {
                     overflow = TextOverflow.Ellipsis
                 )
                 Text(
-                    text = "${contract.format} · ${stringResource(R.string.data_sources_records_count, contract.recordCount)}",
+                    text = listOfNotNull(contract.format.takeIf(String::isNotBlank),
+                        stringResource(R.string.data_sources_records_count, contract.recordCount)).joinToString(" · "),
                     style = MaterialTheme.typography.labelSmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                     maxLines = 1,
@@ -922,6 +938,7 @@ private fun DataSourceUsageRow(record: DataSourceUsageRecord) {
     }
 }
 
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 private fun DataSourceEditorDialog(
     source: CustomDataSourceConfig?,
@@ -972,7 +989,6 @@ private fun DataSourceEditorDialog(
                 }
             }
         )
-        return
     }
 
     if (showDiscardConfirmation) {
@@ -999,22 +1015,40 @@ private fun DataSourceEditorDialog(
                 }
             }
         )
-        return
     }
 
-    AlertDialog(
-        modifier = Modifier.imePadding().testTag("data.sources.editor"),
+    val sheetState = com.nola.ui.components.rememberGuardedEditorSheetState(validating, isDirty) { showDiscardConfirmation = true }
+    ModalBottomSheet(
+        modifier = Modifier.dismissImeOnBlankTap().testTag("data.sources.editor"),
         onDismissRequest = requestDismiss,
-        title = {
-            Column(verticalArrangement = Arrangement.spacedBy(3.dp)) {
-                Text(if (source == null) stringResource(R.string.data_sources_editor_add_title) else stringResource(R.string.data_sources_editor_edit_title))
-                Text(stringResource(R.string.data_sources_editor_subtitle), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        sheetState = sheetState,
+    ) {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .fillMaxHeight(0.9f)
+                .imePadding()
+                .navigationBarsPadding()
+                .padding(horizontal = 20.dp),
+        ) {
+            Column(
+                modifier = Modifier.fillMaxWidth().padding(bottom = 12.dp),
+                verticalArrangement = Arrangement.spacedBy(3.dp),
+            ) {
+                Text(
+                    if (source == null) stringResource(R.string.data_sources_editor_add_title)
+                    else stringResource(R.string.data_sources_editor_edit_title),
+                    style = MaterialTheme.typography.titleLarge,
+                )
+                Text(
+                    stringResource(R.string.data_sources_editor_subtitle),
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
             }
-        },
-        text = {
             LazyColumn(
-                modifier = Modifier.testTag("data.sources.editor.fields"),
-                verticalArrangement = Arrangement.spacedBy(12.dp)
+                modifier = Modifier.weight(1f).testTag("data.sources.editor.fields"),
+                verticalArrangement = Arrangement.spacedBy(12.dp),
             ) {
                 item {
                     OutlinedTextField(
@@ -1042,11 +1076,14 @@ private fun DataSourceEditorDialog(
                         Row(
                             Modifier
                                 .fillMaxWidth()
+                                .heightIn(min = 48.dp)
+                                .clip(RoundedCornerShape(8.dp))
                                 .selectable(
                                     selected = policy == candidate,
                                     onClick = { policy = candidate },
                                     role = Role.RadioButton
                                 )
+                                .padding(vertical = 4.dp)
                                 .testTag("data.sources.editor.policy.${candidate.name}"),
                             verticalAlignment = Alignment.CenterVertically
                         ) {
@@ -1101,39 +1138,21 @@ private fun DataSourceEditorDialog(
                         }
                     }
                 }
+                item { Spacer(Modifier.height(8.dp)) }
             }
-        },
-        confirmButton = {
-            Button(
-                onClick = {
-                    onTestAndSave(
-                        (source ?: CustomDataSourceConfig(name = name, location = location)).copy(
-                            name = name,
-                            location = location,
-                            kind = UnifiedDataSourceKind.Url,
-                            accessPolicy = policy,
-                            allowCloudContext = allowCloud,
-                            maximumAgeMinutes = maxAge.toIntOrNull()?.coerceIn(
-                                DATA_SOURCE_MINIMUM_AGE_MINUTES,
-                                DATA_SOURCE_MAXIMUM_AGE_MINUTES
-                            ) ?: 60
-                        )
-                    )
-                },
-                enabled = valid && !validating,
-                modifier = Modifier.testTag("data.sources.editor.test_save")
+            HorizontalDivider(thickness = 0.5.dp, color = MaterialTheme.colorScheme.outlineVariant)
+            @OptIn(ExperimentalLayoutApi::class)
+            FlowRow(
+                modifier = Modifier.fillMaxWidth().padding(vertical = 12.dp),
+                horizontalArrangement = Arrangement.spacedBy(8.dp, Alignment.End),
+                verticalArrangement = Arrangement.spacedBy(8.dp),
             ) {
-                if (validating) {
-                    CircularProgressIndicator(Modifier.size(16.dp), strokeWidth = 2.dp)
-                    Spacer(Modifier.size(7.dp))
-                }
-                Text(stringResource(R.string.data_sources_editor_test_save))
-            }
-        },
-        dismissButton = {
-            Row {
                 onDelete?.let {
-                    TextButton(onClick = { showDeleteConfirmation = true }, enabled = !validating) {
+                    TextButton(
+                        onClick = { showDeleteConfirmation = true },
+                        enabled = !validating,
+                        colors = ButtonDefaults.textButtonColors(contentColor = MaterialTheme.colorScheme.error)
+                    ) {
                         Icon(Icons.Filled.Delete, null, Modifier.size(16.dp))
                         Spacer(Modifier.size(5.dp))
                         Text(stringResource(R.string.common_delete))
@@ -1142,9 +1161,34 @@ private fun DataSourceEditorDialog(
                 TextButton(onClick = requestDismiss, enabled = !validating) {
                     Text(stringResource(R.string.common_cancel))
                 }
+                Button(
+                    onClick = {
+                        onTestAndSave(
+                            (source ?: CustomDataSourceConfig(name = name, location = location)).copy(
+                                name = name,
+                                location = location,
+                                kind = UnifiedDataSourceKind.Url,
+                                accessPolicy = policy,
+                                allowCloudContext = allowCloud,
+                                maximumAgeMinutes = maxAge.toIntOrNull()?.coerceIn(
+                                    DATA_SOURCE_MINIMUM_AGE_MINUTES,
+                                    DATA_SOURCE_MAXIMUM_AGE_MINUTES
+                                ) ?: 60
+                            )
+                        )
+                    },
+                    enabled = valid && !validating,
+                    modifier = Modifier.testTag("data.sources.editor.test_save")
+                ) {
+                    if (validating) {
+                        CircularProgressIndicator(Modifier.size(16.dp), strokeWidth = 2.dp)
+                        Spacer(Modifier.size(7.dp))
+                    }
+                    Text(stringResource(R.string.data_sources_editor_test_save))
+                }
             }
         }
-    )
+    }
 }
 
 @Composable

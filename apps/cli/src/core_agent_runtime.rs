@@ -3543,14 +3543,18 @@ impl<'a, O: crate::runtime_output::RuntimeOutputPort + ?Sized> CoreEventPresente
         let Some(queue) = &self.assistant_journal_notifications else {
             return;
         };
-        let (publications, error, permission_update) = {
+        let (publications, error, permission_update, external_session) = {
             let mut delivery = queue.lock().unwrap_or_else(|error| error.into_inner());
             (
                 std::mem::take(&mut delivery.journal_publications),
                 delivery.observer_error.take(),
                 delivery.permission_update.take(),
+                delivery.external_session.take(),
             )
         };
+        if let Some(binding) = external_session {
+            self.emitter.committed_external_session(&binding);
+        }
         if let Some(update) = permission_update {
             if self.valid_core_session(&update.session_id) {
                 self.last_permission_projection = Some((update.session_id.clone(), update.permissions.revision));
@@ -4119,6 +4123,13 @@ fn core_permission_rules_with_skills(
     // appending these defaults after user rules would erase their provenance
     // and could even replace a user Deny with a product Allow.
     let mut rules = core_internal_tool_rules_with_skills(skills);
+    let network_rules = core_network_policy_rules(&config.tool_settings.network_policy);
+    rules.extend(
+        network_rules
+            .iter()
+            .filter(|rule| rule.decision != CoreRuleDecision::Deny)
+            .cloned(),
+    );
     let permission_profile = effective_permission_profile(config);
     {
         // Preserve configured rules across a later policy downgrade. Kernel
@@ -4145,6 +4156,13 @@ fn core_permission_rules_with_skills(
         );
     }
     rules.extend(config.runtime.core_permission_rules.iter().cloned());
+    // Explicit network-policy Deny is a hard constraint that must not be
+    // overridden by AllowAll or generic allow rules.
+    rules.extend(
+        network_rules
+            .into_iter()
+            .filter(|rule| rule.decision == CoreRuleDecision::Deny),
+    );
     PermissionRuleSet { rules }.with_profile(permission_profile)
 }
 
@@ -4170,17 +4188,21 @@ fn core_network_policy_rules(network_policy: &str) -> Vec<CorePermissionRule> {
         "deny" => CoreRuleDecision::Deny,
         _ => return Vec::new(),
     };
-    [
-        ("web_search", "*"),
-        ("web_fetch", "*"),
-        ("chrome_native_open_page", "*"),
-    ]
-    .into_iter()
-    .map(|(capability, resource)| CorePermissionRule {
+    let source = if decision == CoreRuleDecision::Deny {
+        PermissionRuleSource::UserGlobal
+    } else {
+        PermissionRuleSource::ProductDefault
+    };
+    let mut capabilities = vec!["web_search", "web_fetch", "chrome_native_open_page", "github_skill_find"];
+    // Network access alone cannot authorize a persistent Skill installation.
+    if decision == CoreRuleDecision::Deny {
+        capabilities.push("github_skill_install");
+    }
+    capabilities.into_iter().map(|capability| CorePermissionRule {
         capability_pattern: capability.to_string(),
-        resource_pattern: resource.to_string(),
+        resource_pattern: "*".into(),
         decision,
-        source: PermissionRuleSource::ProductDefault,
+        source,
     })
     .collect()
 }

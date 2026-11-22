@@ -37,6 +37,13 @@ private func macMCPSummaryText(_ summary: MacMCPCapabilitySummary) -> String {
 }
 
 final class MacExtensionsNavigationState: ObservableObject {
+    @Published var centerTab: MacExpertsAndSkillsCenterView.Tab = {
+        #if DEBUG
+        if ProcessInfo.processInfo.environment["NOLA_CAPTURE_UI"] != nil,
+           let tab = ProcessInfo.processInfo.environment["NOLA_CAPTURE_EXTENSIONS_TAB"].flatMap(MacExpertsAndSkillsCenterView.Tab.init(rawValue:)) { return tab }
+        #endif
+        return .experts
+    }()
     @Published var selectedID: String?
     @Published var sourceFilter: MacExtensionsCenterView.SourceFilter = .thisMac
     @Published var query = ""
@@ -115,6 +122,7 @@ struct MacExtensionsCenterView: View {
     @State private var isChromeManagerPresented = false
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @Environment(\.accessibilityReduceTransparency) private var reduceTransparency
+    private let store: MacApplicationPort
     private let activeWorkspaceURL: URL?
     private let visibleKinds: [MacExtensionItem.Kind]
     private let showsPageHeader: Bool
@@ -127,15 +135,17 @@ struct MacExtensionsCenterView: View {
         navigationAction: (() -> Void)? = nil,
         navigation: MacExtensionsNavigationState = MacExtensionsNavigationState(),
         catalog: MacExtensionsCatalogLoader? = nil,
-        activeWorkspaceURL: URL? = nil
+        activeWorkspaceURL: URL? = nil,
+        store: MacApplicationPort = .shared
     ) {
+        self.store = store
         _catalog = StateObject(wrappedValue: catalog ?? MacExtensionsCatalogLoader(
-            local: { try await MacExtensionsService.shared.localExtensions(workspaceURL: $0) },
+            local: { try await MacExtensionsService.shared.localExtensions(workspaceURL: $0, store: store) },
             host: {
                 guard await remoteHost.isConfigured() else { return [] }
                 return try await remoteHost.fetchExtensions()
             },
-            removedSkills: { try MacBuiltInSkillRegistry.hasRemovedSkills() }
+            removedSkills: { try MacBuiltInSkillRegistry.hasRemovedSkills(store: store) }
         ))
         self.activeWorkspaceURL = activeWorkspaceURL
         _workspaceURL = State(initialValue: activeWorkspaceURL ?? MacSecurityScopedBookmarkStore.shared.restoreWorkspace())
@@ -150,11 +160,13 @@ struct MacExtensionsCenterView: View {
             if let selectedItem {
                 MacExtensionDetail(
                     item: selectedItem,
+                    store: store,
                     navigation: navigation,
                     externalErrorMessage: $catalog.errorMessage,
                     onClose: { selectedID = nil },
                     onEnabledChange: { setEnabled($0, for: selectedItem) },
-                    onRemove: { pendingRemoval = selectedItem }
+                    onRemove: { pendingRemoval = selectedItem },
+                    onSaved: { refresh() }
                 )
                 .id(selectedItem.id)
             } else {
@@ -197,6 +209,8 @@ struct MacExtensionsCenterView: View {
         } message: { item in
             if item.id.hasPrefix("managed-mcp:") {
                 Text(String(format: macExtensionsText("mac.extensions.remove_mcp.message", "Delete MCP server %1$@ from this Mac?"), item.title))
+            } else if item.installedSkillID != nil {
+                Text(String(format: macExtensionsText("mac.extensions.remove_skill.message", "Remove skill %1$@ from this Mac?"), item.title))
             } else {
                 Text(String(format: macExtensionsText("mac.extensions.remove.message", "Remove %1$@ from this Mac? You can restore built-in Skills later."), item.title))
             }
@@ -208,6 +222,7 @@ struct MacExtensionsCenterView: View {
         .sheet(item: $mcpEditorMode) { mode in
             MacMCPServerEditorSheet(
                 mode: mode,
+                store: store,
                 onSaved: {
                     mcpEditorMode = nil
                     refresh()
@@ -292,14 +307,21 @@ struct MacExtensionsCenterView: View {
         .background(MacPageBackground())
     }
 
+    @ViewBuilder
+    private var localCatalogActions: some View {
+        if sourceFilter != .connectedHost {
+            scopeMenu
+            if visibleKinds.contains(.mcp) {
+                addMCPButton
+            }
+        }
+    }
+
     private var catalogToolbar: some View {
         ViewThatFits(in: .horizontal) {
             HStack(spacing: 12) {
                 sourcePicker
-                scopeMenu
-                if visibleKinds.contains(.mcp) {
-                    addMCPButton
-                }
+                localCatalogActions
                 if !showsPageHeader {
                     toolbarRefreshButton
                 }
@@ -311,10 +333,7 @@ struct MacExtensionsCenterView: View {
                 HStack(spacing: 10) {
                     sourcePicker
                     Spacer(minLength: 6)
-                    scopeMenu
-                    if visibleKinds.contains(.mcp) {
-                        addMCPButton
-                    }
+                    localCatalogActions
                     if !showsPageHeader {
                         toolbarRefreshButton
                     }
@@ -351,7 +370,7 @@ struct MacExtensionsCenterView: View {
                 Divider()
                 Button {
                     do {
-                        try MacBuiltInSkillRegistry.restoreBuiltInSkills()
+                        try MacBuiltInSkillRegistry.restoreBuiltInSkills(store: store)
                         refresh()
                     } catch {
                         errorMessage = error.localizedDescription
@@ -529,6 +548,13 @@ struct MacExtensionsCenterView: View {
             Button(macExtensionsText("mac.extensions.action.remove", "Remove"), role: .destructive) {
                 pendingRemoval = item
             }
+        } else if item.installedSkillID != nil {
+            Toggle(macExtensionsText("mac.extensions.metric.enabled", "Enabled"), isOn: Binding(
+                get: { item.isEnabled }, set: { setEnabled($0, for: item) }
+            ))
+            Button(macExtensionsText("mac.extensions.action.remove", "Remove"), role: .destructive) {
+                pendingRemoval = item
+            }
         } else if item.id.hasPrefix("managed-mcp:") {
             Toggle(
                 macExtensionsText("mac.extensions.metric.enabled", "Enabled"),
@@ -571,21 +597,32 @@ struct MacExtensionsCenterView: View {
     private func setEnabled(_ enabled: Bool, for item: MacExtensionItem) {
         if let id = MacBuiltInSkillRegistry.skillID(forExtensionItemID: item.id) {
             do {
-                try MacBuiltInSkillRegistry.setEnabled(enabled, for: id)
+                try MacBuiltInSkillRegistry.setEnabled(enabled, for: id, store: store)
+            } catch {
+                errorMessage = error.localizedDescription
+                return
+            }
+        } else if let id = item.installedSkillID {
+            do {
+                guard let editor = try store.skillEditor(id), editor.record.gitHubSourceURL != nil else {
+                    throw MacExtensionsServiceError.contentUnavailable
+                }
+                _ = try store.setSkillEnabled(editor, enabled: enabled,
+                    updatedAtMs: Int64(Date().timeIntervalSince1970 * 1_000))
             } catch {
                 errorMessage = error.localizedDescription
                 return
             }
         } else if item.kind == .skill, item.source != .connectedHost {
             do {
-                try MacLocalSkillActivationStore.setEnabled(enabled, itemID: item.id)
+                try MacLocalSkillActivationStore.setEnabled(enabled, itemID: item.id, store: store)
             } catch {
                 errorMessage = error.localizedDescription
                 return
             }
         } else if item.kind == .mcp, item.source != .connectedHost {
             do {
-                try MacLocalMCPActivationStore.setEnabled(enabled, itemID: item.id)
+                try MacLocalMCPActivationStore.setEnabled(enabled, itemID: item.id, store: store)
             } catch {
                 errorMessage = error.localizedDescription
                 return
@@ -599,7 +636,7 @@ struct MacExtensionsCenterView: View {
     private func openMCPEditor(for item: MacExtensionItem) {
         Task {
             do {
-                let draft = try await MacExtensionsService.shared.managedMCPDraft(forItemID: item.id)
+                let draft = try await MacExtensionsService.shared.managedMCPDraft(forItemID: item.id, store: store)
                     ?? MacManagedMCPServerDraft(displayName: item.title)
                 mcpEditorMode = .edit(item: item, draft: draft)
             } catch {
@@ -610,10 +647,21 @@ struct MacExtensionsCenterView: View {
 
     private func remove(_ item: MacExtensionItem) {
         pendingRemoval = nil
+        if let id = item.installedSkillID {
+            do {
+                guard let editor = try store.skillEditor(id), editor.record.gitHubSourceURL != nil else {
+                    throw MacExtensionsServiceError.contentUnavailable
+                }
+                _ = try store.deleteUserSkill(editor, deletedAtMs: Int64(Date().timeIntervalSince1970 * 1_000))
+                if selectedID == item.id { selectedID = nil }
+                refresh()
+            } catch { errorMessage = error.localizedDescription }
+            return
+        }
         if item.id.hasPrefix("managed-mcp:") {
             Task {
                 do {
-                    _ = try await MacExtensionsService.shared.deleteManagedMCPServer(itemID: item.id)
+                    _ = try await MacExtensionsService.shared.deleteManagedMCPServer(itemID: item.id, store: store)
                     if selectedID == item.id { selectedID = nil }
                     refresh()
                 } catch {
@@ -624,7 +672,7 @@ struct MacExtensionsCenterView: View {
         }
         guard let id = MacBuiltInSkillRegistry.skillID(forExtensionItemID: item.id) else { return }
         do {
-            try MacBuiltInSkillRegistry.remove(id)
+            try MacBuiltInSkillRegistry.remove(id, store: store)
         } catch {
             errorMessage = error.localizedDescription
             return
@@ -740,14 +788,14 @@ struct MacExtensionGallery: View {
                                         action: { onSelect(item) }
                                     )
                                     .contextMenu {
-                                        if item.source == .builtIn {
+                                        if item.source == .builtIn || item.installedSkillID != nil {
                                             Button {
                                                 onEnabledChange(item, !item.isEnabled)
                                             } label: {
                                                 Label(
                                                     item.isEnabled
-                                                        ? macExtensionsText("mac.extensions.status.disabled", "Disabled")
-                                                        : macExtensionsText("mac.extensions.status.enabled", "Enabled"),
+                                                        ? macExtensionsText("mac.extensions.action.disable", "Disable")
+                                                        : macExtensionsText("mac.extensions.action.enable", "Enable"),
                                                     systemImage: item.isEnabled ? "pause.circle" : "play.circle"
                                                 )
                                             }
@@ -763,8 +811,8 @@ struct MacExtensionGallery: View {
                                             } label: {
                                                 Label(
                                                     item.isEnabled
-                                                        ? macExtensionsText("mac.extensions.status.disabled", "Disabled")
-                                                        : macExtensionsText("mac.extensions.status.enabled", "Enabled"),
+                                                        ? macExtensionsText("mac.extensions.action.disable", "Disable")
+                                                        : macExtensionsText("mac.extensions.action.enable", "Enable"),
                                                     systemImage: item.isEnabled ? "pause.circle" : "play.circle"
                                                 )
                                             }
@@ -789,8 +837,8 @@ struct MacExtensionGallery: View {
                                                 } label: {
                                                     Label(
                                                         item.isEnabled
-                                                            ? macExtensionsText("mac.extensions.status.disabled", "Disabled")
-                                                            : macExtensionsText("mac.extensions.status.enabled", "Enabled"),
+                                                            ? macExtensionsText("mac.extensions.action.disable", "Disable")
+                                                            : macExtensionsText("mac.extensions.action.enable", "Enable"),
                                                         systemImage: item.isEnabled ? "pause.circle" : "play.circle"
                                                     )
                                                 }
@@ -838,9 +886,9 @@ private struct MacExtensionGalleryCard: View {
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     var body: some View {
-        VStack(spacing: 0) {
+        ZStack(alignment: .bottomTrailing) {
             Button(action: action) {
-                VStack(alignment: .leading, spacing: 16) {
+                VStack(alignment: .leading, spacing: 10) {
                     HStack(alignment: .top, spacing: 12) {
                         Image(systemName: cardSymbol)
                             .font(.system(size: 16, weight: .semibold))
@@ -866,7 +914,7 @@ private struct MacExtensionGalleryCard: View {
                         .font(.system(size: 12))
                         .foregroundStyle(.secondary)
                         .lineLimit(3)
-                        .frame(maxWidth: .infinity, minHeight: 46, alignment: .topLeading)
+                        .frame(maxWidth: .infinity, alignment: .topLeading)
 
                     if let summary = item.mcpSummary {
                         Text(macMCPSummaryText(summary))
@@ -875,65 +923,50 @@ private struct MacExtensionGalleryCard: View {
                             .lineLimit(2)
                     }
 
+                    HStack {
+                        Label(item.source.title, systemImage: sourceSymbol)
+                            .font(.system(size: 12, weight: .medium))
+                            .foregroundStyle(.secondary)
+                        Spacer(minLength: 8)
+                        if onEnabledChange == nil {
+                            MacStatusBadge(
+                                title: item.isEnabled
+                                    ? macExtensionsText("mac.extensions.status.enabled", "Enabled")
+                                    : macExtensionsText("mac.extensions.status.disabled", "Disabled"),
+                                tint: item.isEnabled ? Color.green : Color.secondary,
+                                symbol: item.isEnabled ? "checkmark" : "power"
+                            )
+                        } else {
+                            Color.clear.frame(width: 48, height: 1)
+                        }
+                    }
+                    .frame(minHeight: 28)
                 }
-                .padding(.horizontal, 16)
-                .padding(.top, 16)
-                .padding(.bottom, 13)
-                .frame(maxWidth: .infinity, minHeight: 140, alignment: .topLeading)
+                .padding(.horizontal, 14)
+                .padding(.vertical, 12)
+                .frame(maxWidth: .infinity, alignment: .leading)
                 .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
-            .accessibilityIdentifier("mac.extensions.card.\(item.id)")
-
-            HStack(spacing: 8) {
-                Button(action: action) {
-                    Label(item.source.title, systemImage: sourceSymbol)
-                        .font(.system(size: 12, weight: .medium))
-                        .foregroundStyle(.secondary)
-                        .lineLimit(1)
-                        .frame(maxWidth: .infinity, minHeight: 36, alignment: .leading)
-                        .contentShape(Rectangle())
-                }
-                .buttonStyle(.plain)
+            .accessibilityLabel("\(item.title), \(item.source.title)")
+            .accessibilityHint(macExtensionsText("mac.extensions.action.open_details", "Open details"))
+            .accessibilityIdentifier("mac.extensions.details.\(item.id)")
+            if let onEnabledChange {
+                Toggle(
+                    macExtensionsText("mac.extensions.metric.enabled", "Enabled"),
+                    isOn: Binding(
+                        get: { item.isEnabled },
+                        set: onEnabledChange
+                    )
+                )
+                .toggleStyle(.macSwitchControl)
                 .accessibilityLabel(item.title)
-                .accessibilityHint(macExtensionsText("mac.extensions.action.open_details", "Open details"))
-                .accessibilityIdentifier("mac.extensions.details.\(item.id)")
-                if let onEnabledChange {
-                    Toggle(
-                        macExtensionsText("mac.extensions.metric.enabled", "Enabled"),
-                        isOn: Binding(
-                            get: { item.isEnabled },
-                            set: onEnabledChange
-                        )
-                    )
-                    .toggleStyle(.macSwitchControl)
-                    .help(
-                        item.isEnabled
-                            ? macExtensionsText("mac.extensions.status.disabled", "Disabled")
-                            : macExtensionsText("mac.extensions.status.enabled", "Enabled")
-                    )
-                    .accessibilityLabel(macExtensionsText("mac.extensions.metric.enabled", "Enabled"))
-                    .accessibilityValue(
-                        item.isEnabled
-                            ? macExtensionsText("mac.extensions.status.enabled", "Enabled")
-                            : macExtensionsText("mac.extensions.status.disabled", "Disabled")
-                    )
-                    .accessibilityIdentifier("mac.extensions.toggle.\(item.id)")
-                } else {
-                    MacStatusBadge(
-                        title: item.isEnabled
-                            ? macExtensionsText("mac.extensions.status.enabled", "Enabled")
-                            : macExtensionsText("mac.extensions.status.disabled", "Disabled"),
-                        tint: item.isEnabled ? Color.green : Color.secondary,
-                        symbol: item.isEnabled ? "checkmark" : "power"
-                    )
-                }
-
+                .accessibilityIdentifier("mac.extensions.toggle.\(item.id)")
+                .padding(.trailing, 14)
+                .padding(.bottom, 12)
             }
-            .padding(.horizontal, 14)
-            .frame(height: 42)
         }
-        .frame(maxWidth: .infinity, minHeight: 184, alignment: .topLeading)
+        .frame(maxWidth: .infinity, alignment: .topLeading)
         .background(
             isHovering ? MacDesignColor.brand.opacity(0.065) : Color.primary.opacity(0.03),
             in: RoundedRectangle(cornerRadius: 14, style: .continuous)
@@ -951,9 +984,7 @@ private struct MacExtensionGalleryCard: View {
                 isHovering = hovering
             }
         }
-        .accessibilityLabel("\(item.title), \(item.source.title)")
-        .accessibilityHint(macExtensionsText("mac.extensions.action.open_details", "Open details"))
-                .accessibilityIdentifier("mac.extensions.details.\(item.id)")
+
     }
 
     private var skillCategory: MacSkillFunctionalCategory? {
@@ -1112,7 +1143,7 @@ private struct MacChromeExtensionManagerView: View {
                             }
                             .frame(minWidth: 112)
                         }
-                        .buttonStyle(.borderedProminent)
+                        .buttonStyle(.nolaProminent)
                         .disabled(isPerformingAction)
                     }
                     .padding(17)
@@ -1183,7 +1214,7 @@ private struct MacChromeExtensionManagerView: View {
                         } label: {
                             Label(macExtensionsText("mac.extensions.chrome.open_extensions", "Open Chrome Extensions"), systemImage: "arrow.up.forward.app")
                         }
-                        .buttonStyle(.borderedProminent)
+                        .buttonStyle(.nolaProminent)
 
                         Button {
                             MacChromeMessagingService.shared.revealExtension()
@@ -1400,11 +1431,13 @@ private struct MacExtensionRow: View {
 
 private struct MacExtensionDetail: View {
     let item: MacExtensionItem
+    let store: MacApplicationPort
     let navigation: MacExtensionsNavigationState
     @Binding var externalErrorMessage: String?
     let onClose: () -> Void
     let onEnabledChange: (Bool) -> Void
     let onRemove: () -> Void
+    var onSaved: () -> Void = {}
 
     @State private var document: MacExtensionDocument?
     @State private var draft = ""
@@ -1486,7 +1519,9 @@ private struct MacExtensionDetail: View {
                 Spacer()
                 if item.source == .builtIn || (item.source != .connectedHost && (item.kind == .skill || item.kind == .mcp)) {
                     HStack(spacing: 8) {
-                        Text(macExtensionsText("mac.extensions.status.enabled", "Enabled"))
+                        Text(item.isEnabled
+                            ? macExtensionsText("mac.extensions.status.enabled", "Enabled")
+                            : macExtensionsText("mac.extensions.status.disabled", "Disabled"))
                             .font(.system(size: 11.5, weight: .medium))
                             .foregroundStyle(.secondary)
                         Toggle(
@@ -1497,10 +1532,10 @@ private struct MacExtensionDetail: View {
                             )
                         )
                         .toggleStyle(.macSwitchControl)
-                        .accessibilityLabel(macExtensionsText("mac.extensions.status.enabled", "Enabled"))
+                        .accessibilityLabel(item.title)
                     }
                 }
-                if item.source == .builtIn || item.id.hasPrefix("managed-mcp:") {
+                if item.source == .builtIn || item.installedSkillID != nil || item.id.hasPrefix("managed-mcp:") {
                     Menu {
                         Button(macExtensionsText("mac.extensions.action.remove", "Remove"), role: .destructive) {
                             requestExit(onRemove)
@@ -1535,9 +1570,9 @@ private struct MacExtensionDetail: View {
             navigation.leaveHandler = nil
             exitState.cancel()
         }
-        .task {
+        .task(id: item.installedSkillID != nil && item.isEnabled) {
             if !(item.source == .connectedHost && item.mcpSummary != nil) {
-                await loadDocument()
+                await loadDocument(preservingDraft: item.installedSkillID != nil)
             }
         }
         .confirmationDialog(
@@ -1613,9 +1648,9 @@ private struct MacExtensionDetail: View {
                     .font(.system(size: 9.5, weight: .medium))
                     .frame(width: 116, alignment: .leading)
                     Spacer()
-                    Button(macExtensionsText("mac.extensions.action.copy_path", "Copy Path")) {
+                    Button(document.url.isFileURL ? macExtensionsText("mac.extensions.action.copy_path", "Copy Path") : String(localized: "Copy")) {
                         NSPasteboard.general.clearContents()
-                        NSPasteboard.general.setString(document.url.path, forType: .string)
+                        NSPasteboard.general.setString(document.url.isFileURL ? document.url.path : document.url.absoluteString, forType: .string)
                     }
                     .buttonStyle(.borderless)
                     if !item.id.hasPrefix("managed-mcp:") {
@@ -1676,7 +1711,7 @@ private struct MacExtensionDetail: View {
                 }
 
                 HStack {
-                    Text(document.url.path)
+                    Text(document.url.isFileURL ? document.url.path : document.url.absoluteString)
                         .lineLimit(1)
                         .truncationMode(.middle)
                     Spacer()
@@ -1756,16 +1791,22 @@ private struct MacExtensionDetail: View {
         }
     }
 
-    private func loadDocument() async {
-        isLoading = true
+    private func loadDocument(preservingDraft: Bool = false) async {
+        isLoading = document == nil
         defer { isLoading = false }
         do {
-            let loaded = try await MacExtensionsService.shared.document(for: item)
+            let loaded = try await MacExtensionsService.shared.document(for: item, store: store)
+            guard !Task.isCancelled else { return }
+            if preservingDraft && hasUnsavedChanges {
+                // Toggling enabled changes the record revision while leaving the draft open.
+                if loaded.content == savedContent { document = loaded }
+                return
+            }
             document = loaded
             draft = loaded.content
             savedContent = loaded.content
             if let skillID = MacBuiltInSkillRegistry.skillID(forExtensionItemID: item.id) {
-                hasBuiltInOverride = MacBuiltInSkillRegistry.hasOverride(for: skillID)
+                hasBuiltInOverride = MacBuiltInSkillRegistry.hasOverride(for: skillID, store: store)
             }
         } catch MacExtensionsServiceError.contentUnavailable {
             document = nil
@@ -1780,12 +1821,13 @@ private struct MacExtensionDetail: View {
         isSaving = true
         defer { isSaving = false }
         do {
-            let saved = try await MacExtensionsService.shared.save(draft, for: item)
+            let saved = try await MacExtensionsService.shared.save(draft, for: item, expectedRevision: document?.canonicalSkillRevision, store: store)
             document = saved
             savedContent = saved.content
             if item.source == .builtIn {
                 hasBuiltInOverride = true
             }
+            onSaved()
             showsSavedConfirmation = true
             feedbackID = UUID()
             let feedback = feedbackID
@@ -1814,14 +1856,22 @@ private struct MacExtensionDetail: View {
         isSaving = true
         defer { isSaving = false }
         do {
-            try MacBuiltInSkillRegistry.resetOverride(for: skillID)
-            try MacBuiltInSkillRegistry.synchronizeCatalog()
+            try MacBuiltInSkillRegistry.resetOverride(for: skillID, store: store)
+            try MacBuiltInSkillRegistry.synchronizeCatalog(store: store)
             try MacBuiltInSkillRegistry.installTrustedRouter()
             hasBuiltInOverride = false
+            onSaved()
             await loadDocument()
         } catch {
             errorMessage = error.localizedDescription
         }
+    }
+}
+
+extension OpenSettingsAction {
+    func openHostConnections() {
+        UserDefaults.standard.set("connections", forKey: "nola.mac.settings.category")
+        self()
     }
 }
 
@@ -1830,6 +1880,7 @@ struct MacExpertsAndSkillsCenterView: View {
         case experts
         case skills
         case mcp
+        case plugins
 
         var id: String { rawValue }
         var title: String {
@@ -1837,6 +1888,7 @@ struct MacExpertsAndSkillsCenterView: View {
             case .experts: String(localized: "Experts")
             case .skills: String(localized: "Skills")
             case .mcp: String(localized: "MCP")
+            case .plugins: String(localized: "Plugins")
             }
         }
     }
@@ -1845,38 +1897,59 @@ struct MacExpertsAndSkillsCenterView: View {
     let remoteHost: any MacRemoteHostManaging
     @ObservedObject var skillsNavigation: MacExtensionsNavigationState
     var activeWorkspaceURL: URL? = nil
+    let pluginLibrary: MacDesktopPluginLibrary?
+    let pluginLibraryError: String?
+    let onOpenPluginPage: (MacDesktopPluginPage) -> Void
     @StateObject private var mcpNavigation = MacExtensionsNavigationState()
-    @State private var selectedTab: Tab
+    @Environment(\.openURL) private var openURL
+    @Environment(\.openSettings) private var openSettings
+    @State private var openingPlugins = false
+    @State private var pluginError: String?
+    @State private var expertsHasUnsavedChanges = false
+    @State private var pendingExpertLeaveTab: Tab?
 
     init(
         roomWorkspace: MacAgentRoomWorkspace,
         remoteHost: any MacRemoteHostManaging,
         skillsNavigation: MacExtensionsNavigationState,
-        activeWorkspaceURL: URL? = nil
+        activeWorkspaceURL: URL? = nil, pluginLibrary: MacDesktopPluginLibrary? = nil,
+        pluginLibraryError: String? = nil, onOpenPluginPage: @escaping (MacDesktopPluginPage) -> Void = { _ in }
     ) {
+        self.pluginLibrary = pluginLibrary
+        self.pluginLibraryError = pluginLibraryError
+        self.onOpenPluginPage = onOpenPluginPage
         self.roomWorkspace = roomWorkspace
         self.remoteHost = remoteHost
         self.skillsNavigation = skillsNavigation
         self.activeWorkspaceURL = activeWorkspaceURL
-        #if DEBUG
-        if ProcessInfo.processInfo.environment["NOLA_CAPTURE_UI"] != nil,
-           let raw = ProcessInfo.processInfo.environment["NOLA_CAPTURE_EXTENSIONS_TAB"],
-           let requested = Tab(rawValue: raw) {
-            _selectedTab = State(initialValue: requested)
-            return
-        }
-        #endif
-        _selectedTab = State(initialValue: .experts)
+
     }
 
     var body: some View {
         VStack(spacing: 0) {
             HStack(spacing: 12) {
-                Picker(String(localized: "Experts & Skills"), selection: $selectedTab) {
+                Picker(String(localized: "Capability library"), selection: Binding(get: { skillsNavigation.centerTab }, set: { next in
+                    guard next != skillsNavigation.centerTab else { return }
+                    switch skillsNavigation.centerTab {
+                    case .skills:
+                        skillsNavigation.requestLeave { skillsNavigation.centerTab = next }
+                    case .mcp:
+                        mcpNavigation.requestLeave { skillsNavigation.centerTab = next }
+                    case .experts:
+                        if expertsHasUnsavedChanges {
+                            pendingExpertLeaveTab = next
+                        } else {
+                            skillsNavigation.centerTab = next
+                        }
+                    case .plugins:
+                        skillsNavigation.centerTab = next
+                    }
+                })) {
                     ForEach(Tab.allCases) { tab in
-                        Text(tab.title).tag(tab)
+                        Text(tab.title).tag(tab).accessibilityIdentifier("workspace.extensions.tab." + tab.id)
                     }
                 }
+                .accessibilityIdentifier("workspace.extensions.tabs")
                 .pickerStyle(.segmented)
                 .labelsHidden()
                 .fixedSize()
@@ -1890,9 +1963,24 @@ struct MacExpertsAndSkillsCenterView: View {
                 .fill(MacDesignColor.borderSubtle)
                 .frame(height: 1)
 
-            switch selectedTab {
+            switch skillsNavigation.centerTab {
+            case .plugins:
+                ScrollView {
+                    VStack(alignment: .leading, spacing: 20) {
+                        MacRuntimePluginManagerView(library: pluginLibrary, libraryError: pluginLibraryError,
+                            openPage: onOpenPluginPage, openPairedHost: openPairedPlugins, openingPairedHost: openingPlugins)
+                        if openingPlugins { ProgressView().controlSize(.small) }
+                        if let pluginError { Text(pluginError).font(.callout).foregroundStyle(.secondary).textSelection(.enabled) }
+                    }
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(MacDesignTokens.Layout.pageGutter)
+                }
             case .experts:
-                MacExpertDirectoryManagementView(workspace: roomWorkspace, showsCloseButton: false)
+                MacExpertDirectoryManagementView(
+                    workspace: roomWorkspace,
+                    showsCloseButton: false,
+                    onUnsavedChangesChanged: { expertsHasUnsavedChanges = $0 }
+                )
             case .skills:
                 MacExtensionsCenterView(
                     remoteHost: remoteHost,
@@ -1913,7 +2001,46 @@ struct MacExpertsAndSkillsCenterView: View {
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
         .background(MacPageBackground())
+        .confirmationDialog(
+            String(localized: "Discard unsaved changes?"),
+            isPresented: Binding(
+                get: { pendingExpertLeaveTab != nil },
+                set: { if !$0 { pendingExpertLeaveTab = nil } }
+            ),
+            titleVisibility: .visible
+        ) {
+            Button(String(localized: "Discard Changes"), role: .destructive) {
+                let target = pendingExpertLeaveTab
+                pendingExpertLeaveTab = nil
+                expertsHasUnsavedChanges = false
+                if let target {
+                    skillsNavigation.centerTab = target
+                }
+            }
+            Button(String(localized: "Keep Editing"), role: .cancel) {
+                pendingExpertLeaveTab = nil
+            }
+        }
     }
+    private func openPairedPlugins() {
+        guard !openingPlugins else { return }
+        openingPlugins = true
+        pluginError = nil
+        Task { @MainActor in
+            defer { openingPlugins = false }
+            do {
+                guard await remoteHost.isConfigured() else {
+                    openSettings.openHostConnections()
+                    return
+                }
+                let url = try await remoteHost.requestWebManagementURL(target: "/capabilities?tab=plugins")
+                openURL(url)
+            } catch {
+                pluginError = error.localizedDescription
+            }
+        }
+    }
+
 }
 
 private enum MacMCPServerEditorMode: Identifiable {
@@ -1929,28 +2056,32 @@ private enum MacMCPServerEditorMode: Identifiable {
 }
 
 private struct MacMCPServerEditorSheet: View {
+    let store: MacApplicationPort
     let mode: MacMCPServerEditorMode
     let onSaved: () -> Void
     let onCancel: () -> Void
 
+    private let originalDraft: MacManagedMCPServerDraft
+    @State private var confirmsDiscard = false
     @State private var draft: MacManagedMCPServerDraft
     @State private var isSaving = false
     @State private var errorMessage: String?
 
     init(
         mode: MacMCPServerEditorMode,
+        store: MacApplicationPort,
         onSaved: @escaping () -> Void,
         onCancel: @escaping () -> Void
     ) {
         self.mode = mode
+        self.store = store
         self.onSaved = onSaved
         self.onCancel = onCancel
-        switch mode {
-        case .add:
-            _draft = State(initialValue: MacManagedMCPServerDraft())
-        case .edit(_, let existing):
-            _draft = State(initialValue: existing)
+        originalDraft = switch mode {
+        case .add: MacManagedMCPServerDraft()
+        case .edit(_, let existing): existing
         }
+        _draft = State(initialValue: originalDraft)
     }
 
     private var title: String {
@@ -1970,6 +2101,7 @@ private struct MacMCPServerEditorSheet: View {
                     macExtensionsText("mac.extensions.mcp_editor.name", "Name"),
                     text: $draft.displayName
                 )
+                .accessibilityIdentifier("mac.mcp.editor.name")
                 Picker(
                     macExtensionsText("mac.extensions.mcp_editor.transport", "Transport"),
                     selection: $draft.transport
@@ -2025,26 +2157,46 @@ private struct MacMCPServerEditorSheet: View {
                 .toggleStyle(.macSwitch)
             }
             .formStyle(.grouped)
+            .scrollContentBackground(.hidden)
 
             if let errorMessage {
                 Text(errorMessage)
                     .font(.caption)
-                    .foregroundStyle(.red)
+                    .foregroundStyle(MacDesignColor.danger)
             }
 
             HStack {
+                if isSaving {
+                    ProgressView()
+                        .controlSize(.small)
+                }
                 Spacer()
-                Button(macExtensionsText("mac.extensions.action.cancel", "Cancel"), action: onCancel)
+                Button(macExtensionsText("mac.extensions.action.cancel", "Cancel")) {
+                    if draft == originalDraft { onCancel() } else { confirmsDiscard = true }
+                }
+                    .accessibilityIdentifier("mac.mcp.editor.cancel")
                     .keyboardShortcut(.cancelAction)
+                    .disabled(isSaving)
                 Button(macExtensionsText("mac.extensions.detail.save", "Save")) {
                     save()
                 }
+                .buttonStyle(.nolaProminent)
+                .accessibilityIdentifier("mac.mcp.editor.save")
                 .keyboardShortcut(.defaultAction)
                 .disabled(isSaving || draft.displayName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || draft.commandOrURL.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
             }
         }
+        .confirmationDialog(macExtensionsText("mac.extensions.detail.discard_title", "Discard unsaved changes?"),
+                            isPresented: $confirmsDiscard, titleVisibility: .visible) {
+            Button(String(localized: "Keep Editing"), role: .cancel) {}
+            Button(macExtensionsText("mac.extensions.detail.discard", "Discard Changes"), role: .destructive,
+                   action: onCancel)
+        }
         .padding(20)
         .frame(width: 460)
+        .frame(minHeight: 340, idealHeight: 420)
+        .background(MacDesignColor.canvas)
+        .interactiveDismissDisabled(isSaving || draft != originalDraft)
     }
 
     private func save() {
@@ -2056,9 +2208,9 @@ private struct MacMCPServerEditorSheet: View {
             do {
                 switch mode {
                 case .add:
-                    _ = try await MacExtensionsService.shared.createManagedMCPServer(capturedDraft)
+                    _ = try await MacExtensionsService.shared.createManagedMCPServer(capturedDraft, store: store)
                 case .edit(let item, _):
-                    _ = try await MacExtensionsService.shared.updateManagedMCPServer(itemID: item.id, draft: capturedDraft)
+                    _ = try await MacExtensionsService.shared.updateManagedMCPServer(itemID: item.id, draft: capturedDraft, store: store)
                 }
                 await MainActor.run {
                     isSaving = false

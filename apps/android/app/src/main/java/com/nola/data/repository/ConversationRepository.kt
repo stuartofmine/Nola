@@ -25,6 +25,7 @@ import kotlinx.serialization.json.JsonNull
 import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.put
+import kotlinx.serialization.json.contentOrNull
 import kotlinx.serialization.json.intOrNull
 import kotlinx.serialization.json.jsonPrimitive
 import java.util.UUID
@@ -71,17 +72,17 @@ interface ConversationRepository {
     suspend fun deleteConversation(id: String)
     suspend fun updateTitle(id: String, title: String)
     suspend fun updateSessionMemory(id: String, memory: String)
-    suspend fun updateKnowledge(id: String, knowledgePoints: String, wiki: String)
+    suspend fun updateKnowledge(id: String, knowledgePoints: String, wiki: String): Long
     suspend fun selectModel(id: String, model: ModelInfo, parameters: com.nola.domain.model.ModelParameters, expectedRevision: Long): Conversation
     suspend fun selectHost(id: String, binding: com.nola.domain.model.ExecutionHostBinding, parameters: com.nola.domain.model.ModelParameters, expectedRevision: Long): Conversation
     suspend fun modelParameters(id: String, model: ModelInfo): com.nola.domain.model.ModelParameters?
     suspend fun saveModelParameters(id: String, model: ModelInfo, value: com.nola.domain.model.ModelParameters, expectedBaseline: com.nola.domain.model.ModelParameters?, expectedRevision: Long): Conversation
-    suspend fun updateGenerationOverride(id: String, model: ModelInfo, value: ConversationGenerationOverride)
-    suspend fun updateResponseStyle(id: String, style: String?)
+    suspend fun updateGenerationOverride(id: String, model: ModelInfo, value: ConversationGenerationOverride): Long
+    suspend fun updateResponseStyle(id: String, style: String?): Long
     suspend fun updatePermissionMode(id: String, mode: String, expectedRevision: Long,
         owner: com.nola.data.local.PermissionConfigurationOwner)
-    suspend fun updateExecutionBackend(id: String, backend: String, sessions: Map<String, String>)
-    suspend fun setDataSourceEnabled(id: String, sourceId: String, enabled: Boolean?)
+    suspend fun updateExecutionBackend(id: String, backend: String, sessions: Map<String, String>): Long
+    suspend fun setDataSourceEnabled(id: String, sourceId: String, enabled: Boolean?): Long
     suspend fun touchLastActive(id: String)
 }
 
@@ -113,6 +114,7 @@ class ConversationRepositoryImpl @Inject constructor(
         val initial = Json.parseToJsonElement(if (modelInfo != null && parameters != null && !isHost)
             writeConversationParameters(encoded, modelInfo, parameters) else encoded).jsonObject.toMutableMap()
         initial.remove("knowledgePoints"); initial.remove("wiki")
+        initial["titleSource"] = JsonPrimitive(if (title.isNullOrBlank()) "automatic" else "user")
         initial["knowledge"] = JsonObject(mapOf("keyPointsMarkdown" to JsonPrimitive(settings.knowledgePoints),
             "wikiMarkdown" to JsonPrimitive(settings.wiki), "updatedAt" to kotlinx.serialization.json.JsonNull))
         applicationRuntime.createConversation(id, title.orEmpty(), now, now, JsonObject(initial).toString())
@@ -233,7 +235,7 @@ class ConversationRepositoryImpl @Inject constructor(
         applicationRuntime.replaceContextSummary(applicationRuntime.prepareContextCompaction(id), memory)
     }
 
-    override suspend fun updateKnowledge(id: String, knowledgePoints: String, wiki: String) = withContext(Dispatchers.IO) {
+    override suspend fun updateKnowledge(id: String, knowledgePoints: String, wiki: String): Long = withContext(Dispatchers.IO) {
         updateSettings(id) { copy(knowledgePoints = knowledgePoints, wiki = wiki) }
     }
 
@@ -279,13 +281,13 @@ class ConversationRepositoryImpl @Inject constructor(
         }
     }
 
-    override suspend fun updateGenerationOverride(id: String, model: ModelInfo, value: ConversationGenerationOverride) = withContext(Dispatchers.IO) {
+    override suspend fun updateGenerationOverride(id: String, model: ModelInfo, value: ConversationGenerationOverride): Long = withContext(Dispatchers.IO) {
         value.validate()
         val key = ConversationGenerationOverride.modelKey(model)
         patchConfiguration(id, conversationGenerationPatch(key, value))
     }
 
-    override suspend fun updateResponseStyle(id: String, style: String?) = withContext(Dispatchers.IO) {
+    override suspend fun updateResponseStyle(id: String, style: String?): Long = withContext(Dispatchers.IO) {
         com.nola.domain.model.requireValidPromptResponseStyle(style)
         updateSettings(id) { copy(promptResponseStyle = style) }
     }
@@ -303,16 +305,19 @@ class ConversationRepositoryImpl @Inject constructor(
         Unit
     }
 
-    private fun patchConfiguration(id: String, patch: JsonObject) {
+    private fun patchConfiguration(id: String, patch: JsonObject): Long {
         val current = applicationRuntime.loadConversation(id) ?: error("Conversation is missing: $id")
         applicationRuntime.patchConversationConfiguration(id, requireNotNull(current.configurationRevision), patch.toString()).requireCommitted()
+        return requireNotNull(applicationRuntime.loadConversation(id)?.configurationRevision) {
+            "Canonical conversation configuration revision is missing"
+        }
     }
 
-    override suspend fun updateExecutionBackend(id: String, backend: String, sessions: Map<String, String>) = withContext(Dispatchers.IO) {
+    override suspend fun updateExecutionBackend(id: String, backend: String, sessions: Map<String, String>): Long = withContext(Dispatchers.IO) {
         updateSettings(id) { copy(executionBackend = backend, externalExecutionSessions = sessions) }
     }
 
-    override suspend fun setDataSourceEnabled(id: String, sourceId: String, enabled: Boolean?) = withContext(Dispatchers.IO) {
+    override suspend fun setDataSourceEnabled(id: String, sourceId: String, enabled: Boolean?): Long = withContext(Dispatchers.IO) {
         if (sourceId.startsWith("data_source:")) {
             val canonicalId = sourceId.removePrefix("data_source:")
             require(sourceOverrides.resolve(id, System.currentTimeMillis()).any { it.sourceId == canonicalId }) {
@@ -323,6 +328,9 @@ class ConversationRepositoryImpl @Inject constructor(
                 false -> CanonicalDataSourceOverride.Disabled
                 null -> CanonicalDataSourceOverride.Inherit
             }, System.currentTimeMillis())
+            requireNotNull(applicationRuntime.loadConversation(id)?.configurationRevision) {
+                "Canonical conversation configuration revision is missing"
+            }
         } else {
             updateSettings(id) {
                 val selected = dataSourceIds.filterNot { it.startsWith("data_source:") }.toMutableSet()
@@ -334,12 +342,13 @@ class ConversationRepositoryImpl @Inject constructor(
 
     override suspend fun touchLastActive(id: String) = withContext(Dispatchers.IO) {
         updateSettings(id) { this }
+        Unit
     }
 
     private fun updateSettings(
         id: String,
         transform: AndroidConversationSettings.() -> AndroidConversationSettings,
-    ) {
+    ): Long {
         val stored = applicationRuntime.loadConversation(id) ?: error("Conversation is missing: $id")
         val before = stored.settingsJson?.let { Json.parseToJsonElement(it).jsonObject } ?: JsonObject(emptyMap())
         val after = Json.parseToJsonElement(transformConversationSettings(stored.settingsJson, transform)).jsonObject
@@ -353,8 +362,12 @@ class ConversationRepositoryImpl @Inject constructor(
         }
         changes.remove("version")
         changes.remove("permissionModeRawValue")?.let { changes["permissionProfile"] = it }
-        if (changes.isNotEmpty()) applicationRuntime.patchConversationConfiguration(id,
-            requireNotNull(stored.configurationRevision), JsonObject(changes).toString()).requireCommitted()
+        val currentRevision = requireNotNull(stored.configurationRevision)
+        if (changes.isEmpty()) return currentRevision
+        applicationRuntime.patchConversationConfiguration(id, currentRevision, JsonObject(changes).toString()).requireCommitted()
+        return requireNotNull(applicationRuntime.loadConversation(id)?.configurationRevision) {
+            "Canonical conversation configuration revision is missing"
+        }
     }
 
     private fun canonicalMessages(id: String): List<ConversationMessage> {
@@ -457,23 +470,28 @@ internal fun readConversationGenerationOverrides(stored: String?): Map<String, C
     }.toMap()
 }
 
-private fun CanonicalConversation.settings(): AndroidConversationSettings {
+internal fun decodeConversationSettings(settingsJson: String?): AndroidConversationSettings {
     val decoder = Json { ignoreUnknownKeys = true }
     val base = settingsJson
         ?.let { runCatching { decoder.decodeFromString<AndroidConversationSettings>(it) }.getOrNull() }
         ?: AndroidConversationSettings()
-    val fields = settingsJson?.let { Json.parseToJsonElement(it).jsonObject } ?: return base
+    val fields = settingsJson
+        ?.let { runCatching { Json.parseToJsonElement(it).jsonObject }.getOrNull() }
+        ?: return base
     val knowledge = fields["knowledge"] as? JsonObject
     return base.copy(
-        agentRoomOwner = fields["agentRoomOwner"]?.let {
-            Json.decodeFromJsonElement(com.nola.domain.model.AgentRoomContextOwner.serializer(), it)
-        },
-        knowledgePoints = knowledge?.get("keyPointsMarkdown")?.jsonPrimitive?.content ?: base.knowledgePoints,
-        wiki = knowledge?.get("wikiMarkdown")?.jsonPrimitive?.content ?: base.wiki,
-        selectedPromptTemplateId = fields["selectedPromptTemplateID"]?.takeUnless { it is kotlinx.serialization.json.JsonNull }
-            ?.jsonPrimitive?.content ?: base.selectedPromptTemplateId,
+        agentRoomOwner = fields["agentRoomOwner"]
+            ?.takeUnless { it is JsonNull }
+            ?.let { runCatching { decoder.decodeFromJsonElement(com.nola.domain.model.AgentRoomContextOwner.serializer(), it) }.getOrNull() }
+            ?: base.agentRoomOwner,
+        knowledgePoints = (knowledge?.get("keyPointsMarkdown") as? JsonPrimitive)?.contentOrNull ?: base.knowledgePoints,
+        wiki = (knowledge?.get("wikiMarkdown") as? JsonPrimitive)?.contentOrNull ?: base.wiki,
+        selectedPromptTemplateId = (fields["selectedPromptTemplateID"] as? JsonPrimitive)?.contentOrNull
+            ?: base.selectedPromptTemplateId,
     )
 }
+
+private fun CanonicalConversation.settings(): AndroidConversationSettings = decodeConversationSettings(settingsJson)
 
 private fun CanonicalConversation.toDomain(model: ModelInfo?): Conversation {
     val settings = settings()

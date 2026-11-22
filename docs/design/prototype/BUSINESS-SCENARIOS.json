@@ -1,6 +1,6 @@
 {
     "schema_version": 1,
-    "updated": "2026-11-10",
+    "updated": "2026-11-22",
     "scope": "当前仓库用户可见业务流程清单；场景状态是设计演示，不是生产完成证据。",
     "platforms": {
         "mac": "macOS",
@@ -133,8 +133,8 @@
         {
             "id": "web-login",
             "group": "start",
-            "title": "Web / Windows 连接登录",
-            "entry": "Host 地址 → 登录",
+            "title": "浏览器登录与退出宿主机",
+            "entry": "Host 受保护页面或设置 → 连接",
             "platforms": [
                 "web",
                 "windows"
@@ -142,26 +142,36 @@
             "sources": [
                 "apps/web/frontend/src/pages/Login.svelte",
                 "apps/web/frontend/src/lib/login.ts",
-                "apps/cli/src/web_parts/native_bridge.rs"
+                "apps/cli/src/web_parts/native_bridge.rs",
+                "apps/web/frontend/src/pages/Settings.svelte",
+                "apps/web/frontend/src/lib/settingsSession.ts",
+                "apps/windows/src-tauri/src/main.rs"
             ],
             "states": [
                 {
                     "id": "0",
-                    "title": "连接宿主机",
+                    "title": "登录宿主机",
                     "body": [
                         "输入正在连接的宿主机的访问令牌。需要帮助时可展开查看令牌位置。"
                     ],
                     "kind": "form",
                     "actions": [
                         {
-                            "label": "使用有效令牌（演示）",
+                            "label": "登录",
                             "to": "2",
                             "style": "primary"
                         },
                         {
-                            "label": "使用无效令牌（演示）",
+                            "label": "令牌被拒绝",
                             "to": "1",
-                            "style": "secondary"
+                            "style": "secondary",
+                            "preview_only": true
+                        },
+                        {
+                            "label": "本机已有访问权",
+                            "to": "local",
+                            "style": "secondary",
+                            "preview_only": true
                         }
                     ]
                 },
@@ -184,14 +194,71 @@
                     "id": "2",
                     "title": "已连接",
                     "body": [
-                        "回到登录前要访问的页面。"
+                        "已返回发起登录的站内页面。其他浏览器的会话独立。"
                     ],
                     "kind": "success",
                     "actions": [
                         {
-                            "label": "重新演示",
-                            "to": "0",
+                            "label": "退出当前会话",
+                            "to": "signed-out",
+                            "style": "secondary",
+                            "confirm": true
+                        }
+                    ]
+                },
+                {
+                    "id": "local",
+                    "title": "本机连接",
+                    "body": [
+                        "本机回环允许访问当前工作区；此浏览器尚未通过令牌登录。"
+                    ],
+                    "kind": "list",
+                    "actions": [
+                        {
+                            "label": "用令牌登录",
+                            "to": "optional",
+                            "style": "primary"
+                        }
+                    ]
+                },
+                {
+                    "id": "optional",
+                    "title": "用令牌登录",
+                    "body": [
+                        "从仍可访问的本机设置进入，可取消并回到连接设置。"
+                    ],
+                    "kind": "form",
+                    "actions": [
+                        {
+                            "label": "登录",
+                            "to": "2",
+                            "style": "primary"
+                        },
+                        {
+                            "label": "取消",
+                            "to": "local",
                             "style": "secondary"
+                        }
+                    ]
+                },
+                {
+                    "id": "signed-out",
+                    "title": "浏览器会话已退出",
+                    "body": [
+                        "远端入口需要重新登录；本机回环可继续通过本地信任访问。"
+                    ],
+                    "kind": "success",
+                    "actions": [
+                        {
+                            "label": "登录",
+                            "to": "0",
+                            "style": "primary"
+                        },
+                        {
+                            "label": "查看本机连接",
+                            "to": "local",
+                            "style": "secondary",
+                            "preview_only": true
                         }
                     ]
                 }
@@ -200,15 +267,16 @@
                 {
                     "label": "访问令牌",
                     "value": "DEMO_ONLY",
-                    "required": true
+                    "required": true,
+                    "secret": true
                 }
             ],
             "command": null,
-            "contract": "令牌保留在登录表单直至连接成功。登录成功后回到请求的站内页面。",
+            "contract": "认证成功后返回发起页。本机已有访问权时可取消登录。退出撤销当前浏览器会话，本机信任单独计算。",
             "boundary": "合成状态与交互设计；源码位置为业务依据，不证明所有平台已实现或已验收。",
             "platform_notes": {
                 "web": "共享业务合同；浏览器预览不模拟原生系统授权、手势或真实执行。",
-                "windows": "共享业务合同；浏览器预览不模拟原生系统授权、手势或真实执行。"
+                "windows": "Windows 使用本机 Tauri Host 的 Web 会话；此处不切换桌面壳连接地址。"
             }
         },
         {
@@ -2919,39 +2987,90 @@
         {
             "id": "local-model",
             "group": "model",
-            "title": "本地模型、下载与设备容量",
-            "entry": "模型 → 本地",
+            "title": "本地模型：在线推荐、直链导入、下载与一键启用",
+            "entry": "聊天模型选择器 → 管理与下载本地模型 / 模型中心 → 本地模型",
             "platforms": [
                 "mac",
                 "ios",
-                "android"
+                "android",
+                "web",
+                "windows",
+                "cli"
             ],
             "sources": [
+                "apps/cli/src/model_acquisition/planning.rs",
+                "apps/cli/src/model_acquisition/modelfit.rs",
+                "apps/macos/UI/MacLocalModelManagerView.swift",
                 "apps/ios/UI/ModelsView.swift",
-                "apps/web/frontend/src/pages/ModelCenter.svelte",
-                "apps/cli/src/config.rs"
+                "apps/android/app/src/main/java/com/nola/ui/screen/models/ModelsScreen.kt",
+                "apps/web/frontend/src/pages/ModelCenter.svelte"
             ],
             "states": [
                 {
                     "id": "0",
-                    "title": "选择本地模型",
+                    "title": "按设备在线推荐（UTC+8 中国默认 ModelScope）",
                     "body": [
-                        "核对大小、设备兼容与可用磁盘；不支持的设备显示原因。"
+                        "首屏优先展示「我的本地模型」与按当前内存动态匹配的推荐卡片，统一使用 GB 标注体积与「流畅运行 / 适中运行」徽章；UTC+8 中文环境默认走 ModelScope，可随时切换 Hugging Face。"
                     ],
                     "kind": "list",
                     "actions": [
                         {
-                            "label": "演示下载中断",
+                            "label": "粘贴模型直链 / owner/repo",
                             "to": "1",
+                            "style": "secondary"
+                        },
+                        {
+                            "label": "下载并使用（演示）",
+                            "to": "2",
                             "style": "primary"
                         }
                     ]
                 },
                 {
                     "id": "1",
+                    "title": "手动输入链接或仓库直达",
+                    "body": [
+                        "粘贴 Hugging Face / ModelScope 完整 URL 或 owner/repo，自动识别来源并解析最佳量化与设备适配，技术细节默认收纳于「技术详情」。"
+                    ],
+                    "kind": "form",
+                    "actions": [
+                        {
+                            "label": "解析并下载（演示）",
+                            "to": "2",
+                            "style": "primary"
+                        },
+                        {
+                            "label": "返回推荐列表",
+                            "to": "0",
+                            "style": "secondary"
+                        }
+                    ]
+                },
+                {
+                    "id": "2",
+                    "title": "后台下载中（百分比、速度与剩余时间）",
+                    "body": [
+                        "显示已下载体积、等宽数字百分比、速率与剩余时间；切走页面不会取消下载。"
+                    ],
+                    "kind": "loading",
+                    "actions": [
+                        {
+                            "label": "演示下载完成并启用",
+                            "to": "4",
+                            "style": "primary"
+                        },
+                        {
+                            "label": "演示网络中断",
+                            "to": "3",
+                            "style": "secondary"
+                        }
+                    ]
+                },
+                {
+                    "id": "3",
                     "title": "空间不足或下载中断",
                     "body": [
-                        "保留已选模型，允许清理明确的可重建缓存或稍后重试，不删除会话数据。"
+                        "保留已选模型与部分缓存，提供一键重试或切换来源，不删除任何会话数据。"
                     ],
                     "kind": "error",
                     "actions": [
@@ -2961,27 +3080,22 @@
                             "style": "primary"
                         },
                         {
-                            "label": "返回上一步",
+                            "label": "返回推荐列表",
                             "to": "0",
                             "style": "secondary"
                         }
                     ]
                 },
                 {
-                    "id": "2",
-                    "title": "模型已就绪",
+                    "id": "4",
+                    "title": "已就绪 · 一键切换并启动",
                     "body": [
-                        "下载完成不等于已经选择；显式激活后才用于新调用。"
+                        "已下载模型展示在「我的本地模型」，点击「切换并使用」自动启动或拉起推理服务并设为当前模型，不再要求手动点击两次。"
                     ],
                     "kind": "success",
                     "actions": [
                         {
-                            "label": "返回上一步",
-                            "to": "1",
-                            "style": "secondary"
-                        },
-                        {
-                            "label": "重新演示",
+                            "label": "返回推荐列表",
                             "to": "0",
                             "style": "secondary"
                         }
@@ -2990,185 +3104,431 @@
             ],
             "fields": [],
             "command": null,
-            "contract": "草稿、决定和结果属于当前对象；失败不能显示为成功。",
+            "contract": "UI 优先、动态在线推荐带 TTL 缓存、UTC+8 中文环境默认 ModelScope、支持直链/owner/repo 粘贴、失败保留缓存可重试、不删除用户数据。",
             "boundary": "合成状态与交互设计；源码位置为业务依据，不证明所有平台已实现或已验收。",
             "platform_notes": {
-                "mac": "共享业务合同；浏览器预览不模拟原生系统授权、手势或真实执行。",
-                "ios": "共享业务合同；浏览器预览不模拟原生系统授权、手势或真实执行。",
-                "android": "共享业务合同；浏览器预览不模拟原生系统授权、手势或真实执行。"
+                "mac": "按 (engine, source) 缓存推荐结果，单次打开无需反复冷探；下载完成后一键切换并启动。",
+                "ios": "端侧模型按设备内存动态匹配，UTC+8 默认 ModelScope 并提供切源入口，离线校验在后台线程完成。",
+                "android": "下载任务归属应用级协程作用域，切页不中断；选择已下载模型自动启动服务。",
+                "web": "与桌面端共享统一卡片、直链输入与来源切换，远程宿主机场景引导本机安装引擎。",
+                "windows": "以友好 GPU/CPU 名称替代底层 VULKAN/X64 字符串，适配窗口分屏与暗色启动底色。",
+                "cli": "nola model acquire 复用带磁盘与内存 TTL 缓存的规划器、并行探测与 8 秒总超时。"
             }
         },
         {
             "id": "host-pair",
             "group": "host",
-            "title": "粘贴配对、检查与连接",
-            "entry": "模型 / 连接 → 宿主机",
+            "title": "连接与管理已配对的宿主机",
+            "entry": "Mac 设置 → 连接；手机模型 → 宿主机",
             "platforms": [
                 "mac",
                 "ios",
                 "android"
             ],
             "sources": [
-                "apps/macos/Features/Chat/MacHostPermissionView.swift",
-                "apps/android/app/src/main/java/com/nola/ui/screen/chat/HostPermissionEvent.kt",
+                "apps/macos/App/NolaMacApp.swift",
+                "apps/ios/UI/ModelsView.swift",
+                "apps/android/app/src/main/java/com/nola/ui/screen/models/ModelsScreen.kt",
                 "docs/design/shared/HOST_CONNECTION_WORKFLOW.md"
             ],
             "states": [
                 {
                     "id": "0",
-                    "title": "粘贴连接信息",
+                    "title": "连接宿主机",
                     "body": [
-                        "用户主动粘贴后仅填草稿。显示地址与身份，保留手动填写入口。"
+                        "在 Mac 上打开设置里的「连接」，开启共享并复制连接信息。"
                     ],
                     "kind": "form",
                     "actions": [
                         {
-                            "label": "验证并连接（演示）",
-                            "to": "1",
+                            "label": "粘贴连接信息",
+                            "to": "draft",
                             "style": "primary"
                         },
                         {
-                            "label": "取消并保留原状",
-                            "to": "0",
+                            "label": "手动填写",
+                            "to": "manual",
+                            "style": "secondary"
+                        }
+                    ]
+                },
+                {
+                    "id": "manual",
+                    "title": "手动填写",
+                    "body": [
+                        "填写要连接的地址以及这台宿主机的访问令牌。"
+                    ],
+                    "kind": "form",
+                    "actions": [
+                        {
+                            "label": "验证并连接",
+                            "to": "checking",
+                            "style": "primary"
+                        },
+                        {
+                            "label": "粘贴连接信息",
+                            "to": "draft",
+                            "style": "secondary"
+                        }
+                    ]
+                },
+                {
+                    "id": "draft",
+                    "title": "检查连接信息",
+                    "body": [
+                        "确认地址，令牌仅用于验证这台宿主机。"
+                    ],
+                    "kind": "form",
+                    "actions": [
+                        {
+                            "label": "验证并连接",
+                            "to": "checking",
+                            "style": "primary"
+                        },
+                        {
+                            "label": "返回已保存的连接",
+                            "to": "2",
+                            "requires_pairing": true
+                        }
+                    ]
+                },
+                {
+                    "id": "checking",
+                    "title": "正在验证",
+                    "body": [
+                        "正在核对令牌与宿主机身份。"
+                    ],
+                    "kind": "waiting",
+                    "actions": [
+                        {
+                            "label": "预览回执",
+                            "to": "2",
                             "style": "secondary",
-                            "cancel": true
+                            "preview_only": true
+                        },
+                        {
+                            "label": "预览回执",
+                            "to": "rejected",
+                            "style": "secondary",
+                            "preview_only": true
+                        },
+                        {
+                            "label": "预览回执",
+                            "to": "1",
+                            "style": "secondary",
+                            "preview_only": true
+                        },
+                        {
+                            "label": "预览回执",
+                            "to": "offline",
+                            "style": "secondary",
+                            "preview_only": true
+                        },
+                        {
+                            "label": "预览回执",
+                            "to": "storage",
+                            "style": "secondary",
+                            "preview_only": true
+                        },
+                        {
+                            "label": "取消验证",
+                            "to": "draft",
+                            "style": "secondary",
+                            "platforms": [
+                                "ios",
+                                "mac"
+                            ]
+                        },
+                        {
+                            "label": "取消",
+                            "to": "0",
+                            "platforms": [
+                                "android"
+                            ]
+                        }
+                    ]
+                },
+                {
+                    "id": "rejected",
+                    "title": "令牌被拒绝",
+                    "body": [
+                        "从宿主机重新复制连接信息，或更正当前令牌。"
+                    ],
+                    "kind": "error",
+                    "actions": [
+                        {
+                            "label": "粘贴连接信息",
+                            "to": "draft",
+                            "style": "primary"
+                        },
+                        {
+                            "label": "重试",
+                            "to": "checking",
+                            "style": "secondary"
+                        },
+                        {
+                            "label": "返回已保存的连接",
+                            "to": "2",
+                            "requires_pairing": true
                         }
                     ]
                 },
                 {
                     "id": "1",
-                    "title": "身份校验失败",
+                    "title": "宿主机身份不符",
                     "body": [
-                        "响应身份与配对信息不一致。保留旧连接与凭据，检查来源后重试。"
+                        "请先核对 Mac 和地址。确认要重新配对时，先解除原来的绑定。"
                     ],
                     "kind": "error",
                     "actions": [
                         {
-                            "label": "检查来源后重试（演示）",
-                            "to": "2",
+                            "label": "检查连接信息",
+                            "to": "draft",
                             "style": "primary"
                         },
                         {
-                            "label": "返回上一步",
-                            "to": "0",
+                            "label": "返回已保存的连接",
+                            "to": "2",
+                            "requires_pairing": true
+                        }
+                    ]
+                },
+                {
+                    "id": "offline",
+                    "title": "宿主机不可达",
+                    "body": [
+                        "确认 Mac 已开启共享、设备可以互访，再重试。"
+                    ],
+                    "kind": "error",
+                    "actions": [
+                        {
+                            "label": "重试",
+                            "to": "checking",
+                            "style": "primary"
+                        },
+                        {
+                            "label": "修改地址",
+                            "to": "draft",
                             "style": "secondary"
+                        },
+                        {
+                            "label": "返回已保存的连接",
+                            "to": "2",
+                            "requires_pairing": true
+                        }
+                    ]
+                },
+                {
+                    "id": "storage",
+                    "title": "连接未保存",
+                    "body": [
+                        "设备未能保存配对信息。检查安全存储后重试。"
+                    ],
+                    "kind": "error",
+                    "actions": [
+                        {
+                            "label": "重试",
+                            "to": "checking",
+                            "style": "primary"
+                        },
+                        {
+                            "label": "返回编辑",
+                            "to": "draft",
+                            "style": "secondary"
+                        },
+                        {
+                            "label": "返回已保存的连接",
+                            "to": "2",
+                            "requires_pairing": true
                         }
                     ]
                 },
                 {
                     "id": "2",
-                    "title": "宿主机已连接",
+                    "title": "已配对",
                     "body": [
-                        "验证后保存。再明确选择此宿主机作为执行来源；配对不授予工具权限。"
+                        "当前设备已保存宿主机连接。"
                     ],
                     "kind": "success",
                     "actions": [
                         {
-                            "label": "返回上一步",
-                            "to": "1",
+                            "label": "检查连接",
+                            "to": "checking",
+                            "style": "secondary",
+                            "platforms": [
+                                "mac",
+                                "ios"
+                            ]
+                        },
+                        {
+                            "label": "编辑连接",
+                            "to": "draft"
+                        },
+                        {
+                            "label": "打开宿主机管理",
+                            "to": "manage",
                             "style": "secondary"
                         },
                         {
-                            "label": "重新演示",
+                            "label": "解除配对",
                             "to": "0",
+                            "style": "danger",
+                            "confirm": true
+                        }
+                    ]
+                },
+                {
+                    "id": "manage",
+                    "title": "宿主机管理",
+                    "body": [
+                        "此处展示已配对宿主机提供的管理页面。"
+                    ],
+                    "kind": "reader",
+                    "actions": [
+                        {
+                            "label": "返回",
+                            "to": "2",
                             "style": "secondary"
                         }
                     ]
                 }
             ],
-            "fields": [
-                {
-                    "label": "地址",
-                    "value": "http://host.example.invalid:5001",
-                    "required": true
-                },
-                {
-                    "label": "连接信息",
-                    "value": "DEMO_ONLY",
-                    "required": true
-                }
-            ],
+            "fields": [],
             "command": null,
-            "contract": "草稿、决定和结果属于当前对象；失败不能显示为成功。",
-            "boundary": "合成状态与交互设计；源码位置为业务依据，不证明所有平台已实现或已验收。",
+            "contract": "粘贴填写草稿。验证通过后保存地址、身份和凭据。改地址需重新提供令牌，失败可就地更正。",
+            "boundary": "使用内存中的书房 Mac 样例。原型模拟等待与回执；手机系统键盘、钥匙串、Keystore 和实际网络由原生测试覆盖。",
             "platform_notes": {
-                "mac": "共享业务合同；浏览器预览不模拟原生系统授权、手势或真实执行。",
-                "ios": "共享业务合同；浏览器预览不模拟原生系统授权、手势或真实执行。",
-                "android": "共享业务合同；浏览器预览不模拟原生系统授权、手势或真实执行。"
+                "mac": "设置 → 连接 → 连接到 Nola 服务器",
+                "ios": "设置 → 模型 → 宿主机，插件库也可发起配对",
+                "android": "设置 → 模型 → 宿主机连接"
             }
         },
         {
             "id": "share-host",
             "group": "host",
-            "title": "共享此 Mac 与局域网地址",
-            "entry": "Mac → 设置 → 宿主机连接",
+            "title": "在 Mac 上开启共享",
+            "entry": "Mac 设置 → 连接 → 共享这台 Mac",
             "platforms": [
                 "mac"
             ],
             "sources": [
-                "apps/macos/Features/Chat/MacHostPermissionView.swift",
-                "apps/android/app/src/main/java/com/nola/ui/screen/chat/HostPermissionEvent.kt",
+                "apps/macos/App/NolaMacApp.swift",
+                "apps/macos/Services/MacManagedNolaServer.swift",
                 "docs/design/shared/HOST_CONNECTION_WORKFLOW.md"
             ],
             "states": [
                 {
                     "id": "0",
-                    "title": "共享此 Mac",
+                    "title": "共享这台 Mac",
                     "body": [
-                        "说明可访问范围、监听状态及本机信任边界。"
+                        "为局域网内的 Nola 客户端提供连接。"
                     ],
                     "kind": "choice",
                     "actions": [
                         {
-                            "label": "分享连接信息（演示）",
-                            "to": "1",
+                            "label": "开启共享",
+                            "to": "starting",
                             "style": "primary"
                         }
                     ]
                 },
                 {
-                    "id": "1",
-                    "title": "复制连接信息",
+                    "id": "starting",
+                    "title": "正在启动服务",
                     "body": [
-                        "优先展示可用局域网地址，不能向手机复制通配监听地址。",
-                        "地址、身份与令牌来自一次明确分享。"
+                        "服务就绪后可复制连接信息。"
                     ],
-                    "kind": "review",
+                    "kind": "waiting",
                     "actions": [
                         {
-                            "label": "停止共享（演示）",
-                            "to": "2",
-                            "style": "primary",
-                            "confirm": true
+                            "label": "预览回执",
+                            "to": "1",
+                            "style": "secondary",
+                            "preview_only": true
                         },
                         {
-                            "label": "返回上一步",
+                            "label": "预览回执",
+                            "to": "failed",
+                            "style": "secondary",
+                            "preview_only": true
+                        },
+                        {
+                            "label": "关闭共享",
                             "to": "0",
                             "style": "secondary"
+                        }
+                    ]
+                },
+                {
+                    "id": "1",
+                    "title": "服务已就绪",
+                    "body": [
+                        "从手机或另一台 Mac 粘贴连接信息。"
+                    ],
+                    "kind": "success",
+                    "actions": [
+                        {
+                            "label": "复制连接信息",
+                            "to": "copied",
+                            "style": "primary"
                         },
                         {
-                            "label": "取消并保留原状",
-                            "to": "0",
-                            "style": "secondary",
-                            "cancel": true
+                            "label": "关闭共享",
+                            "to": "2",
+                            "style": "secondary"
+                        }
+                    ]
+                },
+                {
+                    "id": "copied",
+                    "title": "已复制连接信息",
+                    "body": [
+                        "可以前往客户端配对。"
+                    ],
+                    "kind": "success",
+                    "actions": [
+                        {
+                            "label": "复制连接信息",
+                            "to": "copied",
+                            "style": "primary"
+                        },
+                        {
+                            "label": "关闭共享",
+                            "to": "2",
+                            "style": "secondary"
                         }
                     ]
                 },
                 {
                     "id": "2",
-                    "title": "停止共享",
+                    "title": "共享已关闭",
                     "body": [
-                        "撤销分享前确认对当前远端会话的影响；已有记录保留。"
+                        "此 Mac 已停止接受新的连接。"
                     ],
-                    "kind": "warning",
+                    "kind": "empty",
                     "actions": [
                         {
-                            "label": "返回上一步",
-                            "to": "1",
-                            "style": "secondary"
+                            "label": "开启共享",
+                            "to": "starting",
+                            "style": "primary"
+                        }
+                    ]
+                },
+                {
+                    "id": "failed",
+                    "title": "服务未能启动",
+                    "body": [
+                        "检查本机地址与端口，然后重试。"
+                    ],
+                    "kind": "error",
+                    "actions": [
+                        {
+                            "label": "重试",
+                            "to": "starting",
+                            "style": "primary"
                         },
                         {
-                            "label": "重新演示",
+                            "label": "关闭共享",
                             "to": "0",
                             "style": "secondary"
                         }
@@ -3177,8 +3537,8 @@
             ],
             "fields": [],
             "command": null,
-            "contract": "草稿、决定和结果属于当前对象；失败不能显示为成功。",
-            "boundary": "合成状态与交互设计；源码位置为业务依据，不证明所有平台已实现或已验收。",
+            "contract": "开启共享并等候服务就绪，就绪后可复制完整连接信息或分别复制地址与令牌。关闭共享会停止此 Mac 管理的服务。",
+            "boundary": "本地样例只切换界面状态，不监听端口，不接触系统剪贴板。",
             "platform_notes": {
                 "mac": "共享业务合同；浏览器预览不模拟原生系统授权、手势或真实执行。"
             }
@@ -3186,18 +3546,17 @@
         {
             "id": "host-network",
             "group": "host",
-            "title": "离线、地址变更与凭据写入失败",
-            "entry": "宿主机 → 连接失败",
+            "title": "宿主机离线与重连",
+            "entry": "原生客户端 → 重新检查连接",
             "platforms": [
                 "mac",
                 "ios",
-                "android",
-                "web",
-                "windows"
+                "android"
             ],
             "sources": [
-                "apps/macos/Features/Chat/MacHostPermissionView.swift",
-                "apps/android/app/src/main/java/com/nola/ui/screen/chat/HostPermissionEvent.kt",
+                "apps/macos/App/NolaMacApp.swift",
+                "apps/ios/UI/ModelsView.swift",
+                "apps/android/app/src/main/java/com/nola/ui/screen/models/ModelsScreen.kt",
                 "docs/design/shared/HOST_CONNECTION_WORKFLOW.md"
             ],
             "states": [
@@ -3259,14 +3618,12 @@
             ],
             "fields": [],
             "command": null,
-            "contract": "草稿、决定和结果属于当前对象；失败不能显示为成功。",
+            "contract": "不可达时检查地址、共享开关和网络。重新验证同一已保存连接后再恢复操作。",
             "boundary": "合成状态与交互设计；源码位置为业务依据，不证明所有平台已实现或已验收。",
             "platform_notes": {
                 "mac": "共享业务合同；浏览器预览不模拟原生系统授权、手势或真实执行。",
                 "ios": "共享业务合同；浏览器预览不模拟原生系统授权、手势或真实执行。",
-                "android": "共享业务合同；浏览器预览不模拟原生系统授权、手势或真实执行。",
-                "web": "共享业务合同；浏览器预览不模拟原生系统授权、手势或真实执行。",
-                "windows": "共享业务合同；浏览器预览不模拟原生系统授权、手势或真实执行。"
+                "android": "共享业务合同；浏览器预览不模拟原生系统授权、手势或真实执行。"
             }
         },
         {
@@ -3710,6 +4067,356 @@
                 "web": "共享业务合同；浏览器预览不模拟原生系统授权、手势或真实执行。",
                 "windows": "共享业务合同；浏览器预览不模拟原生系统授权、手势或真实执行。"
             }
+        },
+        {
+            "id": "github-skill",
+            "group": "capability",
+            "title": "从对话安装 GitHub Skill",
+            "entry": "本机或当前 Host 的对话",
+            "platforms": [
+                "mac",
+                "ios",
+                "android",
+                "web",
+                "windows",
+                "cli"
+            ],
+            "sources": [
+                "core/nola-skill-host/src/lib.rs",
+                "apps/ios/Services/IOSGitHubSkillPackages.swift",
+                "apps/android/app/src/main/java/com/nola/core/AndroidAgentHostExecutor.kt",
+                "apps/cli/src/github_skills.rs"
+            ],
+            "states": [
+                {
+                    "id": "0",
+                    "title": "安装论文精读技能",
+                    "body": [
+                        "帮我找 Nature Skills 里做论文精读卡的技能，安装并启用。"
+                    ],
+                    "kind": "choice",
+                    "actions": [
+                        {
+                            "label": "按名称查找",
+                            "to": "choose",
+                            "style": "primary"
+                        },
+                        {
+                            "label": "使用目录链接",
+                            "to": "review",
+                            "style": "secondary"
+                        }
+                    ]
+                },
+                {
+                    "id": "choose",
+                    "title": "找到论文精读卡",
+                    "body": [
+                        "公开仓库中与请求匹配的 Skill。"
+                    ],
+                    "kind": "list",
+                    "actions": [
+                        {
+                            "label": "选择 nature-paper-card",
+                            "to": "review",
+                            "style": "primary"
+                        },
+                        {
+                            "label": "返回对话",
+                            "to": "0",
+                            "style": "secondary"
+                        }
+                    ]
+                },
+                {
+                    "id": "review",
+                    "title": "允许安装这个 Skill？",
+                    "body": [
+                        "下载所选技能及其声明的共享文件，并在这里启用，供以后的对话调用。"
+                    ],
+                    "kind": "permission",
+                    "actions": [
+                        {
+                            "label": "仅允许本次",
+                            "to": "installed",
+                            "style": "primary"
+                        },
+                        {
+                            "label": "拒绝",
+                            "to": "denied",
+                            "style": "secondary"
+                        }
+                    ]
+                },
+                {
+                    "id": "installed",
+                    "title": "已安装并启用",
+                    "body": [
+                        "新会话可以调用这份论文精读技能。"
+                    ],
+                    "kind": "success",
+                    "actions": [
+                        {
+                            "label": "在新会话中使用",
+                            "to": "read",
+                            "style": "primary"
+                        },
+                        {
+                            "label": "查看已安装技能",
+                            "to": "settings",
+                            "style": "secondary"
+                        }
+                    ]
+                },
+                {
+                    "id": "read",
+                    "title": "论文精读卡",
+                    "body": [
+                        "已读取随包术语表，英文标题为 Terminology Ledger。"
+                    ],
+                    "kind": "answer",
+                    "actions": [
+                        {
+                            "label": "查看已安装技能",
+                            "to": "settings",
+                            "style": "primary"
+                        }
+                    ]
+                },
+                {
+                    "id": "settings",
+                    "title": "已安装技能",
+                    "body": [
+                        "按论文原文提取研究问题、方法与证据，并整理成精读卡。"
+                    ],
+                    "kind": "list",
+                    "actions": [
+                        {
+                            "label": "停用",
+                            "to": "off",
+                            "style": "secondary"
+                        },
+                        {
+                            "label": "在新会话中使用",
+                            "to": "read",
+                            "style": "primary"
+                        }
+                    ]
+                },
+                {
+                    "id": "off",
+                    "title": "技能已停用",
+                    "body": [
+                        "这份技能保留在安装位置。重新启用后，新会话可以继续使用。"
+                    ],
+                    "kind": "reader",
+                    "actions": [
+                        {
+                            "label": "重新启用",
+                            "to": "settings",
+                            "style": "primary"
+                        }
+                    ]
+                },
+                {
+                    "id": "denied",
+                    "title": "本次安装已拒绝",
+                    "body": [
+                        "此位置的技能列表没有变化。"
+                    ],
+                    "kind": "blocked",
+                    "actions": [
+                        {
+                            "label": "重新审阅",
+                            "to": "review",
+                            "style": "primary"
+                        },
+                        {
+                            "label": "返回对话",
+                            "to": "0",
+                            "style": "secondary"
+                        }
+                    ]
+                }
+            ],
+            "fields": [],
+            "command": "nola",
+            "contract": "安装位置跟随会话。权限卡显示具体目录和目标，确认后才登记启用。来源固定到同一 Git 提交。",
+            "boundary": "浏览器内回放示例。本机与配对 Host 的设置各自保留，Windows 使用本地 Web Host 的设计视角。",
+            "platform_notes": {}
+        },
+        {
+            "id": "github-skill-host",
+            "group": "capability",
+            "title": "手机对话 · 安装到配对 Host",
+            "entry": "已配对 Host 的对话",
+            "platforms": [
+                "ios",
+                "android"
+            ],
+            "sources": [
+                "core/nola-skill-host/src/lib.rs",
+                "apps/ios/Services/IOSGitHubSkillPackages.swift",
+                "apps/android/app/src/main/java/com/nola/core/AndroidAgentHostExecutor.kt",
+                "apps/cli/src/github_skills.rs"
+            ],
+            "states": [
+                {
+                    "id": "0",
+                    "title": "安装论文精读技能",
+                    "body": [
+                        "帮我找 Nature Skills 里做论文精读卡的技能，安装并启用。"
+                    ],
+                    "kind": "choice",
+                    "actions": [
+                        {
+                            "label": "按名称查找",
+                            "to": "choose",
+                            "style": "primary"
+                        },
+                        {
+                            "label": "使用目录链接",
+                            "to": "review",
+                            "style": "secondary"
+                        }
+                    ]
+                },
+                {
+                    "id": "choose",
+                    "title": "找到论文精读卡",
+                    "body": [
+                        "公开仓库中与请求匹配的 Skill。"
+                    ],
+                    "kind": "list",
+                    "actions": [
+                        {
+                            "label": "选择 nature-paper-card",
+                            "to": "review",
+                            "style": "primary"
+                        },
+                        {
+                            "label": "返回对话",
+                            "to": "0",
+                            "style": "secondary"
+                        }
+                    ]
+                },
+                {
+                    "id": "review",
+                    "title": "允许安装这个 Skill？",
+                    "body": [
+                        "下载所选技能及其声明的共享文件，并在这里启用，供以后的对话调用。"
+                    ],
+                    "kind": "permission",
+                    "actions": [
+                        {
+                            "label": "仅允许本次",
+                            "to": "installed",
+                            "style": "primary"
+                        },
+                        {
+                            "label": "拒绝",
+                            "to": "denied",
+                            "style": "secondary"
+                        }
+                    ]
+                },
+                {
+                    "id": "installed",
+                    "title": "已安装并启用",
+                    "body": [
+                        "新会话可以调用这份论文精读技能。"
+                    ],
+                    "kind": "success",
+                    "actions": [
+                        {
+                            "label": "在新会话中使用",
+                            "to": "read",
+                            "style": "primary"
+                        },
+                        {
+                            "label": "查看已安装技能",
+                            "to": "settings",
+                            "style": "secondary"
+                        }
+                    ]
+                },
+                {
+                    "id": "read",
+                    "title": "论文精读卡",
+                    "body": [
+                        "已读取随包术语表，英文标题为 Terminology Ledger。"
+                    ],
+                    "kind": "answer",
+                    "actions": [
+                        {
+                            "label": "查看已安装技能",
+                            "to": "settings",
+                            "style": "primary"
+                        }
+                    ]
+                },
+                {
+                    "id": "settings",
+                    "title": "已安装技能",
+                    "body": [
+                        "按论文原文提取研究问题、方法与证据，并整理成精读卡。"
+                    ],
+                    "kind": "list",
+                    "actions": [
+                        {
+                            "label": "停用",
+                            "to": "off",
+                            "style": "secondary"
+                        },
+                        {
+                            "label": "在新会话中使用",
+                            "to": "read",
+                            "style": "primary"
+                        }
+                    ]
+                },
+                {
+                    "id": "off",
+                    "title": "技能已停用",
+                    "body": [
+                        "这份技能保留在安装位置。重新启用后，新会话可以继续使用。"
+                    ],
+                    "kind": "reader",
+                    "actions": [
+                        {
+                            "label": "重新启用",
+                            "to": "settings",
+                            "style": "primary"
+                        }
+                    ]
+                },
+                {
+                    "id": "denied",
+                    "title": "本次安装已拒绝",
+                    "body": [
+                        "此位置的技能列表没有变化。"
+                    ],
+                    "kind": "blocked",
+                    "actions": [
+                        {
+                            "label": "重新审阅",
+                            "to": "review",
+                            "style": "primary"
+                        },
+                        {
+                            "label": "返回对话",
+                            "to": "0",
+                            "style": "secondary"
+                        }
+                    ]
+                }
+            ],
+            "fields": [],
+            "command": "nola",
+            "contract": "安装位置跟随会话。权限卡显示具体目录和目标，确认后才登记启用。来源固定到同一 Git 提交。",
+            "boundary": "浏览器内回放示例。本机与配对 Host 的设置各自保留，Windows 使用本地 Web Host 的设计视角。",
+            "platform_notes": {}
         },
         {
             "id": "skill-editor",
@@ -5042,7 +5749,7 @@
             "id": "experts",
             "group": "collaboration",
             "title": "专家配置、子任务协作与只读会话",
-            "entry": "输入栏 @ 专家 / 专家与技能 / 会话 → 任务",
+            "entry": "输入栏 @ / 已发消息中的专家名字 / 会话 → 任务",
             "platforms": [
                 "mac",
                 "ios",
@@ -5061,7 +5768,7 @@
                     "id": "0",
                     "title": "选择专家",
                     "body": [
-                        "主会话仅由 Nola 面向用户发言；专家作为协作执行者处理子任务，不直接生成专家气泡。"
+                        "输入「请 @代码」，从候选中选择代码助手，再继续写要求。选人后仍在编辑草稿。发送后，点击正文里的名字可查看该次绑定的专家。"
                     ],
                     "kind": "choice",
                     "actions": [
@@ -5122,7 +5829,7 @@
                     "id": "3",
                     "title": "主会话汇总回复完成",
                     "body": [
-                        "Nola 汇总专家核对结论统一回复用户，完整子任务来往保留在只读专家子会话中。"
+                        "Nola 在主会话回复。点消息中的专家名字可查看资料，从任务卡可直接阅读派发记录。重新引入专家后，原来的名字仍指向旧配置。"
                     ],
                     "kind": "answer",
                     "actions": [
@@ -6796,14 +7503,434 @@
                 "web": "共享业务合同；浏览器预览不模拟原生系统授权、手势或真实执行。",
                 "windows": "共享业务合同；浏览器预览不模拟原生系统授权、手势或真实执行。"
             }
+        },
+        {
+            "id": "harness-plugins",
+            "group": "capability",
+            "title": "插件库与工作区页面",
+            "entry": "能力库 → 插件 · 工作区侧栏",
+            "platforms": [
+                "mac",
+                "ios",
+                "android",
+                "web",
+                "windows",
+                "cli"
+            ],
+            "sources": [
+                "apps/cli/src/harness_plugin.rs"
+            ],
+            "states": [
+                {
+                    "id": "0",
+                    "title": "插件",
+                    "body": [
+                        "尚未安装插件。"
+                    ],
+                    "kind": "empty",
+                    "actions": [
+                        {
+                            "label": "添加插件",
+                            "to": "add",
+                            "style": "primary"
+                        },
+                        {
+                            "label": "连接 Host",
+                            "to": "offline",
+                            "style": "secondary",
+                            "preview_only": true
+                        },
+                        {
+                            "label": "查看部分读取失败",
+                            "to": "partial",
+                            "style": "secondary",
+                            "preview_only": true
+                        }
+                    ]
+                },
+                {
+                    "id": "add",
+                    "title": "添加插件",
+                    "body": [
+                        "选择插件包和运行位置。"
+                    ],
+                    "kind": "choice",
+                    "actions": [
+                        {
+                            "label": "DeepSeek Harness · Web",
+                            "to": "dsh",
+                            "style": "secondary"
+                        },
+                        {
+                            "label": "继续",
+                            "to": "pi-review",
+                            "style": "primary"
+                        },
+                        {
+                            "label": "取消",
+                            "to": "0",
+                            "style": "secondary"
+                        }
+                    ]
+                },
+                {
+                    "id": "pi",
+                    "title": "添加插件",
+                    "body": [
+                        "安装终端状态插件。"
+                    ],
+                    "kind": "form",
+                    "actions": [
+                        {
+                            "label": "DeepSeek Harness · Web",
+                            "to": "dsh",
+                            "style": "secondary"
+                        },
+                        {
+                            "label": "继续",
+                            "to": "pi-review",
+                            "style": "primary"
+                        },
+                        {
+                            "label": "取消",
+                            "to": "0",
+                            "style": "secondary"
+                        }
+                    ]
+                },
+                {
+                    "id": "pi-review",
+                    "title": "安装终端状态插件？",
+                    "body": [
+                        "包内代码将在所选设备运行。"
+                    ],
+                    "kind": "permission",
+                    "actions": [
+                        {
+                            "label": "安装",
+                            "to": "pi-installed",
+                            "style": "primary"
+                        },
+                        {
+                            "label": "返回编辑",
+                            "to": "pi",
+                            "style": "secondary"
+                        }
+                    ]
+                },
+                {
+                    "id": "pi-installed",
+                    "title": "插件",
+                    "body": [
+                        "pi-statusline"
+                    ],
+                    "kind": "list",
+                    "actions": [
+                        {
+                            "label": "添加插件",
+                            "to": "add",
+                            "style": "secondary"
+                        },
+                        {
+                            "label": "移除",
+                            "to": "pi-remove",
+                            "style": "secondary"
+                        }
+                    ]
+                },
+                {
+                    "id": "pi-remove",
+                    "title": "移除 pi-statusline？",
+                    "body": [
+                        "从这台设备的 Pi 配置移除。"
+                    ],
+                    "kind": "choice",
+                    "actions": [
+                        {
+                            "label": "移除",
+                            "to": "0",
+                            "style": "danger"
+                        },
+                        {
+                            "label": "取消",
+                            "to": "pi-installed",
+                            "style": "secondary"
+                        }
+                    ]
+                },
+                {
+                    "id": "dsh",
+                    "title": "添加插件",
+                    "body": [
+                        "任务看板与参考资料随包安装。"
+                    ],
+                    "kind": "form",
+                    "actions": [
+                        {
+                            "label": "Pi",
+                            "to": "pi",
+                            "style": "secondary"
+                        },
+                        {
+                            "label": "继续",
+                            "to": "dsh-review",
+                            "style": "primary"
+                        },
+                        {
+                            "label": "取消",
+                            "to": "0",
+                            "style": "secondary"
+                        }
+                    ]
+                },
+                {
+                    "id": "dsh-review",
+                    "title": "安装研究工作台？",
+                    "body": [
+                        "包内代码将在所选设备运行。"
+                    ],
+                    "kind": "permission",
+                    "actions": [
+                        {
+                            "label": "安装",
+                            "to": "dsh-installed",
+                            "style": "primary"
+                        },
+                        {
+                            "label": "返回编辑",
+                            "to": "dsh",
+                            "style": "secondary"
+                        },
+                        {
+                            "label": "安装到已有插件的设备",
+                            "to": "both-installed",
+                            "style": "secondary",
+                            "preview_only": true
+                        }
+                    ]
+                },
+                {
+                    "id": "dsh-installed",
+                    "title": "插件",
+                    "body": [
+                        "研究工作台"
+                    ],
+                    "kind": "list",
+                    "actions": [
+                        {
+                            "label": "任务看板",
+                            "to": "page",
+                            "style": "secondary"
+                        },
+                        {
+                            "label": "参考资料",
+                            "to": "sources",
+                            "style": "secondary"
+                        },
+                        {
+                            "label": "移除",
+                            "to": "dsh-remove",
+                            "style": "secondary"
+                        },
+                        {
+                            "label": "对话",
+                            "to": "workspace-chat",
+                            "style": "secondary"
+                        },
+                        {
+                            "label": "添加插件",
+                            "to": "add",
+                            "style": "secondary"
+                        }
+                    ]
+                },
+                {
+                    "id": "page",
+                    "title": "任务看板",
+                    "body": [
+                        "本周研究"
+                    ],
+                    "kind": "reader",
+                    "actions": [
+                        {
+                            "label": "参考资料",
+                            "to": "sources",
+                            "style": "secondary"
+                        },
+                        {
+                            "label": "插件",
+                            "to": "dsh-installed",
+                            "style": "secondary"
+                        },
+                        {
+                            "label": "对话",
+                            "to": "workspace-chat",
+                            "style": "secondary"
+                        }
+                    ]
+                },
+                {
+                    "id": "sources",
+                    "title": "参考资料",
+                    "body": [
+                        "研究资料"
+                    ],
+                    "kind": "reader",
+                    "actions": [
+                        {
+                            "label": "任务看板",
+                            "to": "page",
+                            "style": "secondary"
+                        },
+                        {
+                            "label": "插件",
+                            "to": "dsh-installed",
+                            "style": "secondary"
+                        },
+                        {
+                            "label": "对话",
+                            "to": "workspace-chat",
+                            "style": "secondary"
+                        }
+                    ]
+                },
+                {
+                    "id": "workspace-chat",
+                    "title": "项目讨论",
+                    "body": [
+                        "研究报告准备好了吗？"
+                    ],
+                    "kind": "reader",
+                    "actions": [
+                        {
+                            "label": "任务看板",
+                            "to": "page",
+                            "style": "secondary"
+                        },
+                        {
+                            "label": "参考资料",
+                            "to": "sources",
+                            "style": "secondary"
+                        },
+                        {
+                            "label": "插件",
+                            "to": "dsh-installed",
+                            "style": "secondary"
+                        }
+                    ]
+                },
+                {
+                    "id": "dsh-remove",
+                    "title": "移除研究工作台？",
+                    "body": [
+                        "此配置中的任务看板和参考资料入口将同时移除。"
+                    ],
+                    "kind": "choice",
+                    "actions": [
+                        {
+                            "label": "移除",
+                            "to": "0",
+                            "style": "danger"
+                        },
+                        {
+                            "label": "取消",
+                            "to": "dsh-installed",
+                            "style": "secondary"
+                        }
+                    ]
+                },
+                {
+                    "id": "offline",
+                    "title": "连接桌面 Host",
+                    "body": [
+                        "选择设备后查看它的插件。"
+                    ],
+                    "kind": "blocked",
+                    "actions": [
+                        {
+                            "label": "返回插件",
+                            "to": "0",
+                            "style": "secondary"
+                        }
+                    ]
+                },
+                {
+                    "id": "partial",
+                    "title": "插件",
+                    "body": [
+                        "DSH 终端清单读取失败。"
+                    ],
+                    "kind": "error",
+                    "actions": [
+                        {
+                            "label": "重新读取",
+                            "to": "pi-installed",
+                            "style": "secondary"
+                        },
+                        {
+                            "label": "移除",
+                            "to": "pi-remove",
+                            "style": "secondary"
+                        }
+                    ]
+                },
+                {
+                    "id": "both-installed",
+                    "title": "插件",
+                    "body": [
+                        "研究工作台、pi-statusline"
+                    ],
+                    "kind": "list",
+                    "actions": [
+                        {
+                            "label": "任务看板",
+                            "to": "page",
+                            "style": "secondary"
+                        },
+                        {
+                            "label": "参考资料",
+                            "to": "sources",
+                            "style": "secondary"
+                        },
+                        {
+                            "label": "移除",
+                            "to": "dsh-remove",
+                            "style": "secondary"
+                        },
+                        {
+                            "label": "对话",
+                            "to": "workspace-chat",
+                            "style": "secondary"
+                        },
+                        {
+                            "label": "添加插件",
+                            "to": "add",
+                            "style": "secondary"
+                        },
+                        {
+                            "label": "移除 pi-statusline",
+                            "to": "pi-remove",
+                            "style": "secondary"
+                        }
+                    ]
+                }
+            ],
+            "fields": [],
+            "command": "nola plugin",
+            "contract": "一次安装，同时更新插件库和工作区。库中页面和侧栏入口定位到同一个页面。",
+            "boundary": "预览使用示例包与本地状态。原生包安装、Host 配对和隔离渲染由产品验收。",
+            "platform_notes": {
+                "mac": "安装后在工作区侧栏直接打开随包提供的页面。",
+                "windows": "安装后在工作区侧栏直接打开随包提供的页面。",
+                "web": "安装后在工作区侧栏直接打开随包提供的页面。"
+            }
         }
     ],
     "route_coverage": {
         "/models": [
             "model-empty",
             "api-config",
-            "catalog-select",
-            "host-pair"
+            "catalog-select"
         ],
         "/model-test": [
             "model-probe"
@@ -6816,7 +7943,9 @@
             "skill-review",
             "mcp-config",
             "mcp-uncertain",
-            "mcp-invoke"
+            "mcp-invoke",
+            "github-skill",
+            "harness-plugins"
         ],
         "/activity": [
             "activity-inbox",
@@ -6838,7 +7967,8 @@
             "general-fonts",
             "updates",
             "privacy-export",
-            "diagnostics"
+            "diagnostics",
+            "web-login"
         ],
         "/scheduled-actions": [
             "plans"
@@ -6861,7 +7991,11 @@
             "permission",
             "remote-reconnect",
             "compaction",
-            "inspector"
+            "inspector",
+            "github-skill"
+        ],
+        "/plugin-page": [
+            "harness-plugins"
         ]
     }
 }

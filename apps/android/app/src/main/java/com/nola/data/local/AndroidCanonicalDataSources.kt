@@ -167,7 +167,8 @@ internal class AndroidCanonicalDataSources(
         return DataSourceValidationContract(
             sourceId = value.string("sourceId"), connectorId = value.string("connectorId"),
             connectorVersion = value.getValue("connectorVersion").jsonPrimitive.int,
-            readerDescription = value.string("readerDescription"), format = "canonical",
+            readerDescription = value.string("readerDescription"),
+            format = readSourceFormat(recipe.getValue("outputSchema")),
             schemaFields = value.getValue("schemaFields").jsonArray.map { it.jsonPrimitive.content },
             redactedSample = value.string("redactedSample"), recordCount = value.getValue("recordCount").jsonPrimitive.int,
             maximumAgeMinutes = value.getValue("maximumAgeMinutes").jsonPrimitive.int,
@@ -195,10 +196,21 @@ internal fun DataSourceValidationContract.toCanonicalContract(): JsonObject = bu
     put("readRecipe", buildJsonObject {
         put("method", recipe.method.name.replaceFirstChar { it.lowercase() }); put("operationId", recipe.operationId)
         put("configurationKeys", JsonArray(recipe.configurationKeys.map(::JsonPrimitive)))
-        put("outputSchema", Json.parseToJsonElement(recipe.outputSchemaJson))
+        val schema = Json.parseToJsonElement(recipe.outputSchemaJson)
+        put("outputSchema", if (schema is JsonObject && format.isNotBlank() && SOURCE_FORMAT_ANNOTATION !in schema) {
+            JsonObject(schema + (SOURCE_FORMAT_ANNOTATION to JsonPrimitive(format)))
+        } else schema)
     })
     put("schemaFields", JsonArray(schemaFields.map(::JsonPrimitive))); put("redactedSample", redactedSample)
     put("recordCount", recordCount); put("maximumAgeMinutes", maximumAgeMinutes)
     put("validationState", validationState.name.replaceFirstChar { it.lowercase() })
     put("validatedAt", Instant.ofEpochMilli(validatedAt).toString()); put("observedAt", Instant.ofEpochMilli(observedAt).toString())
 }
+
+// An annotation on the existing JSON Schema records the observed input format.
+// An older schema can describe the same output for several different formats.
+private const val SOURCE_FORMAT_ANNOTATION = "x-nola-source-format"
+
+internal fun readSourceFormat(schema: JsonElement): String =
+    ((schema as? JsonObject)?.get(SOURCE_FORMAT_ANNOTATION) as? JsonPrimitive)
+        ?.takeIf { it.isString }?.content.orEmpty()

@@ -19,6 +19,7 @@ import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
@@ -80,25 +81,25 @@ class DataSourcesViewModel internal constructor(
             sourceReadPending = sourceReadPending || refreshSources
             return
         }
-        _uiState.value = _uiState.value.copy(isRefreshing = true)
+        _uiState.update { it.copy(isRefreshing = true) }
         viewModelScope.launch {
             val previous = _uiState.value
             try {
                 val outcome = withContext(ioDispatcher) {
                     sourceOperation { operations.load(refreshSources, previous) }
                 }
-                val current = _uiState.value
-                _uiState.value = outcome.getOrElse { error ->
-                    current.copy(operationError = error.localizedMessage ?: error.javaClass.simpleName)
-                }.copy(
-                    isRefreshing = false,
-                    validatingSourceId = current.validatingSourceId,
-                    busySourceIds = current.busySourceIds,
-                    operationError = outcome.exceptionOrNull()?.let { it.localizedMessage ?: it.javaClass.simpleName }
-                        ?: outcome.getOrNull()?.operationError ?: current.operationError
-                )
+                _uiState.update { current ->
+                    val resolvedError = outcome.exceptionOrNull()?.let { it.localizedMessage ?: it.javaClass.simpleName }
+                        ?: outcome.getOrNull()?.operationError
+                    outcome.getOrElse { current }.copy(
+                        isRefreshing = false,
+                        validatingSourceId = current.validatingSourceId,
+                        busySourceIds = current.busySourceIds,
+                        operationError = if (refreshSources) resolvedError else (resolvedError ?: current.operationError)
+                    )
+                }
             } finally {
-                _uiState.value = _uiState.value.copy(isRefreshing = false)
+                _uiState.update { it.copy(isRefreshing = false) }
                 if (reloadPending) {
                     val readSources = sourceReadPending
                     reloadPending = false
@@ -112,17 +113,19 @@ class DataSourcesViewModel internal constructor(
     fun validateAndSave(source: CustomDataSourceConfig, onComplete: (Boolean) -> Unit = {}) {
         if (!viewModelScope.isActive) return
         if (_uiState.value.validatingSourceId != null) return
-        _uiState.value = _uiState.value.copy(validatingSourceId = source.id, operationError = null)
+        _uiState.update { it.copy(validatingSourceId = source.id, operationError = null) }
         viewModelScope.launch {
             val result = try {
                 withContext(ioDispatcher) { sourceOperation { operations.save(source) } }
             } finally {
-                _uiState.value = _uiState.value.copy(validatingSourceId = null)
+                _uiState.update { it.copy(validatingSourceId = null) }
             }
-            _uiState.value = _uiState.value.copy(
-                validatingSourceId = null,
-                operationError = result.exceptionOrNull()?.localizedMessage
-            )
+            _uiState.update {
+                it.copy(
+                    validatingSourceId = null,
+                    operationError = result.exceptionOrNull()?.localizedMessage
+                )
+            }
             loadData(refreshSources = false)
             onComplete(result.isSuccess)
         }
@@ -139,26 +142,30 @@ class DataSourcesViewModel internal constructor(
     private fun mutate(sourceId: String, operation: suspend () -> Unit) {
         if (!viewModelScope.isActive) return
         if (sourceId in _uiState.value.busySourceIds) return
-        _uiState.value = _uiState.value.copy(
-            busySourceIds = _uiState.value.busySourceIds + sourceId,
-            operationError = null
-        )
+        _uiState.update {
+            it.copy(
+                busySourceIds = it.busySourceIds + sourceId,
+                operationError = null
+            )
+        }
         viewModelScope.launch {
             val result = try {
                 withContext(ioDispatcher) { sourceOperation { operation() } }
             } finally {
-                _uiState.value = _uiState.value.copy(busySourceIds = _uiState.value.busySourceIds - sourceId)
+                _uiState.update { it.copy(busySourceIds = it.busySourceIds - sourceId) }
             }
-            _uiState.value = _uiState.value.copy(
-                busySourceIds = _uiState.value.busySourceIds - sourceId,
-                operationError = result.exceptionOrNull()?.localizedMessage
-            )
+            _uiState.update {
+                it.copy(
+                    busySourceIds = it.busySourceIds - sourceId,
+                    operationError = result.exceptionOrNull()?.localizedMessage
+                )
+            }
             loadData(refreshSources = false)
         }
     }
 
     fun clearOperationError() {
-        _uiState.value = _uiState.value.copy(operationError = null)
+        _uiState.update { it.copy(operationError = null) }
     }
 }
 

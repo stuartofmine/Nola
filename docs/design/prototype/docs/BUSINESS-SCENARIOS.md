@@ -1,14 +1,14 @@
 # 全业务场景与状态目录
 
-更新：2026-11-10。主入口：[可操作场景原型](../scenarios.html)；原有完整交互原型：[index.html](../index.html)。
+更新：2026-11-22。主入口：[可操作场景原型](../scenarios.html)；原有完整交互原型：[index.html](../index.html)。
 
 ## 范围与使用方法
 
-本清单以当前仓库用户可见业务为范围，共 **68 个场景、220 个状态、6 个平台视角**。每项有独立状态图、原型入口、适用平台与生产源码依据；Web 当前 **14 个路由**全部关联。它覆盖可枚举的业务主线、异常和恢复，不声称穷尽任意数据、语言、系统版本和网络组合。
+本清单以当前仓库用户可见业务为范围，共 **71 个场景、267 个状态、6 个平台视角**。每项有独立状态图、原型入口、适用平台与生产源码依据；Web 当前 **15 个路由**全部关联。它覆盖可枚举的业务主线、异常和恢复，不声称穷尽任意数据、语言、系统版本和网络组合。
 
 选择业务与平台，直接操作预览中的按钮；右侧可跳到任意状态。每个状态有独立 URL，浏览器前进／后退可复现。原型目录和状态面板属于评审工具，不是产品导航。字段只保存为当前页面内、当前平台及场景的草稿；取消保留已保存基线，切换场景不覆盖其他草稿，刷新重置。破坏性样例先打开可取消的确认框。没有模型、账户、Host、文件、下载或系统权限请求，不能输入真实凭据。
 
-“适用平台”表示这项设计应在哪里提供，**不是已实现或已测试的能力声明**。不适用时明确显示范围，不生成假系统入口。macOS/iOS/Android 的控件只是浏览器布局示意；Windows 表示共享 Web Host 客户端方向；CLI 为文本布局草图，下方按钮仅用于评审，不是新 CLI 命令。Web 更新安装、手机永久后台调度及跨 Host 接管不作为已支持能力。
+“适用平台”表示这项设计应在哪里提供，**不是已实现或已测试的能力声明**。不适用时明确显示范围，不生成假系统入口。macOS/iOS/Android 的控件只是浏览器布局示意；Windows 视角对应 Tauri 主窗口中的共享 Web 客户端，原生桌面命令另行校验来源；CLI 为文本布局草图，下方按钮仅用于评审，不是新 CLI 命令。Web 更新安装、手机永久后台调度及跨 Host 接管不作为已支持能力。
 
 ## 共同行为
 
@@ -26,7 +26,7 @@
 | ID | 业务 / 场景 | 入口 | 状态数 | 适用设计平台 |
 | --- | --- | --- | ---: | --- |
 | [welcome](../scenarios.html?scene=welcome&platform=mac) | 开始与账户 / 首次使用与跳过引导 | 首次启动 | 3 | macOS / iOS / iPadOS / Android |
-| [web-login](../scenarios.html?scene=web-login&platform=web) | 开始与账户 / Web / Windows 连接登录 | Host 地址 → 登录 | 3 | Web / Windows |
+| [web-login](../scenarios.html?scene=web-login&platform=web) | 开始与账户 / 浏览器登录与退出宿主机 | Host 受保护页面或设置 → 连接 | 6 | Web / Windows |
 | [account-browser](../scenarios.html?scene=account-browser&platform=mac) | 开始与账户 / ChatGPT 授权与网页回跳 | 模型 → 添加 ChatGPT 账户 | 4 | macOS / CLI |
 | [account-reauth](../scenarios.html?scene=account-reauth&platform=mac) | 开始与账户 / 账户失效、重新授权与退出 | 模型 → 账户详情 | 3 | macOS / CLI |
 | [conversation-list](../scenarios.html?scene=conversation-list&platform=mac) | 对话与输入 / 会话列表、搜索与草稿 | 对话 | 3 | macOS / iOS / iPadOS / Android / Web / Windows / CLI |
@@ -55,14 +55,16 @@
 | [reasoning](../scenarios.html?scene=reasoning&platform=mac) | 模型与账户配置 / 实际推理档位、继承与未知能力 | 模型选项 → 推理档位 | 3 | macOS / iOS / iPadOS / Android / Web / Windows |
 | [prompt-template](../scenarios.html?scene=prompt-template&platform=mac) | 模型与账户配置 / 预设提示词与作用范围 | 模型配置 → 提示词 | 3 | macOS / iOS / iPadOS / Android / Web / Windows |
 | [model-probe](../scenarios.html?scene=model-probe&platform=mac) | 模型与账户配置 / 付费探测与用户能力覆盖 | 模型详情 → 测试能力 | 3 | macOS / iOS / iPadOS / Android / Web / Windows / CLI |
-| [local-model](../scenarios.html?scene=local-model&platform=mac) | 模型与账户配置 / 本地模型、下载与设备容量 | 模型 → 本地 | 3 | macOS / iOS / iPadOS / Android |
-| [host-pair](../scenarios.html?scene=host-pair&platform=mac) | 宿主机与权限 / 粘贴配对、检查与连接 | 模型 / 连接 → 宿主机 | 3 | macOS / iOS / iPadOS / Android |
-| [share-host](../scenarios.html?scene=share-host&platform=mac) | 宿主机与权限 / 共享此 Mac 与局域网地址 | Mac → 设置 → 宿主机连接 | 3 | macOS |
-| [host-network](../scenarios.html?scene=host-network&platform=mac) | 宿主机与权限 / 离线、地址变更与凭据写入失败 | 宿主机 → 连接失败 | 3 | macOS / iOS / iPadOS / Android / Web / Windows |
+| [local-model](../scenarios.html?scene=local-model&platform=mac) | 模型与账户配置 / 本地模型：在线推荐、直链导入、下载与一键启用 | 聊天模型选择器 → 管理与下载本地模型 / 模型中心 → 本地模型 | 5 | macOS / iOS / iPadOS / Android / Web / Windows / CLI |
+| [host-pair](../scenarios.html?scene=host-pair&platform=mac) | 宿主机与权限 / 连接与管理已配对的宿主机 | Mac 设置 → 连接；手机模型 → 宿主机 | 10 | macOS / iOS / iPadOS / Android |
+| [share-host](../scenarios.html?scene=share-host&platform=mac) | 宿主机与权限 / 在 Mac 上开启共享 | Mac 设置 → 连接 → 共享这台 Mac | 6 | macOS |
+| [host-network](../scenarios.html?scene=host-network&platform=mac) | 宿主机与权限 / 宿主机离线与重连 | 原生客户端 → 重新检查连接 | 3 | macOS / iOS / iPadOS / Android |
 | [permission](../scenarios.html?scene=permission&platform=mac) | 宿主机与权限 / 具体操作授权、拒绝与补充指引 | 工具执行前 → 权限申请 | 5 | macOS / iOS / iPadOS / Android / Web / Windows / CLI |
 | [permission-missing](../scenarios.html?scene=permission-missing&platform=mac) | 宿主机与权限 / 缺失详情、过期申请与错误身份 | 原会话 → 权限申请 | 4 | macOS / iOS / iPadOS / Android / Web / Windows |
 | [system-permission](../scenarios.html?scene=system-permission&platform=mac) | 宿主机与权限 / 系统权限拒绝与设置入口 | 使用受保护资源时 | 3 | macOS / iOS / iPadOS / Android |
 | [execution-scope](../scenarios.html?scene=execution-scope&platform=mac) | 宿主机与权限 / 执行位置、设备桥接与边界 | 会话详情 → 执行 | 3 | macOS / iOS / iPadOS / Android / Web / Windows |
+| [github-skill](../scenarios.html?scene=github-skill&platform=mac) | Skills、MCP 与插件 / 从对话安装 GitHub Skill | 本机或当前 Host 的对话 | 8 | macOS / iOS / iPadOS / Android / Web / Windows / CLI |
+| [github-skill-host](../scenarios.html?scene=github-skill-host&platform=ios) | Skills、MCP 与插件 / 手机对话 · 安装到配对 Host | 已配对 Host 的对话 | 8 | iOS / iPadOS / Android |
 | [skill-editor](../scenarios.html?scene=skill-editor&platform=mac) | Skills、MCP 与插件 / Skill 新增、编辑与内置恢复 | 设置 → Skills | 3 | macOS / iOS / iPadOS / Android / Web / Windows |
 | [skill-review](../scenarios.html?scene=skill-review&platform=mac) | Skills、MCP 与插件 / Skill 设置复核与来源保留 | Skills → 需要复核 | 3 | macOS / iOS / iPadOS / Android / Web / Windows |
 | [mcp-config](../scenarios.html?scene=mcp-config&platform=mac) | Skills、MCP 与插件 / MCP HTTP / stdio 配置与检查 | 设置 → MCP → 添加 | 3 | macOS / iOS / iPadOS / Android / Web / Windows |
@@ -76,7 +78,7 @@
 | [memory](../scenarios.html?scene=memory&platform=mac) | 资料、知识与记忆 / 个人长期记忆、修正与删除 | 资料 → 长期记忆 | 4 | macOS / iOS / iPadOS / Android / Web / Windows |
 | [health](../scenarios.html?scene=health&platform=mac) | 资料、知识与记忆 / 健康数据、授权与同步 | 资料 → 健康 | 3 | macOS / iOS / iPadOS / Android |
 | [location-calendar](../scenarios.html?scene=location-calendar&platform=mac) | 资料、知识与记忆 / 位置、日历与设备来源 | 资料 → 设备来源 | 3 | macOS / iOS / iPadOS / Android |
-| [experts](../scenarios.html?scene=experts&platform=mac) | 专家、Room 与审阅 / 专家配置、子任务协作与只读会话 | 输入栏 @ 专家 / 专家与技能 / 会话 → 任务 | 4 | macOS / iOS / iPadOS / Android / Web / Windows |
+| [experts](../scenarios.html?scene=experts&platform=mac) | 专家、Room 与审阅 / 专家配置、子任务协作与只读会话 | 输入栏 @ / 已发消息中的专家名字 / 会话 → 任务 | 4 | macOS / iOS / iPadOS / Android / Web / Windows |
 | [room](../scenarios.html?scene=room&platform=mac) | 专家、Room 与审阅 / Room 创建、加入、定向消息与恢复 | 专家 / Room | 4 | macOS / iOS / iPadOS / CLI |
 | [subtask](../scenarios.html?scene=subtask&platform=mac) | 专家、Room 与审阅 / 子任务、执行者与取消 | 对话内联过程 / 会话 → 任务 | 4 | macOS / iOS / iPadOS / Android / Web / Windows / CLI |
 | [inspector](../scenarios.html?scene=inspector&platform=mac) | 专家、Room 与审阅 / 检查器三区布局与独立展开 | 桌面右栏 / 手机会话详情 | 3 | macOS / iOS / iPadOS / Android / Web / Windows |
@@ -93,25 +95,27 @@
 | [privacy-export](../scenarios.html?scene=privacy-export&platform=mac) | 通用、隐私与维护 / 隐私、导出与清理确认 | 设置 → 隐私与数据 | 4 | macOS / iOS / iPadOS / Android / Web / Windows |
 | [diagnostics](../scenarios.html?scene=diagnostics&platform=mac) | 通用、隐私与维护 / 诊断、日志与存储空间 | 设置 → 诊断 | 3 | macOS / Web / Windows / CLI |
 | [shortcuts-accessibility](../scenarios.html?scene=shortcuts-accessibility&platform=mac) | 通用、隐私与维护 / 键盘、侧滑、大字与减少动态效果 | 任一页面 | 3 | macOS / iOS / iPadOS / Android / Web / Windows |
+| [harness-plugins](../scenarios.html?scene=harness-plugins&platform=mac) | Skills、MCP 与插件 / 插件库与工作区页面 | 能力库 → 插件 · 工作区侧栏 | 16 | macOS / iOS / iPadOS / Android / Web / Windows / CLI |
 
 ## 路由关联
 
 | 生产 Web 路由 | 对应业务场景 |
 | --- | --- |
-| `/models` | [model-empty](../scenarios.html?scene=model-empty&platform=web), [api-config](../scenarios.html?scene=api-config&platform=web), [catalog-select](../scenarios.html?scene=catalog-select&platform=web), [host-pair](../scenarios.html?scene=host-pair&platform=web) |
+| `/models` | [model-empty](../scenarios.html?scene=model-empty&platform=web), [api-config](../scenarios.html?scene=api-config&platform=web), [catalog-select](../scenarios.html?scene=catalog-select&platform=web) |
 | `/model-test` | [model-probe](../scenarios.html?scene=model-probe&platform=web) |
 | `/login` | [web-login](../scenarios.html?scene=web-login&platform=web) |
-| `/capabilities` | [skill-editor](../scenarios.html?scene=skill-editor&platform=web), [skill-review](../scenarios.html?scene=skill-review&platform=web), [mcp-config](../scenarios.html?scene=mcp-config&platform=web), [mcp-uncertain](../scenarios.html?scene=mcp-uncertain&platform=web), [mcp-invoke](../scenarios.html?scene=mcp-invoke&platform=web) |
+| `/capabilities` | [skill-editor](../scenarios.html?scene=skill-editor&platform=web), [skill-review](../scenarios.html?scene=skill-review&platform=web), [mcp-config](../scenarios.html?scene=mcp-config&platform=web), [mcp-uncertain](../scenarios.html?scene=mcp-uncertain&platform=web), [mcp-invoke](../scenarios.html?scene=mcp-invoke&platform=web), [github-skill](../scenarios.html?scene=github-skill&platform=web), [harness-plugins](../scenarios.html?scene=harness-plugins&platform=web) |
 | `/activity` | [activity-inbox](../scenarios.html?scene=activity-inbox&platform=web), [event-wait](../scenarios.html?scene=event-wait&platform=web) |
 | `/results` | [results-dashboard](../scenarios.html?scene=results-dashboard&platform=web) |
 | `/dashboard` | [results-dashboard](../scenarios.html?scene=results-dashboard&platform=web) |
 | `/data-sources` | [data-sources](../scenarios.html?scene=data-sources&platform=web), [knowledge](../scenarios.html?scene=knowledge&platform=web), [wiki](../scenarios.html?scene=wiki&platform=web), [memory](../scenarios.html?scene=memory&platform=web) |
-| `/settings` | [general-fonts](../scenarios.html?scene=general-fonts&platform=web), [updates](../scenarios.html?scene=updates&platform=web), [privacy-export](../scenarios.html?scene=privacy-export&platform=web), [diagnostics](../scenarios.html?scene=diagnostics&platform=web) |
+| `/settings` | [general-fonts](../scenarios.html?scene=general-fonts&platform=web), [updates](../scenarios.html?scene=updates&platform=web), [privacy-export](../scenarios.html?scene=privacy-export&platform=web), [diagnostics](../scenarios.html?scene=diagnostics&platform=web), [web-login](../scenarios.html?scene=web-login&platform=web) |
 | `/scheduled-actions` | [plans](../scenarios.html?scene=plans&platform=web) |
 | `/workspace-review` | [git-review](../scenarios.html?scene=git-review&platform=web), [artifact-review](../scenarios.html?scene=artifact-review&platform=web) |
 | `/today` | [results-dashboard](../scenarios.html?scene=results-dashboard&platform=web) |
 | `/conversations` | [conversation-list](../scenarios.html?scene=conversation-list&platform=web), [conversation-delete](../scenarios.html?scene=conversation-delete&platform=web) |
-| `/chat` | [compose](../scenarios.html?scene=compose&platform=web), [stream-reader](../scenarios.html?scene=stream-reader&platform=web), [goal-input](../scenarios.html?scene=goal-input&platform=web), [permission](../scenarios.html?scene=permission&platform=web), [remote-reconnect](../scenarios.html?scene=remote-reconnect&platform=web), [compaction](../scenarios.html?scene=compaction&platform=web), [inspector](../scenarios.html?scene=inspector&platform=web) |
+| `/chat` | [compose](../scenarios.html?scene=compose&platform=web), [stream-reader](../scenarios.html?scene=stream-reader&platform=web), [goal-input](../scenarios.html?scene=goal-input&platform=web), [permission](../scenarios.html?scene=permission&platform=web), [remote-reconnect](../scenarios.html?scene=remote-reconnect&platform=web), [compaction](../scenarios.html?scene=compaction&platform=web), [inspector](../scenarios.html?scene=inspector&platform=web), [github-skill](../scenarios.html?scene=github-skill&platform=web) |
+| `/plugin-page` | [harness-plugins](../scenarios.html?scene=harness-plugins&platform=web) |
 
 ## 维护与验收
 

@@ -179,7 +179,10 @@ pub fn validate_resource_scope_revision(previous: &[RunRequirement], next: &[Run
                         && preserves_review(claim.review.as_ref(), candidate.review.as_ref())),
                     RequirementResourceScope::Undeclared => false,
                 });
-                if !preserved { return Err("resource scope narrowed without new user input".into()); }
+                if !preserved {
+                    return Err(format!("resource scope narrowed without new user input: preserve the original {} claim for {} with its recorded version, predicate and review evidence; add any different operation as a separate claim",
+                        claim.operation, claim.resource_uri));
+                }
             }
         }
     }
@@ -521,7 +524,8 @@ mod tests {
         old.resource_scope = RequirementResourceScope::Declared { required:vec![claim],exclusions:vec![],interpreted_user_frontier:vec!["input-3".into()] };
         let mut changed=old.clone();
         changed.resource_scope=RequirementResourceScope::Undeclared;
-        assert!(validate_resource_scope_revision(&[old.clone()],&[changed.clone()],&["input-3".into()]).is_err());
+        let error = validate_resource_scope_revision(&[old.clone()], &[changed.clone()], &["input-3".into()]).unwrap_err();
+        assert!(error.contains("original read claim for file:///a"));
         assert!(validate_resource_scope_revision(&[old.clone()],&[old.clone()],&["input-3".into()]).is_ok());
         assert!(validate_resource_scope_retirement(&old,&[changed.clone()],&["input-3".into()]).is_err());
         assert!(validate_resource_scope_retirement(&old,&[changed.clone()],&["input-4".into()]).is_ok());

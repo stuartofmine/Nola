@@ -14,6 +14,14 @@ use std::{
 };
 
 type Round = GoalRoundResult<()>;
+
+fn needs_host_interrupt(state: &AgentThreadState, run: &str) -> bool {
+    state.execution.active_turn.as_ref().is_some_and(|turn|
+        turn.turn_id.as_str() == run && !turn.status.is_terminal()
+            && turn.status != nola_agent_engine::agent::AgentTurnStatus::Cancelling)
+        && state.goal_projection.execution_owner(run).is_some()
+}
+
 fn checkpoint<R: AgentRuntimeCommandRepositories>(
     store: &R,
     owner: &str,
@@ -631,12 +639,8 @@ fn advance_in_transaction<R: AgentRuntimeCommandRepositories>(
                 .active_run(&owner)
                 .map_err(|error| error.to_string())?
             {
-                if snapshot
-                    .state
-                    .goal_projection
-                    .execution_owner(&active.run_id)
-                    .is_some()
-                {
+                if !snapshot.state.goal_projection.applied_operations.contains_key(&envelope.operation_id)
+                    && needs_host_interrupt(&snapshot.state, &active.run_id) {
                     interrupted_run = Some(active.run_id);
                 }
             }
@@ -775,11 +779,9 @@ fn advance_in_transaction<R: AgentRuntimeCommandRepositories>(
         }
     }
     if !host_available {
-        let goal = checkpoint(store, &owner)?.state.goal_projection.active;
-        if goal
-            .as_ref()
-            .is_some_and(|goal| goal.status == GoalStatus::Running)
-        {
+        let snapshot = checkpoint(store, &owner)?;
+        if let Some(goal) = snapshot.state.goal_projection.control_observation()
+            .filter(|goal| goal.status == GoalStatus::Running) {
             let port = Port {
                 store: RefCell::new(&mut *store),
                 owner: owner.clone(),
@@ -792,19 +794,15 @@ fn advance_in_transaction<R: AgentRuntimeCommandRepositories>(
                 stop_after_sealed_round: false,
                 projection: RefCell::new(None),
             };
-            interrupted_run = port.active_run_id()?.filter(|run| {
-                goal.as_ref().is_some_and(|goal| {
-                    goal.contracts
-                        .iter()
-                        .any(|c| c.execution_run_id.as_ref() == Some(run))
-                })
-            });
+            interrupted_run = port.active_run_id()?.filter(|run| needs_host_interrupt(&snapshot.state, run));
             port.submit(nola_agent_engine::agent::GoalRuntimeCommandEnvelope {
                 operation_id: format!("goal-host-unavailable:{}", uuid::Uuid::new_v4()),
-                command: nola_agent_engine::agent::GoalRuntimeCommand::Pause {
-                    status: GoalStatus::Paused,
-                    wake_at_epoch_ms: None,
-                    now_epoch_ms: now,
+                command: nola_agent_engine::agent::GoalRuntimeCommand::GuardedControl {
+                    expected_goal_id: goal.goal_id,
+                    expected_control_token: goal.control_token,
+                    control: Box::new(nola_agent_engine::agent::GoalRuntimeCommand::Pause {
+                        status: GoalStatus::Paused, wake_at_epoch_ms: None, now_epoch_ms: now,
+                    }),
                 },
             })?;
         }

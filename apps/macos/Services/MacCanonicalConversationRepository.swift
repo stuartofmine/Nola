@@ -918,6 +918,21 @@ final class MacCanonicalConversationRepository {
         )
     }
 
+    func adoptMessageTitle(conversationID: String, title: String, editedMessageID: String? = nil) throws -> Bool {
+        struct Settings: Decodable { let titleSource: MacConversationTitleSource? }
+        guard !title.isEmpty, let metadata = try store.loadConversationMetadata(conversationID) else { return false }
+        let settings = try JSONDecoder().decode(Settings.self, from: Data((metadata.settingsJSON ?? "{}").utf8))
+        guard settings.titleSource != .user else { return false }
+        if let editedMessageID {
+            guard settings.titleSource == .firstMessage || settings.titleSource == .automatic else { return false }
+            let page = try store.loadConversationProjectionPageV1(conversationID, offset: 0, limit: 1)
+            guard page.messages.first?.messageID == editedMessageID, page.messages.first?.role == .user else { return false }
+            if page.title == title { return true }
+        }
+        return try store.renameConversation(conversationID, title: title, source: .firstMessage,
+            expectedRevision: UInt64(metadata.revision), updatedAtMs: Self.milliseconds(.now))
+    }
+
     /// A nil knowledge argument means this operation does not own a knowledge
     /// edit. Use an explicit `.empty` document to clear knowledge.
     func saveMetadata(
@@ -1229,6 +1244,18 @@ final class MacCanonicalConversationRepository {
         }
     }
 
+    func createEmptyConversation(localModel: MacLocalModelProfile? = nil) throws -> MacConversation {
+        let option = localModel.map { MacChatModelOption(source: .local, modelID: $0.id, displayName: $0.displayName) }
+        var conversation = MacConversation(title: String(localized: "New Conversation"), preview: "", updatedAt: .now,
+            isPinned: false, promptTemplateID: try MacPromptLibrary.defaultTemplateID(using: store), promptTemplateSelectionIsExplicit: true,
+            modelSelectionID: option?.id, executionHostRawValue: option == nil ? nil : MacExecutionHost.local.rawValue,
+            executionBackendRawValue: option == nil ? nil : "nola")
+        guard let revision = try ensureConversation(conversation) else { throw MacApplicationPortError.invalidResponse }
+        conversation.configurationRevision = revision
+        conversation.isPersisted = true
+        return conversation
+    }
+
     @discardableResult
     func ensureConversation(_ conversation: MacConversation) throws -> Int64? {
         guard try store.loadConversation(conversation.id) == nil else { return conversation.configurationRevision }
@@ -1267,6 +1294,16 @@ final class MacCanonicalConversationRepository {
 
     func conversationSourceOwner(conversationID: String) throws -> AppleConversationSourceOwner {
         try store.conversationSourceOwner(conversationID: conversationID)
+    }
+
+    func cachedRemotePeers(_ contextIDs: Set<String>, parentID: String) async -> Set<String> {
+        guard !contextIDs.isEmpty else { return [] }
+        let store = store
+        return await Task.detached {
+            guard let parent = try? store.conversationSourceOwner(conversationID: parentID),
+                  case .remote = parent else { return [] }
+            return contextIDs.filter { (try? store.conversationSourceOwner(conversationID: $0)) == parent }
+        }.value
     }
 
     func sessionProjection(conversationID: String) throws -> MacCanonicalSessionProjection? {
@@ -1538,7 +1575,7 @@ final class MacCanonicalConversationRepository {
     }
 
     nonisolated static func projectMessages(_ window: MacCanonicalConversationWindow, databaseURL: URL? = nil,
-        sourceOwner: AppleConversationSourceOwner? = nil) throws -> [MacChatMessage] {
+        sourceOwner: AppleConversationSourceOwner? = nil, disclosedJournalText: [String: String]? = nil) throws -> [MacChatMessage] {
         let deferredIDs = Set(window.deferredTextParts.map(\.messageID))
         // A journal-owned row intentionally has no inline body. Validate its
         // owner before applying inline visibility rules, not after discarding it.
@@ -1550,11 +1587,19 @@ final class MacCanonicalConversationRepository {
                       $0.messageID == cursor.identity.assistant_message_id && $0.role == .assistant
                   }) else { throw MacApplicationServiceError.invalidResponse }
         }
-        guard journalIDs.isEmpty || databaseURL != nil else {
+        guard disclosedJournalText.map({ Set($0.keys) == journalIDs }) ?? (journalIDs.isEmpty || databaseURL != nil) else {
             throw MacApplicationServiceError.invalidResponse
         }
         var messages = try projectMessages(window.projection, deferredMessageIDs: deferredIDs,
                                            journalMessageIDs: journalIDs)
+        if let disclosedJournalText {
+            for index in messages.indices {
+                if let id = messages[index].canonicalMessageID, let text = disclosedJournalText[id], !text.isEmpty {
+                    messages[index].scopedJournalText = text
+                    messages[index].text = text
+                }
+            }
+        }
         if let databaseURL {
             // Presentation residency only; source/Host access remains checked
             // by the original operation port when a reader/action is used.

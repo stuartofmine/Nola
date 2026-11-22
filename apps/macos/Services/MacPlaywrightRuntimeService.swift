@@ -37,6 +37,8 @@ actor MacPlaywrightRuntimeService {
     private var endpoint: ControlEndpoint?
     private var pendingControlURL: URL?
     private var pendingToken: String?
+    private var startupTask: Task<ControlEndpoint?, Never>?
+    private var startupWaiters: [UUID: CheckedContinuation<ControlEndpoint?, Never>] = [:]
     private init() {
         _ = NotificationCenter.default.addObserver(
             forName: NSApplication.willTerminateNotification,
@@ -129,7 +131,58 @@ actor MacPlaywrightRuntimeService {
         if process?.isRunning == true, let endpoint {
             return endpoint
         }
+        guard !Task.isCancelled else {
+            return nil
+        }
+        if startupTask == nil {
+            startupTask = Task<ControlEndpoint?, Never> {
+                await self.startSharedProcess(runtime: runtime)
+            }
+        }
+        let waiterID = UUID()
+        return await withTaskCancellationHandler {
+            await withCheckedContinuation { continuation in
+                if Task.isCancelled {
+                    continuation.resume(returning: nil)
+                    return
+                }
+                if self.process?.isRunning == true, let endpoint = self.endpoint {
+                    continuation.resume(returning: endpoint)
+                    return
+                }
+                if self.startupTask == nil {
+                    continuation.resume(returning: self.process?.isRunning == true ? self.endpoint : nil)
+                    return
+                }
+                self.startupWaiters[waiterID] = continuation
+            }
+        } onCancel: {
+            Task { await self.cancelStartupWaiter(id: waiterID) }
+        }
+    }
+
+    private func cancelStartupWaiter(id: UUID) {
+        if let continuation = startupWaiters.removeValue(forKey: id) {
+            continuation.resume(returning: nil)
+        }
+    }
+
+    private func finishStartup(result: ControlEndpoint?) {
+        startupTask = nil
+        let waiters = startupWaiters
+        startupWaiters.removeAll()
+        for continuation in waiters.values {
+            continuation.resume(returning: result)
+        }
+    }
+
+    private func startSharedProcess(runtime: MacPlaywrightRuntimeSnapshot) async -> ControlEndpoint? {
+        if process?.isRunning == true, let endpoint {
+            finishStartup(result: endpoint)
+            return endpoint
+        }
         guard let nodeURL = runtime.nodeURL, let bridgeURL = runtime.bridgeURL else {
+            finishStartup(result: nil)
             return nil
         }
         do {
@@ -138,6 +191,7 @@ actor MacPlaywrightRuntimeService {
                 withIntermediateDirectories: true
             )
         } catch {
+            finishStartup(result: nil)
             return nil
         }
         let launchedProcess: Process
@@ -169,6 +223,7 @@ actor MacPlaywrightRuntimeService {
                 try process.run()
                 MacOwnedChildProcessRegistry.shared.register(process)
             } catch {
+                finishStartup(result: nil)
                 return nil
             }
             self.process = process
@@ -185,6 +240,7 @@ actor MacPlaywrightRuntimeService {
                 self.endpoint = endpoint
                 pendingControlURL = nil
                 pendingToken = nil
+                finishStartup(result: endpoint)
                 return endpoint
             }
             try? await Task.sleep(for: .milliseconds(20))
@@ -196,10 +252,13 @@ actor MacPlaywrightRuntimeService {
             pendingToken = nil
         }
         MacOwnedChildProcessRegistry.shared.stop(launchedProcess)
+        finishStartup(result: nil)
         return nil
     }
 
     private func stop() {
+        startupTask?.cancel()
+        finishStartup(result: nil)
         let runningProcess = process
         process = nil
         endpoint = nil

@@ -2,9 +2,42 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createConversationSubmissionController, observedGoalResumeRoute } from './conversationSubmissionController.ts';
 import type { ConversationSubmissionSnapshot } from './conversationSubmissionController.ts';
+import { ApiError } from './api.ts';
 import { createChatTurn } from './chatTurn.ts';
 import { terminalFixture } from './assistantTerminal.fixture.ts';
 import { SourceSubmissionStorage, createSourceSubmission, bindSourceDigest, acceptSourceReceipt } from './sourceSubmission.ts';
+
+test('a second browser reads the settled response without gaining Run controls', async () => {
+    let snapshot: ConversationSubmissionSnapshot | undefined;
+    const storage = new SourceSubmissionStorage({length:0, key:()=>null, getItem:()=>null, setItem:()=>{}, removeItem:()=>{}});
+    const workspace = {load:async()=>{}, isLoaded:()=>true, restoreSubmissions:async()=>[], submissions:new Map(),
+        knowledge:new Map(), replyNotices:new Map(), text:{read:()=>''}, attachments:{read:()=>[]}};
+    let reads = 0;
+    const writes: string[] = [];
+    const controller = createConversationSubmissionController({hostId:'host', clientId:'foreign',
+        conversation:{conversationId:'conversation'} as never, workspace:workspace as never, storage, recoveryOwners:async()=>[],
+        request:(async(path:string, options?:RequestInit) => {
+            if (path.includes('/queued-input')) return {head:null, dispatch:null};
+            if (path.endsWith('/observe')) throw new ApiError(409, 'Foreign owner', 'run_control_unconfirmed');
+            if (options?.method === 'POST') writes.push(path);
+            if (!path.includes('/messages?')) throw new Error(path);
+            const running = ++reads === 1;
+            return {sourceHostId:'host', assistantJournalHeads:[], conversationProjection:{contract_version:1,
+                conversation_id:'conversation', revision:running?1:2, messages:[{message_id:'answer', role:'assistant',
+                    state:running?'running':'completed', revision:running?1:2, created_at_ms:0, parts:[]}]},
+                messageWindow:{projectionRevision:running?1:2, eventSequence:running?1:2, before:null, hasMore:false, totalCount:1}};
+        }) as never});
+    try {
+        controller.attach(value=>{snapshot=value;});
+        await controller.initialize();
+        for (let i=0;i<100 && snapshot?.timeline?.messages.at(-1)?.state !== 'completed';i++)
+            await new Promise(resolve=>setTimeout(resolve,50));
+        assert.equal(snapshot?.timeline?.messages.at(-1)?.state,'completed');
+        assert.equal(snapshot?.observedCanSubmit,false);
+        assert.equal(snapshot?.challenge,null);
+        assert.deepEqual(writes,[]);
+    } finally { controller.dispose(); }
+});
 
 for (const validManifest of [true, false]) for (const draftFailure of ['none', 'missing', 'retire']) test(`history read failure cannot override Core terminal authority (valid manifest: ${validManifest}, draft failure: ${draftFailure})`, async () => {
     const missingDraft = draftFailure === 'missing';

@@ -78,7 +78,17 @@ public final class RulesEngine {
     /// Note: Rust rules engine may also apply its own throttling/deduplication.
     /// This method is intentionally lightweight and does not persist across app launches.
     public func wasRecentlySent(_ dedupeKey: String, now: Date = Date()) -> Bool {
-        let windowSeconds = TimeInterval(max(0, config.throttleWindowHours)) * 3600
+        let frequency = UserDefaults.standard.string(forKey: "notificationFrequency") ?? "daily"
+        let effectiveThrottleHours: Int
+        switch frequency {
+        case "immediate":
+            effectiveThrottleHours = 0
+        case "weekly":
+            effectiveThrottleHours = max(config.throttleWindowHours, 24) * 7
+        default:
+            effectiveThrottleHours = config.throttleWindowHours
+        }
+        let windowSeconds = TimeInterval(max(0, effectiveThrottleHours)) * 3600
         guard windowSeconds > 0 else { return false }
 
         recentLock.lock(); defer { recentLock.unlock() }

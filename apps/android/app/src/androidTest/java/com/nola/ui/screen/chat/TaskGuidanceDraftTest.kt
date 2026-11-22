@@ -34,6 +34,7 @@ class TaskGuidanceDraftTest {
         compose.onNodeWithTag("chat.task.card.task").performClick()
         val field = compose.onNode(hasSetTextAction())
         val send = compose.onNodeWithContentDescription(InstrumentationRegistry.getInstrumentation().targetContext.getString(R.string.chat_task_guidance_send))
+        compose.onAllNodes(hasSetTextAction() and hasAnyAncestor(hasTestTag("chat.task.card.task"))).assertCountEquals(0)
         field.performTextInput("First instruction")
         send.performClick()
         send.assertIsNotEnabled()

@@ -12,8 +12,8 @@
     import type { ConfirmationHandle } from '../lib/confirmation';
     import { createConversationDraftStore } from '../lib/chatConversations';
 
-    let { hostId, conversationId, generation, busy = false, refreshKey = 0, readOnly = false, section = 'all', oncontrol, draftStore = createConversationDraftStore() }: {
-        hostId: string; conversationId: string; generation: number; section?: 'all' | 'progress' | 'goal' | 'execution'; readOnly?: boolean; busy?: boolean; refreshKey?: number | string;
+    let { hostId, conversationId, generation, busy = false, refreshKey = 0, objectiveRevision = 0, readOnly = false, section = 'all', oncontrol, draftStore = createConversationDraftStore() }: {
+        hostId: string; conversationId: string; generation: number; section?: 'all' | 'progress' | 'goal' | 'execution'; readOnly?: boolean; busy?: boolean; refreshKey?: number | string; objectiveRevision?: number;
         oncontrol?: () => void;
         draftStore?: ReturnType<typeof createConversationDraftStore>;
     } = $props();
@@ -40,8 +40,12 @@
     let pollTimer: ReturnType<typeof setTimeout> | null = null;
     let pendingOperation = $state<string | null>(null);
     let controlPending = false;
+    const ownsGoal = $derived(section === 'all' || section === 'goal');
+    const ownsTraces = $derived(section === 'all' || section === 'execution');
+    const ownsPlan = $derived(section === 'all' || section === 'progress');
     const intents = () => new GoalControlIntentStore(localStorage, hostId);
     function restoreIntent() {
+        if (!ownsGoal) return;
         try {
             const saved = intents().read(conversationId);
             pendingOperation = saved?.operationId ?? null;
@@ -82,7 +86,7 @@
     function schedulePoll() {
         if (pollTimer !== null) clearTimeout(pollTimer);
         pollTimer = null;
-        if (disposed || !chatActivityNeedsPolling(goal, traces, controlPending)) return;
+        if (disposed || !chatActivityNeedsPolling(ownsGoal ? goal : null, ownsTraces ? traces : [], ownsGoal ? controlPending : false)) return;
         pollTimer = setTimeout(() => {
             pollTimer = null;
             if (document.visibilityState === 'visible' && !writing && !loading) void load();
@@ -91,39 +95,46 @@
     }
     async function load(reset = false) {
         const source = hostId, id = conversationId, epoch = generation, sequence = ++request;
+        const fetchGoal = ownsGoal, fetchTraces = ownsTraces, fetchPlan = ownsPlan;
         controller?.abort(); const next = new AbortController(); controller = next;
         const signal = AbortSignal.any([next.signal, AbortSignal.timeout(15_000)]);
         loading = true; goalError = ''; traceError = ''; planError = '';
         if (reset) { goalLoaded = false; tracesLoaded = false; goal = null; traces = []; plan = null; planLoaded = false; }
         const [goalResult, traceResult, planResult] = await Promise.allSettled([
-            api(chatActivityUrl(id, 'goal'), { signal }),
-            api(chatActivityUrl(id, 'traces'), { signal }),
-            api(chatActivityUrl(id, 'plan'), { signal }),
+            fetchGoal ? api(chatActivityUrl(id, 'goal'), { signal }) : Promise.resolve(null),
+            fetchTraces ? api(chatActivityUrl(id, 'traces'), { signal }) : Promise.resolve(null),
+            fetchPlan ? api(chatActivityUrl(id, 'plan'), { signal }) : Promise.resolve(null),
         ]);
         if (!current(source, id, epoch, sequence) || next.signal.aborted) return;
-        try { if (goalResult.status !== 'fulfilled' || (goalResult.value as { source_host_id?: string })?.source_host_id !== source) throw new Error(); goal = parseChatGoal(goalResult.value, id); goalLoaded = true;
-            if (pendingOperation) {
-                const outcome = goalControlOutcome(goalResult.value, id, pendingOperation);
-                if (outcome !== 'pending') {
-                    const store = intents(), operation = pendingOperation;
-                    const saved = await store.locked(id, async () => {
-                        const intent = store.read(id);
-                        if (intent?.operationId === operation) store.settle(id, intent, goalResult.value);
-                        return intent?.operationId === operation ? intent : null;
-                    });
-                    if (!current(source, id, epoch, sequence)) return;
-                    if (saved) clearAppliedStartDraft(id, saved, outcome);
-                    pendingOperation = store.read(id)?.operationId ?? null;
-                    controlError = outcome === 'rejected' ? 'chatActivity.controlRejected' : '';
-                }
-            } }
-        catch { goalError = 'chatActivity.loadFailed'; goalLoaded = false; }
-        try { if (traceResult.status !== 'fulfilled') throw new Error(); traces = parseChatTraces(traceResult.value, id); tracesLoaded = true; }
-        catch { traceError = 'chatActivity.loadFailed'; }
-        try { if (planResult.status !== 'fulfilled') throw new Error(); plan = parseChatPlan(planResult.value, id); planLoaded = true; }
-        catch { planError = 'chatActivity.loadFailed'; }
+        if (fetchGoal) {
+            try { if (goalResult.status !== 'fulfilled' || (goalResult.value as { source_host_id?: string })?.source_host_id !== source) throw new Error(); goal = parseChatGoal(goalResult.value, id); goalLoaded = true;
+                if (pendingOperation) {
+                    const outcome = goalControlOutcome(goalResult.value, id, pendingOperation);
+                    if (outcome !== 'pending') {
+                        const store = intents(), operation = pendingOperation;
+                        const saved = await store.locked(id, async () => {
+                            const intent = store.read(id);
+                            if (intent?.operationId === operation) store.settle(id, intent, goalResult.value);
+                            return intent?.operationId === operation ? intent : null;
+                        });
+                        if (!current(source, id, epoch, sequence)) return;
+                        if (saved) clearAppliedStartDraft(id, saved, outcome);
+                        pendingOperation = store.read(id)?.operationId ?? null;
+                        controlError = outcome === 'rejected' ? 'chatActivity.controlRejected' : '';
+                    }
+                } }
+            catch { goalError = 'chatActivity.loadFailed'; goalLoaded = false; }
+        }
+        if (fetchTraces) {
+            try { if (traceResult.status !== 'fulfilled') throw new Error(); traces = parseChatTraces(traceResult.value, id); tracesLoaded = true; }
+            catch { traceError = 'chatActivity.loadFailed'; }
+        }
+        if (fetchPlan) {
+            try { if (planResult.status !== 'fulfilled') throw new Error(); plan = parseChatPlan(planResult.value, id); planLoaded = true; }
+            catch { planError = 'chatActivity.loadFailed'; }
+        }
         loading = false;
-        if (goalLoaded) controlPending = pendingOperation !== null;
+        if (fetchGoal && goalLoaded) controlPending = pendingOperation !== null;
         schedulePoll();
         if (pendingRefresh) { pendingRefresh = false; scheduleRefresh(); }
     }
@@ -131,18 +142,22 @@
         hostId; conversationId; generation; refreshKey;
         if (mounted) untrack(() => {
             const key = JSON.stringify([hostId, conversationId, generation]);
-            if (key !== mountedOwner) { mountedOwner = key; objective = draftStore.read(conversationId); writing = false; pendingOperation = null; controlError = ''; controlPending = false; pendingRefresh = false; restoreIntent(); void load(true); }
+            if (key !== mountedOwner) { mountedOwner = key; objective = ownsGoal ? draftStore.read(conversationId) : ''; writing = false; pendingOperation = null; controlError = ''; controlPending = false; pendingRefresh = false; restoreIntent(); void load(true); }
             else if (writing) pendingRefresh = true;
             else scheduleRefresh();
         });
     });
+    $effect(() => {
+        objectiveRevision;
+        if (mounted && ownsGoal && objectiveRevision > 0) untrack(() => { objective = draftStore.read(conversationId); });
+    });
     onMount(() => {
         mounted = true;
         mountedOwner = JSON.stringify([hostId, conversationId, generation]);
-        objective = draftStore.read(conversationId);
+        objective = ownsGoal ? draftStore.read(conversationId) : '';
         restoreIntent(); void load();
         const storageChanged = (event: StorageEvent) => {
-            if (event.storageArea !== localStorage || (event.key !== null && !event.key.startsWith('nola.goal-intent:'))) return;
+            if (!ownsGoal || event.storageArea !== localStorage || (event.key !== null && !event.key.startsWith('nola.goal-intent:'))) return;
             // Another tab may have submitted or settled the shared durable intent.
             // Never keep a stale enabled action or retry button in this panel.
             restoreIntent(); scheduleRefresh();
@@ -222,12 +237,12 @@
     }
 </script>
 
-<svelte:window onbeforeunload={event => { if (!acceptsWorkspaceUnload(event)) return; if (objective.trim() || writing) { event.preventDefault(); event.returnValue = ''; } }} />
+<svelte:window onbeforeunload={event => { if (!acceptsWorkspaceUnload(event)) return; if (ownsGoal && (objective.trim() || writing)) { event.preventDefault(); event.returnValue = ''; } }} />
 <ConfirmationDialog bind:this={confirmation} />
 <section class="activity-goal" aria-label={t($locale, 'chatActivity.title')}>
 <div class="heading"><button type="button" onclick={() => load()} disabled={loading || writing}>{t($locale, 'chatActivity.refresh')}</button></div>
-    {#if loading && !goalLoaded}<p class="muted" role="status">{t($locale, 'chatActivity.loading')}</p>{/if}
-    {#if pendingOperation}<p class="muted" role="status">{t($locale, 'chatActivity.controlPending')}</p><button type="button" disabled={readOnly || writing || loading} onclick={retryIntent}>{t($locale, 'chatActivity.retryControl')}</button>{/if}
+    {#if loading && ((ownsGoal && !goalLoaded) || (ownsTraces && !tracesLoaded) || (ownsPlan && !planLoaded))}<p class="muted" role="status">{t($locale, 'chatActivity.loading')}</p>{/if}
+    {#if ownsGoal && pendingOperation}<p class="muted" role="status">{t($locale, 'chatActivity.controlPending')}</p><button type="button" disabled={readOnly || writing || loading} onclick={retryIntent}>{t($locale, 'chatActivity.retryControl')}</button>{/if}
     {#if section === 'all' || section === 'progress'}<div class="section"><h3>{t($locale, 'chatInspector.requirements')}</h3>
         {#if planError}<p class="error" role="alert">{t($locale, planError)}</p>{/if}
         {#if planLoaded && !plan?.todos.length}<p class="muted">{t($locale, 'chatInspector.noPlan')}</p>{/if}
@@ -243,6 +258,10 @@
             <p class="objective">{goal.objective}</p>
             {#if goal.executionBlocker}<p class="error" role="alert">{t($locale, 'chatActivity.configurationUnavailable')}</p>{/if}
             <p class="muted">{t($locale, goalStatus)} · {t($locale, 'chatActivity.progress', { done: goal.completedRequirements, total: goal.totalRequirements })}</p>
+            {#if goal.constraintsOutsideRequirements.length}
+                <h4>{t($locale, 'chatActivity.constraints')}</h4>
+                <ul>{#each goal.constraintsOutsideRequirements as constraint}<li>{constraint}</li>{/each}</ul>
+            {/if}
             {#if goal.requirements.length}<ul class="checklist" aria-label={t($locale, 'chatInspector.requirements')}>
                 {#each goal.requirements as requirement (requirement.id)}<li>
                     <span aria-hidden="true">{requirement.status === 'completed' ? '✓' : '○'}</span>
