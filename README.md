@@ -16,7 +16,7 @@ Experts can also run through an installed Antigravity, Codex, Claude Code or Ope
 
 ## Downloads
 
-Choose an installer or archive from the [1.0.0 release](https://github.com/stuartofmine/Nola/releases/tag/v1.0.0-build.2). The release page lists the available platforms, signing status and checksums.
+Choose an installer or archive from the [1.0.0 release](https://github.com/stuartofmine/Nola/releases/tag/v1.0.0-build.3). The release page lists the available platforms, signing status and checksums.
 
 For the Linux CLI and Web client, extract the complete archive and run the following commands from its directory.
 

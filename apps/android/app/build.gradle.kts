@@ -76,7 +76,7 @@ android {
         applicationId = "com.nola"
         minSdk = 26
         targetSdk = 35
-        versionCode = 2
+        versionCode = 3
         versionName = "1.0.0"
         val updateDistribution = providers.gradleProperty("nolaDistribution").getOrElse("direct")
         require(updateDistribution in listOf("direct", "store")) { "nolaDistribution must be direct or store" }

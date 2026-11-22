@@ -16,7 +16,7 @@ CLI 可以通过带认证的本地 HTTP 服务，为 Web 和远程客户端提�
 
 ## 下载
 
-从 [1.0.0 发行页](https://github.com/stuartofmine/Nola/releases/tag/v1.0.0-build.2) 选择安装包或压缩包。发行页列出了可下载的平台、签名状态和校验值。
+从 [1.0.0 发行页](https://github.com/stuartofmine/Nola/releases/tag/v1.0.0-build.3) 选择安装包或压缩包。发行页列出了可下载的平台、签名状态和校验值。
 
 使用 Linux CLI 和 Web 客户端时，请完整解压，在解压后的目录中运行以下命令。
 
