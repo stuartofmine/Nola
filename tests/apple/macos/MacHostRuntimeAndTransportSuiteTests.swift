@@ -588,7 +588,7 @@ final class MacCodeSigningIdentityTests: XCTestCase {
             XCTAssertTrue(embed.contains("\"$MACOS/\(executable)\" \"${CODE_SIGNING_ALLOWED:-NO}\""))
         }
         XCTAssertTrue(installer.contains("if [[ \"$sign\" == YES ]]; then"))
-        let sign = try XCTUnwrap(installer.range(of: "/usr/bin/codesign --force --sign - --timestamp=none \"$staged\" || exit 1"))
+        let sign = try XCTUnwrap(installer.range(of: "nola_sign_embedded_binary \"$staged\" || exit 1"))
         let verify = try XCTUnwrap(installer.range(of: "/usr/bin/codesign --verify \"$staged\" || exit 1"))
         let install = try XCTUnwrap(installer.range(of: "mv -f \"$staged\" \"$destination\" || exit 1"))
         XCTAssertLessThan(sign.lowerBound, verify.lowerBound)

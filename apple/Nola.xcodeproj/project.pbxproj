@@ -713,6 +713,8 @@
 				"$(SRCROOT)/apps/web/browser_use_runtime/requirements.in",
 				"$(SRCROOT)/apps/web/browser_use_runtime/requirements.lock",
 				"$(SRCROOT)/scripts/bundle_browser_use_runtime.sh",
+				"$(SRCROOT)/scripts/lib/install_mac_executable.sh",
+				"$(SRCROOT)/scripts/node-runtime.entitlements",
 				"$(SRCROOT)/scripts/bundle_playwright_runtime.sh",
 			);
 			name = "Bundle Playwright Runtime";

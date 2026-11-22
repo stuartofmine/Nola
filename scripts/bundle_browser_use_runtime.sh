@@ -26,11 +26,12 @@ cp "$SOURCE/worker.py" "$SOURCE/requirements.in" "$SOURCE/requirements.lock" "$S
 PYTHONNOUSERSITE=1 PYTHONPATH="$STAGING/site-packages" "$STAGING/python/bin/python3" -c \
     'from importlib.metadata import version; assert version("browser-use") == "1.0.2"; assert version("browser-harness") == "0.1.13"'
 if [[ "${CODE_SIGNING_ALLOWED:-NO}" == YES && "$(uname -s)" == Darwin ]]; then
+    . "$(dirname "$0")/lib/install_mac_executable.sh"
     # Python extensions are loaded by the bundled child, not the application.
     # Sign each Mach-O in the relocated runtime, as for the existing Node child.
     while IFS= read -r -d '' binary; do
         if /usr/bin/file -b "$binary" | /usr/bin/grep -q 'Mach-O'; then
-            /usr/bin/codesign --force --sign - --timestamp=none "$binary"
+            nola_sign_embedded_binary "$binary"
         fi
     done < <(find "$STAGING" -type f \( -name '*.so' -o -name '*.dylib' -o -name 'python3.12' \) -print0)
 fi

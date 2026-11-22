@@ -1,4 +1,4 @@
-#!/bin/sh
+#!/bin/bash
 set -euo pipefail
 
 SOURCE="${NOLA_PLAYWRIGHT_SOURCE:-${SRCROOT}/apps/web/playwright_runtime}"
@@ -56,7 +56,8 @@ mkdir -p "$DESTINATION/bin"
 cp "$NODE_BIN" "$DESTINATION/bin/node"
 chmod 755 "$DESTINATION/bin/node"
 if [[ "${CODE_SIGNING_ALLOWED:-NO}" == "YES" ]]; then
-  /usr/bin/codesign --force --sign - --timestamp=none "$DESTINATION/bin/node"
+  . "$(dirname "$0")/lib/install_mac_executable.sh"
+  nola_sign_embedded_binary "$DESTINATION/bin/node" --entitlements "$(dirname "$0")/node-runtime.entitlements"
 fi
 "$(dirname "$0")/bundle_browser_use_runtime.sh" "$DESTINATION/browser_use"
 touch "$DESTINATION/.ready"

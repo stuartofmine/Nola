@@ -2,6 +2,19 @@
 # SPDX-License-Identifier: Apache-2.0
 # Replace executable inodes; overwriting a running/cached Mach-O can leave
 # the kernel's code-signature cache inconsistent even when codesign verifies.
+nola_sign_embedded_binary() (
+    local binary=$1
+    shift
+    if [[ ${CONFIGURATION:-Debug} == Release ]]; then
+        local identity=${NOLA_MAC_DISTRIBUTION_IDENTITY:--}
+        local timestamp=--timestamp=none
+        [[ $identity == - ]] || timestamp=--timestamp
+        /usr/bin/codesign --force --options runtime --sign "$identity" "$timestamp" "$@" "$binary"
+    else
+        /usr/bin/codesign --force --sign - --timestamp=none "$binary"
+    fi
+)
+
 nola_install_mac_executable() (
     set -euo pipefail
     local source=$1 destination=$2 sign=${3:-NO}
@@ -14,7 +27,7 @@ nola_install_mac_executable() (
     chmod 755 "$staged" || exit 1
     cmp -s "$source" "$staged" || exit 1
     if [[ "$sign" == YES ]]; then
-        /usr/bin/codesign --force --sign - --timestamp=none "$staged" || exit 1
+        nola_sign_embedded_binary "$staged" || exit 1
     fi
     /usr/bin/codesign --verify "$staged" || exit 1
     mv -f "$staged" "$destination" || exit 1

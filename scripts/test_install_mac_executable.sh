@@ -33,5 +33,8 @@ nola_install_mac_executable /usr/bin/true "$destination" NO
 [[ ! -e "${destination}.nola-staging" ]]
 nola_install_mac_executable /usr/bin/true "$destination" YES
 "$destination"
+CONFIGURATION=Release nola_install_mac_executable /usr/bin/true "$destination" YES
+/usr/bin/codesign -dv --verbose=4 "$destination" 2>&1 | grep 'flags=.*runtime'
+"$destination"
 [[ ! -e "${destination}.nola-staging" ]]
 echo 'PASS: failed copies/signatures preserve output; replacement changes inode; staging cleaned; both signing modes execute.'
