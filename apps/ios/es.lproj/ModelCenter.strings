@@ -181,5 +181,3 @@
 "Updating This Mac’s Account…" = "Actualizando la cuenta de este Mac…";
 "Use this Mac’s ChatGPT account controls above to discover models. API-key capability tests do not apply to this authorization." = "Usa los controles de cuenta de ChatGPT de este Mac que aparecen arriba para buscar modelos. Las pruebas de capacidades con clave de API no se aplican a esta autorización.";
 "Waiting for Authorization…" = "Esperando autorización…";
-"Unable to open Nola data" = "No se pudieron abrir los datos de Nola";
-"Your existing data has been preserved. No database was reset or converted." = "Se conservaron tus datos existentes. No se restableció ni convirtió ninguna base de datos.";

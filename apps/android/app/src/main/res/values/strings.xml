@@ -305,6 +305,7 @@
     <string name="common_expand">Expand</string>
     <string name="common_collapse">Collapse</string>
     <string name="chat_error_dismiss">Dismiss</string>
+    <string name="chat_continue_draft">Continue editing draft</string>
     <string name="chat_error_edit_retry">Edit and try again</string>
     <string name="chat_error_switch_model">Switch model</string>
     <string name="chat_host_tool_status_permission_required">Confirmation required</string>

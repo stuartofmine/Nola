@@ -1,4 +1,5 @@
 <script lang="ts">
+    import { toolDisplayName } from '../lib/toolDisplayName';
     import { onMount, untrack } from 'svelte';
     import { activityRequestFocus } from '../lib/activityRequestFocus';
     import { locale, t } from '../lib/i18n';
@@ -70,7 +71,7 @@
     </header>
     {#if parsed}
         <div class="permission-content" bind:this={content}>
-        <p class="tool">{parsed.tool_name}</p>
+        <p class="tool">{toolDisplayName($locale, parsed.tool_name)}</p>
         {#if reviewText.trim()}<pre>{reviewText}</pre>{:else}<p>{t($locale, 'chatPermission.noDetails')}</p>{/if}
         <p class="muted">{t($locale, 'chatPermission.scope')}</p>
         {#if !active || status !== 'ready' || expired}

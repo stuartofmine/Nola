@@ -60,9 +60,14 @@ struct MacHostPermissionCard: View {
         .accessibilityLabel(
             String(
                 format: String(localized: "Permission required for %@"),
-                request.toolName
+                displayName
             )
         )
+    }
+
+    private var displayName: String {
+        MacToolPresentationPolicy.displayTitle(for: request.toolName, arguments: request.arguments,
+            mcpDescriptorData: request.mcpDescriptorData)
     }
 
     private var requestContent: some View {
@@ -75,13 +80,7 @@ struct MacHostPermissionCard: View {
                     .background(Color.orange.opacity(0.12), in: RoundedRectangle(cornerRadius: 7, style: .continuous))
                     .accessibilityHidden(true)
                 HStack(spacing: 8) {
-                    Text(
-                        MacToolPresentationPolicy.displayTitle(
-                            for: request.toolName,
-                            arguments: request.arguments,
-                            mcpDescriptorData: request.mcpDescriptorData
-                        )
-                    )
+                    Text(displayName)
                     .font(.system(size: 14, weight: .semibold))
                     .lineLimit(2)
 

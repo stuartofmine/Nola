@@ -22,6 +22,41 @@ enum FilterMode: String {
     }
 }
 
+struct NotificationHistoryPages {
+    struct Scope: Equatable {
+        let filter: FilterMode
+        let query: String
+    }
+
+    private(set) var scope: Scope?
+    private(set) var items: [NotificationEntity] = []
+    private(set) var hasMore = false
+    private(set) var retryMore = false
+    private var offset = 0
+
+    mutating func read(scope next: Scope, more: Bool, limit: Int,
+                       fetch: (Int) throws -> [NotificationEntity]) throws {
+        if more && (next != scope || !hasMore) { return }
+        if scope != next {
+            self = NotificationHistoryPages()
+            scope = next
+        }
+        let start = more ? offset : 0
+        do {
+            let page = try fetch(start)
+            var seen = more ? Set(items.map(\.id)) : []
+            let unseen = page.filter { seen.insert($0.id).inserted }
+            if more { items.append(contentsOf: unseen) } else { items = unseen }
+            offset = start + page.count
+            hasMore = page.count == limit
+            retryMore = false
+        } catch {
+            retryMore = more
+            throw error
+        }
+    }
+}
+
 private struct NotificationCenterRoute: Hashable {
     let entityId: String?
     let lookupKey: String
@@ -40,14 +75,17 @@ private struct NotificationCenterRoute: Hashable {
 struct NotificationCenterView: View {
     @Environment(\.dismiss) private var dismiss
     @EnvironmentObject var container: ServiceContainer
-    @State private var items: [NotificationEntity] = []
+    @State private var history = NotificationHistoryPages()
+    private var scope: NotificationHistoryPages.Scope {
+        .init(filter: filter, query: query.trimmingCharacters(in: .whitespacesAndNewlines))
+    }
+    private var items: [NotificationEntity] { history.scope == scope ? history.items : [] }
     @State private var isLoading: Bool = true
     @State private var isLoadingMore: Bool = false
-    @State private var hasMoreHistory: Bool = false
-    @State private var pageSize: Int = 25
-    @State private var offset: Int = 0
+    private let pageSize = 25
     @State private var filter: FilterMode = .all
     @State private var query: String = ""
+    @State private var searchPresented = false
     @State private var navPath = NavigationPath()
     @State private var suppressNextNotificationRefresh = false
     @State private var queryRefreshTask: Task<Void, Never>? = nil
@@ -83,7 +121,7 @@ struct NotificationCenterView: View {
 
     private var content: some View {
         Group {
-            if isLoading && items.isEmpty {
+            if history.scope != scope || isLoading && items.isEmpty {
                 ProgressView()
                     .controlSize(.regular)
                     .tint(DesignTokens.primaryColor)
@@ -126,7 +164,10 @@ struct NotificationCenterView: View {
                                     .frame(maxWidth: .infinity, alignment: .leading)
                                 if loadError != nil {
                                     Button(NSLocalizedString("common.retry", value: "Retry", comment: "Retry")) {
-                                        Task { await loadHistory(showLoading: false) }
+                                        Task {
+                                            if history.retryMore { await loadMore() }
+                                            else { await loadHistory(showLoading: false) }
+                                        }
                                     }
                                     .buttonStyle(.borderless)
                                     .frame(minHeight: 44)
@@ -170,7 +211,7 @@ struct NotificationCenterView: View {
                             }
                         }
                     }
-                    if hasMoreHistory {
+                    if history.hasMore && loadError == nil {
                         Button {
                             Task { await loadMore() }
                         } label: {
@@ -239,8 +280,8 @@ struct NotificationCenterView: View {
             }
         }
         .searchable(
-            text: $query,
-            placement: .navigationBarDrawer(displayMode: items.isEmpty ? .automatic : .always),
+            text: $query, isPresented: $searchPresented,
+            placement: .navigationBarDrawer(displayMode: .always),
             prompt: Text(L10n.notificationsSearchPlaceholder)
         )
         .task(id: deepLinkRequestID?.uuidString ?? initialDeepLinkKey ?? "") {
@@ -286,17 +327,17 @@ struct NotificationCenterView: View {
                     message: NSLocalizedString("notifications.empty.search.message", value: "Try another search or clear the current query.", comment: "No matching notifications message"),
                     tint: .blue,
                     actionTitle: NSLocalizedString("notifications.empty.search.clear", value: "Clear search", comment: "Clear notification search"),
-                    action: { query = "" }
+                    action: { query = ""; searchPresented = false }
                 )
             } else {
                 NolaInlineEmptyState(
                     icon: filter == .unread ? "checkmark.circle" : "bell.slash",
                     title: filter == .unread
                         ? NSLocalizedString("notifications.empty.unread.title", value: "No unread notifications", comment: "No unread notifications")
-                        : L10n.notificationsNoPending,
+                        : NSLocalizedString("notifications.empty.all.title", value: "No notifications yet", comment: "Empty notification history"),
                     message: filter == .unread
                         ? NSLocalizedString("notifications.empty.unread.message", value: "You're all caught up.", comment: "All notifications handled")
-                        : L10n.notificationsAllSentOrCancelled,
+                        : nil,
                     tint: filter == .unread ? .green : .secondary
                 )
             }
@@ -343,11 +384,7 @@ struct NotificationCenterView: View {
         }
         do {
             loadError = nil
-            offset = 0
-            let fetched = try container.notificationManager?.fetchHistory(limit: pageSize, offset: offset, unreadOnly: filter == .unread, query: query) ?? []
-            self.items = fetched
-            self.offset = fetched.count
-            self.hasMoreHistory = fetched.count == pageSize
+            try readPage(more: false)
         } catch {
             loadError = error.localizedDescription
             container.logger.log(.error, "NotificationCenter", "Failed to load notification history", metadata: ["error": error.localizedDescription])
@@ -393,18 +430,27 @@ struct NotificationCenterView: View {
 
     @MainActor
     private func loadMore() async {
-        guard !isLoadingMore, hasMoreHistory else { return }
+        guard !isLoadingMore, history.scope == scope, history.hasMore else { return }
         isLoadingMore = true
         do {
-            let fetched = try container.notificationManager?.fetchHistory(limit: pageSize, offset: offset, unreadOnly: filter == .unread, query: query) ?? []
-            self.items.append(contentsOf: fetched)
-            self.offset += fetched.count
-            self.hasMoreHistory = fetched.count == pageSize
+            try readPage(more: true)
+            loadError = nil
         } catch {
             loadError = error.localizedDescription
             container.logger.log(.error, "NotificationCenter", "Failed to load more notifications", metadata: ["error": error.localizedDescription])
         }
         isLoadingMore = false
+    }
+
+    @MainActor
+    private func readPage(more: Bool) throws {
+        let current = scope
+        let manager = container.notificationManager
+        let limit = pageSize
+        try history.read(scope: current, more: more, limit: limit) { offset in
+            guard let manager else { throw CocoaError(.fileReadUnknown) }
+            return try manager.fetchHistory(limit: limit, offset: offset, unreadOnly: current.filter == .unread, query: current.query)
+        }
     }
 
     private func initialEntity(for route: NotificationCenterRoute) -> NotificationEntity? {

@@ -7,6 +7,38 @@ import org.junit.Assert.*
 import org.junit.Test
 
 class ConversationComposerDraftsTest {
+    @Test fun starterPromptKeepsExpertIdentityAndDoesNotDuplicateOnRetap() {
+        val draft = ConversationComposerDraft()
+        val expert = InlineExpertMention(0, "@专家", "expert", 2)
+        draft.setContent("@专家 帮我整理\n", listOf(expert))
+        repeat(2) { draft.insertSuggestion("Plan today") }
+        assertEquals("@专家 帮我整理\nPlan today", draft.text.value)
+        assertEquals(listOf(expert), draft.mentions)
+        assertEquals(draft.text.value.length, draft.caret)
+    }
+
+    @Test fun retryRestoresOnlyAnEmptyComposerAndPreservesAnEditedMentionAndCaret() {
+        val draft = ConversationComposerDraft()
+        draft.restoreRetryTextIfEmpty("Failed input")
+        assertEquals("Failed input", draft.text.value)
+        assertEquals(draft.text.value.length, draft.caret)
+        val expert = InlineExpertMention(0, "@专家", "expert", 2)
+        draft.setContent("@专家 新草稿", listOf(expert))
+        draft.caret = 4
+        draft.restoreRetryTextIfEmpty("Failed input")
+        assertEquals("@专家 新草稿", draft.text.value)
+        assertEquals(listOf(expert), draft.mentions)
+        assertEquals(4, draft.caret)
+
+        draft.text.value = ""
+        val attachment = AndroidChatAttachment(name = "notes", typeLabel = "text", sizeBytes = 3,
+            content = "abc", extractionLabel = "text", contentDigest = "", uri = "content://notes", mimeType = "text/plain")
+        draft.attachments.value = listOf(attachment)
+        draft.restoreRetryTextIfEmpty("Failed input")
+        assertEquals("", draft.text.value)
+        assertEquals(listOf(attachment), draft.attachments.value)
+    }
+
     @Test fun admittedDraftRetirementInvalidatesComposerObservationImmediately() = runBlocking {
         val drafts = ConversationComposerDrafts()
         drafts.forConversation("a").text.value = "submitted"

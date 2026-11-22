@@ -158,6 +158,32 @@ final class MacActivityReadOwnershipTests: XCTestCase {
         XCTAssertNotNil(element(host, "activity.run.all-result"))
     }
 
+    func testConversationPaginationRetriesTheFailedPage() async throws {
+        let accessibility = try MacHostedAccessibilitySession()
+        defer { accessibility.restore() }
+        let fixture = ActivityFixture()
+        let host = NSHostingView(rootView: AppleActivityView(load: { try await fixture.load($0) },
+            detail: { _ in nil }, openSource: { _ in }).environment(\.accessibilityEnabled, true)
+            .frame(width: 600, height: 560))
+        let window = makeWindow(host)
+        defer { window.orderOut(nil); window.contentView = nil; window.close() }
+        try await wait { self.element(host, "activity.run.all-result") != nil }
+        XCTAssertTrue(try XCTUnwrap(element(host, "activity.source.conversation")).accessibilityPerformPress?() ?? false)
+        try await wait { self.element(host, "activity.run.conversation-result") != nil }
+        fixture.failNext = true
+        XCTAssertTrue(try XCTUnwrap(element(host, "activity.loadMore")).accessibilityPerformPress?() ?? false)
+        try await wait { self.element(host, "activity.retry") != nil }
+        XCTAssertTrue(try XCTUnwrap(element(host, "activity.retry")).accessibilityPerformPress?() ?? false)
+        try await wait { self.element(host, "activity.run.older-result") != nil }
+        XCTAssertNotNil(element(host, "activity.run.conversation-result"))
+        XCTAssertEqual(fixture.queries.suffix(2).compactMap { $0.cursor?.run_id }, ["conversation-result", "conversation-result"])
+        XCTAssertTrue(try XCTUnwrap(element(host, "activity.source.automation")).accessibilityPerformPress?() ?? false)
+        try await wait { self.element(host, "activity.resetFilters") != nil }
+        XCTAssertTrue(try XCTUnwrap(element(host, "activity.resetFilters")).accessibilityPerformPress?() ?? false)
+        try await wait { self.element(host, "activity.run.all-result") != nil }
+        XCTAssertNil(fixture.queries.last?.source)
+    }
+
     private func makeWindow<Content: View>(_ host: NSHostingView<Content>) -> NSWindow {
         let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 600, height: 560),
             styleMask: [.titled], backing: .buffered, defer: false)
@@ -190,11 +216,12 @@ final class MacActivityReadOwnershipTests: XCTestCase {
     func load(_ query: AppleActivityQuery) async throws -> AppleActivityPage {
         queries.append(query)
         if failNext { failNext = false; throw Failure.unavailable }
-        let id = query.source == "agent" ? "agent-result" : "all-result"
-        let cursor: Any = query.source == "agent" ? NSNull() : ["created_at_ms": 1, "run_id": id]
+        if query.source == "automation" { return AppleActivityPage(entries: [], next_cursor: nil) }
+        let id = query.cursor == nil ? (query.source ?? "all") + "-result" : "older-result"
+        let cursor: Any = query.source == "agent" || query.cursor != nil ? NSNull() : ["created_at_ms": 1, "run_id": id]
         return try JSONDecoder().decode(AppleActivityPage.self, from: JSONSerialization.data(withJSONObject: [
             "entries": [["run_id": id, "conversation_id": "conversation-" + id, "assistant_message_id": "assistant-" + id,
-                "source": "agent", "title": id, "created_at_ms": 1, "completed_at_ms": 2,
+                "source": query.source ?? "agent", "title": id, "created_at_ms": 1, "completed_at_ms": 2,
                 "status": "answered", "needs_response": false, "is_current": true]], "next_cursor": cursor]))
     }
 }

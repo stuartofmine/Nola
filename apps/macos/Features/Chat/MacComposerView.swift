@@ -279,10 +279,12 @@ struct MacComposerTextEditor: NSViewRepresentable {
                         textView.string = restored.text
                         let range = NSRange(location: min(restored.caret, restored.text.utf16.count), length: 0)
                         textView.setSelectedRange(range)
+                        textView.scrollRangeToVisible(range)
                         return true
                     }
                 }
                 textView.setSelectedRange(NSRange(location: min(request.location, textView.string.utf16.count), length: 0))
+                textView.scrollRangeToVisible(textView.selectedRange())
             }
             if let layout = textView.layoutManager, context.coordinator.styledText != textView.string || context.coordinator.styledMentions != mentionEditor.mentions {
                 context.coordinator.styledText = textView.string

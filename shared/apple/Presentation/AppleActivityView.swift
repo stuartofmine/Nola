@@ -66,6 +66,7 @@ struct AppleActivityView: View {
     @State private var attention = false
     @State private var busy = false
     @State private var error: String?
+    @State private var retryMore = false
     @State private var errorRequestKey: String?
     @State private var selected: AppleActivityEntry?
     @State private var loadedRequestKey: String?
@@ -95,6 +96,7 @@ struct AppleActivityView: View {
             VStack(alignment: .leading, spacing: 10) {
                 HStack(spacing: 2) {
                     sourceButton("all", title: Text("activity.all"))
+                    sourceButton("conversation", title: Text("activity.conversation"))
                     sourceButton("agent", title: Text("activity.agent"))
                     sourceButton("automation", title: Text("activity.plan"))
                 }.padding(2).background(Color.primary.opacity(0.04), in: RoundedRectangle(cornerRadius: 8))
@@ -117,7 +119,8 @@ struct AppleActivityView: View {
             if let error = errorForCurrentQuery {
                 VStack(alignment: .leading, spacing: 6) {
                     Text(error).foregroundStyle(.secondary)
-                    Button("common.retry") { requestReload(more: false) }.disabled(busy)
+                    Button("common.retry") { requestReload(more: retryMore) }.disabled(busy)
+                        .accessibilityIdentifier("activity.retry")
                 }.padding()
             }
             HStack(spacing: 8) {
@@ -168,10 +171,16 @@ struct AppleActivityView: View {
             }.padding(.horizontal).padding(.vertical, 6)
             List {
                 if displayEntries.isEmpty && !busy && !waitingForCurrentQuery && errorForCurrentQuery == nil {
-                    Group {
-                        if attention { Text("activity.emptyResponse").foregroundStyle(.secondary) }
-                        else if !query.isEmpty { ContentUnavailableView.search(text: query) }
+                    VStack(alignment: .leading, spacing: 8) {
+                        if !query.isEmpty { ContentUnavailableView.search(text: query) }
+                        else if attention { Text("activity.emptyResponse").foregroundStyle(.secondary) }
+                        else if source != "all" { Text("Adjust the filters or search query.").foregroundStyle(.secondary) }
                         else { Text("information.activity.empty").foregroundStyle(.secondary) }
+                        if source != "all" || attention || !query.isEmpty {
+                            Button("Reset Filters") { source = "all"; attention = false; query = "" }
+                                .frame(minHeight: actionSize)
+                                .accessibilityIdentifier("activity.resetFilters")
+                        }
                     }.listRowBackground(Color.clear).listRowSeparator(.hidden)
                 }
                 ForEach(displayEntries) { entry in
@@ -192,7 +201,7 @@ struct AppleActivityView: View {
                     }.buttonStyle(.plain).listRowBackground(Color.clear)
                         .accessibilityIdentifier("activity.run.\(entry.run_id)")
                 }
-                if cursor != nil && !waitingForCurrentQuery {
+                if cursor != nil && !waitingForCurrentQuery && errorForCurrentQuery == nil {
                     Button("activity.loadMore") { requestReload(more: true) }
                         .frame(maxWidth: .infinity, minHeight: actionSize)
                         .disabled(busy)
@@ -292,7 +301,7 @@ struct AppleActivityView: View {
             error = nil
         } catch is CancellationError { }
         catch { if key == requestKey, generation == loadGeneration {
-            self.error = error.localizedDescription; errorRequestKey = key
+            self.error = error.localizedDescription; errorRequestKey = key; retryMore = more
         } }
     }
     private func requestReload(more: Bool) {

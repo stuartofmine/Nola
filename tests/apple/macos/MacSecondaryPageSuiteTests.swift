@@ -1157,6 +1157,10 @@ final class MacSecondaryPageNavigationTests: XCTestCase {
                 try await pressIdentifier(resetID, in: host)
                 _ = try await waitForControl(rowID)
                 XCTAssertNil(session.element(resetID, in: host))
+                let currentEditor = try XCTUnwrap(field.currentEditor() as? NSTextView, "Reset should return typing to search")
+                currentEditor.insertText("Inbox", replacementRange: currentEditor.selectedRange())
+                _ = try await waitForControl(rowID)
+                XCTAssertEqual(currentEditor.string, "Inbox")
             }
         } catch {
             await history.remove(identifier: item.id)
@@ -1500,11 +1504,16 @@ final class MacSecondaryPageNavigationTests: XCTestCase {
         try await MacVisualPixelAssertions.settleLayout(window: panel, hostingView: sheet)
         XCTAssertEqual(flow.phase, .searching)
         let fields = accessibilityObjects(sheet)
+        let hardware = try XCTUnwrap(fields.first { $0.accessibilityIdentifier?() == "local-acquire-hardware" })
+        let summaryFrame = try XCTUnwrap(hardware.accessibilityFrame?())
+        XCTAssertFalse(summaryFrame.isEmpty)
         for id in ["local-acquire-engine", "local-acquire-source"] {
-            XCTAssertNotNil(fields.first { $0.accessibilityIdentifier?() == id }, id)
+            let picker = try XCTUnwrap(fields.first { $0.accessibilityIdentifier?() == id }, id)
+            let pickerFrame = try XCTUnwrap(picker.accessibilityFrame?())
+            XCTAssertFalse(pickerFrame.isEmpty, id)
+            XCTAssertGreaterThanOrEqual(summaryFrame.minY, pickerFrame.maxY, id)
         }
         let field = try XCTUnwrap(fields.compactMap { $0 as? NSTextField }.first { $0.isEditable })
-        XCTAssertNotNil(fields.first { $0.accessibilityIdentifier?() == "local-acquire-hardware" })
         XCTAssertTrue(panel.makeFirstResponder(field))
         let editor = try XCTUnwrap(field.currentEditor() as? NSTextView)
         editor.insertText("Qwen3", replacementRange: editor.selectedRange())

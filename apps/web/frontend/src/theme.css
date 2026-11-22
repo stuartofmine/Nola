@@ -232,6 +232,8 @@ dialog:not([role="complementary"]) { opacity: 0; transform: translateY(4px); tra
 dialog:not([role="complementary"]):modal { opacity: 1; transform: translateY(0); }
 dialog::backdrop { opacity: 0; background: rgb(0 0 0 / .4); backdrop-filter: blur(3px); transition: opacity var(--motion-base) ease-out, overlay var(--motion-base) allow-discrete, display var(--motion-base) allow-discrete; }
 dialog:modal::backdrop { opacity: 1; }
+/* An editor can unmount its contents as soon as the native dialog closes. */
+dialog:not([open]):not(:has(> *)), dialog:not([open]):not(:has(> *))::backdrop { display: none; transition: none; }
 @starting-style {
     dialog:not([role="complementary"]):modal { opacity: 0; transform: translateY(4px); }
     dialog:modal::backdrop { opacity: 0; }
@@ -309,6 +311,7 @@ dialog form { display: grid; gap: 20px; }
 /* Native continuous corners where supported; rounded fallback keeps layout. */
 @supports (corner-shape: squircle) {
     button, .button, input:not([role='switch']), select, textarea, .card, .tabs, dialog, .composer { corner-shape: squircle; }
+    .composer-actions button.primary { corner-shape: round; }
 }
 @media (forced-colors: active) {
     button, .button, input, select, textarea, .card, .tabs, dialog,

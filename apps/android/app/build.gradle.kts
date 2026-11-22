@@ -140,6 +140,10 @@ android {
     sourceSets.getByName("debug").manifest.srcFile(updateManifest)
     sourceSets.getByName("release").manifest.srcFile(updateManifest)
 
+    sourceSets.getByName("main").resources.srcDir(
+        rootProject.projectDir.parentFile.parentFile.resolve("shared/localization")
+    )
+
     sourceSets.getByName("main").assets.srcDir(
         rootProject.projectDir.parentFile.parentFile.resolve("apps/ios/SharedPrompts")
     )

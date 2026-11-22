@@ -25,7 +25,7 @@ enum MacToolPresentationPolicy {
         if trace.tool != nil {
             let title = trace.title.trimmingCharacters(in: .whitespacesAndNewlines)
             if !title.isEmpty, title != "Tool", title != trace.capabilityID {
-                return displayTitle(for: title)
+                return AppleToolDisplayName.localized(trace.capabilityID, title: title) ?? title
             }
             return displayTitle(for: trace.capabilityID, arguments: trace.arguments)
         }
@@ -182,9 +182,9 @@ enum MacToolPresentationPolicy {
             }
             // Host traces may already contain a localized presentation title.
             // Preserve it instead of producing “Unknown tool · Read file”.
-            return trimmed
+            return AppleToolDisplayName.localized(rawTitle) ?? trimmed
         }
-        let title = NSLocalizedString(
+        let title = AppleToolDisplayName.localized(rawTitle) ?? NSLocalizedString(
             presentation.key,
             value: presentation.fallback,
             comment: "Localized Agent Host tool title"

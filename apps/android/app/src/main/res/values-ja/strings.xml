@@ -633,6 +633,7 @@
     <string name="common_expand">展開</string>
     <string name="common_collapse">折りたたむ</string>
     <string name="chat_error_dismiss">閉じる</string>
+    <string name="chat_continue_draft">下書きの編集を続ける</string>
     <string name="chat_error_edit_retry">編集して再試行</string>
     <string name="chat_error_switch_model">モデルを切り替える</string>
     <string name="models_certificate_sha256_optional">証明書 SHA-256（任意）</string>

@@ -30,9 +30,11 @@
 "goal.pause" = "暂停";
 "goal.resume" = "继续";
 "goal.schedule" = "定时继续";
+"goal.schedule_action" = "安排";
 "goal.cancel" = "取消目标";
 "goal.actions" = "目标操作";
 "goal.start" = "开始目标";
+"goal.start_action" = "开始";
 "goal.sending" = "正在发送目标操作";
 "goal.objective" = "这个目标要完成什么？";
 "goal.model_note" = "使用此对话选定的模型，并遵循当前工具权限。";
@@ -52,3 +54,9 @@
 "inspector.conversation_needed" = "请先开始或打开一个对话，再查看进度或设置目标。";
 "goal.discard" = "放弃";
 "goal.paused_reply_hint" = "已暂停等待补充。可在聊天中直接回复或点击继续。";
+"goal.section.goal" = "目标";
+"goal.section.requirements" = "要求";
+"goal.section.work" = "进度";
+"inspector.section.checklist" = "检查清单";
+"inspector.section.status" = "会话状态";
+"inspector.section.tasks" = "任务";

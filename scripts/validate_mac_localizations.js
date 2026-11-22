@@ -8,7 +8,7 @@ const path = require("path");
 
 const root = path.resolve(__dirname, "..");
 const catalogPath = path.join(root, "apps/macos", "Localizable.xcstrings");
-const requiredLocales = ["en", "zh-Hans", "zh-Hant", "ja", "ko", "fr", "de", "es"];
+const requiredLocales = ["en", "zh-Hans", "zh-Hant", "ja", "ko", "fr", "de", "es", "ru"];
 const criticalKeyPattern = /Data Center|Data source|Sources|Usage|Health|Web source|Default|conversation|attention|validation|Validated|Never used|Last used|^onboarding\.|^mac\.data_center\.permission\./i;
 
 function placeholders(value) {

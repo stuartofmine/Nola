@@ -23,29 +23,46 @@
     }
     $effect(() => { if (open) void tick().then(positionChoices); else choiceShift = 0; });
     const selected = $derived(selection?.options.find(option => option.value === selection.choice));
-    const label = $derived(selected?.name ?? t($locale, selection?.choice && selection.choice !== 'auto' ? 'chatSession.unavailableModel' : (selection?.options.length ? 'chatSession.autoModel' : 'chatSession.invalidModel')));
+    const label = $derived(selected?.name ?? t($locale, selection?.choice && selection.choice !== 'auto' ? 'chatSession.unavailableModel' : (selection?.options.length ? 'chatOverview.automatic' : 'rooms.model')));
     async function navigate(event: KeyboardEvent) {
+        if (event.defaultPrevented || event.isComposing || event.altKey || event.ctrlKey || event.metaKey || event.shiftKey) return;
+        if (open && event.key === 'Escape') {
+            event.preventDefault();
+            event.stopPropagation();
+            close();
+            return;
+        }
         if (!['ArrowDown', 'ArrowUp', 'Home', 'End'].includes(event.key)) return;
         event.preventDefault();
-        const wasOpen = open;
+        const fromTrigger = event.target === root?.querySelector('summary');
         open = true;
         await tick();
         if (!open || !root?.isConnected) return;
         const choices = [...root.querySelectorAll<HTMLElement>('.choices button:not(:disabled), .choices a')];
         if (!choices.length) return;
         const index = choices.indexOf(document.activeElement as HTMLElement);
+        const selectedIndex = choices.findIndex(choice => choice.getAttribute('aria-pressed') === 'true');
+        const entry = selectedIndex >= 0 ? selectedIndex : event.key === 'ArrowUp' ? choices.length - 1 : 0;
         const target = event.key === 'Home' ? 0 : event.key === 'End' ? choices.length - 1
-            : !wasOpen || index < 0 ? (event.key === 'ArrowUp' ? choices.length - 1 : 0)
+            : fromTrigger || index < 0 ? entry
             : (index + (event.key === 'ArrowDown' ? 1 : -1) + choices.length) % choices.length;
-        choices[target].focus();
+        choices[target].focus({ preventScroll: true });
+        const list = choices[target].parentElement?.closest<HTMLElement>('.choices');
+        if (list) {
+            const item = choices[target].getBoundingClientRect(), bounds = list.getBoundingClientRect();
+            if (item.top < bounds.top) list.scrollTop -= bounds.top - item.top;
+            else if (item.bottom > bounds.bottom) list.scrollTop += item.bottom - bounds.bottom;
+        }
     }
-    function close() { open = false; root?.querySelector('summary')?.focus(); }
+    function close() { open = false; root?.querySelector('summary')?.focus({ preventScroll: true }); }
 </script>
-<svelte:window onclick={event => { if (open && !event.composedPath().includes(root)) open = false; }} onfocusin={event => { if (root && event.target instanceof Node && !root.contains(event.target)) { root.open = false; open = false; } }} onkeydown={event => { if (!event.composedPath().includes(root)) return; if (open && event.key === 'Escape') { event.preventDefault(); close(); } else void navigate(event); }} onresize={positionChoices} />
+<svelte:window onclick={event => { if (open && !event.composedPath().includes(root)) open = false; }} onfocusin={event => { if (root && event.target instanceof Node && !root.contains(event.target)) { root.open = false; open = false; } }} onkeydown={event => { if (event.composedPath().includes(root)) void navigate(event); }} onresize={positionChoices} />
 <details class="model-menu" bind:this={root} bind:open ontoggle={event => { if (event.currentTarget.open) onopen(); }}>
     <summary aria-label={`${t($locale, 'chatSession.model')}: ${label}`} title={label}><span>{label}</span><svg aria-hidden="true" class="chevron" viewBox="0 0 24 24"><path d="m6 9 6 6 6-6" /></svg>{#if selection?.errorKey}<span class="error-mark" role="img" aria-label={t($locale, selection.errorKey)} title={t($locale, selection.errorKey)}>!</span>{/if}</summary>
     <div class="choices" style:translate={choiceShift ? `${choiceShift}px 0` : undefined} aria-label={t($locale, 'chatSession.model')}>
-        <button type="button" disabled={!selection || selection.disabled || !selection.options.length} aria-pressed={selection?.choice === 'auto'} onclick={() => { close(); onselect('auto'); }}>{t($locale, selection?.options.length ? 'chatSession.autoModel' : 'chatSession.invalidModel')}</button>
+        {#if selection?.options.length}
+            <button type="button" disabled={selection.disabled} aria-pressed={selection?.choice === 'auto'} onclick={() => { close(); onselect('auto'); }}>{t($locale, 'chatSession.autoModel')}</button>
+        {/if}
         {#each [false, true] as local}
             {#if selection?.options.some(option => option.local === local)}
                 <p class="group">{t($locale, local ? 'models.local' : 'models.api')}</p>
@@ -55,7 +72,7 @@
             {/if}
         {/each}
         {#if selection?.errorKey}<p role="status">{t($locale, selection.errorKey)}</p><button type="button" onclick={event => { event.stopPropagation(); onreload(); }}>{t($locale, 'chatSession.reload')}</button>{/if}
-        <div class="management"><button type="button" onclick={() => { close(); onsettings(); }}>{t($locale, 'chatSession.title')}</button><a href="/models">{t($locale, 'models.title')}…</a></div>
+        <div class="management" class:separated={!!selection?.options.length || !!selection?.errorKey}><button type="button" onclick={() => { close(); onsettings(); }}>{t($locale, 'chatSession.title')}</button><a href="/models">{t($locale, selection?.options.length ? 'models.title' : 'chatSession.configureModel')}</a></div>
     </div>
 </details>
 <style>
@@ -75,6 +92,6 @@
     button[aria-pressed="true"] { background: var(--glass-pill-bg); border-color: var(--glass-pill-border); color: var(--content); }
     small { display: block; color: var(--muted); font-size: 12px; }
     .group { color: var(--muted); margin: 12px 10px 4px; font-size: 12px; }
-    .management { margin-top: 8px; padding-top: 8px; border-top: 1px solid var(--border); }
+    .management.separated { margin-top: 8px; padding-top: 8px; border-top: 1px solid var(--border); }
     @media(max-width:760px) { .model-menu { max-width: 30vw; } .choices { position: fixed; left: 12px; top: 96px; max-height: min(65dvh, calc(100dvh - 108px)); width: calc(100vw - 24px); } }
 </style>

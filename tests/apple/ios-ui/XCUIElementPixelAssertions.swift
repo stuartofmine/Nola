@@ -25,15 +25,16 @@ enum XCUIElementPixelAssertions {
     }
 
     private static let lightSurfaceTargets: [RGBPixel] = [
-        RGBPixel(r: 250, g: 248, b: 244), // #FAFAFA
+        RGBPixel(r: 250, g: 250, b: 250), // #FAFAFA
         RGBPixel(r: 255, g: 255, b: 255), // #FFFFFF
-        RGBPixel(r: 241, g: 239, b: 232)  // #F2F2F4
+        RGBPixel(r: 242, g: 242, b: 244)  // #F2F2F4
     ]
 
     private static let darkSurfaceTargets: [RGBPixel] = [
-        RGBPixel(r: 27, g: 28, b: 26), // #0b0b0c
-        RGBPixel(r: 34, g: 36, b: 32), // #131315
-        RGBPixel(r: 41, g: 44, b: 39)  // #1a1a1d
+        RGBPixel(r: 11, g: 11, b: 12), // #0b0b0c
+        RGBPixel(r: 19, g: 19, b: 21), // #131315
+        RGBPixel(r: 26, g: 26, b: 29), // #1a1a1d
+        RGBPixel(r: 36, g: 36, b: 40)  // #242428
     ]
 
     @discardableResult
@@ -140,7 +141,10 @@ enum XCUIElementPixelAssertions {
                 let b = Int(buffer[offset + 2])
 
                 analyzedCount += 1
-                if targets.contains(where: { abs(r - $0.r) <= 8 && abs(g - $0.g) <= 8 && abs(b - $0.b) <= 8 }) {
+                // The row fill is only a few RGB steps away from UIKit grouped gray.
+                // Count flat theme fills at sRGB rounding tolerance, excluding ambiguous blends.
+                let isThemeFill = targets.contains { abs(r - $0.r) <= 1 && abs(g - $0.g) <= 1 && abs(b - $0.b) <= 1 }
+                if isThemeFill {
                     warmSurfaceCount += 1
                 }
                 if r <= 3 && g <= 3 && b <= 3 {
@@ -156,7 +160,7 @@ enum XCUIElementPixelAssertions {
                 } else {
                     isNeutralCoolGray = r > 220 && (b - r) >= 3 && abs(r - g) <= 4
                 }
-                if isNeutralCoolGray {
+                if isNeutralCoolGray && !isThemeFill {
                     coolGrayCount += 1
                 }
 
@@ -215,5 +219,27 @@ enum XCUIElementPixelAssertions {
 
     private static func formatPct(_ value: Double) -> String {
         String(format: "%.2f%%", value * 100)
+    }
+}
+
+final class IOSPaletteMeasurementTests: XCTestCase {
+    func testThemeAndSystemSurfacesRemainDistinguishable() throws {
+        let cases: [(UInt32, Bool, Bool)] = [
+            (0x0B0B0C, true, true), (0x131315, true, true), (0x1A1A1D, true, true),
+            (0x242428, true, true), (0x1C1C1E, true, false),
+            (0xFAFAFA, false, true), (0xFFFFFF, false, true),
+            (0xF2F2F4, false, true), (0xF2F2F7, false, false)
+        ]
+        for (rgb, dark, approved) in cases {
+            let space = try XCTUnwrap(CGColorSpace(name: CGColorSpace.sRGB))
+            let ctx = try XCTUnwrap(CGContext(data: nil, width: 20, height: 20, bitsPerComponent: 8,
+                bytesPerRow: 80, space: space, bitmapInfo: CGImageAlphaInfo.noneSkipLast.rawValue))
+            ctx.setFillColor(red: CGFloat(rgb >> 16) / 255, green: CGFloat((rgb >> 8) & 255) / 255,
+                             blue: CGFloat(rgb & 255) / 255, alpha: 1)
+            ctx.fill(CGRect(x: 0, y: 0, width: 20, height: 20))
+            let result = try XCUIElementPixelAssertions.analyze(cgImage: XCTUnwrap(ctx.makeImage()), isDark: dark)
+            XCTAssertEqual(result.warmSurfaceFraction, approved ? 1 : 0)
+            XCTAssertEqual(result.coolGrayFraction, approved ? 0 : 1)
+        }
     }
 }

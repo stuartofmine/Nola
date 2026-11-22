@@ -15,6 +15,7 @@ interface AndroidExpertNativeTestDependencies {
     fun modelService(): com.nola.llm.ModelService
     fun scheduledActionScheduler(): com.nola.work.ScheduledActionScheduler
     fun scheduledActions(): com.nola.data.repository.ScheduledActionRepository
+    fun notifications(): com.nola.data.repository.NotificationRepository
     fun preferences(): com.nola.data.local.datastore.PreferenceDataStore
     fun modelRepository(): ModelRepository
     fun runtime(): AndroidApplicationRuntime

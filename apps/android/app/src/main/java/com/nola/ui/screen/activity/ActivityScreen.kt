@@ -3,7 +3,6 @@ package com.nola.ui.screen.activity
 
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.foundation.clickable
-import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.lazy.LazyColumn
@@ -112,8 +111,8 @@ internal fun ActivityScreen(onOpenConversation: (String) -> Unit, onOpenPlans: (
                     selectedContainerColor = MaterialTheme.colorScheme.primaryContainer,
                     selectedLabelColor = MaterialTheme.colorScheme.onPrimaryContainer,
                 )
-                Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(4.dp)) {
-                    listOf(null to R.string.activity_all, "agent" to R.string.activity_agent, "automation" to R.string.activity_plan).forEach { (value, label) ->
+                FlowRow(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                    listOf(null to R.string.activity_all, "conversation" to R.string.tab_chat, "agent" to R.string.activity_agent, "automation" to R.string.activity_plan).forEach { (value, label) ->
                         FilterChip(selected = source == value, onClick = { source = value }, colors = colors, border = null,
                             shape = MaterialTheme.shapes.extraLarge, label = { Text(stringResource(label)) })
                     }
@@ -121,11 +120,16 @@ internal fun ActivityScreen(onOpenConversation: (String) -> Unit, onOpenPlans: (
                         shape = MaterialTheme.shapes.extraLarge, label = { Text(stringResource(R.string.activity_needs_response)) })
                 }
             }
-            if (state.hasLoaded && state.entries.isEmpty()) item {
+            if (state.hasLoaded && !state.loading && !state.failed && state.entries.isEmpty()) item {
                 val filtered = needsResponse || source != null || search.isNotBlank()
                 NolaEmptyState(
                     icon = if (filtered) Icons.Filled.Search else Icons.Filled.History,
                     title = stringResource(if (filtered) R.string.activity_empty_filter else R.string.activity_empty),
+                    action = if (filtered) { {
+                        TextButton(onClick = { searchDraft = ""; search = ""; source = null; needsResponse = false }) {
+                            Text(stringResource(R.string.notifications_reset_filters))
+                        }
+                    } } else null,
                 )
             }
             items(state.entries.filter { it.needs_response } + state.entries.filter { !it.needs_response }, key = { it.run_id }) { entry ->

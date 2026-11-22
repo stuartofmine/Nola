@@ -1,7 +1,8 @@
 <script lang="ts">
+    import { toolDisplayName } from '../lib/toolDisplayName';
     import {randomId} from '../lib/randomId';
     import {supportsExpertExecutors, parseExpertRoles, ExpertRoleCatalogUnavailable, expertLocalized, expertEfforts, expertDefaultProfileId, type ExpertRoleTemplate} from '../lib/expertRoles';
-    import {onMount} from 'svelte';
+    import {onMount, tick} from 'svelte';
     import {api, ApiError} from '../lib/api';
     import {locale, t} from '../lib/i18n';
     import {loadModelCatalog} from '../lib/modelCatalog';
@@ -9,6 +10,10 @@
     import {roomCommandAtSource} from '../lib/agentRooms';
     import type {AgentDirectory, PersistentAgent} from '../lib/agentRooms';
     import {expertExecutorKey, expertExecutorSelection, type ExpertExecutorOption, editedExpertDefaults, confirmsExpertWrite, expertEditorValues, rebaseExpertEditorValues, type ExpertEditorValues} from '../lib/expertDefinition';
+    import {workspaceDialog, workspaceUnloadScope} from '../lib/workspacePageLocation';
+    const ownDialog = workspaceDialog();
+    const ownsUnload = workspaceUnloadScope();
+    let nameField: HTMLInputElement;
     import ConfirmationDialog from './ConfirmationDialog.svelte';
     import ExpertBubbleColorPicker from './ExpertBubbleColorPicker.svelte';
     let {hostId, onclose}: {hostId: string; onclose: () => void} = $props();
@@ -65,7 +70,19 @@
         event?.preventDefault(); if (saving || !await discard() || !alive) return;
         dialog.close(); onclose();
     }
-    async function select(agent: PersistentAgent | null) {if (!saving && !uncertain && await discard() && alive) reset(agent);}
+    async function select(agent: PersistentAgent | null) {
+        if (saving || loading || uncertain) return;
+        if (agent?.id !== editing?.id) {
+            if (!await discard() || !alive) return;
+            reset(agent);
+        }
+        await tick();
+        nameField?.focus();
+    }
+    function changeModel(next: string) {
+        model = next;
+        if (!expertEfforts(profiles, next, defaultProfileId).includes(effort)) effort = 'automatic';
+    }
     async function loadExecutors() {
         const request = ++executorCatalogRequest;
         executorCatalogLoading = true;
@@ -159,13 +176,25 @@
         return () => {alive = false; lifetime.abort();};
     });
 </script>
-<svelte:window onbeforeunload={event => {if (dirty || saving || uncertain) {event.preventDefault(); event.returnValue = '';}}} />
+<svelte:window onbeforeunload={event => {if (ownsUnload(event) && (dirty || saving || uncertain)) {event.preventDefault(); event.returnValue = '';}}} />
 <ConfirmationDialog bind:this={confirmation} />
-<dialog use:portal bind:this={dialog} aria-label={t($locale, 'rooms.manageExperts')} oncancel={close} onclick={event => { if (event.target === dialog && !saving) void close(); }}>
+<dialog use:ownDialog use:portal bind:this={dialog} aria-label={t($locale, 'rooms.manageExperts')} oncancel={close} onclick={event => { if (event.target === dialog && !saving) void close(); }}>
     <header><h2>{t($locale, 'rooms.manageExperts')}</h2><button disabled={saving} onclick={() => close()}>{t($locale, 'rooms.close')}</button></header>
     {#if loading}<p role="status">{t($locale, 'rooms.loading')}</p>{/if}
     {#if error}<p role="alert" class="error">{t($locale, catalogUnavailable ? 'rooms.expertCatalogUnavailable' : 'rooms.failed')}</p><button disabled={saving} onclick={refresh}>{t($locale, 'rooms.refresh')}</button>{/if}
     <div class="expert-panes">
+    <label class="expert-mobile-picker">{t($locale, 'rooms.experts')}
+        <select value={editing?.id ?? ''} disabled={saving || loading || uncertain} onchange={event => {
+            const next = directory.agents.find(agent => agent.id === event.currentTarget.value) ?? null;
+            event.currentTarget.value = editing?.id ?? '';
+            void select(next);
+        }}>
+            <option value="">{t($locale, 'rooms.createAgent')}</option>
+            {#each directory.agents as agent (agent.id)}
+                <option value={agent.id}>{agent.name}{agent.availability !== 'active' ? ' · ' + t($locale, 'rooms.inactive') : ''}</option>
+            {/each}
+        </select>
+    </label>
     <nav class="expert-sidebar" aria-label={t($locale, 'rooms.experts')}>
         <button class="create-btn" disabled={saving || uncertain} aria-pressed={!editing} onclick={() => select(null)}>+ {t($locale, 'rooms.createAgent')}</button>
         {#each directory.agents as agent (agent.id)}<button class="expert-item" disabled={saving || uncertain} aria-pressed={editing?.id === agent.id} onclick={() => select(agent)}><span class="expert-initial" aria-hidden="true">{Array.from(agent.name.trim())[0] ?? '?'}</span><span class="expert-item-label">{agent.name}{#if agent.availability !== 'active'}<small class="muted"> · {t($locale, 'rooms.inactive')}</small>{/if}</span></button>{/each}
@@ -178,7 +207,7 @@
             </div>
         {/if}
         <fieldset disabled={loading || !loaded || saving || uncertain || conflicted}>
-            <label>{t($locale, 'rooms.agentName')}<input bind:value={name} maxlength="200" required /></label>
+            <label>{t($locale, 'rooms.agentName')}<input bind:this={nameField} bind:value={name} maxlength="200" required /></label>
             <label>{t($locale, 'rooms.agentDescription')}<textarea bind:value={description} rows="3"></textarea></label>
             {#if executorCatalogLoading || executors.length || executor}
                 <label>{t($locale, 'messaging.execution_backend')}<select value={selectedBackend} aria-busy={executorCatalogLoading} disabled={executorCatalogLoading}
@@ -189,7 +218,7 @@
                 </select></label>
             {/if}
             {#if selectedBackend}
-                <label>{t($locale, 'rooms.model')}<select bind:value={executor}>
+                <label>{t($locale, 'rooms.model')}<select aria-label={t($locale, 'rooms.model')} bind:value={executor}>
                     <option value={expertExecutorKey(selectedBackend)}>{t($locale, 'chatSession.automatic')}</option>
                     {#if executor !== expertExecutorKey(selectedBackend) && !backend?.models?.some(m => expertExecutorKey(selectedBackend, m) === executor)}
                         <option value={executor} disabled>{JSON.parse(executor).slice(1).filter(Boolean).join(' · ')} · {t($locale, 'rooms.inactive')}</option>
@@ -197,7 +226,7 @@
                     {#each backend?.models ?? [] as item (expertExecutorKey(selectedBackend, item))}<option value={expertExecutorKey(selectedBackend, item)}>{selectedBackend === 'codex' && item.provider_id ? item.display_name + ' · ' + item.provider_id : item.display_name}</option>{/each}
                 </select></label>
             {:else}
-                <label>{t($locale, 'rooms.model')}<select bind:value={model}>
+                <label>{t($locale, 'rooms.model')}<select aria-label={t($locale, 'rooms.model')} value={model} onchange={event => changeModel(event.currentTarget.value)}>
                     <option value="">{t($locale, 'rooms.useAppDefaultModel')}</option>
                     {#if model && !profiles.some(p => `configured:${p.id}` === model)}<option value={model}>{t($locale, 'rooms.inactive')} ({model.replace(/^configured:/, '').slice(0, 8)})</option>{/if}
                     {#each profiles as profile (profile.id)}<option value={`configured:${profile.id}`}>{profile.displayName}</option>{/each}
@@ -220,7 +249,7 @@
             {#if selectedRole}<section class="role-preview" aria-label={expertLocalized(selectedRole.name, $locale)}>
                 <p>{expertLocalized(selectedRole.description, $locale)}</p>
                 <details><summary>{t($locale, 'rooms.rolePrompt')}</summary><pre>{selectedRole.prompt}</pre></details>
-                <details><summary>{t($locale, 'rooms.roleTools')} · {selectedRole.tool_pack.tools.length}</summary><ul>{#each selectedRole.tool_pack.tools as tool}<li><code>{tool}</code></li>{/each}</ul></details>
+                <details><summary>{t($locale, 'rooms.roleTools')} · {selectedRole.tool_pack.tools.length}</summary><ul>{#each selectedRole.tool_pack.tools as tool}<li>{toolDisplayName($locale, tool)}</li>{/each}</ul></details>
                 <details><summary>{t($locale, 'rooms.roleSkills')} · {selectedRole.skills.length}</summary>{#each selectedRole.skills as skill}<h3>{expertLocalized(skill.name, $locale)}</h3><pre>{skill.instructions}</pre>{/each}</details>
             </section>{/if}
             <p class="muted">{t($locale,'rooms.roleNextIntroduction')}</p>
@@ -232,8 +261,10 @@
 </dialog>
 <style>
     dialog {width: min(860px, calc(100vw - 24px)); max-height: calc(100dvh - 24px); overflow: auto;}
-    header {display: flex; justify-content: space-between; align-items: center; gap: 16px; padding-bottom: 12px; border-bottom: 1px solid var(--border);} h2 {margin: 0;}
-    .expert-panes {display: grid; grid-template-columns: 230px minmax(0, 1fr); gap: 20px; margin-top: 16px; align-items: start;}
+    dialog[open] {display: flex; flex-direction: column; overflow: hidden;}
+    .expert-mobile-picker {display: none;}
+    header {flex: none; display: flex; justify-content: space-between; align-items: center; gap: 16px; padding-bottom: 12px; border-bottom: 1px solid var(--border);} h2 {margin: 0;}
+    .expert-panes {display: grid; grid-template-columns: 230px minmax(0, 1fr); gap: 20px; margin-top: 16px; align-items: start; overflow-y: auto; overscroll-behavior: contain; min-height: 0; padding: 3px;}
     .expert-sidebar {display: grid; gap: 4px; margin: 0; padding-inline-end: 16px; border-inline-end: 1px solid var(--border); max-height: min(65dvh, 560px); overflow: auto;}
     .expert-sidebar button {display: flex; align-items: center; gap: 8px; width: 100%; text-align: start; border-color: transparent; background: transparent; box-shadow: none; padding: 8px 10px; min-height: 40px;}
     .expert-sidebar button:hover:not(:disabled) {background: var(--panel);}
@@ -250,7 +281,8 @@
     input:not([type="checkbox"]), select, textarea {width: 100%; min-width: 0; box-sizing: border-box;} button {min-height: 44px;} [role="alert"] {color: var(--danger);}
     @media (max-width: 720px) {
         .expert-panes {grid-template-columns: minmax(0, 1fr); gap: 14px;}
-        .expert-sidebar {display: flex; flex-wrap: wrap; gap: 6px; padding-inline-end: 0; padding-bottom: 12px; border-inline-end: 0; border-bottom: 1px solid var(--border); max-height: none;}
-        .expert-sidebar button {width: auto;}
+        .expert-mobile-picker {display: grid; min-width: 0; font-size: .875rem;}
+        .expert-mobile-picker select {min-height: 44px;}
+        .expert-sidebar {display: none;}
     }
 </style>

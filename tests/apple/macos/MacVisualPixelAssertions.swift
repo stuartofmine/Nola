@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 // File Overview:
-// - Purpose: Hosts SwiftUI views in real titled NSWindows and validates Warm Paper/Ink sRGB pixel invariants and foreground contrast.
+// - Purpose: Hosts SwiftUI views in real titled NSWindows and validates theme sRGB pixel invariants and foreground contrast.
 
 import AppKit
 import CoreGraphics
@@ -26,19 +26,25 @@ enum MacVisualPixelAssertions {
         let r: Int
         let g: Int
         let b: Int
+
+        init(_ value: UInt32) {
+            r = Int((value >> 16) & 0xFF)
+            g = Int((value >> 8) & 0xFF)
+            b = Int(value & 0xFF)
+        }
     }
 
     private static let lightBackgrounds = [
-        RGB(r: 0xFA, g: 0xF8, b: 0xF4),
-        RGB(r: 0xFF, g: 0xFF, b: 0xFF),
-        RGB(r: 0xF1, g: 0xEF, b: 0xE8),
-    ]
+        MacDesignTokens.Palette.Light.canvas,
+        MacDesignTokens.Palette.Light.surface,
+        MacDesignTokens.Palette.Light.surfaceSubtle,
+    ].map(RGB.init)
 
     private static let darkBackgrounds = [
-        RGB(r: 0x1B, g: 0x1C, b: 0x1A),
-        RGB(r: 0x22, g: 0x24, b: 0x20),
-        RGB(r: 0x29, g: 0x2C, b: 0x27),
-    ]
+        MacDesignTokens.Palette.Dark.canvas,
+        MacDesignTokens.Palette.Dark.surface,
+        MacDesignTokens.Palette.Dark.surfaceSubtle,
+    ].map(RGB.init)
 
     @discardableResult
     static func assertView<Content: View>(
@@ -303,6 +309,7 @@ enum MacVisualPixelAssertions {
         let splitY = y0 + max(1, Int(Double(y1 - y0) * 0.30))
 
         let allowedBackgrounds = isDark ? darkBackgrounds : lightBackgrounds
+        let selection = RGB(isDark ? MacDesignTokens.Palette.Dark.accentSubtle : MacDesignTokens.Palette.Light.accentSubtle)
         var analyzed = 0
         var warmSurfaceCount = 0
         var pureBlackCount = 0
@@ -338,9 +345,9 @@ enum MacVisualPixelAssertions {
                     rowBlack += 1
                 }
 
-                // Sage selection fills have more blue than red, but green is
-                // their dominant channel. Check for a blue cast specifically.
-                let blueCast = b >= g && b - r >= 4
+                // The selected-row fill deliberately has a slight blue cast in both themes.
+                let selectedFill = r == selection.r && g == selection.g && b == selection.b
+                let blueCast = !selectedFill && b >= g && b - r >= 4
                 let isLightCoolGray = !isDark && r > 215 && blueCast
                 let isDarkCoolGray = isDark && (20...55).contains(r) && blueCast
                 if isLightCoolGray || isDarkCoolGray {
@@ -409,7 +416,7 @@ enum MacVisualPixelAssertions {
         XCTAssertGreaterThanOrEqual(
             metrics.warmSurfaceFraction,
             0.35,
-            "\(name) dominant background does not match Warm \(isDark ? "Ink" : "Paper") (matched \(String(format: "%.2f%%", metrics.warmSurfaceFraction * 100)))",
+            "\(name) dominant background does not match the \(isDark ? "dark" : "light") surface palette (matched \(String(format: "%.2f%%", metrics.warmSurfaceFraction * 100)))",
             file: file,
             line: line
         )

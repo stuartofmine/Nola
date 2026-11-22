@@ -1,4 +1,5 @@
 <script lang="ts">
+    import { protocolTitle } from '../lib/modelEndpoints';
     import { workspacePageApi } from '../lib/workspacePageLocation';
     const api = workspacePageApi(unscopedApi);
     import { onMount, tick } from 'svelte';
@@ -200,7 +201,7 @@
             {#each snapshot.document.catalog?.models ?? [] as model (`${model.protocol}:${model.model_id}`)}
                 {@const key = `${model.protocol}:${model.model_id}`}
                 <label class="model"><input type="checkbox" role="switch" disabled={busy} checked={modelEnabled(connection.id, key)} onchange={event => selectModel(event, snapshot, key)} />
-                    <span>{model.display_name} <small>{model.protocol}{#if model.context_window} · {model.context_window.toLocaleString()}{/if}</small></span></label>
+                    <span>{model.display_name} <small>{protocolTitle(model.protocol)}{#if model.context_window} · {model.context_window.toLocaleString($locale)}{/if}</small></span></label>
                 <ModelCapabilityProbe {snapshot} {model} refresh={async () => { await refresh(); await onChanged?.(); }} accountRevision={inventory.accounts.find(item => item.account.id === snapshot.document.connection.account_id)?.revision ?? null} />
             {/each}
         </div></details>

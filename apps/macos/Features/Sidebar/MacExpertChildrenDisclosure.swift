@@ -52,7 +52,7 @@ struct MacExpertChildrenDisclosure: View {
             }
             .buttonStyle(MacHorizontalBarButtonStyle(isSubtle: true, isExpanded: expanded))
             .accessibilityIdentifier("expert.children.toggle." + parentID)
-            .accessibilityValue(Text(expanded ? "Expanded" : "Collapsed", tableName: "Chat"))
+            .accessibilityValue(expanded ? Text("Expanded", tableName: "Chat") : Text("Collapsed", tableName: "Chat"))
             if expanded {
                 ForEach(children) { child in
                     Button { open(child) } label: {

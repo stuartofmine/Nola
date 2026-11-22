@@ -441,6 +441,37 @@ final class IOSWorkspaceNavigationSmokeTests: XCTestCase {
         #endif
     }
 
+    func testStarterPromptKeepsTypedDraft() throws {
+        let app = try openExpertFixture().app
+        app.tapRootTab("chat")
+        app.buttons["chat.conversations.new"].tap()
+        let field = app.textViews["chat.composer.input"]
+        let prompt = app.buttons["Review meaningful changes in my recent data"]
+        XCTAssertTrue(prompt.waitForExistence(timeout: 8))
+        XCTAssertFalse(app.staticTexts["chat.empty.description"].exists)
+        let ready = XCTAttachment(screenshot: app.screenshot())
+        ready.name = "ready-conversation-suggestions"
+        ready.lifetime = .keepAlways
+        add(ready)
+        field.tap()
+        let notes = (1...8).map { "Line " + String($0) }.joined(separator: "\n")
+        field.typeText(notes)
+        field.typeKey(.upArrow, modifierFlags: [])
+        prompt.tap()
+        XCTAssertEqual(field.value as? String, notes + "\n" + prompt.label)
+        app.typeKey("z", modifierFlags: .command)
+        XCTAssertEqual(field.value as? String, notes)
+        app.typeKey("z", modifierFlags: [.command, .shift])
+        XCTAssertEqual(field.value as? String, notes + "\n" + prompt.label)
+        app.typeText(" + detail")
+        XCTAssertEqual(field.value as? String, notes + "\n" + prompt.label + " + detail")
+        XCTAssertTrue(app.buttons["chat.composer.send"].isHittable)
+        let inserted = XCTAttachment(screenshot: app.screenshot())
+        inserted.name = "starter-appended-to-draft"
+        inserted.lifetime = .keepAlways
+        add(inserted)
+    }
+
     private func storedExpert(named name: String, database: URL) throws -> [String: Any] {
         var connection: OpaquePointer?
         XCTAssertEqual(sqlite3_open_v2(database.path, &connection, SQLITE_OPEN_READONLY, nil), SQLITE_OK)
@@ -1394,21 +1425,30 @@ extension IOSWorkspaceNavigationSmokeTests {
         captureAudit("ipad-system-sidebar-chat", in: app)
     }
 
-    func testDataOverviewNotificationTargetAndDarkEmptyState() throws {
+    func testActivityNotificationSearchAndReturn() throws {
         let app = launchSettingsAudit("notifications")
         defer { app.terminate() }
-        app.openWorkspaceManagement("sources")
-        let bell = app.buttons["data.notifications"]
+        app.tapRootTab("activity")
+        let bell = app.buttons["activity.notifications"]
         XCTAssertTrue(bell.waitForExistence(timeout: 5))
-        // UIKit exposes the toolbar's visual button frame. Exercise the outer
-        // edge of its 44-point touch region from the actual window instead.
-        let toolbarPoint = CGVector(dx: bell.frame.midX, dy: bell.frame.midY + 21)
-        app.coordinate(withNormalizedOffset: .zero).withOffset(toolbarPoint).tap()
+        bell.tap()
         XCTAssertTrue(app.navigationBars["Notifications"].waitForExistence(timeout: 5))
+        let search = app.searchFields.firstMatch
+        XCTAssertTrue(search.waitForExistence(timeout: 5))
         try XCUIElementPixelAssertions.assertScreenshot(app.screenshot(), label: "empty-notifications", isDark: true)
-        captureAudit("data-notifications", in: app)
-        app.navigationBars.buttons.element(boundBy: 0).tap()
-        XCTAssertTrue(app.buttons["data.center.open"].waitForExistence(timeout: 5))
+        XCTAssertTrue(app.staticTexts["No notifications yet"].waitForExistence(timeout: 5))
+        captureAudit("activity-notifications", in: app)
+        search.tap()
+        search.typeText("missing-notification")
+        XCTAssertTrue(app.staticTexts["No matching notifications"].waitForExistence(timeout: 5))
+        let clear = app.buttons["Clear search"].firstMatch
+        XCTAssertTrue(clear.waitForExistence(timeout: 5))
+        clear.tap()
+        XCTAssertNotEqual(search.value as? String, "missing-notification")
+        let dismissed = XCTNSPredicateExpectation(predicate: NSPredicate(format: "exists == false"), object: app.keyboards.firstMatch)
+        XCTAssertEqual(XCTWaiter.wait(for: [dismissed], timeout: 5), .completed)
+        app.navigationBars["Notifications"].buttons.element(boundBy: 0).tap()
+        XCTAssertTrue(bell.waitForExistence(timeout: 5))
     }
 
     func testMemoryFiltersAndCapabilityTabsKeepReadingControlsInPlace() {

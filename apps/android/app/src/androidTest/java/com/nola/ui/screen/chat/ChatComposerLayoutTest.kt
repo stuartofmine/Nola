@@ -52,6 +52,53 @@ import java.io.File
 class ChatComposerLayoutTest {
     @get:Rule val compose = createAndroidComposeRule<ComponentActivity>()
 
+    @Test fun starterRowsAppendToTheExistingDraft() {
+        val draft = ConversationComposerDraft().apply { text.value = "My notes" }
+        compose.setContent {
+            NolaTheme {
+                Box(Modifier.width(320.dp).testTag("starter.fixture")) {
+                    ChatEmptyState(true, com.nola.domain.model.ModelInfo("test", "Test model"), false,
+                        listOf("Summarize" to "Summarize the notes", "Plan" to "Plan my day"),
+                        onSuggestion = draft::insertSuggestion, onPrimaryAction = {})
+                }
+            }
+        }
+        val row = compose.onNodeWithText("Summarize")
+        row.performClick()
+        row.performClick()
+        compose.runOnIdle {
+            assertEquals("My notes\nSummarize the notes", draft.text.value)
+            assertEquals(draft.text.value.length, draft.caret)
+        }
+        val bitmap = compose.onNodeWithTag("starter.fixture").captureToImage().asAndroidBitmap()
+        val dir = InstrumentationRegistry.getInstrumentation().targetContext.getExternalFilesDir(null)
+        File(dir, "starter-rows.png").outputStream().use {
+            bitmap.compress(android.graphics.Bitmap.CompressFormat.PNG, 100, it)
+        }
+    }
+
+    @Test fun recoveryCardOnlyExpandsTruncatedErrorsAndOffersExistingDraft() {
+        var issue by mutableStateOf("Brief error")
+        var resumeCount = 0
+        compose.setContent {
+            NolaTheme {
+                Box(Modifier.width(320.dp)) {
+                    ChatErrorRecoveryCard(issue, editingCurrentDraft = true,
+                        onEditAndRetry = { resumeCount++ }, onSwitchModel = {}, onDismiss = {})
+                }
+            }
+        }
+        fun label(id: Int) = compose.activity.getString(id)
+        val details = compose.onNodeWithText(label(com.nola.R.string.canonical_details))
+        details.assertDoesNotExist()
+        compose.onNodeWithText(label(com.nola.R.string.chat_continue_draft)).performClick()
+        assertEquals(1, resumeCount)
+        compose.runOnIdle { issue = (1..14).joinToString("\n") { "Diagnostic line $it" } }
+        details.performClick()
+        compose.onNodeWithText(label(com.nola.R.string.canonical_hide_details)).performClick()
+        details.assertExists()
+    }
+
     @Test fun messageBodyExposesOnlyItsLongPressMenuAndPreservesTouchGestures() {
         var menuRequests = 0
         compose.setContent {

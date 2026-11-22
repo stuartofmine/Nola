@@ -46,9 +46,17 @@
 "goal.resume" = "Продолжить";
 "goal.paused_reply_hint" = "Приостановлено для вашего ответа. Ответьте в чате или нажмите «Продолжить».";
 "goal.schedule" = "Запланировать продолжение";
+"goal.schedule_action" = "Запланировать";
 "goal.cancel" = "Отменить цель";
 "goal.actions" = "Действия цели";
 "goal.start" = "Запустить цель";
+"goal.start_action" = "Начать";
 "goal.sending" = "Отправка действия цели";
 "goal.objective" = "Чего должна достичь эта цель?";
 "goal.wake" = "Продолжить в";
+"goal.section.goal" = "Цель";
+"goal.section.requirements" = "Требования";
+"goal.section.work" = "Ход работы";
+"inspector.section.checklist" = "Контрольный список";
+"inspector.section.status" = "Состояние сеанса";
+"inspector.section.tasks" = "Задачи";

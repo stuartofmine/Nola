@@ -1520,8 +1520,8 @@ struct MacRemoteModelManagerView: View {
                         set: { model.wrappedValue.executionCapabilities.chatOutputTokenField = $0 }
                     )) {
                         Text(String(localized: "Automatic", table: "ModelCenter")).tag(MacChatOutputTokenField.auto)
-                        Text("max_tokens").tag(MacChatOutputTokenField.maxTokens)
-                        Text("max_completion_tokens").tag(MacChatOutputTokenField.maxCompletionTokens)
+                        Text("Legacy limit parameter (max_tokens)", tableName: "ModelCenter").tag(MacChatOutputTokenField.maxTokens)
+                        Text("Standard completion limit (max_completion_tokens)", tableName: "ModelCenter").tag(MacChatOutputTokenField.maxCompletionTokens)
                     }
                 }
             }
@@ -1578,7 +1578,7 @@ struct MacRemoteModelManagerView: View {
     private func capabilityTitle(_ capability: MacRemoteModelCapability) -> String {
         switch capability {
         case .chat: return String(localized: "Chat", table: "ModelCenter")
-        case .retrieval: return String(localized: "Retrieval", table: "ModelCenter")
+        case .retrieval: return String(localized: "Model retrieval", table: "ModelCenter")
         case .issueRepair: return String(localized: "Issue Repair", table: "ModelCenter")
         case .sensitiveData: return String(localized: "Sensitive Data", table: "ModelCenter")
         }
@@ -2187,7 +2187,7 @@ struct MacAddRemoteModelSheet: View {
 
             Section(String(localized: "Allowed uses", table: "ModelCenter")) {
                 capabilityToggle(.chat, title: String(localized: "Chat", table: "ModelCenter"), symbol: "bubble.left.and.bubble.right")
-                capabilityToggle(.retrieval, title: String(localized: "Retrieval", table: "ModelCenter"), symbol: "magnifyingglass")
+                capabilityToggle(.retrieval, title: String(localized: "Model retrieval", table: "ModelCenter"), symbol: "magnifyingglass")
                 capabilityToggle(.issueRepair, title: String(localized: "Issue Repair", table: "ModelCenter"), symbol: "wrench.and.screwdriver")
             }
 
@@ -2218,8 +2218,8 @@ struct MacAddRemoteModelSheet: View {
                     set: { executionCapabilities.chatOutputTokenField = $0 }
                 )) {
                     Text(String(localized: "Automatic", table: "ModelCenter")).tag(MacChatOutputTokenField.auto)
-                    Text("max_tokens").tag(MacChatOutputTokenField.maxTokens)
-                    Text("max_completion_tokens").tag(MacChatOutputTokenField.maxCompletionTokens)
+                    Text("Legacy limit parameter (max_tokens)", tableName: "ModelCenter").tag(MacChatOutputTokenField.maxTokens)
+                    Text("Standard completion limit (max_completion_tokens)", tableName: "ModelCenter").tag(MacChatOutputTokenField.maxCompletionTokens)
                 }
                 Text(String(localized: "Tool calls are enabled by default, not pre-verified. Actual tool execution still follows your permission settings. Disable only if this model cannot accept tools.", table: "ModelCenter"))
                     .font(.caption).foregroundStyle(.secondary)

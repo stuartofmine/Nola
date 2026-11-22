@@ -633,6 +633,7 @@
     <string name="common_expand">Développer</string>
     <string name="common_collapse">Réduire</string>
     <string name="chat_error_dismiss">Fermer</string>
+    <string name="chat_continue_draft">Continuer à modifier le brouillon</string>
     <string name="chat_error_edit_retry">Modifier et réessayer</string>
     <string name="chat_error_switch_model">Changer de modèle</string>
     <string name="models_certificate_sha256_optional">SHA-256 du certificat (facultatif)</string>

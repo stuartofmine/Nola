@@ -13,6 +13,20 @@
     } = $props();
     let cursor=$state(0), focused=$state(false), composing=$state(false), dismissed=$state(false), index=$state(0);
     let loading=$state(false), failure=$state(''), scrollY=$state(0);
+    let moreAbove = $state(false), moreBelow = $state(false);
+    function syncScrollEdges() {
+        if (!field) return;
+        scrollY = field.scrollTop;
+        moreAbove = field.scrollTop > 1;
+        moreBelow = field.scrollHeight - field.clientHeight - field.scrollTop > 1;
+    }
+    $effect(() => {
+        if (!field) return;
+        const observer = new ResizeObserver(syncScrollEdges);
+        observer.observe(field);
+        return () => observer.disconnect();
+    });
+    $effect(() => { value; void tick().then(syncScrollEdges); });
     let reducedMotion = $state(typeof matchMedia === 'function' && matchMedia('(prefers-reduced-motion: reduce)').matches);
     onMount(() => {
         if (typeof matchMedia !== 'function') return;
@@ -127,13 +141,21 @@
         }
         if(query && !event.ctrlKey && !event.metaKey && !event.altKey && !event.shiftKey){
             if(event.key==='Escape'){event.preventDefault();event.stopPropagation();dismissed=true;return;}
-            if(['ArrowDown','ArrowUp','Enter','Tab'].includes(event.key) && (event.key!=='Tab'||options.length)){
+            if (!options.length && event.key === 'Enter') {
+                // The main composer submits on Return. The multiline edit dialog inserts a newline.
+                if (rows === 1) event.preventDefault();
+                dismissed = true;
+                return;
+            }
+            if (options.length && ['ArrowDown','ArrowUp','Enter','Tab'].includes(event.key)) {
                 event.preventDefault();
-                if(options.length){
-                    index=Math.min(index,options.length-1);
-                    if(event.key==='Enter'||event.key==='Tab')choose(options[index]);
-                    else {index=(index+(event.key==='ArrowUp'?-1:1)+options.length)%options.length;document.getElementById(id+'-option-'+index)?.scrollIntoView({block:'nearest'});}
-                }return;
+                index = Math.min(index, options.length - 1);
+                if (event.key === 'Enter' || event.key === 'Tab') choose(options[index]);
+                else {
+                    index = (index + (event.key === 'ArrowUp' ? -1 : 1) + options.length) % options.length;
+                    document.getElementById(id+'-option-'+index)?.scrollIntoView({block:'nearest'});
+                }
+                return;
             }
         }
         if(field && !event.shiftKey && !event.altKey && !event.metaKey && !event.ctrlKey && field.selectionStart===field.selectionEnd){
@@ -158,12 +180,12 @@
             {:else}<span role="status">{failure || t($locale,loading?'rooms.loading':'rooms.noExperts')}</span>{/each}
         </div>
     {/if}
-    <div class="stack" class:marked={mentions.length>0}>
+    <div class="stack" class:marked={mentions.length>0} class:more-above={moreAbove} class:more-below={moreBelow}>
         {#if query}<div class="highlight measure" aria-hidden="true"><div style:transform={'translateY(-'+scrollY+'px)'}>{value.slice(0,cursor)}<span bind:this={marker}>{'\u200b'}</span></div></div>{/if}
         {#if mentions.length}<div class="highlight" aria-hidden="true"><div style:transform={'translateY(-'+scrollY+'px)'}>{#each pieces as piece}{#if piece.agent_id}<strong>{piece.text}</strong>{:else}{piece.text}{/if}{/each}{'\u200b'}</div></div>{/if}
         <textarea bind:this={field} {id} {value} {rows} {placeholder} {disabled} aria-label={label} role="combobox" aria-autocomplete="list"
             aria-expanded={!!query||!!commandList} aria-controls={query?id+'-options':commandList} aria-activedescendant={query&&options.length?id+'-option-'+index:commandOption}
-            onscroll={e=>scrollY=e.currentTarget.scrollTop} onselect={position} onclick={()=>{dismissed=false;position();void lookup();}}
+            onscroll={syncScrollEdges} onselect={position} onclick={()=>{dismissed=false;position();void lookup();}}
             onfocus={()=>{focused=true;position();onfocus?.();void lookup();}} onblur={()=>{focused=false;onblur?.();}}
             oncompositionstart={()=>composing=true} oncompositionend={()=>{composing=false;void tick().then(lookup);}}
             onbeforeinput={beforeInput} oninput={changed} onkeydown={key}></textarea>
@@ -177,6 +199,12 @@ textarea{display:block;position:relative;min-height:40px;max-height:min(30dvh,15
 textarea:focus{outline:none}textarea::placeholder{color:var(--muted);opacity:1}
 .highlight{pointer-events:none;position:absolute;inset:0;overflow:hidden;color:var(--content);scrollbar-gutter:stable}.highlight strong{font-weight:inherit;color:var(--primary);text-decoration:underline;text-decoration-color:var(--accent-subtle);text-underline-offset:.14em}
 .measure{visibility:hidden}
+.more-above{--top-edge:8px}.more-below{--bottom-edge:8px}
+@media (forced-colors:none) {
+    .stack:is(.more-above,.more-below) :is(textarea,.highlight:not(.measure)) {
+        mask-image:linear-gradient(to bottom,transparent 0,#000 var(--top-edge,0px),#000 calc(100% - var(--bottom-edge,0px)),transparent 100%);
+    }
+}
 .marked textarea{color:transparent;caret-color:var(--content)}
 .editing .stack{border:1px solid var(--input-border);border-radius:10px;background:var(--input-bg);transition:border-color var(--motion-fast) ease,box-shadow var(--motion-fast) ease}.editing .stack:focus-within{border-color:var(--input-focus-border)}.editing textarea{min-height:150px;max-height:45dvh}
 .options{position:absolute;z-index:60;bottom:calc(100% + 6px);inset-inline-start:var(--inset,0);width:min(100%,340px);box-sizing:border-box;max-height:var(--available,220px);overflow:auto;padding:4px;background:var(--surface-elevated,var(--surface,var(--canvas)));border:1px solid var(--dialog-border);border-radius:12px;box-shadow:0 8px 28px rgb(0 0 0 / .18)}

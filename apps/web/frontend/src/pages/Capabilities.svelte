@@ -233,8 +233,8 @@
             <div class="card capability">
                 <div class="row between capability-head">
                     <button type="button" class="capability-open" onclick={() => edit(item, index)} disabled={busy}><strong>{displayName(item)}</strong></button>
-                    <label class="capability-switch" aria-label={displayName(item)}>
-                        <input type="checkbox" role="switch" checked={item.enabled !== false} disabled={busy} onchange={event => {
+                    <label class="capability-switch">
+                        <input type="checkbox" role="switch" aria-label={displayName(item)} checked={item.enabled !== false} disabled={busy} onchange={event => {
                             const next = event.currentTarget.checked;
                             event.currentTarget.checked = item.enabled !== false;
                             void toggleInline(item, index, next);

@@ -349,7 +349,7 @@ class GenerativeUiRealModelEndToEndTest {
             val allow = compose.onAllNodesWithText(context.getString(R.string.permission_action_allow_once))
             if (allow.fetchSemanticsNodes().isNotEmpty()) {
                 // This scenario authorizes only UI publication, never another tool.
-                val toolLabel = com.nola.ui.components.hostToolDisplayNameStringRes("render_ui")?.let(context::getString)
+                val toolLabel = com.nola.ui.components.BuiltinToolNames.label("render_ui", null, context.resources.configuration.locales[0])
                     ?: context.getString(R.string.chat_host_tool_name_unknown_format, "render_ui")
                 val uiTitle = context.getString(R.string.permission_required_title, toolLabel)
                 val uiOnly = compose.onAllNodesWithText(uiTitle, useUnmergedTree = true).fetchSemanticsNodes().isNotEmpty()

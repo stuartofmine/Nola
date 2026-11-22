@@ -118,6 +118,52 @@ private struct TabLabelProbe: UIViewRepresentable {
 }
 
 final class IOSConversationInspectorTests: XCTestCase {
+    func testBundledToolNamesDistinguishActionsAndKeepDeclaredTitles() {
+        XCTAssertEqual(AppleToolDisplayName.localized("render_ui", title: "render_ui", language: "zh-Hans"), "显示交互界面")
+        XCTAssertEqual(AppleToolDisplayName.localized("bash_background_stop", language: "ja"), "バックグラウンドコマンドを停止")
+        XCTAssertEqual(AppleToolDisplayName.localized("run_command", title: "运行命令", language: "de"), "Befehl ausführen")
+        XCTAssertNil(AppleToolDisplayName.localized("render_ui", title: "My custom panel", language: "de"))
+        XCTAssertNil(AppleToolDisplayName.localized("mcp__my_server__render_ui", language: "de"))
+    }
+
+    func testContextStatusAndSkillInvocationUseBundledTranslations() throws {
+        let labels = [
+            ("zh-Hans", "正在运行", "使用「%@」技能：", "上下文用量"),
+            ("en", "Running", "Use the “%@” skill:", "Context usage"),
+            ("de", "Wird ausgeführt", "Verwende den Skill „%@“:", "Kontextnutzung"),
+            ("es", "En ejecución", "Usa la habilidad «%@»:", "Uso del contexto"),
+            ("fr", "En cours", "Utilisez la compétence « %@ » :", "Utilisation du contexte"),
+            ("ja", "実行中", "「%@」スキルを使用：", "コンテキスト使用量"),
+            ("ru", "Выполняется", "Используй навык «%@»:", "Использование контекста"),
+        ]
+        for (language, running, invocation, usage) in labels {
+            let url = try XCTUnwrap(Bundle.main.url(forResource: language, withExtension: "lproj"))
+            let bundle = try XCTUnwrap(Bundle(url: url))
+            XCTAssertEqual(bundle.localizedString(forKey: "chat.task.state.running", value: nil, table: nil), running, language)
+            XCTAssertEqual(bundle.localizedString(forKey: "chat.context.usage.header", value: nil, table: nil), usage, language)
+            let format = bundle.localizedString(forKey: "chat.context.skills.invocation.format", value: nil, table: nil)
+            let skill = "Design 100% ✏️"
+            XCTAssertEqual(String(format: format, skill), invocation.replacingOccurrences(of: "%@", with: skill), language)
+        }
+    }
+
+    func testGoalSheetActionsResolveInTheInspectorTable() throws {
+        for (language, start, schedule) in [
+            ("en", "Start", "Schedule"), ("de", "Starten", "Planen"), ("es", "Iniciar", "Programar"),
+            ("fr", "Démarrer", "Planifier"), ("ja", "開始", "予約"), ("ru", "Начать", "Запланировать"),
+            ("zh-Hans", "开始", "安排"),
+        ] {
+            let url = try XCTUnwrap(Bundle.main.url(forResource: language, withExtension: "lproj"))
+            let bundle = try XCTUnwrap(Bundle(url: url))
+            for (key, action) in [("goal.start", start), ("goal.schedule", schedule)] {
+                XCTAssertEqual(bundle.localizedString(forKey: key + "_action", value: nil, table: "ConversationInspector"), action)
+                let title = bundle.localizedString(forKey: key, value: nil, table: "ConversationInspector")
+                XCTAssertNotEqual(title, key)
+                XCTAssertNotEqual(title, action)
+            }
+        }
+    }
+
     func testEmptyCoreGoalProjectionOmitsActive() throws {
         let session: AgentCoreJSONValue = .object(["goal_projection": .object(["applied_operations": .object([:])])])
         let updated = try IOSInspectorProgressSnapshot.applyingGoalObservation(.null, to: session)

@@ -25,6 +25,7 @@ import androidx.compose.ui.graphics.luminance
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
+import com.nola.ui.components.BuiltinToolNames
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.text.font.FontWeight
 import com.nola.data.repository.ExpertRoleCatalog
@@ -444,8 +445,9 @@ internal fun ExpertManagementPanel(
                     Text(stringResource(R.string.expert_role_prompt), style = MaterialTheme.typography.titleSmall)
                     Text(role.prompt, style = MaterialTheme.typography.bodySmall)
                     Text(stringResource(R.string.expert_role_tools), style = MaterialTheme.typography.titleSmall)
-                    Text(role.toolPack.id, style = MaterialTheme.typography.labelSmall)
-                    Text(role.toolPack.tools.joinToString(" · "), style = MaterialTheme.typography.bodySmall)
+                    val toolLocale = LocalConfiguration.current.locales[0]
+                    Text(role.toolPack.tools.joinToString(" · ") { BuiltinToolNames.label(it, null, toolLocale) ?: it },
+                        style = MaterialTheme.typography.bodySmall)
                     Text(stringResource(R.string.expert_role_skills), style = MaterialTheme.typography.titleSmall)
                     role.skills.forEach { skill ->
                         Text(expertRoleText(skill.name, language), style = MaterialTheme.typography.labelLarge)

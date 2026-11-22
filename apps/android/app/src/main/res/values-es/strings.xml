@@ -633,6 +633,7 @@
     <string name="common_expand">Expandir</string>
     <string name="common_collapse">Contraer</string>
     <string name="chat_error_dismiss">Cerrar</string>
+    <string name="chat_continue_draft">Seguir editando el borrador</string>
     <string name="chat_error_edit_retry">Editar y volver a intentar</string>
     <string name="chat_error_switch_model">Cambiar modelo</string>
     <string name="models_certificate_sha256_optional">SHA-256 del certificado (opcional)</string>

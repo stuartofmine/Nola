@@ -34,6 +34,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.Alignment
+import com.nola.ui.components.hostToolDisplayName
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.res.stringResource
@@ -87,7 +88,7 @@ internal fun CanonicalActivityCards(
     }
     val current = currentExecutionActivity(activity, isLive)
     val currentTitle = when (current) {
-        is ConversationProjectionV1.Part.Tool -> current.title.takeIf {
+        is ConversationProjectionV1.Part.Tool -> hostToolDisplayName(current.capabilityId, current.title).takeIf {
             current.state in setOf(ConversationProjectionV1.ActivityState.Running, ConversationProjectionV1.ActivityState.Pending)
         }
         is ConversationProjectionV1.Part.Reasoning -> if (current.state == ConversationProjectionV1.ActivityState.Running)
@@ -154,7 +155,7 @@ private fun CanonicalActivityRow(part: ConversationProjectionV1.Part.Tool, detai
     val facts = part.cardFacts()
     Column(Modifier.fillMaxWidth().padding(vertical = 8.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
-            Text(facts.title.ifEmpty { stringResource(R.string.chat_tool_activity) }, Modifier.weight(1f), style = MaterialTheme.typography.labelLarge,
+            Text(hostToolDisplayName(facts.capabilityId, facts.title), Modifier.weight(1f), style = MaterialTheme.typography.labelLarge,
                 fontWeight = FontWeight.SemiBold, maxLines = 2, overflow = TextOverflow.Ellipsis)
             ActivityStateBadge(facts.state)
         }

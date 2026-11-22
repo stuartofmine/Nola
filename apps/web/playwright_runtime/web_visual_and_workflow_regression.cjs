@@ -232,7 +232,9 @@ async function verifyFirstConnection(page, origin, tokenPath) {
     const token = page.locator('#host-token');
     const connect = page.getByRole('button', {name: 'Connect', exact: true});
     await page.locator('.login-card summary').click();
-    assert.equal(await page.locator('.login-card details code').innerText(), '~/.nola/web/mobile-access-token');
+    assert.deepEqual((await page.locator('.login-card details code').allTextContents()).sort(), [
+        String.raw`%USERPROFILE%\.nola\web\mobile-access-token`, '~/.nola/web/mobile-access-token',
+    ].sort());
     await token.fill('short');
     assert.equal(await token.getAttribute('aria-invalid'), 'false');
     await connect.click();
@@ -249,7 +251,7 @@ async function verifyFirstConnection(page, origin, tokenPath) {
     await page.locator('#chat-composer').waitFor();
 }
 
-async function verifyModelSetupNavigation(page, origin) {
+async function verifyModelSetupNavigation(page, origin, conversationId) {
     const name = 'First run test model';
     const result = await page.request.post(`${origin}/api/model-profiles`, {data: {
         expectedRevisions: {}, endpointName: name, displayName: name, modelName: 'first-run',
@@ -267,6 +269,20 @@ async function verifyModelSetupNavigation(page, origin) {
     await page.locator('[role="tab"][id$="tab-local"]:visible').click();
     await page.reload();
     await page.locator('[role="tab"][id$="tab-local"][aria-selected="true"]').waitFor();
+    await page.goto(origin + '/chat?conversation=' + encodeURIComponent(conversationId));
+    const menu = page.locator('.composer .model-menu');
+    const trigger = menu.locator('summary');
+    await trigger.click();
+    await menu.getByRole('button', {name: new RegExp(name)}).click();
+    await page.waitForFunction(expected => document.querySelector('.composer .model-menu summary')?.textContent.includes(expected), name);
+    await trigger.press('ArrowUp');
+    await page.waitForFunction(() => document.activeElement?.getAttribute('aria-pressed') === 'true');
+    await page.keyboard.press('Control+Home');
+    assert.equal(await menu.locator('[aria-pressed="true"]').evaluate(e => e === document.activeElement), true);
+    await page.keyboard.press('End');
+    assert.equal(await menu.locator('.management a').evaluate(e => e === document.activeElement), true);
+    await page.keyboard.press('Escape');
+    assert.equal(await trigger.evaluate(e => e === document.activeElement), true);
 }
 
 async function runWorkflowRoundTrips(page, origin) {
@@ -284,8 +300,34 @@ async function runWorkflowRoundTrips(page, origin) {
     assert.ok(convId, 'Created conversation must return conversationId');
     await page.waitForFunction(id => new URL(window.location.href).searchParams.get('conversation') === id, convId);
     await page.locator('#chat-composer').waitFor();
-    await page.locator('#chat-composer').fill('Roundtrip draft text');
-    assert.equal(await page.locator('#chat-composer').inputValue(), 'Roundtrip draft text');
+    const input = page.locator('#chat-composer');
+    await input.fill('/no-command-matches');
+    await page.locator('#composer-commands').waitFor();
+    await input.press('Tab');
+    assert.equal(await input.evaluate(e => e === document.activeElement), false);
+    await input.fill('first line\n@unknown-expert-xyz');
+    await page.locator('#chat-composer-options [role="status"]').waitFor();
+    await input.press('ArrowUp');
+    assert.ok(await input.evaluate(e => e.selectionStart <= 'first line'.length));
+
+    const draft = '记录 📝\n'.repeat(45) + '继续';
+    await input.fill(draft);
+    await input.hover();
+    await page.mouse.wheel(0, 5000);
+    await page.locator('.stack.more-above:not(.more-below)').waitFor();
+    const firstConversation = page.url();
+    await newConvBtn.click();
+    await page.waitForURL(url => url.searchParams.has('conversation') && url.href !== firstConversation);
+    assert.equal(await input.inputValue(), '');
+    await input.fill('Second conversation');
+    const secondConversation = page.url();
+    await page.goto(firstConversation);
+    await page.waitForFunction(value => document.querySelector('#chat-composer')?.value === value, draft);
+    await input.fill('');
+    await page.goto(secondConversation);
+    await page.waitForFunction(() => document.querySelector('#chat-composer')?.value === 'Second conversation');
+    await page.goto(firstConversation, {waitUntil:'networkidle'});
+    assert.equal(await input.inputValue(), '');
 
     const listRes = await page.request.get(`${origin}/api/chat/conversations`);
     assert.ok(listRes.ok());
@@ -309,7 +351,7 @@ async function runWorkflowRoundTrips(page, origin) {
     assert.ok(saveSkillResp.ok(), `Expected capability save 2xx, got ${saveSkillResp.status()}`);
     await capDialog.waitFor({state: 'hidden'});
     await page.reload({waitUntil: 'networkidle'});
-    const skillCard = page.locator('button.capability:visible', {hasText: skillName});
+    const skillCard = page.locator('button.capability-open:visible', {hasText: skillName});
     await skillCard.waitFor();
 
     // Clean up created skill via UI delete + confirmation dialog
@@ -367,14 +409,18 @@ async function verifyA2uiSurface(context, origin, convId, scheme, width, hostId)
 
     const msgRoute = `**/api/chat/conversations/${encodeURIComponent(convId)}/messages*`;
     const surfaceRoute = `**/api/chat/conversations/${encodeURIComponent(convId)}/ui-surface-changes`;
-    const handleMessages = async route => route.fulfill({
-        json: {
-            sourceHostId: hostId,
+    const handleMessages = async route => {
+        const response = await route.fetch();
+        const original = await response.json();
+        return route.fulfill({json: {
+            ...original,
             conversationProjection: {
-                contract_version: 1,
-                conversation_id: convId,
+                ...original.conversationProjection,
                 revision: 2,
                 messages: [{
+                    message_id: 'question', role: 'user', state: 'completed', revision: 1, created_at_ms: 1,
+                    parts: [{ kind: 'text', part_id: 'question-text', revision: 1, markdown: '你好', is_final: true }],
+                }, {
                     message_id: 'a2ui-msg-1',
                     role: 'assistant',
                     state: 'completed',
@@ -389,9 +435,9 @@ async function verifyA2uiSurface(context, origin, convId, scheme, width, hostId)
                     }],
                 }],
             },
-            messageWindow: {projectionRevision: 2, eventSequence: 2, before: null, hasMore: false, totalCount: 1},
-        },
-    });
+            messageWindow: {...original.messageWindow, projectionRevision: 2, eventSequence: 2, before: null, hasMore: false, totalCount: 2},
+        }});
+    };
     const handleSurface = async route => route.fulfill({
         json: {update: {type: 'snapshot', snapshot}},
     });
@@ -406,6 +452,42 @@ async function verifyA2uiSurface(context, origin, convId, scheme, width, hostId)
         const surface = page.locator('.nola-generative-surface');
         await surface.waitFor();
         await surface.getByText('Shared A2UI form').waitFor();
+        const bubble = page.locator('[data-message-id="question"] .message-content');
+        const bounds = await bubble.boundingBox();
+        assert.ok(bounds && bounds.width >= 40 && bounds.width < 100, 'A short outgoing message hugs its text');
+        const row = page.locator('[data-message-id="question"] .message-actions');
+        const copy = row.locator(':scope > .copy-action');
+        await copy.hover();
+        assert.equal(await copy.evaluate(button => getComputedStyle(button).backgroundColor), 'rgba(0, 0, 0, 0)');
+        assert.equal(await row.evaluate(actions => getComputedStyle(actions).opacity), '1');
+
+        const edit = row.locator(':scope > button:not(.copy-action)');
+        await edit.click();
+        const dialog = page.locator('dialog:modal');
+        const field = dialog.locator('textarea');
+        await dialog.click({position:{x:5,y:5}});
+        assert.equal(await dialog.isVisible(), true, 'Clicking the modal padding must keep it open');
+        await field.fill('Line one\n@no-expert-xyz');
+        await dialog.locator('[role="listbox"] [role="status"]').waitFor();
+        await field.press('Enter');
+        assert.equal(await field.inputValue(), 'Line one\n@no-expert-xyz\n');
+        await field.fill('Edited question');
+        await page.mouse.click(1, 1);
+        assert.equal(await dialog.isVisible(), true, 'A stray backdrop click must keep an edited draft');
+        await field.evaluate(e => e.setSelectionRange(2, 6));
+        await page.route('**/api/chat/in-place-resend/prepare', route => route.fulfill({
+            status:409, json:{error:'Message changed'},
+        }));
+        await dialog.locator('button[type="submit"]').click();
+        await dialog.getByRole('alert').waitFor();
+        await page.waitForFunction(() => document.activeElement?.id === 'edit-expert-message');
+        assert.deepEqual(await field.evaluate(e => [e.value,e.selectionStart,e.selectionEnd]), ['Edited question',2,6]);
+        if (process.env.UI_EVIDENCE_DIR) {
+            await page.screenshot({path:path.join(process.env.UI_EVIDENCE_DIR, `edit-recovery-${scheme}-${width}.png`)});
+        }
+        await page.keyboard.press('Escape');
+        assert.equal(await edit.evaluate(e => e === document.activeElement), true);
+
         const tokens = await page.evaluate(() => {
             const rootStyle = getComputedStyle(document.documentElement);
             const surfaceEl = document.querySelector('.nola-generative-surface');
@@ -424,7 +506,7 @@ async function verifyA2uiSurface(context, origin, convId, scheme, width, hostId)
         assert.equal(expandHex(tokens.rootSurface), scheme === 'dark' ? '#131315' : '#ffffff');
         assert.equal(expandHex(tokens.rootText), scheme === 'dark' ? '#f5f5f7' : '#111113');
         assert.equal(expandHex(tokens.rootPrimary), scheme === 'dark' ? '#f5f5f7' : '#18181b');
-        assert.equal(expandHex(tokens.rootDanger), scheme === 'dark' ? '#f28080' : '#dc2626');
+        assert.equal(expandHex(tokens.rootDanger), scheme === 'dark' ? '#f28080' : '#c81e1e');
         assert.equal(expandHex(tokens.surfBg), expandHex(tokens.rootSurface));
         await inspectView(page, 'a2ui-surface', scheme, width);
         assert.deepEqual(errors, []);
@@ -595,7 +677,8 @@ async function verifyA2uiSurface(context, origin, convId, scheme, width, hostId)
                     await page.keyboard.press('Escape');
                     await page.locator('dialog:modal').waitFor({state: 'hidden'});
 
-                    await page.goto(`${origin}/models?tab=local`, {waitUntil: 'networkidle'});
+                    await page.goto(`${origin}/models?tab=local`, {waitUntil: 'domcontentloaded'});
+                    await page.locator('[role="tabpanel"][id$="panel-local"]:visible').waitFor();
                     await inspectView(page, 'models-local', scheme, viewport.width);
                     viewCount += 1;
 
@@ -620,12 +703,12 @@ async function verifyA2uiSurface(context, origin, convId, scheme, width, hostId)
         }
         const modelPage = await browser.newPage({locale: 'en-US'});
         try {
-            await verifyModelSetupNavigation(modelPage, origin);
+            await verifyModelSetupNavigation(modelPage, origin, convId);
         } finally {
             await modelPage.close();
         }
         assert.deepEqual(errors, [], 'Uncaught browser page errors detected');
-        console.log(`PASS: Web visual, contrast, overflow, accessibility, A2UI, and real HTTP round-trip suite (${viewCount} views across 14 routes, 6 settings categories, tabs, and modals)`);
+        console.log(`PASS: Web visual, contrast, overflow, accessibility, A2UI, and real HTTP round-trip suite (${viewCount} views across ${EXPECTED_ROUTES.length} routes, 6 settings categories, tabs, and modals)`);
     } finally {
         await browser.close();
         await stopProcess(host);

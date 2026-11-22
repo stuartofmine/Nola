@@ -165,6 +165,8 @@ import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.platform.LocalConfiguration
 import com.nola.ui.components.nolaPageGutter
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.res.painterResource
@@ -324,6 +326,12 @@ internal fun ChatScreen(
         return hasCurrentDraftScope() && !composerDraft.loading.value && !composerDrafts.initializing.value && composerDraft.persistenceError.value == null &&
             latest.pendingExpertHostAdmission == null && latest.expertHostConfirmationStatus == null
     }
+    val composerFocus = remember(composerDraft) { FocusRequester() }
+    fun focusComposer() {
+        composerFocus.requestFocus()
+        navigationKeyboard?.show()
+    }
+    val retryMessage = if (state.error != null) state.messages.lastOrNull { it.role == ChatRole.user && it.text.isNotEmpty() } else null
     var inputText by composerDraft.text
     var showModelMenu by remember { mutableStateOf(false) }
     var showIMSearch by rememberSaveable { mutableStateOf(false) }
@@ -1241,18 +1249,36 @@ internal fun ChatScreen(
                 if (it.identity == receipt.snapshot.identity && receipt.snapshot.revision >= it.revision) receipt.snapshot else it
             } },
             modifier = Modifier.fillMaxSize(),
-            onSuggestion = { if (canMutateDraft()) inputText = it },
+            onSuggestion = { prompt ->
+                if (canMutateDraft() && state.expertContextOwner == null && state.taskChildOwner == null) {
+                    composerDraft.insertSuggestion(prompt)
+                    editor = TextFieldValue(composerDraft.text.value, TextRange(composerDraft.text.value.length))
+                    composerDraft.caret = editor.selection.end
+                    focusComposer()
+                }
+            },
             onOpenModels = onOpenModels,
             onLongPress = { actionMessage = it },
             onResolveHostPermission = viewModel::resolvePermission,
             onResolveLocalPermission = viewModel::resolveLocalAgentPermission,
             onHostPermissionInstruction = viewModel::provideHostPermissionInstruction,
             onLocalPermissionInstruction = viewModel::provideLocalPermissionInstruction,
-            onEditAndRetry = {
-                if (canMutateDraft() && viewModel.dismissError(state)) {
-                    state.messages.lastOrNull { it.role == ChatRole.user }?.text?.let { inputText = it }
+            editingCurrentDraft = composerDraft.hasComposerContent,
+            onEditAndRetry = if (state.error != null && draftWritable && !state.processingState.blocksInput &&
+                state.expertContextOwner == null && state.taskChildOwner == null &&
+                (composerDraft.hasComposerContent || retryMessage != null)) {
+                {
+                    if (canMutateDraft() && viewModel.dismissError(state)) {
+                        if (!composerDraft.hasComposerContent && retryMessage?.meta?.get("nola.canonicalMessageID") != null &&
+                            state.currentModel?.source != ModelInfo.ModelSource.WebHost) {
+                            viewModel.beginMessageEdit(retryMessage)
+                        } else {
+                            composerDraft.restoreRetryTextIfEmpty(retryMessage?.text)
+                            focusComposer()
+                        }
+                    }
                 }
-            },
+            } else null,
             onSwitchModel = {
                 if (viewModel.dismissError(state)) onOpenModels()
             },
@@ -1540,6 +1566,7 @@ internal fun ChatScreen(
                 inputText = inputText,
                 draftWritable = draftWritable,
                 onInputChange = {},
+                editorFocus = composerFocus,
                 controlledEditor = editorValue,
                 inlineMentions = inlineMentions,
                 onEditorChange = { next ->
@@ -1731,7 +1758,8 @@ internal fun ChatTranscript(
     onResolveLocalPermission: (String, Boolean, Boolean) -> Unit = { _, _, _ -> },
     onHostPermissionInstruction: (String, String) -> Unit = { _, _ -> },
     onLocalPermissionInstruction: (String, String) -> Unit = { _, _ -> },
-    onEditAndRetry: () -> Unit = {},
+    editingCurrentDraft: Boolean = false,
+    onEditAndRetry: (() -> Unit)? = null,
     onSwitchModel: () -> Unit = {},
     onDismissError: () -> Unit = {},
     onInspectUnknownEffects: () -> Unit = {},
@@ -2134,6 +2162,7 @@ internal fun ChatTranscript(
                     }
                     ChatErrorRecoveryCard(
                         message = error,
+                        editingCurrentDraft = editingCurrentDraft,
                         onEditAndRetry = onEditAndRetry,
                         onSwitchModel = onSwitchModel,
                         onDismiss = onDismissError
@@ -2217,11 +2246,13 @@ internal fun PendingPermissionNavigation(count: Int, toolName: String, onReview:
 @Composable
 internal fun ChatErrorRecoveryCard(
     message: String,
-    onEditAndRetry: () -> Unit,
+    editingCurrentDraft: Boolean,
+    onEditAndRetry: (() -> Unit)?,
     onSwitchModel: () -> Unit,
     onDismiss: () -> Unit
 ) {
     var expanded by remember(message) { mutableStateOf(false) }
+    var truncated by remember(message) { mutableStateOf(false) }
     val context = LocalContext.current
     Card(
         modifier = Modifier
@@ -2245,6 +2276,7 @@ internal fun ChatErrorRecoveryCard(
                     color = MaterialTheme.colorScheme.onSurface,
                     maxLines = if (expanded) Int.MAX_VALUE else 3,
                     overflow = TextOverflow.Ellipsis,
+                    onTextLayout = { if (!expanded) truncated = it.hasVisualOverflow },
                     modifier = Modifier.weight(1f)
                 )
                 IconButton(onClick = onDismiss, modifier = Modifier.size(48.dp)) {
@@ -2257,16 +2289,20 @@ internal fun ChatErrorRecoveryCard(
                 }
             }
             androidx.compose.foundation.layout.FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                TextButton(onClick = onEditAndRetry, modifier = Modifier.heightIn(min = 48.dp)) {
-                    Text(stringResource(R.string.chat_error_edit_retry), color = MaterialTheme.colorScheme.onSurface)
+                if (onEditAndRetry != null) {
+                    TextButton(onClick = onEditAndRetry, modifier = Modifier.heightIn(min = 48.dp)) {
+                        Text(stringResource(if (editingCurrentDraft) R.string.chat_continue_draft else R.string.chat_error_edit_retry), color = MaterialTheme.colorScheme.onSurface)
+                    }
                 }
                 TextButton(onClick = onSwitchModel, modifier = Modifier.heightIn(min = 48.dp)) {
                     Text(stringResource(R.string.chat_error_switch_model), color = MaterialTheme.colorScheme.onSurface)
                 }
-                TextButton(onClick = { expanded = !expanded }, modifier = Modifier.heightIn(min = 48.dp)) {
-                    Text(stringResource(if (expanded) R.string.canonical_hide_details else R.string.canonical_details), color = MaterialTheme.colorScheme.onSurfaceVariant)
+                if (expanded || truncated) {
+                    TextButton(onClick = { expanded = !expanded }, modifier = Modifier.heightIn(min = 48.dp)) {
+                        Text(stringResource(if (expanded) R.string.canonical_hide_details else R.string.canonical_details), color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    }
                 }
-                if (expanded) {
+                if (expanded || !truncated) {
                     TextButton(modifier = Modifier.heightIn(min = 48.dp), onClick = {
                         val clipboard = context.getSystemService(android.content.Context.CLIPBOARD_SERVICE) as android.content.ClipboardManager
                         clipboard.setPrimaryClip(ClipData.newPlainText("Nola", message))
@@ -2514,6 +2550,7 @@ internal fun ChatComposerBar(
     showGoalProgress: Boolean = false,
     onFocusChange: (Boolean) -> Unit = {},
     onMentionKey: (Key) -> Boolean = { false },
+    editorFocus: FocusRequester = remember { FocusRequester() },
     controlledEditor: TextFieldValue? = null,
     inlineMentions: List<InlineExpertMention> = emptyList(),
     onEditorChange: ((TextFieldValue) -> Unit)? = null,
@@ -2541,8 +2578,7 @@ internal fun ChatComposerBar(
             .testTag("chat.composer")
             .semantics { chatComposerGenerationActive = isGenerating }
             .fillMaxWidth()
-            .padding(horizontal = 8.dp)
-            .padding(vertical = 4.dp),
+            .padding(horizontal = NolaSpacing.md, vertical = 6.dp),
         verticalArrangement = Arrangement.spacedBy(6.dp)
     ) {
         if (attachments.isNotEmpty()) {
@@ -2589,6 +2625,7 @@ internal fun ChatComposerBar(
                 } },
                 visualTransformation = expertMentionStyle(inlineMentions),
                 modifier = Modifier
+                    .focusRequester(editorFocus)
                     .testTag("chat.composer.input")
                     .onFocusChanged { inputFocused = it.isFocused; onFocusChange(it.isFocused) }
                     .fillMaxWidth()
@@ -2829,57 +2866,45 @@ fun ChatEmptyState(
                 color = MaterialTheme.colorScheme.onSurface,
                 textAlign = TextAlign.Center
             )
-            Spacer(Modifier.height(8.dp))
-            Text(
-                currentModel?.let { model ->
-                    stringResource(
-                        when (model.source) {
-                            ModelInfo.ModelSource.Local -> R.string.chat_empty_mode_device
-                            ModelInfo.ModelSource.Cloud -> R.string.chat_empty_mode_cloud
-                            ModelInfo.ModelSource.WebHost -> if (hybridEnabled) {
-                                R.string.chat_empty_mode_hybrid
-                            } else {
-                                R.string.chat_empty_mode_host
-                            }
-                        }
-                    )
-                } ?: if (hasModels) stringResource(R.string.chat_empty_has_models)
-                else stringResource(R.string.chat_empty_no_models),
-                style = MaterialTheme.typography.bodyMedium,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                textAlign = TextAlign.Center
-            )
+            val guidance = when {
+                !hasModels -> R.string.chat_empty_no_models
+                currentModel == null -> R.string.chat_empty_has_models
+                currentModel.source == ModelInfo.ModelSource.WebHost ->
+                    if (hybridEnabled) R.string.chat_empty_mode_hybrid else R.string.chat_empty_mode_host
+                else -> null
+            }
+            if (guidance != null) {
+                Spacer(Modifier.height(8.dp))
+                Text(stringResource(guidance), style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant, textAlign = TextAlign.Center)
+            }
             if (hasModels) {
                 Spacer(Modifier.height(18.dp))
-                suggestions.forEach { (title, prompt) ->
-                    Column(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .heightIn(min = 62.dp)
-                            .clip(RoundedCornerShape(NolaRadius.md))
-                            .background(MaterialTheme.colorScheme.onSurface.copy(alpha = 0.035f))
-                            .clickable { onSuggestion(prompt) }
-                            .padding(horizontal = 15.dp, vertical = 11.dp),
-                        verticalArrangement = Arrangement.Center
-                    ) {
-                        Text(
-                            title,
-                            style = MaterialTheme.typography.labelMedium,
-                            fontWeight = FontWeight.SemiBold,
-                            color = MaterialTheme.colorScheme.primary,
-                            maxLines = 1,
-                            overflow = TextOverflow.Ellipsis
-                        )
-                        Spacer(Modifier.height(2.dp))
-                        Text(
-                            prompt,
-                            style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                            maxLines = 2,
-                            overflow = TextOverflow.Ellipsis
-                        )
+                Column(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clip(RoundedCornerShape(NolaRadius.md))
+                        .background(MaterialTheme.colorScheme.surfaceContainerLow)
+                ) {
+                    suggestions.forEachIndexed { index, (title, prompt) ->
+                        if (index > 0) {
+                            HorizontalDivider(
+                                modifier = Modifier.padding(start = 16.dp),
+                                color = MaterialTheme.colorScheme.outlineVariant
+                            )
+                        }
+                        Column(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .clickable(role = Role.Button) { onSuggestion(prompt) }
+                                .heightIn(min = 48.dp)
+                                .padding(horizontal = 16.dp, vertical = 10.dp)
+                        ) {
+                            Text(title, style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.onSurface)
+                            Spacer(Modifier.height(2.dp))
+                            Text(prompt, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        }
                     }
-                    Spacer(Modifier.height(8.dp))
                 }
             } else {
                 Spacer(Modifier.height(16.dp))

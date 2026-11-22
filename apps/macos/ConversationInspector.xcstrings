@@ -14,11 +14,102 @@
             "state" : "translated",
             "value" : "无法打开 Chrome。请安装 Chrome 后重试。"
           }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "無法打開 Chrome。請安裝 Chrome 後重試。"
+          }
+        },
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Chrome konnte nicht geöffnet werden. Installiere Chrome und versuche es erneut."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "No se pudo abrir Chrome. Instala Chrome e inténtalo de nuevo."
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Impossible d’ouvrir Chrome. Installez Chrome, puis réessayez."
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Chromeを開けませんでした。Chromeをインストールして、もう一度お試しください。"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Chrome을 열 수 없습니다. Chrome을 설치한 뒤 다시 시도하세요."
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Не удалось открыть Chrome. Установите Chrome и повторите попытку."
+          }
         }
       }
     },
     "Diff preview is shortened. Open full review to inspect all changes." : {
-
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "差异预览已截短。打开完整审查可查看所有更改。"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "差異預覽已截短。打開完整審查可查看所有更改。"
+          }
+        },
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Die Diff-Vorschau ist gekürzt. Öffne die vollständige Prüfung, um alle Änderungen anzusehen."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "La vista previa de diferencias está truncada. Abre la revisión completa para ver todos los cambios."
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "L’aperçu des différences est tronqué. Ouvrez l’examen complet pour voir toutes les modifications."
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "差分プレビューは短縮されています。完全なレビューを開いて、すべての変更を確認してください。"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "차이 미리보기가 일부만 표시됩니다. 모든 변경 사항을 확인하려면 전체 검토를 여세요."
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Предпросмотр различий сокращён. Откройте полный обзор, чтобы проверить все изменения."
+          }
+        }
+      }
     },
     "Diff preview is shortened. Open in a tab to review the full changes." : {
       "extractionState" : "stale",
@@ -33,6 +124,48 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "差异预览已缩短。请在标签页中查看完整变更。"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "差異預覽已縮短。請在標籤頁中查看完整變更。"
+          }
+        },
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Die Diff-Vorschau ist gekürzt. Öffne sie in einem Tab, um alle Änderungen anzusehen."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "La vista previa de diferencias está truncada. Ábrela en una pestaña para revisar todos los cambios."
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "L’aperçu des différences est tronqué. Ouvrez-le dans un onglet pour examiner toutes les modifications."
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "差分プレビューは短縮されています。タブで開いて、変更の全体を確認してください。"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "차이 미리보기가 일부만 표시됩니다. 모든 변경 사항을 검토하려면 탭에서 여세요."
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Предпросмотр различий сокращён. Откройте изменения во вкладке, чтобы проверить их полностью."
           }
         }
       }
@@ -49,6 +182,48 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "目标控件暂不可用。请刷新以确认当前目标状态。"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "目標控件暫不可用。請刷新以確認當前目標狀態。"
+          }
+        },
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Die Zielsteuerung ist nicht verfügbar. Aktualisiere, um den aktuellen Zielstatus zu bestätigen."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Los controles del objetivo no están disponibles. Recarga la vista para confirmar el estado actual del objetivo."
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Les commandes de l’objectif sont indisponibles. Actualisez pour vérifier l’état actuel de l’objectif."
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "目標の操作機能は利用できません。更新して、現在の目標の状態を確認してください。"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "목표 컨트롤을 사용할 수 없습니다. 새로고침하여 현재 목표 상태를 확인하세요."
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Настройки цели недоступны. Обновите страницу, чтобы проверить текущее состояние цели."
           }
         }
       }
@@ -449,6 +624,18 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "上下文用量"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "上下文用量"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "컨텍스트 사용량"
           }
         }
       }
@@ -2397,7 +2584,56 @@
       }
     },
     "New Goal" : {
-
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "新建目标"
+          }
+        },
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Neues Ziel"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Nuevo objetivo"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Nouvel objectif"
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "新しい目標"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "새 목표"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Новая цель"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "新建目標"
+          }
+        }
+      }
     },
     "No textual diff is available for this file." : {
       "localizations" : {
@@ -2411,6 +2647,48 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "此文件暂无可显示的文本差异。"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "此文件暫無可顯示的文本差異。"
+          }
+        },
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Für diese Datei ist kein Text-Diff verfügbar."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "No hay diferencias de texto disponibles para este archivo."
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Aucune différence textuelle n’est disponible pour ce fichier."
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "このファイルにはテキスト差分がありません。"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "이 파일의 텍스트 차이를 표시할 수 없습니다."
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Для этого файла нет текстовых различий."
           }
         }
       }
@@ -2427,6 +2705,48 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Chrome 扩展安装失败。请检查文件访问权限后重试。"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Chrome 擴展安裝失敗。請檢查文件訪問權限後重試。"
+          }
+        },
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Die Chrome-Erweiterung konnte nicht installiert werden. Prüfe den Dateizugriff und versuche es erneut."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "No se pudo instalar la extensión de Chrome. Comprueba el acceso a los archivos e inténtalo de nuevo."
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Impossible d’installer l’extension Chrome. Vérifiez l’accès au fichier, puis réessayez."
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Chrome拡張機能をインストールできませんでした。ファイルへのアクセスを確認して、もう一度お試しください。"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Chrome 확장 프로그램을 설치할 수 없습니다. 파일 접근 권한을 확인하고 다시 시도하세요."
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Не удалось установить расширение Chrome. Проверьте доступ к файлу и повторите попытку."
           }
         }
       }

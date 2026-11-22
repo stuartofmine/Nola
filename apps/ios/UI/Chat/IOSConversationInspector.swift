@@ -428,7 +428,7 @@ struct IOSConversationInspector: View {
                 .toolbar {
                     ToolbarItem(placement: .cancellationAction) { Button(L10n.close) { showGoalStart = false } }
                     ToolbarItem(placement: .confirmationAction) {
-                        Button(goalText("goal.start", "Start")) {
+                        Button(goalText("goal.start_action", "Start")) {
                             let objective = goalObjective.trimmingCharacters(in: .whitespacesAndNewlines)
                             let parsedConstraints = goalConstraints
                                 .components(separatedBy: .newlines)
@@ -453,7 +453,7 @@ struct IOSConversationInspector: View {
                     .toolbar {
                         ToolbarItem(placement: .cancellationAction) { Button(L10n.close) { showSchedule = false } }
                         ToolbarItem(placement: .confirmationAction) {
-                            Button(goalText("goal.schedule", "Schedule")) {
+                            Button(goalText("goal.schedule_action", "Schedule")) {
                                 showSchedule = false
                                 sendObservedGoalControl(.schedule, wake: Int64(goalWake.timeIntervalSince1970 * 1_000))
                             }

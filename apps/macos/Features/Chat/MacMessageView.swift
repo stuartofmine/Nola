@@ -1190,7 +1190,7 @@ private struct MacAssistantSourcesView: View {
                 .buttonStyle(MacActionButtonStyle(contentInsets: .init()))
                 .accessibilityLabel(Text("Sources", tableName: "Chat"))
                 .help(String(localized: "Sources", table: "Chat"))
-                .accessibilityValue(Text(expanded ? "Expanded" : "Collapsed", tableName: "Chat"))
+                .accessibilityValue(expanded ? Text("Expanded", tableName: "Chat") : Text("Collapsed", tableName: "Chat"))
             }
         }
         .padding(.top, 2)
@@ -1417,7 +1417,7 @@ nonisolated enum MacCanonicalPartFlow {
         }
         switch current {
         case .tool(let tool) where [.running, .pending].contains(tool.state):
-            return tool.title.isEmpty ? String(localized: "Activity") : tool.title
+            return AppleToolDisplayName.localized(tool.capabilityID, title: tool.title) ?? (tool.title.isEmpty ? String(localized: "Activity") : tool.title)
         case .reasoning(let reasoning) where reasoning.state == .running:
             return String(localized: "Thinking")
         default: return nil

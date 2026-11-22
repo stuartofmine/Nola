@@ -39,6 +39,8 @@ WINDOWS_LOCALES = ("en", "zh-Hans", "zh-Hant", "ja", "ko", "de", "es", "fr", "ru
 SWIFT_KEY_PATTERNS = (
     re.compile(r'String\(localized:\s*"([^"\\]+)"(?!\s*\+)'),
     re.compile(r'NSLocalizedString\(\s*"([^"\\]+)"(?!\s*\+)'),
+    # The Apple clients also wrap NSLocalizedString in tr(key, fallback).
+    re.compile(r'\btr\(\s*"([a-z][a-z0-9_]*(?:\.[a-z0-9_]+)+)"\s*,'),
     re.compile(r'LocalizedStringKey\(\s*"([^"\\]+)"(?!\s*\+)'),
     re.compile(
         r'\b(?:Text|Label|Button|Toggle|Picker|Section|GroupBox|Menu|Link|TextField|SecureField|ContentUnavailableView|SettingsLink|LabeledContent|ShareLink|ProgressView)\(\s*"([^"\\]+)"(?!\s*\+)'
@@ -138,16 +140,17 @@ def swift_keys(root: Path) -> set[str]:
     }
 
 
-def apple_catalogs(root: Path) -> dict[str, dict]:
-    entries: dict[str, dict] = {}
+def apple_catalog_tables(root: Path) -> dict[str, dict]:
+    tables: dict[str, dict] = {}
     for path in root.glob("*.xcstrings"):
         payload = json.loads(path.read_text(encoding="utf-8"))
-        entries.update(payload.get("strings", {}))
+        tables[path.stem] = payload.get("strings", {})
     strings_entry = re.compile(
         r'^\s*"((?:\\.|[^"\\])*)"\s*=\s*"((?:\\.|[^"\\])*)"\s*;\s*$',
         re.MULTILINE,
     )
     for path in root.glob("*.lproj/*.strings"):
+        entries = tables.setdefault(path.stem, {})
         locale = path.parent.name.removesuffix(".lproj")
         source = path.read_text(encoding="utf-8")
         for raw_key, raw_value in strings_entry.findall(source):
@@ -161,7 +164,7 @@ def apple_catalogs(root: Path) -> dict[str, dict]:
             entry.setdefault("localizations", {})[locale] = {
                 "stringUnit": {"state": "translated", "value": value}
             }
-    return entries
+    return tables
 
 
 def audit_apple_catalog_integrity(
@@ -185,6 +188,8 @@ def audit_apple_catalog_integrity(
             if not key.strip():
                 failures.append(f"{name}: {path.name}: empty localization key")
                 continue
+            if "\\(" in key:
+                failures.append(f"{name}: {path.name}: Swift interpolation source used as a catalog key: {key}")
             occurrences[key].append((path, entry))
             for locale in locales:
                 if translated_value(entry, locale) is None:
@@ -288,16 +293,24 @@ STRUCTURED_LOCALIZATION_KEY = re.compile(
 )
 
 
-def apple_placeholders(value: str) -> list[str]:
-    """Return semantic printf conversion types, ignoring legal reordering."""
-    tokens: list[str] = []
+def apple_placeholders(value: str) -> list[tuple[int, str]]:
+    """Compare argument positions and types even when a language reorders them."""
+    arguments = []
+    next_position = 1
     for token in APPLE_FORMAT_PATTERN.findall(value):
         if token == "%%":
             continue
-        match = re.search(r"(?:hh|h|ll|l|j|z|t|L)?[@a-zA-Z]$", token)
-        if match is not None:
-            tokens.append(match.group(0))
-    return sorted(tokens)
+        conversion = re.search(r"(?:hh|h|ll|l|j|z|t|L)?[@a-zA-Z]$", token)
+        if conversion is None:
+            continue
+        explicit = re.match(r"%(\d+)\$", token)
+        if explicit:
+            position = int(explicit.group(1))
+        else:
+            position = next_position
+            next_position += 1
+        arguments.append((position, conversion.group(0)))
+    return sorted(arguments)
 
 
 STABLE_UI_TERMS = {
@@ -305,6 +318,8 @@ STABLE_UI_TERMS = {
     "Chat Completions",
     "Chrome",
     "Hugging Face",
+    "ModelFit · CC BY 4.0",
+    "Playwright",
     "JSON",
     "MLX",
     "MCP",
@@ -386,43 +401,40 @@ def audit_apple(
     failures.extend(audit_apple_catalog_routing(name, source_root, catalog_root))
     failures.extend(audit_raw_runtime_localization(name, source_root))
     keys = swift_keys(source_root)
-    entries = apple_catalogs(catalog_root)
+    tables = apple_catalog_tables(catalog_root)
+    catalog_keys = {key for entries in tables.values() for key in entries}
     if name == "ios":
-        for key in sorted(key for key in entries if key.startswith("mac.")):
+        for key in sorted(key for key in catalog_keys if key.startswith("mac.")):
             failures.append(f"{name}: Mac-only key leaked into iOS resources: {key}")
-    # String Catalogs also contain keys reached through dynamic navigation,
-    # AppKit bridges, formatted SwiftUI labels, and generated subpage models.
-    # Limiting the contract to a few source-code regexes made those screens
-    # silently fall back to English while the audit reported success.
-    keys.update(key for key in entries if key.strip())
-    for key in sorted(keys - entries.keys()):
+    for key in sorted(keys - catalog_keys):
         failures.append(f"{name}: missing catalog key: {key}")
-    for key in sorted(keys & entries.keys()):
-        english_value = translated_value(entries[key], "en")
-        if english_value is None:
-            if STRUCTURED_LOCALIZATION_KEY.fullmatch(key):
-                failures.append(f"{name}: {key}: missing English source")
-                continue
-            source_value = key
-        else:
-            source_value = english_value
-        if source_value == key and STRUCTURED_LOCALIZATION_KEY.fullmatch(key):
-            failures.append(f"{name}: {key}: internal key leaked into English UI")
-        for locale in locales:
-            value = translated_value(entries[key], locale)
-            if value is None:
-                failures.append(f"{name}: {key}: missing {locale}")
-            elif apple_placeholders(source_value) != apple_placeholders(value):
-                failures.append(f"{name}: {key}: placeholder mismatch in {locale}")
-            elif locale == "zh-Hant" and any(
-                marker in value for marker in SIMPLIFIED_CHINESE_MARKERS
-            ):
-                failures.append(f"{name}: {key}: simplified Chinese leaked into zh-Hant")
-            elif quality and (
-                (key.startswith("autogen.") and value == key)
-                or obviously_untranslated(source_value, value, locale)
-            ):
-                failures.append(f"{name}: {key}: untranslated {locale}")
+    for table, entries in sorted(tables.items()):
+        for key, entry in sorted(entries.items()):
+            english_value = translated_value(entry, "en")
+            if english_value is None:
+                if STRUCTURED_LOCALIZATION_KEY.fullmatch(key):
+                    failures.append(f"{name}: {table}: {key}: missing English source")
+                    continue
+                source_value = key
+            else:
+                source_value = english_value
+            if source_value == key and STRUCTURED_LOCALIZATION_KEY.fullmatch(key):
+                failures.append(f"{name}: {table}: {key}: internal key leaked into English UI")
+            for locale in locales:
+                value = translated_value(entry, locale)
+                if value is None:
+                    failures.append(f"{name}: {table}: {key}: missing {locale}")
+                elif apple_placeholders(source_value) != apple_placeholders(value):
+                    failures.append(f"{name}: {table}: {key}: placeholder mismatch in {locale}")
+                elif locale == "zh-Hant" and any(
+                    marker in value for marker in SIMPLIFIED_CHINESE_MARKERS
+                ):
+                    failures.append(f"{name}: {table}: {key}: simplified Chinese leaked into zh-Hant")
+                elif quality and (
+                    (key.startswith("autogen.") and value == key)
+                    or obviously_untranslated(source_value, value, locale)
+                ):
+                    failures.append(f"{name}: {table}: {key}: untranslated {locale}")
     return failures
 
 
@@ -737,6 +749,44 @@ def audit_windows(quality: bool = False) -> list[str]:
     return failures
 
 
+def audit_tool_names(catalog: dict, required: set[str], device_pairs: list[tuple[str, str]]) -> list[str]:
+    labels = catalog["labels"]
+    aliases = catalog["aliases"]
+    failures = []
+    for identifier, translations in labels.items():
+        for locale in CLI_LOCALES:
+            value = translations.get(locale)
+            if not isinstance(value, str) or not value.strip() or value == identifier:
+                failures.append(f"tool names: {identifier}: missing display name in {locale}")
+    for alias, target in aliases.items():
+        if target not in labels or alias in labels:
+            failures.append(f"tool names: invalid alias {alias} -> {target}")
+    for identifier in sorted(required):
+        if aliases.get(identifier, identifier) not in labels:
+            failures.append(f"tool names: unregistered display name for {identifier}")
+    for capability, name in device_pairs:
+        if aliases.get(capability, capability) != aliases.get(name, name):
+            failures.append(f"tool names: device capability {capability} and tool {name} differ")
+    return failures
+
+
+def audit_shipped_tool_names() -> list[str]:
+    catalog = json.loads((ROOT / "shared/localization/tool-names.json").read_text())
+    host = (ROOT / "apps/cli/src/tools/parts/catalog.rs").read_text()
+    device = (ROOT / "apps/ios/Services/AgentCoreToolCatalog.swift").read_text()
+    experts = json.loads((ROOT / "core/nola-application/src/expert_roles/catalog.json").read_text())
+    android = (ROOT / "apps/android/app/src/main/java/com/nola/core/AgentCoreToolPolicy.kt").read_text()
+    android_ids = set(re.findall(r'\bcandidate\(\s*"([\w.-]+)"', android))
+    host_ids = {name.lower().replace("-", "_") for name in re.findall(r'\bname:\s*"([\w.-]+)"', host)}
+    device_pairs = re.findall(r'\btool\(\s*id:\s*"([^"]+)",\s*name:\s*"([^"]+)"', device)
+    if not host_ids or not android_ids or not device_pairs or not experts["templates"]:
+        return ["tool names: shipped catalog contains no declarations"]
+    required = host_ids | android_ids | {tool for pair in device_pairs for tool in pair}
+    for template in experts["templates"]:
+        required.update(template["tool_pack"]["tools"])
+    return audit_tool_names(catalog, required, device_pairs)
+
+
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument(
@@ -752,7 +802,7 @@ def main() -> int:
     )
     args = parser.parse_args()
 
-    failures: list[str] = []
+    failures = audit_shipped_tool_names()
     if args.platform in {"all", "mac"}:
         failures.extend(
             audit_apple("mac", ROOT / "apps/macos", ROOT / "apps/macos", MAC_LOCALES, args.quality)

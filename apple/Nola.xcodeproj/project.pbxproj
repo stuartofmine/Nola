@@ -205,6 +205,11 @@
 			path = "shared/mlx-runtime";
 			sourceTree = "<group>";
 		};
+		F31000000000000000000002 /* shared/localization */ = {
+			isa = PBXFileSystemSynchronizedRootGroup;
+			path = shared/localization;
+			sourceTree = SOURCE_ROOT;
+		};
 		F31000000000000000000001 /* shared/apple */ = {
 			isa = PBXFileSystemSynchronizedRootGroup;
 			path = shared/apple;
@@ -319,6 +324,7 @@
 			isa = PBXGroup;
 			children = (
 				F31000000000000000000001 /* shared/apple */,
+				F31000000000000000000002 /* shared/localization */,
 				F10000000000000000000003 /* shared/apple-core/NolaCore.xcodeproj */,
 				B10000000000000000000002 /* apps/macos */,
 				F20000000000000000000002 /* shared/mlx-runtime */,
@@ -391,6 +397,7 @@
 			fileSystemSynchronizedGroups = (
 				9A9F768E2EBD3711004F68FB /* apps/ios */,
 				F31000000000000000000001 /* shared/apple */,
+				F31000000000000000000002 /* shared/localization */,
 			);
 			name = Nola;
 			packageProductDependencies = (
@@ -477,6 +484,7 @@
 			fileSystemSynchronizedGroups = (
 				B10000000000000000000002 /* apps/macos */,
 				F31000000000000000000001 /* shared/apple */,
+				F31000000000000000000002 /* shared/localization */,
 			);
 			name = NolaMac;
 			packageProductDependencies = (

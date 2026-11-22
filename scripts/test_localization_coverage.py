@@ -1,5 +1,8 @@
 import importlib.util
 import copy
+import json
+import shutil
+import subprocess
 import tempfile
 import unittest
 from pathlib import Path
@@ -13,6 +16,18 @@ SPEC.loader.exec_module(localization)
 
 
 class LocalizationCoverageTests(unittest.TestCase):
+    def test_tool_names_cover_each_locale_and_resolve_device_aliases(self):
+        labels = dict.fromkeys(localization.CLI_LOCALES, "Display name")
+        catalog = {"labels": {"read_file": labels}, "aliases": {"device.files.read": "read_file"}}
+        required = {"read_file", "device.files.read"}
+        pair = [("device.files.read", "read_file")]
+        self.assertEqual(localization.audit_tool_names(catalog, required, pair), [])
+        del labels["ko"]
+        catalog["aliases"]["device.files.read"] = "removed"
+        problems = localization.audit_tool_names(catalog, required | {"new_tool"}, pair)
+        for expected in ("missing display name in ko", "invalid alias", "new_tool", "and tool read_file differ"):
+            self.assertTrue(any(expected in message for message in problems), problems)
+
     def test_swift_concatenated_key_is_not_a_literal_prefix(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
@@ -23,6 +38,15 @@ class LocalizationCoverageTests(unittest.TestCase):
                 'Text("screen.title")\nNSLocalizedString("missing.key", comment: "")'
             )
             self.assertEqual(localization.swift_keys(root), {"screen.title", "missing.key"})
+
+    def test_swift_fallback_text_does_not_hide_a_missing_translation(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / "View.swift").write_text(
+                'tr("chat.context.usage.header", "Context usage")\n'
+                'tr("chat.context." + section, "Unknown")'
+            )
+            self.assertEqual(localization.swift_keys(root), {"chat.context.usage.header"})
 
     def web_snapshot(self):
         catalogs = [{locale: {"screen.title": f"Translated {locale} {{name}}"}
@@ -64,6 +88,41 @@ class LocalizationCoverageTests(unittest.TestCase):
             failures = localization.audit_apple_catalog_routing("ios", root, root)
             self.assertEqual(len(failures), 1)
             self.assertIn("missing catalog table Chat", failures[0])
+
+    def test_apple_quality_checks_each_runtime_table_and_format_position(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            for locale in ("en", "ja"):
+                folder = root / (locale + ".lproj")
+                folder.mkdir()
+                for table in ("Chat", "Localizable"):
+                    value = "%@ has %lld files" if locale == "en" else "%2$lld 件：%1$@"
+                    if table == "Chat" and locale == "ja":
+                        value = "%1$lld 件：%2$@"
+                    (folder / (table + ".strings")).write_text(f'"file.count" = "{value}";')
+            failures = localization.audit_apple("mac", root, root, ("ja",), True)
+            self.assertEqual(failures, ["mac: Chat: file.count: placeholder mismatch in ja"])
+
+    def test_sync_only_adds_default_table_literals(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            scripts = root / "scripts"
+            scripts.mkdir()
+            sync = scripts / "sync_mac_localization_catalog.rb"
+            shutil.copy(MODULE_PATH.with_name(sync.name), sync)
+            app = root / "apps/macos"
+            app.mkdir(parents=True)
+            catalog = app / "Localizable.xcstrings"
+            catalog.write_text('{"sourceLanguage":"en","strings":{}}')
+            (app / "Example.swift").write_text(
+                'String(localized: "Default label")\nString(localized: "Named table", table: "Chat")\n'
+                r'String(localized: "Count: \(count)")'
+            )
+            subprocess.run(["ruby", str(sync)], check=True, capture_output=True)
+            keys = json.loads(catalog.read_text())["strings"]
+            self.assertIn("Default label", keys)
+            self.assertNotIn("Named table", keys)
+            self.assertNotIn(r"Count: \(count)", keys)
 
     def test_android_placeholders_ignore_positions_but_preserve_types(self) -> None:
         self.assertEqual(localization.android_placeholders("%2$d · %1$s · %%"), ["d", "s"])

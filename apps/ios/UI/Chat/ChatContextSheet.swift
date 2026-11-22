@@ -272,15 +272,15 @@ struct ChatContextSheet: View {
                     title: conversationTitle,
                     detail: sheetSubtitle,
                     scopeLabel: displayMode == .context
-                        ? tr("chat.scope.current_conversation", "当前对话", "This conversation")
-                        : tr("chat.scope.across_conversations", "跨对话", "Across conversations")
+                        ? String(localized: "chat.scope.current_conversation")
+                        : String(localized: "chat.scope.across_conversations")
                 )
             }
 
             if displayMode == .context {
                 Section {
                     Picker(
-                        tr("chat.context.pane.picker", "对话详情", "Conversation details"),
+                        String(localized: "chat.context.pane.picker"),
                         selection: $selectedContextPane
                     ) {
                         ForEach(ContextPane.allCases, id: \.self) { pane in
@@ -320,7 +320,7 @@ struct ChatContextSheet: View {
                                 }
                                 .frame(height: 10)
                             } else {
-                                Label(tr("chat.context.metric.occupancy_unknown", "暂无已提交的上下文用量", "No committed context usage yet"), systemImage: "info.circle")
+                                Label(String(localized: "chat.context.metric.occupancy_unknown"), systemImage: "info.circle")
                                     .font(.callout)
                                     .foregroundStyle(.secondary)
                             }
@@ -331,61 +331,61 @@ struct ChatContextSheet: View {
                                     alignment: .leading,
                                     spacing: 12
                                 ) {
-                                    contextMetric(title: tr("chat.context.metric.measurement", "上下文", "Context"),
+                                    contextMetric(title: String(localized: "chat.context.metric.measurement"),
                                         value: contextUsage.contextIsEstimated
-                                            ? tr("chat.context.metric.estimated_request", "预计下次请求", "Estimated next request")
-                                            : tr("chat.context.metric.measured_request", "请求实测上下文", "Measured request context"))
+                                            ? String(localized: "chat.context.metric.estimated_request")
+                                            : String(localized: "chat.context.metric.measured_request"))
                                     if let request = contextUsage.cacheDiagnosticRequestID {
-                                        contextMetric(title: tr("chat.context.metric.cache_request", "缓存诊断请求", "Cache diagnostic request"), value: request)
+                                        contextMetric(title: String(localized: "chat.context.metric.cache_request"), value: request)
                                     }
                                     if let attempt = contextUsage.cacheDiagnosticAttemptID {
-                                        contextMetric(title: tr("chat.context.metric.cache_attempt", "物理尝试", "Physical attempt"), value: attempt)
+                                        contextMetric(title: String(localized: "chat.context.metric.cache_attempt"), value: attempt)
                                     }
                                     if contextUsage.hasEstimatedBreakdown {
-                                        contextMetric(title: tr("chat.context.metric.active", "当前消息", "Active"), value: "\(contextUsage.activeMessageTokens)")
-                                        contextMetric(title: tr("chat.context.metric.memory", "记忆", "Memory"), value: "\(contextUsage.longTermMemoryTokens)")
-                                        contextMetric(title: tr("chat.context.metric.preferences", "偏好", "Preferences"), value: "\(contextUsage.userPreferencesTokens)")
-                                        contextMetric(title: tr("chat.context.metric.mcp", "MCP", "MCP"), value: "\(contextUsage.mcpServersTokens)")
-                                        contextMetric(title: tr("chat.context.metric.skills", "Skills", "Skills"), value: "\(contextUsage.uploadedSkillsTokens)")
-                                        contextMetric(title: tr("chat.context.metric.documents", "文档", "Documents"), value: "\(contextUsage.uploadedDocumentsTokens)")
+                                        contextMetric(title: String(localized: "chat.context.metric.active"), value: "\(contextUsage.activeMessageTokens)")
+                                        contextMetric(title: String(localized: "chat.context.metric.memory"), value: "\(contextUsage.longTermMemoryTokens)")
+                                        contextMetric(title: String(localized: "chat.context.metric.preferences"), value: "\(contextUsage.userPreferencesTokens)")
+                                        contextMetric(title: String(localized: "chat.context.metric.mcp"), value: "\(contextUsage.mcpServersTokens)")
+                                        contextMetric(title: String(localized: "chat.context.metric.skills"), value: "\(contextUsage.uploadedSkillsTokens)")
+                                        contextMetric(title: String(localized: "chat.context.metric.documents"), value: "\(contextUsage.uploadedDocumentsTokens)")
                                     }
                                     if let status = contextUsage.promptCacheStatus {
                                         contextMetric(
-                                            title: tr("chat.context.metric.prompt_cache", "提示缓存", "Prompt cache"),
+                                            title: String(localized: "chat.context.metric.prompt_cache"),
                                             value: promptCacheStatusLabel(status)
                                         )
                                     }
                                     contextMetric(
-                                        title: tr("chat.context.metric.cache_hit_rate", "会话缓存命中率", "Conversation cache hit rate"),
+                                        title: String(localized: "chat.context.metric.cache_hit_rate"),
                                         value: contextUsage.cacheHitRateBps.map { (Double($0) / 10_000).formatted(.percent.precision(.fractionLength(1))) }
-                                            ?? tr("chat.context.metric.cache_unknown", "未知", "Unknown")
+                                            ?? String(localized: "chat.context.metric.cache_unknown")
                                     )
                                     if let value = contextUsage.cacheReportedRequests {
-                                        contextMetric(title: tr("chat.context.metric.cache_reported", "已报告请求", "Reported requests"), value: value.formatted())
+                                        contextMetric(title: String(localized: "chat.context.metric.cache_reported"), value: value.formatted())
                                     }
                                     if let value = contextUsage.cacheUnreportedRequests, value > 0 {
-                                        contextMetric(title: tr("chat.context.metric.cache_unreported", "缓存用量未知的请求", "Requests with unknown cache usage"), value: value.formatted())
+                                        contextMetric(title: String(localized: "chat.context.metric.cache_unreported"), value: value.formatted())
                                     }
                                     if let value = contextUsage.cachedInputTokens {
                                         contextMetric(
-                                            title: tr("chat.context.metric.cache_read", "缓存读取", "Cache read"),
+                                            title: String(localized: "chat.context.metric.cache_read"),
                                             value: formattedTokenCount(value)
                                         )
                                     }
                                     if let value = contextUsage.cacheWriteInputTokens {
                                         contextMetric(
-                                            title: tr("chat.context.metric.cache_write", "缓存写入", "Cache write"),
+                                            title: String(localized: "chat.context.metric.cache_write"),
                                             value: formattedTokenCount(value)
                                         )
                                     }
                                     if contextUsage.hasEstimatedBreakdown {
-                                        contextMetric(title: tr("chat.context.metric.supplemental", "附加", "Supplemental"), value: "\(contextUsage.supplementalTokens)")
-                                        contextMetric(title: tr("chat.context.metric.archived", "已折叠", "Archived"), value: "\(contextUsage.archivedMessageCount)")
+                                        contextMetric(title: String(localized: "chat.context.metric.supplemental"), value: "\(contextUsage.supplementalTokens)")
+                                        contextMetric(title: String(localized: "chat.context.metric.archived"), value: "\(contextUsage.archivedMessageCount)")
                                     }
                                 }
                                 .padding(.top, 8)
                             } label: {
-                                Text(tr("chat.context.diagnostics.header", "诊断详情", "Diagnostics"))
+                                Text(String(localized: "chat.context.diagnostics.header"))
                                     .font(.subheadline.weight(.medium))
                                     .foregroundStyle(DesignTokens.secondaryContentColor)
                                     .frame(minHeight: 40)
@@ -394,7 +394,7 @@ struct ChatContextSheet: View {
                             .accessibilityIdentifier("chat.context.diagnostics")
 
                             if let lastCompactedAt = contextUsage.lastCompactedAt {
-                                Text("\(tr("chat.context.last_compact.prefix", "上次 compact：", "Last compact: "))\(lastCompactedAt.formatted(date: .abbreviated, time: .shortened))")
+                                Text("\(String(localized: "chat.context.last_compact.prefix"))\(lastCompactedAt.formatted(date: .abbreviated, time: .shortened))")
                                     .font(.caption)
                                     .foregroundColor(.secondary)
                             }
@@ -417,28 +417,28 @@ struct ChatContextSheet: View {
                         }
                         .padding(.vertical, 4)
                     } else {
-                        Text(tr("chat.context.usage.empty", "当前还没有可用的上下文统计。", "No context usage stats are available yet."))
+                        Text(String(localized: "chat.context.usage.empty"))
                             .font(.subheadline)
                             .foregroundColor(.secondary)
                     }
                 } header: {
-                    Text(tr("chat.context.usage.header", "Context usage", "Context usage"))
+                    Text(String(localized: "chat.context.usage.header"))
                 } footer: {
-                    Text(tr("chat.context.usage.footer", "compact 会把较早消息折叠到 session memory，但本地历史仍会保留。", "Compact folds earlier messages into session memory while preserving local history."))
+                    Text(String(localized: "chat.context.usage.footer"))
                 }
             }
 
             if displayMode == .context && selectedContextPane == .knowledge {
                 Section {
                     HStack(spacing: 8) {
-                        TextField(tr("chat.context.search.placeholder", "输入关键词检索 compact 前原始记忆", "Search original memory before compact with keywords"), text: $memorySearchQuery)
+                        TextField(String(localized: "chat.context.search.placeholder"), text: $memorySearchQuery)
                             .textInputAutocapitalization(.never)
                             .autocorrectionDisabled(true)
                         Button {
                             runMemorySearch()
                         } label: {
                             ZStack {
-                                Text(tr("chat.context.search.action", "检索", "Search"))
+                                Text(String(localized: "chat.context.search.action"))
                                     .opacity(isSearchingMemory ? 0 : 1)
                                 if isSearchingMemory {
                                     ProgressView()
@@ -451,7 +451,7 @@ struct ChatContextSheet: View {
                     }
 
                     if memorySearchResults.isEmpty {
-                        Text(tr("chat.context.search.empty", "暂无检索结果。", "No search results yet."))
+                        Text(String(localized: "chat.context.search.empty"))
                             .font(.caption)
                             .foregroundColor(.secondary)
                     } else {
@@ -463,7 +463,7 @@ struct ChatContextSheet: View {
                                         .foregroundColor(.primary)
                                     Spacer()
                                     if hit.score > 0 {
-                                        Text("\(tr("chat.context.search.score_prefix", "匹配分", "Score")) \(hit.score)")
+                                        Text("\(String(localized: "chat.context.search.score_prefix")) \(hit.score)")
                                             .font(.caption2)
                                             .foregroundColor(.secondary)
                                     }
@@ -477,9 +477,9 @@ struct ChatContextSheet: View {
                         }
                     }
                 } header: {
-                    Text(tr("chat.context.search.header", "原始记忆检索", "Raw memory search"))
+                    Text(String(localized: "chat.context.search.header"))
                 } footer: {
-                    Text(tr("chat.context.search.footer", "检索 compact 快照与已折叠消息，用于回查原始信息；不会自动注入模型上下文。", "Search compact snapshots and archived messages for raw recall; results are not auto-injected into model context."))
+                    Text(String(localized: "chat.context.search.footer"))
                 }
             }
 
@@ -493,9 +493,9 @@ struct ChatContextSheet: View {
                             .background(DesignTokens.cardBackgroundColor)
                             .accessibilityIdentifier("chat-context-session-memory")
                     } header: {
-                        Text(tr("chat.context.session.header", "Session memory", "Session memory"))
+                        Text(String(localized: "chat.context.session.header"))
                     } footer: {
-                        Text(tr("chat.context.session.footer", "仅作用于当前对话，用来记录本轮任务的阶段信息和临时约束。", "Only affects this conversation; records task phase and temporary constraints."))
+                        Text(String(localized: "chat.context.session.footer"))
                     }
                 }
 
@@ -509,11 +509,11 @@ struct ChatContextSheet: View {
                             .accessibilityIdentifier("chat-context-knowledge")
                     } header: {
                         HStack {
-                            Text(tr("chat.context.knowledge.header", "会话知识点", "Conversation knowledge"))
+                            Text(String(localized: "chat.context.knowledge.header"))
                             Spacer()
                         }
                     } footer: {
-                        Text(tr("chat.context.knowledge.draft_footer", "整理当前会话的事实、决定、约束和未完成事项；点击保存后生效。", "Keep this conversation’s facts, decisions, constraints, and unresolved items. Choose Save to apply changes."))
+                        Text(String(localized: "chat.context.knowledge.draft_footer"))
                     }
 
                     Section {
@@ -524,9 +524,9 @@ struct ChatContextSheet: View {
                             .background(DesignTokens.cardBackgroundColor)
                             .accessibilityIdentifier("chat-context-wiki")
                     } header: {
-                        Text(tr("chat.context.wiki.header", "会话 Wiki", "Conversation Wiki"))
+                        Text(String(localized: "chat.context.wiki.header"))
                     } footer: {
-                        Text(tr("chat.context.wiki.footer", "使用 Markdown 维护术语、架构、人物、流程和参考资料；仅属于当前会话。", "Use Markdown for terminology, architecture, people, workflows, and references. Scoped to this conversation only."))
+                        Text(String(localized: "chat.context.wiki.footer"))
                     }
 
                     Section {
@@ -536,9 +536,9 @@ struct ChatContextSheet: View {
                             .scrollContentBackground(.hidden)
                             .background(DesignTokens.cardBackgroundColor)
                     } header: {
-                        Text(tr("chat.context.long_term.header", "长期记忆（全局）", "Long-term memory (global)"))
+                        Text(String(localized: "chat.context.long_term.header"))
                     } footer: {
-                        Text(tr("chat.context.long_term.footer", "跨对话持久保留，适合放稳定事实、项目约定与长期背景。", "Persists across conversations for stable facts, project conventions, and long-term context."))
+                        Text(String(localized: "chat.context.long_term.footer"))
                     }
 
                     Section {
@@ -548,9 +548,9 @@ struct ChatContextSheet: View {
                             .scrollContentBackground(.hidden)
                             .background(DesignTokens.cardBackgroundColor)
                     } header: {
-                        Text(tr("chat.context.preferences.header", "用户偏好（全局）", "User preferences (global)"))
+                        Text(String(localized: "chat.context.preferences.header"))
                     } footer: {
-                        Text(tr("chat.context.preferences.footer", "用于记录输出语气、交互偏好和决策倾向。", "Records response tone, interaction preferences, and decision tendencies."))
+                        Text(String(localized: "chat.context.preferences.footer"))
                     }
 
                     Section {
@@ -575,7 +575,7 @@ struct ChatContextSheet: View {
                                     }
                                 }
                                 .frame(width: 20, height: 20)
-                                Text(tr("chat.context.memory.save", "保存长期记忆与用户偏好", "Save long-term memory and user preferences"))
+                                Text(String(localized: "chat.context.memory.save"))
                             }
                             .frame(maxWidth: .infinity)
                         }
@@ -619,14 +619,14 @@ struct ChatContextSheet: View {
                                     }
                                 }
                                 .frame(width: 20, height: 20)
-                                Text(tr("chat.context.compact.run", "执行 compact 压缩", "Run compact"))
+                                Text(String(localized: "chat.context.compact.run"))
                             }
                             .frame(maxWidth: .infinity)
                         }
                         .buttonStyle(.bordered)
                         .disabled(isSavingMemoryProfile || isCompacting)
 
-                        Button(tr("chat.context.reload", "重新加载上下文状态", "Reload context state")) {
+                        Button(String(localized: "chat.context.reload")) {
                             guard !isReloading else { return }
                             isReloading = true
                             errorMessage = nil
@@ -639,9 +639,9 @@ struct ChatContextSheet: View {
                         .font(.footnote)
                         .disabled(isCompacting || isReloading)
                     } header: {
-                        Text(tr("chat.context.compact.header", "压缩上下文", "Compact context"))
+                        Text(String(localized: "chat.context.compact.header"))
                     } footer: {
-                        Text(tr("chat.context.compact.footer", "compact 会折叠旧消息，降低 token 占用；原始历史仍保留在本地。", "Compact folds older messages to reduce token usage while keeping raw history locally."))
+                        Text(String(localized: "chat.context.compact.footer"))
                     }
                 }
             }
@@ -653,17 +653,17 @@ struct ChatContextSheet: View {
                     } else if !mcpServers.isEmpty {
                         localMCPServersReadOnlyList(items: mcpServers)
                     } else {
-                        Text(tr("chat.context.mcp.empty", "当前还没有可用的 MCP 服务器。", "No MCP servers are configured yet."))
+                        Text(String(localized: "chat.context.mcp.empty"))
                             .font(.subheadline)
                             .foregroundColor(.secondary)
                     }
                 } header: {
-                    Text(tr("chat.context.mcp.header", "MCP 能力", "MCP capabilities"))
+                    Text(String(localized: "chat.context.mcp.header"))
                 } footer: {
                     if !hostMCPServers.isEmpty {
-                        Text(tr("chat.context.mcp.host.footer", "连接、授权和能力发现由宿主机管理；此设备显示本次会话可用的能力。", "Connection, authorization, and capability discovery are managed by the host; this device shows what is available to this conversation."))
+                        Text(String(localized: "chat.context.mcp.host.footer"))
                     } else {
-                        Text(tr("chat.context.mcp.local.footer", "可在「资料库 > 能力库」中配置、启用或管理本机 MCP 服务器。", "Configure and manage local MCP servers in Library > Capabilities."))
+                        Text(String(localized: "chat.context.mcp.local.footer"))
                     }
                 }
             }
@@ -671,25 +671,25 @@ struct ChatContextSheet: View {
             if displayMode == .skills {
                 Section {
                     VStack(alignment: .leading, spacing: 10) {
-                        Text(tr("chat.context.skills.library", "Skill Library", "Skill Library"))
+                        Text(String(localized: "chat.context.skills.library"))
                             .font(.title3.weight(.semibold))
-                        Text(tr("chat.context.skills.library.footer", "一个 Skill 只描述一个稳定工作流。启用后会注入后续对话，也可以在输入框直接点名使用。", "Each Skill should describe one stable workflow. Enabled skills are injected into later conversations and can be invoked directly in chat."))
+                        Text(String(localized: "chat.context.skills.library.footer"))
                             .font(.caption)
                             .foregroundColor(.secondary)
                     }
 
                     HStack(spacing: 10) {
                         Label(
-                            "\(uploadedSkills.filter(\.enabled).count + hostUploadedSkills.filter(\.enabled).count) \(tr("chat.context.skills.enabled_count", "已启用", "enabled"))",
+                            "\(uploadedSkills.filter(\.enabled).count + hostUploadedSkills.filter(\.enabled).count) \(String(localized: "chat.context.skills.enabled_count"))",
                             systemImage: "checkmark.circle.fill"
                         )
                         Spacer()
-                        Text("\(uploadedSkills.count + hostUploadedSkills.count) \(tr("chat.context.skills.total_count", "个 Skill", "Skills"))")
+                        Text("\(uploadedSkills.count + hostUploadedSkills.count) \(String(localized: "chat.context.skills.total_count"))")
                     }
                     .font(.caption.weight(.medium))
                     .foregroundStyle(.secondary)
                 } header: {
-                    Text(tr("chat.context.skills.header", "Skills", "Skills"))
+                    Text(String(localized: "chat.context.skills.header"))
                 }
 
                 skillGallery(items: $uploadedSkills, hostItems: hostUploadedSkills)
@@ -697,24 +697,24 @@ struct ChatContextSheet: View {
                 Section {
                     Button {
                         uploadedSkills.append(UserUploadedContextItem(
-                            name: tr("chat.context.skills.new_skill_name", "新 Skill", "New Skill"),
-                            content: skillTemplate,
-                            description: tr("chat.context.skills.new_skill_description", "说明这个 skill 适合什么时候使用。", "Describe when this skill should be used."),
+                            name: String(localized: "chat.context.skills.new_skill_name"),
+                            content: String(localized: "chat.context.skills.template.body"),
+                            description: String(localized: "chat.context.skills.new_skill_description"),
                             enabled: true
                         ))
                         selectedSkillID = uploadedSkills.last?.id
-                        noticeMessage = tr("chat.context.skills.template_created", "已创建模板 Skill。", "Template Skill created.")
+                        noticeMessage = String(localized: "chat.context.skills.template_created")
                     } label: {
-                        Label(tr("chat.context.skills.create_template", "新建 Skill", "Create Skill"), systemImage: "plus")
+                        Label(String(localized: "chat.context.skills.create_template"), systemImage: "plus")
                     }
                     Button {
                         skillImportOwner = ContextFileImportOwner(conversationID: conversationID)
                         showSkillImporter = true
                     } label: {
-                        Label(tr("chat.context.skills.upload_file", "导入 Skill 文件", "Import Skill file"), systemImage: "square.and.arrow.down")
+                        Label(String(localized: "chat.context.skills.upload_file"), systemImage: "square.and.arrow.down")
                     }
                 } footer: {
-                    Text(tr("chat.context.skills.footer", "本机 Skill 可编辑和删除；主机 Skill 由连接的主机管理。启用项会作为全局能力用于后续对话。", "Local Skills can be edited or removed. Host Skills are managed by the connected host. Enabled Skills become available across conversations."))
+                    Text(String(localized: "chat.context.skills.footer"))
                 }
             }
 
@@ -723,7 +723,7 @@ struct ChatContextSheet: View {
                     if documentsReadable {
                         uploadedItemsList(
                             items: $uploadedDocuments,
-                            emptyText: hostUploadedDocuments.isEmpty ? tr("chat.context.documents.empty", "还没有上传文档。", "No documents uploaded yet.") : ""
+                            emptyText: hostUploadedDocuments.isEmpty ? String(localized: "chat.context.documents.empty") : ""
                         )
                     } else {
                         Text("chat.context.documents.read_error").foregroundStyle(.secondary)
@@ -733,13 +733,13 @@ struct ChatContextSheet: View {
                         documentImportOwner = ContextFileImportOwner(conversationID: conversationID)
                         showDocumentImporter = true
                     } label: {
-                        Label(tr("chat.context.documents.upload", "上传文档文件", "Upload document file"), systemImage: "doc.badge.plus")
+                        Label(String(localized: "chat.context.documents.upload"), systemImage: "doc.badge.plus")
                     }
                     .disabled(!documentsReadable)
                 } header: {
-                    Text(tr("chat.context.documents.header", "用户文档", "User documents"))
+                    Text(String(localized: "chat.context.documents.header"))
                 } footer: {
-                    Text(tr("chat.context.documents.footer", "文档默认只保存在本机，用于增强当前设备上的对话上下文。", "Documents are stored locally by default to enhance chat context on this device."))
+                    Text(String(localized: "chat.context.documents.footer"))
                 }
 
 
@@ -923,49 +923,49 @@ struct ChatContextSheet: View {
             noticeMessage = nil
         }
         .confirmationDialog(
-            tr("chat.context.skills.delete_title", "删除这个 Skill？", "Delete this Skill?"),
+            String(localized: "chat.context.skills.delete_title"),
             isPresented: Binding(
                 get: { pendingSkillDeletionID != nil },
                 set: { if !$0 { pendingSkillDeletionID = nil } }
             ),
             titleVisibility: .visible
         ) {
-            Button(tr("chat.context.delete", "删除", "Delete"), role: .destructive) {
+            Button(String(localized: "chat.context.delete"), role: .destructive) {
                 deletePendingSkill()
             }
             Button(L10n.cancel, role: .cancel) {
                 pendingSkillDeletionID = nil
             }
         } message: {
-            Text(tr("chat.context.skills.delete_message", "删除后将不再注入后续对话。", "It will no longer be injected into future conversations."))
+            Text(String(localized: "chat.context.skills.delete_message"))
         }
         .confirmationDialog(
-            tr("chat.context.mcp.delete_title", "删除这个 MCP 接口？", "Delete this MCP endpoint?"),
+            String(localized: "chat.context.mcp.delete_title"),
             isPresented: Binding(
                 get: { pendingMCPDeletionID != nil },
                 set: { if !$0 { pendingMCPDeletionID = nil } }
             ),
             titleVisibility: .visible
         ) {
-            Button(tr("chat.context.delete", "删除", "Delete"), role: .destructive) {
+            Button(String(localized: "chat.context.delete"), role: .destructive) {
                 deletePendingMCPServer()
             }
             Button(L10n.cancel, role: .cancel) {
                 pendingMCPDeletionID = nil
             }
         } message: {
-            Text(tr("chat.context.mcp.delete_message", "删除后将无法再使用该接口提供的工具和资源。", "Tools and resources from this endpoint will no longer be available."))
+            Text(String(localized: "chat.context.mcp.delete_message"))
         }
     }
 
     private func contextPaneTitle(_ pane: ContextPane) -> String {
         switch pane {
         case .overview:
-            return tr("chat.context.pane.overview", "概览", "Overview")
+            return String(localized: "chat.context.pane.overview")
         case .knowledge:
-            return tr("chat.context.pane.knowledge", "知识", "Knowledge")
+            return String(localized: "chat.context.pane.knowledge")
         case .tools:
-            return tr("chat.context.pane.tools", "工具", "Tools")
+            return String(localized: "chat.context.pane.tools")
         }
     }
 
@@ -974,7 +974,7 @@ struct ChatContextSheet: View {
         case .context:
             return NSLocalizedString("chat.context.title", value: "上下文", comment: "Chat context title")
         case .skills:
-            return tr("chat.context.skills.header", "Skills", "Skills")
+            return String(localized: "chat.context.skills.header")
         }
     }
 
@@ -983,7 +983,7 @@ struct ChatContextSheet: View {
         case .context:
             return NSLocalizedString("chat.context.sheet.subtitle", value: "查看上下文占用、整理 session memory，并维护跨对话生效的长期记忆与用户偏好。", comment: "Chat context sheet subtitle")
         case .skills:
-            return tr("chat.context.skills.sheet_subtitle", "独立维护你的技能库：按场景拆分 skill，启用后自动进入后续对话上下文。", "Maintain your skill library independently: split skills by scenario, and enabled ones automatically join later context.")
+            return String(localized: "chat.context.skills.sheet_subtitle")
         }
     }
 
@@ -1078,14 +1078,14 @@ struct ChatContextSheet: View {
 
     private func promptCacheStatusLabel(_ status: String) -> String {
         switch status {
-        case "disabled": return tr("chat.context.cache.disabled", "已关闭", "Disabled")
-        case "invalid_identity": return tr("chat.context.cache.invalid", "标识无效", "Invalid identity")
-        case "first_request": return tr("chat.context.cache.first_request", "首次请求", "First request")
-        case "hit": return tr("chat.context.cache.hit", "命中", "Hit")
-        case "write": return tr("chat.context.cache.write", "已写入", "Stored")
-        case "miss": return tr("chat.context.cache.miss", "未命中", "Miss")
-        case "stable_candidate": return tr("chat.context.cache.candidate", "稳定候选", "Stable candidate")
-        default: return tr("chat.context.cache.unknown", "状态未知", "Unknown")
+        case "disabled": return String(localized: "chat.context.cache.disabled")
+        case "invalid_identity": return String(localized: "chat.context.cache.invalid")
+        case "first_request": return String(localized: "chat.context.cache.first_request")
+        case "hit": return String(localized: "chat.context.cache.hit")
+        case "write": return String(localized: "chat.context.cache.write")
+        case "miss": return String(localized: "chat.context.cache.miss")
+        case "stable_candidate": return String(localized: "chat.context.cache.candidate")
+        default: return String(localized: "chat.context.cache.unknown")
         }
     }
 
@@ -1115,7 +1115,7 @@ struct ChatContextSheet: View {
                     .foregroundColor(.primary)
                 Spacer()
                 if suggestion.estimatedSavingsTokens > 0 {
-                    Text("~\(suggestion.estimatedSavingsTokens) \(tr("chat.context.tokens", "tokens", "tokens"))")
+                    Text("~\(suggestion.estimatedSavingsTokens) \(String(localized: "chat.context.tokens"))")
                         .font(.caption2)
                         .foregroundColor(.secondary)
                 }
@@ -1144,9 +1144,9 @@ struct ChatContextSheet: View {
             }
             ForEach(items) { $item in
                 VStack(alignment: .leading, spacing: 8) {
-                    Toggle(tr("chat.context.toggle.enabled", "启用", "Enabled"), isOn: $item.enabled)
-                    TextField(tr("chat.context.field.name", "名称", "Name"), text: $item.name)
-                    Text("\(item.content.count) \(tr("chat.context.unit.characters", "字符", "characters"))")
+                    Toggle(String(localized: "chat.context.toggle.enabled"), isOn: $item.enabled)
+                    TextField(String(localized: "chat.context.field.name"), text: $item.name)
+                    Text("\(item.content.count) \(String(localized: "chat.context.unit.characters"))")
                         .font(.caption)
                         .foregroundColor(.secondary)
                     TextEditor(text: $item.content)
@@ -1172,9 +1172,9 @@ struct ChatContextSheet: View {
         if !hasSkills {
             Section {
                 ContentUnavailableView(
-                    tr("chat.context.skills.empty_title", "还没有 Skill", "No Skills yet"),
+                    String(localized: "chat.context.skills.empty_title"),
                     systemImage: "shippingbox",
-                    description: Text(tr("chat.context.skills.empty", "新建或导入一个 Skill，建立可重复使用的工作流。", "Create or import a Skill to build a reusable workflow."))
+                    description: Text(String(localized: "chat.context.skills.empty"))
                 )
             }
         } else {
@@ -1217,7 +1217,7 @@ struct ChatContextSheet: View {
                 Toggle("", isOn: item.enabled)
                     .labelsHidden()
                     .controlSize(.small)
-                    .accessibilityLabel(tr("chat.context.toggle.enabled", "启用", "Enabled"))
+                    .accessibilityLabel(String(localized: "chat.context.toggle.enabled"))
             }
 
             NavigationLink {
@@ -1233,7 +1233,7 @@ struct ChatContextSheet: View {
                         .foregroundStyle(.secondary)
                         .lineLimit(3)
                     HStack(spacing: 4) {
-                        Text(tr("chat.context.skills.local", "本机", "On device"))
+                        Text(String(localized: "chat.context.skills.local"))
                         Spacer(minLength: 4)
                     }
                     .font(.caption2.weight(.medium))
@@ -1277,7 +1277,7 @@ struct ChatContextSheet: View {
                     .foregroundStyle(.secondary)
                     .lineLimit(3)
                 HStack(spacing: 4) {
-                    Text(tr("chat.context.skills.host", "主机", "Host"))
+                    Text(String(localized: "chat.context.skills.host"))
                     Spacer(minLength: 4)
                 }
                 .font(.caption2.weight(.medium))
@@ -1307,22 +1307,22 @@ struct ChatContextSheet: View {
                     VStack(alignment: .leading, spacing: 3) {
                         Text(skillCategoryTitle(category))
                             .font(.subheadline.weight(.semibold))
-                        Text(tr("chat.context.skills.local_editable", "保存在本机，可编辑", "Stored on this device and editable"))
+                        Text(String(localized: "chat.context.skills.local_editable"))
                             .font(.caption)
                             .foregroundStyle(.secondary)
                     }
                     Spacer()
-                    Toggle(tr("chat.context.toggle.enabled", "启用", "Enabled"), isOn: item.enabled)
+                    Toggle(String(localized: "chat.context.toggle.enabled"), isOn: item.enabled)
                         .labelsHidden()
                 }
             }
             Section {
                 GitHubSkillSourceLink(reference: item.wrappedValue.packageReference)
-                TextField(tr("chat.context.skills.name", "Skill 名称", "Skill name"), text: item.name)
-                TextField(tr("chat.context.skills.description", "说明：什么时候使用这个 Skill", "Description: when to use this Skill"), text: item.description, axis: .vertical)
+                TextField(String(localized: "chat.context.skills.name"), text: item.name)
+                TextField(String(localized: "chat.context.skills.description"), text: item.description, axis: .vertical)
                     .lineLimit(2...5)
             } header: {
-                Text(tr("chat.context.skills.identity", "名称与用途", "Identity and purpose"))
+                Text(String(localized: "chat.context.skills.identity"))
             }
             Section {
                 TextEditor(text: item.content)
@@ -1332,9 +1332,9 @@ struct ChatContextSheet: View {
                     .background(DesignTokens.cardBackgroundColor)
             } header: {
                 HStack {
-                    Text(tr("chat.context.skills.instructions", "Skill 内容", "Skill instructions"))
+                    Text(String(localized: "chat.context.skills.instructions"))
                     Spacer()
-                    Text("\(item.wrappedValue.content.count) \(tr("chat.context.unit.characters", "字符", "characters"))")
+                    Text("\(item.wrappedValue.content.count) \(String(localized: "chat.context.unit.characters"))")
                         .font(.caption2)
                         .foregroundStyle(.secondary)
                 }
@@ -1343,19 +1343,19 @@ struct ChatContextSheet: View {
                 Button {
                     onUseSkill(skillInvocation(for: item.wrappedValue))
                 } label: {
-                    Label(tr("chat.context.skills.use", "在对话中使用", "Use in conversation"), systemImage: "arrow.turn.down.left")
+                    Label(String(localized: "chat.context.skills.use"), systemImage: "arrow.turn.down.left")
                 }
                 Button {
                     let invocation = skillInvocation(for: item.wrappedValue)
                     UIPasteboard.general.string = invocation
-                    noticeMessage = tr("chat.context.skills.copied", "已复制调用语句", "Invocation copied")
+                    noticeMessage = String(localized: "chat.context.skills.copied")
                 } label: {
-                    Label(tr("chat.context.copy", "复制调用语句", "Copy invocation"), systemImage: "doc.on.doc")
+                    Label(String(localized: "chat.context.copy"), systemImage: "doc.on.doc")
                 }
                 Button(role: .destructive) {
                     pendingSkillDeletionID = item.wrappedValue.id
                 } label: {
-                    Label(tr("chat.context.delete", "删除 Skill", "Delete Skill"), systemImage: "trash")
+                    Label(String(localized: "chat.context.delete"), systemImage: "trash")
                 }
             }
             }
@@ -1379,7 +1379,7 @@ struct ChatContextSheet: View {
                     VStack(alignment: .leading, spacing: 3) {
                         Text(skillDisplayName(item))
                             .font(.headline)
-                        Text(tr("chat.context.skills.host_managed", "由连接的主机提供和管理", "Provided and managed by the connected host"))
+                        Text(String(localized: "chat.context.skills.host_managed"))
                             .font(.caption)
                             .foregroundStyle(.secondary)
                     }
@@ -1387,11 +1387,11 @@ struct ChatContextSheet: View {
                 GitHubSkillSourceLink(reference: item.packageReference)
             }
             if !item.description.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-                Section(tr("chat.context.skills.purpose", "适用场景", "When to use")) {
+                Section(String(localized: "chat.context.skills.purpose")) {
                     Text(item.description)
                 }
             }
-            Section(tr("chat.context.skills.instructions", "Skill 内容", "Skill instructions")) {
+            Section(String(localized: "chat.context.skills.instructions")) {
                 Text(item.content)
                     .font(.system(.caption, design: .monospaced))
                     .textSelection(.enabled)
@@ -1400,7 +1400,7 @@ struct ChatContextSheet: View {
                 Button {
                     onUseSkill(skillInvocation(for: item))
                 } label: {
-                    Label(tr("chat.context.skills.use", "在对话中使用", "Use in conversation"), systemImage: "arrow.turn.down.left")
+                    Label(String(localized: "chat.context.skills.use"), systemImage: "arrow.turn.down.left")
                 }
             }
             }
@@ -1426,14 +1426,14 @@ struct ChatContextSheet: View {
 
     private func skillCategoryTitle(_ category: SkillVisualCategory) -> String {
         switch category {
-        case .documents: return tr("chat.context.skills.category.documents", "文档与表格", "Documents and sheets")
-        case .data: return tr("chat.context.skills.category.data", "数据分析", "Data analysis")
-        case .design: return tr("chat.context.skills.category.design", "设计与创作", "Design and creation")
-        case .communication: return tr("chat.context.skills.category.communication", "沟通协作", "Communication")
-        case .automation: return tr("chat.context.skills.category.automation", "计划与自动化", "Planning and automation")
-        case .research: return tr("chat.context.skills.category.research", "知识与研究", "Knowledge and research")
-        case .workspace: return tr("chat.context.skills.category.workspace", "工作区与代码", "Workspace and code")
-        case .custom: return tr("chat.context.skills.category.custom", "其他", "Other")
+        case .documents: return String(localized: "chat.context.skills.category.documents")
+        case .data: return String(localized: "chat.context.skills.category.data")
+        case .design: return String(localized: "chat.context.skills.category.design")
+        case .communication: return String(localized: "chat.context.skills.category.communication")
+        case .automation: return String(localized: "chat.context.skills.category.automation")
+        case .research: return String(localized: "chat.context.skills.category.research")
+        case .workspace: return String(localized: "chat.context.skills.category.workspace")
+        case .custom: return String(localized: "chat.context.skills.category.custom")
         }
     }
 
@@ -1486,10 +1486,10 @@ struct ChatContextSheet: View {
                                 .frame(width: 34, height: 34)
                                 .background(DesignTokens.primaryColor.opacity(0.10), in: RoundedRectangle(cornerRadius: 9, style: .continuous))
                             VStack(alignment: .leading, spacing: 3) {
-                                Text(server.name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? tr("chat.context.mcp.default_name", "MCP Server", "MCP Server") : server.name)
+                                Text(server.name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? String(localized: "chat.context.mcp.default_name") : server.name)
                                     .font(.subheadline.weight(.semibold))
                                     .foregroundStyle(.primary)
-                                Text(server.endpoint.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? tr("chat.context.mcp.endpoint_required", "等待填写服务地址", "Endpoint required") : server.endpoint)
+                                Text(server.endpoint.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? String(localized: "chat.context.mcp.endpoint_required") : server.endpoint)
                                     .font(.caption)
                                     .foregroundStyle(.secondary)
                                     .lineLimit(1)
@@ -1506,16 +1506,16 @@ struct ChatContextSheet: View {
 
                     Toggle("", isOn: $server.enabled)
                         .labelsHidden()
-                        .accessibilityLabel(tr("chat.context.toggle.enabled", "启用", "Enabled"))
+                        .accessibilityLabel(String(localized: "chat.context.toggle.enabled"))
                 }
 
                 if selectedMCPServerID == server.id {
                     Divider()
-                    TextField(tr("chat.context.field.name", "名称", "Name"), text: $server.name)
+                    TextField(String(localized: "chat.context.field.name"), text: $server.name)
                     TextField("https://example.com/mcp", text: $server.endpoint)
                         .textInputAutocapitalization(.never)
                         .keyboardType(.URL)
-                    TextField(tr("chat.context.field.description_optional", "说明（可选）", "Description (optional)"), text: $server.description, axis: .vertical)
+                    TextField(String(localized: "chat.context.field.description_optional"), text: $server.description, axis: .vertical)
                         .lineLimit(1...3)
 
                     HStack {
@@ -1523,7 +1523,7 @@ struct ChatContextSheet: View {
                         Button(role: .destructive) {
                             pendingMCPDeletionID = server.id
                         } label: {
-                            Label(tr("chat.context.delete", "删除", "Delete"), systemImage: "trash")
+                            Label(String(localized: "chat.context.delete"), systemImage: "trash")
                         }
                         .buttonStyle(.borderless)
                     }
@@ -1536,7 +1536,7 @@ struct ChatContextSheet: View {
 
     private func skillDisplayName(_ item: UserUploadedContextItem) -> String {
         item.name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-            ? tr("chat.context.skills.untitled", "未命名 Skill", "Untitled Skill")
+            ? String(localized: "chat.context.skills.untitled")
             : item.name
     }
 
@@ -1546,8 +1546,8 @@ struct ChatContextSheet: View {
             return description
         }
         return item.enabled
-            ? tr("chat.context.skills.enabled_desc", "已启用，会进入后续对话上下文", "Enabled; will be injected into later context")
-            : tr("chat.context.skills.disabled_desc", "已停用，不占用上下文", "Disabled; does not consume context")
+            ? String(localized: "chat.context.skills.enabled_desc")
+            : String(localized: "chat.context.skills.disabled_desc")
     }
 
     private func deletePendingSkill() {
@@ -1572,18 +1572,18 @@ struct ChatContextSheet: View {
         Group {
             if !items.isEmpty {
                 VStack(alignment: .leading, spacing: 8) {
-                    Text(tr("chat.context.skills.host.header", "Web 主机 Skills", "Web host Skills"))
+                    Text(String(localized: "chat.context.skills.host.header"))
                         .font(.caption.weight(.semibold))
                         .foregroundColor(.secondary)
                     ForEach(items) { item in
                         VStack(alignment: .leading, spacing: 6) {
                             HStack {
-                                Text(item.name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? tr("chat.host_skill.default_name", "Host Skill", "Host Skill") : item.name)
+                                Text(item.name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? String(localized: "chat.host_skill.default_name") : item.name)
                                     .font(.subheadline.weight(.semibold))
                                 Spacer()
                                 Text(item.enabled
-                                     ? tr("chat.context.skills.host.enabled", "主机启用", "Host enabled")
-                                     : tr("chat.context.skills.host.disabled", "主机停用", "Host disabled"))
+                                     ? String(localized: "chat.context.skills.host.enabled")
+                                     : String(localized: "chat.context.skills.host.disabled"))
                                     .font(.caption2.weight(.semibold))
                                     .foregroundColor(item.enabled ? DesignTokens.successColor : .secondary)
                             }
@@ -1594,13 +1594,13 @@ struct ChatContextSheet: View {
                                     .fixedSize(horizontal: false, vertical: true)
                             }
                             HStack {
-                                Label("\(item.content.count) \(tr("chat.context.unit.characters", "字符", "characters"))", systemImage: "desktopcomputer")
+                                Label("\(item.content.count) \(String(localized: "chat.context.unit.characters"))", systemImage: "desktopcomputer")
                                 Spacer()
                                 Button {
                                     let invocation = skillInvocation(for: item)
                                     onUseSkill(invocation)
                                 } label: {
-                                    Text(tr("chat.context.use", "使用", "Use"))
+                                    Text(String(localized: "chat.context.use"))
                                 }
                                 .buttonStyle(.borderless)
                             }
@@ -1620,18 +1620,18 @@ struct ChatContextSheet: View {
         Group {
             if !items.isEmpty {
                 VStack(alignment: .leading, spacing: 8) {
-                    Text(tr("chat.context.documents.host.header", "宿主机文档", "Host documents"))
+                    Text(String(localized: "chat.context.documents.host.header"))
                         .font(.caption.weight(.semibold))
                         .foregroundColor(.secondary)
                     ForEach(items) { item in
                         VStack(alignment: .leading, spacing: 6) {
                             HStack {
-                                Text(item.name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? tr("chat.host_document.default_name", "Host Document", "Host Document") : item.name)
+                                Text(item.name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? String(localized: "chat.host_document.default_name") : item.name)
                                     .font(.subheadline.weight(.semibold))
                                 Spacer()
                                 Text(item.enabled
-                                     ? tr("chat.context.documents.host.enabled", "主机启用", "Host enabled")
-                                     : tr("chat.context.documents.host.disabled", "主机停用", "Host disabled"))
+                                     ? String(localized: "chat.context.documents.host.enabled")
+                                     : String(localized: "chat.context.documents.host.disabled"))
                                     .font(.caption2.weight(.semibold))
                                     .foregroundColor(item.enabled ? DesignTokens.successColor : .secondary)
                             }
@@ -1641,7 +1641,7 @@ struct ChatContextSheet: View {
                                     .foregroundColor(.secondary)
                                     .fixedSize(horizontal: false, vertical: true)
                             }
-                            Label("\(item.content.count) \(tr("chat.context.unit.characters", "字符", "characters"))", systemImage: "doc.text")
+                            Label("\(item.content.count) \(String(localized: "chat.context.unit.characters"))", systemImage: "doc.text")
                                 .font(.caption)
                                 .foregroundColor(.secondary)
                         }
@@ -1660,13 +1660,13 @@ struct ChatContextSheet: View {
                 VStack(alignment: .leading, spacing: 6) {
                     HStack(alignment: .firstTextBaseline) {
                         Text(server.name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-                             ? tr("chat.context.mcp.default_name", "MCP Server", "MCP Server")
+                             ? String(localized: "chat.context.mcp.default_name")
                              : server.name)
                             .font(.subheadline.weight(.semibold))
                         Spacer()
                         Text(server.enabled
-                             ? tr("chat.context.toggle.enabled", "启用", "Enabled")
-                             : tr("chat.context.sources.disabled", "已停用", "Disabled"))
+                             ? String(localized: "chat.context.toggle.enabled")
+                             : String(localized: "chat.context.sources.disabled"))
                             .font(.caption2.weight(.semibold))
                             .foregroundColor(server.enabled ? DesignTokens.successColor : .secondary)
                     }
@@ -1695,18 +1695,18 @@ struct ChatContextSheet: View {
         Group {
             if !items.isEmpty {
                 VStack(alignment: .leading, spacing: 8) {
-                    Text(tr("chat.context.mcp.host.header", "宿主机 MCP", "Host MCP"))
+                    Text(String(localized: "chat.context.mcp.host.header"))
                         .font(.caption.weight(.semibold))
                         .foregroundColor(.secondary)
                     ForEach(items) { server in
                         VStack(alignment: .leading, spacing: 6) {
                             HStack(alignment: .firstTextBaseline) {
-                                Text(server.name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? tr("chat.host_mcp.default_name", "Host MCP Server", "Host MCP Server") : server.name)
+                                Text(server.name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? String(localized: "chat.host_mcp.default_name") : server.name)
                                     .font(.subheadline.weight(.semibold))
                                 Spacer()
                                 Text(server.availability == "available"
-                                     ? tr("chat.context.mcp.host.connected", "已连接", "Connected")
-                                     : tr("chat.context.mcp.host.unavailable", "不可用", "Unavailable"))
+                                     ? String(localized: "chat.context.mcp.host.connected")
+                                     : String(localized: "chat.context.mcp.host.unavailable"))
                                     .font(.caption2.weight(.semibold))
                                     .foregroundColor(server.availability == "available" ? DesignTokens.successColor : .secondary)
                             }
@@ -1734,14 +1734,14 @@ struct ChatContextSheet: View {
                                 + (server.prompts?.count ?? 0)
                             DisclosureGroup(
                                 String(
-                                    format: tr("chat.context.mcp.host.catalog_count", "能力目录 · %d 项", "Capability catalog · %d items"),
+                                    format: String(localized: "chat.context.mcp.host.catalog_count"),
                                     catalogCount
                                 )
                             ) {
-                                hostMCPNames(tr("chat.context.mcp.host.tools", "工具", "Tools"), names: server.tools ?? [])
-                                hostMCPNames(tr("chat.context.mcp.host.resources", "资源", "Resources"), names: server.resources ?? [])
-                                hostMCPNames(tr("chat.context.mcp.host.templates", "资源模板", "Resource templates"), names: server.resourceTemplates ?? [])
-                                hostMCPNames(tr("chat.context.mcp.host.prompts", "提示词", "Prompts"), names: server.prompts ?? [])
+                                hostMCPNames(String(localized: "chat.context.mcp.host.tools"), names: server.tools ?? [])
+                                hostMCPNames(String(localized: "chat.context.mcp.host.resources"), names: server.resources ?? [])
+                                hostMCPNames(String(localized: "chat.context.mcp.host.templates"), names: server.resourceTemplates ?? [])
+                                hostMCPNames(String(localized: "chat.context.mcp.host.prompts"), names: server.prompts ?? [])
                             }
                             .disclosureGroupStyle(NolaRowDisclosureStyle())
                             .font(.caption)
@@ -1772,32 +1772,8 @@ struct ChatContextSheet: View {
     }
 
     private func skillInvocation(for item: UserUploadedContextItem) -> String {
-        let name = item.name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? tr("chat.context.skills.invocation.default_name", "Skill", "Skill") : item.name
-        return "\(tr("chat.context.skills.invocation.prefix", "使用「", "Use \""))\(name)\(tr("chat.context.skills.invocation.suffix", "」skill：", "\" skill:"))"
-    }
-
-    private func tr(_ key: String, _ zh: String, _ en: String) -> String {
-        let preferred = (Locale.preferredLanguages.first ?? "").lowercased()
-        let fallback = preferred.hasPrefix("zh") ? zh : en
-        return NSLocalizedString(key, value: fallback, comment: "")
-    }
-
-    private var skillTemplate: String {
-        """
-        # Skill: New Skill
-
-        ## When to use
-        Describe the exact scenario where this skill should be used.
-
-        ## Workflow
-        1. Clarify the user goal.
-        2. Inspect relevant context.
-        3. Produce a concise, actionable result.
-
-        ## Output style
-        - Keep the response structured.
-        - Call out assumptions and risks.
-        """
+        let name = item.name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? String(localized: "chat.context.skills.invocation.default_name") : item.name
+        return String(format: String(localized: "chat.context.skills.invocation.format"), name)
     }
 
     private func importUploadedFiles(_ result: Result<[URL], Error>, into items: Binding<[UserUploadedContextItem]>) {

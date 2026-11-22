@@ -13,6 +13,13 @@
     let entries = $state<ActivityEntry[]>([]), cursor = $state<ActivityCursor | null>(null);
     let error = $state(''), loading = $state(false), query = $state(''), source = $state(''), needsResponse = $state(false);
     let detail = $state<ActivityDetail | null>(null), detailError = $state(''), detailLoading = $state(false);
+    let retryMore = $state(false);
+    let searchInput: HTMLInputElement;
+    const filtered = $derived(Boolean(source || needsResponse || query.trim()));
+    function clearFilters() {
+        source = ''; needsResponse = false; query = '';
+        searchInput.focus();
+    }
     let selected = $state<ActivityOwner | null>(null);
     let dialog = $state<HTMLDialogElement>();
     let controller: AbortController | undefined, detailController: AbortController | undefined;
@@ -39,7 +46,7 @@
                 entries = more ? Array.from(new Map([...entries, ...response.entries].map(entry => [entry.run_id, entry])).values()) : response.entries;
                 cursor = response.next_cursor; snapshotQuery = key;
             }
-        } catch (cause) { if (!disposed && !request.signal.aborted && queryKey() === key) error = activityErrorKey(cause); }
+        } catch (cause) { if (!disposed && !request.signal.aborted && queryKey() === key) { error = activityErrorKey(cause); retryMore = more; } }
         finally { if (!disposed && !request.signal.aborted && requestedQuery === key) loading = false; }
     }
     $effect(() => {
@@ -85,14 +92,14 @@
     <p class="muted scope">{t($locale, 'activity.localScope')}</p>
     <div class="filters">
         <label>{t($locale, 'activity.source')}<select bind:value={source}>
-            <option value="">{t($locale, 'activity.all')}</option><option value="agent">{t($locale, 'activity.agent')}</option><option value="automation">{t($locale, 'activity.plan')}</option>
+            <option value="">{t($locale, 'activity.all')}</option><option value="conversation">{t($locale, 'activity.conversation')}</option><option value="agent">{t($locale, 'activity.agent')}</option><option value="automation">{t($locale, 'activity.plan')}</option>
         </select></label>
         <label class="attention"><input type="checkbox" bind:checked={needsResponse} />{t($locale, 'chatInspector.needsResponse')}</label>
-    <label class="search">{t($locale, 'activity.search')}<input type="search" bind:value={query} maxlength="512" placeholder={t($locale, 'activity.canonicalSearch')} /></label>
+    <label class="search">{t($locale, 'activity.search')}<input type="search" bind:this={searchInput} bind:value={query} maxlength="512" placeholder={t($locale, 'activity.canonicalSearch')} /></label>
     <button onclick={() => load()} disabled={loading}>{t($locale, 'activity.refresh')}</button>
     </div>
     {#if loading}<p role="status">{t($locale, 'shell.pageLoading')}</p>{/if}
-    {#if error}<p role="alert" class="error">{t($locale, error)}</p>{/if}
+    {#if error}<p role="alert" class="error">{t($locale, error)}</p><div><button onclick={() => load(retryMore)}>{t($locale, 'activity.retry')}</button></div>{/if}
     {#each entries as entry (entry.run_id)}
         <button class="activity-row" onclick={() => showDetail(entry)}>
             <div class="row-top">
@@ -105,8 +112,11 @@
             <small>{t($locale, entry.source === 'automation' ? 'activity.plan' : entry.source === 'agent' ? 'activity.agent' : 'activity.conversation')} · {time(entry.created_at_ms)}</small>
         </button>
     {/each}
-    {#if !loading && !error && !entries.length}<p class="muted">{t($locale, needsResponse ? 'chatInspector.noResponse' : 'chatInspector.noActivity')}</p>{/if}
-    {#if cursor}<button disabled={loading} onclick={() => load(true)}>{t($locale, 'activity.loadMore')}</button>{/if}
+    {#if !loading && !error && !entries.length}
+        <p class="muted" role="status">{t($locale, filtered ? 'activity.no_matches' : 'chatInspector.noActivity')}</p>
+        {#if filtered}<div><button onclick={clearFilters}>{t($locale, 'activity.clear_filters')}</button></div>{/if}
+    {/if}
+    {#if cursor && !error}<button disabled={loading} onclick={() => load(true)}>{t($locale, 'activity.loadMore')}</button>{/if}
     {#if !full}<button onclick={() => onopen('/activity')}>{t($locale, 'chatInspector.list.activity')}</button>{/if}
 </div>
 {#if full}<dialog bind:this={dialog} use:ownDialog oncancel={event => {event.preventDefault(); close();}} onclick={event => { if (event.target === dialog) close(); }} onclose={() => { detailController?.abort(); selected = null; }} aria-label={t($locale, 'activity.detail')}>

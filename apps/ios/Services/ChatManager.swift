@@ -4615,7 +4615,7 @@ public final class ChatManager: ObservableObject {
                                         value: "Run %@ on this device",
                                         comment: "Hybrid device request action format"
                                     ),
-                                    prepared.resolvedTool.toolId
+                                    AppleToolDisplayName.localized(prepared.resolvedTool.toolId) ?? prepared.resolvedTool.toolId
                                 ),
                                 nonce: request.nonce,
                                 hostId: request.hostId,

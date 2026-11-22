@@ -774,7 +774,7 @@ struct MacModelConnectionsView: View {
         Section {
             Text(String(localized: "Select a source file, preview its connections, then confirm. Imported API keys stay in this Mac’s Keychain. Source files are never changed.", table: "ModelCenter"))
                 .font(.callout).foregroundStyle(.secondary)
-            Picker(String(localized: "Source", table: "ModelCenter"), selection: $importSource) {
+            Picker(String(localized: "Import source", table: "ModelCenter"), selection: $importSource) {
                 Text(verbatim: "OpenCode").tag("open_code")
                 Text(verbatim: "Codex").tag("codex")
                 Text(verbatim: "Kimi Code CLI").tag("kimi_code")

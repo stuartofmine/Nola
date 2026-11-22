@@ -174,7 +174,7 @@ nonisolated enum MacModelParameterPreset: String, CaseIterable, Identifiable, Se
     var title: String {
         switch self {
         case .precise: return String(localized: "Precise", table: "ModelCenter")
-        case .balanced: return String(localized: "Balanced", table: "ModelCenter")
+        case .balanced: return String(localized: "Balanced preset", table: "ModelCenter")
         case .creative: return String(localized: "Creative", table: "ModelCenter")
         case .custom: return String(localized: "Custom", table: "ModelCenter")
         }

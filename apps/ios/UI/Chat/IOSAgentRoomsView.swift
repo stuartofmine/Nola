@@ -231,13 +231,12 @@ struct IOSAgentRoomsView: View {
                 VStack(alignment: .leading, spacing: 12) {
                     Text(role.prompt).font(.body).textSelection(.enabled)
                     Text("experts.role.tools").font(.subheadline.weight(.semibold))
-                    Text(role.toolPack.id).font(.caption).foregroundStyle(.secondary)
                     LazyVGrid(columns: [GridItem(.adaptive(minimum: 108), alignment: .leading)], alignment: .leading, spacing: 6) {
                         ForEach(role.toolPack.tools, id: \.self) { tool in
-                            Text(tool)
+                            Text(verbatim: AppleToolDisplayName.localized(tool) ?? tool)
                                 .font(.caption.weight(.medium))
                                 .foregroundStyle(DesignTokens.contentColor)
-                                .lineLimit(1)
+                                .fixedSize(horizontal: false, vertical: true)
                                 .padding(.horizontal, 10)
                                 .padding(.vertical, 5)
                                 .background(DesignTokens.rowFillColor, in: Capsule())

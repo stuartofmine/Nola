@@ -92,10 +92,11 @@ async function freePort() {
         const recommendation = page.waitForResponse(res => res.url().endsWith('/api/local-models/recommend'), {timeout:300000});
         await page.goto(origin + '/models?tab=local');
         assert.equal(await page.getByLabel(label('Inference engine','推理引擎')).inputValue(), 'llama.cpp');
-        assert.equal(await page.getByLabel(label('Download source','下载来源')).inputValue(), 'modelscope');
+        assert.equal(await page.getByRole('group',{name:label('Download source','下载来源')}).getByRole('button',{name:'ModelScope'}).getAttribute('aria-pressed'), 'true');
         const hardware = await (await page.request.get(origin + '/api/local-models/hardware')).json();
         assert.ok(hardware.hardware.cpu && hardware.hardware.cores && hardware.hardware.memoryBytes);
-        await page.getByRole('region', {name:label('Host hardware','宿主机硬件')}).getByText(hardware.hardware.cpu, {exact:false}).first().waitFor();
+        await page.locator('details.hardware > summary').click();
+        await page.locator('details.hardware').getByText(hardware.hardware.cpu, {exact:false}).first().waitFor();
         const recommended = await (await recommendation).json();
         assert.ok(recommended.candidates?.length, JSON.stringify(recommended));
         assert.ok(['modelfit','hub','mixed'].includes(recommended.recommendationSource));
@@ -136,6 +137,7 @@ async function freePort() {
         await confirm.waitFor();
         const selectedPlan = page.locator('.acquisition li').filter({has:confirm});
         assert.ok(choice.contextTokens < 131072);
+        await selectedPlan.locator('summary').click();
         await selectedPlan.getByText(choice.contextTokens.toLocaleString('en'),{exact:true}).waitFor();
         await selectedPlan.getByText(chinese ? /备选方案/ : /Alternative/).waitFor();
         assert.equal((await (await page.request.get(origin + '/api/local-models')).json()).acquisition, null);
@@ -148,8 +150,8 @@ async function freePort() {
         const row = page.locator('.model-row').filter({hasText:query});
         for (let retries = 0; ; retries++) {
             if (await row.isVisible()) break;
-            const failure = page.locator('.download').getByRole('button', {name: label('Retry','重试')});
-            if (await failure.isVisible()) throw Error(await page.locator('.download').innerText());
+            const failure = page.locator('.download-banner').getByRole('button', {name: label('Review download plan','重新查看下载方案')});
+            if (await failure.isVisible()) throw Error(await page.locator('.download-banner').innerText());
             if (retries === 120) throw Error('Timed out waiting for the model download');
             await sleep(1000);
         }
@@ -166,8 +168,6 @@ async function freePort() {
         finally { await blob.close(); }
         assert.equal(record.revision, choice.plan.revision);
         assert.equal(installed.parameters.contextTokens, choice.contextTokens);
-        if (!installed.selected) await row.getByRole('button', {name:label('Select','选择'), exact:true}).click();
-        await row.getByText(label('Selected','已选择'), {exact:true}).waitFor();
         await row.getByRole('button', {name:label('Configure','配置')}).click();
         const context = page.getByRole('dialog').getByLabel(label('Context window','上下文窗口'));
         const initial = Number(await context.inputValue());
@@ -175,13 +175,19 @@ async function freePort() {
         await page.getByRole('dialog').getByRole('button', {name:label('Save','保存')}).click();
         await page.getByRole('dialog').waitFor({state:'hidden'});
         await page.reload();
-        await row.getByText(label('Selected','已选择'), {exact:true}).waitFor();
-        assert.equal(await page.getByLabel(label('Download source','下载来源')).inputValue(), 'modelscope');
+        await row.waitFor();
+        assert.equal(await page.getByRole('group',{name:label('Download source','下载来源')}).getByRole('button',{name:'ModelScope'}).getAttribute('aria-pressed'), 'true');
         const restored = (await catalog()).models.find(model => model.id === installed.id);
         assert.equal(restored.parameters.contextTokens, initial - 1);
         await row.getByText(label('Context','上下文') + ' · ' + (initial - 1).toLocaleString('en'),{exact:true}).waitFor();
         if (restored.binaryAvailable) {
-            assert.equal(await row.getByRole('button',{name:label('Start','启动'),exact:true}).isEnabled(),true);
+            await row.getByRole('button',{name:label('Switch & use','切换并使用'),exact:true}).click();
+            const stop = row.getByRole('button',{name:label('Stop','停止'),exact:true});
+            await stop.waitFor({timeout:90000});
+            const running = (await catalog()).models.find(model => model.id === installed.id);
+            assert.ok(running.selected && running.running);
+            await stop.click();
+            await row.getByText(label('Selected','已选择'),{exact:true}).waitFor();
         } else {
             await row.getByRole('button',{name:label('Set up engine','设置引擎')}).click();
             await page.getByRole('region',{name:label('Runtime status','运行状态')}).waitFor();

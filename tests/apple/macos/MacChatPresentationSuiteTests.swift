@@ -12,6 +12,111 @@ import XCTest
 @testable import Nola
 
 final class MacChatBubbleCapabilityAndVisibilitySuiteTests: XCTestCase {
+    @MainActor
+    func testLongDraftInsertionRestoresCaretOnUndoAndRedo() async throws {
+        final class Draft: ObservableObject {
+            @Published var text = (1...18).map { "第\($0)行 📝" }.joined(separator: "\n")
+            @Published var caret: AppleMentionEditor.Caret?
+        }
+        struct Editor: View {
+            @ObservedObject var draft: Draft
+            @FocusState var focused: Bool
+            var body: some View {
+                MacComposerTextEditor(text: $draft.text, conversationID: "test", focused: $focused,
+                    onPasteAttachments: { false }, onDropAttachments: { _ in false }, onSubmit: {},
+                    mentionEditor: .init(caretRequest: draft.caret, restore: { value, _ in draft.text = value }))
+            }
+        }
+        let draft = Draft()
+        let original = draft.text
+        let hosting = NSHostingView(rootView: Editor(draft: draft).frame(width: 320, height: 96))
+        let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 320, height: 96),
+                              styleMask: [.titled], backing: .buffered, defer: false)
+        window.contentView = hosting
+        window.makeKeyAndOrderFront(nil)
+        defer { window.orderOut(nil); window.contentView = nil }
+        func settle() async throws {
+            hosting.layoutSubtreeIfNeeded()
+            try await Task.sleep(for: .milliseconds(80))
+        }
+        func findInput(in view: NSView) -> NSTextView? {
+            if let input = view as? NSTextView { return input }
+            return view.subviews.lazy.compactMap { findInput(in: $0) }.first
+        }
+        try await settle()
+        let input = try XCTUnwrap(findInput(in: hosting))
+        XCTAssertTrue(window.makeFirstResponder(input))
+        input.setSelectedRange(NSRange(location: 2, length: 0))
+        let previous = AppleMentionEditor.Snapshot(text: original, mentions: [], caret: 2)
+        let appended = ComposerSuggestion.inserting("请继续", into: original)
+        draft.text = appended
+        draft.caret = .init(location: appended.utf16.count, before: previous)
+        try await settle()
+        XCTAssertEqual(input.selectedRange().location, appended.utf16.count)
+        let scrolledToEnd = input.visibleRect.minY
+        XCTAssertGreaterThan(scrolledToEnd, 0)
+        let undo = try XCTUnwrap(input.undoManager)
+        undo.undo()
+        try await settle()
+        XCTAssertEqual(draft.text, original)
+        XCTAssertEqual(input.selectedRange().location, 2)
+        XCTAssertLessThan(input.visibleRect.minY, scrolledToEnd)
+        undo.redo()
+        try await settle()
+        input.insertText("。", replacementRange: input.selectedRange())
+        XCTAssertEqual(input.string, appended + "。")
+    }
+
+    @MainActor
+    func testStarterPromptsReflowAndRemainClickable() async throws {
+        for width: CGFloat in [320, 760] {
+            var selected: [String] = []
+            let root = MacEmptyConversationView { selected.append($0) }
+                .frame(width: width, height: 400)
+                .background(Color("NolaCanvas"))
+            let host = NSHostingView(rootView: root)
+            let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: width, height: 400),
+                                  styleMask: [.titled], backing: .buffered, defer: false)
+            window.contentView = host
+            window.makeKeyAndOrderFront(nil)
+            defer { window.orderOut(nil) }
+            host.layoutSubtreeIfNeeded()
+            try await Task.sleep(for: .milliseconds(150))
+
+            let bitmap = try XCTUnwrap(host.bitmapImageRepForCachingDisplay(in: host.bounds))
+            host.cacheDisplay(in: host.bounds, to: bitmap)
+            let image = NSImage(size: host.bounds.size)
+            image.addRepresentation(bitmap)
+            let attachment = XCTAttachment(image: image)
+            attachment.name = "starter-prompts-\(Int(width))"
+            attachment.lifetime = .keepAlways
+            add(attachment)
+            func click(x: CGFloat, y: CGFloat) async throws {
+                let point = NSPoint(x: x, y: y)
+                for kind in [NSEvent.EventType.leftMouseDown, .leftMouseUp] {
+                    window.sendEvent(try XCTUnwrap(NSEvent.mouseEvent(with: kind, location: point, modifierFlags: [],
+                        timestamp: ProcessInfo.processInfo.systemUptime, windowNumber: window.windowNumber,
+                        context: nil, eventNumber: 0, clickCount: 1, pressure: 1)))
+                }
+                await Task.yield()
+            }
+            // Sample a vertical line through the compact stack, or a horizontal
+            // line through the wide row. Count unique actions that actually fire.
+            var rowY: CGFloat?
+            for y in stride(from: CGFloat(16), to: 384, by: 16) {
+                try await click(x: width / 2, y: y)
+                if width > 320, !selected.isEmpty { rowY = y; break }
+            }
+            if width > 320 {
+                let y = try XCTUnwrap(rowY)
+                for x in stride(from: CGFloat(16), to: width, by: 16) {
+                    try await click(x: x, y: y)
+                }
+            }
+            XCTAssertEqual(Set(selected).count, 3, "All suggestions must respond along the visible row or column")
+        }
+    }
+
     func testChatBubbleLayoutAndCapabilityActionPresentation() {
         XCTAssertEqual(MacDesignTokens.Layout.chatProseMaxWidth, 720)
         XCTAssertLessThanOrEqual(MacDesignTokens.Layout.chatProseMaxWidth, MacChatBubbleLayout.transcriptWidth(availableWidth: 1_440))

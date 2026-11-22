@@ -156,7 +156,7 @@ struct MacConversationRecallRow: View {
                     .contentShape(Rectangle())
                 }
                 .buttonStyle(MacHorizontalBarButtonStyle(isSubtle: true, isExpanded: isExpanded))
-                .accessibilityValue(Text(isExpanded ? "Expanded" : "Collapsed", tableName: "Chat"))
+                .accessibilityValue(isExpanded ? Text("Expanded", tableName: "Chat") : Text("Collapsed", tableName: "Chat"))
 
                 if isExpanded {
                     Text(result.content)

@@ -673,7 +673,7 @@ mod tests {
         );
         assert_eq!(
             localize_tool_display_name_for(Language::ZhHans, "git_diff"),
-            "检查变更"
+            "查看 Git 差异"
         );
         assert_eq!(
             localize_tool_display_name_for(Language::ZhHans, "project_overview"),
@@ -681,19 +681,19 @@ mod tests {
         );
         assert_eq!(
             localize_tool_display_name_for(Language::ZhHans, "codebase_search"),
-            "搜索文件"
+            "搜索代码库"
         );
         assert_eq!(
             localize_tool_display_name_for(Language::En, "codebase_index_status"),
-            "Inspect workspace"
+            "Check codebase index status"
         );
         assert_eq!(
             localize_tool_display_name_for(Language::ZhHans, "focused_context"),
-            "检查工作区"
+            "读取相关上下文"
         );
         assert_eq!(
             localize_tool_display_name_for(Language::ZhHans, "find_files"),
-            "浏览目录"
+            "查找文件"
         );
         assert_eq!(
             localize_tool_display_name_for(Language::ZhHans, "tool_search"),
@@ -701,7 +701,7 @@ mod tests {
         );
         assert_eq!(
             localize_tool_display_name_for(Language::ZhHans, "computer_click"),
-            "操作电脑"
+            "点击鼠标"
         );
         assert_eq!(
             localize_tool_display_name_for(Language::En, "read_file"),

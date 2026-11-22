@@ -54,6 +54,7 @@
     let requestedEndpointName = $state('');
     let catalog = $state<Catalog>();
     let error = $state('');
+    let actionError = $state<{name: string; message: string}>();
     let editorError = $state<string | ModelValidationIssue>('');
     let busy = $state('');
     let editing = $state<Model>();
@@ -67,8 +68,18 @@
         (catalog?.models.filter(model => model.installed || model.download?.status === 'downloading') ?? [])
             .sort((a, b) => Number(b.running) - Number(a.running) || Number(b.selected) - Number(a.selected))
     );
-    const selectedRuntime = $derived(catalog?.runtimes?.find(item => item.id === engine)
-        ?? (engine === 'llama.cpp' && catalog ? { id: engine, binaryAvailable: catalog.binaryAvailable, installHint: catalog.installHint } : undefined));
+    function runtimeAvailable(id: LocalEngine) {
+        return catalog?.runtimes?.find(item => item.id === id)?.binaryAvailable
+            ?? (id === 'llama.cpp' && catalog?.binaryAvailable);
+    }
+    async function showEngineSetup(id: LocalEngine) {
+        engine = id;
+        await tick();
+        engineSetup?.reveal();
+    }
+    function hasActiveDownload(value?: Catalog) {
+        return downloadActive(value?.acquisition) || value?.models.some(model => model.download?.status === 'downloading');
+    }
     let engineSetup = $state<{reveal(): void}>();
     let readiness = $state<Partial<Record<LocalEngine, boolean>>>({});
     const alternative = $derived((['llama.cpp','vllm'] as LocalEngine[]).find(id => id !== engine &&
@@ -110,12 +121,12 @@
                     configure(linked);
                 }
             }
-            if (pageLocation.active() && !document.hidden && tab === 'local' && (downloadActive(result.acquisition) || result.models.some(model => model.download?.status === 'downloading'))) timer = setTimeout(refresh, 1000);
+            if (pageLocation.active() && !document.hidden && tab === 'local' && hasActiveDownload(result)) timer = setTimeout(refresh, 1000);
             return result;
         } catch (cause) {
             if (!disposed) {
                 error = errorMessage(cause);
-                if (pageLocation.active() && !document.hidden && tab === 'local' && downloadActive(catalog?.acquisition)) timer = setTimeout(refresh, 3000);
+                if (pageLocation.active() && !document.hidden && tab === 'local' && hasActiveDownload(catalog)) timer = setTimeout(refresh, 3000);
             }
         }
     }
@@ -159,35 +170,36 @@
         }).catch(() => {});
         return () => { disposed = true; clearTimeout(timer); catalogReads.cancel(); };
     });
-    async function switchAndUse(model: Model) {
-        if (busy) return;
-        busy = model.id; error = '';
-        catalogReads.cancel(); clearTimeout(timer);
+    async function changeModel(model: Model, change: () => Promise<void>) {
+        if (busy || disposed) return;
+        busy = model.id;
+        actionError = undefined;
+        catalogReads.cancel();
+        clearTimeout(timer);
         try {
-            if (!model.selected) {
-                await api(`/api/local-models/${encodeURIComponent(model.id)}/select`, { method: 'POST' });
+            await change();
+        } catch (cause) {
+            if (!disposed) actionError = { name: model.displayName || model.name || model.id, message: errorMessage(cause) };
+        } finally {
+            // Selection can succeed before startup fails. Re-read the durable state for either outcome.
+            if (!disposed) {
+                await refresh();
+                busy = '';
             }
-            if (disposed) return;
-            if (!model.running) {
-                await api(`/api/local-models/${encodeURIComponent(model.id)}/start`, { method: 'POST' });
-            }
-            if (disposed) return;
-            await refresh();
-        } catch (cause) { if (!disposed) error = errorMessage(cause); }
-        finally { if (!disposed) busy = ''; }
+        }
+    }
+    function switchAndUse(model: Model) {
+        return changeModel(model, async () => {
+            if (!model.selected) await api(`/api/local-models/${encodeURIComponent(model.id)}/select`, { method: 'POST' });
+            if (!disposed && !model.running) await api(`/api/local-models/${encodeURIComponent(model.id)}/start`, { method: 'POST' });
+        });
     }
     async function action(model: Model, name: string) {
         if (busy) return;
         if (name === 'installation' && !await confirmation.ask({ title: t($locale, 'models.deleteTitle'), description: t($locale, 'models.deleteBody', { name: model.displayName || model.name || model.id }), confirmLabel: t($locale, 'models.deleteConfirm'), destructive: true })) return;
-        if (disposed) return;
-        busy = model.id; error = '';
-        catalogReads.cancel(); clearTimeout(timer);
-        try {
+        await changeModel(model, async () => {
             await api(`/api/local-models/${encodeURIComponent(model.id)}/${name}`, { method: name === 'installation' ? 'DELETE' : 'POST' });
-            if (disposed) return;
-            await refresh();
-        } catch (cause) { if (!disposed) error = errorMessage(cause); }
-        finally { if (!disposed) busy = ''; }
+        });
     }
     async function configure(model: Model) {
         engine = model.runtime === 'vllm' ? 'vllm' : 'llama.cpp';
@@ -260,6 +272,7 @@
     </div>
     <div id="panel-local" role="tabpanel" tabindex="0" aria-labelledby="tab-local" hidden={tab !== 'local'}>
         {#if error}<div class="notice error" role="alert">{error}{catalog ? t($locale, 'models.stale') : ''} <button onclick={refresh} disabled={!!busy}>{t($locale, 'models.retry')}</button></div>{/if}
+        {#if actionError}<div class="notice error" role="alert"><strong>{actionError.name}</strong> {actionError.message}</div>{/if}
         {#if !catalog}{#if !error}<p role="status">{t($locale, 'models.loading')}</p>{/if}
         {:else}
             {#if catalog.configurationError}<p class="notice error" role="alert">{t($locale, 'local.configuration_error', { detail: catalog.configurationError })}</p>{/if}
@@ -267,20 +280,22 @@
                 <section class="installed-section" aria-label={t($locale, 'local.myModels')}>
                     <div class="section-heading">
                         <h2>{t($locale, 'local.myModels')}</h2>
-                        <span class="muted">{formatBytes(catalog.diskUsageBytes)}</span>
+                        {#if catalog.diskUsageBytes != null}<span class="muted">{formatBytes(catalog.diskUsageBytes)}</span>{/if}
                     </div>
                     <div class="models">
                         {#each visibleModels as model (model.id)}
                             {@const modelEngine = (model.runtime === 'vllm' ? 'vllm' : 'llama.cpp') as LocalEngine}
-                            {@const canRun = model.running || (readiness[modelEngine] ?? model.binaryAvailable ?? selectedRuntime?.binaryAvailable)}
+                            {@const modelTitle = model.displayName || cleanModelName(model.name || model.id)}
+                            {@const canRun = model.running || (readiness[modelEngine] ?? model.binaryAvailable ?? runtimeAvailable(modelEngine))}
                             <article class="model-row" aria-busy={busy === model.id}>
                                 <div class="row between">
                                     <div class="model-title">
-                                        <h3>{model.displayName || cleanModelName(model.name || model.id)}</h3>
-                                        <span class="status-pill" data-running={model.running || undefined}>{t($locale, model.running ? 'models.running' : model.selected ? 'models.selected' : model.installed ? 'models.installed' : 'models.notDownloaded')}</span>
+                                        <h3>{modelTitle}</h3>
+                                        <span class="status-pill" data-running={model.running || undefined}>{t($locale, model.running ? 'models.running' : model.download?.status === 'downloading' ? 'local.downloading' : model.selected ? 'models.selected' : model.installed ? 'models.installed' : 'models.notDownloaded')}</span>
                                     </div>
                                     <span class="muted tabular">{model.downloadBytes != null ? formatUnifiedGb(model.downloadBytes, $locale) : ''}</span>
                                 </div>
+                                {#if model.name && model.name !== modelTitle}<small class="muted">{model.name}</small>{/if}
                                 {#if model.description || model.subtitle}<p class="muted">{model.description || model.subtitle}</p>{/if}
                                 <p class="model-details muted tabular">
                                     {#if model.quantization || model.format}<span>{model.quantization || model.format}</span>{/if}
@@ -289,7 +304,7 @@
                                     <span>{engineName(modelEngine)}</span>
                                 </p>
                                 {#if model.download?.status === 'downloading'}
-                                    <progress aria-label={t($locale, 'models.downloadProgress')} value={model.download.downloadedBytes} max={model.download.totalBytes || 1}></progress>
+                                    <progress aria-label={t($locale, 'models.downloadProgress')} value={model.download.totalBytes > 0 ? model.download.downloadedBytes : undefined} max={model.download.totalBytes || undefined}></progress>
                                 {/if}
                                 {#if model.download?.error}<p class="error">{model.download.error}</p>{/if}
                                 <div class="actions">
@@ -299,7 +314,7 @@
                                         {:else if canRun}
                                             <button class="primary" onclick={() => switchAndUse(model)} disabled={!!busy}>{t($locale, 'local.switchAndUse')}</button>
                                         {:else}
-                                            <button onclick={() => engineSetup?.reveal()}>{t($locale, 'local.setup.openSetup')}</button>
+                                            <button onclick={() => showEngineSetup(modelEngine)}>{t($locale, 'local.setup.openSetup')}</button>
                                         {/if}
                                         <button onclick={() => configure(model)} disabled={!!busy}>{t($locale, 'models.configure')}</button>
                                         <button class="danger" onclick={() => action(model, 'installation')} disabled={!!busy || model.running}>{t($locale, 'models.delete')}</button>

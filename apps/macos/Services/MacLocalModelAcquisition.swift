@@ -295,12 +295,11 @@ final class MacLocalModelAcquisition: ObservableObject {
 
     static func formatETA(_ seconds: Double?) -> String? {
         guard let seconds, seconds.isFinite, seconds >= 1 else { return nil }
-        let total = Int(seconds.rounded())
-        if total < 60 { return "\(total)s" }
-        let minutes = total / 60
-        let remainder = total % 60
-        if minutes < 60 { return "\(minutes)m \(remainder)s" }
-        return "\(minutes / 60)h \(minutes % 60)m"
+        let formatter = DateComponentsFormatter()
+        formatter.unitsStyle = .abbreviated
+        formatter.allowedUnits = seconds.rounded() >= 3600 ? [.hour, .minute] : [.minute, .second]
+        formatter.zeroFormattingBehavior = .dropAll
+        return formatter.string(from: seconds.rounded())
     }
 
     init(client: MacModelAcquisitionClient = .init()) { self.client = client }

@@ -1290,7 +1290,13 @@ struct ChatView: View {
                     await loadCompactionSource(request)
                 },
                 onSuggestion: { suggestion in
-                    inputText = suggestion
+                    let previous = inputText
+                    let next = ComposerSuggestion.inserting(suggestion, into: previous)
+                    let snapshot = AppleMentionEditor.Snapshot(text: previous, mentions: composerDrafts.current.mentions,
+                        caret: editorSelection.map(NSMaxRange) ?? previous.utf16.count)
+                    inputText = next
+                    mentionCaret = .init(location: next.utf16.count, before: next == previous ? nil : snapshot)
+                    editorSelection = NSRange(location: next.utf16.count, length: 0)
                     composerFocused = true
                 },
                 onPrimaryAction: {
@@ -1909,6 +1915,7 @@ struct ChatView: View {
                         draft.text = value; draft.mentions = mentions
                         composerDrafts.current = draft
                     }, pasted: { dismissedExpertMention = $0 }),
+                draftOwner: composerDrafts.selected,
                 showsModelControl: horizontalSizeClass == .compact,
                 modelControl: composerModelControl
             )

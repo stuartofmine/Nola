@@ -39,6 +39,7 @@ struct MacNotificationCenterView: View {
     @State private var selection: String?
     @State private var filter = Filter.all
     @State private var query = ""
+    @FocusState private var searchFocused: Bool
     @State private var confirmsClearHistory = false
     @State private var pendingRemoval: MacNotificationInboxItem?
     @State private var compactDetailIsPresented = false
@@ -196,14 +197,8 @@ struct MacNotificationCenterView: View {
                 .foregroundStyle(Color.accentColor)
                 .frame(width: 28, height: 28)
                 .background(Color.accentColor.opacity(0.1), in: RoundedRectangle(cornerRadius: 8))
-            VStack(alignment: .leading, spacing: 2) {
-                Text(macNotificationText("mac.notifications.title", "Notifications"))
-                    .font(.system(size: 15, weight: .semibold))
-                Text(macNotificationText("mac.notifications.empty.detail", "Agent completions and scheduled notifications will appear here."))
-                    .font(.system(size: 11.5))
-                    .foregroundStyle(.secondary)
-                    .lineLimit(1)
-            }
+            Text(macNotificationText("mac.notifications.title", "Notifications"))
+                .font(.headline)
             Spacer(minLength: 16)
             if store.isLoading {
                 ProgressView().controlSize(.small)
@@ -216,6 +211,7 @@ struct MacNotificationCenterView: View {
             .macToolbarIcon()
             .disabled(store.isLoading)
             .help(macNotificationText("mac.notifications.refresh", "Refresh"))
+            .accessibilityLabel(macNotificationText("mac.notifications.refresh", "Refresh"))
 
             Menu {
                 Button(macNotificationText("mac.notifications.mark_all_read", "Mark All Read")) {
@@ -232,6 +228,7 @@ struct MacNotificationCenterView: View {
             }
             .menuStyle(MacToolbarMenuStyle())
             .help(macNotificationText("mac.notifications.actions", "Actions"))
+            .accessibilityLabel(macNotificationText("mac.notifications.actions", "Actions"))
         }
         .padding(.horizontal, MacDesignTokens.Layout.pageGutter)
         .frame(height: MacDesignTokens.Control.pageHeader)
@@ -250,6 +247,7 @@ struct MacNotificationCenterView: View {
 
             TextField(macNotificationText("mac.notifications.search", "Search notifications"), text: $query)
                 .textFieldStyle(.roundedBorder)
+                .focused($searchFocused)
                 .accessibilityIdentifier("mac.notifications.search")
 
             List {
@@ -359,7 +357,7 @@ struct MacNotificationCenterView: View {
 
     @ViewBuilder
     private var notificationEmptyState: some View {
-        if store.items.isEmpty {
+        if store.items.isEmpty && filter == .all && query.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
             VStack(spacing: MacDesignTokens.Spacing.lg) {
                 Image(systemName: "bell.slash")
                     .font(.system(size: 21, weight: .medium))
@@ -387,6 +385,7 @@ struct MacNotificationCenterView: View {
                 Button(macNotificationText("mac.notifications.empty.filtered.reset", "Reset Filters")) {
                     query = ""
                     filter = .all
+                    searchFocused = true
                 }
                 .buttonStyle(.nolaProminent)
                 .accessibilityIdentifier("mac.notifications.resetFilters")

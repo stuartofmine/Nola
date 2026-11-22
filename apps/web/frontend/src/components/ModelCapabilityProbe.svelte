@@ -1,4 +1,5 @@
 <script lang="ts">
+    import { protocolTitle } from '../lib/modelEndpoints';
     import { workspacePageApi } from '../lib/workspacePageLocation';
     const api = workspacePageApi(unscopedApi);
     import { onDestroy } from 'svelte';
@@ -60,7 +61,7 @@
 <details class="capability">
     <summary>{t($locale, 'connections.probeTitle')}</summary>
     <p>{t($locale, assessment?.evidence?.text_generation && assessment.evidence.account_revision === accountRevision && assessment.evidence.credential_binding === credentialBinding ? 'connections.probeVerified' : 'connections.probeUnknown')}</p>
-    <p>{snapshot.document.connection.display_name} · {model.display_name} · {model.protocol}</p>
+    <p>{snapshot.document.connection.display_name} · {model.display_name} · {protocolTitle(model.protocol)}</p>
     <p>{t($locale, 'connections.probeCost')}</p>
     <label><input type="checkbox" bind:checked={confirmed} disabled={pending} /> {t($locale, 'connections.probeConsent')}</label>
     <button disabled={!confirmed || pending || !credentialBinding || !snapshot.document.connection.enabled} onclick={() => void probe()}>{t($locale, 'connections.probeSend')}</button>

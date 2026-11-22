@@ -261,13 +261,17 @@ def source_pairs
   Dir[File.join(ROOT, "apps/macos", "**", "*.swift")].each do |path|
     source = File.read(path)
     source.scan(/\b\w+Text\(\s*"([^"]+)"\s*,\s*"((?:\\.|[^"])*)"/m) do |key, fallback|
+      next if key.include?('\\(') || fallback.include?('\\(')
       pairs[key] = fallback.gsub('\\"', '"')
     end
     source.scan(/NSLocalizedString\(\s*"([^"]+)"\s*,\s*value:\s*"((?:\\.|[^"])*)"/m) do |key, fallback|
+      next if key.include?('\\(') || fallback.include?('\\(')
       pairs[key] = fallback.gsub('\\"', '"')
     end
-    source.scan(/String\(localized:\s*"((?:\\.|[^"])*)"/m) do |value|
-      pairs[value.first] = value.first
+    # Xcode extracts interpolated formats and named tables. This pass only
+    # supplies literal keys looked up in the default table of the main bundle.
+    source.scan(/String\(localized:\s*"([^"\\]+)"(?:\s*,\s*defaultValue:\s*"([^"\\]*)")?(?:\s*,\s*bundle:\s*\.main)?(?:\s*,\s*comment:\s*"[^"\\]*")?\s*\)/m) do |key, fallback|
+      pairs[key] = fallback || key
     end
   end
   pairs

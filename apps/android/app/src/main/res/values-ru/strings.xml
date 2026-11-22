@@ -633,6 +633,7 @@
     <string name="common_expand">Развернуть</string>
     <string name="common_collapse">Свернуть</string>
     <string name="chat_error_dismiss">Закрыть</string>
+    <string name="chat_continue_draft">Продолжить редактирование черновика</string>
     <string name="chat_error_edit_retry">Изменить и повторить</string>
     <string name="chat_error_switch_model">Сменить модель</string>
     <string name="models_certificate_sha256_optional">SHA-256 сертификата (необязательно)</string>

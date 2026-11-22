@@ -1904,7 +1904,7 @@ struct MacSettingsView: View {
                 }
                 DisclosureGroup {
                     VStack(alignment: .leading, spacing: 9) {
-                        Text("nola server --host 0.0.0.0 --port 5001")
+                        Text(verbatim: "nola server --host 0.0.0.0 --port 5001")
                             .font(.system(.callout, design: .monospaced, weight: .medium))
                             .textSelection(.enabled)
                             .padding(.horizontal, 12)

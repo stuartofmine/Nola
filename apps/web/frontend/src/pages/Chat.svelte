@@ -1078,9 +1078,15 @@
         if (commandsVisible && !composing && !event.isComposing && !event.shiftKey && !event.ctrlKey && !event.metaKey && !event.altKey) {
             if (event.key === 'Escape') { event.preventDefault(); commandDismissed = draft; return; }
             if (['ArrowUp', 'ArrowDown', 'Enter', 'Tab'].includes(event.key)) {
-                event.preventDefault();
                 const count = commandCandidates.length;
-                if (!count) return;
+                if (!count) {
+                    if (event.key === 'Enter') {
+                        event.preventDefault();
+                        commandDismissed = draft;
+                    }
+                    return;
+                }
+                event.preventDefault();
                 commandIndex = Math.min(commandIndex, count - 1);
                 if (event.key === 'Enter' || event.key === 'Tab') completeCommand(commandCandidates[commandIndex].name);
                 else { commandIndex = (commandIndex + (event.key === 'ArrowUp' ? -1 : 1) + count) % count;
@@ -1432,7 +1438,20 @@
             <div class="transcript-shell">
             <div class="transcript" bind:this={transcript} onwheel={userScrollStarted} ontouchstart={transcriptPointerStarted} ontouchmove={userScrollStarted} onpointerdown={transcriptPointerStarted} onscroll={observedScroll} tabindex="0" aria-label={t($locale, 'chatPage.title')} role="log" aria-live="polite" aria-relevant="additions text">
                 {#if timeline?.window?.hasMore}<button class="older" onclick={() => loadHistory('prepend')} disabled={historyLoading || busy}>{t($locale, 'chatPage.history')}</button>{/if}
-                {#if !messages.length && (initializing || historyLoading)}<p class="placeholder">{t($locale, 'chatPage.loading')}</p>{:else if !active && !initializationFailed}<div class="empty-conversation"><div class="empty-mark" aria-hidden="true">n</div><h2>{t($locale, 'chatPage.choose')}</h2><button class="empty-navigation" onclick={() => navigationPanel.openPanel()}>{t($locale, 'shell.workspace')}</button></div>{:else if active && !messages.length && !busy && !error}<div class="empty-conversation"><div class="empty-mark" aria-hidden="true">n</div><h2>{t($locale, 'chatPage.welcome')}</h2><p>{t($locale, 'chatPage.welcomeHint')}</p><button onclick={() => composer?.focus()}>{t($locale, 'chatPage.placeholder')}</button></div>{/if}
+                {#if !messages.length && (initializing || historyLoading)}
+                    <p class="placeholder">{t($locale, 'chatPage.loading')}</p>
+                {:else if !active && !initializationFailed}
+                    <div class="empty-conversation">
+                        <div class="empty-mark" aria-hidden="true">n</div>
+                        <h2>{t($locale, 'chatPage.choose')}</h2>
+                        <button class="empty-navigation" onclick={() => navigationPanel.openPanel()}>{t($locale, 'shell.workspace')}</button>
+                    </div>
+                {:else if active && !messages.length && !busy && !error}
+                    <div class="empty-conversation">
+                        <div class="empty-mark" aria-hidden="true">n</div>
+                        <h2>{t($locale, 'chatPage.welcome')}</h2>
+                    </div>
+                {/if}
                 {#each messages as message (JSON.stringify([hostId, active?.conversationId, message.id]))}
                     {@const attachmentDisplay = message.role === 'user' ? displayTextAttachmentMessage(timelineMessageText(message)) : null}
                     {@const visibleUserText=attachmentDisplay?.displayText??timelineMessageText(message)}
@@ -1667,7 +1686,7 @@
 </div>
 
 <style>
-    .expert-mentions { max-height: 224px; overflow-y: auto; overscroll-behavior: contain; border: 1px solid var(--border); border-radius: 14px; padding: 6px; margin-bottom: 8px; }
+    .expert-mentions { max-height: min(224px, 38dvh); overflow-y: auto; overscroll-behavior: contain; border: 1px solid var(--border); border-radius: 14px; padding: 6px; margin-bottom: 8px; }
     #composer-commands { position: absolute; bottom: calc(100% + 6px); inset-inline: 0; z-index: 60; margin-bottom: 0; background: var(--surface-elevated, var(--surface, var(--canvas))); box-shadow: 0 8px 28px rgb(0 0 0 / .18); }
     .expert-mentions > button { width: 100%; min-height: 52px; display: flex; align-items: center; gap: 12px; text-align: start; border: 1px solid transparent; background: transparent; box-shadow: none; padding: 6px 10px; border-radius: 10px; transition: border-color var(--motion-fast) ease; }
     .expert-mentions > button[aria-selected='true'] { background: var(--accent-subtle); border-color: transparent; }
@@ -1707,18 +1726,17 @@
     .composer-footer :global(.text-attachments) { display: contents; }
     .composer-footer :global(.text-attachments > :not(.attachment-toolbar)) { order: -1; flex: 1 0 100%; margin-bottom: 4px; }
     .composer-footer :global(.text-attachments > .attachment-toolbar) { flex: 0 0 auto; }
-    .composer-execution { display: flex; align-items: center; gap: 6px; margin-inline-start: auto; min-width: 0; }
-    .composer-actions { flex-shrink: 0; }
+    .composer-execution { flex: 1; display: flex; align-items: center; gap: 4px; min-width: 0; }
+    .composer-actions { flex-shrink: 0; margin-inline-start: auto; }
     .composer-options { flex-shrink: 0; }
     .chat-columns { isolation: isolate; z-index: 0; min-width: 0; display: grid; grid-template-columns: var(--sidebar-width) minmax(0, 1fr) var(--inspector-width); min-height: 0; gap: 0; }
     .chat-columns.without-conversation { grid-template-columns: var(--sidebar-width) minmax(0, 1fr); }
     .chat-columns.without-navigation { grid-template-columns: minmax(0, 1fr) var(--inspector-width); }
     .chat-columns.without-navigation.without-conversation { grid-template-columns: minmax(0, 1fr); }
     .empty-navigation { display: none; }
-    .empty-conversation { display: grid; justify-items: center; align-content: center; gap: 12px; min-height: 45dvh; padding: 24px; text-align: center; }
-    .empty-mark { font: italic 600 44px/1 Georgia, serif; color: var(--accent); margin-bottom: 4px; }
-    .empty-conversation h2 { font-family: var(--font-display); color: var(--content); font-size: 1.75rem; line-height: 1.3; font-weight: 600; }
-    .empty-conversation p { color: var(--muted); font-size: .875rem; margin: 0; }
+    .empty-conversation { display: grid; justify-items: center; align-content: center; gap: 14px; min-height: 100%; padding: 16px; text-align: center; }
+    .empty-mark { font: italic 600 40px/1 Georgia, serif; color: var(--content); }
+    .empty-conversation h2 { font-family: var(--font-display); color: var(--content); font-size: clamp(1.5rem, 1.25rem + 1vw, 2rem); line-height: 1.3; font-weight: 600; text-wrap: balance; }
     .panel-column { position: relative; min-width: 0; min-height: 0; }
     .chat-navigation { display: flex; flex-direction: column; gap: 12px; min-width: 0; height: calc(100dvh - 48px); max-height: calc(100dvh - 48px); overflow: hidden; padding: 12px; border: 0; background: var(--canvas); border-right:1px solid var(--border); }
     .activity-source-return { display:flex; align-items:center; gap:8px; min-height:44px; flex-shrink:0; padding:8px 16px; border-bottom:1px solid var(--border); }
@@ -1736,9 +1754,18 @@
     .transcript:focus-visible { outline-offset: -3px; }
     .transcript { flex: 1 1 0; min-height: 80px; overflow: auto; padding: 24px max(32px, calc((100% - 752px)/2)); scrollbar-gutter: stable; font-size: 1rem; line-height: 1.625; }
     .transcript article { display: flex; align-items: flex-start; gap: 8px; margin: 24px 0; padding: 12px 0; border: 1px solid transparent; position: relative; border-radius: 12px; }
-    .transcript article.user { max-width: 85%; margin-inline-start: auto; padding: 0; }
+    .transcript article.user { width: fit-content; max-width: 85%; margin-inline-start: auto; padding: 0; }
     .message-column { min-width: 0; flex: 1; }
-    .transcript article.user .message-content { background: var(--panel); padding: 12px 16px; border-radius:16px 5px 16px 16px; } .transcript article.selected { background: var(--accent-subtle); border-color: transparent; }
+    .transcript article.user .message-content {
+        flex: 0 1 auto;
+        width: fit-content;
+        max-width: 100%;
+        margin-inline-start: auto;
+        padding: 10px 16px;
+        border-radius: 18px;
+        background: var(--panel);
+    }
+    .transcript article.selected { background: var(--accent-subtle); border-color: transparent; }
     .transcript article:not(.user) .message-content { max-width: 720px; }
     .transcript article:has(> .response-identity) { flex-direction: column; align-items: stretch; gap: 12px; }
     .transcript article:has(> .response-identity) .message-content { background: transparent; box-shadow: none; padding: 0; border-radius: 0; }
@@ -1826,7 +1853,7 @@
         .transcript article.user { padding: 0; margin-inline-start: auto; }
         .transcript article.user .message-content { padding: 10px 12px; }
         .transcript article:has(> .response-identity) { gap: 10px; }
-        .composer { width: calc(100% - 40px); margin:10px 20px 16px; padding:4px; border-radius:24px; background:var(--composer-bg); }
+        .composer { width: calc(100% - 40px); margin:10px 20px max(12px, env(safe-area-inset-bottom)); padding:4px; border-radius:24px; background:var(--composer-bg); }
         .composer-footer { align-items: center; gap: 0; }
         .composer-execution { flex: 1; justify-content: flex-end; }
         .composer-footer :global(.model-menu) { flex: 1; min-width: 0; max-width: none; }
@@ -1839,7 +1866,7 @@
         .chat-search { flex-wrap: wrap; padding: 8px 16px; }
         .chat-search label { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); }
     }
-    .composer-actions button.primary { width:36px; height:36px; min-width:36px; min-height:36px; padding:7px; border-radius:50%; }
+    .composer-actions button.primary { width:36px; height:36px; min-width:36px; min-height:36px; padding:7px; border-radius:50%; display:grid; place-items:center; }
     .composer-actions svg { width:20px; height:20px; fill:none; stroke:currentColor; stroke-width:1.6; }
     .composer-footer :global(.model-menu) { align-self:center; }
     @media(min-width:761px) {

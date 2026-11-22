@@ -122,7 +122,20 @@ struct MacConversationCanvas: View {
                             modelControls.frame(maxWidth: 520).padding(24)
                                 .frame(maxWidth: .infinity, maxHeight: .infinity)
                         } else {
-                            MacEmptyConversationView(model: model, composerFocused: composerFocused)
+                            MacEmptyConversationView { prompt in
+                                if let owner = model.selectedConversationID {
+                                    let previous = model.draft
+                                    let next = ComposerSuggestion.inserting(prompt, into: previous)
+                                    let snapshot = AppleMentionEditor.Snapshot(text: previous, mentions: model.draftMentions(owner),
+                                        caret: selectionRange.map(NSMaxRange) ?? previous.utf16.count)
+                                    if next != previous {
+                                        model.setDraft(next, conversationID: owner, mentions: snapshot.mentions)
+                                    }
+                                    caretRequest = .init(location: next.utf16.count, before: next == previous ? nil : snapshot)
+                                    selectionRange = NSRange(location: next.utf16.count, length: 0)
+                                }
+                                composerFocused.wrappedValue = true
+                            }
                         }
                     } else {
                         let conversationID = model.selectedConversationID ?? ""

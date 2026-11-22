@@ -2692,6 +2692,14 @@ final class MacChatWorkspaceBehaviorTests: XCTestCase {
             MacToolPresentationPolicy.displayTitle(for: "write_file"),
             String(localized: "Files", table: "Chat")
         )
+        let moved = MacAssistantTrace(
+            kind: .tool, title: "move_file", detail: "",
+            arguments: #"{"path":"/tmp/notes.txt"}"#, state: .completed
+        )
+        XCTAssertEqual(
+            MacToolTraceDisplayPolicy.operationTitle(for: moved),
+            "\(try XCTUnwrap(AppleToolDisplayName.localized("move_file"))) notes.txt"
+        )
         let outputRead = MacAssistantTrace(
             kind: .tool,
             title: "tool_output_read",
@@ -2709,11 +2717,11 @@ final class MacChatWorkspaceBehaviorTests: XCTestCase {
                 for: "codebase_search",
                 arguments: #"{"query":"SessionLedger"}"#
             ),
-            "\(String(localized: "Search files")) SessionLedger"
+            "\(try XCTUnwrap(AppleToolDisplayName.localized("codebase_search"))) SessionLedger"
         )
         XCTAssertEqual(
             MacToolPresentationPolicy.displayTitle(for: "codebase_index_status"),
-            String(localized: "Inspect workspace")
+            AppleToolDisplayName.localized("codebase_index_status")
         )
     }
 

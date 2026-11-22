@@ -80,7 +80,7 @@ public final class ModelDownloader: ObservableObject {
             case .modelscope:
                 return NSLocalizedString(
                     "model.download.source.modelscope",
-                    value: "ModelScope（中国推荐）",
+                    value: "ModelScope (recommended in China)",
                     comment: "ModelScope download source option"
                 )
             }

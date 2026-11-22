@@ -1,5 +1,6 @@
 package com.nola.ui.screen.chat
 
+import com.nola.ui.components.BuiltinToolNames
 import com.nola.data.local.readableExpertTemplates
 import com.nola.data.local.*
 import com.nola.data.local.requireIdentity
@@ -5067,7 +5068,10 @@ class ChatViewModel @Inject constructor(
                     args = event.args,
                     match = event.capability,
                     reason = context.getString(R.string.chat_permission_hybrid_request_reason),
-                    message = context.getString(R.string.chat_permission_hybrid_run_format, event.toolName),
+                    message = context.getString(
+                        R.string.chat_permission_hybrid_run_format,
+                        BuiltinToolNames.label(event.toolName, null, context.resources.configuration.locales[0]) ?: event.toolName,
+                    ),
                     nonce = event.nonce,
                     hostId = event.hostId,
                     clientId = event.clientId,

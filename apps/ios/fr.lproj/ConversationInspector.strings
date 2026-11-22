@@ -46,9 +46,17 @@
 "goal.resume" = "Continuer";
 "goal.paused_reply_hint" = "En pause pour votre réponse. Répondez dans le chat ou touchez Continuer.";
 "goal.schedule" = "Planifier la suite";
+"goal.schedule_action" = "Planifier";
 "goal.cancel" = "Annuler l’objectif";
 "goal.actions" = "Actions de l’objectif";
 "goal.start" = "Démarrer un objectif";
+"goal.start_action" = "Démarrer";
 "goal.sending" = "Envoi de l’action";
 "goal.objective" = "Que doit accomplir cet objectif ?";
 "goal.wake" = "Continuer à";
+"goal.section.goal" = "Objectif";
+"goal.section.requirements" = "Exigences";
+"goal.section.work" = "Progression";
+"inspector.section.checklist" = "Liste de contrôle";
+"inspector.section.status" = "État de la session";
+"inspector.section.tasks" = "Tâches";

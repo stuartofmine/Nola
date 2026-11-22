@@ -11,6 +11,16 @@ import XCTest
 @testable import Nola
 
 @MainActor final class ChatComposerLayoutTests: XCTestCase {
+    func testSuggestionPreservesDraftAndRepeatedTaps() {
+        let draft = "@Ada 请看看这份文件"
+        let prompt = "Summarize the key changes."
+        let expected = draft + "\n" + prompt
+        XCTAssertEqual(ComposerSuggestion.inserting(prompt, into: ""), prompt)
+        XCTAssertEqual(ComposerSuggestion.inserting(prompt, into: draft), expected)
+        XCTAssertEqual(ComposerSuggestion.inserting(prompt, into: draft + "\n"), expected)
+        XCTAssertEqual(ComposerSuggestion.inserting(prompt, into: expected), expected)
+    }
+
     func testPhoneComposerKeepsWritingAreaAboveToolbarInBothAppearances() async throws {
         for width in [CGFloat(320), CGFloat(390)] {
             for dark in [false, true] {

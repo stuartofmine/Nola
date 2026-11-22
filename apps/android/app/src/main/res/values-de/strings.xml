@@ -633,6 +633,7 @@
     <string name="common_expand">Ausklappen</string>
     <string name="common_collapse">Einklappen</string>
     <string name="chat_error_dismiss">Schließen</string>
+    <string name="chat_continue_draft">Entwurf weiterbearbeiten</string>
     <string name="chat_error_edit_retry">Bearbeiten und erneut versuchen</string>
     <string name="chat_error_switch_model">Modell wechseln</string>
     <string name="models_certificate_sha256_optional">Zertifikat-SHA-256 (optional)</string>

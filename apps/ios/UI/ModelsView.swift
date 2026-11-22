@@ -1124,15 +1124,16 @@ struct WebHostConfigurationView: View {
 
     private func connect() {
         guard !isConnecting else { return }
-        connectionField = nil
         errorMessage = nil
         verifiedAddress = nil
         let rawURL = hostURL.trimmingCharacters(in: .whitespacesAndNewlines)
         guard let url = IOSHostConnectionDraftPolicy.endpoint(rawURL) else {
+            connectionField = .url
             errorMessage = NSLocalizedString("model.web_host.invalid_url", value: "Enter a valid HTTP or HTTPS Host URL.", comment: "Invalid Web Host URL error")
             return
         }
         guard MobileHostTransportPolicy.allows(url) else {
+            connectionField = .url
             errorMessage = NSLocalizedString("model.web_host.public_http_forbidden", value: "Public Web Host addresses require HTTPS. HTTP is limited to this device or a private local network.", comment: "Public HTTP Web Host error")
             return
         }
@@ -1141,9 +1142,11 @@ struct WebHostConfigurationView: View {
             loadSaved: { ModelSelectionManager.webHostToken(for: rawURL) }
         )
         guard !token.isEmpty else {
+            connectionField = .token
             errorMessage = NSLocalizedString("model.web_host.missing_token", value: "Enter the access token for this host.", comment: "Missing Web Host token error")
             return
         }
+        connectionField = nil
         isConnecting = true
         connectionTask = Task { @MainActor in
             defer {

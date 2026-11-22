@@ -1,8 +1,9 @@
 <script lang="ts">
+    import { toolDisplayName } from '../lib/toolDisplayName';
     import { replyDisclosure } from '../lib/replyDisclosure';
     import { locale, t } from '../lib/i18n';
     import { messagePresentation, executionProcessExpanded, isExecutionPresentation, liveReasoningParts } from '../lib/chatMessagePresentation';
-    import { timelinePartText, timelineToolPresentation } from '../lib/chatTimeline';
+    import { timelinePartText } from '../lib/chatTimeline';
     import type { TimelinePart } from '../lib/chatTimeline';
     import Markdown from './Markdown.svelte';
     import ChatToolPart from './ChatToolPart.svelte';
@@ -19,7 +20,7 @@
     const latest = $derived(live ? [...parts].reverse().find(part =>
         (part.value.kind === 'tool' || part.value.kind === 'reasoning') && ['running', 'pending'].includes(String(part.value.state))) : undefined);
     const currentTitle = $derived(latest?.value.kind === 'tool' && ['running', 'pending'].includes(String(latest.value.state))
-        ? timelineToolPresentation(latest)?.title : undefined);
+        ? toolDisplayName($locale, latest.value.capability_id, latest.value.title) : undefined);
     const groups = $derived(messagePresentation(parts).filter(isExecutionPresentation));
 </script>
 

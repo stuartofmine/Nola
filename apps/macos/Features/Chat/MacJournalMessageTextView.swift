@@ -623,8 +623,10 @@ nonisolated struct MacJournalProcessProjection {
         }) else { return nil }
         switch current.metadata {
         case .tool(let tool) where ["running", "pending"].contains(tool.state):
-            if case .inline(let title) = tool.title, !title.isEmpty { return title }
-            return String(localized: "Activity")
+            if case .inline(let title) = tool.title, !title.isEmpty {
+                return AppleToolDisplayName.localized(tool.capability_id, title: title) ?? title
+            }
+            return MacToolPresentationPolicy.displayTitle(for: tool.capability_id)
         case .reasoning(let activity) where activity.isRunning:
             return String(localized: "Thinking")
         default: return nil
@@ -1170,7 +1172,7 @@ private struct MacJournalReferenceFooter: View {
             }
             if parts.count > 3 {
                 Button { showsAll.toggle() } label: {
-                    Text(showsAll ? "Show fewer sources" : "Show all sources", tableName: "Chat")
+                    (showsAll ? Text("Show fewer sources", tableName: "Chat") : Text("Show all sources", tableName: "Chat"))
                         .font(.caption).foregroundStyle(.secondary)
                         .frame(minHeight: 28).contentShape(Rectangle())
                 }.buttonStyle(.plain)
@@ -1751,8 +1753,8 @@ struct MacJournalToolView: View {
             HStack {
                 Image(systemName: "wrench.and.screwdriver")
                 VStack(alignment: .leading, spacing: 4) {
-                    if case .inline(let title) = tool.title {
-                        Text(verbatim: MacToolPresentationPolicy.displayTitle(for: title)).lineLimit(2)
+                    if case .inline(let title) = tool.title, !title.isEmpty, title != tool.capability_id {
+                        Text(verbatim: AppleToolDisplayName.localized(tool.capability_id, title: title) ?? title).lineLimit(2)
                     } else {
                         Text(verbatim: MacToolPresentationPolicy.displayTitle(for: tool.capability_id)).lineLimit(2)
                     }

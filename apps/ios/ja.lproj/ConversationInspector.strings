@@ -46,9 +46,17 @@
 "goal.resume" = "続行";
 "goal.paused_reply_hint" = "入力待ちで一時停止中です。チャットで返信するか「続行」をタップしてください。";
 "goal.schedule" = "続行を予約";
+"goal.schedule_action" = "予約";
 "goal.cancel" = "目標をキャンセル";
 "goal.actions" = "目標の操作";
 "goal.start" = "目標を開始";
+"goal.start_action" = "開始";
 "goal.sending" = "目標操作を送信中";
 "goal.objective" = "この目標で何を達成しますか？";
 "goal.wake" = "再開時刻";
+"goal.section.goal" = "目標";
+"goal.section.requirements" = "要件";
+"goal.section.work" = "進捗";
+"inspector.section.checklist" = "チェックリスト";
+"inspector.section.status" = "セッションの状態";
+"inspector.section.tasks" = "タスク";

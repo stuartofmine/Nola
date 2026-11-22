@@ -151,79 +151,95 @@ final class MacDiagnosticsLogViewerTests: XCTestCase {
 }
 
 final class MacChatLocalizationContractTests: XCTestCase {
-    func testLocalExecutionRecoveryDoesNotClaimCancellationOrSuccess() {
-        let chinese = Locale(identifier: "zh-Hans")
-        XCTAssertEqual(String(localized: "Local execution connection interrupted. The result is not yet confirmed.",
-                              table: "Chat", bundle: .main, locale: chinese),
+    func testBundledToolNamesDistinguishActionsAndKeepDeclaredTitles() {
+        XCTAssertEqual(AppleToolDisplayName.localized("render_ui", title: "render_ui", language: "zh-Hans"), "显示交互界面")
+        XCTAssertEqual(AppleToolDisplayName.localized("bash_background_stop", language: "ja"), "バックグラウンドコマンドを停止")
+        XCTAssertEqual(AppleToolDisplayName.localized("run_command", title: "运行命令", language: "de"), "Befehl ausführen")
+        XCTAssertNil(AppleToolDisplayName.localized("render_ui", title: "My custom panel", language: "de"))
+        XCTAssertNil(AppleToolDisplayName.localized("mcp__my_server__render_ui", language: "de"))
+    }
+
+    func testExpertAndLocalModelLabelsResolveInTheirRuntimeTables() throws {
+        let chinese = try XCTUnwrap(Bundle.main.url(forResource: "zh-Hans", withExtension: "lproj").flatMap(Bundle.init(url:)))
+        let english = try XCTUnwrap(Bundle.main.url(forResource: "en", withExtension: "lproj").flatMap(Bundle.init(url:)))
+        XCTAssertEqual(chinese.localizedString(forKey: "Model & Reasoning", value: nil, table: "ExpertLibrary"), "模型与推理")
+        XCTAssertEqual(chinese.localizedString(forKey: "common.retry", value: nil, table: nil), "重试")
+        XCTAssertEqual(english.localizedString(forKey: "我的本地模型", value: nil, table: "ModelCenter"), "My local models")
+    }
+
+    func testLocalizedChatAndModelLabelsResolveFromAllSixLanguageBundles() throws {
+        let cacheLabels = [
+            "de": "Cache-Trefferrate (Unterhaltung)",
+            "es": "Tasa de aciertos de caché (conversación)",
+            "fr": "Taux de succès du cache (conversation)",
+            "ja": "キャッシュヒット率（会話全体）",
+            "ko": "캐시 적중률(대화)",
+            "ru": "Доля попаданий в кэш (беседа)",
+        ]
+        for (language, cacheLabel) in cacheLabels {
+            let url = try XCTUnwrap(Bundle.main.url(forResource: language, withExtension: "lproj"))
+            let bundle = try XCTUnwrap(Bundle(url: url))
+            XCTAssertEqual(bundle.localizedString(forKey: "Cache hit rate (conversation)", value: nil, table: "Chat"), cacheLabel, language)
+            let key = "%@ context · %@ max output · temperature %@"
+            let format = bundle.localizedString(forKey: key, value: nil, table: "ModelCenter")
+            XCTAssertNotEqual(format, key, language)
+            let display = String(format: format, "128K", "8192", "0.7")
+            for value in ["128K", "8192", "0.7"] {
+                XCTAssertTrue(display.contains(value), "\(language): \(display)")
+            }
+            let goal = "Goal controls are unavailable. Refresh to confirm the current goal state."
+            XCTAssertNotEqual(bundle.localizedString(forKey: goal, value: nil, table: "ConversationInspector"), goal, language)
+        }
+    }
+
+    func testConnectionCountUsesKoreanArgumentOrderInBothTables() throws {
+        let directory = try XCTUnwrap(Bundle.main.url(forResource: "ko", withExtension: "lproj"))
+        let bundle = try XCTUnwrap(Bundle(url: directory))
+        for table in ["Localizable", "ModelCenter"] {
+            let format = bundle.localizedString(forKey: "%lld of %lld connected", value: nil, table: table)
+            XCTAssertEqual(String(format: format, Int64(2), Int64(11)), "11개 중 2개 연결됨")
+        }
+        let memory = bundle.localizedString(forKey: "%@ unified memory", value: nil, table: "ModelCenter")
+        XCTAssertEqual(String(format: memory, "16 GB"), "통합 메모리 16 GB")
+    }
+
+    func testCompiledTablesContainEveryLabelInAllSixLanguages() throws {
+        func keys(_ table: String, _ language: String) throws -> Set<String> {
+            let directory = try XCTUnwrap(Bundle.main.url(forResource: language, withExtension: "lproj"))
+            let url = directory.appendingPathComponent(table + ".strings")
+            let plist = try PropertyListSerialization.propertyList(from: Data(contentsOf: url), format: nil)
+            return Set(try XCTUnwrap(plist as? [String: String]).keys)
+        }
+
+        for table in ["Chat", "ConversationInspector", "ExpertLibrary", "Localizable", "ModelCenter", "Permissions", "Reasoning"] {
+            let expected = try keys(table, "zh-Hans")
+            XCTAssertFalse(expected.isEmpty, table)
+            for language in ["de", "es", "fr", "ja", "ko", "ru"] {
+                let missing = expected.subtracting(try keys(table, language))
+                XCTAssertTrue(missing.isEmpty, "\(language)/\(table): \(missing.sorted())")
+            }
+        }
+    }
+
+    func testLocalExecutionRecoveryDoesNotClaimCancellationOrSuccess() throws {
+        let chinese = try XCTUnwrap(Bundle.main.url(forResource: "zh-Hans", withExtension: "lproj").flatMap(Bundle.init(url:)))
+        XCTAssertEqual(chinese.localizedString(forKey: "Local execution connection interrupted. The result is not yet confirmed.", value: nil, table: "Chat"),
                        "本地执行连接已中断，结果尚未确认。")
-        XCTAssertEqual(String(localized: "Check execution status", table: "Chat", bundle: .main, locale: chinese),
+        XCTAssertEqual(chinese.localizedString(forKey: "Check execution status", value: nil, table: "Chat"),
                        "检查执行状态")
     }
 
     func testConversationInspectorUsesChatCatalogTranslations() throws {
-        let simplifiedChinese = Locale(identifier: "zh-Hans")
-
-        XCTAssertEqual(
-            String(
-                localized: "Conversation Details",
-                table: "Chat",
-                bundle: .main,
-                locale: simplifiedChinese
-            ),
-            "对话详情"
-        )
-        XCTAssertEqual(
-            String(
-                localized: "Applies to this conversation",
-                table: "Chat",
-                bundle: .main,
-                locale: simplifiedChinese
-            ),
-            "仅对当前对话有效"
-        )
-        XCTAssertEqual(
-            String(
-                localized: "Knowledge",
-                table: "Chat",
-                bundle: .main,
-                locale: simplifiedChinese
-            ),
-            "知识"
-        )
-        XCTAssertEqual(
-            String(
-                format: String(
-                    localized: "Context %@ / %@",
-                    bundle: .main,
-                    locale: simplifiedChinese
-                ),
-                "~5k",
-                "128k"
-            ),
-            "上下文 ~5k / 128k"
-        )
-        XCTAssertEqual(
-            String(localized: "Choose…", bundle: .main, locale: simplifiedChinese),
-            "选择…"
-        )
-        XCTAssertEqual(
-            String(
-                localized: "Files",
-                table: "Chat",
-                bundle: .main,
-                locale: simplifiedChinese
-            ),
-            "文件"
-        )
-        XCTAssertEqual(
-            String(
-                localized: "Browser",
-                table: "Chat",
-                bundle: .main,
-                locale: simplifiedChinese
-            ),
-            "浏览器"
-        )
+        let chinese = try XCTUnwrap(Bundle.main.url(forResource: "zh-Hans", withExtension: "lproj").flatMap(Bundle.init(url:)))
+        for (key, label) in [
+            ("Conversation Details", "对话详情"), ("Applies to this conversation", "仅对当前对话有效"),
+            ("Knowledge", "知识"), ("Files", "文件"), ("Browser", "浏览器"),
+        ] {
+            XCTAssertEqual(chinese.localizedString(forKey: key, value: nil, table: "Chat"), label)
+        }
+        let context = chinese.localizedString(forKey: "Context %@ / %@", value: nil, table: nil)
+        XCTAssertEqual(String(format: context, "~5k", "128k"), "上下文 ~5k / 128k")
+        XCTAssertEqual(chinese.localizedString(forKey: "Choose…", value: nil, table: nil), "选择…")
         let germanResource = try XCTUnwrap(
             Bundle.main.url(
                 forResource: "Chat",

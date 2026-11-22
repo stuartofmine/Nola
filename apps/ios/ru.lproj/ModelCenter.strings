@@ -182,5 +182,3 @@
 "Updating This Mac’s Account…" = "Обновление аккаунта на этом Mac…";
 "Use this Mac’s ChatGPT account controls above to discover models. API-key capability tests do not apply to this authorization." = "Используйте расположенные выше настройки аккаунта ChatGPT на этом Mac, чтобы найти модели. Проверка возможностей по ключу API не относится к этой авторизации.";
 "Waiting for Authorization…" = "Ожидание авторизации…";
-"Unable to open Nola data" = "Не удалось открыть данные Nola";
-"Your existing data has been preserved. No database was reset or converted." = "Ваши данные сохранены. База данных не сбрасывалась и не преобразовывалась.";

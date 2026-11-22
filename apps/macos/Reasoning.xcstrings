@@ -45,6 +45,18 @@
             "state": "translated",
             "value": "Effort de raisonnement"
           }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "思考強度"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "사고 강도"
+          }
         }
       }
     },
@@ -91,6 +103,18 @@
           "stringUnit": {
             "state": "translated",
             "value": "Valeur du fournisseur"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "제공업체 기본값"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "使用服務商預設值"
           }
         }
       }
@@ -139,6 +163,18 @@
             "state": "translated",
             "value": "Aucun"
           }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "없음"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "無"
+          }
         }
       }
     },
@@ -185,6 +221,18 @@
           "stringUnit": {
             "state": "translated",
             "value": "Minimal"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "極低"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "최소"
           }
         }
       }
@@ -233,6 +281,18 @@
             "state": "translated",
             "value": "Faible"
           }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "低"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "낮음"
+          }
         }
       }
     },
@@ -279,6 +339,18 @@
           "stringUnit": {
             "state": "translated",
             "value": "Moyen"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "中"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "중간"
           }
         }
       }
@@ -327,6 +399,18 @@
             "state": "translated",
             "value": "Élevé"
           }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "高"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "높음"
+          }
         }
       }
     },
@@ -374,6 +458,18 @@
             "state": "translated",
             "value": "Très élevé"
           }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "極高"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "매우 높음"
+          }
         }
       }
     },
@@ -420,6 +516,18 @@
           "stringUnit": {
             "state": "translated",
             "value": "Maximum"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "最高"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "최대"
           }
         }
       }

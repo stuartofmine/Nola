@@ -46,9 +46,17 @@
 "goal.resume" = "Fortsetzen";
 "goal.paused_reply_hint" = "Für deine Eingabe pausiert. Antworte im Chat oder tippe auf Fortsetzen.";
 "goal.schedule" = "Fortsetzung planen";
+"goal.schedule_action" = "Planen";
 "goal.cancel" = "Ziel abbrechen";
 "goal.actions" = "Zielaktionen";
 "goal.start" = "Ziel starten";
+"goal.start_action" = "Starten";
 "goal.sending" = "Zielaktion wird gesendet";
 "goal.objective" = "Was soll dieses Ziel erreichen?";
 "goal.wake" = "Fortsetzen um";
+"goal.section.goal" = "Ziel";
+"goal.section.requirements" = "Anforderungen";
+"goal.section.work" = "Fortschritt";
+"inspector.section.checklist" = "Checkliste";
+"inspector.section.status" = "Sitzungsstatus";
+"inspector.section.tasks" = "Aufgaben";

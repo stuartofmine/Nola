@@ -30,9 +30,11 @@
 "goal.pause" = "Pause";
 "goal.resume" = "Continue";
 "goal.schedule" = "Schedule continuation";
+"goal.schedule_action" = "Schedule";
 "goal.cancel" = "Cancel Goal";
 "goal.actions" = "Goal actions";
 "goal.start" = "Start a Goal";
+"goal.start_action" = "Start";
 "goal.sending" = "Sending Goal action";
 "goal.objective" = "What should this Goal achieve?";
 "goal.model_note" = "Uses this conversation’s selected model and current tool permissions.";
@@ -52,3 +54,9 @@
 "inspector.conversation_needed" = "Start or open a conversation to view progress and set a goal.";
 "goal.discard" = "Discard";
 "goal.paused_reply_hint" = "Paused for your input. Send a reply in chat or tap Continue.";
+"goal.section.goal" = "Goal";
+"goal.section.requirements" = "Requirements";
+"goal.section.work" = "Progress";
+"inspector.section.checklist" = "Checklist";
+"inspector.section.status" = "Session status";
+"inspector.section.tasks" = "Tasks";

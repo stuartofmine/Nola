@@ -19,6 +19,7 @@
     let adding = $state(false);
     let busy = $state(false);
     let error = $state('');
+    let readError = $state('');
     let disposed = false;
     let gate: ConfirmationHandle;
     let field = $state<HTMLInputElement>();
@@ -48,18 +49,18 @@
         });
         if (disposed) return;
         if (!Array.isArray(response.profiles)) throw Error(t($locale,'plugin.readError'));
-        profiles = response.profiles;
+        profiles = response.profiles; readError = '';
     }
     async function refresh() {
         if (disposed || busy) return;
         busy = true;
         error = '';
         try { await read(); }
-        catch (cause) { if (!disposed) { profiles = undefined; error = errorMessage(cause); } }
+        catch (cause) { if (!disposed) { readError = errorMessage(cause); } }
         finally { if (!disposed) busy = false; }
     }
     async function begin() {
-        if (disposed || busy || !usable) return;
+        if (disposed || busy || !!readError || !usable) return;
         chosen = profiles?.find(p => p.available)?.profile ?? '';
         draft = ''; error = ''; adding = true;
         await tick(); if (!disposed) field?.focus();
@@ -69,7 +70,7 @@
         await tick(); if (!disposed) addButton?.focus();
     }
     async function change(action:'install'|'remove', profile:Profile, source:string) {
-        if (disposed || busy || !profile.available || !source) return;
+        if (disposed || busy || !!readError || !profile.available || profile.error || !source) return;
         const verb = t($locale,action === 'install' ? 'plugin.install' : 'plugin.remove');
         const accepted = await gate.ask({
             title: verb + ' · ' + source,
@@ -86,7 +87,7 @@
         } catch (cause) { if (!disposed) error = errorMessage(cause); }
         if (disposed) return;
         try { await read(); }
-        catch (cause) { if (!disposed) { profiles = undefined; error = [error,errorMessage(cause)].filter(Boolean).join(' '); } }
+        catch (cause) { if (!disposed) { readError = errorMessage(cause); } }
         finally {
             if (!disposed) {
                 busy = false;
@@ -111,8 +112,11 @@
 <section class="library" aria-label={t($locale,'plugin.title')}>
     <header>
         <h1>{t($locale,adding ? 'plugin.add' : 'plugin.title')}</h1>
+        {#if !adding && profiles && !readError && !error && usable && !profileErrors.length}
+            <button class="library-refresh" disabled={busy} onclick={refresh}>{t($locale,'plugin.refresh')}</button>
+        {/if}
         {#if !adding && usable}
-            <button class="primary add" bind:this={addButton} disabled={busy} onclick={begin}><PrototypeIcon name="plus" size={16}/>{t($locale,'plugin.add')}</button>
+            <button class="primary add" bind:this={addButton} disabled={busy || !!readError} onclick={begin}><PrototypeIcon name="plus" size={16}/>{t($locale,'plugin.add')}</button>
         {/if}
     </header>
     {#if adding}
@@ -121,7 +125,7 @@
             <label>{t($locale,'plugin.destination')}<select bind:value={chosen} disabled={busy}>
                 {#each profiles ?? [] as profile}<option value={profile.profile} disabled={!profile.available}>{label(profile)}{profile.available ? '' : ' · '+t($locale,'plugin.runtimeMissing')}</option>{/each}
             </select></label>
-            <div class="form-actions"><button type="button" disabled={busy} onclick={end}>{t($locale,'shell.cancel')}</button><button class="primary" disabled={busy || !selected?.available || !draft.trim()}>{t($locale,'plugin.install')}</button></div>
+            <div class="form-actions"><button type="button" disabled={busy} onclick={end}>{t($locale,'shell.cancel')}</button><button class="primary" disabled={busy || !!readError || !selected?.available || !!selected.error || !draft.trim()}>{t($locale,'plugin.install')}</button></div>
         </form>
     {:else}
         {#if entries.length}
@@ -137,7 +141,7 @@
                         </div>
                         <details class="row-actions" use:dismissibleDisclosure>
                             <summary aria-label={t($locale,'plugin.more',{name:plugin.pages[0]?.title ?? plugin.links[0]?.title ?? info.name})}><PrototypeIcon name="more" size={18}/></summary>
-                            <div class="menu"><button class="danger" disabled={busy || !profile.available} onclick={event => {
+                            <div class="menu"><button class="danger" disabled={busy || !!readError || !profile.available || !!profile.error} onclick={event => {
                                 const details = event.currentTarget.closest('details');
                                 if (details) { details.open = false; details.querySelector('summary')?.focus(); }
                                 void change('remove',profile,plugin.source);
@@ -146,18 +150,20 @@
                     </li>
                 {/each}
             </ul>
-        {:else if profiles && !error && !profileErrors.length}
+        {:else if profiles && !error && !readError && !profileErrors.length}
             <p class="empty">{t($locale,usable ? 'plugin.empty' : 'plugin.noRuntime')}</p>
         {/if}
     {/if}
     {#if busy}<p class="feedback" role="status">{t($locale,'plugin.working')}</p>{/if}
-    {#if error || profileErrors.length || (profiles && !usable && !adding)}
-        <div class="feedback">{#if error || profileErrors.length}<div role="alert">{#if error}<p>{error}</p>{/if}{#each profileErrors as profile}<p>{label(profile)} · {profile.error}</p>{/each}</div>{/if}
+    {#if error || readError || profileErrors.length || (profiles && !usable && !adding)}
+        <div class="feedback">{#if error || readError || profileErrors.length}<div role="alert">{#if error}<p>{error}</p>{/if}{#if readError}<p>{readError}</p>{/if}{#each profileErrors as profile}<p>{label(profile)} · {profile.error}</p>{/each}</div>{/if}
             <button disabled={busy} onclick={refresh}>{t($locale,'plugin.refresh')}</button>
         </div>
     {/if}
 </section>
 <style>
+    .library-refresh { margin-inline-start: auto; }
+    header { flex-wrap: wrap; }
     .library { max-width: none; padding: 0; }
     header,.form-actions,li,.add { display:flex;align-items:center;gap:.6rem; }
     header { justify-content:space-between;gap:1rem;margin-bottom:1.35rem; }

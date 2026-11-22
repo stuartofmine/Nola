@@ -42,14 +42,29 @@ final class IOSFirstLaunchTests: XCTestCase {
         #endif
     }
 
-    private func launchWelcome() -> XCUIApplication {
+    private func launchWelcome(language: String = "en", locale: String = "en_US") -> XCUIApplication {
         continueAfterFailure = false
         let app = XCUIApplication()
-        app.launchArguments = ["-ui-testing", "-ui-testing-onboarding", "-AppleLanguages", "(en)", "-AppleLocale", "en_US"]
+        app.launchArguments = ["-ui-testing", "-ui-testing-onboarding", "-AppleLanguages", "(\(language))", "-AppleLocale", locale]
         app.launchEnvironment["NOLA_UI_TEST_RUN_ID"] = "first-launch-\(UUID())"
         app.launch()
         XCTAssertTrue(app.buttons["onboarding.chooseModel"].waitForExistence(timeout: 10))
         return app
+    }
+
+    func testChineseWelcomeAndProviderPresetsUseTheSelectedLanguage() {
+        let app = launchWelcome(language: "zh-Hans", locale: "zh_CN")
+        defer { app.terminate() }
+        for title in ["本机私密模型", "云端 API 服务", "Mac 上的 Nola Server"] {
+            XCTAssertTrue(app.staticTexts[title].exists, title)
+        }
+        let welcome = XCTAttachment(screenshot: app.screenshot())
+        welcome.name = "Chinese onboarding"
+        welcome.lifetime = .keepAlways
+        add(welcome)
+        app.buttons["onboarding.chooseModel"].tap()
+        XCTAssertTrue(app.textFields["model.setup.endpoint"].waitForExistence(timeout: 8))
+        XCTAssertTrue(app.staticTexts["服务商预设"].exists)
     }
 
     func testClosingSetupReturnsToWelcomeAndSkippingSurvivesRelaunch() {

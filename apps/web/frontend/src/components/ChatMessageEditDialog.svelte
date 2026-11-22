@@ -20,6 +20,7 @@
     }=$props();
     let draft=$state<EditedResendDraft>(untrack(()=>initial)), error=$state(''), sending=$state(false);
     let editor=$state<HTMLTextAreaElement>(), dialog=$state<HTMLDialogElement>();
+    const edited = $derived(draft.input.operation_id !== initial.input.operation_id || draft.input.edited_text !== draft.source.originalText);
     let copied=$state<'copied'|'manual'|null>(null);
     let opener: HTMLElement | null = null;
     let alive=true;
@@ -42,6 +43,7 @@
     }
     async function save(){
         if(sending||busy||ownerChanged||!draft.input.edited_text.trim())return;
+        const start = editor?.selectionStart, end = editor?.selectionEnd;
         sending=true;error='';
         try{
             if(draft.mentions?.length){
@@ -58,14 +60,29 @@
             else if('receipts' in completed)confirmEditedExpertResendCompletion(captured,completed);
             else confirmEditedResendAdmission(captured,completed.envelope,completed.receipt);
             if(alive&&!ownerChanged)onclose();
-        }catch(cause){if(alive)error=cause instanceof Error?cause.message:String(cause);}
-        finally{if(alive)sending=false;}
+        } catch (cause) {
+            if (alive) error = cause instanceof Error ? cause.message : String(cause);
+        }
+        finally {
+            if (alive) sending = false;
+        }
+        if (alive && error && !ownerChanged) {
+            await tick();
+            if (alive && !ownerChanged && editor) {
+                editor.focus({preventScroll:true});
+                if (start !== undefined && end !== undefined) editor.setSelectionRange(start, end);
+            }
+        }
     }
     function cancel(event:Event){event.preventDefault();if(!sending)onclose();}
     onDestroy(()=>{alive=false;});
 </script>
-<svelte:window onbeforeunload={event=>{if(acceptsWorkspaceUnload(event)&&(sending||draft.input.edited_text!==draft.source.originalText)){event.preventDefault();event.returnValue='';}}} />
-<dialog bind:this={dialog} use:portal aria-labelledby="message-edit-title" oncancel={cancel} onclick={event => { if (event.target === dialog && !sending) onclose(); }}>
+<svelte:window onbeforeunload={event=>{if(acceptsWorkspaceUnload(event)&&(sending||edited)){event.preventDefault();event.returnValue='';}}} />
+<dialog bind:this={dialog} use:portal aria-labelledby="message-edit-title" oncancel={cancel} onclick={event => {
+    if (event.target !== dialog || !dialog || sending || edited) return;
+    const bounds = dialog.getBoundingClientRect();
+    if (event.clientX < bounds.left || event.clientX > bounds.right || event.clientY < bounds.top || event.clientY > bounds.bottom) onclose();
+}}>
     <form onsubmit={event=>{event.preventDefault();void save();}}>
         <h2 id="message-edit-title">{label($locale,'edit')}</h2>
         <p class="muted">{label($locale,'detail')}</p>

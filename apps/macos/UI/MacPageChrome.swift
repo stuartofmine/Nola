@@ -1584,7 +1584,7 @@ struct MacRowDisclosureStyle: DisclosureGroupStyle {
         VStack(alignment: .leading, spacing: 6) {
             disclosureButton(configuration: configuration)
                 .accessibilityIdentifier(toggleIdentifier)
-                .accessibilityValue(Text(configuration.isExpanded ? "Expanded" : "Collapsed", tableName: "Chat"))
+                .accessibilityValue(configuration.isExpanded ? Text("Expanded", tableName: "Chat") : Text("Collapsed", tableName: "Chat"))
 
             if configuration.isExpanded {
                 configuration.content

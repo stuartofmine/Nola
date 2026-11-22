@@ -1,4 +1,5 @@
 <script lang="ts">
+    import { toolDisplayName } from '../lib/toolDisplayName';
     import { replyDisclosure } from '../lib/replyDisclosure';
     import {getContext} from 'svelte';
     import {MESSAGE_PART_READING,readingPartKey,type MessagePartReading,type DisclosureField} from '../lib/messagePartReading';
@@ -34,7 +35,7 @@
         if(!messageReading)userExpanded={owner,expanded:next};
         onexpandedchange?.(next);
     }
-    const title = $derived(tool?.title || t($locale, 'chatPage.toolActivity'));
+    const title = $derived(toolDisplayName($locale, part.value.capability_id, tool?.title) || t($locale, 'chatPage.toolActivity'));
     function structured(value: unknown): string {
         return typeof value === 'string' ? value : JSON.stringify(value, null, 2) ?? '';
     }

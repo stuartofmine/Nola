@@ -1781,48 +1781,24 @@ nonisolated enum MacToolTraceDisplayPolicy {
             return name.isEmpty ? $0 : name
         }
 
-        if ["list_dir", "list_directory", "file_tree"].contains(normalizedTitle) {
-            return titled(String(localized: "List folder"), target: fileTarget)
+        guard let name = AppleToolDisplayName.localized(trace.capabilityID) else { return nil }
+        switch normalizedTitle {
+        case "list_dir", "list_directory", "file_tree", "read_file", "read_text_file",
+             "read_many_files", "notebook_read", "file_outline", "read_symbol", "write_file",
+             "create_file", "append_file", "edit_file", "edit_file_lines", "multi_edit_file",
+             "notebook_edit", "apply_patch", "replace_text", "replace_symbol_body", "replace_in_files",
+             "rename_symbol", "format_files", "move_file", "delete_file", "remove_file":
+            return titled(name, target: fileTarget)
+        case "bash", "shell", "run_command", "execute_command", "bash_command_review",
+             "file_search", "find_files", "find_up", "grep", "glob", "search_files",
+             "ripgrep", "code_search", "workspace_symbols", "symbol_search",
+             "implementation_search", "document_search":
+            return titled(name, target: target)
+        case "workspace_status", "tool_search":
+            return name
+        default:
+            return nil
         }
-        if ["read_file", "read_text_file", "read_many_files", "notebook_read", "file_outline", "read_symbol"]
-            .contains(normalizedTitle) {
-            return titled(String(localized: "Read file"), target: fileTarget)
-        }
-        if ["write_file", "create_file", "append_file"].contains(normalizedTitle) {
-            return titled(String(localized: "Write file"), target: fileTarget)
-        }
-        if [
-            "edit_file", "edit_file_lines", "multi_edit_file", "notebook_edit",
-            "apply_patch", "replace_text", "replace_symbol_body", "replace_in_files",
-            "rename_symbol", "format_files", "move_file",
-        ].contains(normalizedTitle) {
-            return titled(String(localized: "Edit file"), target: fileTarget)
-        }
-        if ["delete_file", "remove_file"].contains(normalizedTitle) {
-            return titled(String(localized: "Delete file"), target: fileTarget)
-        }
-        if normalizedTitle == "bash"
-            || normalizedTitle.contains("shell")
-            || normalizedTitle.contains("command") {
-            return titled(String(localized: "Run command"), target: target)
-        }
-        if normalizedTitle == "workspace_status" {
-            return String(localized: "Inspect workspace")
-        }
-        if normalizedTitle == "tool_search" {
-            return String(localized: "Search")
-        }
-        if normalizedTitle.hasPrefix("tool_output_") {
-            return String(localized: "Read")
-        }
-        if [
-            "file_search", "find_files", "find_up", "grep", "glob", "search_files",
-            "ripgrep", "code_search", "workspace_symbols", "symbol_search",
-            "implementation_search", "document_search",
-        ].contains(normalizedTitle) {
-            return titled(String(localized: "Search"), target: target)
-        }
-        return nil
     }
 
     private static func titled(_ action: String, target: String?) -> String {

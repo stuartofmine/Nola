@@ -12,6 +12,9 @@ import androidx.compose.ui.test.junit4.createEmptyComposeRule
 import androidx.test.core.app.ActivityScenario
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
+import com.nola.data.local.CanonicalModelProfile
+import dagger.hilt.android.EntryPointAccessors
+import kotlinx.coroutines.runBlocking
 import com.nola.MainActivity
 import com.nola.R
 import com.nola.ui.WarmPaletteExpectations
@@ -413,6 +416,42 @@ class WorkspacePageMatrixTest {
     }
 
     @OptIn(ExperimentalTestApi::class)
+    @Test fun starterPromptReturnsFocusToDraftAtTheEnd() = runBlocking<Unit> {
+        requireIsolatedProductTestUser(context)
+        val deps = EntryPointAccessors.fromApplication(context, AndroidExpertNativeTestDependencies::class.java)
+        val runtime = deps.runtime()
+        val models = deps.modelRepository()
+        val prefs = deps.preferences()
+        val previous = prefs.defaultModelSelection(models.listConfiguredModels())
+        val profile = java.util.UUID.randomUUID().toString()
+        try {
+            runtime.upsertModelProfile(CanonicalModelProfile(profile, "Draft fixture", "openai-compatible", "draft-fixture", "remote",
+                """{"baseURL":"http://127.0.0.1:1/v1","wireProtocol":"responses","credentialRequired":false,"capabilities":["chat"]}""",
+                "{}", true, true, 0, 1, 1))
+            prefs.saveDefaultModelSelection(models.listConfiguredModels().single { it.profileId == profile })
+            ActivityScenario.launch(MainActivity::class.java).use {
+                enterWorkspace()
+                compose.onNodeWithTag("chat.conversations.new").performClick()
+                val input = compose.onNodeWithTag("chat.composer.input")
+                val title = context.getString(R.string.chat_suggestion_brainstorm_title)
+                val prompt = context.getString(R.string.chat_suggestion_brainstorm_prompt)
+                val starter = compose.onNodeWithText(title)
+                compose.onNodeWithText(context.getString(R.string.chat_empty_mode_cloud)).assertDoesNotExist()
+                starter.performScrollTo().performTouchInput { click() }
+                input.assertIsFocused().assertTextEquals(prompt)
+                input.performTextInputSelection(androidx.compose.ui.text.TextRange(1))
+                starter.performScrollTo().performClick()
+                input.assertIsFocused().performTextInput(" + detail")
+                input.assertTextEquals(prompt + " + detail")
+                capture("composer-starter-continue-typing")
+            }
+        } finally {
+            if (previous == null) prefs.clearDefaultModelSelection() else prefs.saveDefaultModelSelection(previous)
+            runtime.deleteModelProfile(profile, System.currentTimeMillis())
+        }
+    }
+
+    @OptIn(ExperimentalTestApi::class)
     @Test fun commandCompletionLeavesTheCursorAfterTheCommand() {
         requireIsolatedProductTestUser(context)
         ActivityScenario.launch(MainActivity::class.java).use {
@@ -494,7 +533,8 @@ class WorkspacePageMatrixTest {
         ActivityScenario.launch(MainActivity::class.java).use { activity ->
             enterWorkspace()
             tab(R.string.tab_activity)
-            fun chip(label: Int) = compose.onNode(hasText(context.getString(label)) and hasClickAction())
+            fun chip(label: Int) = compose.onNode(hasText(context.getString(label)) and hasClickAction() and !hasAnyAncestor(primaryNavigation))
+            chip(R.string.tab_chat).performClick().assertIsSelected()
             chip(R.string.activity_agent).performClick().assertIsSelected()
             chip(R.string.activity_plan).performClick().assertIsSelected()
             chip(R.string.activity_needs_response).performClick().assertIsSelected()
@@ -505,6 +545,9 @@ class WorkspacePageMatrixTest {
             compose.waitUntil(15_000) {
                 compose.onAllNodesWithText(context.getString(R.string.activity_empty_filter)).fetchSemanticsNodes().isNotEmpty()
             }
+            val filterBounds = chip(R.string.activity_needs_response).fetchSemanticsNode().boundsInRoot
+            val viewport = compose.onRoot().fetchSemanticsNode().boundsInRoot
+            org.junit.Assert.assertTrue("The complete response filter must remain visible", viewport.contains(filterBounds.topLeft) && filterBounds.right <= viewport.right)
             capture("activity-filtered-search")
             compose.onNodeWithContentDescription(context.getString(R.string.common_refresh)).performClick()
             compose.onNodeWithContentDescription(context.getString(R.string.scheduled_title)).performClick()
@@ -515,6 +558,10 @@ class WorkspacePageMatrixTest {
             search.assertTextContains(query)
             chip(R.string.activity_plan).assertIsSelected()
             chip(R.string.activity_needs_response).assertIsSelected()
+            compose.onNodeWithText(context.getString(R.string.notifications_reset_filters)).performClick()
+            chip(R.string.activity_all).assertIsSelected()
+            chip(R.string.activity_needs_response).assertIsNotSelected()
+            compose.onNode(hasSetTextAction() and hasText(query)).assertDoesNotExist()
         }
     }
 

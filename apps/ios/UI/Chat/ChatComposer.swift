@@ -180,10 +180,12 @@ struct ChatPasteAwareEditor: UIViewRepresentable {
                         view.text = restored.text
                         let range = NSRange(location: min(restored.caret, restored.text.utf16.count), length: 0)
                         view.selectedRange = range
+                        view.scrollRangeToVisible(range)
                         return true
                     }
                 }
                 view.selectedRange = NSRange(location: min(request.location, view.text.utf16.count), length: 0)
+                view.scrollRangeToVisible(view.selectedRange)
             }
             if context.coordinator.styledText != text || context.coordinator.styledMentions != mentionEditor.mentions {
                 context.coordinator.styledText = text
@@ -651,6 +653,7 @@ struct ChatComposer<ModelControl: View>: View {
     var mentionsVisible = false
     var mentionCommand: (String) -> Bool = { _ in false }
     var mentionEditor = AppleMentionEditor()
+    var draftOwner: ConversationComposerDraftStore.Owner? = nil
     let showsModelControl: Bool
     let modelControl: ModelControl
 
@@ -805,6 +808,7 @@ struct ChatComposer<ModelControl: View>: View {
                 mentionsVisible: mentionsVisible,
                 mentionCommand: mentionCommand, mentionEditor: mentionEditor
             )
+            .id(draftOwner)
             .accessibilityIdentifier("chat.composer.input")
             .focused(focus)
         }

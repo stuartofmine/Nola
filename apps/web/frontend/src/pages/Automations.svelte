@@ -10,7 +10,7 @@
     import { pushToast } from '../lib/toast';
     import ActionDisclosure from '../components/ActionDisclosure.svelte';
     import { onMount, tick } from 'svelte';
-    import { automationEditDraft, automationEditRequest, automationCanEdit } from '../lib/automations';
+    import { automationEditDraft, automationEditRequest, automationCanEdit, isAbsoluteWorkspaceRoot } from '../lib/automations';
     import { parseAutomationSkills, type AutomationSkill } from '../lib/automations';
     import { api as unscopedApi, ApiError } from '../lib/api';
     import { locale, t } from '../lib/i18n';
@@ -31,9 +31,14 @@
     let query = $state('');
     let filter = $state('all');
     let draft = $state(newAutomationDraft());
+    const workspaceHintId = $props.id();
+    let workspaceInput = $state<HTMLInputElement>();
+    let searchInput: HTMLInputElement;
+    let workspaceInvalid = $state(false);
     let draftBaseline = $state('');
     let creating = $state(false);
     let editing = $state<Automation>();
+    let revisionConflict = $state(false);
     let skills = $state<AutomationSkill[]>([]);
     let skillsFailed = $state(false);
     let skillsLoading = $state(false);
@@ -53,7 +58,7 @@
         editing = action ? structuredClone($state.snapshot(action)) : undefined;
         draft = editing ? automationEditDraft(editing) : newAutomationDraft();
         draftBaseline = JSON.stringify(draft);
-        creating = true; error = '';
+        creating = true; error = ''; workspaceInvalid = false; revisionConflict = false;
         void refreshSkills();
         await tick();
         if (!disposed && editorDialog && !editorDialog.open) editorDialog.showModal();
@@ -63,9 +68,9 @@
         event?.preventDefault();
         if (busy) return;
         const dirty = JSON.stringify(draft) !== draftBaseline;
-        if (dirty && !await confirmation.ask({ title: t($locale, 'automation.cancel'), description: t($locale, 'automation.discardBody'), confirmLabel: t($locale, 'automation.discard'), destructive: true })) return;
+        if (dirty && !await confirmation.ask({ title: t($locale, 'automation.discard'), cancelLabel: t($locale, 'automation.keepEditing'), description: t($locale, 'automation.discardBody'), confirmLabel: t($locale, 'automation.discard'), destructive: true })) return;
         if (editorDialog?.open) editorDialog.close();
-        creating = false; editing = undefined; draft = newAutomationDraft(); draftBaseline = '';
+        error = ''; creating = false; editing = undefined; draft = newAutomationDraft(); draftBaseline = '';
         await tick(); if (!disposed && pageLocation.active()) editorOpener?.focus();
     }
     let disposed = false;
@@ -79,8 +84,34 @@
         catch { if (!disposed) loadFailed = true; }
         finally { if (!disposed) busy = false; }
     }
+    async function reloadEditing() {
+        if (!editing || busy || !revisionConflict) return;
+        const accepted = await confirmation.ask({title: t($locale, 'automation.reloadTask'),
+            description: t($locale, 'automation.reloadDraftBody'), confirmLabel: t($locale, 'automation.reloadTask'),
+            cancelLabel: t($locale, 'automation.keepEditing'), destructive: true});
+        if (!accepted || disposed || !editing) return;
+        busy = true;
+        try {
+            const payload = await api('/api/scheduled-actions');
+            if (disposed) return;
+            const latest = parseAutomations(payload);
+            actions = latest; capabilities = automationCapabilities(payload);
+            const current = latest.find(item => item.id === editing?.id);
+            if (!current || !automationCanEdit(current)) { error = 'automation.editUnavailable'; return; }
+            const updated = automationEditDraft(current);
+            editing = current; draft = updated; draftBaseline = JSON.stringify(updated);
+            revisionConflict = false; workspaceInvalid = false; error = '';
+        } catch { if (!disposed) error = 'automation.loadFailed'; }
+        finally { if (!disposed) busy = false; }
+    }
     async function create() {
-        if (busy) return;
+        if (busy || revisionConflict) return;
+        if (!isAbsoluteWorkspaceRoot(draft.workspaceRoot)) {
+            workspaceInvalid = true;
+            await tick();
+            workspaceInput?.focus();
+            return;
+        }
         let body;
         try { body = editing ? automationEditRequest(editing, draft) : automationCreateRequest(draft); } catch { error = 'automation.invalidDraft'; return; }
         busy = true; error = ''; notice = ''; runConversationHref = undefined;
@@ -97,7 +128,12 @@
                 pushToast(t($locale, notice), 'success');
                 editing = undefined;
             }
-        } catch (cause) { if (!disposed) error = cause instanceof ApiError && cause.code === 'automation_revision_conflict' ? 'automation.approvalChanged' : editing ? 'automation.requestFailed' : 'automation.createFailed'; }
+        } catch (cause) {
+            if (!disposed) {
+                revisionConflict = !!editing && cause instanceof ApiError && cause.code === 'automation_revision_conflict';
+                error = revisionConflict ? 'automation.editConflict' : editing ? 'automation.requestFailed' : 'automation.createFailed';
+            }
+        }
         finally { if (!disposed) busy = false; }
         if (!disposed && !creating) { await refresh(); await tick(); if (!disposed && pageLocation.active()) editorOpener?.focus(); }
     }
@@ -155,21 +191,20 @@
 
 <ConfirmationDialog bind:this={confirmation} />
 <svelte:head>{#if pageLocation.active()}<title>{t($locale, 'automation.title')} · Nola</title>{/if}</svelte:head>
-<svelte:window onbeforeunload={event => { if (!acceptsWorkspaceUnload(event)) return; if (creating || busy) event.preventDefault(); }} />
+<svelte:window onbeforeunload={event => { if (!acceptsWorkspaceUnload(event)) return; if (busy || (creating && JSON.stringify(draft) !== draftBaseline)) event.preventDefault(); }} />
 <section>
     <header class="page-header" class:embedded-header={embedded}>{#if !embedded}<div><h1>{t($locale, 'automation.title')}</h1><p class="muted">{t($locale, 'automation.subtitle')}</p></div>{/if}<div class="actions"><button disabled={busy} onclick={refresh}>{t($locale, 'automation.refresh')}</button><button class="primary" disabled={busy || creating} onclick={() => openEditor()}>{t($locale, 'automation.create')}</button></div></header>
     <div class="content management-content" class:embedded-content={embedded}>
     {#if loaded}<aside role="status">{t($locale, capabilities.scheduledDispatch ? 'automation.scheduledAvailable' : capabilities.manualRun ? 'automation.hostScheduleHint' : 'automation.executionUnavailable')}</aside>{/if}
     {#if loadFailed}<p role="alert" class="error">{t($locale, 'automation.loadFailed')}</p>{/if}
-    {#if error}<p role="alert" class="error">{t($locale, error)}</p>{/if}
+    {#if error && !creating}<p role="alert" class="error">{t($locale, error)}</p>{/if}
     {#if notice}<p role="status">{t($locale, notice)}</p>{/if}
     {#if runConversationHref}<a class="button" href={runConversationHref}>{t($locale, 'modelTest.openConversation')}</a>{/if}
     <dialog use:ownDialog bind:this={editorDialog} class="automation-dialog" oncancel={closeEditor} onclick={event => { if (event.target === editorDialog && !busy) void closeEditor(); }} aria-label={t($locale, editing ? 'automation.edit' : 'automation.createTitle')}>
         {#if creating}
         <form bind:this={formElement} onsubmit={event => { event.preventDefault(); void create(); }}>
             <h2>{t($locale, editing ? 'automation.edit' : 'automation.createTitle')}</h2>
-            <p class="muted">{t($locale, 'automation.executionContractHint')}</p>
-            {#if error}<p role="alert" class="error">{t($locale, error)}</p>{/if}
+            <div class="editor-body">
             {#if editing && draft.format === 'script'}<p>{t($locale, 'automation.editScriptHint')}</p>{/if}
             <fieldset disabled={busy}>
                 <label>{t($locale, 'automation.name')}<input bind:value={draft.name} required /></label>
@@ -181,12 +216,16 @@
                 {:else if draft.format !== 'agent'}
                     <label>{t($locale, draft.format === 'search' ? 'automation.query' : ['file', 'folder'].includes(draft.format) ? 'automation.path' : 'automation.url')}<input bind:value={draft.source} required /></label>
                 {/if}
+                {#if draft.format !== 'agent'}<p class="muted">{t($locale, 'automation.executionContractHint')}</p>{/if}
                 <label>{t($locale, 'automation.prompt')}<textarea bind:value={draft.prompt} rows="3" required></textarea></label>
-                <label>{t($locale, 'automation.workspaceRoot')}<input bind:value={draft.workspaceRoot} required /></label>
+                <label>{t($locale, 'automation.workspaceRoot')}<input bind:this={workspaceInput} bind:value={draft.workspaceRoot} oninput={() => workspaceInvalid = false}
+                    aria-invalid={workspaceInvalid || undefined} aria-describedby={workspaceInvalid ? workspaceHintId : undefined} required /></label>
+                {#if workspaceInvalid}<p id={workspaceHintId} role="alert" class="error">{t($locale, 'automation.workspacePathHint')}</p>{/if}
                 <label>{t($locale, 'automation.permissionProfile')}<select bind:value={draft.permissionProfile} required><option value="" disabled>{t($locale, 'automation.selectPermission')}</option>{#each ['cautious', 'allow_all'] as profile}<option value={profile}>{t($locale, `automation.permission.${profile}`)}</option>{/each}</select></label>
                 <div class="readonly-field"><span class="field-label">{t($locale, 'automation.modelSelection')}</span><span class="readonly-value">{t($locale, 'automation.currentDefault')}</span></div>
-                <fieldset aria-label={t($locale, 'automation.skills')}>
-                    <legend>{t($locale, 'automation.skills')}</legend>
+                <details class="skill-picker" open={skillsFailed || undefined}>
+                    <summary>{t($locale, 'automation.skills')}{#if draft.skillIds.length} · {draft.skillIds.length}{/if}</summary>
+                    <div class="skill-options">
                     {#if skillsLoading}<p role="status">{t($locale, 'automation.loading')}</p>{/if}
                     {#if skillsFailed}<p role="alert" class="error">{t($locale, 'automation.skillsFailed')}</p><button type="button" onclick={refreshSkills}>{t($locale, 'automation.refresh')}</button>{/if}
                     {#each skills as skill (skill.id)}
@@ -196,19 +235,36 @@
                         <label class="skill-option"><input type="checkbox" value={id} bind:group={draft.skillIds} /> <span>{id} — {t($locale, 'automation.skillUnavailable')}</span></label>
                     {/each}
                     <p class="muted">{t($locale, 'automation.skillsHint')}</p>
-                </fieldset>
+                    </div>
+                </details>
                 <fieldset class="schedule-fields" disabled={!capabilities.scheduledDispatch}><legend>{t($locale, 'automation.schedule')}</legend>
                 {#if !capabilities.scheduledDispatch}<p class="muted">{t($locale, 'automation.hostScheduleHint')}</p>{/if}
                 <div class="grid"><label>{t($locale, 'automation.frequency')}<select bind:value={draft.frequency}><option value="daily">{t($locale, 'automation.daily')}</option><option value="weekly">{t($locale, 'automation.weekly')}</option></select></label><label>{t($locale, 'automation.time')}<input type="time" bind:value={draft.time} required /></label>
                 {#if draft.frequency === 'weekly'}<label>{t($locale, 'automation.weekday')}<select bind:value={draft.weekday}>{#each [1, 2, 3, 4, 5, 6, 7] as day}<option value={day}>{automationWeekday(day, $locale)}</option>{/each}</select></label>{/if}</div>
                 <p class="muted">{t($locale, 'automation.localTimezone')}</p></fieldset>
-                <div class="buttons actions"><button type="button" onclick={() => closeEditor()}>{t($locale, 'automation.cancel')}</button><button class="primary" type="submit">{t($locale, busy ? 'models.saving' : 'automation.save')}</button></div>
             </fieldset>
+            </div>
+            <footer>
+                {#if error}<p role="alert" class="error">{t($locale, error)}</p>{/if}
+                <div class="buttons actions">
+                    <button type="button" disabled={busy} onclick={() => closeEditor()}>{t($locale, 'automation.cancel')}</button>
+                    {#if revisionConflict}
+                        <button type="button" class="primary" disabled={busy} onclick={reloadEditing}>{t($locale, 'automation.reloadTask')}</button>
+                    {:else}
+                        <button class="primary" type="submit" disabled={busy}>{t($locale, busy ? 'models.saving' : 'automation.save')}</button>
+                    {/if}
+                </div>
+            </footer>
         </form>
         {/if}
     </dialog>
-    <div class="filters"><label>{t($locale, 'automation.search')}<input type="search" bind:value={query} placeholder={t($locale, 'automation.searchPlaceholder')} /></label><label>{t($locale, 'automation.filter')}<select bind:value={filter}>{#each ['all', 'enabled', 'disabled', 'pending'] as value}<option value={value}>{t($locale, `automation.${value}`)}</option>{/each}</select></label></div>
-    {#if !loaded && busy}<p role="status">{t($locale, 'automation.loading')}</p>{:else if loaded && !visible.length}<p>{t($locale, actions.length ? 'automation.noMatches' : 'automation.empty')}</p>{/if}
+    <div class="filters"><label>{t($locale, 'automation.search')}<input type="search" bind:this={searchInput} bind:value={query} placeholder={t($locale, 'automation.searchPlaceholder')} /></label><label>{t($locale, 'automation.filter')}<select bind:value={filter}>{#each ['all', 'enabled', 'disabled', 'pending'] as value}<option value={value}>{t($locale, `automation.${value}`)}</option>{/each}</select></label></div>
+    {#if !loaded && busy}<p role="status">{t($locale, 'automation.loading')}</p>{:else if loaded && !loadFailed && !visible.length}
+        {#if filter !== 'all' || query.trim()}
+            <p role="status">{t($locale, 'automation.noMatches')}</p>
+            <button onclick={() => {query = ''; filter = 'all'; searchInput.focus();}}>{t($locale, 'activity.clear_filters')}</button>
+        {:else}<p>{t($locale, 'automation.empty')}</p>{/if}
+    {/if}
     {#each visible as action (action.id)}
         {@const executionSpec = automationExecutionSpec(action)}
         {@const script = automationScript(action)}
@@ -226,6 +282,17 @@
 </section>
 
 <style>
+    .automation-dialog {padding: 0; overflow: hidden;}
+    .automation-dialog form {display: flex; flex-direction: column; gap: 0; max-height: calc(100dvh - 40px);}
+    .automation-dialog h2 {margin: 0; padding: 16px 20px; border-bottom: 1px solid var(--border);}
+    .automation-dialog footer {flex: none; padding: 12px 20px; border-top: 1px solid var(--border);}
+    .automation-dialog footer p {margin: 0 0 8px;}
+    .editor-body {min-height: 0; overflow-y: auto; overscroll-behavior: contain; padding: 16px 20px;}
+    .skill-picker {border-block: 1px solid var(--border);}
+    .skill-picker summary {padding-block: 12px; font-weight: 500;}
+    .skill-options {display: grid; gap: 4px; padding-bottom: 8px;}
+    .skill-picker .skill-option {min-height: 40px; cursor: pointer;}
+
     .embedded-header { padding: 0 0 12px; justify-content: flex-end; }
     .embedded-content { padding: 0; max-width: none; }
     .automation-row { display: grid; gap: 12px; border-top: 1px solid var(--border); padding: 24px 0; min-width: 0; }

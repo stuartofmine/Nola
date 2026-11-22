@@ -395,8 +395,7 @@ struct MacConversationSearchBar: View {
 }
 
 struct MacEmptyConversationView: View {
-    @Bindable var model: MacWorkspaceModel
-    var composerFocused: FocusState<Bool>.Binding
+    let onSuggestion: (String) -> Void
 
     private struct Suggestion {
         let title: String
@@ -431,26 +430,20 @@ struct MacEmptyConversationView: View {
                 VStack(spacing: compact ? 12 : 20) {
                     Spacer(minLength: compact ? 12 : 44)
 
-                    VStack(spacing: 8) {
-                        Text("What should we work on?")
-                            .accessibilityIdentifier("chat.empty-state.title")
-                            .font(.system(size: compact ? 23 : 29, weight: .semibold))
-                            .foregroundStyle(Color("NolaTextPrimary"))
-                            .multilineTextAlignment(.center)
-                        Text("Ask a question, open a workspace, or bring in a document.")
-                            .font(.system(size: 14))
-                            .foregroundStyle(Color("NolaTextSecondary"))
-                            .multilineTextAlignment(.center)
-                    }
+                    Text("What should we work on?")
+                        .accessibilityIdentifier("chat.empty-state.title")
+                        .accessibilityAddTraits(.isHeader)
+                        .font(.system(size: compact ? 23 : 29, weight: .semibold))
+                        .foregroundStyle(Color("NolaTextPrimary"))
+                        .multilineTextAlignment(.center)
 
                     ViewThatFits(in: .horizontal) {
                         HStack(spacing: 8) {
                             ForEach(suggestions, id: \.title) { suggestion in
                                 suggestionButton(suggestion)
-                                    .frame(maxWidth: .infinity)
                             }
                         }
-                        .frame(maxWidth: 620)
+                        .fixedSize(horizontal: true, vertical: false)
 
                         VStack(spacing: 8) {
                             ForEach(suggestions, id: \.title) { suggestion in
@@ -462,7 +455,7 @@ struct MacEmptyConversationView: View {
 
                     Spacer(minLength: compact ? 16 : 80)
                 }
-                .frame(maxWidth: .infinity)
+                .frame(maxWidth: .infinity, minHeight: viewport.size.height)
                 .padding(.horizontal, 32)
             }
         }
@@ -470,8 +463,7 @@ struct MacEmptyConversationView: View {
 
     private func suggestionButton(_ suggestion: Suggestion) -> some View {
         Button {
-            model.draft = suggestion.prompt
-            composerFocused.wrappedValue = true
+            onSuggestion(suggestion.prompt)
         } label: {
             HStack(spacing: 9) {
                 Image(systemName: suggestion.symbol)
@@ -479,14 +471,15 @@ struct MacEmptyConversationView: View {
                     .foregroundStyle(Color.accentColor)
                     .frame(width: 18)
                 Text(suggestion.title)
-                    .font(.system(size: 12.5, weight: .semibold))
-                    .lineLimit(1)
+                    .font(.body.weight(.medium))
+                    .fixedSize(horizontal: false, vertical: true)
             }
             .padding(.horizontal, 12)
             .frame(maxWidth: .infinity, minHeight: 42)
             .contentShape(Rectangle())
         }
         .buttonStyle(MacActionButtonStyle(contentInsets: .init()))
+        .accessibilityIdentifier("chat.suggestion." + suggestion.symbol)
         .help(suggestion.prompt)
     }
 }

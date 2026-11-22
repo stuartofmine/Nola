@@ -17,6 +17,43 @@ nonisolated private final class LockedNotificationCounter: @unchecked Sendable {
 
 @Suite("iOS Notification Stores and Manager Suite")
 struct IOSNotificationStoreAndManagerSuiteTests {
+    @Test("Notification history retries the same page, preserves rows on refresh failure, and isolates searches")
+    func historyPageRecovery() throws {
+        var history = NotificationHistoryPages()
+        let all = NotificationHistoryPages.Scope(filter: .all, query: "")
+        let unread = NotificationHistoryPages.Scope(filter: .unread, query: "budget")
+        let a = NotificationEntity(requestId: "a"), b = NotificationEntity(requestId: "b")
+        let c = NotificationEntity(requestId: "c")
+        try history.read(scope: all, more: false, limit: 2) { _ in [a, b] }
+        #expect(throws: CocoaError.self) {
+            try history.read(scope: all, more: false, limit: 2) { _ in throw CocoaError(.fileReadUnknown) }
+        }
+        #expect(!history.retryMore && history.items.count == 2)
+        #expect(throws: CocoaError.self) {
+            try history.read(scope: all, more: true, limit: 2) { offset in
+                #expect(offset == 2)
+                throw CocoaError(.fileReadUnknown)
+            }
+        }
+        #expect(history.retryMore)
+        try history.read(scope: all, more: true, limit: 2) { offset in
+            #expect(offset == 2)
+            return [b, c]
+        }
+        #expect(history.items.map(\.id) == [a.id, b.id, c.id])
+        try history.read(scope: unread, more: true, limit: 2) { _ in
+            Issue.record("New filters cannot reuse another list’s offset")
+            return []
+        }
+        #expect(throws: CocoaError.self) {
+            try history.read(scope: unread, more: false, limit: 2) { offset in
+                #expect(offset == 0)
+                throw CocoaError(.fileReadUnknown)
+            }
+        }
+        #expect(history.scope == unread && history.items.isEmpty && !history.hasMore)
+    }
+
     @Test("FileBasedNotificationStore persists across reopen and reads off UI executor")
     func fileBasedNotificationStorePersistenceAndBackgroundProjection() async throws {
         let filename = "notification_suite_test_\(UUID().uuidString).json"

@@ -28,6 +28,8 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
+import androidx.compose.foundation.text.KeyboardActions
+import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
@@ -67,6 +69,8 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.platform.LocalFocusManager
+import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.contentDescription
@@ -99,6 +103,7 @@ fun NotificationCenterScreen(
     var selectedNotificationId by rememberSaveable { mutableStateOf<String?>(null) }
     var query by rememberSaveable { mutableStateOf("") }
     var unreadOnly by rememberSaveable { mutableStateOf(false) }
+    val focus = LocalFocusManager.current
     val normalizedQuery = query.trim()
     val visibleNotifications = state.notifications.filter { notification ->
         (!unreadOnly || !notification.isRead) && (
@@ -172,6 +177,8 @@ fun NotificationCenterScreen(
                         .fillMaxWidth()
                         .padding(horizontal = NolaSpacing.lg, vertical = NolaSpacing.sm),
                     singleLine = true,
+                    keyboardOptions = KeyboardOptions(imeAction = ImeAction.Search),
+                    keyboardActions = KeyboardActions(onSearch = { focus.clearFocus() }),
                     shape = RoundedCornerShape(12.dp),
                     colors = OutlinedTextFieldDefaults.colors(
                         unfocusedContainerColor = MaterialTheme.colorScheme.surfaceContainer,
@@ -243,10 +250,8 @@ fun NotificationCenterScreen(
                             color = MaterialTheme.colorScheme.onTertiaryContainer,
                             modifier = Modifier.weight(1f)
                         )
-                        if (state.hasLoadError) {
-                            Button(onClick = viewModel::loadNotifications, enabled = !state.isLoading) {
-                                Text(stringResource(R.string.notifications_retry))
-                            }
+                        Button(onClick = viewModel::loadNotifications, enabled = !state.isLoading) {
+                            Text(stringResource(R.string.notifications_retry))
                         }
                     }
                 }
@@ -256,18 +261,14 @@ fun NotificationCenterScreen(
                 state.isLoading && state.notifications.isEmpty() -> Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
                     CircularProgressIndicator()
                 }
-                state.hasLoadError && state.notifications.isEmpty() -> Column(
-                    modifier = Modifier.fillMaxWidth().padding(NolaSpacing.xl),
-                    horizontalAlignment = Alignment.Start,
-                    verticalArrangement = Arrangement.spacedBy(8.dp)
-                ) {
-                    NolaEmptyState(
-                        icon = Icons.Filled.ErrorOutline,
-                        title = stringResource(R.string.notifications_load_failed),
-                        message = stringResource(R.string.notifications_load_failed_message)
-                    )
-                    Button(onClick = viewModel::loadNotifications) { Text(stringResource(R.string.notifications_retry)) }
-                }
+                (state.hasLoadError || state.hasSyncWarning) && state.notifications.isEmpty() -> NolaEmptyState(
+                    icon = Icons.Filled.ErrorOutline,
+                    title = stringResource(R.string.notifications_load_failed),
+                    message = if (state.hasLoadError) stringResource(R.string.notifications_load_failed_message) else null,
+                    action = {
+                        Button(onClick = viewModel::loadNotifications) { Text(stringResource(R.string.notifications_retry)) }
+                    }
+                )
                 visibleNotifications.isEmpty() -> NolaEmptyState(
                     icon = if (normalizedQuery.isNotEmpty()) Icons.Filled.Search else Icons.Filled.Notifications,
                     title = stringResource(when {
@@ -283,10 +284,10 @@ fun NotificationCenterScreen(
                     action = if (normalizedQuery.isNotEmpty() || unreadOnly) {
                         {
                             Button(onClick = {
-                                query = ""
-                                unreadOnly = false
+                                if (normalizedQuery.isNotEmpty()) query = "" else unreadOnly = false
+                                focus.clearFocus()
                             }) {
-                                Text(stringResource(R.string.notifications_reset_filters))
+                                Text(stringResource(if (normalizedQuery.isNotEmpty()) R.string.notifications_clear_search else R.string.notifications_filter_all_v2))
                             }
                         }
                     } else null,

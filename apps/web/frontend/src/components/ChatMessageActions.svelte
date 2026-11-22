@@ -113,7 +113,7 @@
                 {/if}
             </ActionDisclosure>
         {/if}
-        {#if notice}<span role={noticeError ? 'alert' : 'status'} class:error={noticeError}>{t($locale, notice)}</span>{/if}
+        {#if notice}<span class:copy-status={notice === 'chatPage.textCopied'} role={noticeError ? 'alert' : 'status'} class:error={noticeError}>{t($locale, notice)}</span>{/if}
         {#if manualCopy !== null}<textarea bind:this={copyField} readonly value={manualCopy} aria-label={t($locale, 'shell.markdown.copy')} rows="3"></textarea>{/if}
     </div>
 {/if}
@@ -123,16 +123,13 @@
 {/if}
 
 <style>
-    .message-actions { display: flex; flex-wrap: wrap; gap: 2px; align-items: center; margin-top: 5px; font-size: 12px; color: var(--muted); transition: opacity var(--motion-fast) ease; }
-    @media (hover: hover) and (min-width: 761px) {
-        .message-actions { opacity: .45; }
-        .message-actions:hover, .message-actions:focus-within, :global(article:hover) .message-actions, :global(article:focus-within) .message-actions { opacity: 1; }
-    }
+    .message-actions { display: flex; flex-wrap: wrap; gap: 2px; align-items: center; margin-top: 5px; font-size: 12px; color: var(--muted); }
+    .copy-status { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
     button { display:inline-flex; align-items:center; gap:5px; min-height: var(--control-hit-size); padding: 6px 8px; font-size: 12px; border: 0; box-shadow: none; background: transparent; color: var(--muted); }
     button:hover:not(:disabled) { background: var(--panel); color: var(--content); }
     button:active:not(:disabled) { background: var(--accent-subtle); color: var(--content); }
-    button.copy-action:hover:not(:disabled) { background: var(--panel); color: var(--content); }
-    button.copy-action:active:not(:disabled) { background: var(--accent-subtle); color: var(--content); }
+    button.copy-action:hover:not(:disabled) { background: transparent; color: var(--content); }
+    button.copy-action:active:not(:disabled) { background: transparent; color: var(--content); }
     svg { flex-shrink:0; width:14px; height:14px; fill:none; stroke:currentColor; stroke-width:1.6; }
     textarea { flex: 1 0 100%; min-width: 0; max-width: 100%; max-height: 180px; box-sizing: border-box; background: var(--canvas); color: inherit; border: 1px solid var(--border); border-radius: 7px; padding: 8px; }
     @media (max-width: 760px) {

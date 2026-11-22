@@ -44,6 +44,22 @@ internal class ConversationComposerDraft(
         override fun component1() = value
         override fun component2(): (String) -> Unit = { value = it }
     }
+    fun insertSuggestion(prompt: String) {
+        val draft = text.value
+        if (draft == prompt || draft.endsWith("\n$prompt")) return
+        val separator = if (draft.isEmpty() || draft.endsWith('\n')) "" else "\n"
+        val next = draft + separator + prompt
+        caret = next.length
+        setContent(next, mentions)
+    }
+    val hasComposerContent get() = text.value.isNotEmpty() || attachments.value.isNotEmpty()
+
+    fun restoreRetryTextIfEmpty(previousText: String?) {
+        if (hasComposerContent || previousText.isNullOrEmpty()) return
+        caret = previousText.length
+        setContent(previousText, emptyList())
+    }
+
     val textEdited get() = content.edited
     fun restoreText(text: String, mentions: List<InlineExpertMention>) = content.restoreIfUnedited(text to mentions)
     var caret: Int? = null

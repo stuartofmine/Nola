@@ -1363,7 +1363,7 @@
         "de" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Der Nola-Server-Stream wurde beendet, bevor der Lauf einen Endzustand erreicht hat."
+            "value" : "Der Nola Server-Stream endete, bevor der Lauf einen Endstatus erreicht hatte."
           }
         },
         "en" : {
@@ -1375,43 +1375,43 @@
         "es" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "El flujo de Nola Server terminó antes de que la ejecución alcanzara un estado final."
+            "value" : "La secuencia de Nola Server terminó antes de que la ejecución alcanzara un estado terminal."
           }
         },
         "fr" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Le flux Nola Server s’est interrompu avant que l’exécution atteigne un état final."
+            "value" : "Le flux Nola Server s’est arrêté avant que l’exécution atteigne un état terminal."
           }
         },
         "ja" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "実行が終了状態になる前に Nola Server のストリームが切断されました。"
+            "value" : "Nola Server ストリームが終了状態に到達する前に終了しました。"
           }
         },
         "ko" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "실행이 종료 상태에 도달하기 전에 Nola Server 스트림이 종료되었습니다."
+            "value" : "Nola Server 스트림이 종료 상태에 도달하기 전에 종료되었습니다."
           }
         },
         "ru" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Поток Nola Server завершился до перехода выполнения в конечное состояние."
+            "value" : "Поток Nola Server завершился до того, как выполнение достигло терминального состояния."
           }
         },
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "运行尚未进入终态，Nola 服务器连接已中断。"
+            "value" : "在执行到达终止状态之前，Nola Server 流已结束。"
           }
         },
         "zh-Hant" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "執行尚未進入終態，Nola 伺服器連線已中斷。"
+            "value" : "在執行到達終止狀態之前，Nola Server 串流已結束。"
           }
         }
       }

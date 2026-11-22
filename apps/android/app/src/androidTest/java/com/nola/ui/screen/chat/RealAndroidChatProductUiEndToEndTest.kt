@@ -73,7 +73,8 @@ class RealAndroidChatProductUiEndToEndTest {
     ): Boolean {
         val context = InstrumentationRegistry.getInstrumentation().targetContext
         val resource = com.nola.ui.components.hostToolDisplayNameStringRes(tool)
-        val displayName = resource?.let(context::getString)
+        val displayName = com.nola.ui.components.BuiltinToolNames.label(tool, null, context.resources.configuration.locales[0])
+            ?: resource?.let(context::getString)
             ?: context.getString(R.string.chat_host_tool_name_unknown_format, tool)
         val title = context.getString(R.string.permission_required_title, displayName)
         val permissionTitle = composeRule.onAllNodesWithText(title, useUnmergedTree = true)

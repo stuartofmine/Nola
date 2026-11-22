@@ -74,6 +74,7 @@ import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalUriHandler
+import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.semantics.SemanticsPropertyKey
 import androidx.compose.ui.semantics.semantics
@@ -194,7 +195,9 @@ internal fun hostToolDisplayNameStringRes(toolName: String): Int? {
 }
 
 @Composable
-internal fun hostToolDisplayName(toolName: String): String {
+internal fun hostToolDisplayName(toolName: String, title: String? = null): String {
+    BuiltinToolNames.label(toolName, title, LocalConfiguration.current.locales[0])?.let { return it }
+    if (!title.isNullOrBlank() && title != toolName) return title
     val normalized = toolName.trim()
     val resource = hostToolDisplayNameStringRes(normalized)
     return when {

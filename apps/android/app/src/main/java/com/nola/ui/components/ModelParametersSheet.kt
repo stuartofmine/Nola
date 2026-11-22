@@ -47,7 +47,7 @@ import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import com.nola.R
-import java.util.Locale
+import androidx.compose.ui.platform.LocalConfiguration
 import kotlin.math.abs
 import kotlin.math.roundToInt
 
@@ -70,6 +70,7 @@ fun ModelParametersContent(
     modifier: Modifier = Modifier,
 ) {
     val baseline = remember(draftVersion) { parameters }
+    val displayLocale = LocalConfiguration.current.locales[0]
     val defaults = remember { com.nola.domain.model.ModelParameters() }
     var temperature by remember(draftVersion) { mutableFloatStateOf(parameters.temperature.coerceIn(0f, 2f)) }
     var topP by remember(draftVersion) { mutableFloatStateOf(parameters.topP.coerceIn(0f, 1f)) }
@@ -171,7 +172,7 @@ fun ModelParametersContent(
                 Spacer(Modifier.height(8.dp))
                 SliderParameterField(
                     label = stringResource(R.string.models_temperature),
-                    valueText = String.format(Locale.US, "%.2f", temperature),
+                    valueText = String.format(displayLocale, "%.2f", temperature),
                     value = temperature,
                     valueRange = 0f..2f,
                     enabled = !saving,
@@ -179,7 +180,7 @@ fun ModelParametersContent(
                 )
                 SliderParameterField(
                     label = stringResource(R.string.models_top_p),
-                    valueText = String.format(Locale.US, "%.2f", topP),
+                    valueText = String.format(displayLocale, "%.2f", topP),
                     value = topP,
                     valueRange = 0f..1f,
                     enabled = !saving,

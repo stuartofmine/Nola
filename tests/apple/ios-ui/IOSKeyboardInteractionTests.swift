@@ -142,6 +142,30 @@ final class IOSKeyboardInteractionTests: XCTestCase {
         XCTAssertEqual(token.value as? String, filled)
     }
 
+    func testConnectFocusesTheFieldThatNeedsCorrection() {
+        let app = launch()
+        defer { app.terminate() }
+        app.tapRootTab("settings")
+        app.buttons["settings.category.agent"].tap()
+        app.buttons["Plugins"].tap()
+        app.buttons["intelligence.harness.plugins"].tap()
+        let connect = app.buttons["model.web_host.connect"]
+        let address = app.textFields["model.web_host.url_field"]
+        let token = app.secureTextFields["model.web_host.token_field"]
+        XCTAssertTrue(connect.waitForExistence(timeout: 6))
+        connect.tap()
+        XCTAssertTrue(app.keyboards.firstMatch.waitForExistence(timeout: 4))
+        app.typeText("http://127.0.0.1")
+        XCTAssertEqual(address.value as? String, "http://127.0.0.1")
+        connect.tap()
+        let error = app.descendants(matching: .any)["model.web_host.validation_error"].firstMatch
+        XCTAssertTrue(error.label.contains("Enter the access token"), error.label)
+        app.typeText("fixture")
+        XCTAssertEqual(address.value as? String, "http://127.0.0.1")
+        XCTAssertNotEqual(token.value as? String, token.placeholderValue)
+        capture("host-correct-token", app)
+    }
+
     func testBlankTapAndFocusChangesInHostSheet() throws {
         // This test owns the port and never listens, so the connection must fail.
         let (fd, addressText) = try bindLoopbackPort()

@@ -28,9 +28,11 @@ test('header model menu displays selected names, groups and management in every 
         assert.ok(html.includes('href="/models"'));
     }
 });
-test('unavailable catalog preserves management and disables selection', () => {
+test('unavailable catalog offers recovery without presenting a dead model choice', () => {
+    locale.set('en');
     const html = render(Menu, { props: { selection: { choice: 'cloud:missing', disabled: true, errorKey: 'chatSession.catalogFailed', options: [] }, onselect() {}, onsettings() {}, onreload() {} } }).body;
-    assert.ok(html.includes('disabled'));
+    assert.doesNotMatch(html, /aria-pressed=/);
+    assert.ok(html.includes(t('en', 'chatSession.configureModel')));
     assert.ok(html.includes('role="status"'));
     assert.ok(html.includes('href="/models"'));
 });

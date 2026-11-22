@@ -20,6 +20,8 @@ const fs = require('node:fs');
         assert.equal(await page.locator('#choice').textContent(), 'one');
         assert.equal(await summary.evaluate(e => e === document.activeElement), true);
         await page.keyboard.press('ArrowUp');
+        assert.equal(await page.locator('.choices [aria-pressed="true"]').evaluate(e => e === document.activeElement), true);
+        await page.keyboard.press('End');
         assert.equal(await page.locator('.choices a').evaluate(e => e === document.activeElement), true);
         await page.keyboard.press('Escape');
         assert.equal(await summary.evaluate(e => e === document.activeElement), true);

@@ -33,36 +33,34 @@ struct ChatEmptyStateCard: View {
                     .font(.title2.weight(.semibold))
                     .foregroundStyle(DesignTokens.contentColor)
 
-                Text(emptyStateDescription)
-                    .font(.subheadline)
-                    .foregroundStyle(DesignTokens.secondaryContentColor)
-                    .multilineTextAlignment(.center)
-                    .padding(.horizontal, 18)
-                    .accessibilityIdentifier("chat.empty.description")
+                if let emptyStateDescription {
+                    Text(emptyStateDescription)
+                        .font(.subheadline)
+                        .foregroundStyle(DesignTokens.secondaryContentColor)
+                        .multilineTextAlignment(.center)
+                        .padding(.horizontal, 18)
+                        .accessibilityIdentifier("chat.empty.description")
+                }
             }
 
             if hasModels && modelIsReady {
-                LazyVGrid(
-                    columns: suggestionColumns,
-                    spacing: 10
-                ) {
-                    ForEach(suggestions, id: \.1) { item in
-                        Button(action: { onSuggestion(item.1) }) {
-                            suggestionLabel(icon: item.0, title: item.1)
-                            .padding(horizontalSizeClass == .compact ? 12 : 14)
-                            .frame(
-                                maxWidth: .infinity,
-                                minHeight: 48,
-                                alignment: horizontalSizeClass == .compact ? .leading : .topLeading
-                            )
-                            .background(DesignTokens.surfaceColor, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
-                            .overlay(
-                                RoundedRectangle(cornerRadius: 14, style: .continuous)
-                                    .stroke(DesignTokens.borderColor, lineWidth: 1)
-                            )
-                            .contentShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
+                let items = suggestions
+                if horizontalSizeClass == .compact {
+                    VStack(spacing: 0) {
+                        ForEach(items, id: \.0) { item in
+                            suggestionButton(item)
+                            if item.0 != items.last?.0 {
+                                Divider().padding(.leading, 53)
+                            }
                         }
-                        .buttonStyle(NolaPressableStyle())
+                    }
+                    .background(DesignTokens.surfaceColor, in: RoundedRectangle(cornerRadius: 16, style: .continuous))
+                } else {
+                    LazyVGrid(columns: [GridItem(.adaptive(minimum: 180), spacing: 10)], spacing: 10) {
+                        ForEach(items, id: \.0) { item in
+                            suggestionButton(item)
+                                .background(DesignTokens.surfaceColor, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
+                        }
                     }
                 }
             } else if selectedModel?.isWebBackend == true,
@@ -91,11 +89,15 @@ struct ChatEmptyStateCard: View {
         .frame(maxWidth: 600)
     }
 
-    private var suggestionColumns: [GridItem] {
-        if horizontalSizeClass == .compact {
-            return [GridItem(.flexible(), spacing: 10)]
+    private func suggestionButton(_ item: (String, String)) -> some View {
+        Button { onSuggestion(item.1) } label: {
+            suggestionLabel(icon: item.0, title: item.1)
+                .padding(.horizontal, 12)
+                .padding(.vertical, 8)
+                .frame(maxWidth: .infinity, minHeight: 48, alignment: .leading)
+                .contentShape(Rectangle())
         }
-        return [GridItem(.adaptive(minimum: 180), spacing: 10)]
+        .buttonStyle(NolaPressableStyle())
     }
 
     @ViewBuilder
@@ -131,7 +133,7 @@ struct ChatEmptyStateCard: View {
             .frame(maxWidth: .infinity, alignment: .leading)
     }
 
-    private var emptyStateDescription: String {
+    private var emptyStateDescription: String? {
         guard let selectedModel else { return L10n.chatEmptySubtitle }
         if selectedModel.isWebBackend {
             switch hostConnectionPhase {
@@ -148,10 +150,7 @@ struct ChatEmptyStateCard: View {
                 ? NSLocalizedString("chat.empty.mode.hybrid", value: "Your Mac can coordinate work and request approved actions on this device.", comment: "Hybrid empty chat description")
                 : NSLocalizedString("chat.empty.mode.host", value: "Connected to your Mac for project tools and longer-running work.", comment: "Host empty chat description")
         }
-        if selectedModel.isLocal {
-            return NSLocalizedString("chat.empty.mode.device", value: "Ready on this device for writing, planning, and device actions.", comment: "Local empty chat description")
-        }
-        return NSLocalizedString("chat.empty.mode.cloud", value: "Using the selected cloud model for conversation and analysis.", comment: "Cloud empty chat description")
+        return nil
     }
 
     private var modelIsReady: Bool {

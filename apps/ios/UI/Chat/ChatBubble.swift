@@ -2574,11 +2574,17 @@ private struct ChatCoreTaskProjectionView: View {
     }
 
     private func status(for state: AgentCoreTaskState) -> String {
-        if state == .sealed { return NSLocalizedString("chat.task.state.sealed", value: "Execution sealed", comment: "Execution ended, not business acceptance") }
-        if state == .retryWaiting {
-            return NSLocalizedString("chat.task.state.retry_waiting", value: "Waiting to retry", comment: "Core task retrying state")
+        switch state {
+        case .queued: String(localized: "chat.task.state.queued")
+        case .running: String(localized: "chat.task.state.running")
+        case .waiting: String(localized: "chat.task.state.waiting")
+        case .suspended: String(localized: "chat.task.state.suspended")
+        case .retryWaiting: String(localized: "chat.task.state.retry_waiting")
+        case .completed: String(localized: "chat.task.state.completed")
+        case .sealed: String(localized: "chat.task.state.sealed")
+        case .failed: String(localized: "chat.task.state.failed")
+        case .cancelled: String(localized: "chat.task.state.cancelled")
         }
-        return NSLocalizedString("chat.task.state.\(state.rawValue)", value: state.rawValue.capitalized, comment: "Core task state")
     }
 
     private func icon(for task: AgentCoreTaskHandle) -> String {
@@ -2740,7 +2746,7 @@ private struct ChatCanonicalExecutionProcess: View {
         }
         switch current {
         case .tool(let tool) where [.running, .pending].contains(tool.state):
-            return tool.title.isEmpty ? nil : tool.title
+            return AppleToolDisplayName.localized(tool.capabilityID, title: tool.title) ?? (tool.title.isEmpty ? nil : tool.title)
         case .reasoning(let reasoning) where reasoning.state == .running:
             return L10n.chatThinkingShort
         default: return nil
@@ -2981,7 +2987,10 @@ private struct HostToolEventCard: View {
     @State private var readerSelection: HostToolTextSnapshot?
 
     private var displayName: String {
-        if let title = canonicalTool?.title { return title }
+        if let tool = canonicalTool {
+            if let title = AppleToolDisplayName.localized(tool.capabilityID, title: tool.title) { return title }
+            if !tool.title.isEmpty { return tool.title }
+        }
         return localizedHostToolDisplayName(event.name)
     }
 
@@ -3684,6 +3693,7 @@ struct HostPermissionDecisionCard: View {
 }
 
 private func localizedHostToolDisplayName(_ rawName: String) -> String {
+    if let label = AppleToolDisplayName.localized(rawName) { return label }
     let normalized = rawName
         .trimmingCharacters(in: .whitespacesAndNewlines)
         .lowercased()

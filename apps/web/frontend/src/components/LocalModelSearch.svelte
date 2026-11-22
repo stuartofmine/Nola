@@ -15,7 +15,7 @@
         downloadActive, engineName, sourceName, modelByteSize, modelMemorySize,
         targetContextTokens, contextLimitation, repositoryUrl, unslothQuantization,
         parseDirectModelInput, cleanModelName, formatUnifiedGb, modelFitLevel, formatEta,
-        type LocalHardware, type ModelCandidate, type LocalEngine, type ModelDownload, type ModelSource
+        type LocalEngine, type ModelDownload, type ModelSource
     } from '../lib/modelAcquisition';
 
     let { engine = $bindable(), source = $bindable(), job, onJob, nativeRuntime = '', engineControls }: {
@@ -199,15 +199,7 @@
     }
 
     async function retryDownload(download: ModelDownload) {
-        if (download.plan && canStart) {
-            await update('install-plan', {
-                engine: download.engine,
-                source: download.source,
-                repository: download.repository,
-                plan: download.plan,
-            });
-            return;
-        }
+        if (!canStart) return;
         clearSearch();
         actionError = '';
         engine = download.engine;
@@ -252,7 +244,7 @@
                 {#if downloadActive(job)}
                     <button type="button" disabled={mutating || job.status === 'cancelling'} onclick={() => update('cancel', { id: job.id })}>{t($locale, 'models.cancel')}</button>
                 {:else if job.status === 'failed' || job.status === 'cancelled'}
-                    <button type="button" class="primary" disabled={!canStart || looking} onclick={() => retryDownload(job!)}>{t($locale, 'local.retryDownload')}</button>
+                    <button type="button" class="primary" disabled={!canStart || looking} onclick={() => retryDownload(job!)}>{t($locale, 'local.reviewDownloadPlan')}</button>
                 {/if}
             </div>
             {#if downloadActive(job)}
@@ -279,8 +271,18 @@
 
     <div class="info-bar">
         <div class="host-summary">
-            {#if hostSummaryText}
-                <span class="muted">{hostSummaryText}</span>
+            {#if hardware}
+                <details class="technical hardware" aria-label={t($locale, 'local.hardware')}>
+                    <summary>{hostSummaryText || t($locale, 'local.hardware')}</summary>
+                    <dl>
+                        {#if hardware.cpu || hardware.cores}<div><dt>CPU</dt><dd>{[hardware.cpu, hardware.cores ? t($locale, 'local.cores', {count: hardware.cores}) : ''].filter(Boolean).join(' · ')}</dd></div>{/if}
+                        {#if hardware.gpu}<div><dt>GPU</dt><dd>{hardware.gpu}</dd></div>{/if}
+                        {#if hardware.memoryBytes != null}<div><dt>{t($locale, hardware.unifiedMemory ? 'local.unifiedMemory' : 'local.memory')}</dt><dd>{modelMemorySize(hardware.memoryBytes, $locale)}</dd></div>{/if}
+                        {#if !hardware.unifiedMemory && hardware.gpuMemoryBytes != null}<div><dt>{t($locale, 'local.graphicsMemory')}</dt><dd>{modelMemorySize(hardware.gpuMemoryBytes, $locale)}</dd></div>{/if}
+                        {#if hardware.freeDiskBytes != null}<div><dt>{t($locale, 'local.diskFree')}</dt><dd>{modelByteSize(hardware.freeDiskBytes, $locale)}</dd></div>{/if}
+                    </dl>
+                    {#if !hardware.cpu && !hardware.cores && !hardware.gpu && hardware.memoryBytes == null && hardware.gpuMemoryBytes == null && hardware.freeDiskBytes == null}<small>{t($locale, 'local.unavailable')}</small>{/if}
+                </details>
             {:else if hardwareError}
                 <span class="error" role="alert">{hardwareError} <button type="button" class="inline-retry" onclick={loadHardware}>{t($locale, 'models.retry')}</button></span>
             {:else}
@@ -309,6 +311,7 @@
 
     {#if results}
         {#if results.length}
+            <p class="context-target">{t($locale, 'local.contextTarget', {tokens: targetContextTokens.toLocaleString($locale)})}</p>
             <ul class="candidate-list">
                 {#each results as candidate (candidate.repository)}
                     {@const limitation = contextLimitation(candidate)}
@@ -321,6 +324,7 @@
                                 <span class="fit-badge" data-fit={fit}>{t($locale, fit === 'best' ? 'local.fitBest' : fit === 'light' ? 'local.fitLight' : 'local.fitLarge')}</span>
                                 <span class="size-pill tabular">{formatUnifiedGb(candidate.downloadBytes, $locale)}</span>
                             </div>
+                            <a class="repository" href={repositoryUrl(source, candidate.repository)} target="_blank" rel="noopener noreferrer">{candidate.repository}</a>
                             <p class="candidate-meta muted tabular">
                                 <span>{t($locale, 'local.runtime')} · {formatUnifiedGb(candidate.estimatedMemoryBytes, $locale)}</span>
                                 <span>{t($locale, 'local.plannedContext')} · {formatContextShort(candidate.contextTokens)}</span>
@@ -328,7 +332,6 @@
                             <details class="technical">
                                 <summary>{t($locale, 'local.technicalDetails')}</summary>
                                 <div class="tech-body">
-                                    <a class="repository" href={repositoryUrl(source, candidate.repository)} target="_blank" rel="noopener noreferrer">{candidate.repository}</a>
                                     {#if candidate.variant}<small class="muted">{edition === 'dynamic' ? 'Unsloth Dynamic · ' : edition === 'quantized' ? t($locale, 'local.unslothQuant') + ' · ' : ''}{candidate.variant}</small>{/if}
                                     <dl>
                                         {#if candidate.plan.device === 'cpu' || candidate.plan.device === 'gpu' || candidate.plan.device === 'unified'}
@@ -394,7 +397,9 @@
     .technical > summary::before { content: '▸'; font-size: .75rem; transition: transform var(--motion-fast) ease; }
     .technical[open] > summary::before { transform: rotate(90deg); }
     .tech-body { display: grid; gap: 6px; padding: 8px 0 2px; font-size: .8125rem; }
-    .repository { font-weight: 550; color: inherit; width: fit-content; text-decoration: none; overflow-wrap: anywhere; }
+    .context-target { margin: 0; font-size: .8125rem; color: var(--muted); }
+    .hardware dl { padding-block: 6px; }
+    .repository { font-size: .8125rem; color: var(--muted); width: fit-content; text-decoration: none; overflow-wrap: anywhere; }
     .repository:hover, .repository:focus-visible { text-decoration: underline; }
     dl { display: flex; flex-wrap: wrap; gap: 8px 20px; margin: 0; }
     dl div { display: grid; gap: 2px; }

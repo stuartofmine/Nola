@@ -1,9 +1,11 @@
 package com.nola.data.repository
 
+import com.nola.data.local.datastore.PreferenceDataStore
 import com.nola.data.local.db.dao.NotificationDao
 import com.nola.data.local.db.entity.NotificationEntity
 import com.nola.data.remote.api.BackendApiService
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.flow.first
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
 import java.time.Instant
@@ -23,7 +25,8 @@ interface NotificationRepository {
 @Singleton
 class NotificationRepositoryImpl @Inject constructor(
     private val notificationDao: NotificationDao,
-    private val api: BackendApiService
+    private val api: BackendApiService,
+    private val preferences: PreferenceDataStore
 ) : NotificationRepository {
     private val json = Json { prettyPrint = false }
 
@@ -59,6 +62,7 @@ class NotificationRepositoryImpl @Inject constructor(
     }
 
     override suspend fun syncFromBackend() {
+        if (preferences.backendAccessToken.first().isBlank()) return
         val response = api.getNotifications(limit = 100)
         response.notifications.forEach { dto ->
             val now = System.currentTimeMillis()

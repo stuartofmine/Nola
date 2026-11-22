@@ -65,7 +65,6 @@ struct MacModelAcquisitionSheet: View {
             }
             .disabled(acquisition.downloading)
 
-            // Compact single-line device summary pill + inline source & engine controls
             compactEnvironmentBar
                 .disabled(acquisition.downloading)
 
@@ -172,9 +171,8 @@ struct MacModelAcquisitionSheet: View {
 
     private var compactEnvironmentBar: some View {
         VStack(alignment: .leading, spacing: 8) {
+            hardwarePill
             HStack(spacing: 8) {
-                hardwarePill
-                Spacer(minLength: 8)
                 HStack(spacing: 0) {
                     Picker(String(localized: "Download Source", table: "ModelCenter"), selection: $source) {
                         Text(verbatim: "ModelScope").tag("modelscope")
@@ -212,13 +210,12 @@ struct MacModelAcquisitionSheet: View {
                 Text(verbatim: compactHardwareText(hw))
                     .font(.caption)
                     .foregroundStyle(.secondary)
-                    .lineLimit(1)
-                    .truncationMode(.tail)
+                    .fixedSize(horizontal: false, vertical: true)
             } else if let message = acquisition.hardwareError {
                 Text(verbatim: message)
                     .font(.caption)
                     .foregroundStyle(.secondary)
-                    .lineLimit(1)
+                    .fixedSize(horizontal: false, vertical: true)
             } else {
                 ProgressView().controlSize(.mini)
             }
@@ -236,10 +233,13 @@ struct MacModelAcquisitionSheet: View {
             parts.append(cpu)
         }
         if let memory = hw.memoryBytes {
-            parts.append(MacLocalModelAcquisition.formatGigabytes(memory) + (hw.unifiedMemory ? " 统一内存" : " RAM"))
+            let format = hw.unifiedMemory
+                ? String(localized: "%@ unified memory", table: "ModelCenter")
+                : String(localized: "%@ RAM", table: "ModelCenter")
+            parts.append(String(format: format, MacLocalModelAcquisition.formatGigabytes(memory)))
         }
         if let disk = hw.freeDiskBytes {
-            parts.append("可用 " + MacLocalModelAcquisition.formatGigabytes(disk))
+            parts.append(String(format: String(localized: "%@ disk space available", table: "ModelCenter"), MacLocalModelAcquisition.formatGigabytes(disk)))
         }
         return parts.isEmpty ? String(localized: "This Mac", table: "ModelCenter") : parts.joined(separator: " · ")
     }

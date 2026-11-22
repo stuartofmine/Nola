@@ -42,6 +42,7 @@
     let activityVisited = $state(initialTab === 'activity');
     function selectTab(next: InformationTab, updateLocation = true) {
         tab = next;
+        readSection(next);
         if (next === 'memory') memoryVisited = true;
         if (next === 'plans') plansVisited = true;
         if (next === 'knowledge') knowledgeVisited = true;
@@ -164,8 +165,12 @@
         finally { if (!disposed && version === usageVersion) usageLoading = false; }
     }
     function cancelReads() { sourceRead.cancel(); usageRead.cancel(); ++sourcesVersion; ++usageVersion; sourcesLoading = false; usageLoading = false; }
-    async function refresh() { if (!busy) await Promise.all([loadSources(), loadUsage()]); }
-    onMount(() => { void refresh(); return () => { disposed = true; ++editorVersion; cancelReads(); }; });
+    function readSection(section: InformationTab) {
+        if (busy) return;
+        if (section === 'sources' && !sourcesLoaded && !sourcesLoading) void loadSources();
+        if ((section === 'usage' || section === 'activity') && !usageLoaded && !usageLoading) void loadUsage();
+    }
+    onMount(() => { readSection(tab); return () => { disposed = true; ++editorVersion; cancelReads(); }; });
     async function edit(source?: DataSource) {
         if (busy || editorId) return;
         ++editorVersion; existing = source ? structuredClone($state.snapshot(source)) : undefined;
@@ -219,7 +224,10 @@
         } finally {
             if (!disposed) {
                 // Failure may have persisted a draft before validation. Never reset the editor.
-                operation = 'refresh'; await Promise.all([loadSources(), loadUsage()]); operation = '';
+                operation = 'refresh';
+                await Promise.all([loadSources(), usageLoaded || tab === 'usage' || tab === 'activity' ? loadUsage() : undefined]);
+                operation = '';
+                readSection(tab);
             }
         }
     }
