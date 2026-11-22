@@ -794,8 +794,8 @@ struct MacExtensionGallery: View {
                                             } label: {
                                                 Label(
                                                     item.isEnabled
-                                                        ? macExtensionsText("mac.extensions.status.disabled", "Disabled")
-                                                        : macExtensionsText("mac.extensions.status.enabled", "Enabled"),
+                                                        ? macExtensionsText("mac.extensions.action.disable", "Disable")
+                                                        : macExtensionsText("mac.extensions.action.enable", "Enable"),
                                                     systemImage: item.isEnabled ? "pause.circle" : "play.circle"
                                                 )
                                             }
@@ -811,8 +811,8 @@ struct MacExtensionGallery: View {
                                             } label: {
                                                 Label(
                                                     item.isEnabled
-                                                        ? macExtensionsText("mac.extensions.status.disabled", "Disabled")
-                                                        : macExtensionsText("mac.extensions.status.enabled", "Enabled"),
+                                                        ? macExtensionsText("mac.extensions.action.disable", "Disable")
+                                                        : macExtensionsText("mac.extensions.action.enable", "Enable"),
                                                     systemImage: item.isEnabled ? "pause.circle" : "play.circle"
                                                 )
                                             }
@@ -837,8 +837,8 @@ struct MacExtensionGallery: View {
                                                 } label: {
                                                     Label(
                                                         item.isEnabled
-                                                            ? macExtensionsText("mac.extensions.status.disabled", "Disabled")
-                                                            : macExtensionsText("mac.extensions.status.enabled", "Enabled"),
+                                                            ? macExtensionsText("mac.extensions.action.disable", "Disable")
+                                                            : macExtensionsText("mac.extensions.action.enable", "Enable"),
                                                         systemImage: item.isEnabled ? "pause.circle" : "play.circle"
                                                     )
                                                 }

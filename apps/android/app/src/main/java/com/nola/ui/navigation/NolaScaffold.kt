@@ -8,6 +8,8 @@ import androidx.compose.animation.core.animateDpAsState
 import androidx.compose.animation.core.tween
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
+import androidx.compose.animation.slideInVertically
+import androidx.compose.animation.slideOutVertically
 import androidx.compose.foundation.border
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
@@ -17,6 +19,7 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.WindowInsets
+import androidx.compose.foundation.layout.displayCutoutPadding
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.consumeWindowInsets
@@ -34,6 +37,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.WbSunny
 import androidx.compose.material.icons.outlined.Folder
+import androidx.compose.material.icons.outlined.Notifications
 import androidx.compose.material.icons.filled.Memory
 import androidx.compose.material.icons.filled.QuestionAnswer
 import androidx.compose.material.icons.filled.Settings
@@ -80,8 +84,11 @@ import com.nola.ui.screen.intelligence.IntelligenceSection
 import com.nola.ui.screen.models.ModelsScreen
 import com.nola.ui.components.rememberNolaHaptics
 import com.nola.ui.screen.settings.SettingsScreen
+import com.nola.ui.components.NolaColors
 import com.nola.ui.components.rememberReduceMotionEnabled
 import com.nola.ui.components.NolaMotion
+import com.nola.ui.components.nolaTween
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.res.painterResource
 import com.nola.R
 
@@ -155,13 +162,24 @@ fun NolaScaffold(
         val usesExpandedSideNavigation = navigationLayout == NolaNavigationLayout.ExpandedSide
 
         val showBottomBar = !usesSideNavigation && !(currentRoute == NolaTab.Chat.route && chatDetailVisible)
+        val reduceMotion = rememberReduceMotionEnabled()
 
         Scaffold(
             modifier = Modifier.fillMaxSize(),
             containerColor = MaterialTheme.colorScheme.background,
             contentWindowInsets = if (usesSideNavigation) WindowInsets(0) else androidx.compose.material3.ScaffoldDefaults.contentWindowInsets,
             bottomBar = {
-                if (showBottomBar) {
+                AnimatedVisibility(
+                    visible = showBottomBar,
+                    enter = slideInVertically(
+                        animationSpec = nolaTween(NolaMotion.base, reduceMotion),
+                        initialOffsetY = { it },
+                    ) + fadeIn(nolaTween(NolaMotion.fast, reduceMotion)),
+                    exit = slideOutVertically(
+                        animationSpec = nolaTween(NolaMotion.fast, reduceMotion),
+                        targetOffsetY = { it },
+                    ) + fadeOut(nolaTween(NolaMotion.fast, reduceMotion)),
+                ) {
                     NolaBottomNavigation(
                         selectedTab = selectedTab,
                         onSelect = navigateToTab
@@ -191,7 +209,7 @@ fun NolaScaffold(
                     compact = !usesSideNavigation,
                     modifier = Modifier
                         .weight(1f)
-                        .then(if (usesSideNavigation) Modifier.statusBarsPadding().navigationBarsPadding() else Modifier)
+                        .then(if (usesSideNavigation) Modifier.statusBarsPadding().navigationBarsPadding().displayCutoutPadding() else Modifier)
                 )
             }
         }
@@ -204,6 +222,7 @@ internal fun NolaBottomNavigation(
     onSelect: (NolaTab) -> Unit
 ) {
     val haptics = rememberNolaHaptics()
+    val reduceMotion = rememberReduceMotionEnabled()
     val largeLabels = LocalDensity.current.fontScale > 1.3f
     Column(
         modifier = Modifier
@@ -212,7 +231,7 @@ internal fun NolaBottomNavigation(
     ) {
         HorizontalDivider(
             thickness = 0.5.dp,
-            color = MaterialTheme.colorScheme.outline.copy(alpha = 0.20f)
+            color = NolaColors.hairlineBorder
         )
         if (largeLabels) {
             // The full selected destination remains visible without shrinking accessibility text.
@@ -235,11 +254,20 @@ internal fun NolaBottomNavigation(
                 val tabLabel = stringResource(tab.labelRes)
                 val compactLabel = tabLabel
                 val selected = selectedTab == tab
-                val tint = if (selected) MaterialTheme.colorScheme.onSurface else MaterialTheme.colorScheme.onSurfaceVariant
+                val containerColor by animateColorAsState(
+                    targetValue = if (selected) NolaColors.navSelectionPill else Color.Transparent,
+                    animationSpec = nolaTween(NolaMotion.fast, reduceMotion),
+                    label = "bottom-nav-container",
+                )
+                val tint by animateColorAsState(
+                    targetValue = if (selected) MaterialTheme.colorScheme.onSurface else MaterialTheme.colorScheme.onSurfaceVariant,
+                    animationSpec = nolaTween(NolaMotion.fast, reduceMotion),
+                    label = "bottom-nav-tint",
+                )
                 Column(
                     modifier = Modifier.weight(1f).heightIn(min = 52.dp)
                         .clip(RoundedCornerShape(8.dp))
-                        .background(if (selected) MaterialTheme.colorScheme.surfaceContainer else androidx.compose.ui.graphics.Color.Transparent)
+                        .background(containerColor)
                         .selectable(selected = selected, role = Role.Tab, onClick = {
                             if (!selected) haptics.selection()
                             onSelect(tab)
@@ -345,7 +373,7 @@ private fun NolaWideNavigation(
                 HorizontalDivider(
                     modifier = Modifier.padding(horizontal = 10.dp, vertical = 8.dp),
                     thickness = 0.5.dp,
-                    color = MaterialTheme.colorScheme.outline.copy(alpha = 0.18f)
+                    color = NolaColors.hairlineBorder
                 )
                 NolaSideNavigationItem(
                     tab = NolaTab.Settings,
@@ -361,7 +389,7 @@ private fun NolaWideNavigation(
         VerticalDivider(
             modifier = Modifier.fillMaxHeight(),
             thickness = 0.5.dp,
-            color = MaterialTheme.colorScheme.outline.copy(alpha = 0.20f)
+            color = NolaColors.hairlineBorder
         )
     }
 }
@@ -375,7 +403,7 @@ private fun NolaSideNavigationItem(
 ) {
     val reduceMotion = rememberReduceMotionEnabled()
     val selectionBackground by animateColorAsState(
-        targetValue = if (selected) MaterialTheme.colorScheme.primaryContainer else androidx.compose.ui.graphics.Color.Transparent,
+        targetValue = if (selected) NolaColors.sideNavSelectionPill else Color.Transparent,
         animationSpec = tween(durationMillis = if (reduceMotion) 0 else NolaMotion.fast),
         label = "sideNavigationBackground"
     )
@@ -423,7 +451,7 @@ private fun NolaTabIcon(
     val resolvedTint = tint ?: LocalContentColor.current
     when (tab) {
         NolaTab.Chat -> Icon(painterResource(R.drawable.nola_chat), contentDescription, tint = resolvedTint, modifier = modifier)
-        NolaTab.Activity -> Icon(painterResource(R.drawable.nola_clock), contentDescription, tint = resolvedTint, modifier = modifier)
+        NolaTab.Activity -> Icon(Icons.Outlined.Notifications, contentDescription, tint = resolvedTint, modifier = modifier)
         NolaTab.Home -> Icon(painterResource(R.drawable.nola_sun), contentDescription, tint = resolvedTint, modifier = modifier)
         NolaTab.Information -> Icon(painterResource(R.drawable.nola_folder), contentDescription, tint = resolvedTint, modifier = modifier)
         NolaTab.Intelligence -> Icon(Icons.Filled.Memory, contentDescription, tint = resolvedTint, modifier = modifier)

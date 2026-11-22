@@ -17,6 +17,7 @@ import SwiftUI
 
 struct MLXTestView: View {
     @EnvironmentObject var container: ServiceContainer
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var isRunning = false
     @State private var log: [String] = []
     @State private var output: ModelOutput = .empty
@@ -29,7 +30,7 @@ struct MLXTestView: View {
     }
 
     private func appendLog(_ msg: String) {
-        withAnimation { log.append(msg) }
+        withAnimation(reduceMotion ? nil : DesignTokens.responsiveAnimation) { log.append(msg) }
         Logger.shared.log(.info, "MLXTest", msg)
     }
 

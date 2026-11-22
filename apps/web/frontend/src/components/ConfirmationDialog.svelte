@@ -10,10 +10,12 @@
     let request = $state<ConfirmationRequest>();
     let dialog: HTMLDialogElement;
     let cancelButton = $state<HTMLButtonElement>();
+    let opener: HTMLElement | null = null;
 
     export async function ask(value: ConfirmationRequest): Promise<boolean> {
         const decision = gate.request();
         if (!decision) return false;
+        opener = document.activeElement instanceof HTMLElement ? document.activeElement : null;
         request = value;
         await tick();
         if (gate.pending) {
@@ -33,7 +35,10 @@
     function finish(accepted: boolean) {
         if (dialog?.open) dialog.close();
         request = undefined;
+        const target = opener;
+        opener = null;
         gate.settle(accepted);
+        if (target?.isConnected) target.focus({ preventScroll: true });
     }
 
     function cancel(event: Event) { event.preventDefault(); finish(false); }

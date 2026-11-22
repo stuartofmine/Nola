@@ -21,8 +21,7 @@
     const messageReading=getContext<MessagePartReading|undefined>(MESSAGE_PART_READING);
     const reading=$derived(messageReading?.bind(part));
     const owner = $derived((reading?reading.identity:(part.source === 'journal' ? part.journalOwner : part.source)) + ':' + part.id);
-    let localChoices=$state<{owner:string;technical?:boolean;input?:boolean}|null>(null);
-    const technicalExpanded=$derived(reading?.choice('technical')??(localChoices?.owner===owner?localChoices.technical??false:false));
+    let localChoices=$state<{owner:string;input?:boolean}|null>(null);
     const inputExpanded=$derived(reading?.choice('input')??(localChoices?.owner===owner?localChoices.input??false:false));
     function chooseField(field:DisclosureField,expanded:boolean){
         if(reading)reading.choose(field,expanded);
@@ -57,8 +56,7 @@
             {#if tool.summary !== null}<p class="tool-summary">{tool.summary}</p>{/if}
             {#each toolArtifacts(tool.artifacts) as reference}<ChatReferenceCard {reference} />{/each}
             {#if tool.origin || tool.hasInput || tool.permission || tool.resources.length || tool.outputPreview !== null || tool.hasStructuredResult}
-            <details use:replyDisclosure class="tool-technical" data-reply-disclosure open={technicalExpanded}>
-                <summary onclick={event=>{event.preventDefault();chooseField('technical',!technicalExpanded);}}>{t($locale, 'chatPage.toolTechnicalDetails')}</summary>
+            <div class="tool-technical">
             {#if tool.origin}<p class="tool-origin">{tool.origin}</p>{/if}
             {#if input !== null}<details use:replyDisclosure class="tool-input" data-reply-disclosure open={inputExpanded}><summary onclick={event=>{event.preventDefault();chooseField('input',!inputExpanded);}}>{t($locale, 'chatPage.toolInput')}</summary>
                 {#if input.length > 2000}{#key owner}<ChatTextReader {part} field="input" text={input} title={title + ' · ' + t($locale, 'chatPage.toolInput')} />{/key}{/if}
@@ -86,7 +84,7 @@
                 {#if result.length > 2000}{#key owner}<ChatTextReader {part} field="result" text={result} title={title + ' · ' + t($locale, 'chatPage.toolResult')} />{/key}{/if}
                 <pre class="tool-result" aria-label={t($locale, 'chatPage.toolResult')}>{preview(result)}</pre>
             {/if}
-            </details>
+            </div>
             {/if}
         </div>
     </details>
@@ -107,9 +105,11 @@
     .tool-title { font-weight: 600; display: -webkit-box; line-clamp: 2; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
     details[open] > summary .tool-title { display: block; }
     .tool-failure-summary { display: -webkit-box; line-clamp: 2; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; white-space: pre-wrap; color: var(--danger); font-size: 12px; font-weight: 400; margin-top: 4px; }
-    .tool-technical > summary { color: var(--muted); font-size: 12px; padding-inline: 0; }
-    .tool-technical > summary::before { content: '›'; font-size: 18px; }
-    .tool-technical[open] > summary::before { transform: rotate(90deg); }
+    .tool-technical { display: grid; gap: 6px; margin-top: 6px; }
+    .tool-origin { margin: 0; color: var(--muted); font-size: 12px; }
+    .tool-input > summary { color: var(--muted); font-size: 12px; padding-inline: 0; min-height: 36px; }
+    .tool-input > summary::before { content: '›'; font-size: 16px; transition: transform var(--motion-base) var(--motion-disclosure); }
+    .tool-input[open] > summary::before { transform: rotate(90deg); }
     summary:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
     .tool-state { color: var(--tool-tone); font-size: 12px; max-width: 45%; overflow-wrap: anywhere; }
     .tool-indicator { width: 7px; height: 7px; flex: 0 0 7px; border-radius: 50%; background: var(--tool-tone); }

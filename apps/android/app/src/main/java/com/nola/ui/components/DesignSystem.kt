@@ -14,6 +14,7 @@ import androidx.compose.foundation.layout.ColumnScope
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.WindowInsets
+import androidx.compose.foundation.layout.displayCutoutPadding
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
@@ -72,6 +73,8 @@ import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.animation.core.CubicBezierEasing
+import androidx.compose.animation.core.Easing
+import androidx.compose.animation.core.TweenSpec
 import androidx.compose.animation.EnterTransition
 import androidx.compose.animation.ExitTransition
 import androidx.compose.animation.expandVertically
@@ -92,18 +95,28 @@ object NolaColors {
     val primary: Color @Composable get() = MaterialTheme.colorScheme.primary
     val primaryLight: Color @Composable get() = MaterialTheme.colorScheme.primaryContainer
     val accent: Color @Composable get() = MaterialTheme.colorScheme.primary
-    val success: Color @Composable get() = if (MaterialTheme.colorScheme.background.luminance() < 0.5f) Color(0xFF82C99B) else Color(0xFF237047)
+    val success: Color @Composable get() = if (MaterialTheme.colorScheme.background.luminance() < 0.5f) Color(0xFF5CD68D) else Color(0xFF147537)
     val warning: Color @Composable get() = MaterialTheme.colorScheme.tertiary
     val danger: Color @Composable get() = MaterialTheme.colorScheme.error
 
-    val bgLight = Color(0xFFFAF8F4)
-    val bgDark = Color(0xFF1B1C1A)
+    val bgLight = Color(0xFFFAFAFA)
+    val bgDark = Color(0xFF0b0b0c)
     val surfaceElevated: Color @Composable get() = MaterialTheme.colorScheme.surface
     val rowFill: Color @Composable get() = MaterialTheme.colorScheme.surfaceVariant
     val mutedFill: Color @Composable get() = MaterialTheme.colorScheme.surfaceContainer
 
     val borderLight: Color @Composable get() = MaterialTheme.colorScheme.outlineVariant
     val borderStrong: Color @Composable get() = MaterialTheme.colorScheme.outline
+
+    val isDark: Boolean @Composable get() = MaterialTheme.colorScheme.background.luminance() < 0.5f
+    val hairlineBorder: Color @Composable get() = if (isDark) Color.White.copy(alpha = 0.09f) else MaterialTheme.colorScheme.outlineVariant
+    val composerBorderUnfocused: Color @Composable get() = if (isDark) Color.White.copy(alpha = 0.10f) else MaterialTheme.colorScheme.outlineVariant
+    val composerBorderFocused: Color @Composable get() = if (isDark) Color.White.copy(alpha = 0.22f) else MaterialTheme.colorScheme.outline
+    val composerDisabledFill: Color @Composable get() = if (isDark) Color.White.copy(alpha = 0.08f) else MaterialTheme.colorScheme.onSurface.copy(alpha = 0.08f)
+    val segmentTrack: Color @Composable get() = if (isDark) Color.White.copy(alpha = 0.045f) else MaterialTheme.colorScheme.surfaceContainer
+    val segmentSelected: Color @Composable get() = if (isDark) Color.White.copy(alpha = 0.13f) else MaterialTheme.colorScheme.surfaceContainerHigh
+    val navSelectionPill: Color @Composable get() = if (isDark) Color.White.copy(alpha = 0.13f) else MaterialTheme.colorScheme.surfaceContainer
+    val sideNavSelectionPill: Color @Composable get() = if (isDark) Color.White.copy(alpha = 0.13f) else MaterialTheme.colorScheme.primaryContainer
 }
 
 @JvmInline
@@ -147,10 +160,16 @@ object NolaSpacing {
 }
 
 object NolaRadius {
+    val xs = 6.dp
     val sm = 8.dp
+    val control = 10.dp
     val md = 12.dp
-    val lg = 12.dp
+    val panel = 14.dp
+    val lg = 14.dp
     val xl = 16.dp
+    val card = 16.dp
+    val message = 18.dp
+    val floating = 20.dp
     val pill = 999.dp
 }
 
@@ -176,9 +195,19 @@ object NolaMotion {
     const val reducedMotionFollowInterval = 16
     const val reducedMotionFollowPasses = 2
     val emphasizedEasing = CubicBezierEasing(0.22f, 1f, 0.36f, 1f)
+    val easing: Easing = emphasizedEasing
     val disclosureEasing = CubicBezierEasing(0.20f, 0.74f, 0.24f, 1f)
     val streamRevealEasing = CubicBezierEasing(0.16f, 0.76f, 0.22f, 1f)
 }
+
+fun <T> nolaTween(
+    durationMs: Int,
+    reduceMotion: Boolean,
+    easing: Easing = NolaMotion.easing,
+): TweenSpec<T> = tween(
+    durationMillis = if (reduceMotion) 0 else durationMs,
+    easing = easing,
+)
 
 /** The same glyph rotates with the body instead of swapping at the first frame. */
 @Composable
@@ -190,7 +219,7 @@ fun NolaDisclosureChevron(
 ) {
     val rotation by animateFloatAsState(
         targetValue = if (expanded) 180f else 0f,
-        animationSpec = tween(if (reduceMotion) 0 else NolaMotion.disclosure, easing = NolaMotion.disclosureEasing),
+        animationSpec = nolaTween(NolaMotion.disclosure, reduceMotion, NolaMotion.disclosureEasing),
         label = "reply-disclosure-chevron",
     )
     Icon(Icons.Filled.ExpandMore, contentDescription = contentDescription,
@@ -199,32 +228,18 @@ fun NolaDisclosureChevron(
 }
 
 fun nolaDisclosureEnter(reduceMotion: Boolean): EnterTransition =
-    fadeIn(
-        tween(
-            durationMillis = if (reduceMotion) 0 else NolaMotion.disclosure,
-            easing = NolaMotion.disclosureEasing,
+    fadeIn(nolaTween(NolaMotion.disclosure, reduceMotion, NolaMotion.disclosureEasing)) +
+        expandVertically(
+            animationSpec = nolaTween(NolaMotion.disclosure, reduceMotion, NolaMotion.disclosureEasing),
+            expandFrom = Alignment.Top,
         )
-    ) + expandVertically(
-        animationSpec = tween(
-            durationMillis = if (reduceMotion) 0 else NolaMotion.disclosure,
-            easing = NolaMotion.disclosureEasing,
-        ),
-        expandFrom = Alignment.Top,
-    )
 
 fun nolaDisclosureExit(reduceMotion: Boolean): ExitTransition =
-    fadeOut(
-        tween(
-            durationMillis = if (reduceMotion) 0 else NolaMotion.disclosure,
-            easing = NolaMotion.disclosureEasing,
+    fadeOut(nolaTween(NolaMotion.disclosure, reduceMotion, NolaMotion.disclosureEasing)) +
+        shrinkVertically(
+            animationSpec = nolaTween(NolaMotion.disclosure, reduceMotion, NolaMotion.disclosureEasing),
+            shrinkTowards = Alignment.Top,
         )
-    ) + shrinkVertically(
-        animationSpec = tween(
-            durationMillis = if (reduceMotion) 0 else NolaMotion.disclosure,
-            easing = NolaMotion.disclosureEasing,
-        ),
-        shrinkTowards = Alignment.Top,
-    )
 
 // ============================================================
 // Reusable Components — matching iOS equivalents
@@ -338,6 +353,7 @@ fun NolaPage(
                 .widthIn(max = 840.dp)
                 .fillMaxWidth()
                 .verticalScroll(scrollState)
+                .displayCutoutPadding()
                 .padding(horizontal = nolaPageGutter())
                 .padding(top = topPadding, bottom = 48.dp),
             verticalArrangement = Arrangement.spacedBy(NolaSpacing.xl),
@@ -392,7 +408,7 @@ fun NolaPageHeader(
 @Composable
 fun NolaCard(
     modifier: Modifier = Modifier,
-    plain: Boolean = false,
+    plain: Boolean = true,
     content: @Composable ColumnScope.() -> Unit
 ) {
     Box(
@@ -433,7 +449,7 @@ fun NolaDivider(modifier: Modifier = Modifier) {
     androidx.compose.material3.HorizontalDivider(
         modifier = modifier.padding(vertical = NolaSpacing.md),
         thickness = 0.5.dp,
-        color = MaterialTheme.colorScheme.outline.copy(alpha = 0.12f)
+        color = NolaColors.hairlineBorder
     )
 }
 
@@ -649,9 +665,14 @@ fun NolaChip(
     onClick: () -> Unit,
     modifier: Modifier = Modifier
 ) {
-    val bg = if (selected) MaterialTheme.colorScheme.primaryContainer
-             else MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f)
-    val fg = if (selected) MaterialTheme.colorScheme.onPrimaryContainer
+    val isDark = NolaColors.isDark
+    val bg = when {
+        selected && isDark -> Color.White.copy(alpha = 0.13f)
+        selected -> MaterialTheme.colorScheme.primaryContainer
+        isDark -> Color.White.copy(alpha = 0.045f)
+        else -> MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.6f)
+    }
+    val fg = if (selected) MaterialTheme.colorScheme.onSurface
              else MaterialTheme.colorScheme.onSurfaceVariant
 
     Row(
@@ -709,6 +730,39 @@ fun NolaHeroCard(
             }
         }
         content?.invoke()
+    }
+}
+
+@Composable
+fun NolaPrimaryButton(
+    text: String,
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier,
+    enabled: Boolean = true,
+) {
+    val isDark = NolaColors.isDark
+    androidx.compose.material3.Button(
+        onClick = onClick,
+        enabled = enabled,
+        shape = NolaContinuousShape(NolaRadius.md),
+        colors = androidx.compose.material3.ButtonDefaults.buttonColors(
+            containerColor = MaterialTheme.colorScheme.primary,
+            contentColor = MaterialTheme.colorScheme.onPrimary,
+            disabledContainerColor = if (isDark) Color.White.copy(alpha = 0.08f) else MaterialTheme.colorScheme.onSurface.copy(alpha = 0.08f),
+            disabledContentColor = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.6f),
+        ),
+        elevation = androidx.compose.material3.ButtonDefaults.buttonElevation(
+            defaultElevation = 0.dp,
+            pressedElevation = 0.dp,
+            focusedElevation = 0.dp,
+            hoveredElevation = 0.dp,
+            disabledElevation = 0.dp,
+        ),
+        modifier = modifier
+            .fillMaxWidth()
+            .heightIn(min = 48.dp),
+    ) {
+        Text(text, style = MaterialTheme.typography.labelLarge)
     }
 }
 

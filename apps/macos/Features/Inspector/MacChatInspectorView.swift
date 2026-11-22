@@ -107,6 +107,9 @@ struct MacChatInspector: View {
         var icon: String {
             switch self { case .task: "nola-progress"; case .artifacts: "nola-artifacts"; case .context: "nola-file" }
         }
+        var symbol: String {
+            switch self { case .task: "checklist"; case .artifacts: "doc.on.doc"; case .context: "tray.full" }
+        }
         var sections: [InspectorTab] {
             switch self { case .task: [.task]; case .artifacts: [.artifacts]; case .context: [.context] }
         }
@@ -115,6 +118,7 @@ struct MacChatInspector: View {
     @Bindable var model: MacWorkspaceModel
     let hostDisplayName: String
     private let close: (() -> Void)?
+    private let showsHeader: Bool
     private let showsHeaderNavigation: Bool
     private let expertHistory: AnyView
     private let participants: [MacInspectorParticipant]
@@ -140,6 +144,7 @@ struct MacChatInspector: View {
         dependencies: MacInspectorDependencies,
         navigation: MacInspectorNavigationState? = nil,
         close: (() -> Void)? = nil,
+        showsHeader: Bool = true,
         showsHeaderNavigation: Bool = false,
         participants: [MacInspectorParticipant] = [],
         expertHistory: AnyView = AnyView(EmptyView()),
@@ -150,6 +155,7 @@ struct MacChatInspector: View {
         self.model = model
         self.hostDisplayName = hostDisplayName
         self.close = close
+        self.showsHeader = showsHeader
         self.showsHeaderNavigation = showsHeaderNavigation
         self.expertHistory = expertHistory
         self.participants = participants
@@ -167,26 +173,30 @@ struct MacChatInspector: View {
 
     var body: some View {
         VStack(spacing: 0) {
-            inspectorHeader
-                .padding(.horizontal, 12)
-                .frame(height: 44)
-                .background(MacDesignColor.inspector)
-                .fixedSize(horizontal: false, vertical: true)
-                .layoutPriority(1)
-                .overlay(alignment: .bottom) {
-                    Rectangle()
-                        .fill(MacDesignColor.borderSubtle)
-                        .frame(height: 1)
-                }
-            // Separate retained reading surfaces preserve scroll and editor
-            // drafts. Only the selected area is visible and interactive.
-            ZStack(alignment: .top) {
-                ForEach(InspectorArea.allCases) { area in
-                    inspectorRegion(area)
-                        .opacity(selectedTab.area == area ? 1 : 0)
-                        .allowsHitTesting(selectedTab.area == area)
-                        .disabled(selectedTab.area != area)
-                        .accessibilityHidden(selectedTab.area != area)
+            if showsHeader {
+                inspectorHeader
+                    .padding(.horizontal, 12)
+                    .frame(height: 44)
+                    .background(MacDesignColor.inspector)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .layoutPriority(1)
+                    .overlay(alignment: .bottom) {
+                        Rectangle()
+                            .fill(MacDesignColor.borderSubtle)
+                            .frame(height: 1)
+                    }
+            }
+            // Mount only the active inspector area so AppKit-backed editors
+            // (NSTextView) in Context never bleed through Task or Artifacts.
+            // Drafts live on model / navigation so switching preserves state.
+            Group {
+                switch selectedTab.area {
+                case .task:
+                    inspectorRegion(.task)
+                case .artifacts:
+                    inspectorRegion(.artifacts)
+                case .context:
+                    inspectorRegion(.context)
                 }
             }
             .frame(minHeight: 0, maxHeight: .infinity, alignment: .top)
@@ -225,32 +235,35 @@ struct MacChatInspector: View {
             .accessibilityIdentifier("mac-inspector-region-" + area.rawValue)
     }
 
+    private var inspectorDivider: some View {
+        Rectangle()
+            .fill(colorScheme == .dark ? Color.white.opacity(0.07) : MacDesignColor.borderSubtle)
+            .frame(height: 0.75)
+    }
+
     @ViewBuilder
     func inspectorContent(_ section: InspectorTab) -> some View {
         switch section {
         case .task:
-            MacInspectorProgressView(model: model, mode: .progress)
-            Rectangle().fill(MacDesignColor.borderSubtle).frame(height: 1)
-            MacInspectorProgressView(model: model, mode: .goal, draftStore: navigation.goalDrafts)
+            MacInspectorProgressView(model: model, mode: .combined, draftStore: navigation.goalDrafts)
             if !participants.isEmpty {
-                Rectangle().fill(MacDesignColor.borderSubtle).frame(height: 1)
+                inspectorDivider
                 MacInspectorParticipantsView(participants: participants)
             }
             expertHistory
         case .artifacts:
             MacInspectorArtifactsView(model: model, canReadLocalFiles: canReadLocalFiles, inspectFile: inspectFile)
-            Rectangle().fill(MacDesignColor.borderSubtle).frame(height: 1)
+            inspectorDivider
             MacInspectorReviewView(model: model, openReview: openReview)
         case .context:
-            MacInspectorWorkingContextView(model: model)
-            Rectangle().fill(MacDesignColor.borderSubtle).frame(height: 1)
             MacInspectorContextSummaryView(model: model)
-            Rectangle().fill(MacDesignColor.borderSubtle).frame(height: 1)
+            inspectorDivider
             MacInspectorKnowledgeView(model: model, navigation: navigation)
-            Rectangle().fill(MacDesignColor.borderSubtle).frame(height: 1)
+            inspectorDivider
+            MacInspectorWorkingContextView(model: model)
             MacInspectorDataSourcesView(model: model, dataRegistry: dataRegistry,
                 platformData: platformData, webSources: webSources)
-            Rectangle().fill(MacDesignColor.borderSubtle).frame(height: 1)
+            inspectorDivider
             MacInspectorBrowserView(model: model, chrome: chrome)
         }
     }

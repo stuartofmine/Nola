@@ -1428,6 +1428,20 @@ fun ScheduledActionEditorSheet(
                         color = MaterialTheme.colorScheme.error)
                     Spacer(Modifier.height(8.dp))
                 }
+                val canSave = !isSaving && name.isNotBlank()
+                    && userPrompt.isNotBlank()
+                    && url.isNotBlank()
+                    && isTimeValid
+                    && isTimezoneValid
+                    && (scheduleFrequency != "weekly" || scheduledWeekday.toIntOrNull() in 1..7)
+                if (!canSave && !isSaving) {
+                    Text(
+                        stringResource(R.string.scheduled_required_fields_hint),
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                    Spacer(Modifier.height(8.dp))
+                }
                 androidx.compose.material3.Button(
                     onClick = {
                         val action = ScheduledActionEntity(
@@ -1448,12 +1462,7 @@ fun ScheduledActionEditorSheet(
                         onSave(action)
                     },
                     modifier = Modifier.fillMaxWidth().testTag("schedule-save"),
-                    enabled = !isSaving && name.isNotBlank()
-                        && userPrompt.isNotBlank()
-                        && url.isNotBlank()
-                        && isTimeValid
-                        && isTimezoneValid
-                        && (scheduleFrequency != "weekly" || scheduledWeekday.toIntOrNull() in 1..7)
+                    enabled = canSave
                 ) { Text(stringResource(if (isSaving) R.string.scheduled_saving else R.string.common_save)) }
                 TextButton(onClick = requestDismiss, enabled = !isSaving, modifier = Modifier.fillMaxWidth()) {
                     Text(stringResource(R.string.common_cancel))

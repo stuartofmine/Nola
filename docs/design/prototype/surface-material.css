@@ -7,7 +7,7 @@
     --material-shadow: none;
 }
 :root[data-theme=dark] {
-    --material-fill: var(--surface, #222420);
+    --material-fill: var(--surface, #131315);
     --material-highlight: transparent;
     --material-shadow: none;
 }

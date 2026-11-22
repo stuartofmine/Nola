@@ -4,6 +4,7 @@
     import { workspacePageApi } from '../lib/workspacePageLocation';
     const api = workspacePageApi(baseApi);
     import { locale, t } from '../lib/i18n';
+    import Markdown from './Markdown.svelte';
     interface Snapshot {
         status: string; current_version: string; current_build: number; channel: string; target: string;
         release: { release_id: string; version: string; build: number; notes: string;
@@ -37,11 +38,15 @@
         const basic = /filename="([^"]+)"|filename=([^;\s]+)/i.exec(header);
         return (basic?.[1] ?? basic?.[2])?.trim() || undefined;
     }
+    function formatSizeMB(bytes?: number): string {
+        if (!bytes || !Number.isFinite(bytes) || bytes <= 0) return '';
+        return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+    }
     async function requestDownload(release: NonNullable<Snapshot['release']>) {
-        if (downloading || downloaded || busy || disposed) return;
+        if (downloading || busy || disposed) return;
         const owner = ++generation;
         controller?.abort();
-        downloading = true; downloaded = true; failure = ''; controller = new AbortController();
+        downloading = true; downloaded = false; failure = ''; controller = new AbortController();
         const url = `/api/software-update/package?release_id=${encodeURIComponent(release.release_id)}`;
         try {
             const response = await fetch(url, { credentials: 'same-origin', signal: controller.signal });
@@ -69,6 +74,7 @@
             anchor.click();
             anchor.remove();
             setTimeout(() => URL.revokeObjectURL(objectUrl), 1000);
+            downloaded = true;
         } catch (error) {
             if (owner === generation && !disposed) {
                 downloaded = false;
@@ -87,11 +93,12 @@
         <p>Nola {snapshot.current_version} ({snapshot.current_build}) · {snapshot.channel}</p>
         <p role="status">{t($locale,`softwareUpdate.status.${snapshot.status}`)}</p>
         {#if snapshot.release}
-            <strong>{snapshot.release.version} ({snapshot.release.build})</strong>
-            {#if snapshot.release.notes}<p class="notes">{snapshot.release.notes}</p>{/if}
+            {@const sizeLabel = formatSizeMB(snapshot.release.artifact.size)}
+            <div class="release-heading"><strong>{snapshot.release.version} ({snapshot.release.build})</strong>{#if sizeLabel}<span class="muted">{sizeLabel}</span>{/if}</div>
+            {#if snapshot.release.notes}<div class="notes"><Markdown source={snapshot.release.notes} /></div>{/if}
             {#if snapshot.release.artifact.kind === 'store'}
                 {#if storeURL(snapshot.release.artifact.url)}<a class="button" href={storeURL(snapshot.release.artifact.url)} target="_blank" rel="noopener noreferrer">{t($locale,'softwareUpdate.store')}</a>{/if}
-            {:else}<a class="button" href={`/api/software-update/package?release_id=${encodeURIComponent(snapshot.release.release_id)}`} rel="noopener noreferrer" aria-disabled={downloading || downloaded || busy} onclick={event => { event.preventDefault(); if (!downloading && !downloaded && !busy && snapshot?.release) void requestDownload(snapshot.release); }}>{t($locale,'softwareUpdate.download')}</a>{/if}
+            {:else}<a class="button" href={`/api/software-update/package?release_id=${encodeURIComponent(snapshot.release.release_id)}`} rel="noopener noreferrer" aria-disabled={downloading || busy} onclick={event => { event.preventDefault(); if (!downloading && !busy && snapshot?.release) void requestDownload(snapshot.release); }}>{t($locale, downloaded ? 'softwareUpdate.downloadAgain' : 'softwareUpdate.download')}</a>{/if}
         {/if}
     {/if}
     {#if busy}<p role="status">{t($locale,'softwareUpdate.working')}</p>{/if}
@@ -100,4 +107,4 @@
     <div class="actions"><button disabled={busy || downloading} onclick={() => check(true)}>{t($locale,'softwareUpdate.check')}</button></div>
     <p class="muted">{t($locale,'softwareUpdate.dataHint')}</p>
 </section>
-<style>.notes {white-space:pre-wrap;overflow-wrap:anywhere}.detail{overflow-wrap:anywhere}</style>
+<style>.release-heading{display:flex;align-items:baseline;gap:10px;flex-wrap:wrap}.notes{overflow-wrap:anywhere}.detail{overflow-wrap:anywhere}</style>

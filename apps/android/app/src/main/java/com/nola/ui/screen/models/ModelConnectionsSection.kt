@@ -19,6 +19,9 @@ import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
 import com.nola.R
 import com.nola.ui.components.NolaCardCompact
+import com.nola.ui.components.nolaDisclosureEnter
+import com.nola.ui.components.nolaDisclosureExit
+import com.nola.ui.components.rememberReduceMotionEnabled
 
 @Composable
 internal fun ModelConnectionsSection(
@@ -27,6 +30,7 @@ internal fun ModelConnectionsSection(
     connectHost: () -> Unit,
     manageHost: () -> Unit,
 ) {
+    val reduceMotion = rememberReduceMotionEnabled()
     var showAccountDetails by remember { mutableStateOf(false) }
     NolaCardCompact {
         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
@@ -51,7 +55,11 @@ internal fun ModelConnectionsSection(
             expanded = showAccountDetails,
             onToggle = { showAccountDetails = !showAccountDetails }
         )
-        AnimatedVisibility(visible = showAccountDetails) {
+        AnimatedVisibility(
+            visible = showAccountDetails,
+            enter = nolaDisclosureEnter(reduceMotion),
+            exit = nolaDisclosureExit(reduceMotion),
+        ) {
             Text(
                 stringResource(R.string.model_connections_source_boundary),
                 style = MaterialTheme.typography.bodySmall,

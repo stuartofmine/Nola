@@ -18,6 +18,6 @@ test('diagram document keeps hostile labels inert and cannot access parent or ne
     assert.throws(() => diagramDocument('graph LR; A-->B', 'javascript:alert(1)', false));
     const lightHtml = diagramDocument('graph LR; A-->B', 'https://localhost/library.js', false);
     assert.ok(lightHtml.includes("theme:'default'"));
-    assert.ok(html.includes('background:#1b1c1a;color:#f1f1e9'));
-    assert.ok(lightHtml.includes('background:#faf8f4;color:#242923'));
+    assert.ok(html.includes('background:#0b0b0c;color:#f5f5f7'));
+    assert.ok(lightHtml.includes('background:#fafafa;color:#111113'));
 });

@@ -15,6 +15,7 @@ if (window.top === window && location.protocol === "http:" && location.hostname 
         loginItem: () => invoke("login_item", {locale: currentLocale()}),
         setLoginItem: enabled => invoke("set_login_item", {enabled, locale: currentLocale()}),
         setTheme: theme => invoke("set_theme", {theme}),
+        openLogsFolder: () => invoke("open_logs_folder"),
     })});
     const markDesktop = () => {
         document.documentElement.dataset.nolaDesktop = "windows";

@@ -669,7 +669,7 @@ def check_apple_fallbacks(root: Path, light: dict[str, str], dark: dict[str, str
             "backgroundColor": (light["canvas"], dark["canvas"]),
             "chatBackgroundColor": (light["canvas"], dark["canvas"]),
             "surfaceColor": (light["surface"], dark["surface"]),
-            "elevatedColor": (light["surfaceSubtle"], dark["surfaceSubtle"]),
+            "elevatedColor": (light["surfaceElevated"], dark["surfaceElevated"]),
             "rowFillColor": (light["surfaceSubtle"], dark["surfaceSubtle"]),
             "primaryColor": (light["ink"], dark["ink"]),
             "secondaryContentColor": (light["inkSecondary"], dark["inkSecondary"]),

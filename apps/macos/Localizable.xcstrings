@@ -2863,6 +2863,16 @@
         }
       }
     },
+    "%lld %@" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "%1$lld %2$@"
+          }
+        }
+      }
+    },
     "%lld entries" : {
       "localizations" : {
         "de" : {
@@ -3797,6 +3807,7 @@
       }
     },
     "0" : {
+      "extractionState" : "stale",
       "localizations" : {
         "de" : {
           "stringUnit" : {
@@ -3913,6 +3924,7 @@
       }
     },
     "30" : {
+      "extractionState" : "stale",
       "localizations" : {
         "de" : {
           "stringUnit" : {
@@ -12564,6 +12576,7 @@
     },
     "autogen.ModelDownloader.71608408" : {
       "comment" : "AUTOGEN",
+      "extractionState" : "stale",
       "localizations" : {
         "de" : {
           "stringUnit" : {
@@ -22306,6 +22319,9 @@
           }
         }
       }
+    },
+    "ChatGPT 授权" : {
+
     },
     "Check execution status · %@" : {
       "localizations" : {
@@ -33529,7 +33545,6 @@
       }
     },
     "Deny" : {
-      "extractionState" : "stale",
       "localizations" : {
         "de" : {
           "stringUnit" : {
@@ -34285,7 +34300,6 @@
       }
     },
     "Diagnostics" : {
-      "extractionState" : "stale",
       "localizations" : {
         "de" : {
           "stringUnit" : {
@@ -37725,6 +37739,9 @@
         }
       }
     },
+    "Execution Engine" : {
+
+    },
     "Execution finished" : {
       "localizations" : {
         "de" : {
@@ -37861,6 +37878,7 @@
       }
     },
     "Execution Unit" : {
+      "extractionState" : "stale",
       "localizations" : {
         "de" : {
           "stringUnit" : {
@@ -44060,6 +44078,9 @@
           }
         }
       }
+    },
+    "Install runtime plugins from a package name or local folder to extend Nola." : {
+
     },
     "Installed from a verified model snapshot." : {
       "localizations" : {
@@ -85565,6 +85586,7 @@
       }
     },
     "mac.welcome.connect" : {
+      "extractionState" : "stale",
       "localizations" : {
         "de" : {
           "stringUnit" : {
@@ -92469,6 +92491,18 @@
         }
       }
     },
+    "model.download.source.modelscope" : {
+      "comment" : "ModelScope download source option",
+      "extractionState" : "extracted_with_value",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "ModelScope（中国推荐）"
+          }
+        }
+      }
+    },
     "model.local.not_started.error" : {
       "comment" : "Local model is selected but its runtime is stopped",
       "extractionState" : "stale",
@@ -99071,6 +99105,9 @@
         }
       }
     },
+    "Nola Server" : {
+
+    },
     "nola server --host 0.0.0.0 --port 5001" : {
       "localizations" : {
         "de" : {
@@ -103952,6 +103989,7 @@
       }
     },
     "Only warnings and errors are recorded until debug logging is enabled in Settings." : {
+      "extractionState" : "stale",
       "localizations" : {
         "de" : {
           "stringUnit" : {
@@ -104008,6 +104046,9 @@
           }
         }
       }
+    },
+    "Only warnings and errors are recorded until detailed logging is turned on above." : {
+
     },
     "Open" : {
       "localizations" : {
@@ -104594,6 +104635,9 @@
           }
         }
       }
+    },
+    "Open Full Review" : {
+
     },
     "Open health details" : {
       "extractionState" : "stale",
@@ -141578,6 +141622,21 @@
           }
         }
       }
+    },
+    "一键预设 OpenAI、Anthropic、DeepSeek、OpenRouter 或 Ollama" : {
+
+    },
+    "使用现有 ChatGPT 账号安全授权并选择可用模型" : {
+
+    },
+    "在 Mac 本地私密运行开源模型，无需联网" : {
+
+    },
+    "本地离线模型" : {
+
+    },
+    "连接 API 密钥" : {
+
     }
   },
   "version" : "1.0"

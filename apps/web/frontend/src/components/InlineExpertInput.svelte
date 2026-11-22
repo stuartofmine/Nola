@@ -1,5 +1,6 @@
 <script lang="ts">
-    import { tick } from 'svelte';
+    import { onMount, tick } from 'svelte';
+    import { fade, fly } from 'svelte/transition';
     import { locale, t } from '../lib/i18n';
     import type { PersistentAgent, RoomParticipant } from '../lib/agentRooms';
     import { candidateIdentity, inlineQuery, mentionSegments, reconcileMentionEdit, replaceMentionRange, type InlineExpertMention } from '../lib/inlineExpertMentions';
@@ -12,6 +13,15 @@
     } = $props();
     let cursor=$state(0), focused=$state(false), composing=$state(false), dismissed=$state(false), index=$state(0);
     let loading=$state(false), failure=$state(''), scrollY=$state(0);
+    let reducedMotion = $state(typeof matchMedia === 'function' && matchMedia('(prefers-reduced-motion: reduce)').matches);
+    onMount(() => {
+        if (typeof matchMedia !== 'function') return;
+        const preference = matchMedia('(prefers-reduced-motion: reduce)');
+        const update = () => { reducedMotion = preference.matches; };
+        update();
+        preference.addEventListener('change', update);
+        return () => preference.removeEventListener('change', update);
+    });
     const query=$derived(focused && !composing && !dismissed ? inlineQuery(value,cursor,mentions) : null);
     const options=$derived.by(()=>{
         if (!query) return [];
@@ -138,7 +148,8 @@
 </script>
 <div bind:this={root} class="inline-editor" class:editing={rows>1}>
     {#if query}
-        <div bind:this={menu} class="options" class:below={menuBelow} style:--available={available+'px'} style:--inset={inset+'px'} role="listbox" id={id+'-options'} aria-label={t($locale,'rooms.experts')}>
+        <div bind:this={menu} class="options" class:below={menuBelow} style:--available={available+'px'} style:--inset={inset+'px'} role="listbox" id={id+'-options'} aria-label={t($locale,'rooms.experts')}
+            in:fly={{ y: 4, duration: reducedMotion ? 0 : 100 }} out:fade={{ duration: reducedMotion ? 0 : 100 }}>
             {#each options as agent,i (agent.id)}
                 <button type="button" role="option" id={id+'-option-'+i} tabindex="-1" aria-selected={i===index}
                     onpointerdown={event=>event.preventDefault()} onclick={()=>choose(agent)}>
@@ -167,9 +178,9 @@ textarea:focus{outline:none}textarea::placeholder{color:var(--muted);opacity:1}
 .highlight{pointer-events:none;position:absolute;inset:0;overflow:hidden;color:var(--content);scrollbar-gutter:stable}.highlight strong{font-weight:inherit;color:var(--primary);text-decoration:underline;text-decoration-color:var(--accent-subtle);text-underline-offset:.14em}
 .measure{visibility:hidden}
 .marked textarea{color:transparent;caret-color:var(--content)}
-.editing .stack{border:1px solid var(--border);border-radius:10px;background:var(--canvas)}.editing textarea{min-height:150px;max-height:45dvh}
-.options{position:absolute;z-index:60;bottom:calc(100% + 6px);inset-inline-start:var(--inset,0);width:min(100%,340px);box-sizing:border-box;max-height:var(--available,220px);overflow:auto;padding:4px;background:var(--surface-elevated,var(--surface,var(--canvas)));border:1px solid var(--border);border-radius:12px;box-shadow:0 8px 28px rgb(0 0 0 / .18)}
-.options.below{bottom:auto;top:100%}.editing .options{position:static;max-height:180px}.options button{display:block;width:100%;text-align:start;border:0;background:transparent;color:inherit;padding:7px 10px;border-radius:7px;min-height:44px;box-shadow:none}.options strong,.options small{display:block}.options small{color:var(--muted)}.options button:hover,.options button[aria-selected=true]{background:var(--accent-subtle)}
+.editing .stack{border:1px solid var(--input-border);border-radius:10px;background:var(--input-bg);transition:border-color var(--motion-fast) ease,box-shadow var(--motion-fast) ease}.editing .stack:focus-within{border-color:var(--input-focus-border)}.editing textarea{min-height:150px;max-height:45dvh}
+.options{position:absolute;z-index:60;bottom:calc(100% + 6px);inset-inline-start:var(--inset,0);width:min(100%,340px);box-sizing:border-box;max-height:var(--available,220px);overflow:auto;padding:4px;background:var(--surface-elevated,var(--surface,var(--canvas)));border:1px solid var(--dialog-border);border-radius:12px;box-shadow:0 8px 28px rgb(0 0 0 / .18)}
+.options.below{bottom:auto;top:100%}.editing .options{position:static;max-height:180px}.options button{display:block;width:100%;text-align:start;border:1px solid transparent;background:transparent;color:inherit;padding:7px 10px;border-radius:7px;min-height:44px;box-shadow:none}.options strong,.options small{display:block}.options small{color:var(--muted)}.options button:hover{background:var(--composer-pill-hover-bg);border-color:transparent}.options button[aria-selected=true]{background:var(--glass-pill-bg);border-color:var(--glass-pill-border)}
 @media(max-width:700px){.options{width:100%}textarea,.highlight{padding:10px 14px}textarea{min-height:44px}}
-@media(forced-colors:active){.marked textarea{color:CanvasText;caret-color:CanvasText}.highlight{visibility:hidden}}
+@media(forced-colors:active){.editing .stack:focus-within{outline:2px solid Highlight;outline-offset:2px;box-shadow:none}.marked textarea{color:CanvasText;caret-color:CanvasText}.highlight{visibility:hidden}}
 </style>

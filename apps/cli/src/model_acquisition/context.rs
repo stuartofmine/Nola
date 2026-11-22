@@ -63,7 +63,10 @@ impl Architecture {
             * 10
     }
     pub fn reason(&self, context: u64) -> &'static str {
-        if context >= TARGET_CONTEXT {
+        self.reason_for_target(context, TARGET_CONTEXT)
+    }
+    pub fn reason_for_target(&self, context: u64, target: u64) -> &'static str {
+        if context >= target {
             "target_met"
         } else if self.native.is_none() || self.kv.is_none() {
             "metadata_unknown"

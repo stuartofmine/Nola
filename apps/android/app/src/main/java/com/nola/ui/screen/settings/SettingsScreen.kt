@@ -16,6 +16,7 @@ import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.animation.togetherWith
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.draw.clip
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -125,22 +126,32 @@ fun SettingsScreen(
         activeScreen = null
     }
 
-    when (activeScreen) {
-        "notifications" -> NotificationCenterScreen(onBack = { activeScreen = null })
-        "scheduled" -> ScheduledActionsScreen(
-            onBack = { activeScreen = null },
-            onOpenConversation = onOpenConversation,
-            onCreateInChat = onOpenChat
-        )
-        else -> pageState.SaveableStateProvider("settings-main") { SettingsMain(
-            detailState = detailState,
-            onNotifications = { activeScreen = "notifications" },
-            onScheduledActions = { activeScreen = "scheduled" },
-            onOpenDataSources = onOpenDataSources,
-            onOpenModels = onOpenModels,
-            onOpenIntelligence = onOpenIntelligence,
-            onOpenExperts = onOpenExperts
-        ) }
+    val reduceMotion = com.nola.ui.components.rememberReduceMotionEnabled()
+    AnimatedContent(
+        targetState = activeScreen,
+        transitionSpec = {
+            fadeIn(com.nola.ui.components.nolaTween(com.nola.ui.components.NolaMotion.controlState, reduceMotion)) togetherWith
+                fadeOut(com.nola.ui.components.nolaTween(com.nola.ui.components.NolaMotion.fast, reduceMotion))
+        },
+        label = "settings-active-screen",
+    ) { screen ->
+        when (screen) {
+            "notifications" -> NotificationCenterScreen(onBack = { activeScreen = null })
+            "scheduled" -> ScheduledActionsScreen(
+                onBack = { activeScreen = null },
+                onOpenConversation = onOpenConversation,
+                onCreateInChat = onOpenChat
+            )
+            else -> pageState.SaveableStateProvider("settings-main") { SettingsMain(
+                detailState = detailState,
+                onNotifications = { activeScreen = "notifications" },
+                onScheduledActions = { activeScreen = "scheduled" },
+                onOpenDataSources = onOpenDataSources,
+                onOpenModels = onOpenModels,
+                onOpenIntelligence = onOpenIntelligence,
+                onOpenExperts = onOpenExperts
+            ) }
+        }
     }
 }
 
@@ -289,7 +300,11 @@ internal fun SettingsContent(
                     colors = ButtonDefaults.buttonColors(containerColor = NolaColors.danger)
                 ) {
                     if (isClearingData) {
-                        CircularProgressIndicator(Modifier.size(18.dp), strokeWidth = 2.dp)
+                        CircularProgressIndicator(
+                            Modifier.size(18.dp),
+                            strokeWidth = 2.dp,
+                            color = MaterialTheme.colorScheme.onError
+                        )
                         Spacer(Modifier.width(8.dp))
                         Text(stringResource(R.string.settings_clearing_data))
                     } else {
@@ -362,9 +377,9 @@ internal fun SettingsContent(
             }
             MobileSettingsGroup(R.string.settings_group_connections) {
                 IMSettingsRow(R.drawable.nola_models, R.string.models_title, onOpenModels)
-                HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant, thickness = 0.5.dp, modifier = Modifier.padding(start = 34.dp))
+                HorizontalDivider(color = NolaColors.hairlineBorder, thickness = 0.5.dp, modifier = Modifier.padding(start = 34.dp))
                 IMSettingsRow(R.drawable.nola_person, R.string.chat_experts, onOpenExperts)
-                HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant, thickness = 0.5.dp, modifier = Modifier.padding(start = 34.dp))
+                HorizontalDivider(color = NolaColors.hairlineBorder, thickness = 0.5.dp, modifier = Modifier.padding(start = 34.dp))
                 IMSettingsRow(R.drawable.nola_execution, R.string.settings_capabilities, onOpenIntelligence)
             }
             MobileSettingsGroup(R.string.settings_group_security) {
@@ -461,10 +476,9 @@ internal fun SettingsContent(
                 enabled = !isExportingData && !isClearingData,
                 onClick = { showExportDialog = true }
             )
-            HorizontalDivider(
-                modifier = Modifier.padding(vertical = NolaSpacing.xs),
-                color = MaterialTheme.colorScheme.outline.copy(alpha = 0.12f)
-            )
+        }
+
+        NolaCard(plain = true) {
             NolaSectionTitle(title = stringResource(R.string.settings_privacy))
             Row(
                 modifier = Modifier
@@ -517,9 +531,14 @@ private fun AppearanceChoices(selected: AppearancePreference, onSelect: (Appeara
     val style = MaterialTheme.typography.labelLarge
     val density = LocalDensity.current
     val measurer = rememberTextMeasurer()
-    BoxWithConstraints(Modifier.fillMaxWidth()
-        .background(MaterialTheme.colorScheme.surfaceContainer, NolaContinuousShape(10.dp))
-        .padding(3.dp).selectableGroup()) {
+    val isDark = NolaColors.isDark
+    val trackShape = NolaContinuousShape(10.dp)
+    BoxWithConstraints(
+        Modifier.fillMaxWidth()
+            .background(NolaColors.segmentTrack, trackShape)
+            .then(if (isDark) Modifier.border(0.75.dp, NolaColors.hairlineBorder, trackShape) else Modifier)
+            .padding(3.dp).selectableGroup()
+    ) {
         val spacing = 2.dp
         val padding = 8.dp
         val segmentWidth = (maxWidth - spacing * (choices.size - 1)) / choices.size
@@ -527,13 +546,24 @@ private fun AppearanceChoices(selected: AppearancePreference, onSelect: (Appeara
             val labelWidth = measurer.measure(label, style = style, softWrap = false).size.width
             with(density) { labelWidth.toDp() } + padding * 2 <= segmentWidth
         }
+        val haptics = com.nola.ui.components.rememberNolaHaptics()
         val option: @Composable (AppearancePreference, String, Modifier) -> Unit = { choice, label, modifier ->
+            val isSelected = selected == choice
             Box(modifier.heightIn(min = 48.dp)
                 .clip(NolaContinuousShape(8.dp))
-                .background(if (selected == choice) MaterialTheme.colorScheme.surface else Color.Transparent)
-                .selectable(selected = selected == choice, role = Role.RadioButton, onClick = { onSelect(choice) })
+                .background(if (isSelected) NolaColors.segmentSelected else Color.Transparent)
+                .selectable(selected = isSelected, role = Role.RadioButton, onClick = {
+                    if (!isSelected) haptics.selection()
+                    onSelect(choice)
+                })
                 .padding(horizontal = padding, vertical = 4.dp), contentAlignment = Alignment.Center) {
-                Text(label, modifier = Modifier.fillMaxWidth(), style = style, textAlign = TextAlign.Center)
+                Text(
+                    label,
+                    modifier = Modifier.fillMaxWidth(),
+                    style = style,
+                    color = if (isSelected) MaterialTheme.colorScheme.onSurface else MaterialTheme.colorScheme.onSurfaceVariant,
+                    textAlign = TextAlign.Center,
+                )
             }
         }
         if (fits) {
@@ -783,6 +813,13 @@ fun SettingsNavRow(
         }
         if (isBusy) {
             CircularProgressIndicator(Modifier.size(24.dp).padding(3.dp), strokeWidth = 2.dp)
+        } else {
+            Icon(
+                painterResource(R.drawable.nola_chevron),
+                contentDescription = null,
+                modifier = Modifier.size(16.dp),
+                tint = MaterialTheme.colorScheme.onSurfaceVariant
+            )
         }
     }
 }

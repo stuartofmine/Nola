@@ -56,7 +56,7 @@ struct MacHealthSummaryView: View {
                         .font(.system(size: 11.5, weight: .medium))
                     Spacer(minLength: 8)
                     Button {
-                        withAnimation(reduceMotion ? nil : .easeOut(duration: 0.16)) { self.syncFeedback = nil }
+                        withAnimation(reduceMotion ? nil : .easeOut(duration: MacDesignTokens.Motion.selection)) { self.syncFeedback = nil }
                     } label: {
                         Image(systemName: "xmark")
                             .font(.system(size: 9, weight: .semibold))
@@ -166,7 +166,7 @@ struct MacHealthSummaryView: View {
             VStack(alignment: .leading, spacing: 2) {
                 Text(title).font(.system(size: 10.5)).foregroundStyle(.secondary)
                 HStack(alignment: .firstTextBaseline, spacing: 4) {
-                    Text(value).font(.system(size: 17, weight: .semibold)).contentTransition(.numericText())
+                    Text(value).font(.system(size: 17, weight: .semibold)).contentTransition(reduceMotion ? .identity : .numericText())
                     Text(unit).font(.system(size: 11)).foregroundStyle(.secondary)
                 }
             }
@@ -256,7 +256,7 @@ struct MacHealthSummaryView: View {
                 tint: .blue
             )
         }
-        withAnimation(reduceMotion ? nil : .easeOut(duration: 0.18)) { syncFeedback = feedback }
+        withAnimation(reduceMotion ? nil : .easeOut(duration: MacDesignTokens.Motion.disclosure)) { syncFeedback = feedback }
     }
 }
 

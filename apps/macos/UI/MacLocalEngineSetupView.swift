@@ -24,7 +24,7 @@ struct MacLocalEngineSetupView: View {
             case .detected(let status):
                 statusContent(status)
             case .failed(let status, let message):
-                Text(verbatim: message).foregroundStyle(.red).textSelection(.enabled)
+                Text(verbatim: message).foregroundStyle(MacDesignColor.danger).textSelection(.enabled)
                     .accessibilityIdentifier("local-engine-error")
                 if let status, !status.ready { statusContent(status) } else { refresh }
             }
@@ -34,9 +34,6 @@ struct MacLocalEngineSetupView: View {
         .accessibilityElement(children: .contain)
         .accessibilityIdentifier("local-engine-status")
         .onChange(of: engine, initial: true) { _, value in acquisition.checkEngine(value) }
-        .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in
-            acquisition.checkEngine(engine)
-        }
     }
 
     @ViewBuilder private func statusContent(_ status: MacModelAcquisitionEvent.EngineStatus) -> some View {
@@ -73,7 +70,7 @@ struct MacLocalEngineSetupView: View {
     }
 
     private var refresh: some View {
-        Button { acquisition.checkEngine(engine) } label: {
+        Button { acquisition.checkEngine(engine, force: true) } label: {
             Image(systemName: "arrow.clockwise")
                 .frame(width: 22, height: 22)
                 .accessibilityLabel(String(localized: "Check engine again", table: "ModelCenter"))

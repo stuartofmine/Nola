@@ -19,23 +19,23 @@ struct ChatEmptyStateCard: View {
 
     private var suggestions: [(String, String)] {
         [
-            ("waveform.path.ecg", NSLocalizedString("chat.suggest.brainstorm", value: "总结我最近数据中的重要变化", comment: "Review recent personal signals")),
-            ("brain.head.profile", NSLocalizedString("chat.suggest.summary", value: "根据你对我的记忆，我接下来该关注什么？", comment: "Continue from personal memory")),
-            ("calendar.badge.clock", NSLocalizedString("chat.suggest.schedule", value: "结合我的日程与优先级，规划今天", comment: "Plan today from priorities")),
-            ("doc.text.magnifyingglass", NSLocalizedString("chat.suggest.translate", value: "分析我上传的文件，提炼事实与影响", comment: "Analyze an uploaded file"))
+            ("waveform.path.ecg", NSLocalizedString("chat.suggest.brainstorm", value: "Summarize important changes in my recent data", comment: "Review recent personal signals")),
+            ("brain.head.profile", NSLocalizedString("chat.suggest.summary", value: "Based on what you remember about me, what should I focus on next?", comment: "Continue from personal memory")),
+            ("calendar.badge.clock", NSLocalizedString("chat.suggest.schedule", value: "Plan today around my schedule and priorities", comment: "Plan today from priorities")),
+            ("doc.text.magnifyingglass", NSLocalizedString("chat.suggest.translate", value: "Analyze an uploaded file and highlight key facts and impact", comment: "Analyze an uploaded file"))
         ]
     }
 
     var body: some View {
         VStack(spacing: 20) {
             VStack(spacing: 8) {
-                Text(NSLocalizedString("chat.empty.greeting", value: "我们从哪里开始？", comment: "Chat empty greeting"))
+                Text(NSLocalizedString("chat.empty.greeting", value: "Where shall we start?", comment: "Chat empty greeting"))
                     .font(.title2.weight(.semibold))
-                    .foregroundColor(.primary)
+                    .foregroundStyle(DesignTokens.contentColor)
 
                 Text(emptyStateDescription)
-                    .font(.body.weight(.medium))
-                    .foregroundStyle(Color(uiColor: .label))
+                    .font(.subheadline)
+                    .foregroundStyle(DesignTokens.secondaryContentColor)
                     .multilineTextAlignment(.center)
                     .padding(.horizontal, 18)
                     .accessibilityIdentifier("chat.empty.description")
@@ -49,13 +49,17 @@ struct ChatEmptyStateCard: View {
                     ForEach(suggestions, id: \.1) { item in
                         Button(action: { onSuggestion(item.1) }) {
                             suggestionLabel(icon: item.0, title: item.1)
-                            .padding(horizontalSizeClass == .compact ? 11 : 13)
+                            .padding(horizontalSizeClass == .compact ? 12 : 14)
                             .frame(
                                 maxWidth: .infinity,
-                                minHeight: 44,
+                                minHeight: 48,
                                 alignment: horizontalSizeClass == .compact ? .leading : .topLeading
                             )
-                            .overlay(alignment: .bottom) { DesignTokens.borderColor.frame(height: 0.5) }
+                            .background(DesignTokens.surfaceColor, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
+                            .overlay(
+                                RoundedRectangle(cornerRadius: 14, style: .continuous)
+                                    .stroke(DesignTokens.borderColor, lineWidth: 1)
+                            )
                             .contentShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
                         }
                         .buttonStyle(NolaPressableStyle())
@@ -66,7 +70,7 @@ struct ChatEmptyStateCard: View {
                 HStack(spacing: 8) {
                     ProgressView()
                         .controlSize(.small)
-                    Text(NSLocalizedString("chat.empty.host_checking", value: "正在检查连接", comment: "Checking host action"))
+                    Text(NSLocalizedString("chat.empty.host_checking", value: "Checking connection", comment: "Checking host action"))
                         .font(.callout.weight(.medium))
                         .foregroundStyle(.secondary)
                 }
@@ -76,12 +80,10 @@ struct ChatEmptyStateCard: View {
                 Button(action: onPrimaryAction) {
                     Text(primaryActionTitle)
                         .font(.callout.weight(.semibold))
-                        .foregroundStyle(DesignTokens.onActionColor)
                         .padding(.horizontal, 22)
                         .padding(.vertical, 12)
-                        .background(RoundedRectangle(cornerRadius: DesignTokens.radius_md).fill(DesignTokens.actionColor))
                 }
-                .buttonStyle(NolaPressableStyle())
+                .buttonStyle(NolaPrimaryButtonStyle(cornerRadius: DesignTokens.radius_md))
             }
         }
         .padding(.horizontal, 18)
@@ -134,11 +136,11 @@ struct ChatEmptyStateCard: View {
         if selectedModel.isWebBackend {
             switch hostConnectionPhase {
             case .checking, .notApplicable:
-                return NSLocalizedString("chat.empty.mode.host_checking", value: "正在连接宿主机并读取可用能力…", comment: "Checking host empty chat description")
+                return NSLocalizedString("chat.empty.mode.host_checking", value: "Connecting to Nola Server and reading available capabilities…", comment: "Checking host empty chat description")
             case .unavailable:
-                return NSLocalizedString("chat.empty.mode.host_unavailable", value: "宿主机暂时不可用。请确认 Mac 版 Nola 正在运行并检查网络。", comment: "Unavailable host empty chat description")
+                return NSLocalizedString("chat.empty.mode.host_unavailable", value: "Nola Server is currently unavailable. Check that Nola on your Mac is running and reachable.", comment: "Unavailable host empty chat description")
             case .unconfigured:
-                return NSLocalizedString("chat.empty.mode.host_unconfigured", value: "宿主机尚未连接。完成配对后，可使用项目工具并处理长任务。", comment: "Unconfigured host empty chat description")
+                return NSLocalizedString("chat.empty.mode.host_unconfigured", value: "Nola Server is not connected yet. Pair with your Mac to use project tools and longer-running tasks.", comment: "Unconfigured host empty chat description")
             case .connected:
                 break
             }
@@ -161,10 +163,10 @@ struct ChatEmptyStateCard: View {
         if !hasModels { return NSLocalizedString("model.setup.title", value: "Configure model", comment: "Configure model") }
         if selectedModel?.isWebBackend == true {
             if hostConnectionPhase == .unavailable {
-                return NSLocalizedString("chat.empty.retry_host", value: "重试连接", comment: "Retry host from empty chat")
+                return NSLocalizedString("chat.empty.retry_host", value: "Retry connection", comment: "Retry host from empty chat")
             }
             if !modelIsReady {
-                return NSLocalizedString("chat.empty.configure_host", value: "配置宿主机", comment: "Configure host from empty chat")
+                return NSLocalizedString("chat.empty.configure_host", value: "Configure host", comment: "Configure host from empty chat")
             }
         }
         return NSLocalizedString("model.picker.title", comment: "Select model action")

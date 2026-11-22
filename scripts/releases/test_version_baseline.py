@@ -65,11 +65,14 @@ class FirstReleaseBaselineTests(unittest.TestCase):
         self.assertEqual((manifest['store_schema'], manifest['store_epoch']), (1, 1))
 
     def test_readmes_describe_current_local_architecture(self):
-        for name in ['README.md', 'README.zh-CN.md']:
+        for name, policy in [('README.md', 'VERSION_COMPATIBILITY.en.md'),
+                             ('README.zh-CN.md', 'VERSION_COMPATIBILITY.md')]:
             text = (ROOT / name).read_text()
             for retired in ['wrangler', 'nola_backend_env', 'BACKEND_PORT', 'Jinja', '| Backend', '├── backend/']:
                 self.assertNotIn(retired, text)
-            self.assertIn('VERSION_COMPATIBILITY.md', text)
+            target = Path('docs/architecture/总体设计') / policy
+            self.assertIn(f']({target.as_posix()})', text)
+            self.assertTrue((ROOT / target).is_file())
             self.assertIn('windows/', text)
 
 

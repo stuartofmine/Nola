@@ -97,7 +97,7 @@
 <svelte:window onbeforeunload={event => { if (!acceptsWorkspaceUnload(event)) return; if (reading) { event.preventDefault(); event.returnValue = ''; } }} />
 <section class="text-attachments" aria-label={t($locale, 'chatTextAttachment.title')}>
     <div class="attachment-toolbar">
-    <label class="picker" class:disabled={busy || reading || attachments.length >= MAX_TEXT_ATTACHMENTS}><span class="mobile-symbol" aria-hidden="true"><PrototypeIcon name="plus" size={18} /></span><span class="toolbar-label">{t($locale, 'chatTextAttachment.select')}</span><input bind:this={picker} type="file" multiple accept={TEXT_ATTACHMENT_ACCEPT} onchange={select} disabled={busy || reading || attachments.length >= MAX_TEXT_ATTACHMENTS} /></label>
+    <label class="picker" class:disabled={busy || reading || attachments.length >= MAX_TEXT_ATTACHMENTS} title={t($locale, 'chatTextAttachment.select')}><span class="mobile-symbol" aria-hidden="true"><PrototypeIcon name="plus" size={18} /></span><span class="toolbar-label">{t($locale, 'chatTextAttachment.select')}</span><input bind:this={picker} type="file" multiple accept={TEXT_ATTACHMENT_ACCEPT} onchange={select} disabled={busy || reading || attachments.length >= MAX_TEXT_ATTACHMENTS} /></label>
     {#if showHelp}<details class="help"><summary><span class="mobile-symbol" aria-hidden="true">ⓘ</span><span class="toolbar-label">{t($locale, 'chatTextAttachment.helpTitle')}</span></summary><p>{t($locale, 'chatTextAttachment.help')}</p><p>{t($locale, 'chatTextAttachment.dropPaste')}</p></details>{/if}
     </div>
     {#if reading}<p role="status">{t($locale, 'chatTextAttachment.reading')}</p>{/if}
@@ -114,32 +114,24 @@
 </section>
 
 <style>
-    .mobile-symbol { display: none; }
     .text-attachments { display: grid; gap: 6px; min-width: 0; }
-    .attachment-toolbar { display: flex; flex-wrap: wrap; align-items: start; gap: 6px 10px; }
-    .picker { position: relative; display: inline-flex; align-items: center; min-height: 44px; width: fit-content; max-width: 100%; padding: 5px 8px; border: 1px solid var(--border); border-radius: 7px; font-size: 12px; font-weight: 600; cursor: pointer; }
+    .attachment-toolbar { display: flex; flex-wrap: wrap; align-items: start; gap: 4px; }
+    .toolbar-label { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
+    .mobile-symbol { display: inline-flex; align-items: center; justify-content: center; }
+    .remove-attachment { display: inline-flex; align-items: center; justify-content: center; padding: 6px; }
+    .picker { position: relative; display: inline-flex; align-items: center; justify-content: center; width: 44px; height: 44px; min-height: 44px; padding: 0; border: 0; border-radius: 12px; font-size: 12px; font-weight: 600; cursor: pointer; }
     .picker.disabled { color: var(--muted); background: var(--panel); cursor: not-allowed; }
     .picker input { position: absolute; width: 1px; height: 1px; overflow: hidden; opacity: 0; }
     .picker:focus-within { outline: 2px solid var(--accent); outline-offset: 2px; }
     .help, small { margin: 0; color: var(--muted); font-size: 11px; line-height: 1.4; }
-    .help { flex: 1 1 140px; min-width: 0; }
+    .help { flex: 0 1 auto; min-width: 0; }
     .help[open] { flex-basis: 100%; }
-    .help summary { cursor: pointer; min-height: 44px; box-sizing: border-box; padding: 14px 0; }
+    .help summary { display: flex; align-items: center; justify-content: center; width: 44px; height: 44px; padding: 0; cursor: pointer; min-height: 44px; box-sizing: border-box; list-style: none; }
+    .help summary::-webkit-details-marker { display: none; }
     .help p { margin: 0 0 6px; }
     .error { margin: 0; color: var(--danger); font-size: 12px; }
     ul { display: grid; gap: 5px; padding: 2px; margin: 0; list-style: none; max-height: max(48px, min(20dvh, 160px)); overflow: auto; overscroll-behavior: contain; scrollbar-gutter: stable; }
     li { display: flex; align-items: center; flex-wrap: wrap; gap: 5px; min-width: 0; }
     li > button:first-child { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; text-align: start; }
     pre { flex: 1 0 100%; max-height: 180px; overflow: auto; margin: 0; padding: 8px; border: 1px solid var(--border); border-radius: 8px; font-size: 11px; white-space: pre-wrap; overflow-wrap: anywhere; }
-    @media (min-width: 0px) {
-        .toolbar-label { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
-        .mobile-symbol { display: inline-flex; align-items: center; justify-content: center; }
-        .remove-attachment { display: inline-flex; align-items: center; justify-content: center; padding: 6px; }
-        .picker { width: 44px; height: 44px; padding: 0; justify-content: center; border: 0; border-radius: 12px; }
-        .help { flex: 0 1 auto; }
-        .help summary { display: flex; align-items: center; justify-content: center; width: 44px; height: 44px; padding: 0; }
-        .help summary::-webkit-details-marker { display: none; }
-        .help[open] { flex-basis: 100%; }
-        .attachment-toolbar { gap: 4px; }
-    }
 </style>

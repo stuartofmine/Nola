@@ -123,7 +123,11 @@
 {/if}
 
 <style>
-    .message-actions { display: flex; flex-wrap: wrap; gap: 2px; align-items: center; margin-top: 5px; font-size: 12px; color: var(--muted); }
+    .message-actions { display: flex; flex-wrap: wrap; gap: 2px; align-items: center; margin-top: 5px; font-size: 12px; color: var(--muted); transition: opacity var(--motion-fast) ease; }
+    @media (hover: hover) and (min-width: 761px) {
+        .message-actions { opacity: .45; }
+        .message-actions:hover, .message-actions:focus-within, :global(article:hover) .message-actions, :global(article:focus-within) .message-actions { opacity: 1; }
+    }
     button { display:inline-flex; align-items:center; gap:5px; min-height: var(--control-hit-size); padding: 6px 8px; font-size: 12px; border: 0; box-shadow: none; background: transparent; color: var(--muted); }
     button:hover:not(:disabled) { background: var(--panel); color: var(--content); }
     button:active:not(:disabled) { background: var(--accent-subtle); color: var(--content); }

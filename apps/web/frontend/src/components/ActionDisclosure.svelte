@@ -42,13 +42,12 @@
         padding: 4px; border: 1px solid var(--border); border-radius: var(--radius-control);
         background: var(--surface-elevated, var(--surface)); color: var(--content); box-shadow: 0 6px 18px rgb(0 0 0 / .18);
     }
-    .disclosed-actions[popover]:not(:popover-open) { display: none; }
     .disclosed-actions:popover-open { display: grid; gap: 0; }
     .disclosed-actions[popover] :global(button:focus-visible) { outline-offset: -2px; }
     .chevron { width: 13px; height: 13px; flex: none; fill: none; stroke: currentColor; stroke-width: 1.6; stroke-linecap: round; stroke-linejoin: round; transition: transform var(--motion-base) ease; }
     details[open] .chevron { transform: rotate(180deg); }
     .disclosed-actions { display: flex; flex-wrap: wrap; gap: 4px; padding: 8px 0; }
-    details[open] .disclosed-actions { animation: enter var(--motion-base) ease-out; }
+    details[open] .disclosed-actions:not([popover]) { animation: enter var(--motion-base) ease-out; }
     .disclosed-actions :global(button) { text-align: start; }
     @keyframes enter { from { opacity: 0; } to { opacity: 1; } }
 </style>

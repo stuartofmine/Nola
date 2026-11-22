@@ -60,13 +60,22 @@
 </script>
 
 <section tabindex="-1" use:activityRequestFocus={{conversationId: parsed?.session_id ?? '', runId, active: active && !expired && status === 'ready'}} class="permission-panel" aria-label={t($locale, 'chatPermission.title')} aria-busy={status === 'submitting'}>
-    <h3>{t($locale, 'chatPermission.title')}</h3>
+    <header class="permission-header">
+        <h3>{t($locale, 'chatPermission.title')}</h3>
+        {#if onRefresh}
+            <button type="button" class="refresh-icon" disabled={status === 'submitting'} aria-label={t($locale, 'chatPermission.refresh')} title={t($locale, 'chatPermission.refresh')} onclick={() => onRefresh?.()}>
+                <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M20 7v5h-5M20 12a8 8 0 1 0-2 5" /></svg>
+            </button>
+        {/if}
+    </header>
     {#if parsed}
         <div class="permission-content" bind:this={content}>
         <p class="tool">{parsed.tool_name}</p>
         {#if reviewText.trim()}<pre>{reviewText}</pre>{:else}<p>{t($locale, 'chatPermission.noDetails')}</p>{/if}
         <p class="muted">{t($locale, 'chatPermission.scope')}</p>
-        <p role="status" aria-live="polite">{t($locale, !active ? 'chatPermission.inactive' : status !== 'ready' ? `chatPermission.${status}` : expired ? 'chatPermission.expired' : 'chatPermission.ready')}</p>
+        {#if !active || status !== 'ready' || expired}
+            <p role="status" aria-live="polite">{t($locale, !active ? 'chatPermission.inactive' : status !== 'ready' ? `chatPermission.${status}` : 'chatPermission.expired')}</p>
+        {/if}
         {#if localError}<p role="alert" class="error">{t($locale, localError)}</p>{/if}
         <details class="guidance" bind:open={guidanceOpen}>
         <summary>{t($locale, 'chatPermission.guidance')}</summary>
@@ -77,20 +86,22 @@
         </div>
         <div class="actions">
             {#if status === 'submitting'}<span class="muted" role="status">{t($locale, 'chatPermission.submitting')}</span>{/if}
+            {#if status === 'unknown'}<button disabled={!active || expired} onclick={() => submit('deny', true)}>{t($locale, 'chatPermission.retrySame')}</button>{/if}
             <button class="danger" disabled={disabled} onclick={() => submit('deny')}>{t($locale, 'chatPermission.deny')}</button>
             <button disabled={disabled} onclick={() => submit('return_to_composer')}>{t($locale, 'chatPermission.return')}</button>
             {#if parsed.allow_conversation}<button disabled={disabled || !reviewText.trim()} onclick={() => submit('allow_conversation')}>{t($locale, 'chatPermission.allowConversation')}</button>{/if}
             <button class="primary" disabled={disabled || !reviewText.trim()} onclick={() => submit('allow_once')}>{t($locale, 'chatPermission.allowOnce')}</button>
         </div>
-
-        {#if status === 'unknown'}<button disabled={!active || expired} onclick={() => submit('deny', true)}>{t($locale, 'chatPermission.retrySame')}</button>{/if}
-        {#if onRefresh}<button disabled={status === 'submitting'} onclick={() => onRefresh?.()}>{t($locale, 'chatPermission.refresh')}</button>{/if}
     {:else}<p role="alert" class="error">{t($locale, 'chatPermission.invalid')}</p>{/if}
 </section>
 
 <style>
-    .permission-panel { flex-shrink: 0; align-self: center; width: calc(100% - 24px); max-width: 752px; max-height: min(240px, 38dvh); overflow: auto; margin: 8px 12px; background: var(--surface); border: 1px solid var(--border); border-radius: 12px; padding: 16px; display: flex; flex-direction: column; gap: 12px; }
-    .permission-content { min-height: 48px; overflow: auto; overscroll-behavior: contain; display: flex; flex-direction: column; gap: 12px; padding: 2px; }
+    .permission-panel { flex-shrink: 0; align-self: center; width: calc(100% - 24px); max-width: 752px; max-height: min(420px, 50dvh); overflow: hidden; margin: 8px 12px; background: var(--surface); border: 1px solid var(--border); border-radius: 12px; padding: 16px; display: flex; flex-direction: column; gap: 12px; }
+    .permission-header { flex-shrink: 0; display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+    .refresh-icon { flex: none; display: grid; place-items: center; width: 32px; height: 32px; min-width: 32px; min-height: 32px; padding: 0; border: 0; background: transparent; box-shadow: none; color: var(--muted); border-radius: 8px; }
+    .refresh-icon:hover:not(:disabled) { background: var(--panel); color: var(--content); }
+    .refresh-icon svg { width: 16px; height: 16px; fill: none; stroke: currentColor; stroke-width: 1.7; stroke-linecap: round; stroke-linejoin: round; }
+    .permission-content { flex: 1; min-height: 0; overflow: auto; overscroll-behavior: contain; display: flex; flex-direction: column; gap: 12px; padding: 2px; }
     .permission-content > * { flex-shrink: 0; }
     h3, p { margin: 0; overflow-wrap: anywhere; }
     h3 { font-size: .9375rem; font-weight: 600; }
@@ -101,6 +112,7 @@
     .guidance[open] > :not(summary) { margin-top: 8px; }
     .sr-only { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); }
     @media (max-width: 760px) { .actions { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); } .actions button { overflow-wrap: anywhere; padding-inline: 8px; } }
+    @media (pointer: coarse) { .refresh-icon { width: 44px; height: 44px; min-width: 44px; min-height: 44px; } }
     label { display: grid; gap: 6px; }
     textarea { width: 100%; box-sizing: border-box; }
 </style>

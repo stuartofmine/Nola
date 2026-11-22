@@ -267,7 +267,7 @@ struct PersonalIntelligenceDashboardView: View {
                 .foregroundStyle(accent)
             Text("\(value.formatted())\(suffix)")
                 .font(.title3.monospacedDigit().weight(.bold))
-                .contentTransition(.numericText())
+                .contentTransition(reduceMotion ? .identity : .numericText())
             Text(title)
                 .font(.footnote)
                 .foregroundStyle(.secondary)
@@ -391,7 +391,7 @@ struct PersonalIntelligenceDashboardView: View {
                     Spacer()
                     Text("\(Int(confidence * 100))%")
                         .monospacedDigit()
-                        .contentTransition(.numericText())
+                        .contentTransition(reduceMotion ? .identity : .numericText())
                 }
                 .font(.caption)
                 .foregroundStyle(.secondary)
@@ -878,7 +878,7 @@ struct PersonalCapabilitiesLibraryView: View {
             Label(notice, systemImage: "checkmark.circle.fill")
                 .font(.caption)
                 .foregroundStyle(.green)
-                .transition(.opacity)
+                .transition(reduceMotion ? .identity : .opacity)
         }
 
         if libraryReadFailed {

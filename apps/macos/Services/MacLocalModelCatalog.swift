@@ -130,6 +130,12 @@ nonisolated struct MacLocalModelProfile: Identifiable, Hashable, Sendable {
         installed(in: modelsRoot)
     }
 
+    static func loadInstalledAsync(in root: URL = modelsRoot) async -> [MacLocalModelProfile] {
+        await Task.detached(priority: .userInitiated) {
+            installed(in: root)
+        }.value
+    }
+
     static func installed(in root: URL) -> [MacLocalModelProfile] {
         let root = root.standardizedFileURL.resolvingSymlinksInPath()
         let catalogURL = root.appendingPathComponent("catalog.json")

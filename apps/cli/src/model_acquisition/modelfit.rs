@@ -2,24 +2,25 @@
 //! ModelFit publishes its compatibility estimates under CC BY 4.0 at
 //! https://modelfit.io/data/. Only the shared public dataset is requested.
 //! Model names are discovery hints. The selected Hub supplies the actual files and revision.
-use super::{Engine, Source};
+use super::{cache, Engine, Source};
 use reqwest::{blocking::Client, redirect::Policy};
 use scraper::{Html, Selector};
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::{io::Read, time::Duration};
 
 const DATASET: &str = "https://modelfit.io/api/dataset/";
 const PICKS: &str = "https://modelfit.io/stats/";
 const MAX_DATASET_BYTES: u64 = 4 * 1024 * 1024;
+const MODELFIT_TIMEOUT: Duration = Duration::from_millis(2500);
 const GIB: f64 = (1u64 << 30) as f64;
 
-#[derive(Deserialize)]
+#[derive(Clone, Serialize, Deserialize)]
 struct Catalog {
     models: Vec<Model>,
 }
 
-#[derive(Deserialize)]
+#[derive(Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct Model {
     model: String,
@@ -35,32 +36,114 @@ struct Model {
     open_weights: bool,
 }
 
+#[derive(Clone, Serialize, Deserialize)]
+struct CachedModelfit {
+    catalog: Catalog,
+    picks: Vec<(u64, String)>,
+}
+
+pub(super) fn curated_family_queries(engine: Engine, hardware: &Value) -> Vec<String> {
+    let ram = hardware["memoryBytes"].as_u64().unwrap_or(0) as f64 / GIB;
+    let vram = hardware["gpuMemoryBytes"].as_u64().unwrap_or(0) as f64 / GIB;
+    let pool = if hardware["unifiedMemory"] == true {
+        ram
+    } else if engine == Engine::Vllm {
+        vram
+    } else if vram > 0.0 {
+        vram.min(ram)
+    } else {
+        ram
+    };
+    let families: &[&str] = if pool <= 8.5 {
+        &[
+            "Qwen3-4B",
+            "Qwen2.5-3B-Instruct",
+            "DeepSeek-R1-Distill-Qwen-1.5B",
+            "gemma-3-4b-it",
+            "Llama-3.2-3B-Instruct",
+            "Qwen3-1.7B",
+        ]
+    } else if pool <= 16.5 {
+        &[
+            "Qwen3-8B",
+            "Qwen2.5-7B-Instruct",
+            "DeepSeek-R1-Distill-Qwen-7B",
+            "gemma-3-4b-it",
+            "Qwen3-4B",
+            "Llama-3.2-3B-Instruct",
+        ]
+    } else if pool <= 32.5 {
+        &[
+            "Qwen3-14B",
+            "Qwen2.5-14B-Instruct",
+            "DeepSeek-R1-Distill-Qwen-14B",
+            "gemma-3-12b-it",
+            "Qwen3-8B",
+            "Qwen2.5-7B-Instruct",
+        ]
+    } else {
+        &[
+            "Qwen3-32B",
+            "Qwen2.5-32B-Instruct",
+            "DeepSeek-R1-Distill-Qwen-32B",
+            "gemma-3-27b-it",
+            "Qwen3-14B",
+            "Qwen2.5-14B-Instruct",
+        ]
+    };
+    families.iter().map(|s| (*s).to_owned()).collect()
+}
+
 pub(super) fn queries(
     engine: Engine,
-    _source: Source,
+    source: Source,
     hardware: &Value,
-) -> Result<Vec<String>, String> {
-    let client = Client::builder()
-        .timeout(Duration::from_secs(8))
-        .user_agent("Nola/1.0")
-        .redirect(Policy::none())
-        .build()
-        .map_err(|e| e.to_string())?;
-    let (data, picks) = std::thread::scope(|scope| {
-        let picks = scope.spawn(|| fetch(&client, PICKS));
-        (
-            fetch(&client, DATASET),
-            picks.join().ok().and_then(Result::ok),
-        )
-    });
-    let catalog =
-        serde_json::from_slice(&data?).map_err(|e| format!("Invalid ModelFit catalog: {e}"))?;
-    let picks = picks
-        .as_deref()
-        .and_then(|bytes| std::str::from_utf8(bytes).ok())
-        .map(published_picks)
-        .unwrap_or_default();
-    Ok(rank(catalog, engine, hardware, &picks))
+) -> Result<(Vec<String>, &'static str), String> {
+    // Never block on modelfit.io when ModelScope is selected (e.g. China UTC+8 users).
+    if source == Source::ModelScope {
+        return Ok((curated_family_queries(engine, hardware), "hub"));
+    }
+    if let Some(cached) = cache::get::<CachedModelfit>("modelfit", "catalog_v1") {
+        let ranked = rank(cached.catalog, engine, hardware, &cached.picks);
+        if !ranked.is_empty() {
+            return Ok((ranked, "modelfit"));
+        }
+    }
+    let fetched = (|| -> Result<CachedModelfit, String> {
+        let client = Client::builder()
+            .connect_timeout(MODELFIT_TIMEOUT)
+            .timeout(MODELFIT_TIMEOUT)
+            .user_agent("Nola/1.0")
+            .redirect(Policy::none())
+            .build()
+            .map_err(|e| e.to_string())?;
+        let (data, picks) = std::thread::scope(|scope| {
+            let picks = scope.spawn(|| fetch(&client, PICKS));
+            (
+                fetch(&client, DATASET),
+                picks.join().ok().and_then(Result::ok),
+            )
+        });
+        let catalog: Catalog =
+            serde_json::from_slice(&data?).map_err(|e| format!("Invalid ModelFit catalog: {e}"))?;
+        let picks = picks
+            .as_deref()
+            .and_then(|bytes| std::str::from_utf8(bytes).ok())
+            .map(published_picks)
+            .unwrap_or_default();
+        Ok(CachedModelfit { catalog, picks })
+    })();
+    match fetched {
+        Ok(entry) => {
+            cache::set("modelfit", "catalog_v1", &entry, cache::MODELFIT_TTL);
+            let ranked = rank(entry.catalog, engine, hardware, &entry.picks);
+            if !ranked.is_empty() {
+                return Ok((ranked, "modelfit"));
+            }
+            Ok((curated_family_queries(engine, hardware), "hub"))
+        }
+        Err(_) => Ok((curated_family_queries(engine, hardware), "hub")),
+    }
 }
 
 fn fetch(client: &Client, url: &str) -> Result<Vec<u8>, String> {
@@ -192,10 +275,13 @@ fn rank(
             let query = hub_name(&model.model)?;
             // This is only a discovery hint. The Hub planner later verifies the architecture,
             // native context and actual weight bytes of each specific build.
+            let target_ctx = super::planning::adaptive_target_context(
+                hardware["memoryBytes"].as_u64().unwrap_or(0),
+            );
             let projected = model
                 .kv_kb_per_token
                 .filter(|n| *n > 0.0)
-                .map(|kb| load + kb * 1024.0 * super::planning::TARGET_CONTEXT as f64 / GIB);
+                .map(|kb| load + kb * 1024.0 * target_ctx as f64 / GIB);
             Some((query, load, projected))
         })
         .collect();

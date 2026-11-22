@@ -128,7 +128,7 @@ struct MacMessageView: View {
     }
 
     private var assistantFailureColor: Color {
-        message.deliveryState == .failed ? .red : .secondary
+        message.deliveryState == .failed ? MacDesignColor.danger : .secondary
     }
 
     private var assistantFailureDetail: String? {
@@ -464,10 +464,12 @@ struct MacMessageView: View {
                                 copyMessage()
                             } label: {
                                 Image(systemName: copied ? "checkmark" : "doc.on.doc")
+                                    .contentTransition(reduceMotion ? .identity : .symbolEffect(.replace))
                                     .frame(width: 32, height: 32)
                                     .contentShape(Rectangle())
                             }
                             .buttonStyle(MacMessageActionButtonStyle())
+                            .foregroundStyle(copied ? MacDesignColor.success : .secondary)
                             .help(copied ? String(localized: "Copied") : String(localized: "Copy"))
                             .accessibilityLabel(copied ? String(localized: "Copied") : String(localized: "Copy"))
                             if message.role == .user && !transcriptReadOnly && editMessage.sourceAllowsEditing {
@@ -484,8 +486,8 @@ struct MacMessageView: View {
                         .foregroundStyle(.secondary)
                         // Keep the completed-message action reachable while
                         // the pointer crosses the gap below the bubble. Hover
-                        // raises emphasis; it no longer controls hit testing.
-                        .opacity(1)
+                        // raises emphasis; it never disables hit testing.
+                        .opacity(isHovering || copied ? 1.0 : 0.72)
                     }
                     .frame(minHeight: 32)
                     .frame(maxWidth: .infinity, alignment: message.role == .assistant ? .leading : .trailing)
@@ -494,10 +496,6 @@ struct MacMessageView: View {
                     .allowsHitTesting(showsMessageMetadata)
                     .accessibilityHidden(!showsMessageMetadata)
                 }
-            }
-
-            if message.role != .user {
-                Spacer(minLength: 32)
             }
         }
         .frame(maxWidth: .infinity)
@@ -510,7 +508,7 @@ struct MacMessageView: View {
             if reduceMotion {
                 isHovering = hovering
             } else {
-                withAnimation(.easeOut(duration: 0.14)) {
+                withAnimation(.easeOut(duration: MacDesignTokens.Motion.hover)) {
                     isHovering = hovering
                 }
             }
@@ -598,12 +596,12 @@ struct MacMessageView: View {
 
     private var searchMatchBackground: some View {
         RoundedRectangle(cornerRadius: 12, style: .continuous)
-            .fill(isSearchMatch ? Color.yellow.opacity(0.18) : Color.clear)
+            .fill(isSearchMatch ? MacDesignColor.warning.opacity(0.18) : Color.clear)
     }
 
     private var searchMatchBorder: some View {
         RoundedRectangle(cornerRadius: 12, style: .continuous)
-            .stroke(isSearchMatch ? Color.yellow.opacity(0.45) : Color.clear, lineWidth: 1)
+            .stroke(isSearchMatch ? MacDesignColor.warning.opacity(0.45) : Color.clear, lineWidth: 1)
             .allowsHitTesting(false)
     }
 
@@ -620,7 +618,9 @@ struct MacMessageView: View {
             return
         }
         copyFeedbackTask?.cancel()
-        copied = true
+        withAnimation(reduceMotion ? nil : .easeOut(duration: MacDesignTokens.Motion.selection)) {
+            copied = true
+        }
         Logger.shared.log(
             "Message copied",
             level: .debug,
@@ -630,7 +630,9 @@ struct MacMessageView: View {
         copyFeedbackTask = Task { @MainActor in
             do { try await Task.sleep(for: .seconds(1.8)) }
             catch { return }
-            copied = false
+            withAnimation(reduceMotion ? nil : .easeOut(duration: MacDesignTokens.Motion.selection)) {
+                copied = false
+            }
         }
     }
 

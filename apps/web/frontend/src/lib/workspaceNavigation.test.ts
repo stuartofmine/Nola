@@ -8,10 +8,10 @@ test('initial layout preserves exact conversation and Host links and adapts mana
         assert.equal(desktop.pathname, '/chat');
         assert.equal(desktop.searchParams.get('content'), path);
         assert.equal(initialWorkspaceLocation(desktop.href, 390).pathname, path);
-        assert.equal(initialWorkspaceLocation(`http://local${path}`, 700).pathname, path);
+        assert.equal(initialWorkspaceLocation(`http://local${path}`, 760).pathname, path);
     }
-    assert.equal(initialWorkspaceLocation('http://local/chat', 700).pathname, '/conversations');
-    assert.equal(initialWorkspaceLocation('http://local/chat', 701).pathname, '/chat');
+    assert.equal(initialWorkspaceLocation('http://local/chat', 760).pathname, '/conversations');
+    assert.equal(initialWorkspaceLocation('http://local/chat', 761).pathname, '/chat');
     const exact = 'http://local/chat?conversation=original&sourceHost=host';
     assert.equal(initialWorkspaceLocation(exact, 390).href, exact);
     assert.equal(initialWorkspaceLocation('http://local/chat?sourceHost=host', 390).pathname, '/chat');

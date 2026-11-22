@@ -1,9 +1,7 @@
 package com.nola.ui.components
 
 import androidx.compose.foundation.selection.toggleable
-import androidx.compose.foundation.selection.selectableGroup
 import androidx.compose.ui.semantics.Role
-
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -26,13 +24,15 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.SheetValue
-import androidx.compose.material3.Switch
+import androidx.compose.material3.Slider
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableFloatStateOf
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberUpdatedState
@@ -44,8 +44,12 @@ import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.semantics.LiveRegionMode
 import androidx.compose.ui.semantics.liveRegion
 import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import com.nola.R
+import java.util.Locale
+import kotlin.math.abs
+import kotlin.math.roundToInt
 
 @Composable
 fun ModelParametersContent(
@@ -62,12 +66,14 @@ fun ModelParametersContent(
     supportsStreamOutput: Boolean = true,
     reasoningEfforts: List<String> = emptyList(),
     showBackTopBar: Boolean = false,
+    onDirtyChange: ((Boolean) -> Unit)? = null,
     modifier: Modifier = Modifier,
 ) {
     val baseline = remember(draftVersion) { parameters }
-    var tempText by remember(draftVersion) { mutableStateOf(parameters.temperature.toString()) }
-    var topPText by remember(draftVersion) { mutableStateOf(parameters.topP.toString()) }
-    var topKText by remember(draftVersion) { mutableStateOf((parameters.topK ?: 40).toString()) }
+    val defaults = remember { com.nola.domain.model.ModelParameters() }
+    var temperature by remember(draftVersion) { mutableFloatStateOf(parameters.temperature.coerceIn(0f, 2f)) }
+    var topP by remember(draftVersion) { mutableFloatStateOf(parameters.topP.coerceIn(0f, 1f)) }
+    var topK by remember(draftVersion) { mutableIntStateOf((parameters.topK ?: 40).coerceIn(1, 200)) }
     var maxTokensText by remember(draftVersion) { mutableStateOf(parameters.maxCompletionTokens.toString()) }
     var maxContextText by remember(draftVersion) { mutableStateOf(parameters.maxContextTokens.toString()) }
     var reasoningPreference by remember(draftVersion) { mutableStateOf(parameters.reasoningPreference ?: "automatic") }
@@ -76,25 +82,34 @@ fun ModelParametersContent(
     var customPrompt by remember(draftVersion) { mutableStateOf(parameters.customSystemPrompt) }
     var showDiscardDialog by remember { mutableStateOf(false) }
     var reloadAfterDiscard by remember { mutableStateOf(false) }
-    val initialTemp = baseline.temperature.toString()
-    val initialTopP = baseline.topP.toString()
-    val initialTopK = (baseline.topK ?: 40).toString()
     val initialMaxTokens = baseline.maxCompletionTokens.toString()
     val initialMaxContext = baseline.maxContextTokens.toString()
-    val dirty = tempText != initialTemp || topPText != initialTopP || topKText != initialTopK
-        || maxTokensText != initialMaxTokens || maxContextText != initialMaxContext
-        || reasoningPreference != (baseline.reasoningPreference ?: "automatic") || enableThinking != baseline.enableThinking || streamOutput != baseline.streamOutput || customPrompt != baseline.customSystemPrompt
-    val tempValue = tempText.toFloatOrNull()
-    val topPValue = topPText.toFloatOrNull()
-    val topKValue = topKText.toIntOrNull()
+    val dirty = abs(temperature - baseline.temperature) > 0.004f
+        || abs(topP - baseline.topP) > 0.004f
+        || (supportsTopK && topK != (baseline.topK ?: 40))
+        || maxTokensText != initialMaxTokens
+        || maxContextText != initialMaxContext
+        || reasoningPreference != (baseline.reasoningPreference ?: "automatic")
+        || enableThinking != baseline.enableThinking
+        || streamOutput != baseline.streamOutput
+        || customPrompt != baseline.customSystemPrompt
+    LaunchedEffect(dirty) { onDirtyChange?.invoke(dirty) }
     val maxTokensValue = maxTokensText.toIntOrNull()
     val maxContextValue = maxContextText.toIntOrNull()
-    val valid = tempValue != null && tempValue in 0f..2f
-        && topPValue != null && topPValue in 0f..1f
-        && (!supportsTopK || (topKValue != null && topKValue in 1..200))
-        && maxTokensValue != null && maxTokensValue in com.nola.domain.model.ModelParameterLimits.outputTokens
+    val valid = maxTokensValue != null && maxTokensValue in com.nola.domain.model.ModelParameterLimits.outputTokens
         && maxContextValue != null && maxContextValue in com.nola.domain.model.ModelParameterLimits.remoteContextTokens
     val requestDismiss = { if (!saving) { reloadAfterDiscard = false; if (dirty) showDiscardDialog = true else onDismiss() } }
+    val resetToDefaults = {
+        temperature = defaults.temperature.coerceIn(0f, 2f)
+        topP = defaults.topP.coerceIn(0f, 1f)
+        topK = (defaults.topK ?: 40).coerceIn(1, 200)
+        maxTokensText = defaults.maxCompletionTokens.toString()
+        maxContextText = defaults.maxContextTokens.toString()
+        reasoningPreference = defaults.reasoningPreference ?: "automatic"
+        enableThinking = defaults.enableThinking
+        streamOutput = defaults.streamOutput
+        customPrompt = defaults.customSystemPrompt
+    }
     val listState = rememberLazyListState()
     LaunchedEffect(error, saving) {
         if (error != null && !saving) listState.animateScrollToItem(0)
@@ -107,7 +122,11 @@ fun ModelParametersContent(
             NolaTopAppBar(
                 title = stringResource(R.string.models_parameters_title, modelName),
                 onBack = requestDismiss,
-            )
+            ) {
+                TextButton(onClick = resetToDefaults, enabled = !saving) {
+                    Text(stringResource(R.string.models_parameters_reset))
+                }
+            }
         }
         LazyColumn(
             state = listState,
@@ -118,7 +137,20 @@ fun ModelParametersContent(
         ) {
             item {
                 if (!showBackTopBar) {
-                    Text(stringResource(R.string.models_parameters_title, modelName), style = MaterialTheme.typography.titleLarge)
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    ) {
+                        Text(
+                            stringResource(R.string.models_parameters_title, modelName),
+                            style = MaterialTheme.typography.titleLarge,
+                            modifier = Modifier.weight(1f),
+                        )
+                        TextButton(onClick = resetToDefaults, enabled = !saving) {
+                            Text(stringResource(R.string.models_parameters_reset))
+                        }
+                    }
                 }
                 if (error != null) {
                     Text(error, color = MaterialTheme.colorScheme.error,
@@ -137,10 +169,31 @@ fun ModelParametersContent(
             item {
                 Text(stringResource(R.string.models_sampling), style = MaterialTheme.typography.titleSmall, color = MaterialTheme.colorScheme.primary)
                 Spacer(Modifier.height(8.dp))
-                NumericParameterField(stringResource(R.string.models_temperature), tempText, "0.00 ... 2.00", true, enabled = !saving, isError = tempValue == null || tempValue !in 0f..2f) { tempText = it }
-                NumericParameterField(stringResource(R.string.models_top_p), topPText, "0.00 ... 1.00", true, enabled = !saving, isError = topPValue == null || topPValue !in 0f..1f) { topPText = it }
+                SliderParameterField(
+                    label = stringResource(R.string.models_temperature),
+                    valueText = String.format(Locale.US, "%.2f", temperature),
+                    value = temperature,
+                    valueRange = 0f..2f,
+                    enabled = !saving,
+                    onValueChange = { temperature = (it * 20f).roundToInt() / 20f },
+                )
+                SliderParameterField(
+                    label = stringResource(R.string.models_top_p),
+                    valueText = String.format(Locale.US, "%.2f", topP),
+                    value = topP,
+                    valueRange = 0f..1f,
+                    enabled = !saving,
+                    onValueChange = { topP = (it * 20f).roundToInt() / 20f },
+                )
                 if (supportsTopK) {
-                    NumericParameterField(stringResource(R.string.models_top_k), topKText, "1 ... 200", false, enabled = !saving, isError = topKValue == null || topKValue !in 1..200) { topKText = it }
+                    SliderParameterField(
+                        label = stringResource(R.string.models_top_k),
+                        valueText = topK.toString(),
+                        value = topK.toFloat(),
+                        valueRange = 1f..200f,
+                        enabled = !saving,
+                        onValueChange = { topK = it.roundToInt().coerceIn(1, 200) },
+                    )
                 }
             }
 
@@ -154,6 +207,7 @@ fun ModelParametersContent(
 
             if (reasoningEfforts.isNotEmpty()) {
                 item {
+                    Spacer(Modifier.height(12.dp))
                     Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                         Text(stringResource(R.string.models_reasoning_effort), style = MaterialTheme.typography.titleSmall)
                         for (effort in (listOf("automatic") + reasoningEfforts).distinct()) {
@@ -194,6 +248,7 @@ fun ModelParametersContent(
             }
             if (supportsStreamOutput) {
                 item {
+                    Spacer(Modifier.height(12.dp))
                     Row(modifier = Modifier.fillMaxWidth().testTag("model-parameters-stream").clip(RoundedCornerShape(8.dp)).toggleable(value = streamOutput, enabled = !saving, role = Role.Switch, onValueChange = { streamOutput = it }).heightIn(min = 48.dp), verticalAlignment = Alignment.CenterVertically) {
                         Text(stringResource(R.string.chat_stream_output), modifier = Modifier.weight(1f))
                         NolaSwitch(checked = streamOutput, onCheckedChange = null, enabled = !saving)
@@ -206,9 +261,9 @@ fun ModelParametersContent(
             onClick = {
                 onUpdate(
                     baseline.copy(
-                        temperature = tempValue ?: baseline.temperature,
-                        topP = topPValue ?: baseline.topP,
-                        topK = if (supportsTopK) topKValue ?: baseline.topK else baseline.topK,
+                        temperature = temperature,
+                        topP = topP,
+                        topK = if (supportsTopK) topK else baseline.topK,
                         maxCompletionTokens = maxTokensValue ?: baseline.maxCompletionTokens,
                         maxContextTokens = maxContextValue ?: baseline.maxContextTokens,
                         reasoningTier = if (reasoningPreference == (baseline.reasoningPreference ?: "automatic")) baseline.reasoningTier else null,
@@ -240,6 +295,39 @@ fun ModelParametersContent(
     }
 }
 
+@Composable
+private fun SliderParameterField(
+    label: String,
+    valueText: String,
+    value: Float,
+    valueRange: ClosedFloatingPointRange<Float>,
+    enabled: Boolean,
+    onValueChange: (Float) -> Unit,
+) {
+    Column(modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp)) {
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.SpaceBetween,
+        ) {
+            Text(label, style = MaterialTheme.typography.bodyMedium)
+            Text(
+                valueText,
+                style = MaterialTheme.typography.labelLarge,
+                fontWeight = FontWeight.SemiBold,
+                color = MaterialTheme.colorScheme.primary,
+            )
+        }
+        Slider(
+            value = value,
+            onValueChange = onValueChange,
+            valueRange = valueRange,
+            enabled = enabled,
+            modifier = Modifier.fillMaxWidth(),
+        )
+    }
+}
+
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun ModelParametersSheet(
@@ -256,51 +344,17 @@ fun ModelParametersSheet(
     supportsStreamOutput: Boolean = true,
     reasoningEfforts: List<String> = emptyList(),
 ) {
-    // A draft and its comparison/submission baseline are one editing transaction.
-    // Observing refreshed parameters must not silently rebase an open editor.
-    val baseline = remember(draftVersion) { parameters }
-    var tempText by remember(draftVersion) { mutableStateOf(parameters.temperature.toString()) }
-    var topPText by remember(draftVersion) { mutableStateOf(parameters.topP.toString()) }
-    var topKText by remember(draftVersion) { mutableStateOf((parameters.topK ?: 40).toString()) }
-    var maxTokensText by remember(draftVersion) { mutableStateOf(parameters.maxCompletionTokens.toString()) }
-    var maxContextText by remember(draftVersion) { mutableStateOf(parameters.maxContextTokens.toString()) }
-    var reasoningPreference by remember(draftVersion) { mutableStateOf(parameters.reasoningPreference ?: "automatic") }
-    var enableThinking by remember(draftVersion) { mutableStateOf(parameters.enableThinking) }
-    var streamOutput by remember(draftVersion) { mutableStateOf(parameters.streamOutput) }
-    var customPrompt by remember(draftVersion) { mutableStateOf(parameters.customSystemPrompt) }
+    var dirty by remember(draftVersion) { mutableStateOf(false) }
     var showDiscardDialog by remember { mutableStateOf(false) }
-    var reloadAfterDiscard by remember { mutableStateOf(false) }
-    val initialTemp = baseline.temperature.toString()
-    val initialTopP = baseline.topP.toString()
-    val initialTopK = (baseline.topK ?: 40).toString()
-    val initialMaxTokens = baseline.maxCompletionTokens.toString()
-    val initialMaxContext = baseline.maxContextTokens.toString()
-    val dirty = tempText != initialTemp || topPText != initialTopP || topKText != initialTopK
-        || maxTokensText != initialMaxTokens || maxContextText != initialMaxContext
-        || reasoningPreference != (baseline.reasoningPreference ?: "automatic") || enableThinking != baseline.enableThinking || streamOutput != baseline.streamOutput || customPrompt != baseline.customSystemPrompt
-    val tempValue = tempText.toFloatOrNull()
-    val topPValue = topPText.toFloatOrNull()
-    val topKValue = topKText.toIntOrNull()
-    val maxTokensValue = maxTokensText.toIntOrNull()
-    val maxContextValue = maxContextText.toIntOrNull()
-    val valid = tempValue != null && tempValue in 0f..2f
-        && topPValue != null && topPValue in 0f..1f
-        && (!supportsTopK || (topKValue != null && topKValue in 1..200))
-        && maxTokensValue != null && maxTokensValue in com.nola.domain.model.ModelParameterLimits.outputTokens
-        && maxContextValue != null && maxContextValue in com.nola.domain.model.ModelParameterLimits.remoteContextTokens
-    val requestDismiss = { if (!saving) { reloadAfterDiscard = false; if (dirty) showDiscardDialog = true else onDismiss() } }
+    val requestDismiss = { if (!saving) { if (dirty) showDiscardDialog = true else onDismiss() } }
     val currentSaving by rememberUpdatedState(saving)
     val currentDirty by rememberUpdatedState(dirty)
-    val listState = rememberLazyListState()
-    LaunchedEffect(error, saving) {
-        if (error != null && !saving) listState.animateScrollToItem(0)
-    }
     val sheetState = rememberModalBottomSheetState(
         skipPartiallyExpanded = true,
         confirmValueChange = { target ->
             if (target != SheetValue.Hidden) true
             else if (currentSaving) false
-            else if (currentDirty) { reloadAfterDiscard = false; showDiscardDialog = true; false }
+            else if (currentDirty) { showDiscardDialog = true; false }
             else true
         },
     )
@@ -308,136 +362,36 @@ fun ModelParametersSheet(
     ModalBottomSheet(
         modifier = Modifier.dismissImeOnBlankTap(),
         onDismissRequest = requestDismiss,
-        sheetState = sheetState
+        sheetState = sheetState,
+        contentWindowInsets = { androidx.compose.foundation.layout.WindowInsets(0) },
     ) {
-        Column(Modifier.fillMaxHeight(0.92f).imePadding().navigationBarsPadding()) {
-            LazyColumn(
-                state = listState,
-                modifier = Modifier
-                    .testTag("model-parameters-list")
-                    .weight(1f)
-                    .padding(horizontal = 24.dp, vertical = 20.dp)
-            ) {
-                item {
-                    Text(stringResource(R.string.models_parameters_title, modelName), style = MaterialTheme.typography.titleLarge)
-                    if (error != null) {
-                        Text(error, color = MaterialTheme.colorScheme.error,
-                            modifier = Modifier.testTag("model-parameters-error")
-                                .semantics { liveRegion = LiveRegionMode.Polite })
-                        if (onReload != null) {
-                            TextButton(enabled = !saving, onClick = {
-                                if (dirty) { reloadAfterDiscard = true; showDiscardDialog = true }
-                                else onReload()
-                            }) { Text(stringResource(R.string.common_refresh)) }
-                        }
-                    }
-                    Spacer(Modifier.height(16.dp))
-                }
-
-                item {
-                    Text(stringResource(R.string.models_sampling), style = MaterialTheme.typography.titleSmall, color = MaterialTheme.colorScheme.primary)
-                    Spacer(Modifier.height(8.dp))
-                    NumericParameterField(stringResource(R.string.models_temperature), tempText, "0.00 ... 2.00", true, enabled = !saving, isError = tempValue == null || tempValue !in 0f..2f) { tempText = it }
-                    NumericParameterField(stringResource(R.string.models_top_p), topPText, "0.00 ... 1.00", true, enabled = !saving, isError = topPValue == null || topPValue !in 0f..1f) { topPText = it }
-                    if (supportsTopK) {
-                        NumericParameterField(stringResource(R.string.models_top_k), topKText, "1 ... 200", false, enabled = !saving, isError = topKValue == null || topKValue !in 1..200) { topKText = it }
-                    }
-                }
-
-                item { Spacer(Modifier.height(16.dp)) }
-                item {
-                    Text(stringResource(R.string.models_limits), style = MaterialTheme.typography.titleSmall, color = MaterialTheme.colorScheme.primary)
-                    Spacer(Modifier.height(8.dp))
-                    NumericParameterField(stringResource(R.string.models_max_output), maxTokensText, "${com.nola.domain.model.ModelParameterLimits.outputTokens.first} ... ${com.nola.domain.model.ModelParameterLimits.outputTokens.last}", false, enabled = !saving, isError = maxTokensValue == null || maxTokensValue !in com.nola.domain.model.ModelParameterLimits.outputTokens) { maxTokensText = it }
-                    NumericParameterField(stringResource(R.string.models_max_context), maxContextText, "${com.nola.domain.model.ModelParameterLimits.remoteContextTokens.first} ... ${com.nola.domain.model.ModelParameterLimits.remoteContextTokens.last}", false, enabled = !saving, isError = maxContextValue == null || maxContextValue !in com.nola.domain.model.ModelParameterLimits.remoteContextTokens) { maxContextText = it }
-                }
-
-                if (reasoningEfforts.isNotEmpty()) {
-                    item {
-                        Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                            Text(stringResource(R.string.models_reasoning_effort), style = MaterialTheme.typography.titleSmall)
-                            for (effort in (listOf("automatic") + reasoningEfforts).distinct()) {
-                                NolaRadioOption(com.nola.ui.screen.chat.reasoningEffortLabel(effort), reasoningPreference == effort,
-                                    enabled = !saving, modifier = Modifier.testTag("model-reasoning-$effort")) { reasoningPreference = effort }
-                            }
-                        }
-                    }
-                }
-                item { Spacer(Modifier.height(16.dp)) }
-                item {
-                    Row(
-                        modifier = Modifier.fillMaxWidth().clip(RoundedCornerShape(8.dp)).toggleable(value = enableThinking, enabled = !saving, role = Role.Switch, onValueChange = { enableThinking = it }).heightIn(min = 48.dp),
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        Column(modifier = Modifier.weight(1f)) {
-                            Text(stringResource(R.string.models_show_thinking), style = MaterialTheme.typography.bodyMedium)
-                            Text(
-                                stringResource(R.string.models_show_thinking_desc),
-                                style = MaterialTheme.typography.bodySmall,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant
-                            )
-                        }
-                        NolaSwitch(checked = enableThinking, onCheckedChange = null, enabled = !saving)
-                    }
-                }
-                item { Spacer(Modifier.height(16.dp)) }
-                item {
-                    OutlinedTextField(
-                        value = customPrompt,
-                        enabled = !saving,
-                        onValueChange = { customPrompt = it },
-                        label = { Text(stringResource(R.string.models_custom_system_prompt)) },
-                        modifier = Modifier.fillMaxWidth(),
-                        minLines = 3,
-                        maxLines = 6
-                    )
-                }
-                if (supportsStreamOutput) {
-                    item {
-                        Row(modifier = Modifier.fillMaxWidth().testTag("model-parameters-stream").clip(RoundedCornerShape(8.dp)).toggleable(value = streamOutput, enabled = !saving, role = Role.Switch, onValueChange = { streamOutput = it }).heightIn(min = 48.dp), verticalAlignment = Alignment.CenterVertically) {
-                            Text(stringResource(R.string.chat_stream_output), modifier = Modifier.weight(1f))
-                            NolaSwitch(checked = streamOutput, onCheckedChange = null, enabled = !saving)
-                        }
-                    }
-                }
-                item { Spacer(Modifier.height(16.dp)) }
-
-            }
-            Button(
-                onClick = {
-                    onUpdate(
-                        baseline.copy(
-                            temperature = tempValue ?: baseline.temperature,
-                            topP = topPValue ?: baseline.topP,
-                            topK = if (supportsTopK) topKValue ?: baseline.topK else baseline.topK,
-                            maxCompletionTokens = maxTokensValue ?: baseline.maxCompletionTokens,
-                            maxContextTokens = maxContextValue ?: baseline.maxContextTokens,
-                            reasoningTier = if (reasoningPreference == (baseline.reasoningPreference ?: "automatic")) baseline.reasoningTier else null,
-                            reasoningPreference = if (reasoningPreference == (baseline.reasoningPreference ?: "automatic")) baseline.reasoningPreference else reasoningPreference,
-                            enableThinking = enableThinking,
-                            streamOutput = streamOutput,
-                            customSystemPrompt = customPrompt.trim()
-                        )
-                    )
-                    if (dismissOnSubmit) onDismiss()
-                },
-                modifier = Modifier.fillMaxWidth().padding(horizontal = 24.dp, vertical = 12.dp).testTag("model-parameters-save"),
-                enabled = dirty && valid && !saving
-            ) {
-                Text(stringResource(R.string.models_save_parameters))
-            }
-        }
+        ModelParametersContent(
+            modelName = modelName,
+            supportsTopK = supportsTopK,
+            parameters = parameters,
+            onUpdate = onUpdate,
+            onDismiss = onDismiss,
+            saving = saving,
+            error = error,
+            dismissOnSubmit = dismissOnSubmit,
+            draftVersion = draftVersion,
+            onReload = onReload,
+            supportsStreamOutput = supportsStreamOutput,
+            reasoningEfforts = reasoningEfforts,
+            showBackTopBar = false,
+            onDirtyChange = { dirty = it },
+            modifier = Modifier.fillMaxHeight(0.92f).imePadding().navigationBarsPadding(),
+        )
     }
     if (showDiscardDialog) {
         DiscardChangesDialog(
             onDiscard = {
                 if (!saving) {
                     showDiscardDialog = false
-                    if (reloadAfterDiscard) onReload?.invoke() else onDismiss()
-                    reloadAfterDiscard = false
+                    onDismiss()
                 }
             },
-            onKeepEditing = { showDiscardDialog = false; reloadAfterDiscard = false }
+            onKeepEditing = { showDiscardDialog = false }
         )
     }
 }

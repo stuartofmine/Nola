@@ -100,14 +100,15 @@ struct MacWorkspaceSettingsRow: View {
 
 struct MacConversationRow: View {
     let conversation: MacConversation
+    var isSelected: Bool = false
     let loadParticipantNames: (String) async throws -> [String]
     @State private var participantNames: [String] = []
 
     var body: some View {
         VStack(alignment: .leading, spacing: 5) {
             Text(MacConversationTitlePolicy.displayTitle(conversation.title, conversationID: conversation.id))
-                .font(.system(size: 14, weight: .medium))
-                .foregroundStyle(Color("NolaTextPrimary"))
+                .font(.system(size: 14, weight: isSelected ? .semibold : .medium))
+                .foregroundStyle(isSelected ? MacDesignColor.brand : Color("NolaTextPrimary"))
                 .lineLimit(1)
                 .help(MacConversationTitlePolicy.displayTitle(conversation.title, conversationID: conversation.id))
             HStack(alignment: .firstTextBaseline, spacing: 6) {

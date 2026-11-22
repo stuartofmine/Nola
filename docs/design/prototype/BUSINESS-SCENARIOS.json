@@ -1,6 +1,6 @@
 {
     "schema_version": 1,
-    "updated": "2026-11-20",
+    "updated": "2026-11-22",
     "scope": "当前仓库用户可见业务流程清单；场景状态是设计演示，不是生产完成证据。",
     "platforms": {
         "mac": "macOS",
@@ -2987,39 +2987,90 @@
         {
             "id": "local-model",
             "group": "model",
-            "title": "本地模型、下载与设备容量",
-            "entry": "模型 → 本地",
+            "title": "本地模型：在线推荐、直链导入、下载与一键启用",
+            "entry": "聊天模型选择器 → 管理与下载本地模型 / 模型中心 → 本地模型",
             "platforms": [
                 "mac",
                 "ios",
-                "android"
+                "android",
+                "web",
+                "windows",
+                "cli"
             ],
             "sources": [
+                "apps/cli/src/model_acquisition/planning.rs",
+                "apps/cli/src/model_acquisition/modelfit.rs",
+                "apps/macos/UI/MacLocalModelManagerView.swift",
                 "apps/ios/UI/ModelsView.swift",
-                "apps/web/frontend/src/pages/ModelCenter.svelte",
-                "apps/cli/src/config.rs"
+                "apps/android/app/src/main/java/com/nola/ui/screen/models/ModelsScreen.kt",
+                "apps/web/frontend/src/pages/ModelCenter.svelte"
             ],
             "states": [
                 {
                     "id": "0",
-                    "title": "选择本地模型",
+                    "title": "按设备在线推荐（UTC+8 中国默认 ModelScope）",
                     "body": [
-                        "核对大小、设备兼容与可用磁盘；不支持的设备显示原因。"
+                        "首屏优先展示「我的本地模型」与按当前内存动态匹配的推荐卡片，统一使用 GB 标注体积与「流畅运行 / 适中运行」徽章；UTC+8 中文环境默认走 ModelScope，可随时切换 Hugging Face。"
                     ],
                     "kind": "list",
                     "actions": [
                         {
-                            "label": "演示下载中断",
+                            "label": "粘贴模型直链 / owner/repo",
                             "to": "1",
+                            "style": "secondary"
+                        },
+                        {
+                            "label": "下载并使用（演示）",
+                            "to": "2",
                             "style": "primary"
                         }
                     ]
                 },
                 {
                     "id": "1",
+                    "title": "手动输入链接或仓库直达",
+                    "body": [
+                        "粘贴 Hugging Face / ModelScope 完整 URL 或 owner/repo，自动识别来源并解析最佳量化与设备适配，技术细节默认收纳于「技术详情」。"
+                    ],
+                    "kind": "form",
+                    "actions": [
+                        {
+                            "label": "解析并下载（演示）",
+                            "to": "2",
+                            "style": "primary"
+                        },
+                        {
+                            "label": "返回推荐列表",
+                            "to": "0",
+                            "style": "secondary"
+                        }
+                    ]
+                },
+                {
+                    "id": "2",
+                    "title": "后台下载中（百分比、速度与剩余时间）",
+                    "body": [
+                        "显示已下载体积、等宽数字百分比、速率与剩余时间；切走页面不会取消下载。"
+                    ],
+                    "kind": "loading",
+                    "actions": [
+                        {
+                            "label": "演示下载完成并启用",
+                            "to": "4",
+                            "style": "primary"
+                        },
+                        {
+                            "label": "演示网络中断",
+                            "to": "3",
+                            "style": "secondary"
+                        }
+                    ]
+                },
+                {
+                    "id": "3",
                     "title": "空间不足或下载中断",
                     "body": [
-                        "保留已选模型，允许清理明确的可重建缓存或稍后重试，不删除会话数据。"
+                        "保留已选模型与部分缓存，提供一键重试或切换来源，不删除任何会话数据。"
                     ],
                     "kind": "error",
                     "actions": [
@@ -3029,27 +3080,22 @@
                             "style": "primary"
                         },
                         {
-                            "label": "返回上一步",
+                            "label": "返回推荐列表",
                             "to": "0",
                             "style": "secondary"
                         }
                     ]
                 },
                 {
-                    "id": "2",
-                    "title": "模型已就绪",
+                    "id": "4",
+                    "title": "已就绪 · 一键切换并启动",
                     "body": [
-                        "下载完成不等于已经选择；显式激活后才用于新调用。"
+                        "已下载模型展示在「我的本地模型」，点击「切换并使用」自动启动或拉起推理服务并设为当前模型，不再要求手动点击两次。"
                     ],
                     "kind": "success",
                     "actions": [
                         {
-                            "label": "返回上一步",
-                            "to": "1",
-                            "style": "secondary"
-                        },
-                        {
-                            "label": "重新演示",
+                            "label": "返回推荐列表",
                             "to": "0",
                             "style": "secondary"
                         }
@@ -3058,12 +3104,15 @@
             ],
             "fields": [],
             "command": null,
-            "contract": "草稿、决定和结果属于当前对象；失败不能显示为成功。",
+            "contract": "UI 优先、动态在线推荐带 TTL 缓存、UTC+8 中文环境默认 ModelScope、支持直链/owner/repo 粘贴、失败保留缓存可重试、不删除用户数据。",
             "boundary": "合成状态与交互设计；源码位置为业务依据，不证明所有平台已实现或已验收。",
             "platform_notes": {
-                "mac": "共享业务合同；浏览器预览不模拟原生系统授权、手势或真实执行。",
-                "ios": "共享业务合同；浏览器预览不模拟原生系统授权、手势或真实执行。",
-                "android": "共享业务合同；浏览器预览不模拟原生系统授权、手势或真实执行。"
+                "mac": "按 (engine, source) 缓存推荐结果，单次打开无需反复冷探；下载完成后一键切换并启动。",
+                "ios": "端侧模型按设备内存动态匹配，UTC+8 默认 ModelScope 并提供切源入口，离线校验在后台线程完成。",
+                "android": "下载任务归属应用级协程作用域，切页不中断；选择已下载模型自动启动服务。",
+                "web": "与桌面端共享统一卡片、直链输入与来源切换，远程宿主机场景引导本机安装引擎。",
+                "windows": "以友好 GPU/CPU 名称替代底层 VULKAN/X64 字符串，适配窗口分屏与暗色启动底色。",
+                "cli": "nola model acquire 复用带磁盘与内存 TTL 缓存的规划器、并行探测与 8 秒总超时。"
             }
         },
         {

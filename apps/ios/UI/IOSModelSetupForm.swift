@@ -36,8 +36,94 @@ struct IOSModelSetupForm: View {
             || draft.modelID.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
     }
 
+    private struct ProviderPreset: Identifiable {
+        let id: String
+        let title: String
+        let endpoint: String
+        let wire: String
+        let defaultName: String
+    }
+
+    private var presets: [ProviderPreset] {
+        [
+            .init(id: "openai", title: "OpenAI", endpoint: "https://api.openai.com/v1", wire: "responses", defaultName: "OpenAI"),
+            .init(id: "anthropic", title: "Anthropic", endpoint: "https://api.anthropic.com", wire: "anthropic", defaultName: "Anthropic"),
+            .init(id: "deepseek", title: "DeepSeek", endpoint: "https://api.deepseek.com/v1", wire: "chat_completions", defaultName: "DeepSeek"),
+            .init(id: "openrouter", title: "OpenRouter", endpoint: "https://openrouter.ai/api/v1", wire: "chat_completions", defaultName: "OpenRouter"),
+            .init(id: "ollama", title: "Ollama", endpoint: "http://127.0.0.1:11434/v1", wire: "chat_completions", defaultName: "Ollama"),
+            .init(id: "custom", title: NSLocalizedString("model.setup.preset.custom", value: "Custom", comment: "Custom provider preset"), endpoint: "", wire: "chat_completions", defaultName: "")
+        ]
+    }
+
+    private func isPresetSelected(_ preset: ProviderPreset) -> Bool {
+        let trimmed = draft.endpoint.trimmingCharacters(in: .whitespacesAndNewlines)
+        if preset.id == "custom" {
+            return !trimmed.isEmpty && !presets.dropLast().contains(where: { $0.endpoint.caseInsensitiveCompare(trimmed) == .orderedSame })
+        }
+        return preset.endpoint.caseInsensitiveCompare(trimmed) == .orderedSame
+    }
+
+    private func applyPreset(_ preset: ProviderPreset) {
+        error = nil
+        if preset.id == "custom" {
+            if presets.dropLast().contains(where: { $0.endpoint.caseInsensitiveCompare(draft.endpoint.trimmingCharacters(in: .whitespacesAndNewlines)) == .orderedSame }) {
+                draft.endpoint = ""
+                draft.name = ""
+            }
+            draft.wire = preset.wire
+            focusedField = .endpoint
+        } else {
+            draft.endpoint = preset.endpoint
+            draft.wire = preset.wire
+            if draft.name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+                || presets.dropLast().contains(where: { $0.defaultName == draft.name }) {
+                draft.name = preset.defaultName
+            }
+            focusedField = preset.id == "ollama" ? .model : .key
+        }
+    }
+
     var body: some View {
         VStack(alignment: .leading, spacing: 18) {
+            VStack(alignment: .leading, spacing: 8) {
+                Text(NSLocalizedString("model.setup.presets", value: "Provider presets", comment: "Provider presets heading"))
+                    .font(.subheadline.weight(.medium))
+                    .foregroundStyle(.primary)
+                ScrollView(.horizontal, showsIndicators: false) {
+                    HStack(spacing: 8) {
+                        ForEach(presets) { preset in
+                            let selected = isPresetSelected(preset)
+                            Button {
+                                applyPreset(preset)
+                            } label: {
+                                Text(preset.title)
+                                    .font(.footnote.weight(selected ? .semibold : .medium))
+                                    .foregroundStyle(selected ? DesignTokens.actionColor : DesignTokens.contentColor)
+                                    .padding(.horizontal, 14)
+                                    .frame(minHeight: 36)
+                                    .background(
+                                        selected ? DesignTokens.accentSubtleColor : DesignTokens.surfaceColor,
+                                        in: Capsule()
+                                    )
+                                    .overlay(
+                                        Capsule().stroke(
+                                            selected ? DesignTokens.actionColor : DesignTokens.borderColor,
+                                            lineWidth: selected ? 1.25 : 1
+                                        )
+                                    )
+                                    .frame(minHeight: 44)
+                                    .contentShape(Rectangle())
+                            }
+                            .buttonStyle(.plain)
+                            .disabled(busy || draft.savedModel != nil)
+                            .accessibilityIdentifier("model.setup.preset.\(preset.id)")
+                            .accessibilityAddTraits(selected ? .isSelected : [])
+                        }
+                    }
+                    .padding(.vertical, 2)
+                }
+            }
+
             field(NSLocalizedString("model.connections.endpoint", comment: "API address")) {
                 TextField(text: $draft.endpoint, prompt: Text(verbatim: "https://api.example.com/v1")) {
                     Text(NSLocalizedString("model.connections.endpoint", comment: "API endpoint"))
@@ -77,34 +163,32 @@ struct IOSModelSetupForm: View {
                     ForEach(discoveredModels, id: \.id) { Text($0.displayName).tag($0.id) }
                 }.accessibilityIdentifier("model.setup.discovered")
             }
-            field(NSLocalizedString("model.connections.protocol", comment: "Protocol")) {
-                Picker(NSLocalizedString("model.connections.protocol", comment: "Protocol"), selection: $draft.wire) {
-                    Text(verbatim: "Chat Completions").tag("chat_completions")
-                    Text(verbatim: "Responses").tag("responses")
-                    Text(verbatim: "Anthropic Messages").tag("anthropic")
-                }
-                .pickerStyle(.menu)
-                .labelsHidden()
-                .frame(maxWidth: .infinity, minHeight: 44, alignment: .leading)
-                .accessibilityIdentifier("model.setup.protocol")
-            }
-            Text(NSLocalizedString("model.protocol.guidance", value: "For tools with reasoning, choose Responses if your service supports it. Some Chat Completions models require reasoning to be disabled explicitly.", comment: "API protocol compatibility guidance"))
-                .font(.footnote).foregroundStyle(.secondary)
             DisclosureGroup(isExpanded: $showsAdvanced) {
-                VStack(alignment: .leading, spacing: 12) {
+                VStack(alignment: .leading, spacing: 14) {
                     field(NSLocalizedString("model.connections.name", comment: "Connection name")) {
                         TextField(NSLocalizedString("model.setup.name_hint", value: "Optional connection name", comment: "Optional connection name"), text: $draft.name)
                             .focused($focusedField, equals: .name)
                             .submitLabel(.done).onSubmit { focusedField = nil }
                     }
+                    field(NSLocalizedString("model.connections.protocol", comment: "Protocol")) {
+                        Picker(NSLocalizedString("model.connections.protocol", comment: "Protocol"), selection: $draft.wire) {
+                            Text(verbatim: "Chat Completions").tag("chat_completions")
+                            Text(verbatim: "Responses").tag("responses")
+                            Text(verbatim: "Anthropic Messages").tag("anthropic")
+                        }
+                        .pickerStyle(.menu)
+                        .labelsHidden()
+                        .frame(maxWidth: .infinity, minHeight: 44, alignment: .leading)
+                        .accessibilityIdentifier("model.setup.protocol")
+                    }
+                    Text(NSLocalizedString("model.protocol.guidance", value: "For tools with reasoning, choose Responses if your service supports it. Some Chat Completions models require reasoning to be disabled explicitly.", comment: "API protocol compatibility guidance"))
+                        .font(.footnote).foregroundStyle(.secondary)
                 }.padding(.top, 8)
             } label: {
                 Text(NSLocalizedString("model.setup.advanced", value: "Advanced settings", comment: "Advanced settings"))
                     .frame(minHeight: 44)
             }
             .disclosureGroupStyle(NolaRowDisclosureStyle())
-            Text(NSLocalizedString("model.setup.summary", value: "Save to enable this model and use it by default. No model discovery or test request is required.", comment: "Manual model configuration summary"))
-                .font(.footnote).foregroundStyle(.secondary)
             if let error { Text(error).font(.callout).foregroundStyle(.red).textSelection(.enabled).accessibilityIdentifier("model.setup.error") }
             Button(action: save) {
                 HStack {
@@ -213,6 +297,7 @@ struct IOSModelProtocolEditor: View {
                 Picker(NSLocalizedString("model.connections.protocol", comment: "Protocol"), selection: $wire) {
                     Text(verbatim: "Responses").tag(ModelWireProtocol.responses)
                     Text(verbatim: "Chat Completions").tag(ModelWireProtocol.chatCompletions)
+                    Text(verbatim: "Anthropic Messages").tag(ModelWireProtocol.anthropic)
                 }
                 .pickerStyle(.menu)
                 .accessibilityIdentifier("model.protocol.selection")

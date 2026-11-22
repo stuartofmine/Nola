@@ -94,3 +94,96 @@ export function downloadActive(job?: ModelDownload | null) {
 
 export const engineName = (engine: LocalEngine) => engine === 'vllm' ? 'vLLM' : 'llama.cpp';
 export const sourceName = (source: ModelSource) => source === 'modelscope' ? 'ModelScope' : 'Hugging Face';
+
+const CHINA_TIMEZONES = new Set([
+    'Asia/Shanghai', 'Asia/Chongqing', 'Asia/Harbin', 'Asia/Urumqi',
+    'Asia/Hong_Kong', 'Asia/Macau', 'Asia/Taipei', 'Asia/Kashgar',
+]);
+
+export function defaultModelSource(locale?: string): ModelSource {
+    try {
+        const tz = Intl.DateTimeFormat().resolvedOptions().timeZone;
+        if (tz && CHINA_TIMEZONES.has(tz)) return 'modelscope';
+        const offsetMinutes = new Date().getTimezoneOffset();
+        const lang = (locale || (typeof navigator !== 'undefined' ? navigator.language : '')).toLowerCase();
+        if (lang.startsWith('zh') && (offsetMinutes === -480 || !tz)) return 'modelscope';
+        if (lang === 'zh-cn' || lang === 'zh-hans' || lang.startsWith('zh-hans-')) return 'modelscope';
+    } catch { /* Fall back to huggingface when Intl is unavailable. */ }
+    return 'huggingface';
+}
+
+export function parseDirectModelInput(raw: string): { repository: string; source?: ModelSource } | null {
+    const trimmed = raw.trim();
+    if (!trimmed) return null;
+    try {
+        const url = new URL(trimmed);
+        const host = url.hostname.toLowerCase();
+        const segments = url.pathname.split('/').filter(Boolean);
+        if ((host === 'huggingface.co' || host === 'www.huggingface.co' || host === 'hf-mirror.com') && segments.length >= 2) {
+            return { repository: `${segments[0]}/${segments[1]}`, source: 'huggingface' };
+        }
+        if ((host === 'modelscope.cn' || host === 'www.modelscope.cn') && segments[0] === 'models' && segments.length >= 3) {
+            return { repository: `${segments[1]}/${segments[2]}`, source: 'modelscope' };
+        }
+    } catch { /* Not a URL; check owner/repo pattern below. */ }
+    if (/^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/.test(trimmed)) {
+        return { repository: trimmed };
+    }
+    return null;
+}
+
+export function cleanModelName(repository: string): string {
+    const tail = repository.split('/').pop() || repository;
+    return tail
+        .replace(/[-_.]?(?:GGUF|MLX|AWQ|GPTQ|EXL2|FP8|BF16|Q\d[_A-Z0-9]*)$/i, '')
+        .replace(/[-_]+/g, ' ')
+        .trim() || repository;
+}
+
+export function formatUnifiedGb(bytes: number, locale: string): string {
+    if (!Number.isFinite(bytes) || bytes < 0) return '';
+    const gb = bytes / 1e9;
+    if (gb >= 0.1) {
+        return `${new Intl.NumberFormat(locale, { maximumFractionDigits: gb >= 10 ? 0 : 1, minimumFractionDigits: gb >= 10 ? 0 : 1 }).format(gb)} GB`;
+    }
+    return modelByteSize(bytes, locale);
+}
+
+export function friendlyRuntimeLabel(backend: string, architecture: string, locale: string): string {
+    const b = backend.trim().toLowerCase();
+    const isZh = locale.toLowerCase().startsWith('zh');
+    if (b === 'vulkan') return isZh ? 'GPU 加速 (Vulkan)' : 'GPU accelerated (Vulkan)';
+    if (b === 'cuda') return isZh ? 'GPU 加速 (CUDA)' : 'GPU accelerated (CUDA)';
+    if (b === 'metal') return isZh ? 'Apple Silicon (Metal)' : 'Apple Silicon (Metal)';
+    if (b === 'rocm' || b === 'hip') return isZh ? 'GPU 加速 (ROCm)' : 'GPU accelerated (ROCm)';
+    if (b === 'cpu') return isZh ? '仅 CPU' : 'CPU only';
+    return [backend, architecture].filter(Boolean).join(' · ');
+}
+
+export function modelFitLevel(candidate: ModelCandidate, hardware?: LocalHardware): 'best' | 'light' | 'large' {
+    const budget = hardware?.unifiedMemory
+        ? hardware.memoryBytes
+        : (hardware?.gpuMemoryBytes ?? hardware?.memoryBytes);
+    if (!budget || budget <= 0) return 'best';
+    const ratio = candidate.estimatedMemoryBytes / budget;
+    if (ratio <= 0.35) return 'light';
+    if (ratio <= 0.72) return 'best';
+    return 'large';
+}
+
+export function formatEta(remainingSeconds: number, locale: string): string {
+    if (!Number.isFinite(remainingSeconds) || remainingSeconds <= 0) return '';
+    const isZh = locale.toLowerCase().startsWith('zh');
+    if (remainingSeconds < 60) {
+        const s = Math.max(1, Math.round(remainingSeconds));
+        return isZh ? `剩余 ~${s}秒` : `~${s}s left`;
+    }
+    const mins = Math.floor(remainingSeconds / 60);
+    const secs = Math.round(remainingSeconds % 60);
+    if (mins < 60) {
+        return isZh ? `剩余 ~${mins}分${secs > 0 ? `${secs}秒` : ''}` : `~${mins}m ${secs > 0 ? `${secs}s ` : ''}left`;
+    }
+    const hrs = Math.floor(mins / 60);
+    const remMins = mins % 60;
+    return isZh ? `剩余 ~${hrs}小时${remMins > 0 ? `${remMins}分` : ''}` : `~${hrs}h ${remMins}m left`;
+}

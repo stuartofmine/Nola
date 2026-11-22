@@ -392,11 +392,60 @@ struct MacComposerTextEditor: NSViewRepresentable {
     }
 }
 
+private struct MacCircularComposerButtonStyle: ButtonStyle {
+    var baseFill: Color = Color.primary.opacity(0.055)
+    @Environment(\.isEnabled) private var isEnabled
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+
+    func makeBody(configuration: Configuration) -> some View {
+        MacCircularComposerButtonBody(
+            label: configuration.label,
+            baseFill: baseFill,
+            isPressed: configuration.isPressed,
+            isEnabled: isEnabled,
+            reduceMotion: reduceMotion
+        )
+    }
+}
+
+private struct MacCircularComposerButtonBody<Label: View>: View {
+    let label: Label
+    let baseFill: Color
+    let isPressed: Bool
+    let isEnabled: Bool
+    let reduceMotion: Bool
+    @State private var isHovering = false
+
+    var body: some View {
+        label
+            .frame(width: 30, height: 30)
+            .background {
+                Circle()
+                    .fill(baseFill)
+                    .overlay {
+                        if isEnabled && isPressed {
+                            Circle().fill(Color.primary.opacity(0.12))
+                        } else if isEnabled && isHovering {
+                            Circle().fill(Color.primary.opacity(0.06))
+                        }
+                    }
+            }
+            .contentShape(Circle())
+            .opacity(isEnabled ? (isPressed ? 0.86 : 1) : 0.45)
+            .onHover { isHovering = isEnabled && $0 }
+            .onChange(of: isEnabled) { _, enabled in if !enabled { isHovering = false } }
+            .animation(reduceMotion ? nil : .easeOut(duration: MacDesignTokens.Motion.hover), value: isHovering)
+            .animation(reduceMotion ? nil : .easeOut(duration: MacDesignTokens.Motion.hover), value: isPressed)
+    }
+}
+
 struct MacComposerView: View {
     let state: MacComposerDisplayState
     let actions: MacComposerActionSink
     var composerFocused: FocusState<Bool>.Binding
     var isModelConfigured = true
+    var leadingControls: AnyView = AnyView(EmptyView())
+    var trailingControls: AnyView = AnyView(EmptyView())
     var mentionCommand: (String) -> Bool = { _ in false }
     var mentionEditor = AppleMentionEditor()
     var localCommand: () -> Bool = { false }
@@ -405,8 +454,8 @@ struct MacComposerView: View {
     @State private var fileImportFailure: (conversationID: String, message: String)?
     @State private var dropTargeted = false
     @State private var voiceInput = MacVoiceInputService()
-    @State private var isSendHovering = false
     @State private var isInputHovered = false
+    @Environment(\.colorScheme) private var colorScheme
     @Environment(\.colorSchemeContrast) private var contrast
     @State private var dictationDraft = MacDictationDraft()
     @State private var dictationActive = false
@@ -415,7 +464,14 @@ struct MacComposerView: View {
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     var body: some View {
-        VStack(spacing: 8) {
+        VStack(spacing: 6) {
+            HStack(spacing: 6) {
+                leadingControls
+                Spacer(minLength: 0)
+            }
+            .padding(.horizontal, 6)
+            .opacity(0.78)
+
             inputSurface
             if let failure = fileImportFailure, failure.conversationID == state.conversationID {
                 MacInlineNotice(message: failure.message, kind: .failure, dismiss: { fileImportFailure = nil })
@@ -425,7 +481,21 @@ struct MacComposerView: View {
                 MacInlineNotice(message: error, kind: .failure, dismiss: { voiceInput.errorMessage = nil })
                     .accessibilityIdentifier("chat.dictation.error")
             }
-            quickBar
+            if state.permissionConfigurationState == .failed {
+                HStack(spacing: 8) {
+                    Text(state.permissionConfigurationState.title)
+                        .font(.caption)
+                        .foregroundStyle(MacDesignColor.warning)
+                        .accessibilityIdentifier("mac-composer-permission-status")
+                    Button(String(localized: "Refresh", table: "Chat")) {
+                        actions.perform(.reloadPermissionConfiguration(conversationID: state.conversationID))
+                    }
+                    .controlSize(.small)
+                    .accessibilityIdentifier("mac-composer-permission-refresh")
+                    Spacer(minLength: 0)
+                }
+                .padding(.horizontal, 4)
+            }
             if let reason = state.submissionBlockReason {
                 Text(reason)
                     .font(.callout)
@@ -441,13 +511,22 @@ struct MacComposerView: View {
         VStack(spacing: 0) {
             attachmentTray
             inputRow
+            bottomToolbar
         }
-        .background(MacDesignColor.panel, in: RoundedRectangle(cornerRadius: 18, style: .continuous))
+        .background(
+            colorScheme == .dark ? Color(red: 0.082, green: 0.082, blue: 0.092) : MacDesignColor.panel,
+            in: RoundedRectangle(cornerRadius: 18, style: .continuous)
+        )
         .overlay {
             RoundedRectangle(cornerRadius: 18, style: .continuous)
-                .strokeBorder(composerStrokeColor, lineWidth: dropTargeted || composerFocused.wrappedValue ? 1.5 : 1)
+                .strokeBorder(composerStrokeColor, lineWidth: dropTargeted ? 1.5 : 1)
                 .allowsHitTesting(false)
         }
+        .shadow(
+            color: Color.black.opacity(colorScheme == .dark ? 0.36 : 0.05),
+            radius: colorScheme == .dark ? 16 : 8,
+            y: colorScheme == .dark ? 6 : 2
+        )
         .onHover { isInputHovered = $0 }
         .animation(reduceMotion ? nil : MacDesignTokens.Motion.responsive, value: dropTargeted)
         .animation(reduceMotion ? nil : MacDesignTokens.Motion.responsive, value: composerFocused.wrappedValue)
@@ -570,6 +649,7 @@ struct MacComposerView: View {
             Text(attachment.name)
                 .font(.system(size: 11.5, weight: .medium))
                 .lineLimit(1)
+                .truncationMode(.middle)
             attachmentStatus(attachment)
             Button {
                 actions.perform(.removeAttachment(
@@ -591,7 +671,9 @@ struct MacComposerView: View {
         }
         .padding(.horizontal, 9)
         .padding(.vertical, 7)
-        .background(Color.primary.opacity(0.055), in: RoundedRectangle(cornerRadius: 8))
+        .frame(maxWidth: 180, alignment: .leading)
+        .background(Color.primary.opacity(0.055), in: RoundedRectangle(cornerRadius: 8, style: .continuous))
+        .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
         .accessibilityElement(children: .contain)
         .accessibilityLabel("\(attachment.name), \(attachmentAccessibilityStatus(attachment))")
         .contextMenu {
@@ -615,31 +697,17 @@ struct MacComposerView: View {
         case .ready:
             Image(systemName: "checkmark.circle.fill")
                 .font(.system(size: 9))
-                .foregroundStyle(.green)
+                .foregroundStyle(MacDesignColor.success)
         case .failed:
             Image(systemName: "exclamationmark.circle.fill")
                 .font(.system(size: 9))
-                .foregroundStyle(.orange)
+                .foregroundStyle(MacDesignColor.warning)
                 .help(attachment.errorMessage ?? String(localized: "Extraction failed"))
         }
     }
 
     private var inputRow: some View {
-        HStack(alignment: .center, spacing: 9) {
-            Button {
-                fileImportFailure = nil
-                fileImporterConversationID = state.conversationID
-                fileImporterPresented = true
-            } label: {
-                Image(systemName: "plus")
-                    .font(.system(size: 13.5, weight: .semibold))
-                    .frame(width: 30, height: 30)
-            }
-            .buttonStyle(MacPressFeedbackButtonStyle(contentInsets: .init()))
-            .background(Color.primary.opacity(0.055), in: Circle())
-            .help("Attach Files")
-            .accessibilityLabel(String(localized: "Attach Files"))
-
+        HStack(alignment: .bottom, spacing: 9) {
             ZStack(alignment: .leading) {
                 MacComposerTextEditor(
                     text: draftBinding,
@@ -672,160 +740,168 @@ struct MacComposerView: View {
                 .focused(composerFocused)
                 .accessibilityLabel(String(localized: "Message Nola"))
             }
-            .frame(minHeight: 30, maxHeight: 132, alignment: .center)
+            .frame(minHeight: 30, maxHeight: 132, alignment: .bottom)
             .fixedSize(horizontal: false, vertical: true)
-
-            Button {
-                if voiceInput.isRecording || voiceInput.isStarting {
-                    dictationActive = false
-                    voiceInput.stop()
-                } else {
-                    dictationConversationID = state.conversationID
-                    dictationDraft = MacDictationDraft(draft: state.draft, conversationID: state.conversationID)
-                    dictationActive = true
-                    Task { await voiceInput.start() }
-                }
-            } label: {
-                Image(systemName: voiceInput.isRecording ? "waveform" : voiceInput.isStarting ? "hourglass" : "mic")
-                    .font(.system(size: 13, weight: .semibold))
-                    .foregroundStyle(voiceInput.isRecording ? Color.red : Color.secondary)
-                    .frame(width: 30, height: 30)
-                    .background {
-                        Circle().fill(voiceInput.isRecording ? Color.red.opacity(0.10) : Color.primary.opacity(0.045))
-                    }
-            }
-            .buttonStyle(MacPressFeedbackButtonStyle(contentInsets: .init()))
-            .help(
-                (voiceInput.isRecording || voiceInput.isStarting)
-                    ? String(localized: "Stop Dictation")
-                    : String(localized: "Start Dictation")
-            )
-            .accessibilityLabel(
-                (voiceInput.isRecording || voiceInput.isStarting)
-                    ? String(localized: "Stop Dictation")
-                    : String(localized: "Start Dictation")
-            )
-
-            let showsStopAction = state.isVisiblyRunning && !state.draft.hasPrefix("/")
-            Button {
-                if localCommand() { return }
-                if state.isVisiblyRunning {
-                    actions.perform(.stop(conversationID: state.conversationID))
-                } else if state.canSend && isModelConfigured {
-                    dictationActive = false
-                    voiceInput.stop()
-                    actions.perform(.submit(conversationID: state.conversationID))
-                }
-            } label: {
-                Image(systemName: showsStopAction ? "stop.fill" : "arrow.up")
-                    .contentTransition(.opacity)
-                    .animation(reduceMotion ? nil : .easeOut(duration: 0.16), value: state.isVisiblyRunning)
-                    .font(.system(size: 13, weight: .bold))
-                    .foregroundStyle((state.canSend && isModelConfigured) || state.isVisiblyRunning ? MacDesignColor.onPrimaryAction : Color.secondary)
-                    .frame(width: 30, height: 30)
-                    .background {
-                        Circle().fill((state.canSend && isModelConfigured) || state.isVisiblyRunning ? MacDesignColor.primaryAction : Color.primary.opacity(0.07))
-                    }
-            }
-            .buttonStyle(MacPressFeedbackButtonStyle(contentInsets: .init()))
-            .disabled(!state.draft.hasPrefix("/") && (state.isPrimaryActionDisabled || (!isModelConfigured && !state.isVisiblyRunning)))
-            .accessibilityIdentifier(showsStopAction ? "mac-composer-stop" : "mac-composer-send")
-            .opacity(isSendHovering && ((state.canSend && isModelConfigured) || state.isVisiblyRunning) ? 0.85 : 1)
-            .onHover { hovering in
-                guard isSendHovering != hovering else { return }
-                if reduceMotion {
-                    isSendHovering = hovering
-                } else {
-                    withAnimation(.easeOut(duration: 0.14)) {
-                        isSendHovering = hovering
-                    }
-                }
-            }
-            .help(
-                showsStopAction
-                    ? String(localized: "Stop")
-                    : String(localized: "Send")
-            )
-            .accessibilityLabel(
-                showsStopAction
-                    ? String(localized: "Stop")
-                    : String(localized: "Send")
-            )
         }
-        .padding(.horizontal, 14)
-        .padding(.vertical, 11)
+        .padding(.horizontal, 12)
+        .padding(.top, 12)
+        .padding(.bottom, 8)
     }
 
-    private var quickBar: some View {
-        ViewThatFits(in: .horizontal) {
-            HStack(spacing: 10) { quickBarControls; Spacer(minLength: 0) }
-                .fixedSize(horizontal: true, vertical: false)
-            VStack(alignment: .leading, spacing: 4) { quickBarControls }
+    private var bottomToolbar: some View {
+        HStack(alignment: .center, spacing: 6) {
+            // Left: Attach button
+            Button {
+                fileImportFailure = nil
+                fileImporterConversationID = state.conversationID
+                fileImporterPresented = true
+            } label: {
+                Image(systemName: "plus")
+                    .font(.system(size: 13.5, weight: .semibold))
+                    .foregroundStyle(.secondary)
+            }
+            .buttonStyle(MacCircularComposerButtonStyle(
+                baseFill: colorScheme == .dark ? Color.white.opacity(0.06) : Color.primary.opacity(0.055)
+            ))
+            .help("Attach Files")
+            .accessibilityLabel(String(localized: "Attach Files"))
+
+            Spacer(minLength: 6)
+
+            // Right: Execution (Model picker, Reasoning effort, Permission mode, Mic, Send/Stop)
+            HStack(alignment: .center, spacing: 4) {
+                trailingControls
+                reasoningMenu
+                permissionModeMenu
+                micButton
+                sendOrStopButton
+            }
         }
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .menuStyle(.borderlessButton)
-        .font(.system(size: 11, weight: .medium))
-        .foregroundStyle(.secondary)
-        .padding(.horizontal, 4)
+        .padding(.horizontal, 10)
+        .padding(.bottom, 9)
+        .padding(.top, 2)
     }
 
-    @ViewBuilder private var quickBarControls: some View {
-            Menu {
-                ForEach(MacPermissionMode.allCases) { mode in
-                    Button {
-                        actions.perform(.selectPermissionMode(conversationID: state.conversationID, mode))
-                    } label: {
-                        Label(mode.title, systemImage: state.permissionMode == mode ? "checkmark" : "shield")
-                    }
-                    .help(mode.detail)
-                }
-            } label: {
-                Label(state.permissionMode.title, systemImage: "shield.lefthalf.filled")
+    private var micButton: some View {
+        Button {
+            if voiceInput.isRecording || voiceInput.isStarting {
+                dictationActive = false
+                voiceInput.stop()
+            } else {
+                dictationConversationID = state.conversationID
+                dictationDraft = MacDictationDraft(draft: state.draft, conversationID: state.conversationID)
+                dictationActive = true
+                Task { await voiceInput.start() }
             }
-            .menuStyle(MacPillMenuStyle(height: 26))
-            .fixedSize(horizontal: true, vertical: false)
-            .help(state.permissionMode.detail)
-            .accessibilityLabel(String(localized: "Permission Mode"))
-            .accessibilityIdentifier("mac-composer-permission-mode")
-            .disabled(state.permissionConfigurationState == .saving)
+        } label: {
+            Image(systemName: voiceInput.isRecording ? "waveform" : voiceInput.isStarting ? "hourglass" : "mic")
+                .font(.system(size: 13, weight: .semibold))
+                .foregroundStyle(voiceInput.isRecording ? MacDesignColor.danger : Color.secondary)
+        }
+        .buttonStyle(MacCircularComposerButtonStyle(
+            baseFill: voiceInput.isRecording ? MacDesignColor.danger.opacity(0.12) : Color.primary.opacity(0.045)
+        ))
+        .help(
+            (voiceInput.isRecording || voiceInput.isStarting)
+                ? String(localized: "Stop Dictation")
+                : String(localized: "Start Dictation")
+        )
+        .accessibilityLabel(
+            (voiceInput.isRecording || voiceInput.isStarting)
+                ? String(localized: "Stop Dictation")
+                : String(localized: "Start Dictation")
+        )
+    }
 
-            Text(state.permissionConfigurationState.title)
-                .fixedSize(horizontal: false, vertical: true)
-                .accessibilityIdentifier("mac-composer-permission-status")
-                .help(state.activePermissionMode.map { "\(String(localized: "Permissions active", table: "Permissions")): \($0.title)" }
-                    ?? state.permissionConfigurationState.title)
-            if state.permissionConfigurationState == .failed {
-                Button(String(localized: "Refresh", table: "Chat")) {
-                    actions.perform(.reloadPermissionConfiguration(conversationID: state.conversationID))
-                }
-                .frame(minHeight: 28)
-                .accessibilityIdentifier("mac-composer-permission-refresh")
+    @ViewBuilder
+    private var sendOrStopButton: some View {
+        let showsStopAction = state.isVisiblyRunning && !state.draft.hasPrefix("/")
+        let isActiveAction = (state.canSend && isModelConfigured) || state.isVisiblyRunning
+        Button {
+            if localCommand() { return }
+            if state.isVisiblyRunning {
+                actions.perform(.stop(conversationID: state.conversationID))
+            } else if state.canSend && isModelConfigured {
+                dictationActive = false
+                voiceInput.stop()
+                actions.perform(.submit(conversationID: state.conversationID))
             }
+        } label: {
+            Image(systemName: showsStopAction ? "stop.fill" : "arrow.up")
+                .contentTransition(reduceMotion ? .identity : .symbolEffect(.replace))
+                .animation(reduceMotion ? nil : .easeOut(duration: MacDesignTokens.Motion.selection), value: showsStopAction)
+                .font(.system(size: 13, weight: .bold))
+                .foregroundStyle(isActiveAction ? MacDesignColor.onPrimaryAction : Color.secondary)
+        }
+        .buttonStyle(MacCircularComposerButtonStyle(
+            baseFill: isActiveAction ? MacDesignColor.primaryAction : Color.primary.opacity(0.07)
+        ))
+        .disabled(!state.draft.hasPrefix("/") && (state.isPrimaryActionDisabled || (!isModelConfigured && !state.isVisiblyRunning)))
+        .accessibilityIdentifier(showsStopAction ? "mac-composer-stop" : "mac-composer-send")
+        .help(
+            showsStopAction
+                ? String(localized: "Stop")
+                : String(localized: "Send")
+        )
+        .accessibilityLabel(
+            showsStopAction
+                ? String(localized: "Stop")
+                : String(localized: "Send")
+        )
+    }
 
-            if !state.reasoningOptions.isEmpty {
-                Menu {
-                    ForEach(["automatic"] + state.reasoningOptions, id: \.self) { preference in
-                        Button {
-                            actions.perform(.selectReasoningPreference(conversationID: state.conversationID, preference))
-                        } label: {
-                            if state.reasoningPreference == preference {
-                                Label { Text(verbatim: reasoningTitle(preference)) } icon: { Image(systemName: "checkmark") }
-                            } else { Text(verbatim: reasoningTitle(preference)) }
-                        }
-                    }
+    private var permissionModeMenu: some View {
+        Menu {
+            ForEach(MacPermissionMode.allCases) { mode in
+                Button {
+                    actions.perform(.selectPermissionMode(conversationID: state.conversationID, mode))
                 } label: {
-                    Label {
-                        Text(verbatim: reasoningTitle(state.reasoningPreference))
-                    } icon: {
-                        Image(systemName: "brain")
+                    Label(mode.title, systemImage: state.permissionMode == mode ? "checkmark" : "shield")
+                }
+                .help(mode.detail)
+            }
+        } label: {
+            Label(state.permissionMode.title, systemImage: "shield.lefthalf.filled")
+                .font(.system(size: 11.5, weight: .medium))
+                .foregroundStyle(state.permissionMode == .allowAll ? MacDesignColor.warning : Color.secondary)
+        }
+        .menuStyle(MacPillMenuStyle(height: 28))
+        .fixedSize(horizontal: true, vertical: false)
+        .help(state.activePermissionMode.map { "\(state.permissionMode.detail) (\(String(localized: "Permissions active", table: "Permissions")): \($0.title))" }
+            ?? state.permissionMode.detail)
+        .accessibilityLabel(String(localized: "Permission Mode"))
+        .accessibilityIdentifier("mac-composer-permission-mode")
+        .disabled(state.permissionConfigurationState == .saving)
+    }
+
+    @ViewBuilder
+    private var reasoningMenu: some View {
+        if !state.reasoningOptions.isEmpty {
+            Menu {
+                ForEach(["automatic"] + state.reasoningOptions, id: \.self) { preference in
+                    Button {
+                        actions.perform(.selectReasoningPreference(conversationID: state.conversationID, preference))
+                    } label: {
+                        if state.reasoningPreference == preference {
+                            Label { Text(verbatim: reasoningTitle(preference)) } icon: { Image(systemName: "checkmark") }
+                        } else { Text(verbatim: reasoningTitle(preference)) }
                     }
                 }
-                .menuStyle(MacPillMenuStyle(height: 26))
-                .fixedSize(horizontal: true, vertical: false)
-                .accessibilityLabel(String(localized: "Reasoning", table: "ModelCenter"))
-                .accessibilityIdentifier("mac-composer-reasoning")
-                .disabled(state.isRunning || state.isSubmissionBlocked)
+            } label: {
+                Label {
+                    Text(verbatim: reasoningTitle(state.reasoningPreference))
+                } icon: {
+                    Image(systemName: "brain")
+                }
+                .font(.system(size: 11.5, weight: .medium))
+                .foregroundStyle(.secondary)
             }
+            .menuStyle(MacPillMenuStyle(height: 28))
+            .fixedSize(horizontal: true, vertical: false)
+            .accessibilityLabel(String(localized: "Reasoning", table: "ModelCenter"))
+            .accessibilityIdentifier("mac-composer-reasoning")
+            .disabled(state.isRunning || state.isSubmissionBlocked)
+        }
     }
 
     private func reasoningTitle(_ preference: String) -> String {
@@ -846,7 +922,12 @@ struct MacComposerView: View {
 
     private var composerStrokeColor: Color {
         if dropTargeted { return MacDesignColor.brand }
-        if composerFocused.wrappedValue { return MacDesignColor.brand }
+        if colorScheme == .dark {
+            if contrast == .increased { return Color.white.opacity(composerFocused.wrappedValue ? 0.50 : 0.28) }
+            if composerFocused.wrappedValue { return Color.white.opacity(0.22) }
+            return isInputHovered ? Color.white.opacity(0.15) : Color.white.opacity(0.09)
+        }
+        if composerFocused.wrappedValue { return Color.primary.opacity(0.28) }
         return contrast == .increased || isInputHovered ? MacDesignColor.controlOutline : MacDesignColor.borderSubtle
     }
 

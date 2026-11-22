@@ -76,6 +76,7 @@ pub(super) fn catalog() -> Value {
     let job = DOWNLOAD.lock().unwrap_or_else(|e| e.into_inner()).clone();
     let mut value = local_models::catalog_json();
     value["acquisition"] = json!(job);
+    value["defaultSource"] = json!(model_acquisition::default_source_name());
     value
 }
 
@@ -184,14 +185,24 @@ pub(super) fn handle(
         #[serde(deny_unknown_fields)]
         struct Search {
             engine: String,
+            #[serde(default)]
             source: String,
+            #[serde(default)]
             query: String,
         }
         let input = match read_json::<Search>(request) {
             Ok(input) => input,
             Err(error) => return error,
         };
-        if !valid_engine_and_source(&input.engine, &input.source)
+        let resolved_source = if input.source.trim().is_empty()
+            || input.source.trim().eq_ignore_ascii_case("auto")
+            || input.source.trim().eq_ignore_ascii_case("default")
+        {
+            model_acquisition::default_source_name()
+        } else {
+            input.source.as_str()
+        };
+        if !valid_engine_and_source(&input.engine, resolved_source)
             || (action == "search" && input.query.trim().is_empty())
             || input.query.len() > 512
         {
@@ -202,7 +213,7 @@ pub(super) fn handle(
         } else {
             model_acquisition::search
         };
-        return match lookup(&input.engine, &input.source, &input.query) {
+        return match lookup(&input.engine, resolved_source, &input.query) {
             Ok(result) => response(200, result),
             Err(error) => response(502, json!({"error":error})),
         };
@@ -229,7 +240,7 @@ pub(super) fn handle(
 }
 
 fn valid_engine_and_source(engine: &str, source: &str) -> bool {
-    matches!(engine, "llama.cpp" | "vllm") && matches!(source, "huggingface" | "modelscope")
+    matches!(engine, "llama.cpp" | "vllm" | "mlx") && matches!(source, "huggingface" | "modelscope")
 }
 
 #[cfg(test)]

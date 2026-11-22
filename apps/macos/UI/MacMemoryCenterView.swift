@@ -48,6 +48,7 @@ struct MacMemoryCenterView: View {
     @State private var isSaving = false
     @State private var editorError: String?
     @State private var isDeleting = false
+    @State private var showsHistory = false
 
     private var supersededIDs: Set<String> {
         Set(records.flatMap(\.supersedes))
@@ -55,8 +56,9 @@ struct MacMemoryCenterView: View {
 
     private var filteredRecords: [MacAgentHostMemoryRecord] {
         let needle = query.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !needle.isEmpty else { return records }
-        return records.filter { record in
+        let visible = showsHistory ? records : records.filter { !supersededIDs.contains($0.id) }
+        guard !needle.isEmpty else { return visible }
+        return visible.filter { record in
             [record.content, record.summary ?? "", record.scope, record.kind, record.source ?? ""]
                 .contains { $0.localizedCaseInsensitiveContains(needle) }
         }
@@ -72,6 +74,15 @@ struct MacMemoryCenterView: View {
                         .foregroundStyle(.secondary)
                 }
                 Spacer()
+                if !supersededIDs.isEmpty {
+                    Toggle(
+                        macMemoryText("mac.memory.show_history", "Show History"),
+                        isOn: $showsHistory
+                    )
+                    .toggleStyle(.macSwitch)
+                    .controlSize(.small)
+                    .font(.system(size: 12, weight: .medium))
+                }
                 Button {
                     editorRecord = nil
                     editorError = nil
@@ -229,10 +240,12 @@ struct MacMemoryCenterView: View {
             HStack(spacing: 12) {
                 Label(sourceTitle(record), systemImage: "arrow.triangle.branch")
                     .lineLimit(1)
-                Label(
-                    String(format: macMemoryText("mac.memory.confidence", "%.0f%% confidence"), record.confidence * 100),
-                    systemImage: "checkmark.seal"
-                )
+                if (record.provenance.source ?? record.source) != "explicit_user_memory_management" {
+                    Label(
+                        String(format: macMemoryText("mac.memory.confidence", "%.0f%% confidence"), record.confidence * 100),
+                        systemImage: "checkmark.seal"
+                    )
+                }
                 Spacer()
                 Text(updatedAtTitle(record.updatedAt))
                     .lineLimit(1)
@@ -399,15 +412,6 @@ private struct MacMemoryEditor: View {
 
             TextField(macMemoryText("mac.memory.tags", "Tags, separated by commas"), text: $tags)
                 .textFieldStyle(.roundedBorder)
-
-            HStack {
-                Text(macMemoryText("mac.memory.confidence.label", "Confidence"))
-                Slider(value: $confidence, in: 0...1, step: 0.05)
-                Text(confidence, format: .percent.precision(.fractionLength(0)))
-                    .monospacedDigit()
-                    .frame(width: 42, alignment: .trailing)
-            }
-            .font(.system(size: 11.5))
 
             if let errorMessage {
                 MacInlineNotice(message: errorMessage, kind: .failure)

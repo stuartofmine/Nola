@@ -18,6 +18,7 @@ struct MacConversationSidebar: View {
     @Environment(\.openSettings) private var openSettings
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var isSearchHovering = false
+    @FocusState private var isSearchFocused: Bool
     @State private var deletionTarget: MacConversation?
     @State private var isCancellingRename = false
     @FocusState private var focusedRenameID: String?
@@ -94,6 +95,7 @@ struct MacConversationSidebar: View {
                     TextField(String(localized: "Search conversations"), text: $model.searchText)
                         .textFieldStyle(.plain)
                         .font(.system(size: 12.5))
+                        .focused($isSearchFocused)
                     if !model.searchText.isEmpty {
                         Button {
                             model.searchText = ""
@@ -109,16 +111,20 @@ struct MacConversationSidebar: View {
                 .padding(.horizontal, 10)
                 .frame(height: 36)
                 .background(
-                    isSearchHovering ? MacDesignColor.hover : MacDesignColor.panel,
+                    isSearchFocused ? MacDesignColor.panel : (isSearchHovering ? MacDesignColor.hover : MacDesignColor.panel),
                     in: RoundedRectangle(cornerRadius: MacDesignTokens.Radius.field, style: .continuous)
                 )
                 .overlay {
                     RoundedRectangle(cornerRadius: MacDesignTokens.Radius.field, style: .continuous)
-                        .strokeBorder(MacDesignColor.borderSubtle, lineWidth: 1)
+                        .strokeBorder(
+                            isSearchFocused ? MacDesignColor.brand : MacDesignColor.borderSubtle,
+                            lineWidth: isSearchFocused ? 1.5 : 1
+                        )
                 }
                 .contentShape(RoundedRectangle(cornerRadius: MacDesignTokens.Radius.field, style: .continuous))
                 .onHover { isSearchHovering = $0 }
                 .animation(reduceMotion ? nil : .easeOut(duration: 0.16), value: isSearchHovering)
+                .animation(reduceMotion ? nil : .easeOut(duration: 0.16), value: isSearchFocused)
 
 
             }
@@ -239,6 +245,7 @@ struct MacConversationSidebar: View {
                 } label: {
                     MacConversationRow(
                         conversation: conversation,
+                        isSelected: isSelected,
                         loadParticipantNames: loadParticipantNames
                     )
                 }

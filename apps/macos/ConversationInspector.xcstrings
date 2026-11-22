@@ -17,7 +17,11 @@
         }
       }
     },
+    "Diff preview is shortened. Open full review to inspect all changes." : {
+
+    },
     "Diff preview is shortened. Open in a tab to review the full changes." : {
+      "extractionState" : "stale",
       "localizations" : {
         "en" : {
           "stringUnit" : {
@@ -2391,6 +2395,9 @@
           }
         }
       }
+    },
+    "New Goal" : {
+
     },
     "No textual diff is available for this file." : {
       "localizations" : {

@@ -1013,24 +1013,17 @@ internal fun ChatScreen(
         if (navigationReduceMotion) navigationState.snapTo(showConversations)
         else navigationState.animateTo(showConversations)
     }
-    val keyboardVisible = WindowInsets.ime.getBottom(LocalDensity.current) > 0
-    PredictiveBackHandler(enabled = !showConversations && !keyboardVisible && inspector == null &&
-        !showExpertPicker && !showContextSheetOpen && !showActions && !showIMSearch) { events ->
-        try {
-            events.collect { event ->
-                if (!navigationReduceMotion) navigationState.seekTo(event.progress, true)
-            }
+    ConversationBackGestureHandler(
+        canHandleBack = !showConversations && inspector == null &&
+            !showExpertPicker && !showContextSheetOpen && !showActions && !showIMSearch,
+        reduceMotion = navigationReduceMotion,
+        navigationState = navigationState,
+        onNavigateBack = {
             dismissNavigationKeyboard()
             viewModel.loadConversations()
             setShowConversations(true)
-        } catch (cancelled: kotlinx.coroutines.CancellationException) {
-            // Cancelling the system gesture keeps the same chat and draft.
-            kotlinx.coroutines.withContext(kotlinx.coroutines.NonCancellable) {
-                if (navigationReduceMotion) navigationState.snapTo(false) else navigationState.animateTo(false)
-            }
-            throw cancelled
-        }
-    }
+        },
+    )
     navigationTransition.AnimatedContent(modifier = Modifier.fillMaxSize(), transitionSpec = {
         val movement = tween<androidx.compose.ui.unit.IntOffset>(260, easing = FastOutSlowInEasing)
         val transition = if (navigationReduceMotion) fadeIn(tween(0)) togetherWith fadeOut(tween(0))
@@ -1103,13 +1096,24 @@ internal fun ChatScreen(
                     .padding(horizontal = NolaSpacing.sm),
                 verticalArrangement = Arrangement.Center
             ) {
-                Text(
-                    conversationTitle,
-                    style = MaterialTheme.typography.titleMedium,
-                    fontWeight = FontWeight.SemiBold,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis
-                )
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(2.dp)
+                ) {
+                    Text(
+                        conversationTitle,
+                        style = MaterialTheme.typography.titleMedium,
+                        fontWeight = FontWeight.SemiBold,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                        modifier = Modifier.weight(1f, fill = false)
+                    )
+                    Text(
+                        "›",
+                        style = MaterialTheme.typography.titleMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
                 Text(
                     when {
                         !presentationReady && state.processingState == ProcessingState.BuildingContext -> stringResource(R.string.chat_loading_conversation)
@@ -1425,7 +1429,14 @@ internal fun ChatScreen(
                     val savingReasoning by viewModel.savingReasoningPreference.collectAsState()
                     Row(verticalAlignment = Alignment.CenterVertically) {
                         Box(Modifier.weight(1f)) {
-                            TextButton(onClick = { showModelMenu = true }, modifier = Modifier.testTag("chat.modelPicker")) {
+                            TextButton(
+                                onClick = { showModelMenu = true },
+                                colors = androidx.compose.material3.ButtonDefaults.textButtonColors(
+                                    contentColor = MaterialTheme.colorScheme.onSurfaceVariant,
+                                ),
+                                contentPadding = PaddingValues(horizontal = 10.dp, vertical = 6.dp),
+                                modifier = Modifier.testTag("chat.modelPicker"),
+                            ) {
                                 Text(state.currentModel?.name ?: stringResource(R.string.chat_no_model_configured), maxLines = 1,
                                     modifier = Modifier.weight(1f, fill = false), style = MaterialTheme.typography.labelMedium, overflow = TextOverflow.Ellipsis)
                                 Spacer(Modifier.width(4.dp))
@@ -1748,7 +1759,7 @@ internal fun ChatTranscript(
     }
     var knownTimelineIds by remember(state.conversationId) { mutableStateOf<List<String>?>(null) }
     val appendedMessageIds = ChatTimelineMotionPolicy.appendedMessageIds(knownTimelineIds, currentTimelineIds)
-    SideEffect {
+    LaunchedEffect(currentTimelineIds) {
         if (knownTimelineIds != currentTimelineIds) knownTimelineIds = currentTimelineIds
     }
     // orderedRuns/orderedTasks materialize their full projection. Build the
@@ -1885,7 +1896,13 @@ internal fun ChatTranscript(
                 if (listState.canScrollForward && !listState.isScrollInProgress) {
                     // Input may cancel an individual scroll, not the persistent
                     // request consumer that must resume after the gesture.
-                    kotlinx.coroutines.coroutineScope { launch { scrollToLatestContent(animated = false) } }
+                    try {
+                        scrollToLatestContent(animated = false)
+                    } catch (cancelled: kotlinx.coroutines.CancellationException) {
+                        if (!kotlinx.coroutines.currentCoroutineContext()[kotlinx.coroutines.Job]?.isActive.let { it == true }) {
+                            throw cancelled
+                        }
+                    }
                 }
             } while (android.os.SystemClock.uptimeMillis() < deadline)
         }
@@ -2127,10 +2144,20 @@ internal fun ChatTranscript(
         androidx.compose.animation.AnimatedVisibility(
             visible = !followsLatest && timelineMessages.isNotEmpty(),
             modifier = Modifier.align(Alignment.BottomCenter).padding(bottom = 12.dp),
-            enter = androidx.compose.animation.fadeIn(tween(if (reduceMotion) 0 else NolaMotion.fast)),
-            exit = androidx.compose.animation.fadeOut(tween(if (reduceMotion) 0 else NolaMotion.fast)),
+            enter = fadeIn(com.nola.ui.components.nolaTween(NolaMotion.base, reduceMotion)) +
+                androidx.compose.animation.slideInVertically(
+                    animationSpec = com.nola.ui.components.nolaTween(NolaMotion.base, reduceMotion),
+                    initialOffsetY = { it / 3 },
+                ),
+            exit = fadeOut(com.nola.ui.components.nolaTween(NolaMotion.fast, reduceMotion)) +
+                androidx.compose.animation.slideOutVertically(
+                    animationSpec = com.nola.ui.components.nolaTween(NolaMotion.fast, reduceMotion),
+                    targetOffsetY = { it / 3 },
+                ),
         ) {
+            val fabHaptics = rememberNolaHaptics()
             IconButton(onClick = {
+                fabHaptics.selection()
                 reviewingPermission = false
                 followsLatest = true
                 userScrollSession = false
@@ -2543,8 +2570,18 @@ internal fun ChatComposerBar(
             )
         }
 
+        val composerReduceMotion = rememberReduceMotionEnabled()
+        val composerBorder by animateColorAsState(
+            targetValue = if (inputFocused) NolaColors.composerBorderFocused else NolaColors.composerBorderUnfocused,
+            animationSpec = tween(
+                durationMillis = if (composerReduceMotion) 0 else NolaMotion.controlState,
+                easing = NolaMotion.disclosureEasing,
+            ),
+            label = "chat-composer-border",
+        )
         Column(Modifier.fillMaxWidth().nolaSurface(radius = 25.dp, raised = false,
-            border = if (inputFocused) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.outlineVariant).padding(4.dp)) {
+            fill = MaterialTheme.colorScheme.surface,
+            border = composerBorder).padding(4.dp)) {
             BasicTextField(
                 value = currentEditor,
                 onValueChange = { value -> if (draftWritable) {
@@ -2555,7 +2592,7 @@ internal fun ChatComposerBar(
                     .testTag("chat.composer.input")
                     .onFocusChanged { inputFocused = it.isFocused; onFocusChange(it.isFocused) }
                     .fillMaxWidth()
-                    .heightIn(min = 44.dp, max = 132.dp)
+                    .heightIn(min = 44.dp, max = 192.dp)
                     .contentReceiver(attachmentContentReceiver)
                     .onPreviewKeyEvent { event ->
                         if (event.type == KeyEventType.KeyDown && event.key == Key.Z && (event.isCtrlPressed || event.isMetaPressed) && !event.isShiftPressed && currentEditor.composition == null && undoMention()) true
@@ -2608,7 +2645,7 @@ internal fun ChatComposerBar(
                 ComposerCircleButton(
                     enabled = enabled && !isImportingAttachments,
                     background = Color.Transparent,
-                    contentColor = MaterialTheme.colorScheme.primary,
+                    contentColor = if (enabled && !isImportingAttachments) MaterialTheme.colorScheme.onSurfaceVariant else MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.45f),
                     onClick = onAttach
                 ) {
                     if (isImportingAttachments) {
@@ -2622,16 +2659,8 @@ internal fun ChatComposerBar(
 
                 val canSend = inputText.trim().isNotEmpty() || attachments.isNotEmpty()
                 val sendEnabled = showGoalProgress || isGenerating || (draftWritable && (inputText.startsWith("/") || (enabled && !isImportingAttachments && canSend)))
-                val sendBackground = when {
-                    isGenerating -> MaterialTheme.colorScheme.primary
-                    sendEnabled -> MaterialTheme.colorScheme.primary
-                    else -> MaterialTheme.colorScheme.onSurface.copy(alpha = 0.09f)
-                }
-                val sendContent = if (sendEnabled) {
-                    MaterialTheme.colorScheme.onPrimary
-                } else {
-                    MaterialTheme.colorScheme.onSurfaceVariant
-                }
+                val sendBackground = if (sendEnabled) MaterialTheme.colorScheme.primary else NolaColors.composerDisabledFill
+                val sendContent = if (sendEnabled) MaterialTheme.colorScheme.onPrimary else MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.65f)
                 ComposerCircleButton(
                     enabled = sendEnabled,
                     background = sendBackground,
@@ -2641,12 +2670,26 @@ internal fun ChatComposerBar(
                         onSendOrStop()
                     }
                 ) {
+                    val iconState = when {
+                        showGoalProgress -> 0
+                        isGenerating -> 1
+                        else -> 2
+                    }
                     Box(modifier = Modifier.testTag("chat.composer.send")) {
-                        Icon(
-                            painterResource(when { showGoalProgress -> R.drawable.nola_goal; isGenerating -> R.drawable.nola_stop; else -> R.drawable.nola_arrow }),
-                            contentDescription = stringResource(when { showGoalProgress -> R.string.inspector_progress; isGenerating -> R.string.chat_stop; else -> R.string.chat_send }),
-                            modifier = Modifier.size(19.dp)
-                        )
+                        AnimatedContent(
+                            targetState = iconState,
+                            transitionSpec = {
+                                fadeIn(com.nola.ui.components.nolaTween(NolaMotion.fast, composerReduceMotion)) togetherWith
+                                    fadeOut(com.nola.ui.components.nolaTween(NolaMotion.fast, composerReduceMotion))
+                            },
+                            label = "chat-composer-action-icon",
+                        ) { target ->
+                            Icon(
+                                painterResource(when (target) { 0 -> R.drawable.nola_goal; 1 -> R.drawable.nola_stop; else -> R.drawable.nola_arrow }),
+                                contentDescription = stringResource(when (target) { 0 -> R.string.inspector_progress; 1 -> R.string.chat_stop; else -> R.string.chat_send }),
+                                modifier = Modifier.size(19.dp)
+                            )
+                        }
                     }
                 }
             }
@@ -2739,14 +2782,21 @@ private fun ComposerCircleButton(
         modifier = Modifier
             .size(48.dp)
             .clip(CircleShape)
-            .background(animatedBackground)
             .clickable(enabled = enabled, onClick = onClick),
         contentAlignment = Alignment.Center
     ) {
-        androidx.compose.runtime.CompositionLocalProvider(
-            androidx.compose.material3.LocalContentColor provides animatedContentColor
+        Box(
+            modifier = Modifier
+                .size(38.dp)
+                .clip(CircleShape)
+                .background(animatedBackground),
+            contentAlignment = Alignment.Center
         ) {
-            content()
+            androidx.compose.runtime.CompositionLocalProvider(
+                androidx.compose.material3.LocalContentColor provides animatedContentColor
+            ) {
+                content()
+            }
         }
     }
 }
@@ -2922,7 +2972,7 @@ private fun HostPermissionCard(request: com.nola.domain.model.HostAgentPermissio
             stringResource(R.string.permission_guidance_recorded) + "\n" + request.permissionInstructions.joinToString("\n") { it.instruction }
         ).filter { it.isNotBlank() }.joinToString("\n\n"),
         executionLocation = if (request.deviceBridge) stringResource(R.string.permission_location_device)
-            else stringResource(R.string.permission_location_host, request.hostId?.take(18) ?: stringResource(R.string.permission_connected_host)),
+            else stringResource(R.string.permission_location_host, stringResource(R.string.permission_connected_host)),
         dataBoundary = stringResource(if (request.deviceBridge) R.string.permission_data_device else R.string.permission_data_host),
         validity = stringResource(if (request.deviceBridge) R.string.permission_valid_once else R.string.permission_valid_choice),
         allowLabel = permissionAllowLabel(request.toolName),
@@ -4049,18 +4099,8 @@ private fun AnswerContextFooter(message: ConversationMessage) {
         }
         AnimatedVisibility(
             visible = expanded,
-            enter = androidx.compose.animation.fadeIn(
-                tween(if (reduceMotion) 0 else NolaMotion.disclosure, easing = NolaMotion.disclosureEasing)
-            ) + androidx.compose.animation.expandVertically(
-                tween(if (reduceMotion) 0 else NolaMotion.disclosure, easing = NolaMotion.disclosureEasing),
-                expandFrom = Alignment.Top,
-            ),
-            exit = androidx.compose.animation.fadeOut(
-                tween(if (reduceMotion) 0 else NolaMotion.disclosure, easing = NolaMotion.disclosureEasing)
-            ) + androidx.compose.animation.shrinkVertically(
-                tween(if (reduceMotion) 0 else NolaMotion.disclosure, easing = NolaMotion.disclosureEasing),
-                shrinkTowards = Alignment.Top,
-            ),
+            enter = nolaDisclosureEnter(reduceMotion),
+            exit = nolaDisclosureExit(reduceMotion),
         ) {
             Column(
                 modifier = Modifier
@@ -4168,18 +4208,8 @@ private fun HostToolTimeline(
 
         AnimatedVisibility(
             visible = expanded,
-            enter = androidx.compose.animation.fadeIn(
-                tween(if (reduceMotion) 0 else NolaMotion.disclosure, easing = NolaMotion.disclosureEasing)
-            ) + androidx.compose.animation.expandVertically(
-                tween(if (reduceMotion) 0 else NolaMotion.disclosure, easing = NolaMotion.disclosureEasing),
-                expandFrom = Alignment.Top,
-            ),
-            exit = androidx.compose.animation.fadeOut(
-                tween(if (reduceMotion) 0 else NolaMotion.disclosure, easing = NolaMotion.disclosureEasing)
-            ) + androidx.compose.animation.shrinkVertically(
-                tween(if (reduceMotion) 0 else NolaMotion.disclosure, easing = NolaMotion.disclosureEasing),
-                shrinkTowards = Alignment.Top,
-            ),
+            enter = nolaDisclosureEnter(reduceMotion),
+            exit = nolaDisclosureExit(reduceMotion),
         ) {
             Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
                 events.forEach { tool ->
@@ -4238,8 +4268,10 @@ fun StreamingText(
 
 @Composable
 private fun ProcessingBreathingDot() {
-    val transition = rememberInfiniteTransition(label = "processing-breath")
-    val pulse by transition.animateFloat(
+    val reduceMotion = rememberReduceMotionEnabled()
+    val animated = com.nola.ui.components.continuousStatusAnimationEnabled(active = true, reduceMotion = reduceMotion)
+    val transition = if (animated) rememberInfiniteTransition(label = "processing-breath") else null
+    val pulseState = transition?.animateFloat(
         initialValue = 0.78f,
         targetValue = 1.16f,
         animationSpec = infiniteRepeatable(
@@ -4248,7 +4280,7 @@ private fun ProcessingBreathingDot() {
         ),
         label = "processing-scale"
     )
-    val haloAlpha by transition.animateFloat(
+    val haloAlphaState = transition?.animateFloat(
         initialValue = 0.20f,
         targetValue = 0.06f,
         animationSpec = infiniteRepeatable(
@@ -4263,9 +4295,10 @@ private fun ProcessingBreathingDot() {
             modifier = Modifier
                 .size(17.dp)
                 .graphicsLayer {
-                    scaleX = pulse
-                    scaleY = pulse
-                    alpha = haloAlpha
+                    val scale = pulseState?.value ?: 1f
+                    scaleX = scale
+                    scaleY = scale
+                    alpha = haloAlphaState?.value ?: 0.14f
                 }
                 .clip(CircleShape)
                 .background(MaterialTheme.colorScheme.primary)
@@ -4281,28 +4314,60 @@ private fun ProcessingBreathingDot() {
 
 @Composable
 private fun StreamingActivityIndicator() {
-    var activeDot by remember { mutableStateOf(0) }
-    LaunchedEffect(Unit) {
-        while (true) {
-            kotlinx.coroutines.delay(240)
-            activeDot = (activeDot + 1) % 3
-        }
+    val reduceMotion = rememberReduceMotionEnabled()
+    val animated = com.nola.ui.components.continuousStatusAnimationEnabled(active = true, reduceMotion = reduceMotion)
+    val transition = if (animated) rememberInfiniteTransition(label = "streaming-activity") else null
+    val dotAlphas = List(3) { index ->
+        transition?.animateFloat(
+            initialValue = 0.20f,
+            targetValue = 0.74f,
+            animationSpec = infiniteRepeatable(
+                animation = tween(durationMillis = 480, easing = FastOutSlowInEasing),
+                repeatMode = RepeatMode.Reverse,
+                initialStartOffset = androidx.compose.animation.core.StartOffset(index * 160),
+            ),
+            label = "streaming-dot-$index",
+        )
     }
     Row(
         modifier = Modifier.padding(top = 5.dp, bottom = 2.dp),
         horizontalArrangement = Arrangement.spacedBy(4.dp)
     ) {
+        val dotColor = MaterialTheme.colorScheme.onSurfaceVariant
         repeat(3) { index ->
+            val alphaState = dotAlphas[index]
             Box(
                 modifier = Modifier
                     .size(4.dp)
+                    .graphicsLayer { alpha = alphaState?.value ?: 0.36f }
                     .clip(CircleShape)
-                    .background(
-                        MaterialTheme.colorScheme.onSurfaceVariant.copy(
-                            alpha = if (index == activeDot) 0.72f else 0.20f
-                        )
-                    )
+                    .background(dotColor)
             )
+        }
+    }
+}
+
+@Composable
+private fun ConversationBackGestureHandler(
+    canHandleBack: Boolean,
+    reduceMotion: Boolean,
+    navigationState: SeekableTransitionState<Boolean>,
+    onNavigateBack: () -> Unit,
+) {
+    // Isolate WindowInsets.ime read in a zero-UI composable so keyboard
+    // animations do not trigger full-screen ChatScreen recomposition.
+    val keyboardVisible = WindowInsets.ime.getBottom(LocalDensity.current) > 0
+    PredictiveBackHandler(enabled = canHandleBack && !keyboardVisible) { events ->
+        try {
+            events.collect { event ->
+                if (!reduceMotion) navigationState.seekTo(event.progress, true)
+            }
+            onNavigateBack()
+        } catch (cancelled: kotlinx.coroutines.CancellationException) {
+            kotlinx.coroutines.withContext(kotlinx.coroutines.NonCancellable) {
+                if (reduceMotion) navigationState.snapTo(false) else navigationState.animateTo(false)
+            }
+            throw cancelled
         }
     }
 }

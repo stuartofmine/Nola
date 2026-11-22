@@ -95,9 +95,14 @@
     {#if error}<p role="alert" class="error">{t($locale, error)}</p>{/if}
     {#each entries as entry (entry.run_id)}
         <button class="activity-row" onclick={() => showDetail(entry)}>
-            <strong>{entry.title || t($locale, 'chatConversations.untitled')}</strong>
-            <small>{t($locale, entry.source === 'automation' ? 'activity.plan' : entry.source === 'agent' ? 'activity.agent' : 'activity.conversation')} · {resultStatus(entry.status, $locale)} · {time(entry.created_at_ms)}</small>
-            {#if entry.needs_response}<span>{t($locale, 'chatInspector.needsResponse')}</span>{/if}
+            <div class="row-top">
+                <strong>{entry.title || t($locale, 'chatConversations.untitled')}</strong>
+                <div class="row-pills">
+                    {#if entry.needs_response}<span class="status-pill attention-pill">{t($locale, 'chatInspector.needsResponse')}</span>{/if}
+                    <span class="status-pill" data-status={entry.status}>{resultStatus(entry.status, $locale)}</span>
+                </div>
+            </div>
+            <small>{t($locale, entry.source === 'automation' ? 'activity.plan' : entry.source === 'agent' ? 'activity.agent' : 'activity.conversation')} · {time(entry.created_at_ms)}</small>
         </button>
     {/each}
     {#if !loading && !error && !entries.length}<p class="muted">{t($locale, needsResponse ? 'chatInspector.noResponse' : 'chatInspector.noActivity')}</p>{/if}
@@ -110,19 +115,24 @@
         {#if detailLoading}<p role="status">{t($locale, 'activity.loading_detail')}</p>{/if}
         {#if detailError}<p role="alert" class="error">{t($locale, detailError)}</p>{#if selected}<button onclick={() => {if (selected) void showDetail(selected);}}>{t($locale, 'activity.retry')}</button>{/if}{/if}
         {#if detail}
-            <section aria-label={t($locale, 'activity.execution')}>
-                <h3>{t($locale, 'activity.execution')}</h3>
-                <p>{resultStatus(detail.entry.status, $locale)} · {time(detail.entry.created_at_ms)}</p>
-                <p class="scope">{t($locale, 'activity.executionBoundary')}</p>
-            </section>
-            <dl class="execution-facts">
-                <div><dt>{t($locale, 'activity.executionHost')}</dt><dd title={detail.execution_host_id || undefined}>{detail.execution_host_id ? detail.execution_host_id.slice(0, 8) : t($locale, 'activity.hostUnknown')}</dd></div>
-                <div><dt>{t($locale, 'activity.contextScope')}</dt><dd>{t($locale, detail.context_scope === 'task' ? 'activity.context.task' : detail.context_scope === 'conversation' ? 'activity.context.conversation' : 'activity.context.unavailable')}</dd></div>
-            </dl>
-            {#if detail.entry.needs_response}<p role="status">{t($locale, 'chatInspector.needsResponse')}</p>{/if}
+            <div class="detail-meta">
+                <span class="status-pill" data-status={detail.entry.status}>{resultStatus(detail.entry.status, $locale)}</span>
+                {#if detail.entry.needs_response}<span class="status-pill attention-pill" role="status">{t($locale, 'chatInspector.needsResponse')}</span>{/if}
+                <span class="muted">{time(detail.entry.created_at_ms)}</span>
+            </div>
             {#if detail.result_text}<Markdown source={detail.result_text} />{/if}
             {#if detail.result_has_more}<p class="muted">{t($locale, 'activity.moreInSource')}</p>{/if}
             {#if detail.explanation}<p class="explanation">{detail.explanation}</p>{/if}
+            <details class="disclosure">
+                <summary>{t($locale, 'activity.execution')}</summary>
+                <div class="execution-details">
+                    <p class="scope">{t($locale, 'activity.executionBoundary')}</p>
+                    <dl class="execution-facts">
+                        <div><dt>{t($locale, 'activity.executionHost')}</dt><dd title={detail.execution_host_id || undefined}>{detail.execution_host_id ? detail.execution_host_id.slice(0, 8) : t($locale, 'activity.hostUnknown')}</dd></div>
+                        <div><dt>{t($locale, 'activity.contextScope')}</dt><dd>{t($locale, detail.context_scope === 'task' ? 'activity.context.task' : detail.context_scope === 'conversation' ? 'activity.context.conversation' : 'activity.context.unavailable')}</dd></div>
+                    </dl>
+                </div>
+            </details>
             {#if detail.source_conversation_id}<button onclick={openSource}>{t($locale, 'activity.openSource')}</button>{:else}<p>{t($locale, 'activity.sourceUnavailable')}</p>{/if}
         {/if}
     </div>
@@ -140,9 +150,18 @@
     .attention { align-self: center; }
     .attention { display: flex; align-items: center; gap: 8px; }
     .attention input { width: auto; }
-    .activity-row { display: grid; gap: 6px; text-align: start; border-color: transparent; background: transparent; padding: 12px; }
+    .activity-row { display: grid; gap: 6px; text-align: start; border: 0; border-bottom: 1px solid var(--border); border-radius: 0; background: transparent; box-shadow: none; padding: 12px 8px; }
+    .activity-row:hover { background: var(--panel); }
+    .row-top { display: flex; align-items: flex-start; justify-content: space-between; gap: 10px; min-width: 0; }
+    .row-pills, .detail-meta { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; flex-shrink: 0; }
+    .status-pill { display: inline-flex; align-items: center; padding: 2px 8px; border-radius: 999px; font-size: 11.5px; font-weight: 500; background: var(--panel); color: var(--muted); white-space: nowrap; }
+    .status-pill[data-status="completed"], .status-pill[data-status="answered"], .status-pill[data-status="succeeded"] { color: var(--success); background: color-mix(in srgb, var(--success) 12%, transparent); }
+    .status-pill[data-status="failed"], .status-pill[data-status="error"] { color: var(--danger); background: color-mix(in srgb, var(--danger) 12%, transparent); }
+    .status-pill[data-status="running"], .status-pill[data-status="pending"] { color: var(--accent); background: var(--accent-subtle); }
+    .attention-pill { color: var(--warning); background: color-mix(in srgb, var(--warning) 14%, transparent); font-weight: 600; }
+    .execution-details { display: grid; gap: 12px; padding-top: 10px; }
     .activity-row strong, .activity-row span, .activity-row small { min-width: 0; overflow-wrap: anywhere; }
-    .activity-row strong { display: -webkit-box; line-clamp: 2; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+    .activity-row strong { flex: 1; display: -webkit-box; line-clamp: 2; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
     .activity-row small, .scope { color: var(--muted); font-size: 12px; }
     .detail { display: grid; gap: 16px; }
     .detail-heading { display: flex; align-items: start; justify-content: space-between; gap: 12px; }

@@ -684,20 +684,24 @@ private struct NolaMacCommands: Commands {
             Button("mac.command.open_data_center") {
                 openWindow(id: "data-center")
             }
+            .keyboardShortcut("d", modifiers: [.command, .shift])
 
             Button("mac.command.automations") {
                 openWindow(id: "automation-center")
             }
+            .keyboardShortcut("a", modifiers: [.command, .shift])
 
             Divider()
 
             Button("mac.window.model_center") {
                 openWindow(id: "model-center")
             }
+            .keyboardShortcut("m", modifiers: [.command, .shift])
 
             Button("mac.command.extensions") {
                 openWindow(id: "extensions-center")
             }
+            .keyboardShortcut("e", modifiers: [.command, .shift])
 
             Button("System Access") {
                 openWindow(id: "capability-center")
@@ -857,6 +861,7 @@ struct MacSettingsView: View {
     @State private var retrievalEnabled = MacAssistantPreferences.retrievalEnabled
     @State private var memoryEnabled = MacAssistantPreferences.memoryEnabled
     @State private var contextLimit = MacAssistantPreferences.contextLimit
+    @State private var usesCustomContextLimit = ![32_768, 65_536, 131_072, 200_000].contains(MacAssistantPreferences.contextLimit)
     @FocusState private var contextLimitFocused: Bool
     @AppStorage(MacRunNotificationPreferenceKeys.agentCompletion) private var agentCompletionNotifications = false
     @AppStorage(MacRunNotificationPreferenceKeys.notificationsEnabled) private var notificationsEnabled = true
@@ -960,7 +965,7 @@ struct MacSettingsView: View {
         .background { MacWindowCloseObserver(onClose: leaveHostVerification).frame(width: 0, height: 0) }
         .onDisappear(perform: leaveHostVerification)
         .confirmationDialog(
-            macSettingsText("mac.settings.host.remove.confirm.title", "Remove connected host?"),
+            macSettingsText("mac.settings.host.remove.confirm.title", "Remove Nola Server connection?"),
             isPresented: $showsRemoveHostConfirmation
         ) {
             Button(
@@ -1098,7 +1103,7 @@ struct MacSettingsView: View {
         case .notConfigured:
             return macSettingsText("mac.settings.host.detail.not_configured", "Start Nola Server, then add its address and access token.")
         case .unverified where hasUnsavedHostChanges:
-            return macSettingsText("mac.settings.host.detail.draft", "Verify this host to save the connection.")
+            return macSettingsText("mac.settings.host.detail.draft", "Verify this Nola Server to save the connection.")
         case .unverified:
             return macSettingsText("mac.settings.host.detail.unverified", "Test the saved connection before selecting it in a conversation.")
         case .checking:
@@ -1425,7 +1430,7 @@ struct MacSettingsView: View {
                         }
                         .frame(width: 16, height: 16)
                         .accessibilityHidden(true)
-                        Text(macSettingsText("mac.settings.messaging.manage", "Manage on Host"))
+                        Text(macSettingsText("mac.settings.messaging.manage", "Manage on Nola Server"))
                     }
                 }
                 .buttonStyle(.bordered)
@@ -1710,26 +1715,51 @@ struct MacSettingsView: View {
                 .toggleStyle(.macSwitch)
             }
             Section(macSettingsText("mac.settings.section.context_window", "Context Window")) {
-                LabeledContent(macSettingsText("mac.settings.agent.context_default", "Default context window")) {
-                    TextField(macSettingsText("mac.settings.agent.tokens", "Tokens"), value: $contextLimit, format: .number)
-                        .frame(minWidth: 100, idealWidth: 120, maxWidth: 160)
-                        .multilineTextAlignment(.trailing)
-                        .focused($contextLimitFocused)
-                        .onSubmit {
-                            commitContextLimit()
-                        }
-                        .onChange(of: contextLimitFocused) { wasFocused, isFocused in
-                            if wasFocused && !isFocused {
+                Picker(
+                    macSettingsText("mac.settings.agent.context_default", "Default context window"),
+                    selection: Binding<Int>(
+                        get: {
+                            usesCustomContextLimit ? -1 : ([32_768, 65_536, 131_072, 200_000].contains(contextLimit) ? contextLimit : -1)
+                        },
+                        set: { value in
+                            if value == -1 {
+                                usesCustomContextLimit = true
+                            } else {
+                                usesCustomContextLimit = false
+                                contextLimit = value
                                 commitContextLimit()
                             }
                         }
-                        .onDisappear {
-                            commitContextLimit()
-                        }
+                    )
+                ) {
+                    Text(verbatim: "32K").tag(32_768)
+                    Text(verbatim: "64K").tag(65_536)
+                    Text(verbatim: "128K").tag(131_072)
+                    Text(verbatim: "200K").tag(200_000)
+                    Text(macSettingsText("mac.settings.agent.context_custom", "Custom")).tag(-1)
                 }
-                Text(macSettingsText("mac.settings.agent.context_commit", "Press Return to save. Supported range: 16,384–2,000,000 tokens."))
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
+                if usesCustomContextLimit {
+                    LabeledContent(macSettingsText("mac.settings.agent.tokens", "Tokens")) {
+                        TextField(macSettingsText("mac.settings.agent.tokens", "Tokens"), value: $contextLimit, format: .number)
+                            .frame(minWidth: 100, idealWidth: 120, maxWidth: 160)
+                            .multilineTextAlignment(.trailing)
+                            .focused($contextLimitFocused)
+                            .onSubmit {
+                                commitContextLimit()
+                            }
+                            .onChange(of: contextLimitFocused) { wasFocused, isFocused in
+                                if wasFocused && !isFocused {
+                                    commitContextLimit()
+                                }
+                            }
+                            .onDisappear {
+                                commitContextLimit()
+                            }
+                    }
+                    Text(macSettingsText("mac.settings.agent.context_commit", "Press Return to save. Supported range: 16,384–2,000,000 tokens."))
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
             }
             Section(macSettingsText("mac.settings.section.long_term_memory", "Long-term Memory")) {
                 VStack(alignment: .leading, spacing: 7) {
@@ -1789,9 +1819,9 @@ struct MacSettingsView: View {
                 .buttonStyle(.bordered)
                 .accessibilityIdentifier("mac.host.pasteSetup")
                 VStack(alignment: .leading, spacing: 7) {
-                    Text(macSettingsText("mac.settings.host.url", "Connected host URL"))
+                    Text(macSettingsText("mac.settings.host.url", "Nola Server URL"))
                         .font(.callout.weight(.semibold))
-                    TextField(macSettingsText("mac.settings.host.url", "Connected host URL"), text: Binding(get: { hostURL }, set: { value in
+                    TextField(macSettingsText("mac.settings.host.url", "Nola Server URL"), text: Binding(get: { hostURL }, set: { value in
                         guard value != hostURL else { return }
                         hostToken = ""
                         hostExpectedID = ""
@@ -1800,7 +1830,7 @@ struct MacSettingsView: View {
                         markHostConfigurationEdited()
                     }), prompt: Text("https://studio-mac.local:5001"))
                         .labelsHidden()
-                        .accessibilityLabel(macSettingsText("mac.settings.host.url", "Connected host URL"))
+                        .accessibilityLabel(macSettingsText("mac.settings.host.url", "Nola Server URL"))
                         .accessibilityIdentifier("mac.host.url")
                         .textContentType(.URL)
                         .textFieldStyle(.roundedBorder)
@@ -1826,7 +1856,7 @@ struct MacSettingsView: View {
                         .controlSize(.large)
                 }
                 Label(
-                    macSettingsText("mac.settings.host.security", "The access token is stored in Keychain and is sent only to this host."),
+                    macSettingsText("mac.settings.host.security", "The access token is stored in Keychain and is sent only to this Nola Server."),
                     systemImage: "lock.shield"
                 )
                     .font(.caption)
@@ -1894,7 +1924,7 @@ struct MacSettingsView: View {
                     Label(
                         macSettingsText(
                             "mac.settings.host.guide.start",
-                            "On the host device, start Nola Web Host and keep it running."
+                            "On the server device, start Nola Server and keep it running."
                         ),
                         systemImage: "terminal"
                     )
@@ -1938,6 +1968,8 @@ struct MacSettingsView: View {
                         MacDebugLoggingConfiguration.apply()
                     }
                 Picker(macSettingsText("mac.settings.diagnostics.log_detail", "Log detail"), selection: $debugLoggingLevel) {
+                    Text(String(localized: "Errors")).tag("error")
+                    Text(String(localized: "Warnings")).tag("warn")
                     Text(macSettingsText("mac.settings.diagnostics.info", "Info")).tag("info")
                     Text(macSettingsText("mac.settings.diagnostics.debug", "Debug")).tag("debug")
                     Text(macSettingsText("mac.settings.diagnostics.trace", "Trace")).tag("trace")

@@ -1,5 +1,6 @@
 package com.nola.ui.components
 
+import androidx.compose.animation.animateColorAsState
 import androidx.compose.animation.animateContentSize
 import androidx.compose.animation.core.RepeatMode
 import androidx.compose.animation.core.Spring
@@ -290,11 +291,18 @@ fun ThinkingBlock(
     }
     val disclosureRotation by animateFloatAsState(
         targetValue = if (expanded) 180f else 0f,
-        animationSpec = tween(
-            durationMillis = if (reduceMotion) 0 else NolaMotion.disclosure,
-            easing = NolaMotion.disclosureEasing,
-        ),
+        animationSpec = nolaTween(NolaMotion.disclosure, reduceMotion, NolaMotion.disclosureEasing),
         label = "thinking-disclosure-rotation"
+    )
+    val cardBackground by animateColorAsState(
+        targetValue = if (expanded) MaterialTheme.colorScheme.surfaceVariant else Color.Transparent,
+        animationSpec = nolaTween(NolaMotion.disclosure, reduceMotion, NolaMotion.disclosureEasing),
+        label = "thinking-card-background"
+    )
+    val cardBorder by animateColorAsState(
+        targetValue = if (expanded) MaterialTheme.colorScheme.outlineVariant else Color.Transparent,
+        animationSpec = nolaTween(NolaMotion.disclosure, reduceMotion, NolaMotion.disclosureEasing),
+        label = "thinking-card-border"
     )
     AnimatedVisibility(
         visible = thinking.isNotEmpty() || isWaiting,
@@ -308,12 +316,9 @@ fun ThinkingBlock(
             modifier = Modifier
                 .fillMaxWidth()
                 .clip(RoundedCornerShape(NolaRadius.lg))
-                .background(if (expanded) MaterialTheme.colorScheme.surfaceVariant else Color.Transparent)
+                .background(cardBackground)
                 .border(
-                    BorderStroke(
-                        0.5.dp,
-                        if (expanded) MaterialTheme.colorScheme.outlineVariant else Color.Transparent
-                    ),
+                    BorderStroke(0.5.dp, cardBorder),
                     RoundedCornerShape(NolaRadius.lg)
                 )
                 .padding(horizontal = 10.dp, vertical = 5.dp)
@@ -557,8 +562,7 @@ fun HostToolCard(
                         color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.8f),
                         maxLines = if (expanded) 6 else 1,
                         overflow = TextOverflow.Ellipsis,
-                        modifier = Modifier.animateContentSize(tween(if (reduceMotion) 0 else NolaMotion.disclosure,
-                            easing = NolaMotion.disclosureEasing))
+                        modifier = Modifier.animateContentSize(nolaTween(NolaMotion.disclosure, reduceMotion, NolaMotion.disclosureEasing))
                     )
                 }
                 AnimatedVisibility(visible = expanded, enter = nolaDisclosureEnter(reduceMotion), exit = nolaDisclosureExit(reduceMotion)) {
@@ -1049,9 +1053,15 @@ fun NolaSwitch(
     modifier: Modifier = Modifier,
     enabled: Boolean = true,
 ) {
+    val haptics = rememberNolaHaptics()
     Switch(
         checked = checked,
-        onCheckedChange = onCheckedChange,
+        onCheckedChange = onCheckedChange?.let { callback ->
+            { next ->
+                haptics.selection()
+                callback(next)
+            }
+        },
         modifier = modifier,
         enabled = enabled,
     )
@@ -1066,6 +1076,7 @@ fun NolaDisclosureBar(
     enabled: Boolean = true,
     subtitle: String? = null,
 ) {
+    val haptics = rememberNolaHaptics()
     val reduceMotion = rememberReduceMotionEnabled()
     Row(
         modifier = modifier
@@ -1078,7 +1089,10 @@ fun NolaDisclosureBar(
                 enabled = enabled,
                 role = androidx.compose.ui.semantics.Role.Button,
                 onClickLabel = stringResource(if (expanded) R.string.common_collapse else R.string.common_expand),
-                onClick = onToggle,
+                onClick = {
+                    haptics.selection()
+                    onToggle()
+                },
             )
             .padding(horizontal = 12.dp, vertical = 10.dp),
         verticalAlignment = Alignment.CenterVertically,

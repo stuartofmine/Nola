@@ -55,7 +55,15 @@ struct MacInspectorDocumentEditor: View {
         let placeholder: String
         let minHeight: CGFloat
         @FocusState private var isFocused: Bool
+        @Environment(\.colorScheme) private var colorScheme
         @Environment(\.accessibilityReduceMotion) private var reduceMotion
+
+        private var borderColor: Color {
+            if colorScheme == .dark {
+                return isFocused ? Color.white.opacity(0.24) : Color.white.opacity(0.09)
+            }
+            return isFocused ? MacDesignColor.controlOutline : MacDesignColor.borderSubtle
+        }
 
         var body: some View {
             ZStack(alignment: .topLeading) {
@@ -79,17 +87,14 @@ struct MacInspectorDocumentEditor: View {
             }
             .frame(maxWidth: .infinity, minHeight: minHeight, maxHeight: minHeight)
             .background(
-                MacDesignColor.canvas,
+                colorScheme == .dark ? Color.white.opacity(0.03) : MacDesignColor.canvas,
                 in: RoundedRectangle(cornerRadius: 9, style: .continuous)
             )
             .overlay {
                 RoundedRectangle(cornerRadius: 9, style: .continuous)
-                    .stroke(
-                        isFocused ? MacDesignColor.controlOutline : MacDesignColor.borderSubtle,
-                        lineWidth: 1
-                    )
+                    .stroke(borderColor, lineWidth: colorScheme == .dark ? 0.75 : 1)
             }
-            .animation(reduceMotion ? nil : .easeOut(duration: 0.14), value: isFocused)
+            .animation(reduceMotion ? nil : .easeOut(duration: MacDesignTokens.Motion.selection), value: isFocused)
         }
     }
 
@@ -126,7 +131,7 @@ struct MacConversationRecallRow: View {
                         HStack(spacing: 7) {
                             Image(systemName: symbol)
                                 .font(.system(size: MacDesignTokens.Typography.inspectorCaption, weight: .semibold))
-                                .foregroundStyle(result.source == .compactionSummary ? Color.orange : Color.accentColor)
+                                .foregroundStyle(result.source == .compactionSummary ? MacDesignColor.warning : Color.secondary)
                                 .frame(width: 16)
                             Text(sourceTitle)
                                 .font(.system(size: MacDesignTokens.Typography.inspectorCaption, weight: .semibold))
@@ -176,6 +181,7 @@ struct MacInspectorToggleRow: View {
         @Binding var isOn: Bool
         @State private var isHovered = false
         @Environment(\.isEnabled) private var isEnabled
+        @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
         init(
             symbol: String,
@@ -227,13 +233,14 @@ struct MacInspectorToggleRow: View {
                 alignment: .leading
             )
             .background(
-                isEnabled && isHovered ? MacDesignColor.hover.opacity(0.6) : Color.clear,
+                isEnabled && isHovered ? Color.primary.opacity(0.055) : Color.clear,
                 in: RoundedRectangle(cornerRadius: 8, style: .continuous)
             )
             .onHover { isHovered = isEnabled && $0 }
             .onChange(of: isEnabled) { _, enabled in if !enabled { isHovered = false } }
             .contentShape(Rectangle())
-            .animation(.easeOut(duration: 0.14), value: isOn)
+            .animation(reduceMotion ? nil : .easeOut(duration: MacDesignTokens.Motion.hover), value: isHovered)
+            .animation(reduceMotion ? nil : .easeOut(duration: MacDesignTokens.Motion.selection), value: isOn)
         }
     }
 

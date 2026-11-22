@@ -277,10 +277,29 @@ struct ChatConversationsList: View {
                             } label: {
                                 HStack(alignment: .top, spacing: 0) {
                                     VStack(alignment: .leading, spacing: 6) {
-                                        HStack(alignment: .firstTextBaseline) {
+                                        HStack(alignment: .firstTextBaseline, spacing: 6) {
+                                            if waiting(conversation.id) {
+                                                Circle()
+                                                    .fill(DesignTokens.actionColor)
+                                                    .frame(width: 7, height: 7)
+                                                    .accessibilityHidden(true)
+                                            }
                                             Text(title(conversation)).font(.body.weight(.medium))
                                                 .foregroundStyle(DesignTokens.contentColor).lineLimit(1)
                                                 .layoutPriority(1)
+                                            if let experts = previews[conversation.id]?.experts, !experts.isEmpty {
+                                                HStack(spacing: 3) {
+                                                    Image(systemName: "person.2.fill")
+                                                        .font(.system(size: 9, weight: .semibold))
+                                                    Text(experts.count == 1 ? experts[0] : "\(experts.count)")
+                                                        .lineLimit(1)
+                                                }
+                                                .font(.caption2.weight(.medium))
+                                                .foregroundStyle(DesignTokens.actionColor)
+                                                .padding(.horizontal, 6)
+                                                .padding(.vertical, 2)
+                                                .background(DesignTokens.accentSubtleColor, in: Capsule())
+                                            }
                                             Spacer(minLength: 8)
                                             Text(conversation.lastActiveAt, format: Calendar.current.isDateInToday(conversation.lastActiveAt) ? .dateTime.hour().minute() : .dateTime.month().day())
                                                 .font(.caption).foregroundStyle(.secondary)
@@ -345,6 +364,26 @@ struct ChatConversationsList: View {
                     .listRowSeparator(.visible, edges: .bottom)
                     .listRowBackground(DesignTokens.backgroundColor)
                     .listRowInsets(EdgeInsets(top: 12, leading: pageInset, bottom: 12, trailing: pageInset))
+                    .swipeActions(edge: .trailing, allowsFullSwipe: false) {
+                        if conversation.canonicalID == conversation.id.uuidString {
+                            let isRunning = container.chatManager.executionForConversation(conversation.id)?.processingState.blocksInput == true
+                            Button(role: .destructive) {
+                                pendingDelete = conversation
+                            } label: {
+                                Label(L10n.chatClearAction, systemImage: "trash")
+                            }
+                            .disabled(isRunning)
+
+                            Button {
+                                let current = title(conversation)
+                                renameDraft = current
+                                renameTarget = (conversation.id, current)
+                            } label: {
+                                Label(String(localized: "chat.conversations.rename", defaultValue: "Rename"), systemImage: "pencil")
+                            }
+                            .tint(DesignTokens.actionColor)
+                        }
+                    }
     }
 
     private var listHeader: some View {

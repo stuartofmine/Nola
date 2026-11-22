@@ -9,9 +9,12 @@ import android.webkit.WebSettings
 import android.webkit.WebView
 import android.webkit.WebViewClient
 import android.widget.TextView
+import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
 import androidx.compose.animation.slideInVertically
+import androidx.compose.animation.togetherWith
 import androidx.compose.animation.core.tween
 import androidx.compose.animation.core.Animatable
 import androidx.compose.foundation.background
@@ -21,14 +24,17 @@ import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.IntrinsicSize
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.InlineTextContent
@@ -619,8 +625,6 @@ private class MeasuredMarkdownTextView(
             // Positive baselineShift starts below the final baseline. CharacterStyle
             // changes drawing only, so existing text never reflows with the wave.
             paint.baselineShift += (3f * density * remaining).toInt()
-            if (remaining > .08f) paint.maskFilter = android.graphics.BlurMaskFilter(
-                .65f * density * remaining, android.graphics.BlurMaskFilter.Blur.NORMAL)
         }
     }
     override fun onDetachedFromWindow() {
@@ -1164,6 +1168,8 @@ fun MarkdownParagraph(block: MarkdownBlock.Paragraph) {
 @Composable
 fun MarkdownCodeBlock(block: MarkdownBlock.CodeBlock) {
     val clipboard = LocalClipboardManager.current
+    val haptics = rememberNolaHaptics()
+    val reduceMotion = rememberReduceMotionEnabled()
     var copied by remember { mutableStateOf(false) }
     LaunchedEffect(copied) {
         if (copied) {
@@ -1184,7 +1190,7 @@ fun MarkdownCodeBlock(block: MarkdownBlock.CodeBlock) {
                 modifier = Modifier
                     .fillMaxWidth()
                     .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.7f))
-                    .padding(horizontal = 8.dp, vertical = 4.dp),
+                    .padding(horizontal = 10.dp, vertical = 2.dp),
                 verticalAlignment = Alignment.CenterVertically
             ) {
                 Text(
@@ -1195,17 +1201,27 @@ fun MarkdownCodeBlock(block: MarkdownBlock.CodeBlock) {
                 )
                 IconButton(onClick = {
                     clipboard.setText(AnnotatedString(block.code))
+                    haptics.success()
                     copied = true
-                }, modifier = Modifier.size(48.dp)) {
-                    if (copied) {
-                        Icon(
-                            Icons.Filled.Check,
-                            stringResource(R.string.chat_message_action_copy),
-                            Modifier.size(18.dp),
-                            tint = MaterialTheme.colorScheme.primary
-                        )
-                    } else {
-                        Icon(painterResource(R.drawable.nola_copy), stringResource(R.string.chat_message_action_copy), Modifier.size(18.dp))
+                }, modifier = Modifier.size(36.dp)) {
+                    AnimatedContent(
+                        targetState = copied,
+                        transitionSpec = {
+                            fadeIn(nolaTween(NolaMotion.fast, reduceMotion)) togetherWith
+                                fadeOut(nolaTween(NolaMotion.fast, reduceMotion))
+                        },
+                        label = "code-block-copy-icon",
+                    ) { isCopied ->
+                        if (isCopied) {
+                            Icon(
+                                Icons.Filled.Check,
+                                stringResource(R.string.chat_message_action_copy),
+                                Modifier.size(16.dp),
+                                tint = MaterialTheme.colorScheme.primary
+                            )
+                        } else {
+                            Icon(painterResource(R.drawable.nola_copy), stringResource(R.string.chat_message_action_copy), Modifier.size(16.dp))
+                        }
                     }
                 }
             }
@@ -1264,17 +1280,18 @@ fun MarkdownBlockquote(block: MarkdownBlock.Blockquote) {
     Row(
         modifier = Modifier
             .fillMaxWidth()
+            .height(IntrinsicSize.Min)
             .clip(RoundedCornerShape(4.dp))
             .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.3f))
     ) {
         Box(
             modifier = Modifier
                 .width(3.dp)
-                .height(40.dp)
+                .fillMaxHeight()
                 .background(MaterialTheme.colorScheme.primary.copy(alpha = 0.5f))
         )
         Text(
-            block.text,
+            buildInlineAnnotatedString(parseInline(block.text)),
             modifier = Modifier.padding(8.dp),
             style = MaterialTheme.typography.bodyMedium,
             color = MaterialTheme.colorScheme.onSurfaceVariant
@@ -1310,11 +1327,15 @@ fun MarkdownTable(block: MarkdownBlock.Table) {
             block.header.forEach { cell ->
                 RichMarkdownRenderer(
                     text = "**$cell**",
-                    modifier = Modifier.width(120.dp).padding(horizontal = 8.dp),
+                    modifier = Modifier.widthIn(min = 84.dp, max = 220.dp).padding(horizontal = 8.dp),
                     textStyle = MaterialTheme.typography.labelMedium,
                 )
             }
         }
+        androidx.compose.material3.HorizontalDivider(
+            thickness = 0.5.dp,
+            color = MaterialTheme.colorScheme.outlineVariant
+        )
         // Rows
         block.rows.forEachIndexed { i, row ->
             Row(
@@ -1328,10 +1349,16 @@ fun MarkdownTable(block: MarkdownBlock.Table) {
                 row.forEach { cell ->
                     RichMarkdownRenderer(
                         text = cell,
-                        modifier = Modifier.width(120.dp).padding(horizontal = 8.dp),
+                        modifier = Modifier.widthIn(min = 84.dp, max = 220.dp).padding(horizontal = 8.dp),
                         textStyle = MaterialTheme.typography.bodySmall,
                     )
                 }
+            }
+            if (i < block.rows.lastIndex) {
+                androidx.compose.material3.HorizontalDivider(
+                    thickness = 0.5.dp,
+                    color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.6f)
+                )
             }
         }
     }

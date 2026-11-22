@@ -11,6 +11,7 @@ export type DesktopStrings = {
     retry: string;
     openLogs: string;
     showNola: string;
+    settings: string;
     restartEngine: string;
     openWorkspace: string;
     openLogFolder: string;
@@ -56,6 +57,7 @@ const english: DesktopStrings = {
     retry: "Try again",
     openLogs: "Open logs",
     showNola: "Show Nola",
+    settings: "Settings",
     restartEngine: "Restart local agent",
     openWorkspace: "Open workspace",
     openLogFolder: "Open log folder",
@@ -101,6 +103,7 @@ const simplifiedChinese: DesktopStrings = {
     retry: "重新尝试",
     openLogs: "打开日志",
     showNola: "显示 Nola",
+    settings: "设置",
     restartEngine: "重启本地 Agent",
     openWorkspace: "打开工作区",
     openLogFolder: "打开日志目录",
@@ -146,6 +149,7 @@ const traditionalChinese: DesktopStrings = {
     retry: "重新嘗試",
     openLogs: "開啟日誌",
     showNola: "顯示 Nola",
+    settings: "設定",
     restartEngine: "重新啟動本機 Agent",
     openWorkspace: "開啟工作區",
     openLogFolder: "開啟日誌目錄",
@@ -191,6 +195,7 @@ const japanese: DesktopStrings = {
     retry: "もう一度試す",
     openLogs: "ログを開く",
     showNola: "Nola を表示",
+    settings: "設定",
     restartEngine: "ローカル Agent を再起動",
     openWorkspace: "ワークスペースを開く",
     openLogFolder: "ログフォルダを開く",
@@ -236,6 +241,7 @@ const korean: DesktopStrings = {
     retry: "다시 시도",
     openLogs: "로그 열기",
     showNola: "Nola 보기",
+    settings: "설정",
     restartEngine: "로컬 Agent 다시 시작",
     openWorkspace: "작업 공간 열기",
     openLogFolder: "로그 폴더 열기",
@@ -281,6 +287,7 @@ const german: DesktopStrings = {
     retry: "Erneut versuchen",
     openLogs: "Logs öffnen",
     showNola: "Nola anzeigen",
+    settings: "Einstellungen",
     restartEngine: "Lokalen Agent neu starten",
     openWorkspace: "Arbeitsbereich öffnen",
     openLogFolder: "Log-Ordner öffnen",
@@ -326,6 +333,7 @@ const spanish: DesktopStrings = {
     retry: "Reintentar",
     openLogs: "Abrir registros",
     showNola: "Mostrar Nola",
+    settings: "Ajustes",
     restartEngine: "Reiniciar agente local",
     openWorkspace: "Abrir espacio de trabajo",
     openLogFolder: "Abrir carpeta de registros",
@@ -371,6 +379,7 @@ const french: DesktopStrings = {
     retry: "Réessayer",
     openLogs: "Ouvrir les journaux",
     showNola: "Afficher Nola",
+    settings: "Réglages",
     restartEngine: "Redémarrer l’agent local",
     openWorkspace: "Ouvrir l’espace de travail",
     openLogFolder: "Ouvrir le dossier des journaux",
@@ -416,6 +425,7 @@ const russian: DesktopStrings = {
     retry: "Повторить",
     openLogs: "Открыть журналы",
     showNola: "Показать Nola",
+    settings: "Настройки",
     restartEngine: "Перезапустить локального агента",
     openWorkspace: "Открыть рабочую область",
     openLogFolder: "Открыть папку журналов",

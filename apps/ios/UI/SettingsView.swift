@@ -17,6 +17,7 @@ struct SettingsView: View {
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @Environment(\.scenePhase) private var scenePhase
     @Environment(\.horizontalSizeClass) private var horizontalSizeClass
+    @Environment(\.colorScheme) private var colorScheme
     @State private var showingClearDataAlert = false
     @State private var showingExportSheet = false
     @State private var exportedFileURL: URL?
@@ -75,21 +76,45 @@ struct SettingsView: View {
                 IOSWorkspacePageHeading(title: L10n.settings).frame(minHeight: 64)
             }
             ForEach(categoryGroups.indices, id: \.self) { group in
-                VStack(alignment: .leading, spacing: 0) {
-                    Text(LocalizedStringKey(["settings.group.preferences", "settings.group.connections", "settings.group.security"][group]))
-                        .font(.footnote.weight(.medium))
-                        .foregroundStyle(DesignTokens.secondaryContentColor)
-                        .padding(.bottom, 8)
+                VStack(alignment: .leading, spacing: 8) {
+                    settingsSectionTitle(NSLocalizedString(["settings.group.preferences", "settings.group.connections", "settings.group.security"][group], comment: "Settings group heading"), compactSpacing: true)
                     NolaSettingsCard {
                         ForEach(categoryGroups[group], id: \.rawValue) { category in
                             NavigationLink { destination(category) } label: { categoryLabel(category) }
                             .buttonStyle(NolaPressableButtonStyle())
                             .accessibilityIdentifier(category == .providers ? "settings.models" : "settings.category." + category.rawValue)
                             if category != categoryGroups[group].last {
-                                Rectangle().fill(DesignTokens.borderColor).frame(height: 0.5).padding(.leading, 48).accessibilityHidden(true)
+                                Rectangle().fill(DesignTokens.hairlineBorderColor(for: colorScheme)).frame(height: 0.5).padding(.leading, 48).accessibilityHidden(true)
                             }
                         }
                     }
+                }
+            }
+            VStack(alignment: .leading, spacing: 8) {
+                settingsSectionTitle(
+                    NSLocalizedString("settings.group.about_diagnostics", value: "About & Diagnostics", comment: "About and diagnostics settings section"),
+                    compactSpacing: true
+                )
+                NolaSettingsCard {
+                    NolaSettingsValueRow(
+                        icon: "info.circle",
+                        tint: DesignTokens.secondaryContentColor,
+                        title: NSLocalizedString("settings.about.version", value: "App Version", comment: "App version label"),
+                        value: appVersionLabel
+                    )
+                    NolaSettingsDivider()
+                    NavigationLink {
+                        LogViewerView()
+                    } label: {
+                        NolaSettingsLinkLabel(
+                            icon: "doc.text.magnifyingglass",
+                            tint: DesignTokens.actionColor,
+                            title: NSLocalizedString("settings.diagnostics.logs", value: "Diagnostic Logs", comment: "Diagnostic logs link"),
+                            trailingIcon: "chevron.right"
+                        )
+                    }
+                    .buttonStyle(NolaPressableButtonStyle())
+                    .accessibilityIdentifier("settings.diagnostics.logs")
                 }
             }
         }
@@ -101,7 +126,7 @@ struct SettingsView: View {
             }
         }
         .toolbarBackground(DesignTokens.backgroundColor, for: .navigationBar)
-        .toolbarBackground(.hidden, for: .navigationBar)
+        .toolbarBackground(.visible, for: .navigationBar)
     }
 
     private func categoryLabel(_ category: Category) -> some View {
@@ -132,9 +157,9 @@ struct SettingsView: View {
         switch category {
         case .general:
             settingsPage(title: NSLocalizedString(category.titleKey, comment: "General settings"), showsHeading: false) {
-                Text("settings.navigation.appearance").font(.headline)
+                settingsSectionTitle(NSLocalizedString("settings.navigation.appearance", comment: "Appearance section"))
                 NolaSettingsCard { appearanceControls }
-                Text("settings.navigation.notifications").font(.headline)
+                settingsSectionTitle(NSLocalizedString("settings.navigation.notifications", comment: "Notifications section"))
                 notificationControls
                 if let notificationError {
                     NolaSettingsStatusBanner(message: notificationError, isError: true) {
@@ -156,17 +181,17 @@ struct SettingsView: View {
 
     private var appearanceControls: some View {
         VStack(alignment: .leading, spacing: 12) {
-            HStack {
-                Text("settings.appearance.theme").font(.body.weight(.medium))
-                Spacer(minLength: 12)
-                AppleAppearancePicker().labelsHidden().pickerStyle(.menu)
-            }.frame(minHeight: 44)
+            Text("settings.appearance.theme")
+                .font(.body.weight(.medium))
+            AppleAppearancePicker()
+                .labelsHidden()
+                .pickerStyle(.segmented)
             let motionKey = reduceMotion ? "settings.appearance.motionReduced" : "settings.appearance.motionStandard"
             Text(LocalizedStringKey(motionKey))
                 .font(.footnote).foregroundStyle(.secondary)
         }
         .padding(.horizontal, 14)
-        .padding(.vertical, 10)
+        .padding(.vertical, 12)
     }
 
     private func settingsPage<Content: View>(title: String, showsHeading: Bool = true, topInset: CGFloat = DesignTokens.spacing_lg, @ViewBuilder content: () -> Content) -> some View {
@@ -188,7 +213,7 @@ struct SettingsView: View {
         NolaSettingsCard {
             NolaSettingsToggleRow(
                 icon: "bell.badge",
-                tint: .red,
+                tint: DesignTokens.actionColor,
                 title: L10n.settingsEnableNotifications,
                 detail: notificationStatusText,
                 isBusy: isUpdatingNotificationAuthorization,
@@ -200,7 +225,7 @@ struct SettingsView: View {
                 Button { openApplicationSettings() } label: {
                     NolaSettingsLinkLabel(
                         icon: "gearshape.fill",
-                        tint: .red,
+                        tint: DesignTokens.dangerColor,
                         title: NSLocalizedString("permission.go_to_settings", value: "Open Settings", comment: "Open system settings"),
                         detail: NSLocalizedString("settings.notifications.status.denied", value: "Blocked in iOS Settings", comment: "Notifications denied")
                     )
@@ -212,7 +237,7 @@ struct SettingsView: View {
                 NolaSettingsDivider()
                 NolaSettingsToggleRow(
                     icon: "figure.walk",
-                    tint: .green,
+                    tint: DesignTokens.actionColor,
                     title: L10n.settingsEnableStepReminders,
                     isOn: $enableStepReminders
                 )
@@ -226,7 +251,7 @@ struct SettingsView: View {
                 NolaSettingsDivider()
                 NolaSettingsPickerRow(
                     icon: "clock",
-                    tint: .indigo,
+                    tint: DesignTokens.actionColor,
                     title: NSLocalizedString("settings.notifications.frequency", value: "Notification Frequency", comment: "Notification frequency setting"),
                     selection: $notificationFrequency
                 )
@@ -255,7 +280,7 @@ struct SettingsView: View {
             NolaSettingsCard {
                 NolaSettingsValueRow(
                     icon: "internaldrive",
-                    tint: .gray,
+                    tint: DesignTokens.secondaryContentColor,
                     title: L10n.settingsLocalDataSize,
                     value: localDataSize
                 )
@@ -288,7 +313,7 @@ struct SettingsView: View {
                 .buttonStyle(.plain)
             }
             settingsSectionTitle(NSLocalizedString("settings.section.reset", comment: "Reset section"))
-            NolaSettingsCard(tint: .red) {
+            NolaSettingsCard(tint: DesignTokens.dangerColor) {
                 Button(role: .destructive) {
                     showingClearDataAlert = true
                 } label: {
@@ -350,14 +375,23 @@ struct SettingsView: View {
         }
     }
 
-    private func settingsSectionTitle(_ title: String) -> some View {
+    private var appVersionLabel: String {
+        let short = Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "1.0"
+        let build = Bundle.main.infoDictionary?["CFBundleVersion"] as? String
+        if let build, !build.isEmpty, build != short {
+            return "\(short) (\(build))"
+        }
+        return short
+    }
+
+    private func settingsSectionTitle(_ title: String, compactSpacing: Bool = false) -> some View {
         Text(title)
             .font(.caption.weight(.semibold))
-            .foregroundStyle(.secondary)
+            .foregroundStyle(DesignTokens.secondaryContentColor)
             .textCase(.uppercase)
             .tracking(0.5)
             .padding(.horizontal, 4)
-            .padding(.bottom, -12)
+            .padding(.bottom, compactSpacing ? 0 : -12)
     }
 
     private func beginExport() {
@@ -640,7 +674,7 @@ private struct NolaSettingsStatusBanner: View {
     let onDismiss: () -> Void
 
     private var tint: Color {
-        isError ? .red : .green
+        isError ? DesignTokens.dangerColor : DesignTokens.successColor
     }
 
     var body: some View {
@@ -688,7 +722,7 @@ private struct NolaSettingsCard<Content: View>: View {
         .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
         .overlay {
             RoundedRectangle(cornerRadius: 16, style: .continuous)
-                .strokeBorder(tint?.opacity(0.28) ?? DesignTokens.borderColor, lineWidth: 1)
+                .strokeBorder(tint?.opacity(0.28) ?? DesignTokens.hairlineBorderColor(for: colorScheme), lineWidth: 1)
         }
     }
 }
@@ -878,11 +912,11 @@ private struct NolaSettingsActionLabel: View {
 
     var body: some View {
         HStack(spacing: 12) {
-            NolaSettingsIconTile(icon: icon, tint: .red)
+            NolaSettingsIconTile(icon: icon, tint: DesignTokens.dangerColor)
             VStack(alignment: .leading, spacing: 2) {
                 Text(title)
                     .font(.body.weight(.medium))
-                    .foregroundStyle(.red)
+                    .foregroundStyle(DesignTokens.dangerColor)
                 Text(detail)
                     .font(.caption)
                     .foregroundStyle(.secondary)
@@ -897,9 +931,11 @@ private struct NolaSettingsActionLabel: View {
 }
 
 private struct NolaSettingsDivider: View {
+    @Environment(\.colorScheme) private var colorScheme
+
     var body: some View {
         Rectangle()
-            .fill(DesignTokens.borderColor)
+            .fill(DesignTokens.hairlineBorderColor(for: colorScheme))
             .frame(height: 0.5)
             .padding(.leading, 60)
             .accessibilityHidden(true)

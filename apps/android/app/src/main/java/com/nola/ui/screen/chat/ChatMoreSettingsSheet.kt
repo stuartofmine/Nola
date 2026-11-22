@@ -127,6 +127,7 @@ internal fun PermissionModeSelector(
     onSelected: (AndroidAgentPermissionMode) -> Unit,
     enabled: Boolean = true,
 ) {
+    val haptics = com.nola.ui.components.rememberNolaHaptics()
     Text(
         stringResource(R.string.chat_permission_mode),
         style = MaterialTheme.typography.labelMedium,
@@ -137,7 +138,10 @@ internal fun PermissionModeSelector(
             SegmentedButton(
                 enabled = enabled,
                 selected = selected == mode,
-                onClick = { onSelected(mode) },
+                onClick = {
+                    if (selected != mode) haptics.selection()
+                    onSelected(mode)
+                },
                 shape = SegmentedButtonDefaults.itemShape(
                     index,
                     AndroidAgentPermissionMode.entries.size,

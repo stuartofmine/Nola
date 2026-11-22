@@ -69,12 +69,12 @@
     details[open] .choices { animation: reveal var(--motion-base) ease-out; }
     @keyframes reveal { from { opacity: 0; transform: translateY(-4px); } to { opacity: 1; transform: translateY(0); } }
     @media (prefers-reduced-motion: reduce) { details[open] .choices { animation: none; } .chevron { transition: none; } }
-    .choices { position: absolute; top: 100%; right: 0; z-index: 50; width: min(340px, calc(100vw - 48px)); max-height: 65dvh; overflow-y: auto; padding: 8px; border: 1px solid var(--border); border-radius: 12px; background: var(--surface-elevated, var(--surface)); box-shadow: inset 0 1px 0 var(--surface-highlight), 0 8px 32px rgb(0 0 0 / .18); }
+    .choices { position: absolute; top: 100%; right: 0; z-index: 50; width: min(340px, calc(100vw - 48px)); max-height: 65dvh; overflow-y: auto; padding: 8px; border: 1px solid var(--dialog-border); border-radius: 12px; background: var(--surface-elevated, var(--surface)); box-shadow: inset 0 1px 0 var(--surface-highlight), 0 8px 32px rgb(0 0 0 / .18); }
     button, a { display: block; width: 100%; text-align: left; padding: 8px 10px; border: 1px solid transparent; background: transparent; color: inherit; border-radius: 6px; font-size: 14px; box-sizing: border-box; text-decoration: none; overflow-wrap: anywhere; }
-    button:hover:not(:disabled), a:hover { background: var(--accent-subtle); border-color: transparent; }
-    button[aria-pressed="true"] { background: var(--accent-subtle); border-color: transparent; }
+    button:hover:not(:disabled), a:hover { background: var(--composer-pill-hover-bg); border-color: transparent; }
+    button[aria-pressed="true"] { background: var(--glass-pill-bg); border-color: var(--glass-pill-border); color: var(--content); }
     small { display: block; color: var(--muted); font-size: 12px; }
     .group { color: var(--muted); margin: 12px 10px 4px; font-size: 12px; }
     .management { margin-top: 8px; padding-top: 8px; border-top: 1px solid var(--border); }
-    @media(max-width:700px) { .model-menu { max-width: 30vw; } .choices { position: fixed; left: 12px; top: 96px; max-height: min(65dvh, calc(100dvh - 108px)); width: calc(100vw - 24px); } }
+    @media(max-width:760px) { .model-menu { max-width: 30vw; } .choices { position: fixed; left: 12px; top: 96px; max-height: min(65dvh, calc(100dvh - 108px)); width: calc(100vw - 24px); } }
 </style>

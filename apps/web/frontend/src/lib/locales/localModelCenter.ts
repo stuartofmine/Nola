@@ -66,6 +66,16 @@ const entries: Record<string, Translations> = {
     'local.storage': ['本地模型存储', 'Local model storage', 'Lokaler Modellspeicher', 'Almacenamiento local de modelos', 'Stockage local des modèles', 'ローカルモデルの保存先', 'Хранилище локальных моделей'],
     'local.unavailable': ['不可用', 'Unavailable', 'Nicht verfügbar', 'No disponible', 'Indisponible', '利用不可', 'Недоступно'],
     'local.configuration_error': ['无法读取模型配置：{detail}', 'Could not read model configuration: {detail}', 'Modellkonfiguration konnte nicht gelesen werden: {detail}', 'No se pudo leer la configuración del modelo: {detail}', 'Impossible de lire la configuration du modèle : {detail}', 'モデル設定を読み込めません：{detail}', 'Не удалось прочитать конфигурацию модели: {detail}'],
+    'local.myModels': ['我的本地模型', 'My local models', 'Meine lokalen Modelle', 'Mis modelos locales', 'Mes modèles locaux', 'インストール済みモデル', 'Мои локальные модели'],
+    'local.switchAndUse': ['切换并使用', 'Switch & use', 'Wechseln & nutzen', 'Cambiar y usar', 'Utiliser', '切り替えて使用', 'Выбрать и запустить'],
+    'local.searchPlaceholder': ['搜索模型，或粘贴 Hugging Face / ModelScope 链接…', 'Search models, or paste a Hugging Face / ModelScope URL…', 'Modelle suchen oder Hugging Face-/ModelScope-URL einfügen…', 'Buscar modelos o pegar un enlace de Hugging Face / ModelScope…', 'Rechercher un modèle ou coller un lien Hugging Face / ModelScope…', 'モデルを検索、または Hugging Face / ModelScope の URL を貼り付け…', 'Поиск моделей или ссылка Hugging Face / ModelScope…'],
+    'local.fitBest': ['最适合本机', 'Best fit', 'Optimal', 'Ideal para este equipo', 'Idéal', '最適', 'Оптимально'],
+    'local.fitLight': ['轻量流畅', 'Fast & light', 'Leicht & schnell', 'Ligero y rápido', 'Léger et rapide', '軽量・高速', 'Лёгкая'],
+    'local.fitLarge': ['大参数', 'Large', 'Groß', 'Grande', 'Volumineux', '大規模', 'Крупная'],
+    'local.technicalDetails': ['技术详情', 'Technical details', 'Technische Details', 'Detalles técnicos', 'Détails techniques', '技術詳細', 'Технические детали'],
+    'local.download': ['下载', 'Download', 'Herunterladen', 'Descargar', 'Télécharger', 'ダウンロード', 'Скачать'],
+    'local.retryDownload': ['重试下载', 'Retry download', 'Erneut laden', 'Reintentar descarga', 'Réessayer', '再試行', 'Повторить'],
+    'local.hostSummary': ['本机 {memory}', 'This device {memory}', 'Gerät {memory}', 'Equipo {memory}', 'Appareil {memory}', 'この端末 {memory}', 'Устройство {memory}'],
 };
 
 export const localModelCenterMessages = Object.fromEntries(languages.map((language, index) => [language,

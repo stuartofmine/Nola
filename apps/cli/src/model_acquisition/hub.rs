@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: Apache-2.0
-use super::{Engine, FileSpec, Manifest, Source};
+use super::{cache, Engine, FileSpec, Manifest, Source};
 use reqwest::{
     blocking::{Client, Response},
     redirect::Policy,
@@ -10,7 +10,7 @@ use std::{
     collections::HashMap,
     io::Read,
     sync::{Arc, Mutex, OnceLock},
-    time::Duration,
+    time::{Duration, Instant},
 };
 
 type MetadataSlots<T> = Mutex<HashMap<String, Arc<OnceLock<Result<T, String>>>>>;
@@ -34,6 +34,7 @@ fn shared_metadata<T: Clone>(
 pub(super) struct Hub {
     client: Client,
     source: Source,
+    deadline: Option<Instant>,
     // Each recommendation and each confirmation creates its own Hub.
     preferred_lists: MetadataSlots<Vec<String>>,
     manifests: MetadataSlots<Manifest>,
@@ -100,8 +101,16 @@ fn immutable(revision: &str) -> bool {
 }
 impl Hub {
     pub(super) fn new(source: Source) -> Result<Self, String> {
+        Self::build(source, None)
+    }
+
+    pub(super) fn with_deadline(source: Source, deadline: Instant) -> Result<Self, String> {
+        Self::build(source, Some(deadline))
+    }
+
+    fn build(source: Source, deadline: Option<Instant>) -> Result<Self, String> {
         let client = Client::builder()
-            .connect_timeout(Duration::from_secs(15))
+            .connect_timeout(Duration::from_secs(5))
             // The blocking client wraps each Read with this timeout; keep weight
             // requests free of a separate total-transfer deadline.
             .timeout(Duration::from_secs(30))
@@ -118,11 +127,16 @@ impl Hub {
         Ok(Self {
             client,
             source,
+            deadline,
             preferred_lists: Mutex::default(),
             manifests: Mutex::default(),
             configurations: Mutex::default(),
             quantization_bases: Mutex::default(),
         })
+    }
+
+    pub(super) fn deadline_exceeded(&self) -> bool {
+        self.deadline.is_some_and(|d| Instant::now() >= d)
     }
 
     fn url(&self, parts: &[&str]) -> Url {
@@ -132,10 +146,19 @@ impl Hub {
     }
 
     fn get(&self, url: Url) -> Result<Value, String> {
+        let timeout = if let Some(deadline) = self.deadline {
+            let now = Instant::now();
+            if now >= deadline {
+                return Err("Recommendation deadline exceeded".into());
+            }
+            deadline.saturating_duration_since(now).min(Duration::from_secs(10))
+        } else {
+            Duration::from_secs(10)
+        };
         let response = self
             .client
             .get(url)
-            .timeout(Duration::from_secs(30))
+            .timeout(timeout)
             .send()
             .map_err(|e| e.without_url().to_string())?;
         metadata(response)
@@ -301,7 +324,11 @@ impl Hub {
         let mut matches = Vec::new();
         let mut first_error = None;
         let mut inspected = 0;
-        for group in candidates.chunks(4).take(4) {
+        let max_chunks = if recommend { 2 } else { 4 };
+        for group in candidates.chunks(4).take(max_chunks) {
+            if self.deadline_exceeded() {
+                break;
+            }
             let results = std::thread::scope(|scope| {
                 let workers: Vec<_> = group
                     .iter()
@@ -382,7 +409,20 @@ impl Hub {
     }
 
     pub(super) fn manifest(&self, repo: &str) -> Result<Manifest, String> {
-        shared_metadata(&self.manifests, repo, || self.fetch_manifest(repo))
+        shared_metadata(&self.manifests, repo, || {
+            let cache_key = format!("{}|{}", self.source.name(), repo);
+            if let Some(cached) = cache::get::<Manifest>("hub_manifest", &cache_key) {
+                return Ok(cached);
+            }
+            let fetched = self.fetch_manifest(repo)?;
+            cache::set(
+                "hub_manifest",
+                &cache_key,
+                &fetched,
+                cache::HUB_METADATA_TTL,
+            );
+            Ok(fetched)
+        })
     }
 
     pub(super) fn configuration(&self, repo: &str, file: &FileSpec) -> Result<Value, String> {
@@ -391,6 +431,10 @@ impl Hub {
         }
         let key = format!("{repo}@{}/{}", file.revision, file.path);
         shared_metadata(&self.configurations, &key, || {
+            let cache_key = format!("{}|{key}", self.source.name());
+            if let Some(cached) = cache::get::<Value>("hub_config", &cache_key) {
+                return Ok(cached);
+            }
             let mut data = Vec::new();
             self.artifact(repo, file, 0)?
                 .take(file.bytes + 1)
@@ -399,7 +443,10 @@ impl Hub {
             if data.len() as u64 != file.bytes {
                 return Err("Incomplete model configuration".into());
             }
-            serde_json::from_slice(&data).map_err(|_| "Invalid model configuration".into())
+            let parsed: Value =
+                serde_json::from_slice(&data).map_err(|_| "Invalid model configuration")?;
+            cache::set("hub_config", &cache_key, &parsed, cache::HUB_METADATA_TTL);
+            Ok(parsed)
         })
     }
 
@@ -502,7 +549,13 @@ impl Hub {
         manifest: &Manifest,
     ) -> Result<Option<String>, String> {
         shared_metadata(&self.quantization_bases, repo, || {
-            self.fetch_quantization_base(repo, manifest)
+            let cache_key = format!("{}|{}|{}", self.source.name(), repo, manifest.revision);
+            if let Some(cached) = cache::get::<Option<String>>("hub_qbase", &cache_key) {
+                return Ok(cached);
+            }
+            let fetched = self.fetch_quantization_base(repo, manifest)?;
+            cache::set("hub_qbase", &cache_key, &fetched, cache::HUB_METADATA_TTL);
+            Ok(fetched)
         })
     }
 

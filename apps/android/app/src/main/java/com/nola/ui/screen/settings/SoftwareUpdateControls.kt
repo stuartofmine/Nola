@@ -8,12 +8,17 @@ import android.os.Build
 import android.provider.Settings
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.*
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
@@ -151,11 +156,38 @@ internal fun SoftwareUpdateControls() {
             .onFailure { failure = it.localizedMessage }
     }
     Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-        Text(stringResource(R.string.software_update_title), style = MaterialTheme.typography.titleSmall)
-        Text(stringResource(statusText), color = MaterialTheme.colorScheme.onSurfaceVariant)
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+        ) {
+            Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                Text(stringResource(R.string.software_update_title), style = MaterialTheme.typography.titleSmall)
+                Text(
+                    stringResource(statusText),
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+            TextButton(enabled = !busy, onClick = {
+                busy = true; failure = null; packageFile = null
+                scope.launch {
+                    try { snapshot = parseSoftwareUpdateSnapshot(updateCall(context, "check")) }
+                    catch (cancel: kotlinx.coroutines.CancellationException) { throw cancel }
+                    catch (error: Exception) { failure = error.localizedMessage; snapshot = null }
+                    finally { busy = false }
+                }
+            }) {
+                if (busy) {
+                    CircularProgressIndicator(Modifier.size(16.dp), strokeWidth = 2.dp)
+                    Spacer(Modifier.width(6.dp))
+                }
+                Text(stringResource(R.string.software_update_check))
+            }
+        }
         snapshot?.release?.let { release ->
-            Text("${release.version} (${release.build})")
-            release.notes?.let { Text(it) }
+            Text("${release.version} (${release.build})", style = MaterialTheme.typography.bodyMedium)
+            release.notes?.let { Text(it, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant) }
             val artifact = release.artifact
             if (artifact.kind == "store") {
                 artifact.url?.let { storeUrl ->
@@ -183,7 +215,7 @@ internal fun SoftwareUpdateControls() {
             }
         }
         packageFile?.let { file ->
-            Text(stringResource(R.string.software_update_verified))
+            Text(stringResource(R.string.software_update_verified), style = MaterialTheme.typography.bodySmall)
             TextButton(enabled = !busy, onClick = {
                 runCatching {
                     if (!context.packageManager.canRequestPackageInstalls()) {
@@ -195,19 +227,12 @@ internal fun SoftwareUpdateControls() {
                     }
                 }.onFailure { failure = it.localizedMessage }
             }) { Text(stringResource(R.string.software_update_install)) }
-            Text(stringResource(R.string.software_update_install_permission), style = MaterialTheme.typography.bodySmall)
+            Text(stringResource(R.string.software_update_install_permission), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
         }
-        if (busy) CircularProgressIndicator(Modifier.size(20.dp), strokeWidth = 2.dp)
-        failure?.let { Text(stringResource(R.string.software_update_failed), color = MaterialTheme.colorScheme.error); Text(it, style = MaterialTheme.typography.bodySmall) }
-        TextButton(enabled = !busy, onClick = {
-            busy = true; failure = null; packageFile = null
-            scope.launch {
-                try { snapshot = parseSoftwareUpdateSnapshot(updateCall(context, "check")) }
-                catch (cancel: kotlinx.coroutines.CancellationException) { throw cancel }
-                catch (error: Exception) { failure = error.localizedMessage; snapshot = null }
-                finally { busy = false }
-            }
-        }) { Text(stringResource(R.string.software_update_check)) }
+        failure?.let {
+            Text(stringResource(R.string.software_update_failed), color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall)
+            Text(it, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        }
         Text(stringResource(R.string.software_update_data_hint), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
     }
 }

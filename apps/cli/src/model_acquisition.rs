@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 //! Desktop model acquisition shared by the native helper, CLI and Web Host.
+mod cache;
 mod device;
 mod engine_setup;
 pub(crate) use engine_setup::{engine_status, setup_engine};
@@ -12,6 +13,7 @@ mod vllm_checkpoint;
 use vllm_checkpoint::Backend as VllmBackend;
 
 use hub::Hub;
+use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use std::{
     fs,
@@ -20,13 +22,13 @@ use std::{
     time::Instant,
 };
 
-#[derive(Clone, Copy, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum Engine {
     Llama,
     Vllm,
     Mlx,
 }
-#[derive(Clone, Copy, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum Source {
     HuggingFace,
     ModelScope,
@@ -79,11 +81,34 @@ impl Engine {
 }
 impl Source {
     fn parse(s: &str) -> Result<Self, String> {
-        match s {
+        match s.trim().to_ascii_lowercase().as_str() {
             "huggingface" => Ok(Self::HuggingFace),
             "modelscope" => Ok(Self::ModelScope),
             _ => Err("Choose Hugging Face or ModelScope".into()),
         }
+    }
+    fn parse_or_default(s: &str) -> Result<Self, String> {
+        let trimmed = s.trim();
+        if trimmed.is_empty()
+            || trimmed.eq_ignore_ascii_case("auto")
+            || trimmed.eq_ignore_ascii_case("default")
+        {
+            Ok(Self::default_for_environment())
+        } else {
+            Self::parse(trimmed)
+        }
+    }
+    fn default_for_environment() -> Self {
+        let env_override = std::env::var("NOLA_MODEL_SOURCE").ok();
+        let tz_offset_secs = Some(chrono::Local::now().offset().local_minus_utc());
+        let tz_name = detect_timezone_name();
+        let locale = detect_locale();
+        default_source_for(
+            env_override.as_deref(),
+            tz_offset_secs,
+            tz_name.as_deref(),
+            locale.as_deref(),
+        )
     }
     fn name(self) -> &'static str {
         match self {
@@ -92,14 +117,96 @@ impl Source {
         }
     }
 }
-#[derive(Clone, Debug)]
+
+pub(crate) fn default_source_name() -> &'static str {
+    Source::default_for_environment().name()
+}
+
+fn detect_timezone_name() -> Option<String> {
+    if let Ok(tz) = std::env::var("TZ") {
+        let trimmed = tz.trim();
+        if !trimmed.is_empty() {
+            return Some(trimmed.to_owned());
+        }
+    }
+    #[cfg(unix)]
+    {
+        if let Ok(target) = fs::read_link("/etc/localtime") {
+            let text = target.to_string_lossy();
+            if let Some((_, zone)) = text.split_once("zoneinfo/") {
+                if !zone.is_empty() {
+                    return Some(zone.to_owned());
+                }
+            }
+        }
+    }
+    None
+}
+
+fn detect_locale() -> Option<String> {
+    for key in ["LC_ALL", "LC_MESSAGES", "LANG"] {
+        if let Ok(val) = std::env::var(key) {
+            let trimmed = val.trim();
+            if !trimmed.is_empty() && !trimmed.eq_ignore_ascii_case("C") && !trimmed.eq_ignore_ascii_case("POSIX") {
+                return Some(trimmed.to_owned());
+            }
+        }
+    }
+    None
+}
+
+fn default_source_for(
+    env_override: Option<&str>,
+    tz_offset_secs: Option<i32>,
+    tz_name: Option<&str>,
+    locale: Option<&str>,
+) -> Source {
+    if let Some(raw) = env_override.map(str::trim).filter(|s| !s.is_empty()) {
+        if raw.eq_ignore_ascii_case("modelscope") {
+            return Source::ModelScope;
+        }
+        if raw.eq_ignore_ascii_case("huggingface") {
+            return Source::HuggingFace;
+        }
+    }
+    if let Some(tz) = tz_name {
+        let lower = tz.trim().to_ascii_lowercase();
+        let is_china_tz = matches!(
+            lower.as_str(),
+            "asia/shanghai"
+                | "asia/chongqing"
+                | "asia/harbin"
+                | "asia/urumqi"
+                | "asia/beijing"
+                | "prc"
+                | "cst-8"
+        ) || lower.contains("shanghai")
+            || lower.contains("chongqing")
+            || lower.contains("harbin")
+            || lower.contains("urumqi");
+        if is_china_tz {
+            return Source::ModelScope;
+        }
+    }
+    if tz_offset_secs == Some(8 * 3600) {
+        if let Some(loc) = locale {
+            let lower = loc.trim().to_ascii_lowercase().replace('_', "-");
+            if lower.starts_with("zh") || lower.contains("zh-cn") || lower.contains("zh-hans") {
+                return Source::ModelScope;
+            }
+        }
+    }
+    Source::HuggingFace
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
 struct FileSpec {
     path: String,
     bytes: u64,
     revision: String,
     sha256: Option<String>,
 }
-#[derive(Clone)]
+#[derive(Clone, Serialize, Deserialize)]
 struct Manifest {
     revision: String,
     files: Vec<FileSpec>,
@@ -117,7 +224,10 @@ fn root_path() -> Result<PathBuf, String> {
     }
 }
 pub(crate) fn hardware() -> Value {
-    json!({"hardware":device::snapshot()})
+    json!({
+        "hardware": device::snapshot(),
+        "defaultSource": Source::default_for_environment().name()
+    })
 }
 pub(crate) use planning::{install_plan, recommend};
 
@@ -131,14 +241,31 @@ pub(crate) fn validate_vllm_directory(directory: &Path) -> Result<(), String> {
 }
 pub(crate) fn search(engine: &str, source: &str, query: &str) -> Result<Value, String> {
     let query = query.trim();
+    let requested_source = Source::parse_or_default(source)?;
+    let engine = Engine::for_model(engine)?;
+    if let Some(direct) = planning::parse_direct_input(query) {
+        let effective_source = direct.source.unwrap_or(requested_source);
+        let mut res = Hub::new(effective_source)?.search(engine, &direct.repository)?;
+        if let Some(obj) = res.as_object_mut() {
+            obj.insert("resolvedSource".into(), json!(effective_source.name()));
+            obj.insert("sourceAutoDetected".into(), json!(direct.source.is_some()));
+            obj.insert("resolvedRepository".into(), json!(direct.repository));
+        }
+        return Ok(res);
+    }
     if query.is_empty()
         || query.len() > 255
         || query.chars().any(char::is_control)
         || (query.contains('/') && !hub::valid_repository(query))
     {
-        return Err("Enter a model name or an owner/repository".into());
+        return Err("Enter a model name, owner/repository, or Hugging Face / ModelScope URL".into());
     }
-    Hub::new(Source::parse(source)?)?.search(Engine::for_model(engine)?, query)
+    let mut res = Hub::new(requested_source)?.search(engine, query)?;
+    if let Some(obj) = res.as_object_mut() {
+        obj.insert("resolvedSource".into(), json!(requested_source.name()));
+        obj.insert("sourceAutoDetected".into(), json!(false));
+    }
+    Ok(res)
 }
 
 fn resolved_files(
@@ -147,12 +274,13 @@ fn resolved_files(
     repo: &str,
     manifest: &Manifest,
 ) -> Result<Vec<FileSpec>, String> {
-    resolved_files_for_budget(
+    resolved_files_for_budget_with_file(
         hub,
         engine,
         repo,
         manifest,
         crate::local_models::physical_memory_bytes().map(|m| m / 4 * 3),
+        None,
     )
 }
 fn resolved_files_for_budget(
@@ -162,7 +290,18 @@ fn resolved_files_for_budget(
     manifest: &Manifest,
     budget: Option<u64>,
 ) -> Result<Vec<FileSpec>, String> {
-    let mut files = selection::primary_for_budget(engine, repo, manifest, budget)?;
+    resolved_files_for_budget_with_file(hub, engine, repo, manifest, budget, None)
+}
+fn resolved_files_for_budget_with_file(
+    hub: &Hub,
+    engine: Engine,
+    repo: &str,
+    manifest: &Manifest,
+    budget: Option<u64>,
+    preferred_file: Option<&str>,
+) -> Result<Vec<FileSpec>, String> {
+    let mut files =
+        selection::primary_for_budget_with_file(engine, repo, manifest, budget, preferred_file)?;
     if engine == Engine::Vllm {
         let cfg = files
             .iter()
@@ -375,6 +514,15 @@ pub(crate) fn cli(args: &[String]) -> Option<Result<(), String>> {
                 return Ok(());
             }
         }
+        if let [_, _, action, engine] = args {
+            if action == "recommend" {
+                println!(
+                    "{}",
+                    recommend(engine, Source::default_for_environment().name(), "")?
+                );
+                return Ok(());
+            }
+        }
         if let [_, _, action, engine, source] = args {
             if action == "recommend" {
                 println!("{}", recommend(engine, source, "")?);
@@ -433,4 +581,53 @@ pub(crate) fn cli(args: &[String]) -> Option<Result<(), String>> {
         };
         writeln!(out, "{result}").map_err(|e| e.to_string())
     })())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn default_source_prefers_modelscope_for_china_utc_plus_8_and_respects_override() {
+        // Explicit env override always wins
+        assert_eq!(
+            default_source_for(Some("huggingface"), Some(8 * 3600), Some("Asia/Shanghai"), Some("zh_CN.UTF-8")),
+            Source::HuggingFace
+        );
+        assert_eq!(
+            default_source_for(Some("modelscope"), Some(-8 * 3600), Some("America/Los_Angeles"), Some("en_US.UTF-8")),
+            Source::ModelScope
+        );
+        // China IANA timezones default to ModelScope even with en_US locale
+        for tz in ["Asia/Shanghai", "Asia/Chongqing", "Asia/Harbin", "Asia/Urumqi", "PRC"] {
+            assert_eq!(
+                default_source_for(None, Some(8 * 3600), Some(tz), Some("en_US.UTF-8")),
+                Source::ModelScope,
+                "expected ModelScope for {tz}"
+            );
+        }
+        // UTC+8 with Chinese locale (e.g. Windows without IANA TZ name) defaults to ModelScope
+        assert_eq!(
+            default_source_for(None, Some(8 * 3600), None, Some("zh_CN.UTF-8")),
+            Source::ModelScope
+        );
+        assert_eq!(
+            default_source_for(None, Some(8 * 3600), None, Some("zh-Hans")),
+            Source::ModelScope
+        );
+        // Non-China UTC+8 with English locale stays HuggingFace
+        assert_eq!(
+            default_source_for(None, Some(8 * 3600), Some("Asia/Singapore"), Some("en_US.UTF-8")),
+            Source::HuggingFace
+        );
+        // Other timezones stay HuggingFace
+        assert_eq!(
+            default_source_for(None, Some(0), Some("UTC"), Some("en_US.UTF-8")),
+            Source::HuggingFace
+        );
+        assert_eq!(
+            default_source_for(None, Some(-5 * 3600), Some("America/New_York"), Some("zh_CN.UTF-8")),
+            Source::HuggingFace
+        );
+    }
 }

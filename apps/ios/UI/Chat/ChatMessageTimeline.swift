@@ -501,6 +501,7 @@ struct ChatMessageTimeline: View {
             }
             .overlay(alignment: .bottomTrailing) {
                 latestMessageButton(with: proxy)
+                    .animation(reduceMotion ? nil : DesignTokens.responsiveAnimation, value: showsLatestButton)
             }
             .onDisappear {
                 if let conversationID, restoredReadingPosition {
@@ -570,7 +571,7 @@ struct ChatMessageTimeline: View {
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
                 .padding(.top, 40)
                 .padding(.horizontal, 16)
-                .transition(.opacity.combined(with: .move(edge: .bottom)))
+                .transition(reduceMotion ? .identity : .opacity.combined(with: .move(edge: .bottom)))
             }
         } else {
             LazyVStack(alignment: .leading, spacing: 20) {
@@ -619,10 +620,15 @@ struct ChatMessageTimeline: View {
         }
     }
 
+    private var showsLatestButton: Bool {
+        (!followsLatest || !isAtLatest) && !messages.isEmpty
+    }
+
     @ViewBuilder
     private func latestMessageButton(with proxy: ScrollViewProxy) -> some View {
-        if (!followsLatest || !isAtLatest), !messages.isEmpty {
+        if showsLatestButton {
             Button {
+                NolaHaptics.selection()
                 cancelFollow()
                 userScrolling = false
                 followsLatest = true
@@ -633,14 +639,17 @@ struct ChatMessageTimeline: View {
                     .font(.system(size: 14, weight: .semibold))
                     .foregroundStyle(.secondary)
                     .frame(width: 44, height: 44)
-                    .contentShape(Rectangle())
+                    .background(.regularMaterial, in: Circle())
+                    .overlay(Circle().stroke(DesignTokens.borderColor, lineWidth: 0.5))
+                    .contentShape(Circle())
             }
-            .buttonStyle(.plain)
+            .buttonStyle(NolaPressableButtonStyle())
+            .clipShape(Circle())
             .padding(.horizontal, 10)
             .padding(.bottom, 6)
             .accessibilityLabel(NSLocalizedString("chat.scroll.latest", value: "Jump to latest message", comment: "Jump to latest chat message"))
             .accessibilityIdentifier("chat.scroll.latest")
-            .transition(.opacity.combined(with: .move(edge: .bottom)))
+            .transition(reduceMotion ? .identity : .opacity.combined(with: .move(edge: .bottom)))
         }
     }
 

@@ -76,11 +76,11 @@ struct DataSourceDetailView: View {
                             ProgressView().tint(DesignTokens.onActionColor)
                         } else {
                             Image(systemName: primaryActionIcon)
-                                .contentTransition(.symbolEffect(.replace))
+                                .contentTransition(reduceMotion ? .identity : .symbolEffect(.replace))
                         }
                         Text(primaryActionTitle)
                             .fontWeight(.semibold)
-                            .contentTransition(.opacity)
+                            .contentTransition(reduceMotion ? .identity : .opacity)
                         Spacer()
                     }
                     .animation(reduceMotion ? nil : DesignTokens.responsiveAnimation, value: runtimeState.phase)

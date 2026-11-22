@@ -14,10 +14,15 @@ pub(super) fn snapshot() -> Value {
     static DEVICE: OnceLock<Value> = OnceLock::new();
     let mut value = DEVICE
         .get_or_init(|| {
+            if let Some(cached) = super::cache::get::<Value>("hardware", "inventory_v1") {
+                return cached;
+            }
             let (cpu, gpu, vram, unified) = inventory();
-            json!({"cpu":cpu,"cores":std::thread::available_parallelism().ok().map(|n| n.get()),
+            let probed = json!({"cpu":cpu,"cores":std::thread::available_parallelism().ok().map(|n| n.get()),
             "memoryBytes":crate::local_models::physical_memory_bytes(),"gpu":gpu,
-            "gpuMemoryBytes":vram,"unifiedMemory":unified})
+            "gpuMemoryBytes":vram,"unifiedMemory":unified});
+            super::cache::set("hardware", "inventory_v1", &probed, super::cache::HARDWARE_TTL);
+            probed
         })
         .clone();
     value["freeDiskBytes"] = json!(super::root_path().ok().and_then(|path| {

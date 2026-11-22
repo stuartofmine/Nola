@@ -1,10 +1,10 @@
 # 全业务场景与状态目录
 
-更新：2026-11-20。主入口：[可操作场景原型](../scenarios.html)；原有完整交互原型：[index.html](../index.html)。
+更新：2026-11-22。主入口：[可操作场景原型](../scenarios.html)；原有完整交互原型：[index.html](../index.html)。
 
 ## 范围与使用方法
 
-本清单以当前仓库用户可见业务为范围，共 **71 个场景、265 个状态、6 个平台视角**。每项有独立状态图、原型入口、适用平台与生产源码依据；Web 当前 **15 个路由**全部关联。它覆盖可枚举的业务主线、异常和恢复，不声称穷尽任意数据、语言、系统版本和网络组合。
+本清单以当前仓库用户可见业务为范围，共 **71 个场景、267 个状态、6 个平台视角**。每项有独立状态图、原型入口、适用平台与生产源码依据；Web 当前 **15 个路由**全部关联。它覆盖可枚举的业务主线、异常和恢复，不声称穷尽任意数据、语言、系统版本和网络组合。
 
 选择业务与平台，直接操作预览中的按钮；右侧可跳到任意状态。每个状态有独立 URL，浏览器前进／后退可复现。原型目录和状态面板属于评审工具，不是产品导航。字段只保存为当前页面内、当前平台及场景的草稿；取消保留已保存基线，切换场景不覆盖其他草稿，刷新重置。破坏性样例先打开可取消的确认框。没有模型、账户、Host、文件、下载或系统权限请求，不能输入真实凭据。
 
@@ -55,7 +55,7 @@
 | [reasoning](../scenarios.html?scene=reasoning&platform=mac) | 模型与账户配置 / 实际推理档位、继承与未知能力 | 模型选项 → 推理档位 | 3 | macOS / iOS / iPadOS / Android / Web / Windows |
 | [prompt-template](../scenarios.html?scene=prompt-template&platform=mac) | 模型与账户配置 / 预设提示词与作用范围 | 模型配置 → 提示词 | 3 | macOS / iOS / iPadOS / Android / Web / Windows |
 | [model-probe](../scenarios.html?scene=model-probe&platform=mac) | 模型与账户配置 / 付费探测与用户能力覆盖 | 模型详情 → 测试能力 | 3 | macOS / iOS / iPadOS / Android / Web / Windows / CLI |
-| [local-model](../scenarios.html?scene=local-model&platform=mac) | 模型与账户配置 / 本地模型、下载与设备容量 | 模型 → 本地 | 3 | macOS / iOS / iPadOS / Android |
+| [local-model](../scenarios.html?scene=local-model&platform=mac) | 模型与账户配置 / 本地模型：在线推荐、直链导入、下载与一键启用 | 聊天模型选择器 → 管理与下载本地模型 / 模型中心 → 本地模型 | 5 | macOS / iOS / iPadOS / Android / Web / Windows / CLI |
 | [host-pair](../scenarios.html?scene=host-pair&platform=mac) | 宿主机与权限 / 连接与管理已配对的宿主机 | Mac 设置 → 连接；手机模型 → 宿主机 | 10 | macOS / iOS / iPadOS / Android |
 | [share-host](../scenarios.html?scene=share-host&platform=mac) | 宿主机与权限 / 在 Mac 上开启共享 | Mac 设置 → 连接 → 共享这台 Mac | 6 | macOS |
 | [host-network](../scenarios.html?scene=host-network&platform=mac) | 宿主机与权限 / 宿主机离线与重连 | 原生客户端 → 重新检查连接 | 3 | macOS / iOS / iPadOS / Android |

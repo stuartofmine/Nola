@@ -91,6 +91,9 @@ import com.nola.ui.components.NolaSectionTitle
 import com.nola.ui.components.NolaSpacing
 import com.nola.ui.components.NolaSwitch
 import com.nola.ui.components.NolaTopAppBar
+import com.nola.ui.components.nolaDisclosureEnter
+import com.nola.ui.components.nolaDisclosureExit
+import com.nola.ui.components.rememberNolaHaptics
 import com.nola.ui.components.rememberReduceMotionEnabled
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
@@ -187,6 +190,7 @@ fun ChatContextScreen(
     onBack: () -> Unit
 ) {
     val reduceMotion = rememberReduceMotionEnabled()
+    val haptics = rememberNolaHaptics()
     var localSessionMemory by remember(conversationId, sessionMemory) { mutableStateOf(sessionMemory) }
     var localKnowledgePoints by remember(conversationId, knowledgePoints) { mutableStateOf(knowledgePoints) }
     var localConversationWiki by remember(conversationId, conversationWiki) { mutableStateOf(conversationWiki) }
@@ -407,7 +411,11 @@ fun ChatContextScreen(
             }
 
             val statusMessage = errorMessage ?: noticeMessage
-            AnimatedVisibility(visible = statusMessage != null) {
+            AnimatedVisibility(
+                visible = statusMessage != null,
+                enter = nolaDisclosureEnter(reduceMotion),
+                exit = nolaDisclosureExit(reduceMotion),
+            ) {
                 Row(
                     modifier = Modifier
                         .fillMaxWidth()
@@ -454,7 +462,10 @@ fun ChatContextScreen(
                         }
                         SegmentedButton(
                             selected = selectedContextPane == pane,
-                            onClick = { selectedContextPane = pane },
+                            onClick = {
+                                if (selectedContextPane != pane) haptics.selection()
+                                selectedContextPane = pane
+                            },
                             shape = SegmentedButtonDefaults.itemShape(index, ContextPane.entries.size),
                             modifier = if (pane == ContextPane.Knowledge) {
                                 Modifier.testTag(CHAT_CONTEXT_KNOWLEDGE_PANE_TEST_TAG)
@@ -1135,18 +1146,8 @@ fun ChatContextScreen(
                             }
                             AnimatedVisibility(
                                 visible = isExpanded,
-                                enter = androidx.compose.animation.fadeIn(
-                                    androidx.compose.animation.core.tween(if (reduceMotion) 0 else NolaMotion.disclosure, easing = NolaMotion.disclosureEasing)
-                                ) + androidx.compose.animation.expandVertically(
-                                    androidx.compose.animation.core.tween(if (reduceMotion) 0 else NolaMotion.disclosure, easing = NolaMotion.disclosureEasing),
-                                    expandFrom = Alignment.Top,
-                                ),
-                                exit = androidx.compose.animation.fadeOut(
-                                    androidx.compose.animation.core.tween(if (reduceMotion) 0 else NolaMotion.disclosure, easing = NolaMotion.disclosureEasing)
-                                ) + androidx.compose.animation.shrinkVertically(
-                                    androidx.compose.animation.core.tween(if (reduceMotion) 0 else NolaMotion.disclosure, easing = NolaMotion.disclosureEasing),
-                                    shrinkTowards = Alignment.Top,
-                                ),
+                                enter = nolaDisclosureEnter(reduceMotion),
+                                exit = nolaDisclosureExit(reduceMotion),
                             ) {
                                 Column {
                                     Spacer(Modifier.height(NolaSpacing.sm))

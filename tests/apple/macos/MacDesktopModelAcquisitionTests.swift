@@ -193,4 +193,64 @@ final class MacDesktopModelAcquisitionTests: XCTestCase {
             XCTAssertEqual(try Data(contentsOf: catalog), bytes)
         }
     }
+
+    func testChinaUTC8DefaultsToModelScopeAndDirectURLParsingDetectsSource() {
+        let shanghai = TimeZone(identifier: "Asia/Shanghai")!
+        let newYork = TimeZone(identifier: "America/New_York")!
+        XCTAssertEqual(
+            MacLocalModelAcquisition.defaultDownloadSource(timeZone: shanghai, locale: Locale(identifier: "en_US")),
+            "modelscope"
+        )
+        XCTAssertEqual(
+            MacLocalModelAcquisition.defaultDownloadSource(timeZone: newYork, locale: Locale(identifier: "zh_Hans_CN")),
+            "modelscope"
+        )
+        XCTAssertEqual(
+            MacLocalModelAcquisition.defaultDownloadSource(timeZone: newYork, locale: Locale(identifier: "en_US")),
+            "huggingface"
+        )
+
+        let ms = MacLocalModelAcquisition.parseDirectInput("https://modelscope.cn/models/Qwen/Qwen2.5-7B-Instruct/files")
+        XCTAssertEqual(ms.source, "modelscope")
+        XCTAssertEqual(ms.query, "Qwen/Qwen2.5-7B-Instruct")
+
+        let hf = MacLocalModelAcquisition.parseDirectInput("https://huggingface.co/mlx-community/Qwen3-4B-4bit/tree/main")
+        XCTAssertEqual(hf.source, "huggingface")
+        XCTAssertEqual(hf.query, "mlx-community/Qwen3-4B-4bit")
+
+        let plain = MacLocalModelAcquisition.parseDirectInput("mlx-community/Qwen3-4B-4bit")
+        XCTAssertNil(plain.source)
+        XCTAssertEqual(plain.query, "mlx-community/Qwen3-4B-4bit")
+    }
+
+    func testSessionCachesHardwareAndRecommendationsWithoutRespawningSubprocess() async throws {
+        let root = try temporaryRoot()
+        let executable = root.appendingPathComponent("cache-test-host")
+        let commands = root.appendingPathComponent("commands")
+        let candidate = #"{"repository":"mlx-community/Qwen3-4B-MLX-4bit","variant":"4bit","revision":"r1","downloadBytes":2500000000,"estimatedMemoryBytes":4000000000,"contextTokens":32768,"plan":{"expectedRevision":"r1","files":["model.safetensors"]}}"#
+        let hardware = #"{"cpu":"Apple M2","cores":8,"memoryBytes":16000000000,"gpu":"Apple M2","unifiedMemory":true,"freeDiskBytes":80000000000}"#
+        try """
+        #!/bin/sh
+        printf '%s|%s|%s|%s\\n' "$3" "$4" "$5" "$6" >> "$TEST_ROOT/commands"
+        case "$3" in
+          hardware) echo '{"hardware":\(hardware)}';;
+          recommend) echo '{"hardware":\(hardware),"recommendationSource":"hub","candidates":[\(candidate)]}';;
+          *) exit 4;;
+        esac
+        """.write(to: executable, atomically: true, encoding: .utf8)
+        try fm.setAttributes([.posixPermissions: 0o700], ofItemAtPath: executable.path)
+
+        let model = MacLocalModelAcquisition(client: .init(executable: executable, root: root, environment: ["TEST_ROOT": root.path]))
+        await model.loadHardware()
+        await model.loadHardware()
+        model.recommend(engine: .mlx, source: "modelscope", name: "")
+        try await wait(for: .choosing, in: model)
+        model.reset()
+        model.recommend(engine: .mlx, source: "modelscope", name: "")
+        XCTAssertEqual(model.phase, .choosing)
+        XCTAssertEqual(model.candidates.first?.displayTitle, "Qwen3 4B")
+        XCTAssertEqual(model.candidates.first?.fitBadge(deviceMemoryBytes: 16_000_000_000).isComfortable, true)
+        let lines = try String(contentsOf: commands, encoding: .utf8).split(separator: "\n")
+        XCTAssertEqual(lines, ["hardware|||", "recommend|mlx|modelscope|"])
+    }
 }

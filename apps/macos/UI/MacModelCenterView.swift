@@ -101,9 +101,16 @@ final class MacModelCenterNavigationState: ObservableObject {
         var id: String { rawValue }
     }
 
+    enum RemoteAction: Equatable {
+        case api
+        case accounts
+    }
+
     @Published var selectedTab: Tab = .local
     @Published private(set) var focusedRemoteProfileID: String?
     @Published private(set) var focusRevision = 0
+    @Published private(set) var pendingRemoteAction: RemoteAction?
+    @Published private(set) var remoteActionRevision = 0
 
     init(selectedTab: Tab = .local) { self.selectedTab = selectedTab }
 
@@ -112,14 +119,18 @@ final class MacModelCenterNavigationState: ObservableObject {
 
     func showLocalModels() {
         focusedRemoteProfileID = nil
+        pendingRemoteAction = nil
         selectedTab = .local
     }
-    func showRemoteModels() {
+    func showRemoteModels(action: RemoteAction? = nil) {
         focusedRemoteProfileID = nil
+        pendingRemoteAction = action
+        if action != nil { remoteActionRevision &+= 1 }
         selectedTab = .api
     }
     func showRemoteModel(profileID: String) {
         focusedRemoteProfileID = profileID
+        pendingRemoteAction = nil
         focusRevision &+= 1
         selectedTab = .api
     }
@@ -218,7 +229,9 @@ struct MacModelCenterView: View {
                     MacModelConnectionsView(
                         service: MacModelConnectionService(application: preference.store.application),
                         focusedRemoteProfileID: navigation.focusedRemoteProfileID,
-                        focusRevision: navigation.focusRevision
+                        focusRevision: navigation.focusRevision,
+                        pendingAction: navigation.pendingRemoteAction,
+                        pendingActionRevision: navigation.remoteActionRevision
                     )
                         .opacity(navigation.selectedTab == .api ? 1 : 0)
                         .allowsHitTesting(navigation.selectedTab == .api)

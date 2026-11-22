@@ -3,26 +3,75 @@ import SwiftUI
 import AppKit
 
 struct MacModelConnectionsView: View {
+    private enum ProviderPreset: String, CaseIterable, Identifiable {
+        case openai
+        case anthropic
+        case deepseek
+        case openrouter
+        case ollama
+        case custom
+
+        var id: String { rawValue }
+
+        var title: String {
+            switch self {
+            case .openai: "OpenAI"
+            case .anthropic: "Anthropic"
+            case .deepseek: "DeepSeek"
+            case .openrouter: "OpenRouter"
+            case .ollama: "Ollama"
+            case .custom: String(localized: "Custom", table: "ModelCenter")
+            }
+        }
+
+        var defaultEndpoint: String {
+            switch self {
+            case .openai: "https://api.openai.com/v1"
+            case .anthropic: "https://api.anthropic.com"
+            case .deepseek: "https://api.deepseek.com/v1"
+            case .openrouter: "https://openrouter.ai/api/v1"
+            case .ollama: "http://127.0.0.1:11434/v1"
+            case .custom: ""
+            }
+        }
+
+        var defaultWire: String {
+            switch self {
+            case .openai: "responses"
+            case .anthropic: "anthropic"
+            case .deepseek, .openrouter, .ollama, .custom: "chat_completions"
+            }
+        }
+    }
+
     let service: MacModelConnectionService
     let focusedRemoteProfileID: String?
     let focusRevision: Int
+    let pendingAction: MacModelCenterNavigationState.RemoteAction?
+    let pendingActionRevision: Int
     private var refreshOnAppear = true
     init(
         service: MacModelConnectionService,
         focusedRemoteProfileID: String? = nil,
-        focusRevision: Int = 0
+        focusRevision: Int = 0,
+        pendingAction: MacModelCenterNavigationState.RemoteAction? = nil,
+        pendingActionRevision: Int = 0
     ) {
         self.service = service
         self.focusedRemoteProfileID = focusedRemoteProfileID
         self.focusRevision = focusRevision
+        self.pendingAction = pendingAction
+        self.pendingActionRevision = pendingActionRevision
     }
     @State private var connections: [MacModelConnectionSnapshot] = []
     @State private var accounts: [MacModelAccountSnapshot] = []
     @State private var enabled: [String: Set<String>] = [:]
     @State private var savedEnabled: [String: Set<String>] = [:]
     @State private var confirmsDiscard = false
-    @State private var name = ""
-    @State private var endpoint = ""
+    @State private var selectedPreset: ProviderPreset = .openai
+    @State private var showsAdvancedProtocol = false
+    @State private var name = "OpenAI"
+    @State private var endpoint = "https://api.openai.com/v1"
     @State private var secret = ""
     @State private var wire = "responses"
     @State private var busy = false
@@ -55,6 +104,7 @@ struct MacModelConnectionsView: View {
     @State private var selectedConnectionID: String?
     @State private var workspace: Workspace?
     @State private var handledFocusRevision: Int?
+    @State private var handledPendingActionRevision: Int?
     private enum Workspace: Hashable, Identifiable {
         case connections, api, imports, accounts, host
         var id: Self { self }
@@ -134,10 +184,14 @@ struct MacModelConnectionsView: View {
                 managementHost = MacRemoteHostConfigurationStore.shared.load()
             }
             focusRemoteProfileIfNeeded()
+            applyPendingActionIfNeeded()
         }
         .onChange(of: focusRevision) { _, _ in
             if refreshOnAppear && connections.isEmpty { reload() }
             focusRemoteProfileIfNeeded()
+        }
+        .onChange(of: pendingActionRevision) { _, _ in
+            applyPendingActionIfNeeded()
         }
         .sheet(item: $workspace) { target in
             VStack(spacing: 0) {
@@ -189,34 +243,96 @@ struct MacModelConnectionsView: View {
     }
 
     private var apiConnectionSection: some View {
-        Section {
-            TextField(String(localized: "Connection name", table: "ModelCenter"), text: $name)
-            TextField(String(localized: "API endpoint", table: "ModelCenter"), text: $endpoint,
-                prompt: Text("https://api.example.com/v1"))
-                .autocorrectionDisabled()
-            Picker(String(localized: "Protocol", table: "ModelCenter"), selection: $wire) {
-                Text(verbatim: "Responses").tag("responses")
-                Text(verbatim: "Chat Completions").tag("chat_completions")
-                Text(verbatim: "Anthropic Messages").tag("anthropic")
+        Group {
+            Section(String(localized: "Provider preset", table: "ModelCenter")) {
+                LazyVGrid(columns: [GridItem(.adaptive(minimum: 108), spacing: 8)], alignment: .leading, spacing: 8) {
+                    ForEach(ProviderPreset.allCases) { preset in
+                        let isSelected = selectedPreset == preset
+                        Button {
+                            applyPreset(preset)
+                        } label: {
+                            Text(preset.title)
+                                .font(.system(size: 12.5, weight: isSelected ? .semibold : .medium))
+                                .foregroundStyle(isSelected ? MacDesignColor.brand : .primary)
+                                .frame(maxWidth: .infinity)
+                                .padding(.vertical, 7)
+                                .padding(.horizontal, 10)
+                                .background(
+                                    isSelected ? MacDesignColor.brand.opacity(0.12) : MacDesignColor.subtleFill,
+                                    in: RoundedRectangle(cornerRadius: MacDesignTokens.Radius.control, style: .continuous)
+                                )
+                                .overlay {
+                                    RoundedRectangle(cornerRadius: MacDesignTokens.Radius.control, style: .continuous)
+                                        .strokeBorder(isSelected ? MacDesignColor.brand : MacDesignColor.borderSubtle, lineWidth: isSelected ? 1.25 : 0.75)
+                                }
+                        }
+                        .buttonStyle(.plain)
+                        .accessibilityAddTraits(isSelected ? .isSelected : [])
+                        .accessibilityIdentifier("model.preset." + preset.rawValue)
+                    }
+                }
+                .padding(.vertical, 2)
             }
-            SecureField(String(localized: "API key · optional for anonymous endpoints", table: "ModelCenter"), text: $secret)
-            Button(String(localized: "Connect account", table: "ModelCenter")) {
-                perform {
-                    let created = try service.create(name: name.trimmingCharacters(in: .whitespacesAndNewlines),
-                        endpoint: endpoint.trimmingCharacters(in: .whitespacesAndNewlines),
-                        wireProtocol: wire, secret: secret)
-                    secret = ""; name = ""; endpoint = ""
-                    selectedConnectionID = created.id
-                    workspace = .connections
-                    status = String(localized: "Connection saved. Discover and enable models before using it.", table: "ModelCenter")
+
+            Section {
+                TextField(String(localized: "Connection name", table: "ModelCenter"), text: $name)
+                TextField(String(localized: "API endpoint", table: "ModelCenter"), text: $endpoint,
+                    prompt: Text("https://api.example.com/v1"))
+                    .autocorrectionDisabled()
+                SecureField(String(localized: "API key · optional for anonymous endpoints", table: "ModelCenter"), text: $secret)
+                DisclosureGroup(String(localized: "Advanced", table: "ModelCenter"), isExpanded: $showsAdvancedProtocol) {
+                    Picker(String(localized: "Protocol", table: "ModelCenter"), selection: $wire) {
+                        Text(verbatim: "Responses").tag("responses")
+                        Text(verbatim: "Chat Completions").tag("chat_completions")
+                        Text(verbatim: "Anthropic Messages").tag("anthropic")
+                    }
+                    .padding(.top, 4)
+                }
+                Button(String(localized: "Connect account", table: "ModelCenter")) {
+                    perform {
+                        let created = try service.create(name: name.trimmingCharacters(in: .whitespacesAndNewlines),
+                            endpoint: endpoint.trimmingCharacters(in: .whitespacesAndNewlines),
+                            wireProtocol: wire, secret: secret)
+                        secret = ""
+                        applyPreset(.openai)
+                        selectedConnectionID = created.id
+                        workspace = .connections
+                        status = String(localized: "Connection saved. Discover and enable models before using it.", table: "ModelCenter")
+                    }
+                }
+                .buttonStyle(.nolaProminent)
+                .disabled(name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || !Self.isValidEndpoint(endpoint))
+                if !endpoint.isEmpty && !Self.isValidEndpoint(endpoint) {
+                    Text(String(localized: "Enter an HTTP or HTTPS address without embedded credentials.", table: "ModelCenter"))
+                        .font(.callout).foregroundStyle(.secondary)
                 }
             }
-            .buttonStyle(.nolaProminent)
-            .disabled(name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || !Self.isValidEndpoint(endpoint))
-            if !endpoint.isEmpty && !Self.isValidEndpoint(endpoint) {
-                Text(String(localized: "Enter an HTTP or HTTPS address without embedded credentials.", table: "ModelCenter"))
-                    .font(.callout).foregroundStyle(.secondary)
-            }
+        }
+    }
+
+    private func applyPreset(_ preset: ProviderPreset) {
+        selectedPreset = preset
+        if preset == .custom {
+            name = ""
+            endpoint = ""
+            wire = preset.defaultWire
+            showsAdvancedProtocol = true
+        } else {
+            name = preset.title
+            endpoint = preset.defaultEndpoint
+            wire = preset.defaultWire
+            showsAdvancedProtocol = false
+        }
+    }
+
+    private func applyPendingActionIfNeeded() {
+        guard let pendingAction, handledPendingActionRevision != pendingActionRevision else { return }
+        handledPendingActionRevision = pendingActionRevision
+        switch pendingAction {
+        case .api:
+            openEditor(.api)
+        case .accounts:
+            openEditor(.accounts)
         }
     }
 
@@ -875,11 +991,17 @@ private struct MacModelCapabilityOverrideEditor: View {
                 Toggle(String(localized: "Sampling requires reasoning disabled", table: "ModelCenter"), isOn: $values.samplingRequiresNoReasoning)
                     .toggleStyle(.macSwitch)
                     .disabled(!values.samplingParameters)
-                Picker(String(localized: "Output token field", table: "ModelCenter"), selection: $values.chatOutputTokenField) {
-                    Text(String(localized: "Protocol default", table: "ModelCenter")).tag("auto")
-                    Text("max_tokens").tag("max_tokens")
-                    Text("max_completion_tokens").tag("max_completion_tokens")
+                DisclosureGroup(String(localized: "Advanced Overrides", table: "ModelCenter")) {
+                    VStack(alignment: .leading, spacing: 8) {
+                        Picker(String(localized: "Output length parameter", table: "ModelCenter"), selection: $values.chatOutputTokenField) {
+                            Text(String(localized: "Automatic (protocol default)", table: "ModelCenter")).tag("auto")
+                            Text(String(localized: "Legacy limit parameter (max_tokens)", table: "ModelCenter")).tag("max_tokens")
+                            Text(String(localized: "Standard completion limit (max_completion_tokens)", table: "ModelCenter")).tag("max_completion_tokens")
+                        }
+                    }
+                    .padding(.top, 6)
                 }
+                .disclosureGroupStyle(MacRowDisclosureStyle(isPlain: true))
                 HStack {
                     Button(String(localized: "Save explicit settings", table: "ModelCenter")) { save(clear: false) }.disabled(declarationError)
                     Button(String(localized: "Clear settings", table: "ModelCenter")) { save(clear: true) }.disabled(saved == nil)

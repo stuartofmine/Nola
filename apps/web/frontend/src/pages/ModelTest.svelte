@@ -61,6 +61,8 @@
     let startedAt = 0;
     let profiles = $state<RemoteProfile[]>([]);
     let localModels = $state<LocalTestModel[]>([]);
+    let selectedLocalId = $state('');
+    let selectedRemoteId = $state('');
     let hostId = '';
     let clientId = '';
     let conversation = $state<ChatConversation | null>(null);
@@ -201,8 +203,18 @@
         if (settled.receipt?.phase === 'admitted') await requestApi('/api/chat/agent/v2/cancel', { method: 'POST', body: JSON.stringify(exactSubmissionCancel(settled)) });
         else if (settledSourceSubmission(settled)) submissionStorage().clear(settled);
     }
-    const activeRemote = $derived(activeApiTestModel(profiles));
-    const activeLocal = $derived(activeLocalTestModel(localModels));
+    const installedLocalModels = $derived(localModels.filter(model => model.installed));
+    const availableRemoteProfiles = $derived(profiles.filter(profile => profile.enabled && profile.endpoint.enabled !== false && profile.capabilities.includes('chat')));
+    const activeRemote = $derived(
+        availableRemoteProfiles.find(profile => profile.id === selectedRemoteId)
+        ?? activeApiTestModel(profiles)
+        ?? availableRemoteProfiles[0]
+    );
+    const activeLocal = $derived(
+        installedLocalModels.find(model => model.id === selectedLocalId)
+        ?? activeLocalTestModel(localModels)
+        ?? installedLocalModels[0]
+    );
     const activeName = $derived(target === 'local'
         ? activeLocal?.displayName || activeLocal?.name || activeLocal?.id
         : activeRemote?.displayName || activeRemote?.modelName);
@@ -224,6 +236,8 @@
             sessionStorage.setItem(editorStorageKey('client'), clientId);
             profiles = remote.profiles;
             localModels = local.models;
+            if (!selectedLocalId) selectedLocalId = activeLocalTestModel(local.models)?.id ?? local.models.find(m => m.installed)?.id ?? '';
+            if (!selectedRemoteId) selectedRemoteId = activeApiTestModel(remote.profiles)?.id ?? remote.profiles.find(p => p.enabled && p.endpoint.enabled !== false && p.capabilities.includes('chat'))?.id ?? '';
             const retained = sessionStorage.getItem(editorStorageKey('pending-conversation'));
             if (retained) {
                 pendingSubmission = submissionStorage().read(hostId, clientId, retained);
@@ -517,7 +531,7 @@
 <div class="model-test-page">
     <header class="page-header">
         <div><h1>{t($locale, 'modelTest.title')}</h1><p class="muted">{t($locale, 'modelTest.subtitle')}</p></div>
-        <div class="actions"><a class="button" href="/models">{t($locale, 'modelTest.back')}</a>{#if target === 'local' ? activeLocal : activeRemote}<a class="button" href={modelTestParametersUrl(target, (target === 'local' ? activeLocal : activeRemote)!.id)}>{t($locale, 'modelTest.parameters')}</a>{/if}<button class="primary" onclick={busy ? stop : run} disabled={loading || cleaning || turn?.phase === 'cancel_requested' || !busy && !canRun}>{t($locale, busy ? 'modelTest.stop' : 'modelTest.run')}</button></div>
+        <div class="actions">{#if target === 'local' ? activeLocal : activeRemote}<a class="button" href={modelTestParametersUrl(target, (target === 'local' ? activeLocal : activeRemote)!.id)}>{t($locale, 'modelTest.parameters')}</a>{/if}<button class="primary" onclick={busy ? stop : run} disabled={loading || cleaning || turn?.phase === 'cancel_requested' || !busy && !canRun}>{t($locale, busy ? 'modelTest.stop' : 'modelTest.run')}</button></div>
     </header>
     {#if error}<p class="notice error" role="alert">{error}</p>{/if}
     {#if warning}<p class="notice" role="status">{warning}{#if conversation}<a href={`/chat?conversation=${encodeURIComponent(conversation.conversationId)}`}>{t($locale, 'modelTest.openConversation')}</a>{/if}</p>{/if}
@@ -532,7 +546,29 @@
                 <button role="tab" id="{componentId}-local-tab" aria-controls="{componentId}-model" tabindex={target === 'local' ? 0 : -1} onkeydown={navigateTabs} aria-selected={target === 'local'} onclick={() => target = 'local'} disabled={busy}>{t($locale, 'models.local')}</button>
                 <button role="tab" id="{componentId}-cloud-tab" aria-controls="{componentId}-model" tabindex={target === 'cloud' ? 0 : -1} onkeydown={navigateTabs} aria-selected={target === 'cloud'} onclick={() => target = 'cloud'} disabled={busy}>{t($locale, 'models.api')}</button>
             </div>
-            <div class="model-name" id="{componentId}-model" role="tabpanel" tabindex="0" aria-labelledby="{componentId}-{target}-tab">{activeName || t($locale, 'modelTest.notConfigured')}</div>
+            <div class="model-select" id="{componentId}-model" role="tabpanel" aria-labelledby="{componentId}-{target}-tab">
+                {#if target === 'local'}
+                    {#if installedLocalModels.length}
+                        <select aria-label={t($locale, 'models.local')} value={activeLocal?.id ?? ''} onchange={event => selectedLocalId = event.currentTarget.value} disabled={busy}>
+                            {#each installedLocalModels as model (model.id)}
+                                <option value={model.id}>{model.displayName || model.name || model.id}</option>
+                            {/each}
+                        </select>
+                    {:else}
+                        <div class="model-name muted">{t($locale, 'modelTest.notConfigured')}</div>
+                    {/if}
+                {:else}
+                    {#if availableRemoteProfiles.length}
+                        <select aria-label={t($locale, 'models.api')} value={activeRemote?.id ?? ''} onchange={event => selectedRemoteId = event.currentTarget.value} disabled={busy}>
+                            {#each availableRemoteProfiles as profile (profile.id)}
+                                <option value={profile.id}>{profile.displayName || profile.modelName}</option>
+                            {/each}
+                        </select>
+                    {:else}
+                        <div class="model-name muted">{t($locale, 'modelTest.notConfigured')}</div>
+                    {/if}
+                {/if}
+            </div>
             <label for="{componentId}-prompt">{t($locale, 'modelTest.prompt')}</label>
             <textarea id="{componentId}-prompt" bind:value={prompt} disabled={busy} rows="9"></textarea>
             <p class="muted">{t($locale, 'modelTest.safeHint')}</p>

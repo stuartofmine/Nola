@@ -12,6 +12,7 @@ import SwiftUI
 
 struct ModelTestView: View {
     @EnvironmentObject var container: ServiceContainer
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     @State private var useLocal: Bool = true
     @State private var selectedModel: String = "deepseek-ai/DeepSeek-V3.2"
@@ -385,7 +386,7 @@ struct ModelTestView: View {
     // MARK: - Private Methods
 
     private func appendLog(_ msg: String, level: LogLevel = .info) {
-        withAnimation {
+        withAnimation(reduceMotion ? nil : DesignTokens.responsiveAnimation) {
             logs.append(LogEntry(level: level, message: msg, date: Date()))
         }
         if level == .error {

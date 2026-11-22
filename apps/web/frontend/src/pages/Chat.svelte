@@ -88,7 +88,7 @@
     let navigationExpanded = $state(true);
     let listCategory = $state<'conversations' | 'resources'>('conversations');
     function setListCategory(category: typeof listCategory) {
-        if (viewportWidth > 700) navigationExpanded = category === listCategory ? !navigationExpanded : true;
+        if (viewportWidth > 760) navigationExpanded = category === listCategory ? !navigationExpanded : true;
         listCategory = category;
     }
 
@@ -157,12 +157,12 @@
         }
         const target = managementContentPath(href, window.location.origin);
         if (!target) return false;
-        if (viewportWidth <= 700) { navigationPanel?.closePanel(); navigateWorkspace(target.path); return true; }
+        if (viewportWidth <= 760) { navigationPanel?.closePanel(); navigateWorkspace(target.path); return true; }
         if (requested.pathname === '/plugin-page' && new URL(window.location.href).searchParams.get('content') !== target.path) {
             history.pushState(history.state, '', window.location.href);
         }
         updateContentTabs(openPageContentTab(contentTabs, target.path, target.titleKey));
-        if (viewportWidth <= 700) navigationPanel?.closePanel();
+        if (viewportWidth <= 760) navigationPanel?.closePanel();
         return true;
     }
     async function closeWorkspaceContentTab(key: string) {
@@ -311,7 +311,7 @@
     let edgeSwipe: {start: SwipePoint; side: PanelSide; owner: string | undefined} | undefined;
     function beginEdgeSwipe(event: TouchEvent) {
         edgeSwipe = undefined;
-        if (viewportWidth > 700 || event.touches.length !== 1 || document.querySelector('dialog:modal') || window.getSelection()?.toString()) return;
+        if (viewportWidth > 760 || event.touches.length !== 1 || document.querySelector('dialog:modal') || window.getSelection()?.toString()) return;
         if ((event.target as HTMLElement).closest('input, textarea, select, button, a, pre, code, [contenteditable], [role="slider"]')) return;
         const touch = event.touches[0];
         const rtl = getComputedStyle(event.currentTarget as HTMLElement).direction === 'rtl';
@@ -334,7 +334,7 @@
         if (tab === 'progress' || tab === 'goal' || tab === 'execution') inspectorVisited.progress = true;
         if (tab === 'resources') inspectorVisited.resources = true;
         if (tab === 'review') inspectorVisited.review = true;
-        if (viewportWidth <= 700) navigationPanel?.closePanel();
+        if (viewportWidth <= 760) navigationPanel?.closePanel();
     }
     let transcript: HTMLDivElement;
     let composer = $state<HTMLTextAreaElement>();
@@ -346,6 +346,7 @@
     let reasoningState = $state<SessionReasoningQuickState | null>(null);
     let disposed = false;
     let userScrollTimer: ReturnType<typeof setTimeout> | null = null;
+    let pointerActive = false;
     let composing = false;
     const busy = $derived(!observedCanSubmit || !!turn && !canReleaseChatTurn(turn));
     const runStatusKey = $derived(turn?.phase === 'awaiting_permission' ? 'chatPage.awaiting'
@@ -455,7 +456,39 @@
     function windowKeydown(event: KeyboardEvent) {
         // A modal panel owns keyboard interaction. Do not move focus into the
         // inert transcript when its search shortcut bubbles to the window.
-        if (event.defaultPrevented || event.isComposing || document.querySelector('dialog:modal') || contentTabs.selected !== conversationTabKey) return;
+        if (event.defaultPrevented || event.isComposing || document.querySelector('dialog:modal')) return;
+        const mod = (event.metaKey || event.ctrlKey) && !event.altKey && !event.shiftKey;
+        if (mod) {
+            const key = event.key.toLowerCase();
+            if (key === 'b') {
+                event.preventDefault();
+                if (viewportWidth > 760) navigationExpanded = !navigationExpanded;
+                else navigationPanel?.openPanel();
+                return;
+            }
+            if (key === ',') {
+                event.preventDefault();
+                openManagementTab('/settings');
+                return;
+            }
+            if (key === 'n') {
+                event.preventDefault();
+                navigationExpanded = true;
+                listCategory = 'conversations';
+                if (viewportWidth <= 760) navigationPanel?.openPanel();
+                void tick().then(() => conversationManager?.focusCreateEntry());
+                return;
+            }
+            if (key === 'k') {
+                event.preventDefault();
+                navigationExpanded = true;
+                listCategory = 'conversations';
+                if (viewportWidth <= 760) navigationPanel?.openPanel();
+                void tick().then(() => document.querySelector<HTMLInputElement>('.conversation-search input')?.focus());
+                return;
+            }
+        }
+        if (contentTabs.selected !== conversationTabKey) return;
         if (event.key === 'f' && (event.metaKey || event.ctrlKey) && !event.altKey) {
             event.preventDefault(); void openSearch();
         } else if (event.key === 'Escape' && searchVisible) {
@@ -502,22 +535,29 @@
         // Control activation is not a scroll gesture, including long presses.
         // Touch movement and wheel events independently take scroll ownership.
         if (event.target instanceof Element && event.target.closest('button,input,textarea,select,a,[contenteditable="true"],[role="button"]')) return;
+        if ('pointerId' in event) pointerActive = true;
         userScrollStarted();
+    }
+    function transcriptPointerEnded() {
+        if (!pointerActive) return;
+        pointerActive = false;
+        scheduleScrollEnd();
     }
     function scheduleScrollEnd() {
         if (userScrollTimer) clearTimeout(userScrollTimer);
         const token = scroll.token;
         userScrollTimer = setTimeout(() => {
+            userScrollTimer = null;
+            if (pointerActive) return;
             if (!disposed && transcript && contentTabs.selected === conversationTabKey && scroll.accepts(token)) {
                 scroll.endUserScroll(token, metrics());
                 showLatest = !scroll.followsLatest;
             }
-            userScrollTimer = null;
         }, 150);
     }
     function observedScroll() {
         if (contentTabs.selected !== conversationTabKey) return;
-        if (userScrollTimer && transcript) {
+        if ((userScrollTimer || pointerActive) && transcript) {
             scroll.observe(scroll.token, metrics(), 'user');
             showLatest = !scroll.followsLatest;
             // Momentum and held keyboard scrolling extend the gesture.
@@ -528,8 +568,14 @@
         if (!transcript) return;
         if (userScrollTimer) clearTimeout(userScrollTimer);
         userScrollTimer = null;
+        pointerActive = false;
         const next = scroll.returnToLatest(scroll.token);
-        if (next && scroll.accepts(next)) { transcript.scrollTop = Math.max(0, transcript.scrollHeight - transcript.clientHeight); showLatest = false; }
+        if (next && scroll.accepts(next)) {
+            const top = Math.max(0, transcript.scrollHeight - transcript.clientHeight);
+            if (typeof transcript.scrollTo === 'function') transcript.scrollTo({ top, behavior: reducedMotion ? 'instant' : 'smooth' });
+            else transcript.scrollTop = top;
+            showLatest = false;
+        }
     }
     $effect(() => {
         timeline?.version;
@@ -790,7 +836,7 @@
         } else {
             void selectConversation(conversation);
         }
-        if (viewportWidth <= 700) navigationPanel?.closePanel();
+        if (viewportWidth <= 760) navigationPanel?.closePanel();
     }
     async function selectConversation(conversation: ChatConversation) {
         if (disposed || !workspaceHost || active?.conversationId === conversation.conversationId) return;
@@ -810,6 +856,7 @@
         historyPrepending = false;
         enteringMessageIds = new Set();
         userScrollTimer = null;
+        pointerActive = false;
         submissionController?.detach();
         mentionProfile=null;active = conversation;
         contentTabs = selectContentTab(workspaceHost.contentTabs.get(conversation.conversationId) ?? emptyContentTabs(), conversationTabKey);
@@ -1262,7 +1309,7 @@
 </script>
 
 <svelte:head>{#if !managementContentSelected}<title>{t($locale, 'chatPage.title')} — Nola</title>{/if}</svelte:head>
-<svelte:window onkeydown={windowKeydown} bind:innerWidth={viewportWidth} />
+<svelte:window onkeydown={windowKeydown} onpointerup={transcriptPointerEnded} onpointercancel={transcriptPointerEnded} bind:innerWidth={viewportWidth} />
 <ConfirmationDialog bind:this={messageConfirmation} />
 {#if managingExperts}
     {#key hostId}<ExpertManager {hostId} onclose={() => {managingExperts = false; void openExperts(true);}} />{/key}
@@ -1309,10 +1356,10 @@
 {/if}
 <div class="chat-page" ontouchstart={beginEdgeSwipe} ontouchend={finishEdgeSwipe} ontouchcancel={() => edgeSwipe = undefined} role="presentation" style:--sidebar-width={`${widths.sidebar}px`}>
     <header class="chat-header">
-        <div class="global-navigation" class:collapsed={viewportWidth > 700 && !navigationExpanded}><a class="desktop-mark" href="/today" aria-label="Nola">n</a><WorkspaceListNavigation category={listCategory} visible={navigationExpanded} onchange={setListCategory} /><button class="sidebar-toggle panel-toggle" title={t($locale, 'shell.toggleSidebar')} aria-label={t($locale, 'shell.toggleSidebar')} aria-expanded={navigationExpanded} onclick={() => navigationExpanded = !navigationExpanded}><PrototypeIcon name="sidebar" size={18} /></button></div>
+        <div class="global-navigation" class:collapsed={viewportWidth > 760 && !navigationExpanded}><a class="desktop-mark" href="/today" aria-label="Nola">n</a><WorkspaceListNavigation category={listCategory} visible={navigationExpanded} onchange={setListCategory} /><button class="sidebar-toggle panel-toggle" title={t($locale, 'shell.toggleSidebar')} aria-label={t($locale, 'shell.toggleSidebar')} aria-expanded={navigationExpanded} onclick={() => navigationExpanded = !navigationExpanded}><PrototypeIcon name="sidebar" size={18} /></button></div>
         <button class="navigation-toggle" aria-label={t($locale, contentTabs.selected === conversationTabKey ? 'shell.workspace' : 'chatPage.title')} onclick={() => contentTabs.selected === conversationTabKey ? navigateWorkspace('/conversations') : updateContentTabs(selectContentTab(contentTabs, conversationTabKey))}><svg aria-hidden="true" viewBox="0 0 24 24"><path d="m15 5-7 7 7 7" /></svg></button>
         <h1 class="sr-only">{selectedContentTab ? selectedContentTab.kind === 'pdf' ? selectedContentTab.resource.displayName : pluginTitles[selectedContentTab.path] ?? t($locale, selectedContentTab.titleKey) : active?.title || t($locale, 'chatPage.title')}</h1>
-        {#if viewportWidth <= 700}<div class="mobile-chat-heading"><strong>{selectedContentTab ? selectedContentTab.kind === 'pdf' ? selectedContentTab.resource.displayName : pluginTitles[selectedContentTab.path] ?? t($locale, selectedContentTab.titleKey) : active?.title || t($locale, 'chatPage.title')}</strong><small>Nola</small></div>{#if selectedContentTab}<button class="panel-toggle mobile-content-close" aria-label={t($locale, 'chatInspector.closeTab')} onclick={() => closeWorkspaceContentTab(contentTabs.selected)}><PrototypeIcon name="close" size={16} /></button>{:else}<button class="panel-toggle" aria-label={t($locale, 'chatInspector.context')} disabled={!active} onclick={() => toggleInspector('resources')}><svg aria-hidden="true" viewBox="0 0 24 24"><path d="M6 3h8l4 4v14H6zM14 3v5h4M9 12h6m-6 4h6"/></svg></button><button class="panel-toggle" aria-label={t($locale, 'rooms.experts')} onclick={() => void openExperts()}><svg aria-hidden="true" viewBox="0 0 24 24"><circle cx="12" cy="7" r="4"/><path d="M5 22v-4a7 7 0 0 1 14 0v4"/></svg></button>{/if}{:else}<ContentTabStrip pageTitles={pluginTitles} ownerKey={contentWorkspaceKey} state={contentTabs} title={active?.title || t($locale, 'chatPage.title')}
+        {#if viewportWidth <= 760}<div class="mobile-chat-heading"><strong>{selectedContentTab ? selectedContentTab.kind === 'pdf' ? selectedContentTab.resource.displayName : pluginTitles[selectedContentTab.path] ?? t($locale, selectedContentTab.titleKey) : active?.title || t($locale, 'chatPage.title')}</strong><small>Nola</small></div>{#if selectedContentTab}<button class="panel-toggle mobile-content-close" aria-label={t($locale, 'chatInspector.closeTab')} onclick={() => closeWorkspaceContentTab(contentTabs.selected)}><PrototypeIcon name="close" size={16} /></button>{:else}<button class="panel-toggle" aria-label={t($locale, 'chatInspector.context')} disabled={!active} onclick={() => toggleInspector('resources')}><svg aria-hidden="true" viewBox="0 0 24 24"><path d="M6 3h8l4 4v14H6zM14 3v5h4M9 12h6m-6 4h6"/></svg></button><button class="panel-toggle" aria-label={t($locale, 'rooms.experts')} onclick={() => void openExperts()}><svg aria-hidden="true" viewBox="0 0 24 24"><circle cx="12" cy="7" r="4"/><path d="M5 22v-4a7 7 0 0 1 14 0v4"/></svg></button>{/if}{:else}<ContentTabStrip pageTitles={pluginTitles} ownerKey={contentWorkspaceKey} state={contentTabs} title={active?.title || t($locale, 'chatPage.title')}
             conversationId={active?.conversationId ?? null}
             canRename={!!active?.conversationId && canInteract && !conversationWriting && !busy && contentTabs.selected === conversationTabKey}
             onselect={key => updateContentTabs(selectContentTab(contentTabs, key))}
@@ -1320,11 +1367,10 @@
             onrename={(id, nextTitle) => conversationManager?.renameConversationById(id, nextTitle)} />{/if}
         {#if active}{@render inspectorControls()}{/if}
         {#if active}<ToolbarPopover label={t($locale, 'chatInspector.more')}>
-            {#if canInteract && viewportWidth <= 700}<ChatModelMenu selection={modelState} onopen={() => sessionSettings?.refreshModelCatalog()} onselect={choice => sessionSettings?.selectModel(choice)} onsettings={() => { inspectorTab = 'settings'; }} onreload={() => sessionSettings?.reloadSettings()} />{/if}
             <details class="attachment-help"><summary>{t($locale, 'chatTextAttachment.helpTitle')}</summary><p>{t($locale, 'chatTextAttachment.help')}</p><p>{t($locale, 'chatTextAttachment.dropPaste')}</p></details>
             <button type="button" onclick={openSearch}>{t($locale, 'chatPage.find')}</button>
             <button type="button" onclick={() => loadHistory('replace')} disabled={historyLoading || (busy && turn?.phase !== 'recovering' && turn?.phase !== 'cancel_requested')}>{t($locale, 'chatPage.refresh')}</button>
-            {#if viewportWidth <= 700}
+            {#if viewportWidth <= 760}
                 {#each inspectorGroups as group}
                     {#if group.label !== 'context' || selectedContentTab}
                         <button type="button" onclick={() => toggleInspector(group.tabs[0])}>{t($locale, `chatInspector.${group.label}`)}</button>
@@ -1333,11 +1379,11 @@
             {/if}
                 <button type="button" onclick={() => toggleInspector('execution')}>{t($locale, 'chatInspector.execution')}</button>
                 {#if canInteract}<button type="button" onclick={() => toggleInspector('settings')}>{t($locale, 'chatInspector.settings')}</button>{/if}
-                {#if viewportWidth > 700 || selectedContentTab}<button type="button" aria-expanded={inspectorTab === 'participants'} onclick={() => void openExperts()}>{t($locale, 'rooms.experts')}{selectedExperts.length ? ` · ${selectedExperts.length}` : ''}</button>{/if}
+                {#if viewportWidth > 760 || selectedContentTab}<button type="button" aria-expanded={inspectorTab === 'participants'} onclick={() => void openExperts()}>{t($locale, 'rooms.experts')}{selectedExperts.length ? ` · ${selectedExperts.length}` : ''}</button>{/if}
         </ToolbarPopover>{/if}
     </header>
-    <div class="chat-columns" class:without-navigation={viewportWidth > 700 && !navigationExpanded} class:without-conversation={!active || managementContentSelected || inspectorTab === null} style:--sidebar-width={`${widths.sidebar}px`} style:--inspector-width={`${widths.inspector}px`}>
-        <ChatResponsivePanel bind:this={navigationPanel} breakpoint={700} side="start" expanded={viewportWidth > 700 ? navigationExpanded : null} label={t($locale, 'shell.workspace')} closeLabel={t($locale, 'shell.cancel')}>
+    <div class="chat-columns" class:without-navigation={viewportWidth > 760 && !navigationExpanded} class:without-conversation={!active || managementContentSelected || inspectorTab === null} style:--sidebar-width={`${widths.sidebar}px`} style:--inspector-width={`${widths.inspector}px`}>
+        <ChatResponsivePanel bind:this={navigationPanel} breakpoint={760} side="start" expanded={viewportWidth > 760 ? navigationExpanded : null} label={t($locale, 'shell.workspace')} closeLabel={t($locale, 'shell.cancel')}>
         <div class="panel-column">
         <aside class="chat-navigation" id="chat-workspace-navigation">
             <div class="compact-list-categories"><WorkspaceListNavigation category={listCategory} onchange={setListCategory} /></div>
@@ -1346,7 +1392,7 @@
             </div>
             <div class="sidebar-section" hidden={listCategory !== 'resources'}><WorkspaceResourceNavigation onopen={openManagementTab}
                 selectedPath={selectedContentTab?.kind === 'page' ? selectedContentTab.path : ''} /></div>
-            {#if viewportWidth > 700 || 'NolaDesktop' in window}
+            {#if viewportWidth > 760 || 'NolaDesktop' in window}
                 <DesktopPluginNavigation selectedPath={selectedContentTab?.kind === 'page' ? selectedContentTab.path : undefined} onpages={reconcilePluginPages} />
             {/if}
             <footer class="workspace-footer">
@@ -1355,7 +1401,7 @@
                 <button aria-label={t($locale, 'shell.settings')} title={t($locale, 'shell.settings')} onclick={() => openManagementTab('/settings')}><svg aria-hidden="true" viewBox="0 0 24 24"><circle cx="12" cy="12" r="4"/><path d="M12 2v3m0 14v3M2 12h3m14 0h3M5 5l2 2m10 10 2 2M5 19l2-2M17 7l2-2"/></svg></button>
             </footer>
         </aside>
-        {#if viewportWidth > 700}<PanelResizeHandle controls="chat-workspace-navigation" label={t($locale, 'shell.resizeSidebar')} value={widths.sidebar} min={220} max={widths.sidebarMax} defaultValue={layoutDefaults.sidebar} onchange={value => setWorkspaceWidth('sidebar', value)} />{/if}
+        {#if viewportWidth > 760}<PanelResizeHandle controls="chat-workspace-navigation" label={t($locale, 'shell.resizeSidebar')} value={widths.sidebar} min={220} max={widths.sidebarMax} defaultValue={layoutDefaults.sidebar} onchange={value => setWorkspaceWidth('sidebar', value)} />{/if}
         </div>
         </ChatResponsivePanel>
         <section id="page-main" tabindex="-1" role="main" class="chat-main" aria-label={selectedContentTab ? selectedContentTab.kind === 'pdf' ? selectedContentTab.resource.displayName : pluginTitles[selectedContentTab.path] ?? t($locale, selectedContentTab.titleKey) : active?.title || t($locale, 'chatPage.title')}>
@@ -1383,6 +1429,7 @@
             {#if active && workspaceHost?.persistenceErrors.has(active.conversationId)}<p class="notice error" role="alert">{t($locale, 'chatPage.draftStorageFailed')}</p>{/if}
             {#if uiSurfaceFailure}<p class="notice error" role="alert">{uiSurfaceFailure}</p>{/if}
             <!-- svelte-ignore a11y_no_noninteractive_tabindex (The named scrollable log needs a keyboard reading target.) -->
+            <div class="transcript-shell">
             <div class="transcript" bind:this={transcript} onwheel={userScrollStarted} ontouchstart={transcriptPointerStarted} ontouchmove={userScrollStarted} onpointerdown={transcriptPointerStarted} onscroll={observedScroll} tabindex="0" aria-label={t($locale, 'chatPage.title')} role="log" aria-live="polite" aria-relevant="additions text">
                 {#if timeline?.window?.hasMore}<button class="older" onclick={() => loadHistory('prepend')} disabled={historyLoading || busy}>{t($locale, 'chatPage.history')}</button>{/if}
                 {#if !messages.length && (initializing || historyLoading)}<p class="placeholder">{t($locale, 'chatPage.loading')}</p>{:else if !active && !initializationFailed}<div class="empty-conversation"><div class="empty-mark" aria-hidden="true">n</div><h2>{t($locale, 'chatPage.choose')}</h2><button class="empty-navigation" onclick={() => navigationPanel.openPanel()}>{t($locale, 'shell.workspace')}</button></div>{:else if active && !messages.length && !busy && !error}<div class="empty-conversation"><div class="empty-mark" aria-hidden="true">n</div><h2>{t($locale, 'chatPage.welcome')}</h2><p>{t($locale, 'chatPage.welcomeHint')}</p><button onclick={() => composer?.focus()}>{t($locale, 'chatPage.placeholder')}</button></div>{/if}
@@ -1393,7 +1440,7 @@
 
                     {#if (pendingText || pendingAttachmentNames.length) && busy && !messages.some(item => item.id === turn?.identity.userMessageId) && message.id === turn?.identity.assistantMessageId}<article class="user pending"><div class="message-content">{#if pendingText}<Markdown source={pendingText} />{/if}{#if pendingAttachmentNames.length}<ul class="attached-files">{#each pendingAttachmentNames as name}<li>{name}</li>{/each}</ul>{/if}<small>{t($locale, 'chatPage.pendingUser')}</small></div></article>{/if}
                     <article class:user={message.role === 'user'} class:selected={selectedMessageId === message.id} class:search-match={matchingMessageIds.has(message.id)} data-message-id={message.id}
-                        in:fly={enteringMessageIds.has(message.id) && !reducedMotion ? { y: 8, duration: 190, easing: cubicOut } : { y: 0, duration: 0 }}
+                        in:fly={enteringMessageIds.has(message.id) && !reducedMotion ? { y: 8, duration: 180, easing: cubicOut } : { y: 0, duration: 0 }}
                         onintroend={() => { if (enteringMessageIds.has(message.id)) { const next = new Set(enteringMessageIds); next.delete(message.id); enteringMessageIds = next; } }}>
                         {#if message.role === 'assistant'}<div class="response-identity"><span class="response-avatar" aria-hidden="true">n</span><strong>Nola</strong></div>{/if}
                         <div class="message-column"><div class="message-content">
@@ -1465,7 +1512,8 @@
                     <ChatUserQuestions conversationId={active.conversationId} {busy} onresolved={observeSelected} />
                 {/key}{/if}
             </div>
-            {#if showLatest}<button class="latest" onclick={jumpToLatest}>{t($locale, 'chatPage.latest')}</button>{/if}
+            {#if showLatest}<button class="latest" transition:fly={{ y: 6, duration: reducedMotion ? 0 : 180 }} onclick={jumpToLatest}>{t($locale, 'chatPage.latest')}</button>{/if}
+            </div>
             {#if canInteract && challenge && turn?.permission}<ChatPermissionPanel {challenge} runId={turn.runId} active={busy} {reviewText} onAccepted={permissionAccepted} onRefresh={observeSelected} />{/if}
             {#if canInteract && challenge && turn?.permission && !reviewText}<p class="muted">{t($locale, 'chatPage.noReview')}</p>{/if}
 
@@ -1490,7 +1538,8 @@
                 <label class="sr-only" for="chat-composer">{t($locale, 'chatPage.placeholder')}</label>
                 {#if commandError}<p role="alert" class="error">{commandError}</p>{/if}
                 {#if commandsVisible}
-                    <div class="expert-mentions" id="composer-commands" role="listbox" aria-label={t($locale, 'commands.help')}>
+                    <div class="expert-mentions" id="composer-commands" role="listbox" aria-label={t($locale, 'commands.help')}
+                        in:fly={{ y: 4, duration: reducedMotion ? 0 : 100 }} out:fade={{ duration: reducedMotion ? 0 : 100 }}>
                         {#each commandCandidates as command, index (command.name)}
                             <button type="button" role="option" tabindex="-1" id={`composer-command-${index}`} aria-selected={index === commandIndex}
                                 onpointerdown={event => event.preventDefault()} onclick={() => completeCommand(command.name)}>
@@ -1507,11 +1556,13 @@
                 {/key}
                 <div class="composer-footer">
                 {#if active}<div class="composer-attachments"><ChatTextAttachments showHelp={false} bind:this={textAttachments} draftStore={workspaceHost?.attachments} conversationId={active.conversationId} {generation} busy={busy || composerUnavailable} onattachments={(files, reading) => { attachments = [...files]; attachmentsReading = reading; }} /></div>{/if}
-                <ChatModelMenu selection={modelState} onopen={() => sessionSettings?.refreshModelCatalog()} onselect={choice => sessionSettings?.selectModel(choice)} onsettings={() => { inspectorTab = 'settings'; }} onreload={() => sessionSettings?.reloadSettings()} />
-                <ChatReasoningMenu state={reasoningState} {busy} onselect={value => sessionSettings?.selectReasoningPreference(value)} />
-                <div class="composer-actions">
-                    {#if busy && turn && !draft.startsWith('/')}<button type="button" in:fade={{ duration: reducedMotion ? 0 : 120 }} onclick={stop} disabled={turn.phase === 'cancel_requested'}>{t($locale, turn.phase === 'cancel_requested' ? 'chatPage.cancelPending' : 'chatPage.stop')}</button>{:else}
-                    <button class="primary" in:fade={{ duration: reducedMotion ? 0 : 120 }} aria-label={t($locale, 'chatPage.send')} type="submit" disabled={composerUnavailable || (!draft.startsWith('/') && (busy || expertAdmissionPending || attachmentsReading || knowledgeSavePending || (!draft.trim() && !attachments.length)))}><svg aria-hidden="true" viewBox="0 0 24 24"><path d="M12 19V5m-6 6 6-6 6 6"/></svg></button>{/if}
+                <div class="composer-execution">
+                    <ChatModelMenu selection={modelState} onopen={() => sessionSettings?.refreshModelCatalog()} onselect={choice => sessionSettings?.selectModel(choice)} onsettings={() => { inspectorTab = 'settings'; }} onreload={() => sessionSettings?.reloadSettings()} />
+                    <ChatReasoningMenu state={reasoningState} {busy} onselect={value => sessionSettings?.selectReasoningPreference(value)} />
+                    <div class="composer-actions">
+                        {#if busy && turn && !draft.startsWith('/')}<button type="button" in:fade={{ duration: reducedMotion ? 0 : 100 }} onclick={stop} disabled={turn.phase === 'cancel_requested'}>{t($locale, turn.phase === 'cancel_requested' ? 'chatPage.cancelPending' : 'chatPage.stop')}</button>{:else}
+                        <button class="primary" in:fade={{ duration: reducedMotion ? 0 : 100 }} aria-label={t($locale, 'chatPage.send')} type="submit" disabled={composerUnavailable || (!draft.startsWith('/') && (busy || expertAdmissionPending || attachmentsReading || knowledgeSavePending || (!draft.trim() && !attachments.length)))}><svg aria-hidden="true" viewBox="0 0 24 24"><path d="M12 19V5m-6 6 6-6 6 6"/></svg></button>{/if}
+                    </div>
                 </div>
                 </div>
                 {#if expertIntentStorageError}<p role="alert">{expertIntentStorageError}</p>{/if}
@@ -1617,7 +1668,8 @@
 
 <style>
     .expert-mentions { max-height: 224px; overflow-y: auto; overscroll-behavior: contain; border: 1px solid var(--border); border-radius: 14px; padding: 6px; margin-bottom: 8px; }
-    .expert-mentions > button { width: 100%; min-height: 52px; display: flex; align-items: center; gap: 12px; text-align: start; border: 1px solid transparent; background: transparent; box-shadow: none; padding: 6px 10px; border-radius: 10px; transition: border-color 120ms ease; }
+    #composer-commands { position: absolute; bottom: calc(100% + 6px); inset-inline: 0; z-index: 60; margin-bottom: 0; background: var(--surface-elevated, var(--surface, var(--canvas))); box-shadow: 0 8px 28px rgb(0 0 0 / .18); }
+    .expert-mentions > button { width: 100%; min-height: 52px; display: flex; align-items: center; gap: 12px; text-align: start; border: 1px solid transparent; background: transparent; box-shadow: none; padding: 6px 10px; border-radius: 10px; transition: border-color var(--motion-fast) ease; }
     .expert-mentions > button[aria-selected='true'] { background: var(--accent-subtle); border-color: transparent; }
     .mentioned-message{white-space:pre-wrap;overflow-wrap:anywhere;margin:0}
     .inline-name{display:inline;padding:0;min-height:0;border:0;background:none;box-shadow:none;color:var(--primary);font:inherit;font-weight:600}
@@ -1642,19 +1694,21 @@
     .navigation-toggle { display: none; flex-shrink: 0; min-height: 44px; }
     .inspector-controls { display: flex; gap: 4px; margin-inline-start: auto; flex-shrink: 0; padding-inline-start: 8px; border-inline-start: 1px solid var(--border); }
     .panel-toggle { display: inline-flex; align-items: center; justify-content: center; width: max(36px, var(--control-hit-size)); height: max(36px, var(--control-hit-size)); padding: 0; border: 1px solid transparent; background: transparent; box-shadow: none; color: var(--muted); }
-    .panel-toggle[aria-pressed="true"] { background: var(--accent-subtle); border-color: transparent; color: var(--content); }
+    .panel-toggle:hover:not(:disabled) { background: var(--composer-pill-hover-bg); border-color: transparent; color: var(--content); }
+    .panel-toggle[aria-pressed="true"] { background: var(--glass-pill-bg); border-color: var(--glass-pill-border); box-shadow: var(--glass-pill-shadow); color: var(--content); }
     .inspector-heading { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
     .inspector-heading button { width: max(32px, var(--control-hit-size)); height: max(32px, var(--control-hit-size)); padding: 0; display: inline-flex; align-items: center; justify-content: center; }
     .chat-header svg, .panel-toggle svg { width: 20px; height: 20px; fill: none; stroke: currentColor; stroke-width: 1.6; stroke-linecap: round; stroke-linejoin: round; }
     .transcript article.user :global(.message-actions) { justify-content:flex-end; }
     @media(min-width:1251px) { .chat-side { height:100%; } }
     .inspector-heading button { border:0; background:transparent;box-shadow:none; }
-    .composer-footer { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+    .composer-footer { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 8px; }
     .composer-attachments { display: contents; }
     .composer-footer :global(.text-attachments) { display: contents; }
     .composer-footer :global(.text-attachments > :not(.attachment-toolbar)) { order: -1; flex: 1 0 100%; margin-bottom: 4px; }
     .composer-footer :global(.text-attachments > .attachment-toolbar) { flex: 0 0 auto; }
-    .composer-actions { flex-shrink: 0; margin-inline-start: auto; }
+    .composer-execution { display: flex; align-items: center; gap: 6px; margin-inline-start: auto; min-width: 0; }
+    .composer-actions { flex-shrink: 0; }
     .composer-options { flex-shrink: 0; }
     .chat-columns { isolation: isolate; z-index: 0; min-width: 0; display: grid; grid-template-columns: var(--sidebar-width) minmax(0, 1fr) var(--inspector-width); min-height: 0; gap: 0; }
     .chat-columns.without-conversation { grid-template-columns: var(--sidebar-width) minmax(0, 1fr); }
@@ -1678,6 +1732,7 @@
     .chat-search input { flex: 1; min-width: 0; max-width: 360px; }
     .chat-search span { color: var(--muted); white-space: nowrap; }
     .chat-search button { margin-inline-start: auto; }
+    .transcript-shell { position: relative; flex: 1 1 0; min-height: 80px; display: flex; flex-direction: column; overflow: hidden; }
     .transcript:focus-visible { outline-offset: -3px; }
     .transcript { flex: 1 1 0; min-height: 80px; overflow: auto; padding: 24px max(32px, calc((100% - 752px)/2)); scrollbar-gutter: stable; font-size: 1rem; line-height: 1.625; }
     .transcript article { display: flex; align-items: flex-start; gap: 8px; margin: 24px 0; padding: 12px 0; border: 1px solid transparent; position: relative; border-radius: 12px; }
@@ -1692,7 +1747,8 @@
     .attached-files { display: flex; flex-wrap: wrap; gap: 5px; list-style: none; margin: 7px 0; padding: 0; }
     .attached-files li { max-width: 100%; overflow-wrap: anywhere; padding: 3px 7px; border: 1px solid var(--border); border-radius: 7px; background: var(--panel); color: var(--muted); font-size: 11px; }
     .placeholder { color: var(--muted); text-align: center; margin-top: 12vh; } .muted, small { color: var(--muted); font-size: 12px; }
-    .older { display: block; margin: 0 auto; } .latest { align-self: center; margin: 4px; }
+    .older { display: block; margin: 0 auto; }
+    .latest { position: absolute; bottom: 12px; inset-inline: 0; margin-inline: auto; width: fit-content; z-index: 5; background: var(--surface-elevated, var(--surface)); border-radius: 999px; padding: 6px 14px; font-size: 13px; box-shadow: 0 4px 16px rgb(0 0 0 / .14); }
     .response-identity { display: flex; flex: none; min-width: 0; align-items: center; gap: 7px; font-size: 14px; line-height: 20px; overflow-wrap: anywhere; }
     .response-avatar { display: grid; place-items: center; width: 19px; height: 19px; border: 1px solid var(--outline); border-radius: 50%; color: var(--content); font-size: 13px; }
     .expert-picker { display: flex; flex-direction:column; align-items:stretch; gap: 8px; padding: 10px 16px; border-bottom: 1px solid var(--border); background: var(--surface); font-size: 12px; }
@@ -1708,21 +1764,33 @@
     @keyframes nola-shimmer { 0% { background-position: 100% 0; } 100% { background-position: -100% 0; } }
     @media (prefers-reduced-motion: reduce) { .run-status.live { background: none; color: var(--muted); animation: none; } }
     @media (forced-colors: active) { .run-status.live { background: none; color: inherit; animation: none; } }
-    .composer { flex-shrink: 0; width: calc(100% - 64px); max-width: 720px; align-self: center; margin: 10px 12px 16px; padding: 12px 16px; border: 1px solid var(--border); border-radius: 16px; background: var(--surface-gradient); box-shadow: inset 0 1px 0 var(--surface-highlight), var(--surface-shadow); transition: border-color var(--motion-fast) ease, box-shadow var(--motion-fast) ease, background-color var(--motion-base) var(--motion-disclosure); }
-    .composer:focus-within { outline: none; border-color: var(--accent); box-shadow: 0 0 0 1px var(--accent); }
+    .composer { position: relative; flex-shrink: 0; width: calc(100% - 64px); max-width: 720px; align-self: center; margin: 10px 12px 16px; padding: 12px 16px; border: 1px solid var(--composer-border); border-radius: 16px; background: var(--composer-bg); box-shadow: var(--composer-shadow); transition: border-color var(--motion-fast) ease, box-shadow var(--motion-fast) ease, background-color var(--motion-base) var(--motion-disclosure); }
+    .composer:focus-within { outline: none; border-color: var(--accent); box-shadow: var(--composer-focus-shadow); }
+    @media (prefers-color-scheme: dark) { :global(:root:not([data-appearance="light"])) .composer:focus-within { border-color: var(--composer-focus-border); box-shadow: var(--composer-focus-shadow); } }
+    :global(:root[data-appearance="dark"]) .composer:focus-within { border-color: var(--composer-focus-border); box-shadow: var(--composer-focus-shadow); }
     @media (forced-colors: active) { .composer:focus-within { outline: 2px solid Highlight; outline-offset: 2px; box-shadow: none; } }
+    .composer-footer :global(.picker),
+    .composer-footer :global(.model-menu > summary),
+    .composer-footer :global(.reasoning-menu > summary),
+    .composer-actions button:not(.primary) { background: transparent; border: 1px solid transparent; border-radius: 8px; color: var(--muted); transition: background-color var(--motion-fast) ease, color var(--motion-fast) ease; }
+    .composer-footer :global(.model-menu > summary),
+    .composer-footer :global(.reasoning-menu > summary) { min-height: 32px; padding: 4px 8px; font-size: 12.5px; }
+    .composer-footer :global(.picker:hover:not(.disabled)),
+    .composer-footer :global(.model-menu > summary:hover),
+    .composer-footer :global(.reasoning-menu > summary:hover:not([aria-disabled="true"])),
+    .composer-actions button:not(.primary):not(:disabled):hover { background: var(--composer-pill-hover-bg); border-color: transparent; color: var(--content); }
     .composer-actions { display: flex; justify-content: flex-end; gap: 8px; }
     .composer-quick-bar { display: flex; flex-shrink: 0; flex-wrap: wrap; align-items: center; gap: 16px; padding: 0 0 16px; width: 100%; margin: 0; }
     .chat-side { position:relative; display: grid; align-content: start; gap: 8px; min-width: 0; min-height:0; overflow:auto; overscroll-behavior:contain; padding: 12px; border-left: 1px solid var(--border); background: var(--canvas); }
     .inspector-content { display: grid; align-content: start; gap: 16px; min-width: 0; padding: 10px 2px 14px; }
     .inspector-section { min-width:0; border-bottom:1px solid var(--border); interpolate-size:allow-keywords; }
     @supports (interpolate-size:allow-keywords) {
-        .inspector-section::details-content { block-size:0; opacity:0; overflow:clip; transition:block-size 200ms var(--motion-disclosure), opacity 160ms ease, content-visibility 200ms allow-discrete; }
+        .inspector-section::details-content { block-size:0; opacity:0; overflow:clip; transition:block-size var(--motion-base) var(--motion-disclosure), opacity var(--motion-fast) ease, content-visibility var(--motion-base) allow-discrete; }
         .inspector-section[open]::details-content { block-size:auto; opacity:1; }
     }
     .inspector-section > summary { min-height:44px; display:flex; align-items:center; gap:10px; cursor:pointer; list-style:none; font-weight:600; font-size:.875rem; border-radius:8px; padding:6px 8px; }
     .inspector-section > summary::-webkit-details-marker { display:none; }
-    .inspector-section > summary::before { content:'›'; font-size:1.1rem; transition:transform 180ms ease; }
+    .inspector-section > summary::before { content:'›'; font-size:1.1rem; transition:transform var(--motion-base) ease; }
     .inspector-section[open] > summary::before { transform:rotate(90deg); }
     .inspector-section > summary:hover { background:var(--accent-subtle); }
     .inspector-section > summary:focus-visible { outline:2px solid var(--primary); outline-offset:-2px; }
@@ -1733,7 +1801,7 @@
     .notice { margin: 8px 16px 0; color: var(--muted); } .notice.error { color: var(--danger); }
     .sr-only { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
     @media (max-width: 1250px) { .chat-columns { grid-template-columns: var(--sidebar-width) minmax(0, 1fr); } .chat-columns.without-navigation { grid-template-columns: minmax(0, 1fr); } .inspector-content { max-height: none; } .inspector-heading { display: none; } }
-    @media (max-width: 700px) {
+    @media (max-width: 760px) {
         .expert-picker { gap: 5px 10px; }
         .expert-picker label { min-height: 44px; }
         .transcript article.expert-message { max-width: 100%; padding: 0; }
@@ -1758,8 +1826,9 @@
         .transcript article.user { padding: 0; margin-inline-start: auto; }
         .transcript article.user .message-content { padding: 10px 12px; }
         .transcript article:has(> .response-identity) { gap: 10px; }
-        .composer { width: calc(100% - 40px); margin:10px 20px 16px; padding:4px; border-radius:24px; background:var(--surface-gradient); }
+        .composer { width: calc(100% - 40px); margin:10px 20px 16px; padding:4px; border-radius:24px; background:var(--composer-bg); }
         .composer-footer { align-items: center; gap: 0; }
+        .composer-execution { flex: 1; justify-content: flex-end; }
         .composer-footer :global(.model-menu) { flex: 1; min-width: 0; max-width: none; }
         .composer-footer :global(.model-menu > summary) { min-height: 44px; justify-content: flex-start; font-size: 12px; padding-inline: 8px; }
         .composer-footer :global(.model-menu summary span:first-child) { max-width: none; min-width: 0; }
@@ -1773,18 +1842,18 @@
     .composer-actions button.primary { width:36px; height:36px; min-width:36px; min-height:36px; padding:7px; border-radius:50%; }
     .composer-actions svg { width:20px; height:20px; fill:none; stroke:currentColor; stroke-width:1.6; }
     .composer-footer :global(.model-menu) { align-self:center; }
-    @media(min-width:701px) {
+    @media(min-width:761px) {
         .composer-footer :global(.model-menu .choices) { top:auto; bottom:calc(100% + 8px); left:0; right:auto; }
         .composer-footer :global(.model-menu[open] .choices) { animation: composer-reveal-up var(--motion-base) ease-out; }
     }
     @keyframes composer-reveal-up { from { opacity: 0; transform: translateY(4px); } to { opacity: 1; transform: translateY(0); } }
     @media (prefers-reduced-motion: reduce) { .composer-footer :global(.model-menu[open] .choices) { animation: none; } }
-    @media(max-width:700px) { .composer-actions button.primary { width:44px; height:44px; min-height:44px; min-width:44px; padding:11px; } }
+    @media(max-width:760px) { .composer-actions button.primary { width:44px; height:44px; min-height:44px; min-width:44px; padding:11px; } }
     @media(max-width:359px) { .composer { width:calc(100% - 32px); margin-inline:16px; } .chat-header { padding-inline:4px; } }
     @media(max-width:359px) {
         .transcript article:has(> .response-identity) { gap: 8px; }
     }
-    @media (min-width: 360px) and (max-width: 700px) { .transcript { padding-inline: 20px; } }
+    @media (min-width: 360px) and (max-width: 760px) { .transcript { padding-inline: 20px; } }
     .attachment-help { font-size:13px; color:var(--muted); }
     .attachment-help summary { min-height:44px; padding:12px 8px; cursor:pointer; }
     .attachment-help p { padding:0 8px; line-height:1.6; }
@@ -1794,5 +1863,5 @@
     .workspace-identity > span:first-child { font:bold 24px Georgia,serif; }
     .workspace-identity small { display:block; font-size:10px; }
     .workspace-footer svg { width:16px; height:16px; fill:none; stroke:currentColor; stroke-width:1.6; }
-    @media(max-width:700px) { .workspace-footer { display:none; } }
+    @media(max-width:760px) { .workspace-footer { display:none; } }
 </style>

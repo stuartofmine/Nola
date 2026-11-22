@@ -7,18 +7,22 @@ import SwiftUI
 
 struct MacActivityCenterView: View {
     let navigationAction: (() -> Void)?
+    let navigationLabel: String?
     let automationOnly: Bool
     @Environment(\.openWindow) private var openWindow
     @Environment(\.macActivityApplicationClient) private var activityClient
     @State private var showsLocalSummaries = false
-    init(navigationAction: (() -> Void)? = nil, automationOnly: Bool = false) {
-        self.navigationAction = navigationAction; self.automationOnly = automationOnly
+    init(navigationAction: (() -> Void)? = nil, navigationLabel: String? = nil, automationOnly: Bool = false) {
+        self.navigationAction = navigationAction
+        self.navigationLabel = navigationLabel
+        self.automationOnly = automationOnly
     }
     var body: some View {
         let client = activityClient
+        let resolvedNavigationLabel = navigationLabel ?? (automationOnly ? String(localized: "Automations") : String(localized: "Back"))
         VStack(spacing: 0) {
             MacPageHeader("Activity", symbol: "waveform.path.ecg", navigationAction: navigationAction,
-                navigationKind: .back, navigationLabel: "Automations") {
+                navigationKind: .back, navigationLabel: LocalizedStringKey(resolvedNavigationLabel)) {
                 EmptyView()
             } actions: {
                 Button("activity.localSummaries") { showsLocalSummaries = true }
@@ -94,20 +98,23 @@ private struct MacLocalActivitySummariesView: View {
     @Environment(\.openWindow) private var openWindow
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     let navigationAction: (() -> Void)?
+    let navigationLabel: String?
 
-    init(navigationAction: (() -> Void)? = nil, automationOnly: Bool = false) {
+    init(navigationAction: (() -> Void)? = nil, navigationLabel: String? = nil, automationOnly: Bool = false) {
         self.navigationAction = navigationAction
+        self.navigationLabel = navigationLabel
         _filter = State(initialValue: automationOnly ? .automation : .all)
     }
 
     var body: some View {
+        let resolvedNavigationLabel = navigationLabel ?? String(localized: "Back")
         VStack(spacing: 0) {
             MacPageHeader(
                 "activity.localSummaries",
                 symbol: "waveform.path.ecg",
                 navigationAction: navigationAction,
                 navigationKind: .back,
-                navigationLabel: "Automations"
+                navigationLabel: LocalizedStringKey(resolvedNavigationLabel)
             ) {
                 Text("Agent and automation results with local run details")
             } actions: {
@@ -148,7 +155,7 @@ private struct MacLocalActivitySummariesView: View {
                 )
                 .padding(.horizontal, MacDesignTokens.Layout.pageGutter)
                 .padding(.vertical, MacDesignTokens.Spacing.sm)
-                .transition(.opacity.combined(with: .move(edge: .top)))
+                .transition(reduceMotion ? .identity : .opacity.combined(with: .move(edge: .top)))
             }
 
             if !store.entries.isEmpty {
@@ -197,7 +204,7 @@ private struct MacLocalActivitySummariesView: View {
         } message: {
             Text("This removes the local history list. Conversation and automation logs are not deleted.")
         }
-        .animation(reduceMotion ? nil : .easeOut(duration: 0.18), value: store.lastError)
+        .animation(reduceMotion ? nil : .easeOut(duration: MacDesignTokens.Motion.disclosure), value: store.lastError)
     }
 
     private var regularContent: some View {
@@ -544,6 +551,7 @@ struct MacActivityDetail: View {
     @State private var copiedOutput = false
     @State private var feedbackID = UUID()
     @State private var manuallyCopyOutput = false
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     var body: some View {
         ScrollView {
@@ -589,7 +597,7 @@ struct MacActivityDetail: View {
                                         manuallyCopyOutput = true
                                         return
                                     }
-                                    withAnimation(.easeOut(duration: 0.16)) {
+                                    withAnimation(reduceMotion ? nil : .easeOut(duration: MacDesignTokens.Motion.selection)) {
                                         copiedOutput = true
                                     }
                                     feedbackID = UUID()
@@ -597,7 +605,7 @@ struct MacActivityDetail: View {
                                     Task { @MainActor in
                                         do { try await Task.sleep(for: .seconds(1.4)) } catch { return }
                                         guard feedbackID == feedback else { return }
-                                        withAnimation(.easeOut(duration: 0.16)) {
+                                        withAnimation(reduceMotion ? nil : .easeOut(duration: MacDesignTokens.Motion.selection)) {
                                             copiedOutput = false
                                         }
                                     }
@@ -606,10 +614,11 @@ struct MacActivityDetail: View {
                                         copiedOutput ? "Copied" : "Copy",
                                         systemImage: copiedOutput ? "checkmark" : "doc.on.doc"
                                     )
+                                    .contentTransition(reduceMotion ? .identity : .symbolEffect(.replace))
                                 }
-                                .buttonStyle(.borderless)
+                                .buttonStyle(MacActionButtonStyle())
                                 .controlSize(.small)
-                                .foregroundStyle(copiedOutput ? Color.green : Color.accentColor)
+                                .foregroundStyle(copiedOutput ? MacDesignColor.success : Color.accentColor)
                             }
                             Text(entry.outputPreview)
                                 .font(.system(size: 11.5, design: .monospaced))

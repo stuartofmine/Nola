@@ -49,17 +49,30 @@ struct MacRuntimePluginManagerView: View {
             if let libraryError { errorMessage(libraryError) }
             if let library {
                 if library.profiles.allSatisfy({ $0.packages.isEmpty && $0.error == nil }) {
-                    Label(String(localized: "No plugins installed"), systemImage: "puzzlepiece.extension")
-                        .foregroundStyle(.secondary).padding(.vertical, 14)
-                }
-                VStack(alignment: .leading, spacing: 0) {
-                    ForEach(profiles) { profile in
-                        ForEach(profile.packages) { package in
-                            packageRow(package, in: profile)
-                            Divider()
+                    MacEmptyState(
+                        LocalizedStringKey(String(localized: "No plugins installed")),
+                        description: LocalizedStringKey(String(localized: "Install runtime plugins from a package name or local folder to extend Nola.")),
+                        symbol: "puzzlepiece.extension"
+                    ) {
+                        Button {
+                            failure = nil
+                            adding = true
+                        } label: {
+                            Label(String(localized: "Add plugin"), systemImage: "plus")
                         }
-                        if let error = profile.error {
-                            errorMessage(profile.title + " · " + error).padding(.vertical, 8)
+                        .buttonStyle(.nolaProminent)
+                        .disabled(updating)
+                    }
+                    .frame(maxWidth: .infinity, minHeight: 220)
+                } else {
+                    VStack(alignment: .leading, spacing: 12) {
+                        ForEach(profiles) { profile in
+                            ForEach(profile.packages) { package in
+                                packageRow(package, in: profile)
+                            }
+                            if let error = profile.error {
+                                MacInlineNotice(message: profile.title + " · " + error, kind: .failure)
+                            }
                         }
                     }
                 }
@@ -122,7 +135,8 @@ struct MacRuntimePluginManagerView: View {
             .menuStyle(.borderlessButton).menuIndicator(.hidden).fixedSize()
             .accessibilityLabel(String(localized: "More") + " · " + package.source)
         }
-        .padding(.vertical, 12)
+        .padding(14)
+        .macPanel(cornerRadius: MacDesignTokens.Radius.panel)
     }
 
     private func errorMessage(_ message: String) -> some View {
@@ -203,7 +217,10 @@ struct MacAddPluginSheet: View {
             if let failure {
                 Text(verbatim: failure).font(.callout).foregroundStyle(MacDesignColor.danger).textSelection(.enabled)
             }
-            Text("This package can run code on your Mac.").font(.callout).foregroundStyle(.secondary)
+            MacInlineNotice(
+                message: String(localized: "This package can run code on your Mac."),
+                kind: .warning
+            )
             HStack {
                 if updating { ProgressView().controlSize(.small) }
                 Spacer()

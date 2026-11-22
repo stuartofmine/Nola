@@ -105,18 +105,31 @@ struct IOSAgentRoomsView: View {
     private var expertDirectorySection: some View {
         Section("chat.experts.title") {
             ForEach(agents) { agent in
+                let isSelected = editing?.id == agent.id
                 Button { requestEditorAction(.edit(agent)) } label: {
-                    HStack {
+                    HStack(spacing: 10) {
                         VStack(alignment: .leading, spacing: 3) {
-                            Text(agent.name).foregroundStyle(.primary)
+                            Text(agent.name)
+                                .font(.body.weight(isSelected ? .semibold : .regular))
+                                .foregroundStyle(isSelected ? DesignTokens.actionColor : .primary)
                             if !agent.description.isEmpty {
                                 Text(agent.description).font(.caption).foregroundStyle(.secondary)
                             }
                         }
                         Spacer()
-                        if agent.availability != "active" { Image(systemName: "archivebox").foregroundStyle(.secondary) }
+                        if agent.availability != "active" {
+                            Image(systemName: "archivebox").foregroundStyle(.secondary)
+                        }
+                        if isSelected {
+                            Image(systemName: "checkmark.circle.fill")
+                                .foregroundStyle(DesignTokens.actionColor)
+                                .accessibilityHidden(true)
+                        }
                     }.frame(minHeight: 44).contentShape(Rectangle())
-                }.accessibilityIdentifier("experts.edit." + agent.id)
+                }
+                .listRowBackground(isSelected ? DesignTokens.accentSubtleColor : DesignTokens.surfaceColor)
+                .accessibilityAddTraits(isSelected ? .isSelected : [])
+                .accessibilityIdentifier("experts.edit." + agent.id)
             }
             if editing != nil {
                 Button("room.create_agent") { requestEditorAction(.edit(nil)) }
@@ -219,7 +232,18 @@ struct IOSAgentRoomsView: View {
                     Text(role.prompt).font(.body).textSelection(.enabled)
                     Text("experts.role.tools").font(.subheadline.weight(.semibold))
                     Text(role.toolPack.id).font(.caption).foregroundStyle(.secondary)
-                    ForEach(role.toolPack.tools, id: \.self) { tool in Text(tool).font(.callout) }
+                    LazyVGrid(columns: [GridItem(.adaptive(minimum: 108), alignment: .leading)], alignment: .leading, spacing: 6) {
+                        ForEach(role.toolPack.tools, id: \.self) { tool in
+                            Text(tool)
+                                .font(.caption.weight(.medium))
+                                .foregroundStyle(DesignTokens.contentColor)
+                                .lineLimit(1)
+                                .padding(.horizontal, 10)
+                                .padding(.vertical, 5)
+                                .background(DesignTokens.rowFillColor, in: Capsule())
+                                .overlay(Capsule().stroke(DesignTokens.borderColor, lineWidth: 0.75))
+                        }
+                    }
                     ForEach(role.skills) { skill in
                         Text(skill.localizedName(locale: locale)).font(.subheadline.weight(.semibold))
                         Text(skill.instructions).font(.callout).textSelection(.enabled)
@@ -241,16 +265,32 @@ struct IOSAgentRoomsView: View {
             }.frame(minHeight: 44).contentShape(Rectangle())
         }.buttonStyle(.plain).accessibilityIdentifier("experts.templates.manage")
         Button { perform { try saveAgent() } } label: {
-            if editing == nil { Text(String(localized: "room.create_agent")) }
-            else { Text(String(localized: "experts.save")) }
+            Group {
+                if editing == nil { Text(String(localized: "room.create_agent")) }
+                else { Text(String(localized: "experts.save")) }
+            }
+            .font(.subheadline.weight(.semibold))
+            .frame(maxWidth: .infinity, minHeight: 44)
         }
+            .buttonStyle(NolaPrimaryButtonStyle(cornerRadius: DesignTokens.radius_md))
             .disabled(agentName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
             .accessibilityIdentifier("experts.save")
         if let editing {
-            Button { requestEditorAction(.archive) } label: {
-                if editing.availability == "active" { Text(String(localized: "experts.archive")) }
-                else { Text(String(localized: "experts.restore")) }
-            }.accessibilityIdentifier("experts.archive")
+            Button(role: editing.availability == "active" ? .destructive : nil) {
+                requestEditorAction(.archive)
+            } label: {
+                HStack {
+                    if editing.availability == "active" {
+                        Label(String(localized: "experts.archive"), systemImage: "archivebox")
+                    } else {
+                        Label(String(localized: "experts.restore"), systemImage: "arrow.uturn.backward")
+                    }
+                    Spacer()
+                }
+                .frame(minHeight: 44)
+                .contentShape(Rectangle())
+            }
+            .accessibilityIdentifier("experts.archive")
         }
     }
 
@@ -359,6 +399,29 @@ struct IOSAgentRoomsView: View {
     }
 }
 
+private struct IOSRoomUserScrollObserver: ViewModifier {
+    let began: () -> Void
+    let ended: () -> Void
+
+    @ViewBuilder func body(content: Content) -> some View {
+        if #available(iOS 18.0, *) {
+            content.onScrollPhaseChange { _, phase in
+                switch phase {
+                case .tracking, .interacting: began()
+                case .idle: ended()
+                default: break
+                }
+            }
+        } else {
+            content.simultaneousGesture(
+                DragGesture(minimumDistance: 4)
+                    .onChanged { _ in began() }
+                    .onEnded { _ in ended() }
+            )
+        }
+    }
+}
+
 private struct IOSRoomGeometryPreference: PreferenceKey {
     static var defaultValue: [String: CGFloat] { [:] }
     static func reduce(value: inout [String: CGFloat], nextValue: () -> [String: CGFloat]) {
@@ -405,7 +468,9 @@ struct IOSAgentRoomTimeline: View {
     private var identityGap: CGFloat { compactExpertLayout ? 8 : 10 }
     private var timelineInset: CGFloat { compactExpertLayout ? 16 : 20 }
     @Environment(\.colorScheme) private var colorScheme
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var followsBottom = true
+    @State private var userScrolling = false
     @State private var distanceFromBottom: CGFloat = 0
     @State private var error: String?
 
@@ -626,10 +691,16 @@ struct IOSAgentRoomTimeline: View {
             DispatchQueue.main.async {
                 guard abs(distanceFromBottom - distance) >= 1 else { return }
                 distanceFromBottom = distance
-                if distance <= 60 { followsBottom = true }
+                if !userScrolling && distance <= 60 { followsBottom = true }
             }
         }
-        .simultaneousGesture(DragGesture(minimumDistance: 4).onChanged { _ in followsBottom = false })
+        .modifier(IOSRoomUserScrollObserver(began: {
+            userScrolling = true
+            followsBottom = false
+        }, ended: {
+            userScrolling = false
+            if distanceFromBottom <= 60 { followsBottom = true }
+        }))
         .onAppear { proxy.scrollTo("room-bottom", anchor: .bottom) }
         .onChange(of: workspace.rows.map { "\($0.id):\($0.projected.revision):\($0.message.canonicalJournalCursor?.sequence ?? "")" }) { _, _ in
             if followsBottom { proxy.scrollTo("room-bottom", anchor: .bottom) }
@@ -641,16 +712,31 @@ struct IOSAgentRoomTimeline: View {
             if followsBottom { proxy.scrollTo("room-bottom", anchor: .bottom) }
         }
         .overlay(alignment: .bottomTrailing) {
-            if !followsBottom && distanceFromBottom > 180 {
-                Button { followsBottom = true; proxy.scrollTo("room-bottom", anchor: .bottom) } label: {
-                    Image(systemName: "chevron.down")
-                        .font(.system(size: 14, weight: .semibold))
-                        .frame(width: 44, height: 44)
-                        .background(.regularMaterial, in: Circle())
-                }.buttonStyle(.plain).padding(12)
+            let showsJumpToLatest = !followsBottom && distanceFromBottom > 180
+            Group {
+                if showsJumpToLatest {
+                    Button {
+                        NolaHaptics.selection()
+                        userScrolling = false
+                        followsBottom = true
+                        withAnimation(reduceMotion ? nil : DesignTokens.responsiveAnimation) {
+                            proxy.scrollTo("room-bottom", anchor: .bottom)
+                        }
+                    } label: {
+                        Image(systemName: "chevron.down")
+                            .font(.system(size: 14, weight: .semibold))
+                            .frame(width: 44, height: 44)
+                            .background(.regularMaterial, in: Circle())
+                    }
+                    .buttonStyle(NolaPressableButtonStyle())
+                    .clipShape(Circle())
+                    .padding(12)
                     .accessibilityLabel(Text("room.latest"))
                     .accessibilityIdentifier("chat.scroll.latest")
+                    .transition(reduceMotion ? .identity : .opacity.combined(with: .move(edge: .bottom)))
+                }
             }
+            .animation(reduceMotion ? nil : DesignTokens.responsiveAnimation, value: showsJumpToLatest)
         }
         }
         }

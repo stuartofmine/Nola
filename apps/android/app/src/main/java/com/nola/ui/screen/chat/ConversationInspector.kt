@@ -4,12 +4,19 @@ import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.AttachFile
+import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.Checklist
 import androidx.compose.material.icons.filled.FolderOpen
-import androidx.compose.material.icons.filled.Tune
+import androidx.compose.material.icons.filled.RadioButtonUnchecked
 import androidx.compose.material.icons.filled.Refresh
+import androidx.compose.material.icons.filled.Schedule
+import androidx.compose.material.icons.filled.Storage
+import androidx.compose.material.icons.filled.Tune
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.res.stringResource
@@ -20,6 +27,11 @@ import com.nola.R
 import com.nola.data.repository.ConversationProgress
 import com.nola.data.repository.ConversationProgressRepository
 import com.nola.data.repository.ConversationProgressItem
+import com.nola.ui.components.NolaBadge
+import com.nola.ui.components.NolaCard
+import com.nola.ui.components.NolaColors
+import com.nola.ui.components.NolaEmptyState
+import com.nola.ui.components.NolaSectionTitle
 import com.nola.ui.components.NolaTopAppBar
 import kotlinx.coroutines.launch
 import kotlinx.serialization.json.*
@@ -227,35 +239,51 @@ internal fun ConversationProgressPanel(
                         }
                     }
                 }
-                progress.objective?.let { Text(it, style = MaterialTheme.typography.titleMedium) }
-                progress.status?.let { Text(progressStatusText(it), style = MaterialTheme.typography.labelMedium) }
-                progress.latestContractRun?.let { run ->
-                    Column(Modifier.testTag("goal.contract.${run.runId}")) {
-                        Text(stringResource(R.string.goal_latest_step), style = MaterialTheme.typography.titleSmall)
-                        if (run.objective.isNotBlank() && run.objective != progress.objective) {
-                            Text(run.objective, style = MaterialTheme.typography.bodyMedium)
+                if (progress.objective != null || progress.status != null || progress.latestContractRun != null || progress.nextWakeAtEpochMs != null) {
+                    NolaCard {
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(8.dp),
+                        ) {
+                            progress.objective?.let {
+                                Text(it, style = MaterialTheme.typography.titleMedium, modifier = Modifier.weight(1f))
+                            }
+                            progress.status?.let {
+                                NolaBadge(text = progressStatusText(it), tint = progressStatusTint(it))
+                            }
                         }
-                        Text(progressStatusText(run.status), style = MaterialTheme.typography.labelMedium,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        progress.latestContractRun?.let { run ->
+                            Column(
+                                Modifier.testTag("goal.contract.${run.runId}"),
+                                verticalArrangement = Arrangement.spacedBy(4.dp),
+                            ) {
+                                NolaSectionTitle(title = stringResource(R.string.goal_latest_step))
+                                if (run.objective.isNotBlank() && run.objective != progress.objective) {
+                                    Text(run.objective, style = MaterialTheme.typography.bodyMedium)
+                                }
+                                NolaBadge(text = progressStatusText(run.status), tint = progressStatusTint(run.status))
+                            }
+                        }
+                        val additionalConstraints = progress.constraints.filterNot { constraint -> progress.requirements.any { it.text == constraint } }
+                        if (additionalConstraints.isNotEmpty()) {
+                            NolaSectionTitle(title = stringResource(R.string.goal_saved_constraints))
+                            for (constraint in additionalConstraints) {
+                                Text(constraint, style = MaterialTheme.typography.bodyMedium)
+                            }
+                        }
+                        progress.nextWakeAtEpochMs?.let { wakeMs ->
+                            val formattedWake = remember(wakeMs) {
+                                java.text.DateFormat.getDateTimeInstance(java.text.DateFormat.SHORT, java.text.DateFormat.SHORT)
+                                    .format(java.util.Date(wakeMs))
+                            }
+                            Text(
+                                stringResource(R.string.goal_next_wake_format, formattedWake),
+                                style = MaterialTheme.typography.labelMedium,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
                     }
-                }
-                val additionalConstraints = progress.constraints.filterNot { constraint -> progress.requirements.any { it.text == constraint } }
-                if (additionalConstraints.isNotEmpty()) {
-                    Text(stringResource(R.string.goal_saved_constraints), style = MaterialTheme.typography.titleSmall)
-                    for (constraint in additionalConstraints) {
-                        Text(constraint, style = MaterialTheme.typography.bodyMedium)
-                    }
-                }
-                progress.nextWakeAtEpochMs?.let { wakeMs ->
-                    val formattedWake = remember(wakeMs) {
-                        java.text.DateFormat.getDateTimeInstance(java.text.DateFormat.SHORT, java.text.DateFormat.SHORT)
-                            .format(java.util.Date(wakeMs))
-                    }
-                    Text(
-                        stringResource(R.string.goal_next_wake_format, formattedWake),
-                        style = MaterialTheme.typography.labelMedium,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                    )
                 }
                 if (progress.requirements.isEmpty() && progress.todos.isEmpty()) Text(stringResource(R.string.inspector_no_plan), color = MaterialTheme.colorScheme.onSurfaceVariant)
                 ProgressItems(stringResource(R.string.inspector_requirements), progress.requirements)
@@ -263,10 +291,28 @@ internal fun ConversationProgressPanel(
             }
             if (owner == null) Text(stringResource(R.string.inspector_conversation_needed))
             else expertChildren(owner)
-            state.coreTaskProjection.orderedTasks.filter { owner != null && it.ownerSessionId == state.coreTaskProjection.sessionId }.forEach { task ->
-                HorizontalDivider()
-                Text(task.currentStep?.takeIf { it.isNotBlank() } ?: stringResource(R.string.canonical_running), style = MaterialTheme.typography.bodyMedium)
-                Text(progressStatusText(task.state.wireValue), style = MaterialTheme.typography.labelMedium)
+            val activeTasks = state.coreTaskProjection.orderedTasks.filter { owner != null && it.ownerSessionId == state.coreTaskProjection.sessionId }
+            if (activeTasks.isNotEmpty()) {
+                NolaCard {
+                    activeTasks.forEachIndexed { index, task ->
+                        if (index > 0) HorizontalDivider(thickness = 0.5.dp, color = MaterialTheme.colorScheme.outlineVariant)
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(8.dp),
+                        ) {
+                            Text(
+                                task.currentStep?.takeIf { it.isNotBlank() } ?: stringResource(R.string.canonical_running),
+                                style = MaterialTheme.typography.bodyMedium,
+                                modifier = Modifier.weight(1f),
+                            )
+                            NolaBadge(
+                                text = progressStatusText(task.state.wireValue),
+                                tint = progressStatusTint(task.state.wireValue),
+                            )
+                        }
+                    }
+                }
             }
         }
     }
@@ -285,16 +331,54 @@ private fun progressStatusText(status: String): String = when (status) {
     "pending", "queued", "planned" -> stringResource(R.string.canonical_pending)
     "needs_user", "waiting_input" -> stringResource(R.string.goal_needs_user)
     "waiting_permission" -> stringResource(R.string.canonical_waiting_permission)
-    else -> stringResource(R.string.chat_cache_unknown) + " · " + status
+    else -> status.replace('_', ' ').trim().replaceFirstChar { it.uppercase() }
+        .ifBlank { stringResource(R.string.chat_cache_unknown) }
+}
+
+@Composable
+private fun progressStatusTint(status: String): Color = when (status) {
+    "completed", "succeeded", "audited" -> NolaColors.success
+    "executing", "running" -> MaterialTheme.colorScheme.primary
+    "failed" -> MaterialTheme.colorScheme.error
+    "needs_user", "waiting_input", "waiting_permission", "awaiting_audit", "interrupted" -> NolaColors.warning
+    else -> MaterialTheme.colorScheme.onSurfaceVariant
 }
 
 @Composable
 internal fun ProgressItems(title: String, entries: List<ConversationProgressItem>) {
     if (entries.isEmpty()) return
-    Text(title, style = MaterialTheme.typography.titleSmall)
-    Text(stringResource(R.string.inspector_completed_count, entries.count { it.status == "completed" }, entries.size))
-    entries.forEach { item ->
-        Column { Text(item.text, style = MaterialTheme.typography.bodyLarge); Text(progressStatusText(item.status), style = MaterialTheme.typography.labelMedium) }
+    NolaCard {
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+        ) {
+            NolaSectionTitle(title = title, modifier = Modifier.weight(1f))
+            NolaBadge(
+                text = stringResource(R.string.inspector_completed_count, entries.count { it.status == "completed" }, entries.size),
+                tint = MaterialTheme.colorScheme.primary,
+            )
+        }
+        entries.forEachIndexed { index, item ->
+            if (index > 0) HorizontalDivider(thickness = 0.5.dp, color = MaterialTheme.colorScheme.outlineVariant)
+            val tint = progressStatusTint(item.status)
+            val icon = when (item.status) {
+                "completed", "succeeded", "audited" -> Icons.Filled.CheckCircle
+                "executing", "running" -> Icons.Filled.Schedule
+                else -> Icons.Filled.RadioButtonUnchecked
+            }
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.Top,
+                horizontalArrangement = Arrangement.spacedBy(10.dp),
+            ) {
+                Icon(icon, contentDescription = null, tint = tint, modifier = Modifier.padding(top = 2.dp).size(18.dp))
+                Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                    Text(item.text, style = MaterialTheme.typography.bodyMedium)
+                    NolaBadge(text = progressStatusText(item.status), tint = tint)
+                }
+            }
+        }
     }
 }
 
@@ -313,25 +397,53 @@ internal fun ConversationResourcesPanel(state: ChatUiState, onClose: () -> Unit)
         NolaTopAppBar(title = stringResource(R.string.inspector_resources), onBack = onClose)
         Column(Modifier.weight(1f).verticalScroll(rememberScrollState()).padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
             if (parts.isEmpty() && sources.isEmpty() && attachments.isEmpty() && selectedDataSources.isEmpty()) {
-                Text(stringResource(R.string.inspector_no_resources), color = MaterialTheme.colorScheme.onSurfaceVariant)
+                NolaEmptyState(
+                    icon = Icons.Filled.FolderOpen,
+                    title = stringResource(R.string.inspector_no_resources),
+                )
             }
-            messages.forEach { message -> key(message.conversationId, message.id) {
-                val messageParts = message.canonicalParts.filter {
-                    it is com.nola.domain.projection.ConversationProjectionV1.Part.Source ||
-                        it is com.nola.domain.projection.ConversationProjectionV1.Part.Citation ||
-                        it is com.nola.domain.projection.ConversationProjectionV1.Part.Attachment
+            if (parts.isNotEmpty() || sources.isNotEmpty()) {
+                NolaCard {
+                    NolaSectionTitle(icon = Icons.Filled.FolderOpen, title = stringResource(R.string.chat_sources_title))
+                    messages.forEach { message -> key(message.conversationId, message.id) {
+                        val messageParts = message.canonicalParts.filter {
+                            it is com.nola.domain.projection.ConversationProjectionV1.Part.Source ||
+                                it is com.nola.domain.projection.ConversationProjectionV1.Part.Citation ||
+                                it is com.nola.domain.projection.ConversationProjectionV1.Part.Attachment
+                        }
+                        if (messageParts.isNotEmpty()) {
+                            CanonicalPartReaderBoundary(message.conversationId, message.id, messageParts) { onReadText ->
+                                CanonicalSourceCards(messageParts, onReadText)
+                            }
+                        }
+                    } }
+                    if (sources.isNotEmpty()) AnswerSourcesList(sources)
                 }
-                CanonicalPartReaderBoundary(message.conversationId, message.id, messageParts) { onReadText ->
-                    CanonicalSourceCards(messageParts, onReadText)
-                }
-            } }
-            if (sources.isNotEmpty()) AnswerSourcesList(sources)
-            attachments.forEach { attachment ->
-                Text(attachment.name, style = MaterialTheme.typography.bodyMedium)
-                Text(attachment.sizeLabel, style = MaterialTheme.typography.labelMedium)
             }
-            selectedDataSources.forEach { source ->
-                Text(source.name, style = MaterialTheme.typography.bodyMedium)
+            if (attachments.isNotEmpty()) {
+                NolaCard {
+                    NolaSectionTitle(icon = Icons.Filled.AttachFile, title = stringResource(R.string.inspector_resources))
+                    attachments.forEachIndexed { index, attachment ->
+                        if (index > 0) HorizontalDivider(thickness = 0.5.dp, color = MaterialTheme.colorScheme.outlineVariant)
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(8.dp),
+                        ) {
+                            Text(attachment.name, style = MaterialTheme.typography.bodyMedium, modifier = Modifier.weight(1f))
+                            NolaBadge(text = attachment.sizeLabel, tint = MaterialTheme.colorScheme.onSurfaceVariant)
+                        }
+                    }
+                }
+            }
+            if (selectedDataSources.isNotEmpty()) {
+                NolaCard {
+                    NolaSectionTitle(icon = Icons.Filled.Storage, title = stringResource(R.string.data_sources_screen_title))
+                    selectedDataSources.forEachIndexed { index, source ->
+                        if (index > 0) HorizontalDivider(thickness = 0.5.dp, color = MaterialTheme.colorScheme.outlineVariant)
+                        Text(source.name, style = MaterialTheme.typography.bodyMedium)
+                    }
+                }
             }
         }
     }

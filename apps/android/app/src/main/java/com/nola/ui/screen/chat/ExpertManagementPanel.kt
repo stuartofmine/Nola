@@ -2,7 +2,10 @@
 package com.nola.ui.screen.chat
 
 import androidx.activity.compose.BackHandler
+import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
@@ -10,14 +13,20 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.material3.*
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.MoreVert
+import androidx.compose.material.icons.filled.Person
 import androidx.compose.runtime.*
 import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.luminance
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.platform.LocalConfiguration
+import androidx.compose.ui.text.font.FontWeight
 import com.nola.data.repository.ExpertRoleCatalog
 import com.nola.data.repository.ExpertRoleTemplate
 import com.nola.data.repository.expertRoleText
@@ -25,8 +34,11 @@ import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.nola.R
+import com.nola.ui.components.NolaBadge
 import com.nola.ui.components.NolaDisclosureBar
 import com.nola.ui.components.NolaDropdownBar
+import com.nola.ui.components.NolaEmptyState
+import com.nola.ui.components.NolaTopAppBar
 import com.nola.data.repository.AgentDirectory
 import com.nola.data.repository.PersistentAgent
 import com.nola.domain.model.ModelInfo
@@ -253,21 +265,42 @@ internal fun ExpertManagementPanel(
         ExpertBubbleColorEditor(it.id, it.name, onDismiss = { colorID = null })
     }
     val editorScroll = rememberScrollState()
+    val startCreateExpert: () -> Unit = {
+        editingID = null; executorJSON = null; newAgentID = java.util.UUID.randomUUID().toString()
+        name = ""; description = ""; effort = "automatic"; inheritModel = true; modelID = null
+        originalModelSelection = null; resetModelParameters = null; modelSelectionTouched = false
+        modelMenu = false; templateID = null; originalTemplateSelection = null
+        templateSelectionTouched = false; templateMenu = false; editorOwnerKey = sourceKey; editing = true
+    }
     Column(
         modifier = Modifier
             .fillMaxWidth()
             .then(if (!isFullScreen) Modifier.navigationBarsPadding() else Modifier)
             .imePadding()
-            .padding(horizontal = 20.dp, vertical = 12.dp)
-            .then(if (editing) Modifier.verticalScroll(editorScroll) else Modifier),
-        verticalArrangement = if (editing) Arrangement.spacedBy(12.dp) else Arrangement.Top
     ) {
-        TextButton(onClick = ::back, enabled = !busy, modifier = Modifier.heightIn(min = 48.dp)) {
-            Text(stringResource(R.string.common_back))
+        NolaTopAppBar(
+            title = stringResource(R.string.expert_manage),
+            subtitle = stringResource(if (editorScope?.remote == true) R.string.expert_manage_source_host else R.string.expert_manage_source_local),
+            onBack = { if (!busy) back() },
+        ) {
+            if (!editing) {
+                IconButton(
+                    onClick = startCreateExpert,
+                    enabled = !busy && catalogReady && directory != null,
+                    modifier = Modifier.testTag("expert.create"),
+                ) {
+                    Icon(Icons.Filled.Add, contentDescription = stringResource(R.string.room_create_agent))
+                }
+            }
         }
-        Text(stringResource(R.string.expert_manage), style = MaterialTheme.typography.titleLarge)
-        Text(stringResource(if (editorScope?.remote == true) R.string.expert_manage_source_host else R.string.expert_manage_source_local), style = MaterialTheme.typography.bodySmall,
-            color = MaterialTheme.colorScheme.onSurfaceVariant)
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .then(if (isFullScreen) Modifier.weight(1f) else Modifier)
+                .padding(horizontal = 20.dp, vertical = 8.dp)
+                .then(if (editing) Modifier.verticalScroll(editorScroll) else Modifier),
+            verticalArrangement = if (editing) Arrangement.spacedBy(12.dp) else Arrangement.Top
+        ) {
         error?.let {
             Text(it, color = MaterialTheme.colorScheme.error, modifier = Modifier.padding(vertical = 8.dp))
             TextButton(enabled = !busy, onClick = { perform { loadCatalog() } }) { Text(stringResource(R.string.common_refresh)) }
@@ -476,65 +509,118 @@ internal fun ExpertManagementPanel(
                     } }) { Text(stringResource(R.string.common_save)) }
             }
         } else {
-            TextButton(onClick = { editingID = null; executorJSON = null; newAgentID = java.util.UUID.randomUUID().toString(); name = ""; description = ""; effort = "automatic"; inheritModel = true; modelID = null; originalModelSelection = null; resetModelParameters = null; modelSelectionTouched = false; modelMenu = false; templateID = null; originalTemplateSelection = null; templateSelectionTouched = false; templateMenu = false; editorOwnerKey = sourceKey; editing = true },
-                enabled = !busy && catalogReady && directory != null, modifier = Modifier.testTag("expert.create").heightIn(min = 48.dp)) {
-                Text(stringResource(R.string.room_create_agent))
-            }
-            LazyColumn(
-                modifier = (if (isFullScreen) Modifier.weight(1f) else Modifier.heightIn(max = 420.dp))
-                    .fillMaxWidth()
-                    .testTag("expert.directory.list")
-            ) {
-                items(directory?.agents.orEmpty(), key = PersistentAgent::id) { agent ->
-                    ListItem(
-                        colors = ListItemDefaults.colors(containerColor = androidx.compose.ui.graphics.Color.Transparent),
-                        headlineContent = { Text(agent.name) }, supportingContent = {
-                        Column {
-                            if (agent.availability == "archived") Text(stringResource(R.string.expert_archived),
-                                style = MaterialTheme.typography.labelSmall)
-                            if (agent.description.isNotBlank()) Text(agent.description)
+            val agents = directory?.agents.orEmpty()
+            val darkAppearance = MaterialTheme.colorScheme.background.luminance() < 0.5f
+            if (directory != null && agents.isEmpty() && !busy) {
+                NolaEmptyState(
+                    icon = Icons.Filled.Person,
+                    title = stringResource(R.string.expert_empty_title),
+                    message = stringResource(R.string.expert_empty_message),
+                    action = if (catalogReady) {
+                        {
+                            Button(onClick = startCreateExpert) {
+                                Text(stringResource(R.string.room_create_agent))
+                            }
                         }
-                    }, modifier = Modifier.fillMaxWidth().heightIn(min = 56.dp).testTag("expert.row.${agent.id}")
-                        .clickable(enabled = !busy && catalogReady) {
-                            editAgent(agent)
-                        }, trailingContent = {
-                            Box {
-                                IconButton(onClick = { actionsID = agent.id }, enabled = !busy,
-                                    modifier = Modifier.sizeIn(minWidth = 48.dp, minHeight = 48.dp).testTag("expert.actions.${agent.id}")) {
-                                    Icon(Icons.Filled.MoreVert, contentDescription = stringResource(R.string.expert_actions, agent.name))
+                    } else null,
+                )
+            } else {
+                LazyColumn(
+                    modifier = (if (isFullScreen) Modifier.weight(1f) else Modifier.heightIn(max = 420.dp))
+                        .fillMaxWidth()
+                        .testTag("expert.directory.list")
+                ) {
+                    items(agents, key = PersistentAgent::id) { agent ->
+                        val bubbleColor = rememberExpertBubbleColor(agent.id)
+                        val initial = agent.name.trim().firstOrNull()?.uppercaseChar()?.toString() ?: "E"
+                        val roleId = agent.defaults["selectedPromptTemplateID"]?.takeUnless { it == JsonNull }?.jsonPrimitive?.contentOrNull
+                        val roleLabel = roleId?.let { id ->
+                            roles.firstOrNull { it.id == id }?.let { expertRoleText(it.name, language) }
+                                ?: templateCatalog?.templates?.firstOrNull { it.id == id }?.name
+                        }
+                        ListItem(
+                            colors = ListItemDefaults.colors(containerColor = androidx.compose.ui.graphics.Color.Transparent),
+                            leadingContent = {
+                                Box(
+                                    modifier = Modifier
+                                        .size(38.dp)
+                                        .clip(CircleShape)
+                                        .background(bubbleColor.background(darkAppearance))
+                                        .border(0.5.dp, MaterialTheme.colorScheme.outlineVariant, CircleShape),
+                                    contentAlignment = Alignment.Center,
+                                ) {
+                                    Text(
+                                        initial,
+                                        style = MaterialTheme.typography.titleSmall,
+                                        fontWeight = FontWeight.SemiBold,
+                                        color = MaterialTheme.colorScheme.onSurface,
+                                    )
                                 }
-                                DropdownMenu(expanded = actionsID == agent.id, onDismissRequest = { actionsID = null }) {
-                                    DropdownMenuItem(text = { Text(stringResource(R.string.expert_color_action)) }, onClick = {
-                                        actionsID = null; colorID = agent.id
-                                    }, enabled = !busy)
-                                    val archived = agent.availability == "archived"
-                                    val conflictMessage = stringResource(R.string.expert_conflict_refresh)
-                                    DropdownMenuItem(text = { Text(stringResource(if (archived) R.string.expert_restore else R.string.expert_archive)) },
-                                        modifier = Modifier.testTag("expert.availability.${agent.id}"),
-                                        enabled = !busy && agent.availability in setOf("active", "archived"), onClick = {
-                                            actionsID = null
-                                            perform {
-                                                val snapshot = checkNotNull(directory)
-                                                val original = snapshot.agents.single { it.id == agent.id }
-                                                check(original.revision == agent.revision && original.availability == agent.availability) {
-                                                    conflictMessage
-                                                }
-                                                directory = dataSource.updateAgent(
-                                                    state.conversationId,
-                                                    editorScope?.storeEpoch,
-                                                    original.copy(availability = if (archived) "active" else "archived"),
-                                                    original.name,
-                                                    original.description,
-                                                    snapshot,
-                                                )
-                                                dataSource.refreshConversationExperts(restoreSelection = false)
+                            },
+                            headlineContent = { Text(agent.name, fontWeight = FontWeight.Medium) },
+                            supportingContent = {
+                                Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                                    if (agent.availability == "archived" || !roleLabel.isNullOrBlank()) {
+                                        Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                                            if (!roleLabel.isNullOrBlank()) {
+                                                NolaBadge(text = roleLabel, tint = MaterialTheme.colorScheme.primary)
                                             }
-                                        })
+                                            if (agent.availability == "archived") {
+                                                NolaBadge(
+                                                    text = stringResource(R.string.expert_archived),
+                                                    tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                                                )
+                                            }
+                                        }
+                                    }
+                                    if (agent.description.isNotBlank()) Text(agent.description)
+                                }
+                            },
+                            modifier = Modifier.fillMaxWidth().heightIn(min = 56.dp).testTag("expert.row.${agent.id}")
+                                .clickable(enabled = !busy && catalogReady) {
+                                    editAgent(agent)
+                                },
+                            trailingContent = {
+                                Box {
+                                    IconButton(onClick = { actionsID = agent.id }, enabled = !busy,
+                                        modifier = Modifier.sizeIn(minWidth = 48.dp, minHeight = 48.dp).testTag("expert.actions.${agent.id}")) {
+                                        Icon(Icons.Filled.MoreVert, contentDescription = stringResource(R.string.expert_actions, agent.name))
+                                    }
+                                    DropdownMenu(expanded = actionsID == agent.id, onDismissRequest = { actionsID = null }) {
+                                        DropdownMenuItem(text = { Text(stringResource(R.string.expert_color_action)) }, onClick = {
+                                            actionsID = null; colorID = agent.id
+                                        }, enabled = !busy)
+                                        val archived = agent.availability == "archived"
+                                        val conflictMessage = stringResource(R.string.expert_conflict_refresh)
+                                        DropdownMenuItem(text = { Text(stringResource(if (archived) R.string.expert_restore else R.string.expert_archive)) },
+                                            modifier = Modifier.testTag("expert.availability.${agent.id}"),
+                                            enabled = !busy && agent.availability in setOf("active", "archived"), onClick = {
+                                                actionsID = null
+                                                perform {
+                                                    val snapshot = checkNotNull(directory)
+                                                    val original = snapshot.agents.single { it.id == agent.id }
+                                                    check(original.revision == agent.revision && original.availability == agent.availability) {
+                                                        conflictMessage
+                                                    }
+                                                    directory = dataSource.updateAgent(
+                                                        state.conversationId,
+                                                        editorScope?.storeEpoch,
+                                                        original.copy(availability = if (archived) "active" else "archived"),
+                                                        original.name,
+                                                        original.description,
+                                                        snapshot,
+                                                    )
+                                                    dataSource.refreshConversationExperts(restoreSelection = false)
+                                                }
+                                            })
+                                    }
                                 }
                             }
-                        })
+                        )
+                    }
                 }
             }
+        }
         }
     }
 }

@@ -1092,13 +1092,17 @@ private struct MacCodeBlockView: View {
                 Button {
                     NSPasteboard.general.clearContents()
                     guard NSPasteboard.general.setString(source, forType: .string) else { copied = false; feedbackID = UUID(); copyFailed = true; return }
-                    copied = true
+                    withAnimation(reduceMotion ? nil : .easeOut(duration: MacDesignTokens.Motion.selection)) {
+                        copied = true
+                    }
                     feedbackID = UUID()
                     let feedback = feedbackID
                     Task { @MainActor in
                         do { try await Task.sleep(for: .seconds(1.2)) } catch { return }
                         guard feedbackID == feedback else { return }
-                        copied = false
+                        withAnimation(reduceMotion ? nil : .easeOut(duration: MacDesignTokens.Motion.selection)) {
+                            copied = false
+                        }
                     }
                 } label: {
                     Label(
@@ -1106,12 +1110,14 @@ private struct MacCodeBlockView: View {
                         systemImage: copied ? "checkmark" : "doc.on.doc"
                     )
                         .font(.system(size: 9.5, weight: .medium))
+                        .contentTransition(reduceMotion ? .identity : .symbolEffect(.replace))
                 }
-                .buttonStyle(.plain)
-                .foregroundStyle(copied ? Color.green : Color.secondary)
+                .buttonStyle(MacActionButtonStyle())
+                .foregroundStyle(copied ? MacDesignColor.success : Color.secondary)
             }
             .padding(.horizontal, 11)
-            .frame(height: 32)
+            .padding(.vertical, 3)
+            .frame(minHeight: 38)
             .background(Color.primary.opacity(0.045))
 
             Divider().opacity(0.45)

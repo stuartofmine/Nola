@@ -142,7 +142,7 @@
     dialog.compact.dragging { transition:none; }
     dialog.compact:not([open]) { display: none; }
     dialog.compact[open] { opacity: 1; transform: translateX(var(--panel-drag-x, 0px)); }
-    dialog.compact::backdrop { background: rgb(0 0 0 / 0); transition: background-color var(--motion-slow) ease; }
+    dialog.compact::backdrop { background: rgb(0 0 0 / 0); transition: background-color var(--motion-slow) ease, overlay var(--motion-slow) allow-discrete, display var(--motion-slow) allow-discrete; }
     dialog.compact[open]::backdrop { background: rgb(0 0 0 / .4); }
     @starting-style { dialog.compact[open] { opacity: 0; transform: translateX(var(--panel-entry-x)); } dialog.compact[open]::backdrop { background: rgb(0 0 0 / 0); } }
     @media (prefers-reduced-motion: reduce) { dialog.compact, dialog.compact::backdrop { transition-duration: 0ms; } }

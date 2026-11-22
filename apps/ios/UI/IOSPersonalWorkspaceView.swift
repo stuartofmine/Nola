@@ -299,7 +299,7 @@ struct IOSWorkspaceManagementContent: View {
         Group {
             switch destination {
             case .knowledge: IOSKnowledgePointsView(initialDirectory: initialDirectory)
-            case .sources: HomeView(ownsNavigationStack: false)
+            case .sources: DataSourcesView()
             case .memory: PersonalIntelligenceDashboardView(embedded: true)
             case .plans: ScheduledActionsView(embedded: true)
             case .records:
@@ -492,6 +492,8 @@ private struct IOSKnowledgePointsView: View {
     @State private var conversations: [IOSConversationDirectoryEntry] = []
     @State private var hasLoaded = false
     @State private var loadError: String?
+    @State private var searchText = ""
+    @State private var expandedIDs: Set<UUID> = []
 
     init(initialDirectory: [IOSConversationDirectoryEntry]?) {
         _conversations = State(initialValue: Self.savedKnowledge(in: initialDirectory ?? []))
@@ -500,6 +502,20 @@ private struct IOSKnowledgePointsView: View {
 
     private static func savedKnowledge(in directory: [IOSConversationDirectoryEntry]) -> [IOSConversationDirectoryEntry] {
         directory.filter { !$0.knowledgePoints.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
+    }
+
+    private var filteredConversations: [IOSConversationDirectoryEntry] {
+        let query = searchText.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !query.isEmpty else { return conversations }
+        return conversations.filter { conversation in
+            let displayTitle = IOSConversationTitlePresentationPolicy.displayTitle(
+                conversation.title,
+                conversationID: conversation.id.uuidString,
+                fallback: L10n.chatConversationDefaultTitle
+            )
+            return displayTitle.localizedStandardContains(query)
+                || conversation.knowledgePoints.localizedStandardContains(query)
+        }
     }
 
     var body: some View {
@@ -517,28 +533,72 @@ private struct IOSKnowledgePointsView: View {
                 Text(NSLocalizedString("information.knowledge.empty", value: "No conversation knowledge points yet.", comment: "Empty knowledge list"))
                     .foregroundStyle(.secondary).padding(.vertical, 20).listRowSeparator(.hidden)
                     .listRowBackground(DesignTokens.backgroundColor)
+            } else if filteredConversations.isEmpty {
+                ContentUnavailableView.search(text: searchText)
+                    .listRowSeparator(.hidden)
+                    .listRowBackground(DesignTokens.backgroundColor)
             }
-            ForEach(conversations) { conversation in
-                VStack(alignment: .leading, spacing: 10) {
-                    Text(IOSConversationTitlePresentationPolicy.displayTitle(conversation.title,
-                        conversationID: conversation.id.uuidString, fallback: L10n.chatConversationDefaultTitle))
-                        .font(.body.weight(.semibold))
-                    ChatMarkdownView(content: conversation.knowledgePoints).textSelection(.enabled)
-                    Button {
-                        dismiss()
-                        NotificationCenter.default.post(name: .nolaOpenChatTab, object: conversation.canonicalID)
+            ForEach(filteredConversations) { conversation in
+                let isExpanded = Binding<Bool>(
+                    get: { expandedIDs.contains(conversation.id) },
+                    set: { expanded in
+                        if expanded { expandedIDs.insert(conversation.id) }
+                        else { expandedIDs.remove(conversation.id) }
+                    }
+                )
+                NolaCard {
+                    DisclosureGroup(isExpanded: isExpanded) {
+                        VStack(alignment: .leading, spacing: 10) {
+                            ChatMarkdownView(content: conversation.knowledgePoints)
+                                .textSelection(.enabled)
+                                .padding(.top, 6)
+                            Button {
+                                dismiss()
+                                NotificationCenter.default.post(name: .nolaOpenChatTab, object: conversation.canonicalID)
+                            } label: {
+                                Label(
+                                    NSLocalizedString("information.knowledge.open_conversation", value: "Open conversation", comment: "Open source conversation from knowledge point"),
+                                    systemImage: "bubble.left"
+                                )
+                                .font(.subheadline.weight(.medium))
+                                .foregroundStyle(DesignTokens.actionColor)
+                                .frame(minHeight: 44)
+                            }
+                            .buttonStyle(.borderless)
+                        }
                     } label: {
-                        Label(L10n.chatTitle, systemImage: "bubble.left").frame(minHeight: 44)
-                    }.buttonStyle(.borderless)
+                        VStack(alignment: .leading, spacing: 4) {
+                            Text(IOSConversationTitlePresentationPolicy.displayTitle(conversation.title,
+                                conversationID: conversation.id.uuidString, fallback: L10n.chatConversationDefaultTitle))
+                                .font(.body.weight(.semibold))
+                                .foregroundStyle(DesignTokens.contentColor)
+                                .lineLimit(2)
+                            if !expandedIDs.contains(conversation.id) {
+                                Text(conversation.knowledgePoints)
+                                    .font(.caption)
+                                    .foregroundStyle(DesignTokens.secondaryContentColor)
+                                    .lineLimit(2)
+                            }
+                            Text(conversation.lastActiveAt, format: .dateTime.month().day())
+                                .font(.caption2)
+                                .foregroundStyle(DesignTokens.secondaryContentColor)
+                        }
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                    }
+                    .disclosureGroupStyle(NolaRowDisclosureStyle(isPlain: true))
                 }
                 .listRowSeparator(.hidden)
                 .listRowBackground(DesignTokens.backgroundColor)
-                .listRowInsets(EdgeInsets(top: 12, leading: pageInset, bottom: 12, trailing: pageInset))
+                .listRowInsets(EdgeInsets(top: 6, leading: pageInset, bottom: 6, trailing: pageInset))
             }
         }
         .listStyle(.plain)
         .scrollContentBackground(.hidden)
         .background(DesignTokens.backgroundColor)
+        .searchable(
+            text: $searchText,
+            prompt: Text(NSLocalizedString("information.knowledge.search", value: "Search knowledge points", comment: "Search knowledge points"))
+        )
         .task { await reload() }
         .refreshable { await reload() }
         .accessibilityIdentifier("information.knowledge.list")
@@ -634,18 +694,23 @@ struct IOSConversationActivityView: View {
         NavigationLink { ScheduledActionsView(embedded: true) } label: {
             HStack(spacing: 12) {
                 Image(systemName: "calendar").font(.title3).foregroundStyle(DesignTokens.actionColor)
-                VStack(alignment: .leading, spacing: 4) {
+                VStack(alignment: .leading, spacing: 3) {
                     Text("workspace.plans").font(.subheadline.weight(.semibold)).foregroundStyle(.primary)
                     if let nextPlan {
-                        Text(nextPlan.title ?? String(localized: "workspace.plans")).font(.subheadline).foregroundStyle(.secondary).lineLimit(1)
+                        Text(nextPlan.title ?? String(localized: "workspace.plans")).font(.footnote).foregroundStyle(.secondary).lineLimit(1)
                         Text(Date(timeIntervalSince1970: Double(nextPlan.scheduled_for_ms) / 1000),
                             format: .dateTime.month().day().hour().minute()).font(.caption).foregroundStyle(.secondary)
+                    } else {
+                        Text(NSLocalizedString("workspace.plans.empty_subtitle", value: "No upcoming scheduled plans", comment: "Empty subtitle when no scheduled plans are queued"))
+                            .font(.caption)
+                            .foregroundStyle(DesignTokens.secondaryContentColor)
+                            .lineLimit(1)
                     }
                 }
                 Spacer(minLength: 8)
                 Image("nola-chevron").resizable().renderingMode(.template).scaledToFit()
                     .frame(width: 14, height: 14).foregroundStyle(.secondary)
-            }.frame(maxWidth: .infinity, minHeight: 64, alignment: .leading).padding(14)
+            }.frame(maxWidth: .infinity, minHeight: 52, alignment: .leading).padding(.horizontal, 14).padding(.vertical, 10)
                 .background(DesignTokens.surfaceColor, in: RoundedRectangle(cornerRadius: 14))
                 .overlay(RoundedRectangle(cornerRadius: 14).stroke(DesignTokens.borderColor, lineWidth: 0.75))
                 .contentShape(Rectangle())
@@ -682,6 +747,21 @@ struct IOSConversationActivityView: View {
         .toolbar {
             if isRootTab && horizontalSizeClass == .compact {
                 IOSWorkspaceToolbarHeading(title: String(localized: "information.activity"), identifier: "activity.heading")
+            }
+            ToolbarItem(placement: .topBarTrailing) {
+                NavigationLink {
+                    NotificationCenterView(ownsNavigationStack: false)
+                        .environmentObject(container)
+                } label: {
+                    Image(systemName: "bell")
+                        .font(.system(size: 17, weight: .medium))
+                        .foregroundStyle(DesignTokens.contentColor)
+                        .frame(width: 44, height: 44)
+                        .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel(L10n.notificationsTitle)
+                .accessibilityIdentifier("activity.notifications")
             }
         }
         .toolbarBackground(.hidden, for: .navigationBar)

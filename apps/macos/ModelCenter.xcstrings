@@ -63,6 +63,7 @@
       }
     },
     "%lld CPU cores" : {
+      "extractionState" : "stale",
       "localizations" : {
         "zh-Hans" : {
           "stringUnit" : {
@@ -202,6 +203,9 @@
           }
         }
       }
+    },
+    "Account actions" : {
+
     },
     "Account label" : {
       "localizations" : {
@@ -484,6 +488,12 @@
           }
         }
       }
+    },
+    "Advanced" : {
+
+    },
+    "Advanced Overrides" : {
+
     },
     "Advanced parameters" : {
       "localizations" : {
@@ -1379,6 +1389,9 @@
           }
         }
       }
+    },
+    "Automatic (protocol default)" : {
+
     },
     "Available model" : {
       "extractionState" : "stale",
@@ -2858,6 +2871,9 @@
           }
         }
       }
+    },
+    "Clear" : {
+
     },
     "Clear settings" : {
       "localizations" : {
@@ -4638,6 +4654,9 @@
         }
       }
     },
+    "Dismiss" : {
+
+    },
     "Display name" : {
       "localizations" : {
         "zh-Hans" : {
@@ -4903,6 +4922,7 @@
       }
     },
     "Download size" : {
+      "extractionState" : "stale",
       "localizations" : {
         "zh-Hans" : {
           "stringUnit" : {
@@ -5514,6 +5534,7 @@
       }
     },
     "Estimated memory" : {
+      "extractionState" : "stale",
       "localizations" : {
         "zh-Hans" : {
           "stringUnit" : {
@@ -5585,6 +5606,7 @@
       }
     },
     "Free disk space" : {
+      "extractionState" : "stale",
       "localizations" : {
         "zh-Hans" : {
           "stringUnit" : {
@@ -5993,6 +6015,9 @@
           }
         }
       }
+    },
+    "Legacy limit parameter (max_tokens)" : {
+
     },
     "Link copied" : {
       "extractionState" : "manual",
@@ -7213,6 +7238,9 @@
         }
       }
     },
+    "Manage Models" : {
+
+    },
     "Maximum output" : {
       "localizations" : {
         "zh-Hans" : {
@@ -7224,6 +7252,7 @@
       }
     },
     "Memory" : {
+      "extractionState" : "stale",
       "localizations" : {
         "zh-Hans" : {
           "stringUnit" : {
@@ -7838,6 +7867,9 @@
           }
         }
       }
+    },
+    "Needs attention" : {
+
     },
     "New Endpoint" : {
       "localizations" : {
@@ -8465,6 +8497,7 @@
       }
     },
     "Optional · recommend a model for this Mac" : {
+      "extractionState" : "stale",
       "localizations" : {
         "zh-Hans" : {
           "stringUnit" : {
@@ -8484,7 +8517,11 @@
         }
       }
     },
+    "Output length parameter" : {
+
+    },
     "Output token field" : {
+      "extractionState" : "stale",
       "localizations" : {
         "zh-Hans" : {
           "stringUnit" : {
@@ -9075,6 +9112,7 @@
       }
     },
     "Protocol default" : {
+      "extractionState" : "stale",
       "localizations" : {
         "zh-Hans" : {
           "stringUnit" : {
@@ -9093,6 +9131,9 @@
           }
         }
       }
+    },
+    "Provider preset" : {
+
     },
     "Reasoning" : {
       "localizations" : {
@@ -9439,6 +9480,9 @@
           }
         }
       }
+    },
+    "Refresh recommendations and hardware status" : {
+
     },
     "Refresh the preview and try again" : {
       "localizations" : {
@@ -11575,7 +11619,11 @@
         }
       }
     },
+    "Standard completion limit (max_completion_tokens)" : {
+
+    },
     "Start" : {
+      "extractionState" : "stale",
       "localizations" : {
         "de" : {
           "stringUnit" : {
@@ -11819,6 +11867,7 @@
       }
     },
     "Stop" : {
+      "extractionState" : "stale",
       "localizations" : {
         "de" : {
           "stringUnit" : {
@@ -12593,6 +12642,7 @@
       }
     },
     "The runtime target controls Start. The default chat model is a separate preference." : {
+      "extractionState" : "stale",
       "localizations" : {
         "de" : {
           "stringUnit" : {
@@ -13560,6 +13610,7 @@
       }
     },
     "Use for Start" : {
+      "extractionState" : "stale",
       "localizations" : {
         "de" : {
           "stringUnit" : {
@@ -13934,6 +13985,42 @@
           }
         }
       }
+    },
+    "停止" : {
+
+    },
+    "内存紧张" : {
+
+    },
+    "切换并使用" : {
+
+    },
+    "剩余" : {
+
+    },
+    "我的本地模型" : {
+
+    },
+    "技术详情" : {
+
+    },
+    "推荐预设模型" : {
+
+    },
+    "搜索模型，或直接粘贴 Hugging Face / ModelScope 链接或 owner/repo" : {
+
+    },
+    "流畅运行" : {
+
+    },
+    "管理与下载本地模型…" : {
+
+    },
+    "适中运行" : {
+
+    },
+    "预计内存" : {
+
     }
   },
   "version" : "1.0"

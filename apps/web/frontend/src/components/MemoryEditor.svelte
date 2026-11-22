@@ -51,7 +51,9 @@
             <label>{t($locale, 'memoryCenter.scope')}<select bind:value={draft.scope}>{#if !['global', 'workspace', 'conversation', 'turn'].includes(draft.scope)}<option value={draft.scope}>{draft.scope}</option>{/if}{#each ['global', 'workspace', 'conversation', 'turn'] as value}<option {value}>{t($locale, `memoryCenter.scope.${value}`)}</option>{/each}</select></label>
             <label>{t($locale, 'memoryCenter.kind')}<select bind:value={draft.kind}>{#each ['preference', 'identity', 'decision', 'project', 'feedback', 'reference', 'other'] as value}<option {value}>{t($locale, `memoryCenter.kind.${value}`)}</option>{/each}</select></label>
             <label>{t($locale, 'memoryCenter.tags')}<input bind:value={tags} /></label>
-            <label>{t($locale, 'memoryCenter.confidence')}<input type="number" min="0" max="1" step="any" bind:value={draft.confidence} required /></label>
+            {#if record && record.source && record.source !== 'user' && record.source !== 'manual'}
+                <p class="source-note muted">{t($locale, 'memoryCenter.source')}: {record.source}</p>
+            {/if}
         </fieldset>
         <div class="actions"><button type="button" disabled={saving} onclick={() => close()}>{t($locale, 'shell.cancel')}</button><button type="submit" class="primary" disabled={saving || uncertain || !draft.content.trim()}>{t($locale, saving ? 'models.saving' : 'memoryCenter.save')}</button></div>
     </form>

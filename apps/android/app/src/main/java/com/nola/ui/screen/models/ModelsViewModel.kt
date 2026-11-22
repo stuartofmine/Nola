@@ -21,6 +21,7 @@ import com.nola.llm.local.DeviceModelRecord
 import com.nola.llm.local.DeviceModelStore
 import com.nola.llm.local.DeviceModelCatalog
 import com.nola.llm.local.DeviceModelCatalogEntry
+import com.nola.llm.local.LocalModelDownloadSource
 import com.nola.llm.provider.LocalLlamaProvider
 import com.nola.llm.provider.LocalModelRuntimeState
 import com.nola.llm.provider.OpenAiProvider
@@ -48,6 +49,7 @@ data class ModelsUiState(
     val configuredApiModels: List<ModelInfo> = emptyList(),
     val installedLocalModels: List<ModelInfo> = emptyList(),
     val deviceCatalog: List<DeviceModelCatalogEntry> = DeviceModelCatalog.entries,
+    val downloadSource: LocalModelDownloadSource = DeviceModelCatalog.defaultSource(),
     val downloadingModelId: String? = null,
     val downloadProgress: Float? = null,
     val webHostModel: ModelInfo? = null,
@@ -158,6 +160,30 @@ class ModelsViewModel @Inject constructor(
                 }
             }
         }
+        viewModelScope.launch {
+            deviceModelStore.downloadState.collect { dl ->
+                _uiState.update {
+                    it.copy(
+                        downloadingModelId = dl.downloadingModelId,
+                        downloadProgress = dl.progress,
+                    )
+                }
+                if (dl.completedModelId != null) {
+                    val name = dl.completedDisplayName ?: dl.completedModelId
+                    deviceModelStore.consumeTerminalDownloadEvent()
+                    loadModels()
+                    publishStatus(context.getString(R.string.models_download_complete_format, name), true)
+                } else if (dl.error != null) {
+                    val msg = dl.error
+                    deviceModelStore.consumeTerminalDownloadEvent()
+                    publishStatus(context.getString(R.string.models_download_failed_format, msg), false)
+                }
+            }
+        }
+    }
+
+    fun setDownloadSource(source: LocalModelDownloadSource) {
+        _uiState.update { it.copy(downloadSource = source) }
     }
 
     fun loadConnectionInventory() {
@@ -278,8 +304,14 @@ class ModelsViewModel @Inject constructor(
                     ModelInfo.ModelSource.Local -> {
                         val ready = localLlamaProvider.state.value as? LocalModelRuntimeState.Ready
                         if (ready?.modelId != model.id) {
-                            publishStatus(context.getString(R.string.models_error_model_unavailable), false)
-                            return@launch
+                            val record = installedLocalRecords.firstOrNull { it.id == model.id }
+                                ?: deviceModelStore.installedModels().firstOrNull { it.id == model.id }
+                            if (record == null) {
+                                publishStatus(context.getString(R.string.models_error_model_unavailable), false)
+                                return@launch
+                            }
+                            val params = modelParametersStore.loadLocalParameters(model.id, record.contextWindow)
+                            localLlamaProvider.start(record, params)
                         }
                         modelService.reconfigure(localLlamaProvider, model.id, "local")
                     }
@@ -619,49 +651,14 @@ class ModelsViewModel @Inject constructor(
         }
     }
 
-    private var localDownloadJob: Job? = null
-
     fun cancelLocalModelDownload() {
-        localDownloadJob?.cancel()
-        localDownloadJob = null
+        deviceModelStore.cancelDownload()
     }
 
     fun downloadLocalModel(entry: DeviceModelCatalogEntry) {
         if (_uiState.value.downloadingModelId != null) return
-        localDownloadJob = viewModelScope.launch {
-            _uiState.update {
-                it.copy(
-                    downloadingModelId = entry.id,
-                    downloadProgress = 0f,
-                    connectionTestResult = null,
-                    connectionTestSucceeded = null,
-                )
-            }
-            try {
-                deviceModelStore.install(
-                    id = entry.id,
-                    displayName = entry.displayName,
-                    sourceUrl = entry.downloadUrl,
-                    expectedSha256 = entry.sha256,
-                    contextWindow = entry.contextWindow,
-                    recommendedRamBytes = entry.recommendedRamBytes,
-                ) { progress ->
-                    val total = progress.totalBytes
-                    _uiState.update { state ->
-                        state.copy(downloadProgress = total?.let { progress.downloadedBytes.toFloat() / it.toFloat() })
-                    }
-                }
-                loadModels()
-                publishStatus(context.getString(R.string.models_download_complete_format, entry.displayName), true)
-            } catch (cancelled: CancellationException) {
-                throw cancelled
-            } catch (error: Throwable) {
-                publishStatus(context.getString(R.string.models_download_failed_format, error.message.orEmpty()), false)
-            } finally {
-                localDownloadJob = null
-                _uiState.update { it.copy(downloadingModelId = null, downloadProgress = null) }
-            }
-        }
+        _uiState.update { it.copy(connectionTestResult = null, connectionTestSucceeded = null) }
+        deviceModelStore.startDownload(entry, _uiState.value.downloadSource)
     }
 
     private var webHostConnectionJob: Job? = null

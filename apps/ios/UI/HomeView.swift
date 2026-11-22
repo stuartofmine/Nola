@@ -1059,7 +1059,6 @@ struct SummaryItemCard: View {
     @EnvironmentObject var container: ServiceContainer
     let item: SummaryItem
     let prefersEventDetail: Bool
-    @State private var isPressed = false
 
     var body: some View {
         Group {
@@ -1073,12 +1072,7 @@ struct SummaryItemCard: View {
                 }
             }
         }
-        .buttonStyle(.plain)
-        .simultaneousGesture(
-            DragGesture(minimumDistance: 0)
-                .onChanged { _ in isPressed = true }
-                .onEnded { _ in isPressed = false }
-        )
+        .buttonStyle(SummaryItemCardButtonStyle())
     }
 
     private var cardContent: some View {
@@ -1129,15 +1123,6 @@ struct SummaryItemCard: View {
             }
             .contentShape(Rectangle())
             .padding(16)
-            .background(
-                RoundedRectangle(cornerRadius: DesignTokens.radius_lg, style: .continuous)
-                    .fill(DesignTokens.surfaceColor)
-            )
-            .overlay(
-                RoundedRectangle(cornerRadius: DesignTokens.radius_lg, style: .continuous)
-                    .stroke(DesignTokens.borderColor, lineWidth: 1)
-            )
-            .scaleEffect(isPressed ? 0.98 : 1.0)
         }
     private var priorityColor: Color {
         if item.priority >= 0.8 { return .red }
@@ -1155,6 +1140,26 @@ struct SummaryItemCard: View {
         if item.priority >= 0.8 { return "flame.fill" }
         if item.priority >= 0.5 { return "bolt.fill" }
         return "checkmark"
+    }
+}
+
+private struct SummaryItemCardButtonStyle: ButtonStyle {
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+
+    func makeBody(configuration: Configuration) -> some View {
+        configuration.label
+            .background(
+                RoundedRectangle(cornerRadius: DesignTokens.radius_lg, style: .continuous)
+                    .fill(configuration.isPressed ? DesignTokens.rowFillColor : DesignTokens.surfaceColor)
+            )
+            .overlay(
+                RoundedRectangle(cornerRadius: DesignTokens.radius_lg, style: .continuous)
+                    .stroke(DesignTokens.borderColor, lineWidth: 1)
+            )
+            .animation(
+                reduceMotion ? nil : .easeOut(duration: DesignTokens.motionFast),
+                value: configuration.isPressed
+            )
     }
 }
 

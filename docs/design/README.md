@@ -15,10 +15,11 @@
 
 1. [对话与工具交互](shared/CONVERSATION_UI_DESIGN.md)：输入区、模型原生档位、提示词位置、主题、流式显示与移动手势。
 2. [会话检查器](shared/CONVERSATION_INSPECTOR.md)、[Apple 适配](../platforms/apple/CONVERSATION_INSPECTOR.md)：右侧原地展开、多区段、草稿与观察生命周期。
-3. [视觉系统](shared/DESIGN_SYSTEM.md)：语义主题、悬停/按压、复制动作、间距、减少动态效果及平台实现入口。
-4. [统一对话与可保存 Agent](shared/MULTI_AGENT_NAVIGATION.md)：领域对象目标与执行归属；目标不等于当前 Room 代码已经删除。
-5. [客户端交互与配置架构](../architecture/模块/13-客户端投影/CLIENT_INTERACTION_AND_CONFIGURATION.md)：状态所有者、精确参数调用链、各端差异与源码映射。
-6. [视觉验收](shared/VISUAL_ACCEPTANCE_CONTRACT.md)、[跨端对齐门槛](shared/CROSS_PLATFORM_UI_PARITY.md)：原型、组件、隔离存储、整窗和真实模型证据分别记录。
+3. [视觉系统](shared/DESIGN_SYSTEM.md)：语义主题、图标位置与入口归属原则、悬停/按压、复制动作、间距、减少动态效果及平台实现入口。
+4. [本地模型体验](shared/LOCAL_MODEL_EXPERIENCE.md)：动态在线推荐与缓存、UTC+8 默认 ModelScope、链接直达解析与一键下载启用。
+5. [统一对话与可保存 Agent](shared/MULTI_AGENT_NAVIGATION.md)：领域对象目标与执行归属；目标不等于当前 Room 代码已经删除。
+6. [客户端交互与配置架构](../architecture/模块/13-客户端投影/CLIENT_INTERACTION_AND_CONFIGURATION.md)：状态所有者、精确参数调用链、各端差异与源码映射。
+7. [视觉验收](shared/VISUAL_ACCEPTANCE_CONTRACT.md)、[跨端对齐门槛](shared/CROSS_PLATFORM_UI_PARITY.md)：原型、组件、隔离存储、整窗和真实模型证据分别记录。
 
 手机当前以会话列表进入聊天，主导航为对话、活动、资料、设置；Today 不再是现行默认入口。桌面保留单顶栏、内容标签、独立左栏和可关闭右栏。检查器原地展开，预设提示词归入模型设置，聊天推理选择按模型实际档位显示，不并列固定三档。
 

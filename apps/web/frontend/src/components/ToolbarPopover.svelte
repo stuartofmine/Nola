@@ -19,8 +19,10 @@
     top = bounds.bottom + 8; right = Math.max(12, window.innerWidth - bounds.right);
 }} popovertarget={id} aria-label={label} title={label} aria-haspopup="dialog"><PrototypeIcon name="more" /></button>
 <div id={id} popover="auto" role="dialog" aria-label={label} class="toolbar-popover" tabindex="-1" style:top={`${top}px`} style:right={`${right}px`} style:--popover-top={`${top}px`} bind:this={panel} ontoggle={afterToggle} onkeydown={event => { if (event.key === 'Escape') { panel.hidePopover(); trigger.focus(); } }} onclick={event => {
-    const button = event.target instanceof Element ? event.target.closest('button') : null;
-    if (button && !button.disabled) panel.hidePopover();
+    const target = event.target instanceof Element ? event.target : null;
+    if (!target || target.closest('details, [data-keep-popover]')) return;
+    const button = target.closest('button');
+    if (button && !button.disabled && !button.hasAttribute('aria-haspopup')) panel.hidePopover();
 }}>{@render children()}</div>
 <style>
     .toolbar-more { flex: none; display: inline-flex; align-items: center; justify-content: center; padding: 0; color: var(--muted); width: var(--control-hit-size); min-height: var(--control-hit-size); border-color: transparent; background: transparent; font-size: 24px; }

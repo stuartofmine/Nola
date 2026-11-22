@@ -64,6 +64,8 @@ import com.nola.R
 import com.nola.core.PersonalIntelligenceCore
 import com.nola.ui.components.NolaColors
 import com.nola.ui.components.NolaMotion
+import com.nola.ui.components.nolaTween
+import com.nola.ui.components.rememberReduceMotionEnabled
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.contentOrNull
@@ -74,6 +76,7 @@ import kotlinx.serialization.json.jsonPrimitive
 
 @Composable
 fun PersonalIntelligenceDialog(onDismiss: () -> Unit) {
+    val reduceMotion = rememberReduceMotionEnabled()
     val context = androidx.compose.ui.platform.LocalContext.current
     val intelligence = remember(context) { PersonalIntelligenceCore.from(context) }
     var snapshot by remember(intelligence) { mutableStateOf(intelligence.snapshot()) }
@@ -160,10 +163,7 @@ fun PersonalIntelligenceDialog(onDismiss: () -> Unit) {
 
                     Column(
                         modifier = Modifier.animateContentSize(
-                            animationSpec = tween(
-                                durationMillis = NolaMotion.base,
-                                easing = NolaMotion.emphasizedEasing,
-                            )
+                            animationSpec = nolaTween(NolaMotion.base, reduceMotion)
                         ),
                         verticalArrangement = Arrangement.spacedBy(10.dp)
                     ) {

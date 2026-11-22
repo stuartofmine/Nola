@@ -23,6 +23,7 @@ struct ChatTopBar: View {
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @Environment(\.accessibilityReduceTransparency) private var reduceTransparency
+    @Environment(\.colorScheme) private var colorScheme
     let showsHistoryToggle: Bool
     var showsConversationTitle: Bool = true
     let roomTitle: String?
@@ -101,7 +102,13 @@ struct ChatTopBar: View {
             if let roomTitle {
                 Button(action: onShowRooms) {
                     VStack(spacing: 2) {
-                        Text(roomTitle).font(.headline).foregroundStyle(.primary)
+                        HStack(spacing: 4) {
+                            Text(roomTitle).font(.headline).foregroundStyle(.primary)
+                            Image(systemName: "chevron.right")
+                                .font(.caption2.weight(.semibold))
+                                .foregroundStyle(.secondary)
+                                .accessibilityHidden(true)
+                        }
                         Text("room.members").font(.caption).foregroundStyle(.secondary)
                     }.frame(maxWidth: .infinity, minHeight: 44)
                         .contentShape(Rectangle())
@@ -129,7 +136,7 @@ struct ChatTopBar: View {
         .padding(.horizontal, 12)
         .padding(.vertical, 5)
         .background(DesignTokens.backgroundColor.ignoresSafeArea(edges: .top))
-        .overlay(Rectangle().fill(DesignTokens.borderColor).frame(height: 0.5), alignment: .bottom)
+        .overlay(Rectangle().fill(DesignTokens.hairlineBorderColor(for: colorScheme)).frame(height: 0.5), alignment: .bottom)
     }
 
     // The same model picker is used in the phone navigation bar and wider layouts.
@@ -158,18 +165,24 @@ struct ChatTopBar: View {
                     Button {
                         onShowModelPicker()
                     } label: {
-                        Label(NSLocalizedString("chat.model.manage", value: "管理模型与参数", comment: "Open model management"), systemImage: "slider.horizontal.3")
+                        Label(NSLocalizedString("chat.model.manage", value: "Manage models and parameters", comment: "Open model management"), systemImage: "slider.horizontal.3")
                     }
                 }
             } label: {
                 HStack(spacing: 6) {
                     VStack(spacing: 1) {
                         if showsConversationTitle {
-                        Text(conversationSubtitle)
-                            .font(.subheadline.weight(.semibold))
-                            .foregroundColor(.primary)
-                            .lineLimit(1)
-                            .truncationMode(.middle)
+                            HStack(spacing: 4) {
+                                Text(conversationSubtitle)
+                                    .font(.subheadline.weight(.semibold))
+                                    .foregroundColor(.primary)
+                                    .lineLimit(1)
+                                    .truncationMode(.middle)
+                                Image(systemName: "chevron.right")
+                                    .font(.caption2.weight(.semibold))
+                                    .foregroundStyle(.secondary)
+                                    .accessibilityHidden(true)
+                            }
                         }
                         HStack(spacing: 5) {
                             Text(currentModelShortLabel)
@@ -195,7 +208,7 @@ struct ChatTopBar: View {
             .accessibilityIdentifier("chat.topbar.modelPicker")
             .accessibilityLabel(
                 String(
-                    format: NSLocalizedString("chat.topbar.accessibility.summary", value: "%@，%@", comment: "Top bar summary accessibility label"),
+                    format: NSLocalizedString("chat.topbar.accessibility.summary", value: "%@, %@", comment: "Top bar summary accessibility label"),
                     conversationSubtitle,
                     modelConnectionLabel
                 )
@@ -205,18 +218,20 @@ struct ChatTopBar: View {
 
     var actionsMenu: some View {
         Menu {
-            Text(selectedModel?.isWebBackend == true ? String(localized: "execution.scope.host") : String(localized: "execution.scope.local"))
-            Text(String(localized: "execution.scope.child"))
             Button(String(localized: "work.tools.title"), systemImage: "square.grid.2x2", action: onShowWorkTools)
                 .accessibilityIdentifier("chat.work_tools.open")
-            Divider()
-            Button(String(localized: "chat.experts.title"), systemImage: "person.2", action: onShowRooms)
-                .accessibilityIdentifier("chat.experts.open")
             Button(String(localized: "inspector.progress", table: "ConversationInspector"), systemImage: "checklist", action: onShowProgress)
                 .accessibilityIdentifier("chat.inspector.progress")
-            Button(String(localized: "inspector.resources", table: "ConversationInspector"), systemImage: "folder", action: onShowResources)
-                .accessibilityIdentifier("chat.inspector.resources")
-            if !executionBackends.isEmpty { executionBackendMenu() }
+            if presentation != .actions {
+                Button(String(localized: "chat.experts.title"), systemImage: "person.2", action: onShowRooms)
+                    .accessibilityIdentifier("chat.experts.open")
+                Button(String(localized: "inspector.resources", table: "ConversationInspector"), systemImage: "folder", action: onShowResources)
+                    .accessibilityIdentifier("chat.inspector.resources")
+            }
+            if !executionBackends.isEmpty {
+                Divider()
+                executionBackendMenu()
+            }
             Divider()
             Button(NSLocalizedString("chat.more_settings.title", value: "Conversation Settings", comment: "Conversation settings"),
                    systemImage: "slider.horizontal.3", action: onShowConversationSettings)
@@ -273,7 +288,7 @@ struct ChatTopBar: View {
     }
 
     private var executionBackendTint: Color {
-        selectedExecutionBackend?.availabilityState == .available ? Color.teal : DesignTokens.warningColor
+        selectedExecutionBackend?.availabilityState == .available ? DesignTokens.actionColor : DesignTokens.warningColor
     }
 
     private var selectedExecutionBackend: WebAgentProvider.HostAgentSettings.ExecutionBackend? {
@@ -361,7 +376,7 @@ struct ChatTopBar: View {
         .hoverEffect(.highlight)
         .help(String(localized: "chat.history.short"))
         .accessibilityLabel(
-            NSLocalizedString("chat.history.short", value: "历史", comment: "Short history button")
+            NSLocalizedString("chat.history.short", value: "History", comment: "Short history button")
         )
     }
 

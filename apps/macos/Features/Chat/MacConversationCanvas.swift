@@ -34,6 +34,8 @@ struct MacConversationCanvas: View {
     @State private var dismissedExpertMention: String?
     var modelSetupRequired: Bool
     var conversationControls: AnyView
+    var leadingComposerControls: AnyView
+    var trailingComposerControls: AnyView
     var modelControls: AnyView
     var onCommand: (ComposerCommand, String) -> Void
     @State private var viewportStore = MacTranscriptViewportStore()
@@ -50,11 +52,15 @@ struct MacConversationCanvas: View {
         expertWorkspace: MacAgentRoomWorkspace? = nil,
         modelSetupRequired: Bool = false,
         conversationControls: AnyView = AnyView(EmptyView()),
+        leadingComposerControls: AnyView = AnyView(EmptyView()),
+        trailingComposerControls: AnyView = AnyView(EmptyView()),
         modelControls: AnyView = AnyView(EmptyView()),
         onCommand: @escaping (ComposerCommand, String) -> Void = { _, _ in }
     ) {
         self.modelSetupRequired = modelSetupRequired
         self.conversationControls = conversationControls
+        self.leadingComposerControls = leadingComposerControls
+        self.trailingComposerControls = trailingComposerControls
         self.modelControls = modelControls
         self.onCommand = onCommand
         self.model = model
@@ -401,6 +407,8 @@ struct MacConversationCanvas: View {
                         actions: composerActions,
                         composerFocused: composerFocused,
                         isModelConfigured: !modelSetupRequired,
+                        leadingControls: leadingComposerControls,
+                        trailingControls: trailingComposerControls,
                         mentionCommand: handleComposerKey,
                         mentionEditor: AppleMentionEditor(mentions: mentions, caretRequest: caretRequest, selectionChanged: { range, marked in
                             selectionRange = range; composing = marked

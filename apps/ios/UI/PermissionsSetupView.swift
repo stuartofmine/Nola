@@ -74,7 +74,7 @@ struct PermissionsSetupView: View {
                 Text("\(currentStep + 1)/\(steps.count + 1)")
                     .font(.caption.monospacedDigit())
                     .foregroundStyle(.secondary)
-                    .contentTransition(.numericText())
+                    .contentTransition(reduceMotion ? .identity : .numericText())
             }
             .padding(.horizontal, 20)
             .padding(.top, 14)
@@ -136,7 +136,7 @@ struct PermissionsSetupView: View {
                     
                     // Comment in English.
                     Button {
-                        withAnimation {
+                        withAnimation(reduceMotion ? nil : DesignTokens.responsiveAnimation) {
                             currentStep += 1
                         }
                     } label: {

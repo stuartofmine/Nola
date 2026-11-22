@@ -187,8 +187,14 @@ fn startup_status(window: tauri::WebviewWindow, phase: String) -> Option<serde_j
             "startingPage"
         })
     });
+    let theme = state
+        .theme_preference
+        .lock()
+        .ok()
+        .map(|pref| pref.clone())
+        .unwrap_or_else(|| "system".into());
     Some(
-        serde_json::json!({"phase":current,"page":page,"language":native::language(),"failure":failure}),
+        serde_json::json!({"phase":current,"page":page,"language":native::language(),"failure":failure,"theme":theme}),
     )
 }
 
@@ -289,7 +295,8 @@ fn start_host(app: &AppHandle, startup: Url, generation: u64) -> Result<(), Stri
                     .permission("allow-native-runtime")
                     .permission("allow-login-item")
                     .permission("allow-set-login-item")
-                    .permission("allow-set-theme"),
+                    .permission("allow-set-theme")
+                    .permission("allow-open-logs-folder"),
             )
             .map_err(|e| e.to_string());
         if let Err(err) = capability_result {
@@ -377,24 +384,32 @@ fn main() {
             native::native_runtime,
             native::login_item,
             native::set_login_item,
-            native::set_theme
+            native::set_theme,
+            native::open_logs_folder
         ])
         .setup(move |app| {
             native::tray(app.handle())?;
             let nav_handle = app.handle().clone();
             let new_window_handle = app.handle().clone();
             let download_handle = app.handle().clone();
+            let (saved_pref, saved_theme) = native::load_persisted_theme(app.handle());
+            if let Ok(mut pref) = app.state::<Desktop>().theme_preference.lock() {
+                *pref = saved_pref;
+            }
             let mut builder =
                 WebviewWindowBuilder::new(app, "main", WebviewUrl::App("index.html".into()));
             if let Some(dir) = std::env::var_os("NOLA_E2E_USER_DATA") {
                 builder = builder.data_directory(PathBuf::from(dir).join("WebView2"));
+            }
+            if let Some(explicit_theme) = saved_theme {
+                builder = builder.theme(Some(explicit_theme));
             }
             let window = builder
                 .title(native::label("appName"))
                 .visible(false)
                 .initialization_script(include_str!("desktop-bridge.js"))
                 .inner_size(1160., 780.)
-                .min_inner_size(720., 520.)
+                .min_inner_size(480., 520.)
                 .on_navigation(move |url| {
                     if local_page(url)
                         || nav_handle
@@ -474,8 +489,8 @@ fn main() {
                     _ => true,
                 })
                 .build()?;
-            // Apply the OS theme's canvas color before restoring state or showing to avoid a light flash.
-            native::apply_theme_background(&window, None);
+            // Apply the persisted/OS theme's canvas color before restoring state or showing to avoid a light flash.
+            native::apply_theme_background(&window, saved_theme);
             let handle = app.handle().clone();
             let startup = startup_url();
             let generation = app

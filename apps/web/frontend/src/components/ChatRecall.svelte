@@ -29,6 +29,14 @@
         } catch { if (current()) failed = true; }
         finally { if (current()) loading = false; }
     }
+    function jumpToMessage(messageId: string) {
+        if (typeof document === 'undefined' || !messageId) return;
+        const escaped = typeof CSS !== 'undefined' && typeof CSS.escape === 'function' ? CSS.escape(messageId) : messageId.replace(/"/g, '\\"');
+        const target = document.querySelector<HTMLElement>(`[data-message-id="${escaped}"]`) ?? document.getElementById(`message-${messageId}`);
+        if (!target) return;
+        target.scrollIntoView({ behavior: window.matchMedia?.('(prefers-reduced-motion: reduce)').matches ? 'auto' : 'smooth', block: 'center' });
+        target.animate?.([{ backgroundColor: 'var(--accent-subtle)' }, { backgroundColor: 'transparent' }], { duration: 1600, easing: 'ease-out' });
+    }
 </script>
 <section class="conversation-recall" aria-busy={loading}>
     <h3>{t($locale, 'chatKnowledge.recall')}</h3>
@@ -40,13 +48,15 @@
     {#if loading}<p role="status">{t($locale, 'chatKnowledge.searching')}</p>{/if}
     {#if failed}<p role="alert">{t($locale, 'chatKnowledge.searchFailed')}</p>{/if}
     {#if loaded && !hits.length}<p role="status">{t($locale, 'chatKnowledge.noMatches')}</p>{/if}
-    <ol>{#each hits as hit (JSON.stringify([hit.message_id, hit.part_id, hit.start_character]))}<li><small>#{hit.message_ordinal} · {hit.role}</small><p class="snippet">{hit.snippet}</p></li>{/each}</ol>
+    <ol>{#each hits as hit (JSON.stringify([hit.message_id, hit.part_id, hit.start_character]))}<li><button type="button" class="hit-button" onclick={() => jumpToMessage(hit.message_id)}><small>#{hit.message_ordinal} · {hit.role}</small><span class="snippet">{hit.snippet}</span></button></li>{/each}</ol>
 </section>
 <style>
     section, form, label { display: grid; gap: 10px; min-width: 0; }
     section { border: 1px solid var(--border); border-radius: 10px; padding: 12px; }
     h3, p { margin: 0; } h3 { font-size: 13px; } p, label, small { font-size: 12px; }
-    p, small { color: var(--muted); } .snippet { color: inherit; white-space: pre-wrap; overflow-wrap: anywhere; }
-    ol { list-style: none; margin: 0; padding: 0; display: grid; gap: 12px; } li { border-top: 1px solid var(--border); padding-top: 10px; }
+    p, small { color: var(--muted); } .snippet { color: inherit; font-size: 12px; white-space: pre-wrap; overflow-wrap: anywhere; }
+    ol { list-style: none; margin: 0; padding: 0; display: grid; gap: 6px; } li { border-top: 1px solid var(--border); padding-top: 6px; }
+    .hit-button { display: grid; gap: 4px; width: 100%; padding: 8px; border: 0; border-radius: 8px; background: transparent; box-shadow: none; text-align: start; min-height: 44px; }
+    .hit-button:hover { background: var(--panel); }
     button { min-height: 44px; } [role="alert"] { color: var(--danger); }
 </style>

@@ -88,14 +88,14 @@
 <style>
     .content-tabs { display: flex; align-self: stretch; align-items: center; justify-content: safe center; flex: 1; min-width: 0; overflow-x: auto; scrollbar-width: thin; gap: 6px; padding-inline: 8px; }
     .tab { display: inline-flex; align-items: center; flex: 0 0 auto; min-width: 96px; max-width: 240px; height: 32px; border: 1px solid transparent; border-radius: 7px; padding-inline: 2px; transition: background-color var(--motion-selection) var(--motion-disclosure), border-color var(--motion-selection) var(--motion-disclosure); }
-    .tab.selected { background: var(--surface); border-color: var(--border); box-shadow: 0 1px 2px rgb(0 0 0 / .04); }
+    .tab.selected { background: var(--glass-pill-bg); border-color: var(--glass-pill-border); box-shadow: var(--glass-pill-shadow); color: var(--content); }
     .tab > button[role="tab"] { min-width: 0; flex: 1; max-width: 210px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; border: 0; border-radius: 6px; background: transparent; min-height: 28px; padding: 4px 10px; font-size: 12.5px; font-weight: 550; }
     .tab > .edit-hint { flex: none; display: inline-flex; align-items: center; justify-content: center; width: 24px; height: 24px; min-height: 24px; padding: 0; border: 0; border-radius: 5px; background: transparent; color: var(--muted); opacity: 0; transition: opacity 120ms ease; }
     .tab > .edit-hint svg { width: 13px; height: 13px; fill: none; stroke: currentColor; stroke-width: 1.5; stroke-linecap: round; stroke-linejoin: round; }
     .tab:hover > .edit-hint, .tab:focus-within > .edit-hint { opacity: 1; }
     .tab > .close { flex: none; min-width: 26px; min-height: 28px; padding: 2px 4px; font-size: 16px; border: 0; background: transparent; }
     .tab-rename { display: flex; align-items: center; }
-    .tab-rename input { min-height: 30px; height: 30px; width: min(260px, 42vw); padding: 2px 10px; border: 1px solid var(--accent); border-radius: 7px; background: var(--surface); font-size: 12.5px; }
+    .tab-rename input { min-height: 30px; height: 30px; width: min(260px, 42vw); padding: 2px 10px; border: 1px solid var(--input-focus-border); border-radius: 7px; background: var(--input-bg); font-size: 12.5px; }
     @media (pointer: coarse) { .tab > .edit-hint { opacity: .85; width: 30px; height: 30px; min-height: 30px; } }
     @media (max-width: 700px) { .content-tabs { justify-content: flex-start; } .tab { height: 40px; max-width: 200px; } .tab > .close { min-width: 44px; min-height: 44px; } }
 </style>

@@ -10,6 +10,11 @@ async function update() {
         return;
     }
     if (!state) return;
+    if (state.theme === "dark" || state.theme === "light") {
+        document.documentElement.dataset.theme = state.theme;
+    } else {
+        document.documentElement.dataset.theme = "auto";
+    }
     if (state.page) {
         // Both templates come from compiled localization resources. Runtime errors are plain text.
         const doc = new DOMParser().parseFromString(state.page, "text/html");

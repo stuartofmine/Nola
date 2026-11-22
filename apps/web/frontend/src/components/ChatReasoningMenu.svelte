@@ -89,8 +89,9 @@
     details[open] .choices { animation: reveal-up var(--motion-base) ease-out; }
     @keyframes reveal-up { from { opacity: 0; transform: translateY(4px); } to { opacity: 1; transform: translateY(0); } }
     @media (prefers-reduced-motion: reduce) { details[open] .choices { animation: none; } .chevron { transition: none; } }
-    .choices { position: absolute; bottom: calc(100% + 8px); inset-inline-end: 0; width: min(240px, calc(100vw - 80px)); max-height: min(50dvh, 360px); overflow: auto; overscroll-behavior: contain; z-index: 50; padding: 6px; background: var(--surface-elevated, var(--surface)); border: 1px solid var(--border); border-radius: 14px; box-shadow: 0 8px 32px rgb(0 0 0 / .18); }
-    button { display: flex; width: 100%; align-items: center; justify-content: space-between; gap: 12px; min-height: 44px; padding: 8px 12px; text-align: start; border: 0; background: transparent; box-shadow: none; color: var(--content); }
-    button[aria-pressed="true"], button:hover:not(:disabled) { background: var(--accent-subtle); }
+    .choices { position: absolute; bottom: calc(100% + 8px); inset-inline-end: 0; width: min(240px, calc(100vw - 80px)); max-height: min(50dvh, 360px); overflow: auto; overscroll-behavior: contain; z-index: 50; padding: 6px; background: var(--surface-elevated, var(--surface)); border: 1px solid var(--dialog-border); border-radius: 14px; box-shadow: 0 8px 32px rgb(0 0 0 / .18); }
+    button { display: flex; width: 100%; align-items: center; justify-content: space-between; gap: 12px; min-height: 44px; padding: 8px 12px; text-align: start; border: 1px solid transparent; background: transparent; box-shadow: none; color: var(--content); }
+    button:hover:not(:disabled) { background: var(--composer-pill-hover-bg); border-color: transparent; }
+    button[aria-pressed="true"] { background: var(--glass-pill-bg); border-color: var(--glass-pill-border); }
     p { padding: 8px; font-size: 12px; }
 </style>

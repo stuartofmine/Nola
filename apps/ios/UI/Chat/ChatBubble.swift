@@ -99,6 +99,8 @@ struct ChatBubble: View {
     @Environment(\.iosExpertReplyAvailableWidth) private var expertReplyAvailableWidth
     @Environment(\.iosCompactExpertReply) private var compactExpertReply
     @Environment(\.iosSourceAllowsMessageEditing) private var sourceAllowsEditing
+    @ScaledMetric(relativeTo: .caption) private var monogramSize: CGFloat = 18
+    @ScaledMetric(relativeTo: .caption) private var monogramFontSize: CGFloat = 12
     let conversationID: UUID?
     let message: ChatMessage
     let isLatestAssistant: Bool
@@ -111,6 +113,7 @@ struct ChatBubble: View {
     var surfaceInteractionsEnabled = true
     var readOnlyHistoryOwner: String?
     var onEditAndResend: ((AppleMessageEditSubmission) async throws -> Void)? = nil
+    var onRetry: (() -> Void)? = nil
     @State private var messageEditorSource: IOSMessageEditorSource?
     @State private var showManualCopy = false
     @State private var showCopiedHint: Bool = false
@@ -149,8 +152,8 @@ struct ChatBubble: View {
                 VStack(alignment: .leading, spacing: 10) {
                     if assistantBubbleFill == nil {
                         HStack(spacing: 6) {
-                            Text(verbatim: "n").font(.system(size: 12, design: .serif)).italic()
-                                .frame(width: 18, height: 18)
+                            Text(verbatim: "n").font(.system(size: monogramFontSize, design: .serif)).italic()
+                                .frame(width: monogramSize, height: monogramSize)
                                 .overlay(Circle().stroke(DesignTokens.borderColor, lineWidth: 0.5))
                             Text(verbatim: "Nola").font(.caption)
                         }
@@ -326,7 +329,7 @@ struct ChatBubble: View {
             Spacer(minLength: 56)
             VStack(alignment: .trailing, spacing: 5) {
                 if !message.includeInContext {
-                    Text(NSLocalizedString("chat.bubble.archived_to_session", value: "已折叠到 session memory", comment: "Message archived to session memory"))
+                    Text(NSLocalizedString("chat.bubble.archived_to_session", value: "Archived to session memory", comment: "Message archived to session memory"))
                         .font(.caption2.weight(.semibold))
                         .foregroundColor(DesignTokens.warningColor)
                 }
@@ -344,7 +347,8 @@ struct ChatBubble: View {
                                 .fill(DesignTokens.accentSubtleColor)
                         )
                         .opacity(message.includeInContext ? 1 : 0.82)
-                        .contentShape(RoundedRectangle(cornerRadius: DesignTokens.radius_lg, style: .continuous))
+                        .contentShape(RoundedRectangle(cornerRadius: 20, style: .continuous))
+                        .contentShape(.contextMenuPreview, RoundedRectangle(cornerRadius: 20, style: .continuous))
                         .contextMenu {
                             copyButton
                         }
@@ -736,7 +740,7 @@ struct ChatBubble: View {
         return HStack(alignment: .top, spacing: 0) {
             VStack(alignment: .leading, spacing: 5) {
                 if !message.includeInContext {
-                    Text(NSLocalizedString("chat.bubble.archived_to_session", value: "已折叠到 session memory", comment: "Message archived to session memory"))
+                    Text(NSLocalizedString("chat.bubble.archived_to_session", value: "Archived to session memory", comment: "Message archived to session memory"))
                         .font(.caption2.weight(.semibold))
                         .foregroundColor(DesignTokens.warningColor)
                 }
@@ -782,8 +786,7 @@ struct ChatBubble: View {
                     }
                 }
                 if message.canonicalParts.contains(where: { if case .text(let text) = $0 { text.isDisclosed && !text.markdown.isEmpty } else { false } }) {
-                    HStack(spacing: 4) { copyButton.disabled(isStreaming) }
-                        .font(.caption).buttonStyle(.borderless).frame(minHeight: 44)
+                    assistantActionRow
                     if !isStreaming { answerContextFooter }
                 }
                 if message.canonicalParts.isEmpty && runtime.showsThinking {
@@ -872,8 +875,7 @@ struct ChatBubble: View {
                         .accessibilityElement(children: .contain)
                         .accessibilityIdentifier("chat.assistant.answer")
 
-                    HStack(spacing: 4) { copyButton.disabled(isStreaming) }
-                        .font(.caption).buttonStyle(.borderless).frame(minHeight: 44)
+                    assistantActionRow
                     if !isStreaming { answerContextFooter }
                 }
             }
@@ -897,12 +899,55 @@ struct ChatBubble: View {
         }
     }
 
+    private var assistantActionRow: some View {
+        HStack(spacing: 4) {
+            copyButton.disabled(isStreaming)
+            if !copyableText.isEmpty {
+                ShareLink(item: copyableText) {
+                    Label(
+                        NSLocalizedString("chat.message.share", value: "Share", comment: "Share chat message"),
+                        systemImage: "square.and.arrow.up"
+                    )
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .padding(.horizontal, 8)
+                    .padding(.vertical, 6)
+                    .frame(minWidth: 44, minHeight: 44)
+                    .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .disabled(isStreaming)
+                .accessibilityIdentifier("chat.message.share.\(message.id.uuidString.lowercased())")
+            }
+            if let onRetry, !ownerIsRunning {
+                Button(action: onRetry) {
+                    Label(
+                        NSLocalizedString("common.retry", value: "Retry", comment: "Retry assistant response"),
+                        systemImage: "arrow.clockwise"
+                    )
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .padding(.horizontal, 8)
+                    .padding(.vertical, 6)
+                    .frame(minWidth: 44, minHeight: 44)
+                    .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .disabled(isStreaming)
+                .accessibilityIdentifier("chat.message.retry.\(message.id.uuidString.lowercased())")
+            }
+        }
+        .font(.caption)
+        .buttonStyle(.borderless)
+        .frame(minHeight: 44)
+    }
+
     private var copyButton: some View {
         Button {
             copyMessageToPasteboard()
         } label: {
             Label {
-                Text(NSLocalizedString("chat.message.copy", value: "复制消息", comment: "Copy chat message"))
+                Text(NSLocalizedString("chat.message.copy", value: "Copy message", comment: "Copy chat message"))
             } icon: {
                 if showCopiedHint {
                     Image(systemName: "checkmark").frame(width: 14, height: 14)
@@ -919,8 +964,8 @@ struct ChatBubble: View {
         .buttonStyle(.plain)
         .accessibilityIdentifier("chat.message.copy.\(message.id.uuidString.lowercased())")
         .accessibilityLabel(showCopiedHint
-            ? NSLocalizedString("chat.message.copied", value: "已复制", comment: "Copied chat message hint")
-            : NSLocalizedString("chat.message.copy", value: "复制消息", comment: "Copy chat message"))
+            ? NSLocalizedString("chat.message.copied", value: "Copied", comment: "Copied chat message hint")
+            : NSLocalizedString("chat.message.copy", value: "Copy message", comment: "Copy chat message"))
     }
 
     @ViewBuilder
@@ -1038,7 +1083,7 @@ struct ChatBubble: View {
     private var copiedHint: some View {
         if showCopiedHint {
             Label(
-                NSLocalizedString("chat.message.copied", value: "已复制", comment: "Copied chat message hint"),
+                NSLocalizedString("chat.message.copied", value: "Copied", comment: "Copied chat message hint"),
                 systemImage: "checkmark"
             )
                 .font(.caption.weight(.semibold))
@@ -1055,7 +1100,7 @@ struct ChatBubble: View {
         guard !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }
         UIPasteboard.general.string = text
         guard UIPasteboard.general.string == text else { showManualCopy = true; return }
-        UINotificationFeedbackGenerator().notificationOccurred(.success)
+        NolaHaptics.success()
         copyFeedbackTask?.cancel()
         withAnimation(reduceMotion ? nil : .easeOut(duration: 0.12)) {
             showCopiedHint = true
@@ -1268,20 +1313,29 @@ extension AppleStreamingMarkdownRenderBlock {
 
 private struct ChatStreamingActivityIndicator: View {
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @Environment(\.scenePhase) private var scenePhase
+    @State private var isVisible = false
+
+    private var isPaused: Bool {
+        reduceMotion || scenePhase != .active || !isVisible
+    }
 
     var body: some View {
-        TimelineView(.animation(minimumInterval: 0.24, paused: reduceMotion)) { context in
-            let activeDot = Int(context.date.timeIntervalSinceReferenceDate * 4) % 3
+        TimelineView(.animation(minimumInterval: 1.0 / 20, paused: isPaused)) { context in
+            let time = context.date.timeIntervalSinceReferenceDate
             HStack(spacing: 4) {
                 ForEach(0..<3, id: \.self) { index in
+                    let phase = isPaused ? 0.5 : (sin(time * .pi * 2.0 - Double(index) * 0.85) + 1) / 2
                     Circle()
-                        .fill(Color.secondary.opacity(reduceMotion ? 0.42 : (index == activeDot ? 0.72 : 0.20)))
+                        .fill(Color.secondary.opacity(isPaused ? 0.42 : (0.20 + phase * 0.52)))
                         .frame(width: 4, height: 4)
                 }
             }
             .frame(height: 8)
             .accessibilityLabel(NSLocalizedString("chat.streaming.active", value: "正在生成", comment: "Streaming response activity"))
         }
+        .onAppear { isVisible = true }
+        .onDisappear { isVisible = false }
     }
 }
 
@@ -1663,6 +1717,7 @@ private struct ChatMarkdownCodeBlock: View {
     let language: String?
     let text: String
     @State private var showCopiedHint = false
+    @State private var copyFeedbackTask: Task<Void, Never>?
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
@@ -1691,7 +1746,7 @@ private struct ChatMarkdownCodeBlock: View {
             .padding(.vertical, 7)
             .background(Color.primary.opacity(0.035))
 
-            ScrollView(.horizontal, showsIndicators: false) {
+            ScrollView(.horizontal, showsIndicators: true) {
                 AppleStreamingAttributedText(value: AttributedString(text))
                     .font(.system(.callout, design: .monospaced))
                     .foregroundColor(.primary)
@@ -1709,15 +1764,26 @@ private struct ChatMarkdownCodeBlock: View {
             RoundedRectangle(cornerRadius: DesignTokens.radius_md, style: .continuous)
                 .stroke(DesignTokens.borderColor, lineWidth: 1)
         )
+        .onDisappear {
+            copyFeedbackTask?.cancel()
+            showCopiedHint = false
+        }
+        .onChange(of: text) { _, _ in
+            copyFeedbackTask?.cancel()
+            showCopiedHint = false
+        }
     }
 
     private func copyCode() {
         guard !text.isEmpty else { return }
         UIPasteboard.general.string = text
+        NolaHaptics.success()
+        copyFeedbackTask?.cancel()
         withAnimation(reduceMotion ? nil : .easeOut(duration: 0.12)) {
             showCopiedHint = true
         }
-        DispatchQueue.main.asyncAfter(deadline: .now() + 1.1) {
+        copyFeedbackTask = Task { @MainActor in
+            do { try await Task.sleep(for: .seconds(1.1)) } catch { return }
             withAnimation(reduceMotion ? nil : .easeIn(duration: 0.16)) {
                 showCopiedHint = false
             }
@@ -1769,7 +1835,7 @@ private struct ChatMarkdownTableBlock: View {
     }
 
     var body: some View {
-        ScrollView(.horizontal, showsIndicators: false) {
+        ScrollView(.horizontal, showsIndicators: true) {
             VStack(alignment: .leading, spacing: 0) {
                 ForEach(allRows.indices, id: \.self) { rowIndex in
                     HStack(spacing: 0) {
@@ -1779,7 +1845,7 @@ private struct ChatMarkdownTableBlock: View {
                                 ? table.alignments[columnIndex]
                                 : .leading
                             ChatMarkdownInlineText(row[columnIndex])
-                                .font(.subheadline)
+                                .font(rowIndex == 0 ? .subheadline.weight(.semibold) : .subheadline)
                                 .foregroundColor(.primary)
                                 .lineSpacing(2)
                                 .multilineTextAlignment(alignment.textAlignment)
@@ -2688,11 +2754,15 @@ private struct ChatCanonicalExecutionProcess: View {
                     switch part {
                     case .reasoning(let reasoning):
                         if !(reasoning.summary ?? "").isEmpty {
-                            ChatSmoothStreamingMarkdownView(content: reasoning.summary ?? "",
-                                isStreaming: isLive && reasoning.state == .running)
-                                .foregroundStyle(.secondary)
-                                .textSelection(.enabled).transaction { $0.animation = nil }
-                                .accessibilityIdentifier("chat.assistant.thinking")
+                            ScrollView {
+                                ChatSmoothStreamingMarkdownView(content: reasoning.summary ?? "",
+                                    isStreaming: isLive && reasoning.state == .running)
+                                    .foregroundStyle(.secondary)
+                                    .textSelection(.enabled).transaction { $0.animation = nil }
+                                    .frame(maxWidth: .infinity, alignment: .leading)
+                                    .accessibilityIdentifier("chat.assistant.thinking")
+                            }
+                            .frame(maxHeight: 240)
                         }
                     case .tool(let tool):
                         if let event = events.first(where: { $0.id == tool.toolCallID })
@@ -3349,122 +3419,186 @@ struct HostPermissionDecisionCard: View {
     let request: HostAgentPermissionRequest
     let onPermissionDecision: (String, HostAgentPermissionDecision) -> Void
     @State private var permissionInstruction = ""
+    @State private var showDetails = false
+    @State private var showGuidance = false
 
     var body: some View {
         permissionDecisionCard(request)
             .disabled(submittingRequestID == request.id)
             .accessibilityElement(children: .contain)
             .accessibilityIdentifier("chat.permission.tool.\(request.toolName)")
-            .onChange(of: request) { _, _ in permissionInstruction = "" }
+            .onChange(of: request) { _, _ in
+                permissionInstruction = ""
+                showDetails = false
+                showGuidance = false
+            }
     }
 
     private func permissionDecisionCard(_ request: HostAgentPermissionRequest) -> some View {
         let isMcp = request.originKind == "mcp"
         let isHost = request.hostId?.isEmpty == false || request.nonce?.isEmpty == false
-        let tint = isHost ? DesignTokens.warningColor : DesignTokens.successColor
+        let tint = isHost ? DesignTokens.warningColor : DesignTokens.actionColor
+        let locationLabel: String = isMcp
+            ? String(localized: "mcp.permission.http_server")
+            : request.deviceBridge == true
+                ? NSLocalizedString("chat.permission.this_device", value: "This device", comment: "This device permission value")
+                : (isHost
+                    ? NSLocalizedString("chat.permission.connected_host", value: "Nola Server", comment: "Connected host permission value")
+                    : NSLocalizedString("chat.permission.this_device", value: "This device", comment: "This device permission value"))
+
         return VStack(alignment: .leading, spacing: 10) {
-            Label(
-                isMcp ? String(localized: "mcp.permission.http_server") : request.deviceBridge == true
-                    ? NSLocalizedString("chat.permission.hybrid.title", value: "宿主机请求此设备", comment: "Hybrid device permission title")
-                    : isHost
-                    ? NSLocalizedString("chat.permission.host.title", value: "在宿主机上执行", comment: "Host permission title")
-                    : NSLocalizedString("chat.permission.device.title", value: "在此设备上执行", comment: "Device permission title"),
-                systemImage: request.deviceBridge == true ? "arrow.triangle.2.circlepath" : (isHost ? "desktopcomputer" : "iphone")
-            )
-                .font(.caption.weight(.semibold))
-                .foregroundColor(tint)
-            Text(isMcp ? String(localized: "mcp.mobile.http_execution") : request.deviceBridge == true
-                ? NSLocalizedString("chat.permission.hybrid.hint", value: "操作在此设备执行，结果将返回当前宿主机会话。", comment: "Hybrid permission hint")
-                : isHost
-                ? NSLocalizedString("chat.permission.host.hint", value: "工具将在已连接的宿主机上运行，结果返回当前对话。", comment: "Host permission hint")
-                : NSLocalizedString("chat.permission.device.hint", value: "工具只访问这台设备上由系统允许的数据。", comment: "Device permission hint"))
-                .font(.caption2)
-                .foregroundColor(.secondary)
-            VStack(spacing: 6) {
-                permissionDetail(
-                    icon: "location",
-                    title: NSLocalizedString("chat.permission.location", value: "执行位置", comment: "Permission execution location"),
-                    value: isMcp ? String(localized: "mcp.permission.http_server") : request.deviceBridge == true
-                        ? NSLocalizedString("chat.permission.this_device", value: "此设备", comment: "This device permission value")
-                        : (isHost ? shortHostIdentity(request.hostId) : NSLocalizedString("chat.permission.this_device", value: "此设备", comment: "This device permission value"))
+            HStack(spacing: 8) {
+                Label(
+                    localizedHostToolDisplayName(request.toolName),
+                    systemImage: request.deviceBridge == true ? "arrow.triangle.2.circlepath" : (isHost ? "desktopcomputer" : "iphone")
                 )
-                permissionDetail(
-                    icon: "arrow.left.arrow.right",
-                    title: NSLocalizedString("chat.permission.data_boundary", value: "数据边界", comment: "Permission data boundary"),
-                    value: isMcp ? String(localized: "mcp.permission.server_and_model") : request.deviceBridge == true
-                        ? NSLocalizedString("chat.permission.current_session", value: "仅当前宿主机会话", comment: "Hybrid session boundary")
-                        : isHost
-                        ? NSLocalizedString("chat.permission.current_session", value: "仅当前会话", comment: "Current session permission boundary")
-                        : NSLocalizedString("chat.permission.device_only", value: "仅此设备", comment: "Device only permission boundary")
-                )
-                permissionDetail(
-                    icon: "1.circle",
-                    title: NSLocalizedString("chat.permission.validity", value: "有效期", comment: "Permission validity"),
-                    value: request.deviceBridge == true
-                        ? NSLocalizedString("chat.permission.once", value: "仅本次操作", comment: "Allow once permission validity")
-                        : NSLocalizedString("chat.permission.validity.choice", value: "可选择本次或本对话", comment: "Permission validity choice")
-                )
+                .font(.subheadline.weight(.semibold))
+                .foregroundStyle(DesignTokens.contentColor)
+                .lineLimit(1)
+                Spacer(minLength: 6)
+                Text(locationLabel)
+                    .font(.caption2.weight(.semibold))
+                    .foregroundStyle(tint)
+                    .padding(.horizontal, 8)
+                    .padding(.vertical, 3)
+                    .background(tint.opacity(0.14), in: Capsule())
             }
-            Text(permissionMessage(for: request))
-                .font(.caption2)
-                .foregroundColor(.secondary)
-                .textSelection(.enabled)
-            if !request.argsPreview.isEmpty || !request.match.isEmpty {
-                DisclosureGroup {
-                    if !request.match.isEmpty {
-                        Text(HostAgentToolEvent.redactSensitiveContent(request.match))
-                            .font(.caption.monospaced()).textSelection(.enabled)
-                    }
-                    Text(HostAgentToolEvent.redactSensitiveContent(request.argsPreview))
-                        .font(.caption.monospaced())
-                        .textSelection(.enabled)
-                } label: {
-                    Text(NSLocalizedString("chat.host_tool.args", value: "参数", comment: "Host tool args title"))
-                        .font(.caption)
-                        .frame(minHeight: 44)
-                }
-                .disclosureGroupStyle(NolaRowDisclosureStyle())
-                .id(request.id)
+
+            let summary = permissionMessage(for: request)
+            if !summary.isEmpty {
+                Text(summary)
+                    .font(.footnote)
+                    .foregroundStyle(DesignTokens.secondaryContentColor)
+                    .textSelection(.enabled)
+                    .fixedSize(horizontal: false, vertical: true)
             }
-            Button {
-                NolaHaptics.primaryAction()
-                onPermissionDecision(request.id, .allowOnce)
-            } label: {
-                HStack {
-                    if submittingRequestID == request.id { ProgressView() }
-                    Text(permissionAllowTitle(for: request))
-                }
-                .foregroundStyle(DesignTokens.onAccentColor)
-                .frame(maxWidth: .infinity, minHeight: 44)
-            }
-            .buttonStyle(.borderedProminent)
-            .frame(maxWidth: .infinity)
-            .accessibilityIdentifier("chat.permission.allow_once")
 
             Group {
                 if dynamicTypeSize.isAccessibilitySize {
                     VStack(spacing: 8) {
-                        secondaryPermissionActions(request)
+                        primaryPermissionActions(request)
                     }
                 } else {
                     HStack(spacing: 8) {
-                        secondaryPermissionActions(request)
+                        primaryPermissionActions(request)
                     }
                 }
             }
-            .font(.caption.weight(.semibold))
-            permissionGuidanceEditor(request)
+            .font(.subheadline.weight(.semibold))
+
+            if request.deviceBridge != true && request.allowConversation {
+                Button {
+                    NolaHaptics.success()
+                    onPermissionDecision(request.id, .allowConversation)
+                } label: {
+                    Text(NSLocalizedString("chat.host_tool.permission.allow_conversation", value: "Allow in this conversation", comment: "Allow matching operations in this conversation"))
+                        .font(.caption.weight(.semibold))
+                        .frame(maxWidth: .infinity, minHeight: 38)
+                }
+                .buttonStyle(.bordered)
+                .accessibilityIdentifier("chat.permission.allow_conversation")
+            }
+
+            DisclosureGroup(isExpanded: $showDetails) {
+                VStack(alignment: .leading, spacing: 8) {
+                    permissionDetail(
+                        icon: "location",
+                        title: NSLocalizedString("chat.permission.location", value: "Location", comment: "Permission execution location"),
+                        value: locationLabel
+                    )
+                    permissionDetail(
+                        icon: "arrow.left.arrow.right",
+                        title: NSLocalizedString("chat.permission.data_boundary", value: "Data boundary", comment: "Permission data boundary"),
+                        value: isMcp ? String(localized: "mcp.permission.server_and_model") : request.deviceBridge == true
+                            ? NSLocalizedString("chat.permission.current_session", value: "This host session only", comment: "Hybrid session boundary")
+                            : isHost
+                            ? NSLocalizedString("chat.permission.current_session", value: "This conversation only", comment: "Current session permission boundary")
+                            : NSLocalizedString("chat.permission.device_only", value: "This device only", comment: "Device only permission boundary")
+                    )
+                    permissionDetail(
+                        icon: "1.circle",
+                        title: NSLocalizedString("chat.permission.validity", value: "Validity", comment: "Permission validity"),
+                        value: request.deviceBridge == true
+                            ? NSLocalizedString("chat.permission.once", value: "This action only", comment: "Allow once permission validity")
+                            : NSLocalizedString("chat.permission.validity.choice", value: "Once or this conversation", comment: "Permission validity choice")
+                    )
+                    if !request.match.isEmpty {
+                        Text(HostAgentToolEvent.redactSensitiveContent(request.match))
+                            .font(.caption.monospaced())
+                            .foregroundStyle(.secondary)
+                            .textSelection(.enabled)
+                    }
+                    if !request.argsPreview.isEmpty {
+                        Text(HostAgentToolEvent.redactSensitiveContent(request.argsPreview))
+                            .font(.caption.monospaced())
+                            .foregroundStyle(.secondary)
+                            .textSelection(.enabled)
+                    }
+                }
+                .padding(.top, 6)
+            } label: {
+                Text(NSLocalizedString("chat.permission.details", value: "Details", comment: "Permission details disclosure"))
+                    .font(.caption.weight(.medium))
+                    .foregroundStyle(DesignTokens.secondaryContentColor)
+                    .frame(minHeight: 36)
+            }
+            .disclosureGroupStyle(NolaRowDisclosureStyle(isPlain: true))
+            .id("details-\(request.id)")
+
+            if request.deviceBridge != true {
+                DisclosureGroup(isExpanded: $showGuidance) {
+                    permissionGuidanceEditor(request)
+                        .padding(.top, 6)
+                } label: {
+                    Text(NSLocalizedString("chat.permission.add_guidance", value: "Add guidance", comment: "Permission add guidance disclosure"))
+                        .font(.caption.weight(.medium))
+                        .foregroundStyle(DesignTokens.secondaryContentColor)
+                        .frame(minHeight: 36)
+                }
+                .disclosureGroupStyle(NolaRowDisclosureStyle(isPlain: true))
+                .id("guidance-\(request.id)")
+            }
         }
-        .padding(10)
+        .padding(12)
         .frame(maxWidth: .infinity, alignment: .leading)
         .background(
-            RoundedRectangle(cornerRadius: DesignTokens.radius_sm, style: .continuous)
-                .fill(tint.opacity(0.08))
+            RoundedRectangle(cornerRadius: DesignTokens.radius_md, style: .continuous)
+                .fill(DesignTokens.surfaceColor)
         )
         .overlay(
-            RoundedRectangle(cornerRadius: DesignTokens.radius_sm, style: .continuous)
-                .stroke(tint.opacity(0.24), lineWidth: 1)
+            RoundedRectangle(cornerRadius: DesignTokens.radius_md, style: .continuous)
+                .stroke(tint.opacity(0.32), lineWidth: 1)
         )
+    }
+
+    @ViewBuilder
+    private func primaryPermissionActions(_ request: HostAgentPermissionRequest) -> some View {
+        Button {
+            NolaHaptics.primaryAction()
+            onPermissionDecision(request.id, .allowOnce)
+        } label: {
+            HStack(spacing: 6) {
+                if submittingRequestID == request.id {
+                    ProgressView().tint(DesignTokens.onAccentColor)
+                }
+                Text(permissionAllowTitle(for: request))
+            }
+            .frame(maxWidth: .infinity, minHeight: 44)
+        }
+        .buttonStyle(NolaPrimaryButtonStyle(cornerRadius: DesignTokens.radius_sm))
+        .frame(maxWidth: .infinity)
+        .accessibilityIdentifier("chat.permission.allow_once")
+
+        Button(role: .cancel) {
+            NolaHaptics.warning()
+            onPermissionDecision(request.id, .deny)
+        } label: {
+            Text(NSLocalizedString("chat.host_tool.permission.reject", value: "Deny", comment: "Reject host tool permission"))
+                .frame(maxWidth: .infinity, minHeight: 44)
+        }
+        .buttonStyle(.bordered)
+        .frame(maxWidth: .infinity)
+        .accessibilityIdentifier("chat.permission.deny")
     }
 
     private func permissionDetail(icon: String, title: String, value: String) -> some View {
@@ -3494,32 +3628,6 @@ struct HostPermissionDecisionCard: View {
     }
 
     @ViewBuilder
-    private func secondaryPermissionActions(_ request: HostAgentPermissionRequest) -> some View {
-        Button(role: .cancel) {
-            NolaHaptics.warning()
-            onPermissionDecision(request.id, .deny)
-        } label: {
-            Text(NSLocalizedString("chat.host_tool.permission.reject", value: "拒绝", comment: "Reject host tool permission"))
-                .frame(maxWidth: .infinity, minHeight: 44)
-        }
-        .buttonStyle(.bordered)
-        .frame(maxWidth: .infinity)
-        .accessibilityIdentifier("chat.permission.deny")
-        if request.deviceBridge != true && request.allowConversation {
-            Button {
-                NolaHaptics.success()
-                onPermissionDecision(request.id, .allowConversation)
-            } label: {
-                Text(NSLocalizedString("chat.host_tool.permission.allow_conversation", value: "本对话中允许", comment: "Allow matching operations in this conversation"))
-                    .frame(maxWidth: .infinity, minHeight: 44)
-            }
-            .buttonStyle(.bordered)
-            .frame(maxWidth: .infinity)
-            .accessibilityIdentifier("chat.permission.allow_conversation")
-        }
-    }
-
-    @ViewBuilder
     private func permissionGuidanceEditor(_ request: HostAgentPermissionRequest) -> some View {
         if request.deviceBridge != true {
             VStack(alignment: .leading, spacing: 6) {
@@ -3537,13 +3645,6 @@ struct HostPermissionDecisionCard: View {
             }
 
         }
-    }
-
-    private func shortHostIdentity(_ hostId: String?) -> String {
-        guard let hostId, !hostId.isEmpty else {
-            return NSLocalizedString("chat.permission.connected_host", value: "已连接宿主机", comment: "Connected host permission value")
-        }
-        return hostId.count > 18 ? String(hostId.prefix(18)) + "…" : hostId
     }
 
     private func permissionAllowTitle(for request: HostAgentPermissionRequest) -> String {
@@ -3852,16 +3953,20 @@ private struct ChatThinkingProcessView: View {
                 }
                 .padding(.top, 6)
             } else {
-                Text(text)
-                    .font(.footnote)
-                    .foregroundColor(.secondary)
-                    .textSelection(.enabled)
-                    .padding(.top, 6)
-                    .transaction { transaction in
-                        // Streaming reasoning should grow in place. It must not
-                        // inherit the timeline's insertion/scroll animations.
-                        transaction.animation = nil
-                    }
+                ScrollView {
+                    Text(text)
+                        .font(.footnote)
+                        .foregroundColor(.secondary)
+                        .textSelection(.enabled)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .padding(.top, 6)
+                        .transaction { transaction in
+                            // Streaming reasoning should grow in place. It must not
+                            // inherit the timeline's insertion/scroll animations.
+                            transaction.animation = nil
+                        }
+                }
+                .frame(maxHeight: 240)
             }
         } label: {
             VStack(alignment: .leading, spacing: 4) {
@@ -3904,6 +4009,12 @@ private struct ChatThinkingProcessView: View {
 private struct ChatThinkingStatusIcon: View {
     let isFinished: Bool
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @Environment(\.scenePhase) private var scenePhase
+    @State private var isVisible = false
+
+    private var isPaused: Bool {
+        reduceMotion || scenePhase != .active || !isVisible
+    }
 
     var body: some View {
         if isFinished {
@@ -3913,13 +4024,15 @@ private struct ChatThinkingStatusIcon: View {
                 .foregroundStyle(.secondary)
                 .frame(width: 16, height: 16)
         } else {
-            TimelineView(.animation(minimumInterval: 1.0 / 20, paused: reduceMotion)) { context in
-                let phase = reduceMotion ? 1.0 : (sin(context.date.timeIntervalSinceReferenceDate * .pi / 1.2) + 1) / 2
+            TimelineView(.animation(minimumInterval: 1.0 / 20, paused: isPaused)) { context in
+                let phase = isPaused ? 1.0 : (sin(context.date.timeIntervalSinceReferenceDate * .pi / 1.2) + 1) / 2
                 Circle()
                     .fill(DesignTokens.primaryColor.opacity(0.65 + phase * 0.35))
                     .frame(width: 8, height: 8)
                     .frame(width: 16, height: 16)
             }
+            .onAppear { isVisible = true }
+            .onDisappear { isVisible = false }
         }
     }
 }

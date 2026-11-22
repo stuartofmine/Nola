@@ -47,7 +47,7 @@ test('the Svelte model test has a routed, localized setup and result surface', a
         const html: string = render(ModelTest).body;
         const prompt = html.match(/<textarea id="([^"]+)"/)?.[1];
         assert.ok(prompt && html.includes('for="' + prompt + '"'));
-        assert.match(html, /\/models/);
+        assert.match(html, /class="model-select/);
         assert.match(html, /role="tablist"/);
         assert.match(html, /data-active-pane="setup"/);
         const controls = Array.from(html.matchAll(/aria-controls="([^"]+)"/g), match => match[1]);

@@ -32,6 +32,7 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Notifications
 import androidx.compose.material.icons.filled.DoneAll
@@ -52,6 +53,7 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.OutlinedTextFieldDefaults
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
@@ -80,6 +82,10 @@ import com.nola.ui.components.NolaEmptyState
 import com.nola.ui.components.NolaMotion
 import com.nola.ui.components.NolaSpacing
 import com.nola.ui.components.NolaTopAppBar
+import com.nola.ui.components.nolaDisclosureEnter
+import com.nola.ui.components.nolaDisclosureExit
+import com.nola.ui.components.nolaTween
+import com.nola.ui.components.rememberReduceMotionEnabled
 import java.util.Locale
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -89,6 +95,7 @@ fun NotificationCenterScreen(
     viewModel: NotificationCenterViewModel = hiltViewModel()
 ) {
     val state by viewModel.uiState.collectAsStateWithLifecycle()
+    val reduceMotion = rememberReduceMotionEnabled()
     var selectedNotificationId by rememberSaveable { mutableStateOf<String?>(null) }
     var query by rememberSaveable { mutableStateOf("") }
     var unreadOnly by rememberSaveable { mutableStateOf(false) }
@@ -165,12 +172,19 @@ fun NotificationCenterScreen(
                         .fillMaxWidth()
                         .padding(horizontal = NolaSpacing.lg, vertical = NolaSpacing.sm),
                     singleLine = true,
+                    shape = RoundedCornerShape(12.dp),
+                    colors = OutlinedTextFieldDefaults.colors(
+                        unfocusedContainerColor = MaterialTheme.colorScheme.surfaceContainer,
+                        focusedContainerColor = MaterialTheme.colorScheme.surfaceContainer,
+                        unfocusedBorderColor = Color.Transparent,
+                        focusedBorderColor = MaterialTheme.colorScheme.primary,
+                    ),
                     leadingIcon = { Icon(Icons.Filled.Search, contentDescription = null) },
                     trailingIcon = {
                         AnimatedVisibility(
                             visible = query.isNotEmpty(),
-                            enter = fadeIn(tween(NolaMotion.fast)),
-                            exit = fadeOut(tween(NolaMotion.fast))
+                            enter = fadeIn(nolaTween(NolaMotion.fast, reduceMotion)),
+                            exit = fadeOut(nolaTween(NolaMotion.fast, reduceMotion))
                         ) {
                             IconButton(onClick = { query = "" }) {
                                 Icon(Icons.Filled.Close, stringResource(R.string.notifications_clear_search))
@@ -206,10 +220,8 @@ fun NotificationCenterScreen(
 
             AnimatedVisibility(
                 visible = (state.hasSyncWarning || state.hasLoadError) && state.notifications.isNotEmpty(),
-                enter = fadeIn(tween(NolaMotion.base, easing = NolaMotion.emphasizedEasing)) +
-                    expandVertically(tween(NolaMotion.base, easing = NolaMotion.emphasizedEasing)),
-                exit = fadeOut(tween(NolaMotion.fast)) +
-                    shrinkVertically(tween(NolaMotion.fast))
+                enter = nolaDisclosureEnter(reduceMotion),
+                exit = nolaDisclosureExit(reduceMotion)
             ) {
                 Surface(
                     modifier = Modifier.fillMaxWidth().padding(horizontal = NolaSpacing.lg, vertical = NolaSpacing.sm),
@@ -256,30 +268,29 @@ fun NotificationCenterScreen(
                     )
                     Button(onClick = viewModel::loadNotifications) { Text(stringResource(R.string.notifications_retry)) }
                 }
-                visibleNotifications.isEmpty() -> Column(
-                    modifier = Modifier.fillMaxWidth().padding(NolaSpacing.xl),
-                    horizontalAlignment = Alignment.Start,
-                    verticalArrangement = Arrangement.spacedBy(8.dp)
-                ) {
-                    Text(stringResource(when {
+                visibleNotifications.isEmpty() -> NolaEmptyState(
+                    icon = if (normalizedQuery.isNotEmpty()) Icons.Filled.Search else Icons.Filled.Notifications,
+                    title = stringResource(when {
                         normalizedQuery.isNotEmpty() -> R.string.notifications_empty_search_title
                         unreadOnly -> R.string.notifications_empty_unread_title
                         else -> R.string.notifications_no_notifications
-                    }), style = MaterialTheme.typography.titleMedium)
-                    Text(stringResource(when {
+                    }),
+                    message = stringResource(when {
                         normalizedQuery.isNotEmpty() -> R.string.notifications_empty_search_message
                         unreadOnly -> R.string.notifications_empty_unread_message
                         else -> R.string.notifications_empty_message
-                    }), style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                    if (normalizedQuery.isNotEmpty() || unreadOnly) {
-                        Button(onClick = {
-                            query = ""
-                            unreadOnly = false
-                        }) {
-                            Text(stringResource(R.string.notifications_reset_filters))
+                    }),
+                    action = if (normalizedQuery.isNotEmpty() || unreadOnly) {
+                        {
+                            Button(onClick = {
+                                query = ""
+                                unreadOnly = false
+                            }) {
+                                Text(stringResource(R.string.notifications_reset_filters))
+                            }
                         }
-                    }
-                }
+                    } else null,
+                )
                 else -> LazyColumn(
                     modifier = Modifier.fillMaxSize(),
                     contentPadding = PaddingValues(NolaSpacing.lg),
@@ -325,6 +336,7 @@ fun NotificationCard(
             DateUtils.FORMAT_ABBREV_RELATIVE
         ).toString()
     }
+    val reduceMotion = rememberReduceMotionEnabled()
     val sourceTint = notificationSourceTint(sourceKey)
     val containerColor by animateColorAsState(
         targetValue = if (isRead) {
@@ -332,7 +344,7 @@ fun NotificationCard(
         } else {
             MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.22f)
         },
-        animationSpec = tween(NolaMotion.base, easing = NolaMotion.emphasizedEasing),
+        animationSpec = nolaTween(NolaMotion.base, reduceMotion),
         label = "notification-read-state"
     )
 
@@ -378,13 +390,13 @@ fun NotificationCard(
                     )
                     AnimatedVisibility(
                         visible = !isRead,
-                        enter = fadeIn(tween(NolaMotion.base)) + scaleIn(
+                        enter = fadeIn(nolaTween(NolaMotion.base, reduceMotion)) + scaleIn(
                             initialScale = 0.90f,
-                            animationSpec = tween(NolaMotion.base, easing = NolaMotion.emphasizedEasing)
+                            animationSpec = nolaTween(NolaMotion.base, reduceMotion)
                         ),
-                        exit = fadeOut(tween(NolaMotion.fast)) + scaleOut(
+                        exit = fadeOut(nolaTween(NolaMotion.fast, reduceMotion)) + scaleOut(
                             targetScale = 0.90f,
-                            animationSpec = tween(NolaMotion.fast)
+                            animationSpec = nolaTween(NolaMotion.fast, reduceMotion)
                         )
                     ) {
                         Row {

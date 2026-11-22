@@ -71,7 +71,21 @@ class LightThemeContrastTest {
     }
 
     @Test
-    fun warmPaperAndWarmInkForbidPureOledBlackAndNeutralColdGrays() {
+    fun obsidianAndPorcelainForbidPureOledBlackAndLegacyColdSurfaces() {
+        val forbiddenSurfaces = setOf(
+            Color(0xFF000000),
+            Color(0xFF080808),
+            Color(0xFF0F1115),
+            Color(0xFF111111),
+            Color(0xFF121212),
+            Color(0xFF141517),
+            Color(0xFF14161B),
+            Color(0xFF16181D),
+            Color(0xFF161920),
+            Color(0xFF1C1F26),
+            Color(0xFFE7E9EE),
+            Color(0xFFF2F2F7),
+        )
         val neutralSurfaces = listOf(
             "LightColors.background" to LightColors.background,
             "LightColors.surfaceContainer" to LightColors.surfaceContainer,
@@ -86,9 +100,7 @@ class LightThemeContrastTest {
             "DarkColors.onSurface" to DarkColors.onSurface,
         )
         neutralSurfaces.forEach { (label, color) ->
-            assertNotEquals("$label must never be pure OLED black", Color(0xFF000000), color)
-            val isNeutralColdGray = color.red == color.green && color.green == color.blue
-            assertTrue("$label ($color) must carry warm undertone rather than pure cold gray", !isNeutralColdGray)
+            assertTrue("$label ($color) must not use pure OLED black or forbidden cold surface", color !in forbiddenSurfaces)
         }
         assertNotEquals(Color(0xFF000000), NolaColors.bgDark)
         assertNotEquals(Color(0xFF121212), NolaColors.bgDark)
@@ -97,8 +109,8 @@ class LightThemeContrastTest {
 
     @Test
     fun semanticAndAlphaCompositedPairsMeetWcagAaContrast() {
-        val lightSuccess = Color(0xFF237047)
-        val darkSuccess = Color(0xFF82C99B)
+        val lightSuccess = Color(0xFF147537)
+        val darkSuccess = Color(0xFF5CD68D)
 
         val pairs = listOf(
             // Light mode semantic pairs

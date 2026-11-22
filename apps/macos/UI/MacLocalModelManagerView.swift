@@ -21,6 +21,7 @@ struct MacLocalModelManagerView: View {
     @State private var deletionTarget: ModelDownloader.ModelType?
     @State private var errorMessage: String?
     @Environment(\.openWindow) private var openWindow
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var openingChatID: String?
     @State private var selectedModelID: String
     @State private var startingModel: ModelDownloader.ModelType?
@@ -38,7 +39,7 @@ struct MacLocalModelManagerView: View {
         nonmutating set { editing.showsCompactDetail = newValue }
     }
     @ObservedObject private var acquisition: MacLocalModelAcquisition
-    @AppStorage("nola.local-model.download-source") private var hubSource = "huggingface"
+    @AppStorage("nola.local-model.download-source") private var hubSource = MacLocalModelAcquisition.defaultDownloadSource
     @AppStorage("nola.local-model.engine") private var hubEngine = MacLocalInferenceEngine.defaultForMac
     @State private var showsAcquisition = false
     @State private var showsDownloadSettings = false
@@ -118,7 +119,7 @@ struct MacLocalModelManagerView: View {
         }
         .onChange(of: acquisition.phase) { _, phase in
             guard case .installed(let id) = phase else { return }
-            installedProfiles = MacLocalModelProfile.installed
+            Task { installedProfiles = await MacLocalModelProfile.loadInstalledAsync() }
             inspectedModelID = id
             showsCompactDetail = true
             editing.searchText = ""
@@ -128,7 +129,7 @@ struct MacLocalModelManagerView: View {
         }
         .onAppear {
             downloader.preferredSource = hubSource == "modelscope" ? .modelscope : .huggingface
-            installedProfiles = MacLocalModelProfile.installed
+            Task { installedProfiles = await MacLocalModelProfile.loadInstalledAsync() }
         }
         .onChange(of: hubSource) { _, value in downloader.preferredSource = value == "modelscope" ? .modelscope : .huggingface }
         .onChange(of: downloader.downloadedModels) { _, _ in preference.reload() }
@@ -169,7 +170,7 @@ struct MacLocalModelManagerView: View {
                 Task {
                     defer {
                         removingID = nil
-                        installedProfiles = MacLocalModelProfile.installed
+                        Task { installedProfiles = await MacLocalModelProfile.loadInstalledAsync() }
                         MacLocalModelConfigurationStore.shared.invalidateReadinessCache()
                         preference.reload()
                     }
@@ -236,14 +237,33 @@ struct MacLocalModelManagerView: View {
             .padding(.horizontal, 14).padding(.vertical, 8)
             ScrollView {
                 LazyVStack(alignment: .leading, spacing: 6) {
-                    ForEach(visibleBuiltInModels, id: \.rawValue) { model in
-                        localModelRow(id: model.rawValue, name: model.displayName,
-                                      downloaded: downloader.isModelDownloaded(model))
-                            .id(model.rawValue)
+                    let downloadedBuiltIns = visibleBuiltInModels.filter { downloader.isModelDownloaded($0) }
+                    let availableBuiltIns = visibleBuiltInModels.filter { !downloader.isModelDownloaded($0) }
+                    if !downloadedBuiltIns.isEmpty || !visibleInstalledModels.isEmpty {
+                        Text(String(localized: "我的本地模型", table: "ModelCenter"))
+                            .font(.caption.weight(.semibold))
+                            .foregroundStyle(.secondary)
+                            .padding(.horizontal, 6)
+                            .padding(.top, 2)
+                        ForEach(visibleInstalledModels) { profile in
+                            localModelRow(id: profile.id, name: profile.displayName, downloaded: true)
+                                .id(profile.id)
+                        }
+                        ForEach(downloadedBuiltIns, id: \.rawValue) { model in
+                            localModelRow(id: model.rawValue, name: model.displayName, downloaded: true)
+                                .id(model.rawValue)
+                        }
                     }
-                    ForEach(visibleInstalledModels) { profile in
-                        localModelRow(id: profile.id, name: profile.displayName, downloaded: true)
-                            .id(profile.id)
+                    if !availableBuiltIns.isEmpty {
+                        Text(String(localized: "推荐预设模型", table: "ModelCenter"))
+                            .font(.caption.weight(.semibold))
+                            .foregroundStyle(.secondary)
+                            .padding(.horizontal, 6)
+                            .padding(.top, downloadedBuiltIns.isEmpty && visibleInstalledModels.isEmpty ? 2 : 8)
+                        ForEach(availableBuiltIns, id: \.rawValue) { model in
+                            localModelRow(id: model.rawValue, name: model.displayName, downloaded: false)
+                                .id(model.rawValue)
+                        }
                     }
                     if visibleBuiltInModels.isEmpty && visibleInstalledModels.isEmpty {
                         Text(String(localized: "No matching models", table: "ModelCenter"))
@@ -290,7 +310,7 @@ struct MacLocalModelManagerView: View {
         } label: {
             HStack(alignment: .top, spacing: 10) {
                 Image(systemName: running ? "play.circle.fill" : downloaded ? "internaldrive" : "arrow.down.circle")
-                    .foregroundStyle(running ? Color.green : Color.secondary)
+                    .foregroundStyle(running ? MacDesignColor.success : Color.secondary)
                     .frame(width: 20)
                     .padding(.top, 2)
                 VStack(alignment: .leading, spacing: 5) {
@@ -338,12 +358,16 @@ struct MacLocalModelManagerView: View {
     private var modelDetail: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 20) {
+                if case .downloading(let repository) = acquisition.phase {
+                    persistentAcquisitionProgressCard(repository: repository)
+                } else if case .failed(let detail) = acquisition.phase {
+                    persistentAcquisitionFailureCard(detail: detail)
+                }
                 MacDefaultChatModelButton(preference: preference, profileID: detailModelID)
-                Text(String(localized: "The runtime target controls Start. The default chat model is a separate preference.", table: "ModelCenter"))
-                    .font(.caption).foregroundStyle(.secondary)
                 if let running = runningModelProfile, running.id != detailModelID {
                     HStack {
                         Label(running.displayName, systemImage: "play.circle.fill")
+                            .foregroundStyle(MacDesignColor.success)
                         Spacer()
                         Button(String(localized: "Stop running model", table: "ModelCenter"), action: stopLocalModel)
                     }
@@ -376,9 +400,85 @@ struct MacLocalModelManagerView: View {
         }
     }
 
+    private func persistentAcquisitionProgressCard(repository: String) -> some View {
+        let fraction = acquisition.total > 0 ? min(1, max(0, Double(acquisition.received) / Double(acquisition.total))) : 0
+        return VStack(alignment: .leading, spacing: 8) {
+            HStack(spacing: 10) {
+                Image(systemName: "arrow.down.circle.fill")
+                    .foregroundStyle(MacDesignColor.brand)
+                Text(verbatim: repository)
+                    .font(.callout.weight(.semibold))
+                    .lineLimit(1)
+                Spacer()
+                if acquisition.total > 0 {
+                    Text("\(Int((fraction * 100).rounded()))%")
+                        .font(.callout.weight(.semibold).monospacedDigit())
+                        .foregroundStyle(MacDesignColor.brand)
+                }
+                Button(String(localized: "Cancel", table: "ModelCenter"), role: .destructive) {
+                    acquisition.reset()
+                }
+                .controlSize(.small)
+            }
+            if acquisition.total > 0 {
+                ProgressView(value: fraction)
+                HStack(spacing: 8) {
+                    Text(verbatim: "\(bytes(acquisition.received)) / \(bytes(acquisition.total))")
+                    if acquisition.downloadSpeedBytesPerSecond > 0 {
+                        Text("·")
+                        Text(verbatim: "\(bytes(Int64(acquisition.downloadSpeedBytesPerSecond)))/s")
+                    }
+                    if let eta = MacLocalModelAcquisition.formatETA(acquisition.estimatedRemainingSeconds) {
+                        Text("·")
+                        Text(String(localized: "剩余", table: "ModelCenter") + " " + eta)
+                    }
+                    Spacer()
+                }
+                .font(.caption.monospacedDigit())
+                .foregroundStyle(.secondary)
+            } else {
+                ProgressView().controlSize(.small)
+            }
+        }
+        .padding(14)
+        .macPanel()
+    }
+
+    private func persistentAcquisitionFailureCard(detail: String) -> some View {
+        HStack(alignment: .top, spacing: 12) {
+            Image(systemName: "exclamationmark.triangle.fill")
+                .font(.system(size: 16, weight: .semibold))
+                .foregroundStyle(MacDesignColor.danger)
+            VStack(alignment: .leading, spacing: 4) {
+                Text(String(localized: "Download failed", table: "ModelCenter"))
+                    .font(.system(size: 12.5, weight: .semibold))
+                Text(verbatim: detail)
+                    .font(.caption)
+                    .foregroundStyle(MacDesignColor.danger)
+                    .textSelection(.enabled)
+            }
+            Spacer(minLength: 8)
+            if acquisition.lastAttemptedCandidate != nil {
+                Button {
+                    acquisition.retryLastDownload()
+                } label: {
+                    Label(String(localized: "Retry", table: "ModelCenter"), systemImage: "arrow.clockwise")
+                }
+                .buttonStyle(.nolaProminent)
+                .controlSize(.small)
+            }
+            Button(String(localized: "Dismiss", table: "ModelCenter")) {
+                acquisition.reset()
+            }
+            .controlSize(.small)
+        }
+        .padding(14)
+        .macPanel()
+    }
+
     private var refreshButton: some View {
         Button {
-            installedProfiles = MacLocalModelProfile.installed
+            Task { installedProfiles = await MacLocalModelProfile.loadInstalledAsync() }
             downloader.refreshDownloadedModelsAsync()
         } label: {
             Image(systemName: "arrow.clockwise")
@@ -411,7 +511,7 @@ struct MacLocalModelManagerView: View {
                     Text(runtimeStatusDetail(runtime))
                         .font(.system(size: 10.5))
                         .foregroundStyle(.secondary)
-                        .contentTransition(.numericText())
+                        .contentTransition(reduceMotion ? .identity : .numericText())
                     TimelineView(.periodic(from: .now, by: 1)) { context in
                         Text(runtimeElapsedText(runtime, now: context.date))
                             .font(.system(size: 10, design: .monospaced))
@@ -420,7 +520,7 @@ struct MacLocalModelManagerView: View {
                 } else if runtime.phase == .failed, let detail = runtime.errorDescription {
                     Text(detail)
                         .font(.system(size: 10.5))
-                        .foregroundStyle(.orange)
+                        .foregroundStyle(MacDesignColor.warning)
                         .textSelection(.enabled)
                 }
                 if case .downloading(let progress) = downloader.state {
@@ -433,13 +533,13 @@ struct MacLocalModelManagerView: View {
                             Text("· \(bytes(Int64(downloader.downloadSpeed)))/s")
                         }
                     }
-                    .font(.system(size: 10, design: .monospaced))
+                    .font(.system(size: 10).monospacedDigit())
                     .foregroundStyle(.secondary)
                 }
                 if let errorMessage {
                     Text(errorMessage)
                         .font(.system(size: 10.5))
-                        .foregroundStyle(.orange)
+                        .foregroundStyle(MacDesignColor.warning)
                         .textSelection(.enabled)
                 }
             }
@@ -477,9 +577,9 @@ struct MacLocalModelManagerView: View {
         HStack(alignment: .top, spacing: 12) {
             Image(systemName: "exclamationmark.triangle.fill")
                 .font(.system(size: 16, weight: .semibold))
-                .foregroundStyle(.orange)
+                .foregroundStyle(MacDesignColor.warning)
                 .frame(width: 36, height: 36)
-                .background(Color.orange.opacity(0.12), in: RoundedRectangle(cornerRadius: 10))
+                .background(MacDesignColor.warning.opacity(0.12), in: RoundedRectangle(cornerRadius: 10))
             VStack(alignment: .leading, spacing: 5) {
                 Text(String(localized: "Download failed", table: "ModelCenter"))
                     .font(.system(size: 12.5, weight: .semibold))
@@ -490,7 +590,7 @@ struct MacLocalModelManagerView: View {
                 }
                 Text(detail)
                     .font(.system(size: 10.5))
-                    .foregroundStyle(.orange)
+                    .foregroundStyle(MacDesignColor.warning)
                     .textSelection(.enabled)
             }
             Spacer(minLength: 12)
@@ -515,7 +615,7 @@ struct MacLocalModelManagerView: View {
             HStack(alignment: .top, spacing: 13) {
                 Image(systemName: downloaded ? "checkmark.circle.fill" : "arrow.down.circle")
                     .font(.system(size: 18, weight: .medium))
-                    .foregroundStyle(downloaded ? Color.green : MacDesignColor.brand)
+                    .foregroundStyle(downloaded ? MacDesignColor.success : MacDesignColor.brand)
                     .frame(width: 20, height: 20)
                 VStack(alignment: .leading, spacing: 5) {
                     Text(model.displayName)
@@ -530,7 +630,7 @@ struct MacLocalModelManagerView: View {
                         if downloaded && selectedModelID == model.rawValue {
                             MacStatusBadge(
                                 title: String(localized: "Runtime target", table: "ModelCenter"),
-                                tint: .green,
+                                tint: MacDesignColor.success,
                                 symbol: "checkmark"
                             )
                         }
@@ -561,7 +661,7 @@ struct MacLocalModelManagerView: View {
                         }
                     }
                     .font(.system(size: 10, weight: .medium))
-                    .foregroundStyle(model.isRecommendedForCurrentDevice ? Color.secondary : Color.orange)
+                    .foregroundStyle(model.isRecommendedForCurrentDevice ? Color.secondary : MacDesignColor.warning)
                     Text(String(localized: "Estimated download", table: "ModelCenter") + " · \(bytes(model.estimatedSize))")
                         .font(.system(size: 10, design: .monospaced))
                         .foregroundStyle(.secondary)
@@ -596,7 +696,7 @@ struct MacLocalModelManagerView: View {
             HStack(alignment: .top, spacing: 13) {
                 Image(systemName: "checkmark.seal.fill")
                     .font(.system(size: 18, weight: .medium))
-                    .foregroundStyle(.green)
+                    .foregroundStyle(MacDesignColor.success)
                     .frame(width: 20, height: 20)
                 VStack(alignment: .leading, spacing: 5) {
                     Text(profile.displayName)
@@ -608,7 +708,7 @@ struct MacLocalModelManagerView: View {
                         if selected {
                             MacStatusBadge(
                                 title: String(localized: "Runtime target", table: "ModelCenter"),
-                                tint: .green,
+                                tint: MacDesignColor.success,
                                 symbol: "checkmark"
                             )
                         }
@@ -664,46 +764,30 @@ struct MacLocalModelManagerView: View {
         running: Bool,
         starting: Bool
     ) -> some View {
-                chatButton(profile, running: running)
-                if !selected {
-                    Button {
-                        do {
-                            try MacLocalModelConfigurationStore.shared.select(profile)
-                            selectedModelID = profile.id
-                            errorMessage = nil
-                            runtimeRefreshID = UUID()
-                        } catch {
-                            errorMessage = error.localizedDescription
-                        }
-                    } label: {
-                        Label(String(localized: "Use for Start", table: "ModelCenter"), systemImage: "checkmark.circle")
-                    }
-                    .buttonStyle(.bordered)
-                    .disabled(runningModelProfile != nil || MacMLXOpenAIService.shared.status.isStarting)
-                }
-                Button {
-                    parameterRoute = MacModelParametersRoute(modelName: profile.id, isLocal: true, displayName: profile.displayName)
-                } label: {
-                    Label(String(localized: "Parameters…", table: "ModelCenter"), systemImage: "slider.horizontal.3")
-                }
                 if running {
                     Button(action: stopLocalModel) {
-                        Label(String(localized: "Stop", table: "ModelCenter"), systemImage: "stop.fill")
+                        Label(String(localized: "停止", table: "ModelCenter"), systemImage: "stop.fill")
                     }
                     .buttonStyle(.bordered)
-                } else if selected {
-                    Button { startLocalProfile(profile) } label: {
+                } else {
+                    Button { switchAndStart(profile) } label: {
                         if starting {
                             HStack(spacing: 6) {
                                 ProgressView().controlSize(.small)
                                 Text(String(localized: "Starting", table: "ModelCenter") + "…")
                             }
                         } else {
-                            Label(String(localized: "Start", table: "ModelCenter"), systemImage: "play.fill")
+                            Label(String(localized: "切换并使用", table: "ModelCenter"), systemImage: "play.fill")
                         }
                     }
                     .buttonStyle(.nolaProminent)
-                    .disabled(!engineReady(for: profile) || runningModelProfile != nil || MacMLXOpenAIService.shared.status.isStarting)
+                    .disabled(!engineReady(for: profile) || MacMLXOpenAIService.shared.status.isStarting)
+                }
+                chatButton(profile, running: running)
+                Button {
+                    parameterRoute = MacModelParametersRoute(modelName: profile.id, isLocal: true, displayName: profile.displayName)
+                } label: {
+                    Label(String(localized: "Parameters…", table: "ModelCenter"), systemImage: "slider.horizontal.3")
                 }
                 Menu {
                     Button(String(localized: "Reveal", table: "ModelCenter")) { if let directory = profile.installedDirectory { NSWorkspace.shared.activateFileViewerSelecting([directory]) } }
@@ -717,21 +801,27 @@ struct MacLocalModelManagerView: View {
     @ViewBuilder
     private func modelActions(_ model: ModelDownloader.ModelType, downloaded: Bool, running: Bool) -> some View {
         if downloaded {
-            if let profile = MacLocalModelProfile.all.first(where: { $0.id == model.rawValue }) {
-                chatButton(profile, running: running)
-            }
-            if selectedModelID != model.rawValue {
-                Button(String(localized: "Use for Start", table: "ModelCenter")) {
-                    do {
-                        try MacLocalModelConfigurationStore.shared.select(model)
-                        selectedModelID = model.rawValue
-                        errorMessage = nil
-                    } catch {
-                        errorMessage = error.localizedDescription
+            if running {
+                Button(action: stopLocalModel) {
+                    Label(String(localized: "停止", table: "ModelCenter"), systemImage: "stop.fill")
+                }
+                .buttonStyle(.bordered)
+            } else {
+                Button {
+                    switchAndStart(model)
+                } label: {
+                    HStack(spacing: 6) {
+                        if startingModel == model {
+                            ProgressView().controlSize(.small)
+                        }
+                        Label(String(localized: "切换并使用", table: "ModelCenter"), systemImage: "play.fill")
                     }
                 }
                 .buttonStyle(.nolaProminent)
-                .disabled(runningModelProfile != nil || MacMLXOpenAIService.shared.status.isStarting)
+                .disabled(startingModel != nil || MacMLXOpenAIService.shared.status.isStarting)
+            }
+            if let profile = MacLocalModelProfile.all.first(where: { $0.id == model.rawValue }) {
+                chatButton(profile, running: running)
             }
             Button {
                 parameterRoute = MacModelParametersRoute(
@@ -741,25 +831,6 @@ struct MacLocalModelManagerView: View {
                 )
             } label: {
                 Label(String(localized: "Parameters…", table: "ModelCenter"), systemImage: "slider.horizontal.3")
-            }
-            if running {
-                Button(action: stopLocalModel) {
-                    Label(String(localized: "Stop", table: "ModelCenter"), systemImage: "stop.fill")
-                }
-                .buttonStyle(.bordered)
-            } else if selectedModelID == model.rawValue {
-                Button {
-                    startLocalModel(model)
-                } label: {
-                    HStack(spacing: 6) {
-                        if startingModel == model {
-                            ProgressView().controlSize(.small)
-                        }
-                        Text(String(localized: "Start", table: "ModelCenter"))
-                    }
-                }
-                .buttonStyle(.nolaProminent)
-                .disabled(startingModel != nil || runningModelProfile != nil || MacMLXOpenAIService.shared.status.isStarting)
             }
             Menu {
                 Button(String(localized: "Reveal", table: "ModelCenter")) {
@@ -894,8 +965,8 @@ struct MacLocalModelManagerView: View {
         switch downloader.state {
         case .notDownloaded: return .secondary
         case .downloading: return MacDesignColor.brand
-        case .downloaded: return .green
-        case .failed, .paused: return .orange
+        case .downloaded: return MacDesignColor.success
+        case .failed, .paused: return MacDesignColor.warning
         }
     }
 
@@ -968,6 +1039,35 @@ struct MacLocalModelManagerView: View {
         }
     }
 
+    private func switchAndStart(_ model: ModelDownloader.ModelType) {
+        guard let profile = MacLocalModelProfile.all.first(where: { $0.id == model.rawValue }) else { return }
+        if runningModelProfile != nil && runningModelProfile?.id != profile.id {
+            MacMLXOpenAIService.shared.stop()
+        }
+        do {
+            try MacLocalModelConfigurationStore.shared.select(model)
+            selectedModelID = model.rawValue
+        } catch {
+            errorMessage = error.localizedDescription
+            return
+        }
+        startLocalModel(model)
+    }
+
+    private func switchAndStart(_ profile: MacLocalModelProfile) {
+        if runningModelProfile != nil && runningModelProfile?.id != profile.id {
+            MacMLXOpenAIService.shared.stop()
+        }
+        do {
+            try MacLocalModelConfigurationStore.shared.select(profile)
+            selectedModelID = profile.id
+        } catch {
+            errorMessage = error.localizedDescription
+            return
+        }
+        startLocalProfile(profile)
+    }
+
     private func startLocalProfile(_ profile: MacLocalModelProfile) {
         errorMessage = nil
         runtimeRefreshID = UUID()
@@ -988,6 +1088,6 @@ struct MacLocalModelManagerView: View {
     }
 
     private func bytes(_ value: Int64) -> String {
-        ByteCountFormatter.string(fromByteCount: value, countStyle: .file)
+        MacLocalModelAcquisition.formatGigabytes(value)
     }
 }

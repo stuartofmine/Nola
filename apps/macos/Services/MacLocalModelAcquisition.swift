@@ -35,6 +35,32 @@ nonisolated struct MacModelAcquisitionEvent: Decodable, Sendable {
 
         var estimates128K: Bool { nativeContextKnown == true && contextTokens >= 131_072 }
 
+        var displayTitle: String {
+            let repoName = repository.split(separator: "/").last.map(String.init) ?? repository
+            let suffixes = ["-MLX-4bit", "-MLX-8bit", "-MLX-6bit", "-MLX", "-mlx", "-GGUF", "-gguf", "-4bit", "-8bit", "-bf16", "-fp16"]
+            var cleaned = repoName
+            for suffix in suffixes where cleaned.hasSuffix(suffix) {
+                cleaned = String(cleaned.dropLast(suffix.count))
+            }
+            return cleaned.replacingOccurrences(of: "-", with: " ").trimmingCharacters(in: .whitespaces)
+        }
+
+        func fitBadge(deviceMemoryBytes: Int64?) -> (label: String, isComfortable: Bool) {
+            if let total = deviceMemoryBytes, total > 0 {
+                let ratio = Double(estimatedMemoryBytes) / Double(total)
+                if ratio <= 0.65 {
+                    return (String(localized: "流畅运行", table: "ModelCenter"), true)
+                }
+                if ratio <= 0.90 {
+                    return (String(localized: "适中运行", table: "ModelCenter"), true)
+                }
+                return (String(localized: "内存紧张", table: "ModelCenter"), false)
+            }
+            return estimatedMemoryBytes <= 6_000_000_000
+                ? (String(localized: "流畅运行", table: "ModelCenter"), true)
+                : (String(localized: "适中运行", table: "ModelCenter"), true)
+        }
+
         var contextDescription: String {
             let estimate = contextTokens.formatted()
             if estimates128K {
@@ -187,19 +213,114 @@ final class MacLocalModelAcquisition: ObservableObject {
     private var recommendedFor: (engine: MacLocalInferenceEngine, source: String, query: String)?
     @Published private(set) var received: Int64 = 0
     @Published private(set) var total: Int64 = 0
+    @Published private(set) var downloadSpeedBytesPerSecond: Double = 0
+    @Published private(set) var estimatedRemainingSeconds: Double?
+    @Published private(set) var lastAttemptedCandidate: MacModelAcquisitionEvent.Candidate?
+    private struct RecommendationCacheKey: Hashable {
+        let engine: MacLocalInferenceEngine
+        let source: String
+        let query: String
+    }
+    private struct CachedRecommendation {
+        let candidates: [MacModelAcquisitionEvent.Candidate]
+        let reason: String?
+        let recommendationSource: String?
+        let hardware: MacModelAcquisitionEvent.Hardware?
+        let cachedAt: Date
+    }
+    private var recommendationCache: [RecommendationCacheKey: CachedRecommendation] = [:]
+    private var engineCheckedAt: [MacLocalInferenceEngine: Date] = [:]
+    private let recommendationCacheTTL: TimeInterval = 1800
+    private let engineCacheTTL: TimeInterval = 300
     private let client: MacModelAcquisitionClient
     private var task: Task<Void, Never>?
     private var generation = UUID()
 
+    static var defaultDownloadSource: String {
+        defaultDownloadSource(timeZone: .current, locale: .current)
+    }
+
+    static func defaultDownloadSource(timeZone: TimeZone, locale: Locale) -> String {
+        let chinaTimeZones: Set<String> = [
+            "Asia/Shanghai", "Asia/Chongqing", "Asia/Harbin", "Asia/Urumqi",
+            "Asia/Hong_Kong", "Asia/Macau", "Asia/Taipei", "PRC"
+        ]
+        let isUTC8 = timeZone.secondsFromGMT() == 8 * 3600
+        let isChineseLocale = locale.language.languageCode?.identifier == "zh"
+            || locale.region?.identifier == "CN"
+            || locale.identifier.lowercased().hasPrefix("zh")
+        if isUTC8 && (chinaTimeZones.contains(timeZone.identifier) || isChineseLocale) {
+            return "modelscope"
+        }
+        if locale.region?.identifier == "CN" || locale.identifier.lowercased().hasPrefix("zh-hans") || locale.identifier.lowercased().hasPrefix("zh_hans") {
+            return "modelscope"
+        }
+        return "huggingface"
+    }
+
+    static func parseDirectInput(_ raw: String) -> (source: String?, query: String) {
+        let trimmed = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return (nil, "") }
+        let normalizedURLString = trimmed.contains("://") ? trimmed : (
+            (trimmed.hasPrefix("huggingface.co/") || trimmed.hasPrefix("www.huggingface.co/")
+             || trimmed.hasPrefix("hf-mirror.com/") || trimmed.hasPrefix("modelscope.cn/")
+             || trimmed.hasPrefix("www.modelscope.cn/")) ? "https://" + trimmed : trimmed
+        )
+        if let url = URL(string: normalizedURLString), let host = url.host?.lowercased() {
+            let parts = url.pathComponents.filter { $0 != "/" && !$0.isEmpty }
+            if host == "huggingface.co" || host == "www.huggingface.co" || host == "hf-mirror.com" || host == "www.hf-mirror.com" {
+                let repoParts = parts.first == "models" ? Array(parts.dropFirst()) : parts
+                if repoParts.count >= 2 {
+                    return ("huggingface", "\(repoParts[0])/\(repoParts[1])")
+                }
+            } else if host == "modelscope.cn" || host == "www.modelscope.cn" {
+                let repoParts = parts.first == "models" ? Array(parts.dropFirst()) : parts
+                if repoParts.count >= 2 {
+                    return ("modelscope", "\(repoParts[0])/\(repoParts[1])")
+                }
+            }
+        }
+        return (nil, trimmed)
+    }
+
+    static func formatGigabytes(_ bytes: Int64) -> String {
+        guard bytes > 0 else { return "0 GB" }
+        let gb = Double(bytes) / 1_000_000_000.0
+        if gb < 0.1 {
+            let mb = Double(bytes) / 1_000_000.0
+            return "\(Int(mb.rounded())) MB"
+        }
+        return gb.formatted(.number.precision(.fractionLength(0...1))) + " GB"
+    }
+
+    static func formatETA(_ seconds: Double?) -> String? {
+        guard let seconds, seconds.isFinite, seconds >= 1 else { return nil }
+        let total = Int(seconds.rounded())
+        if total < 60 { return "\(total)s" }
+        let minutes = total / 60
+        let remainder = total % 60
+        if minutes < 60 { return "\(minutes)m \(remainder)s" }
+        return "\(minutes / 60)h \(minutes % 60)m"
+    }
+
     init(client: MacModelAcquisitionClient = .init()) { self.client = client }
 
-    func checkEngine(_ engine: MacLocalInferenceEngine, install: Bool = false) {
+    func checkEngine(_ engine: MacLocalInferenceEngine, install: Bool = false, force: Bool = false) {
         guard !engineOperations.contains(engine) else { return }
         let previous: MacModelAcquisitionEvent.EngineStatus?
         switch engines[engine] {
         case .checking, .installing: return
-        case .detected(let status), .failed(.some(let status), _): previous = status
-        default: previous = nil
+        case .detected(let status):
+            previous = status
+            if !install && !force,
+               let checkedAt = engineCheckedAt[engine],
+               Date().timeIntervalSince(checkedAt) < engineCacheTTL {
+                return
+            }
+        case .failed(.some(let status), _):
+            previous = status
+        default:
+            previous = nil
         }
         guard !install || (previous?.canInstall == true && previous?.ready == false) else { return }
         engineOperations.insert(engine)
@@ -210,6 +331,7 @@ final class MacLocalModelAcquisition: ObservableObject {
             do {
                 let status = try await client.engineStatus(engine, install: install)
                 engines[engine] = .detected(status)
+                engineCheckedAt[engine] = Date()
             } catch {
                 engines[engine] = .failed(previous, error.localizedDescription)
             }
@@ -224,7 +346,8 @@ final class MacLocalModelAcquisition: ObservableObject {
         return false
     }
 
-    func loadHardware() async {
+    func loadHardware(force: Bool = false) async {
+        if !force && hardware != nil { return }
         do {
             let snapshot = try await client.hardware()
             guard let device = snapshot.hardware else { throw CocoaError(.fileReadCorruptFile) }
@@ -242,6 +365,8 @@ final class MacLocalModelAcquisition: ObservableObject {
         task = nil
         phase = .idle
         received = 0; total = 0
+        downloadSpeedBytesPerSecond = 0
+        estimatedRemainingSeconds = nil
         candidates = []
         reason = nil
         recommendationSource = nil
@@ -264,11 +389,25 @@ final class MacLocalModelAcquisition: ObservableObject {
         recommend(engine: engine, source: source, name: query)
     }
 
-    func recommend(engine: MacLocalInferenceEngine, source: String, name: String) {
+    func recommend(engine: MacLocalInferenceEngine, source: String, name: String, force: Bool = false) {
         let query = name.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !downloading else { return }
-        if let request = recommendedFor, phase == .searching,
+        if !force, let request = recommendedFor, phase == .searching,
            (request.engine, request.source, request.query) == (engine, source, query) { return }
+        let cacheKey = RecommendationCacheKey(engine: engine, source: source, query: query)
+        if !force, let cached = recommendationCache[cacheKey],
+           Date().timeIntervalSince(cached.cachedAt) < recommendationCacheTTL {
+            generation = UUID()
+            task?.cancel()
+            task = nil
+            recommendedFor = (engine, source, query)
+            candidates = cached.candidates
+            hardware = cached.hardware ?? hardware
+            reason = cached.reason
+            recommendationSource = cached.recommendationSource
+            phase = .choosing
+            return
+        }
         reset()
         phase = .searching
         recommendedFor = (engine, source, query)
@@ -282,6 +421,13 @@ final class MacLocalModelAcquisition: ObservableObject {
                 hardware = response.hardware ?? hardware
                 reason = response.reason
                 recommendationSource = response.recommendationSource
+                recommendationCache[cacheKey] = CachedRecommendation(
+                    candidates: items,
+                    reason: response.reason,
+                    recommendationSource: response.recommendationSource,
+                    hardware: response.hardware,
+                    cachedAt: Date()
+                )
                 phase = .choosing
             } catch {
                 if generation == id { phase = .failed(error.localizedDescription) }
@@ -290,11 +436,17 @@ final class MacLocalModelAcquisition: ObservableObject {
     }
 
     func confirm(_ candidate: MacModelAcquisitionEvent.Candidate) {
-        guard phase == .choosing, candidates.contains(candidate), let request = recommendedFor else { return }
+        guard (phase == .choosing || { if case .failed = phase { return true }; return false }()),
+              candidates.contains(candidate),
+              let request = recommendedFor else { return }
         generation = UUID()
         let id = generation
         received = 0; total = 0
+        downloadSpeedBytesPerSecond = 0
+        estimatedRemainingSeconds = nil
+        lastAttemptedCandidate = candidate
         phase = .downloading(candidate.repository)
+        let startedAt = Date()
         task = Task {
             do {
                 let response = try await client.confirm(engine: request.engine, source: request.source, candidate: candidate) { update in
@@ -302,16 +454,38 @@ final class MacLocalModelAcquisition: ObservableObject {
                     if let done = update.downloadedBytes, let size = update.totalBytes {
                         self.received = done
                         self.total = size
+                        let elapsed = Date().timeIntervalSince(startedAt)
+                        if elapsed >= 0.25 && done > 0 {
+                            let speed = Double(done) / elapsed
+                            self.downloadSpeedBytesPerSecond = speed
+                            if size > done && speed > 0 {
+                                self.estimatedRemainingSeconds = Double(size - done) / speed
+                            } else {
+                                self.estimatedRemainingSeconds = nil
+                            }
+                        }
                     }
                 }
                 guard generation == id else { return }
                 guard let installed = response.model?.id else { throw CocoaError(.fileReadCorruptFile) }
                 MacLocalModelConfigurationStore.shared.invalidateReadinessCache()
+                lastAttemptedCandidate = nil
+                downloadSpeedBytesPerSecond = 0
+                estimatedRemainingSeconds = nil
                 phase = .installed(installed)
                 NotificationCenter.default.post(name: .nolaMacConfigurationDidChange, object: nil)
             } catch {
-                if generation == id { phase = .failed(error.localizedDescription) }
+                if generation == id {
+                    downloadSpeedBytesPerSecond = 0
+                    estimatedRemainingSeconds = nil
+                    phase = .failed(error.localizedDescription)
+                }
             }
         }
+    }
+
+    func retryLastDownload() {
+        guard let candidate = lastAttemptedCandidate else { return }
+        confirm(candidate)
     }
 }

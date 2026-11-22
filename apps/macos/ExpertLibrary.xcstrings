@@ -1,282 +1,306 @@
 {
-  "sourceLanguage": "en",
-  "strings": {
-    "Expert Library": {
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Expert Library"
+  "sourceLanguage" : "en",
+  "strings" : {
+    "Built-in experts" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Integrierte Experten"
           }
         },
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "专家库"
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Built-in experts"
           }
         },
-        "de": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Expertenbibliothek"
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Expertos integrados"
           }
         },
-        "es": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Biblioteca de expertos"
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Experts intégrés"
           }
         },
-        "fr": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Bibliothèque d’experts"
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "組み込みエキスパート"
           }
         },
-        "ja": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "エキスパートライブラリ"
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Встроенные эксперты"
           }
         },
-        "ru": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Библиотека экспертов"
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "系统内置"
           }
         }
       }
     },
-    "Built-in experts": {
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Built-in experts"
+    "Customize a copy" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Bearbeitbare Kopie erstellen"
           }
         },
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "系统内置"
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Customize a copy"
           }
         },
-        "de": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Integrierte Experten"
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Crear una copia editable"
           }
         },
-        "es": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Expertos integrados"
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Créer une copie modifiable"
           }
         },
-        "fr": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Experts intégrés"
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "編集可能なコピーを作成"
           }
         },
-        "ja": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "組み込みエキスパート"
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Создать редактируемую копию"
           }
         },
-        "ru": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Встроенные эксперты"
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "创建可编辑副本"
           }
         }
       }
     },
-    "My experts": {
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "My experts"
+    "Delete" : {
+
+    },
+    "Delete this custom expert?" : {
+
+    },
+    "Expert Library" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Expertenbibliothek"
           }
         },
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "我的专家"
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Expert Library"
           }
         },
-        "de": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Meine Experten"
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Biblioteca de expertos"
           }
         },
-        "es": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Mis expertos"
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Bibliothèque d’experts"
           }
         },
-        "fr": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Mes experts"
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "エキスパートライブラリ"
           }
         },
-        "ja": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "マイエキスパート"
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Библиотека экспертов"
           }
         },
-        "ru": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Мои эксперты"
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "专家库"
           }
         }
       }
     },
-    "No custom experts yet": {
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "No custom experts yet"
+    "Identity" : {
+
+    },
+    "Model & Reasoning" : {
+
+    },
+    "My experts" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Meine Experten"
           }
         },
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "还没有自建专家"
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "My experts"
           }
         },
-        "de": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Noch keine eigenen Experten"
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Mis expertos"
           }
         },
-        "es": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Aún no hay expertos propios"
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Mes experts"
           }
         },
-        "fr": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Aucun expert personnalisé"
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "マイエキスパート"
           }
         },
-        "ja": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "カスタムエキスパートはまだありません"
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Мои эксперты"
           }
         },
-        "ru": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Пока нет своих экспертов"
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "我的专家"
           }
         }
       }
     },
-    "Customize a copy": {
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Customize a copy"
+    "No custom experts yet" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Noch keine eigenen Experten"
           }
         },
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "创建可编辑副本"
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "No custom experts yet"
           }
         },
-        "de": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Bearbeitbare Kopie erstellen"
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Aún no hay expertos propios"
           }
         },
-        "es": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Crear una copia editable"
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Aucun expert personnalisé"
           }
         },
-        "fr": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Créer une copie modifiable"
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "カスタムエキスパートはまだありません"
           }
         },
-        "ja": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "編集可能なコピーを作成"
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Пока нет своих экспертов"
           }
         },
-        "ru": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Создать редактируемую копию"
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "还没有自建专家"
           }
         }
       }
     },
-    "Prompt": {
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Prompt"
+    "No matching experts" : {
+
+    },
+    "Prompt" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Anweisung"
           }
         },
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "提示词"
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Prompt"
           }
         },
-        "de": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Anweisung"
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Instrucciones"
           }
         },
-        "es": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Instrucciones"
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Instructions"
           }
         },
-        "fr": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Instructions"
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "プロンプト"
           }
         },
-        "ja": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "プロンプト"
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Инструкции"
           }
         },
-        "ru": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Инструкции"
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "提示词"
           }
         }
       }
+    },
+    "Role & Prompt" : {
+
+    },
+    "Search experts" : {
+
+    },
+    "This disables the expert for future conversations. Existing conversations keep their saved history." : {
+
     }
   },
-  "version": "1.0"
+  "version" : "1.0"
 }

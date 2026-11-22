@@ -186,12 +186,21 @@ struct IOSConversationInspector: View {
                     Text("inspector.failed", tableName: "ConversationInspector")
                     Button(String(localized: "inspector.retry", table: "ConversationInspector")) { retry += 1 }
                 }
-                status(processingState.blocksInput ? "running" : "idle")
+                Section {
+                    HStack {
+                        Text(goalText("inspector.section.status", "Session status"))
+                            .font(.subheadline.weight(.medium))
+                        Spacer()
+                        status(processingState.blocksInput ? "running" : "idle")
+                    }
+                }
                 if pane == .goals && supportsGoalControl && submitGoalControl != nil { goalControls }
                 if pane == .goals, let goal = facts?.goal_projection?.active {
-                    Section {
-                        Text(goal.objective).font(.headline)
-                        status(goal.status)
+                    Section(goalText("goal.section.goal", "Goal")) {
+                        VStack(alignment: .leading, spacing: 8) {
+                            Text(goal.objective).font(.headline)
+                            status(goal.status)
+                        }
                         if let wake = goal.next_wake_at_epoch_ms, wake > 0 {
                             LabeledContent(goalText("goal.wake", "Continue at")) {
                                 Text(Date(timeIntervalSince1970: TimeInterval(wake) / 1_000.0), format: .dateTime.month().day().hour().minute())
@@ -212,24 +221,41 @@ struct IOSConversationInspector: View {
                             }
                         }
                     }
-                    ForEach(goal.requirements.values.sorted { $0.id < $1.id }) { requirement in
-                        VStack(alignment: .leading) { Text(requirement.description); status(requirement.status) }
+                    let sortedRequirements = goal.requirements.values.sorted { $0.id < $1.id }
+                    if !sortedRequirements.isEmpty {
+                        Section(goalText("goal.section.requirements", "Requirements")) {
+                            ForEach(sortedRequirements) { requirement in
+                                inspectorStatusRow(title: requirement.description, state: requirement.status)
+                            }
+                        }
                     }
-                    ForEach(goal.work.current) { entry in
-                        VStack(alignment: .leading) {
-                            Text(entry.content)
-                            if let value = entry.progress { status(value) }
+                    let workEntries = goal.work.current
+                    if !workEntries.isEmpty {
+                        Section(goalText("goal.section.work", "Progress")) {
+                            ForEach(workEntries) { entry in
+                                if let value = entry.progress {
+                                    inspectorStatusRow(title: entry.content, state: value)
+                                } else {
+                                    Text(entry.content)
+                                }
+                            }
                         }
                     }
                 }
                 if pane != .goals {
-                    ForEach(plan?.todos ?? []) { todo in
-                        VStack(alignment: .leading) { Text(todo.content); status(todo.status) }
+                    let todos = plan?.todos ?? []
+                    if !todos.isEmpty {
+                        Section(goalText("inspector.section.checklist", "Checklist")) {
+                            ForEach(todos) { todo in
+                                inspectorStatusRow(title: todo.content, state: todo.status)
+                            }
+                        }
                     }
-                    ForEach(currentTasks) { task in
-                        VStack(alignment: .leading) {
-                            Text(taskDisplayTitle(task))
-                            status(task.state.rawValue)
+                    if !currentTasks.isEmpty {
+                        Section(goalText("inspector.section.tasks", "Tasks")) {
+                            ForEach(currentTasks) { task in
+                                inspectorStatusRow(title: taskDisplayTitle(task), state: task.state.rawValue)
+                            }
                         }
                     }
                 }
@@ -516,12 +542,69 @@ struct IOSConversationInspector: View {
             .filter { $0.ownerSessionId == conversationID }
     }
 
+    private func inspectorStatusRow(title: String, state: String) -> some View {
+        let normalized = state.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        let isCompleted = ["completed", "done", "succeeded", "satisfied", "verified"].contains(normalized)
+        return HStack(alignment: .top, spacing: 10) {
+            Image(systemName: statusSymbol(for: normalized))
+                .font(.body)
+                .foregroundStyle(statusTint(for: normalized))
+                .padding(.top, 1)
+                .accessibilityHidden(true)
+            VStack(alignment: .leading, spacing: 5) {
+                Text(title)
+                    .font(.body)
+                    .foregroundStyle(isCompleted ? .secondary : .primary)
+                    .strikethrough(isCompleted)
+                status(state)
+            }
+        }
+        .padding(.vertical, 2)
+    }
+
+    private func statusSymbol(for normalized: String) -> String {
+        switch normalized {
+        case "completed", "done", "succeeded", "satisfied", "verified":
+            return "checkmark.circle.fill"
+        case "running", "in_progress", "active":
+            return "clock.arrow.circlepath"
+        case "failed", "error", "cancelled", "canceled":
+            return "exclamationmark.circle.fill"
+        case "paused", "needs_user", "waiting":
+            return "pause.circle.fill"
+        default:
+            return "circle"
+        }
+    }
+
+    private func statusTint(for normalized: String) -> Color {
+        switch normalized {
+        case "completed", "done", "succeeded", "satisfied", "verified":
+            return DesignTokens.successColor
+        case "running", "in_progress", "active":
+            return DesignTokens.actionColor
+        case "failed", "error", "cancelled", "canceled":
+            return DesignTokens.dangerColor
+        case "paused", "needs_user", "waiting":
+            return DesignTokens.warningColor
+        default:
+            return DesignTokens.secondaryContentColor
+        }
+    }
+
     private func status(_ value: String) -> some View {
+        let normalized = value.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        let tint = statusTint(for: normalized)
         let key = "inspector.state." + value
         let localized = NSLocalizedString(key, tableName: "ConversationInspector", comment: "Canonical progress state")
-        return Text(localized == key
+        let label = localized == key
             ? String(localized: "inspector.state.unknown", table: "ConversationInspector") + " · " + value
-            : localized)
-            .font(.caption).foregroundStyle(.secondary)
+            : localized
+        return Text(label)
+            .font(.caption2.weight(.semibold))
+            .foregroundStyle(tint)
+            .padding(.horizontal, 8)
+            .padding(.vertical, 3)
+            .background(tint.opacity(0.12), in: Capsule())
     }
 }

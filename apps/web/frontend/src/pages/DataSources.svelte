@@ -26,7 +26,7 @@
     let sources = $state<DataSource[]>([]);
     let usage = $state<SourceUsage[]>([]);
     type InformationTab = 'overview' | 'knowledge' | 'sources' | 'memory' | 'plans' | 'activity' | 'usage';
-    const desktopTabs: InformationTab[] = ['sources', 'memory', 'plans', 'usage'];
+    const desktopTabs: InformationTab[] = ['knowledge', 'sources', 'memory', 'plans', 'usage'];
     const tabs = $derived<readonly InformationTab[]>(viewportWidth <= 700 ? mobileInformationTabs : desktopTabs);
     function tabAt(url: URL, width: number): InformationTab {
         const requested = url.searchParams.get('tab');
@@ -246,7 +246,7 @@
     {#if viewportWidth > 700}<div class="data-tabs" role="tablist" aria-label={t($locale, 'data_sources.header.title')}>
         {#each tabs as item, index}<button type="button" role="tab" id={`data-tab-${item}`} aria-controls={`data-panel-${item}`} aria-selected={tab === item} tabindex={tab === item ? 0 : -1} onclick={() => selectTab(item)} onkeydown={event => tabKey(event, index)}>{t($locale, tabLabel(item))}</button>{/each}
     </div>{/if}
-    {#if knowledgeVisited}<div class="data-panel" id="data-panel-knowledge" role={viewportWidth <= 700 ? 'region' : 'tabpanel'} aria-labelledby="data-tab-knowledge" hidden={tab !== 'knowledge'}><InformationKnowledge /></div>{/if}
+    <div class="data-panel" id="data-panel-knowledge" role={viewportWidth <= 700 ? 'region' : 'tabpanel'} aria-labelledby="data-tab-knowledge" hidden={tab !== 'knowledge'}>{#if knowledgeVisited}<InformationKnowledge />{/if}</div>
     {#if activityVisited}<div class="data-panel" id="data-panel-activity" role={viewportWidth <= 700 ? 'region' : 'tabpanel'} aria-labelledby="data-tab-activity" hidden={tab !== 'activity'}><section class="card"><h2>{t($locale, 'chatInspector.list.activity')}</h2><p class="muted">{t($locale, 'activity.results_hint')}</p><a class="button" href="/activity">{t($locale, 'chatInspector.list.activity')}</a></section></div>{/if}
     {#if notice && !editorId}<p role="status" class:error={!!formError}>{t($locale, notice)} {#if formError}{message(formError)}{/if}</p>{/if}
     <div class="card data-panel" id="data-panel-sources" role={viewportWidth <= 700 ? 'region' : 'tabpanel'} aria-labelledby="data-tab-sources" hidden={tab !== 'sources'} aria-busy={sourcesLoading || !!operation}>
@@ -296,9 +296,10 @@
     </form>{/if}
 </dialog>
 <style>
-    .data-tabs { display: flex; flex-wrap: wrap; gap: 8px; padding: 0; background: transparent; border-radius: 0; }
-    .data-tabs button { flex: 0 1 auto; min-height: 44px; border-color: transparent; background: transparent; transition: border-color 160ms ease; }
-    .data-tabs button[aria-selected='true'] { background: var(--accent-subtle); border-color: transparent; }
+    .data-tabs { display: flex; flex-wrap: wrap; gap: 4px; padding: 4px; justify-self: start; background: var(--glass-track-bg); border: 1px solid var(--glass-track-border); border-radius: var(--radius); }
+    .data-tabs button { flex: 0 1 auto; min-height: var(--control-hit-size); border: 1px solid transparent; background: transparent; color: var(--muted); transition: background-color var(--motion-fast) ease, border-color var(--motion-base) ease, color var(--motion-fast) ease; }
+    .data-tabs button:hover:not(:disabled) { background: var(--composer-pill-hover-bg); border-color: transparent; color: var(--content); }
+    .data-tabs button[aria-selected='true'] { background: var(--glass-pill-bg); border-color: var(--glass-pill-border); box-shadow: var(--glass-pill-shadow); color: var(--content); }
     .data-panel { display: grid; gap: 16px; min-width: 0; } .data-panel[hidden] { display: none; }
     .source { border-top: 1px solid var(--border); padding-top: 16px; display: grid; gap: 8px; overflow-wrap: anywhere; }
     .location, dd { overflow-wrap: anywhere; } form, fieldset { display: grid; gap: 16px; } fieldset { border: 0; padding: 0; margin: 0; min-width: 0; }

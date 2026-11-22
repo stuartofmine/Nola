@@ -101,7 +101,7 @@ async function waitForUiSettled(page) {
 
 async function inspectView(page, label, scheme, width) {
     await waitForUiSettled(page);
-    const expectedBg = scheme === 'dark' ? 'rgb(27, 28, 26)' : 'rgb(250, 248, 244)';
+    const expectedBg = scheme === 'dark' ? 'rgb(11, 11, 12)' : 'rgb(250, 250, 250)';
     const metrics = await page.evaluate(() => {
         const parseColor = (raw) => {
             if (!raw || raw === 'transparent') return null;
@@ -421,10 +421,10 @@ async function verifyA2uiSurface(context, origin, convId, scheme, width, hostId)
         const expandHex = (value) => /^#[0-9a-f]{3}$/i.test(value)
             ? '#' + [...value.slice(1)].map(c => c + c).join('').toLowerCase()
             : value.toLowerCase();
-        assert.equal(expandHex(tokens.rootSurface), scheme === 'dark' ? '#222420' : '#ffffff');
-        assert.equal(expandHex(tokens.rootText), scheme === 'dark' ? '#f1f1e9' : '#242923');
-        assert.equal(expandHex(tokens.rootPrimary), scheme === 'dark' ? '#a8c9b7' : '#345d50');
-        assert.equal(expandHex(tokens.rootDanger), scheme === 'dark' ? '#efaaa2' : '#ad3d34');
+        assert.equal(expandHex(tokens.rootSurface), scheme === 'dark' ? '#131315' : '#ffffff');
+        assert.equal(expandHex(tokens.rootText), scheme === 'dark' ? '#f5f5f7' : '#111113');
+        assert.equal(expandHex(tokens.rootPrimary), scheme === 'dark' ? '#f5f5f7' : '#18181b');
+        assert.equal(expandHex(tokens.rootDanger), scheme === 'dark' ? '#f28080' : '#dc2626');
         assert.equal(expandHex(tokens.surfBg), expandHex(tokens.rootSurface));
         await inspectView(page, 'a2ui-surface', scheme, width);
         assert.deepEqual(errors, []);

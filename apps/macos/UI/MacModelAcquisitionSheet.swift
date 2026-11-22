@@ -10,51 +10,90 @@ struct MacModelAcquisitionSheet: View {
     @Environment(\.dismiss) private var dismiss
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 16) {
-            Text(String(localized: "Download a model", table: "ModelCenter")).font(.title2.bold())
-            hardwareSummary
-            Grid(alignment: .leading, horizontalSpacing: 14, verticalSpacing: 10) {
-                GridRow {
-                    Text(String(localized: "Inference engine", table: "ModelCenter"))
-                    Picker(String(localized: "Inference engine", table: "ModelCenter"), selection: $engine) {
-                        ForEach(MacLocalInferenceEngine.allCases, id: \.self) { value in Text(verbatim: value.title).tag(value) }
-                    }.labelsHidden().accessibilityIdentifier("local-acquire-engine")
+        VStack(alignment: .leading, spacing: 14) {
+            HStack(alignment: .firstTextBaseline) {
+                Text(String(localized: "Download a model", table: "ModelCenter"))
+                    .font(.title2.bold())
+                Spacer()
+                Button {
+                    Task {
+                        await acquisition.loadHardware(force: true)
+                        acquisition.checkEngine(engine, force: true)
+                        acquisition.recommend(engine: engine, source: source, name: acquisition.query, force: true)
+                    }
+                } label: {
+                    Label(String(localized: "Refresh", table: "ModelCenter"), systemImage: "arrow.clockwise")
+                        .font(.caption.weight(.medium))
                 }
-                GridRow {
-                    Text(String(localized: "Download Source", table: "ModelCenter"))
-                    Picker(String(localized: "Download Source", table: "ModelCenter"), selection: $source) {
-                        Text(verbatim: "Hugging Face").tag("huggingface")
-                        Text(verbatim: "ModelScope").tag("modelscope")
-                    }.labelsHidden().accessibilityIdentifier("local-acquire-source")
+                .buttonStyle(.borderless)
+                .disabled(acquisition.busy)
+                .help(String(localized: "Refresh recommendations and hardware status", table: "ModelCenter"))
+                .accessibilityIdentifier("local-acquire-refresh")
+            }
+
+            // Unified Search + Direct URL / owner/repo bar
+            HStack(spacing: 8) {
+                Image(systemName: "magnifyingglass")
+                    .foregroundStyle(.secondary)
+                TextField(
+                    String(localized: "Model name", table: "ModelCenter"),
+                    text: $acquisition.query,
+                    prompt: Text(String(localized: "搜索模型，或直接粘贴 Hugging Face / ModelScope 链接或 owner/repo", table: "ModelCenter"))
+                )
+                .textFieldStyle(.plain)
+                .focused($nameFocused)
+                .accessibilityLabel(String(localized: "Model name", table: "ModelCenter"))
+                .accessibilityIdentifier("local-acquire-name")
+                .onSubmit { recommend() }
+                if !acquisition.query.isEmpty {
+                    Button {
+                        acquisition.query = ""
+                    } label: {
+                        Image(systemName: "xmark.circle.fill")
+                            .foregroundStyle(.tertiary)
+                    }
+                    .buttonStyle(.plain)
+                    .help(String(localized: "Clear", table: "ModelCenter"))
                 }
-                GridRow {
-                    Text(String(localized: "Model name", table: "ModelCenter"))
-                    TextField(String(localized: "Model name", table: "ModelCenter"), text: $acquisition.query,
-                        prompt: Text(String(localized: "Optional · recommend a model for this Mac", table: "ModelCenter")))
-                        .focused($nameFocused)
-                        .accessibilityLabel(String(localized: "Model name", table: "ModelCenter"))
-                        .accessibilityIdentifier("local-acquire-name")
-                        .onSubmit { recommend() }
-                }
-            }.disabled(acquisition.downloading)
+            }
+            .padding(.horizontal, 12)
+            .padding(.vertical, 9)
+            .background(MacDesignColor.panel, in: RoundedRectangle(cornerRadius: 10, style: .continuous))
+            .overlay {
+                RoundedRectangle(cornerRadius: 10, style: .continuous)
+                    .strokeBorder(nameFocused ? MacDesignColor.brand : MacDesignColor.borderSubtle, lineWidth: nameFocused ? 1.5 : 1)
+            }
+            .disabled(acquisition.downloading)
+
+            // Compact single-line device summary pill + inline source & engine controls
+            compactEnvironmentBar
+                .disabled(acquisition.downloading)
+
             MacLocalEngineSetupView(acquisition: acquisition, engine: engine, modelDownloaded: false) {
                 acquisition.query = ""
                 engine = .mlx
             }
+
             switch acquisition.phase {
             case .idle, .installed:
                 EmptyView()
             case .searching:
-                HStack {
+                HStack(spacing: 8) {
                     ProgressView().controlSize(.small)
                     Text(String(localized: "Finding compatible models…", table: "ModelCenter"))
+                        .foregroundStyle(.secondary)
                 }
+                .padding(.vertical, 6)
             case .choosing:
                 if acquisition.candidates.isEmpty {
                     VStack(alignment: .leading, spacing: 4) {
                         Text(String(localized: "No compatible model found", table: "ModelCenter"))
-                        if let reason = acquisition.reason { Text(verbatim: reason).font(.callout).foregroundStyle(.secondary) }
+                            .font(.callout.weight(.medium))
+                        if let reason = acquisition.reason {
+                            Text(verbatim: reason).font(.callout).foregroundStyle(.secondary)
+                        }
                     }
+                    .padding(.vertical, 6)
                 } else {
                     Divider()
                     if let origin = acquisition.recommendationSource, ["modelfit", "hub", "mixed"].contains(origin) {
@@ -64,36 +103,28 @@ struct MacModelAcquisitionSheet: View {
                             }
                             if origin != "modelfit" {
                                 Text(verbatim: String(localized: "Recommended from", table: "ModelCenter") + " " +
-                                    (source == "modelscope" ? "ModelScope" : "Hugging Face")).foregroundStyle(.secondary)
+                                    (source == "modelscope" ? "ModelScope" : "Hugging Face"))
+                                    .foregroundStyle(.secondary)
                             }
                         }
                         .font(.caption)
                     }
                     ScrollView {
-                        VStack(alignment: .leading, spacing: 12) {
+                        LazyVStack(alignment: .leading, spacing: 10) {
                             ForEach(acquisition.candidates.indices, id: \.self) { index in
                                 candidateRow(acquisition.candidates[index], index: index)
-                                if index + 1 < acquisition.candidates.count { Divider() }
                             }
                         }
+                        .padding(.vertical, 2)
                     }
-                    .frame(height: min(240, CGFloat(acquisition.candidates.count) * 132))
+                    .frame(minHeight: 160, maxHeight: min(360, max(180, CGFloat(acquisition.candidates.count) * 140)))
                 }
             case .downloading(let repository):
-                VStack(alignment: .leading, spacing: 6) {
-                    Text(verbatim: repository).font(.callout).lineLimit(2)
-                    if acquisition.total > 0 {
-                        ProgressView(value: Double(acquisition.received), total: Double(acquisition.total))
-                        Text(verbatim: "\(bytes(acquisition.received)) / \(bytes(acquisition.total))")
-                            .font(.caption.monospacedDigit()).foregroundStyle(.secondary)
-                    } else {
-                        ProgressView().controlSize(.small)
-                    }
-                }
+                downloadProgressCard(repository: repository)
             case .failed(let detail):
-                Text(verbatim: detail).foregroundStyle(.red).textSelection(.enabled)
-                    .accessibilityIdentifier("local-acquire-error")
+                failureCard(detail: detail)
             }
+
             HStack {
                 if acquisition.busy {
                     Button(String(localized: "Cancel", table: "ModelCenter")) {
@@ -106,12 +137,14 @@ struct MacModelAcquisitionSheet: View {
                     .keyboardShortcut(.cancelAction)
                 if !acquisition.busy && (acquisition.phase != .choosing || acquisition.candidates.isEmpty) {
                     Button(String(localized: "Find recommendations", table: "ModelCenter"), action: recommend)
+                        .buttonStyle(.nolaProminent)
                         .keyboardShortcut(.defaultAction)
                         .accessibilityIdentifier("local-acquire-submit")
                 }
             }
         }
-        .padding(24).frame(minWidth: 540, idealWidth: 600)
+        .padding(24)
+        .frame(minWidth: 580, idealWidth: 640)
         .onAppear { nameFocused = !acquisition.downloading }
         .task {
             acquisition.updateInputs(engine: engine, source: source)
@@ -120,76 +153,248 @@ struct MacModelAcquisitionSheet: View {
                 acquisition.recommendOnOpen(engine: engine, source: source)
             }
         }
-        .onChange(of: acquisition.query) { inputsChanged() }
+        .onChange(of: acquisition.query) { _, newValue in
+            let parsed = MacLocalModelAcquisition.parseDirectInput(newValue)
+            if let detectedSource = parsed.source {
+                if source != detectedSource {
+                    source = detectedSource
+                }
+                if parsed.query != newValue {
+                    acquisition.query = parsed.query
+                    return
+                }
+            }
+            inputsChanged()
+        }
         .onChange(of: engine) { inputsChanged() }
         .onChange(of: source) { inputsChanged() }
     }
 
-    @ViewBuilder private var hardwareSummary: some View {
-        VStack(alignment: .leading, spacing: 6) {
-            Label(String(localized: "This Mac", table: "ModelCenter"), systemImage: "desktopcomputer")
-                .font(.headline)
-            if let hw = acquisition.hardware {
-                let cpu = [hw.cpu, hw.cores.map { String(format: String(localized: "%lld CPU cores", table: "ModelCenter"), $0) }]
-                    .compactMap { $0 }.joined(separator: " · ")
-                if !cpu.isEmpty { Text(verbatim: cpu) }
-                if let gpu = hw.gpu {
-                    let memory = hw.unifiedMemory ? nil : hw.gpuMemoryBytes.map(memorySize)
-                    Text(verbatim: ["GPU: " + gpu, memory].compactMap { $0 }.joined(separator: " · "))
-                }
-                let memoryTitle = hw.unifiedMemory ? String(localized: "Unified memory", table: "ModelCenter")
-                    : String(localized: "Memory", table: "ModelCenter")
-                HStack(spacing: 16) {
-                    if let memory = hw.memoryBytes { Text(verbatim: memoryTitle + "  " + memorySize(memory)) }
-                    if let disk = hw.freeDiskBytes {
-                        Text(verbatim: String(localized: "Free disk space", table: "ModelCenter") + "  " + bytes(disk))
+    private var compactEnvironmentBar: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack(spacing: 8) {
+                hardwarePill
+                Spacer(minLength: 8)
+                HStack(spacing: 0) {
+                    Picker(String(localized: "Download Source", table: "ModelCenter"), selection: $source) {
+                        Text(verbatim: "ModelScope").tag("modelscope")
+                        Text(verbatim: "Hugging Face").tag("huggingface")
                     }
+                    .labelsHidden()
+                    .pickerStyle(.segmented)
+                    .frame(width: 196)
                 }
-            } else if let message = acquisition.hardwareError {
-                Text(verbatim: message).foregroundStyle(.secondary)
-            } else {
-                ProgressView().controlSize(.small)
+                .accessibilityElement(children: .contain)
+                .accessibilityIdentifier("local-acquire-source")
+
+                HStack(spacing: 0) {
+                    Picker(String(localized: "Inference engine", table: "ModelCenter"), selection: $engine) {
+                        ForEach(MacLocalInferenceEngine.allCases, id: \.self) { value in
+                            Text(verbatim: value.title).tag(value)
+                        }
+                    }
+                    .labelsHidden()
+                    .pickerStyle(.segmented)
+                    .frame(width: 176)
+                }
+                .accessibilityElement(children: .contain)
+                .accessibilityIdentifier("local-acquire-engine")
             }
         }
-        .font(.callout).frame(maxWidth: .infinity, alignment: .leading)
-        .padding(12).background(.quaternary.opacity(0.6), in: RoundedRectangle(cornerRadius: 9))
+    }
+
+    private var hardwarePill: some View {
+        HStack(spacing: 6) {
+            Image(systemName: "desktopcomputer")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+            if let hw = acquisition.hardware {
+                Text(verbatim: compactHardwareText(hw))
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
+                    .truncationMode(.tail)
+            } else if let message = acquisition.hardwareError {
+                Text(verbatim: message)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
+            } else {
+                ProgressView().controlSize(.mini)
+            }
+        }
+        .padding(.horizontal, 10)
+        .padding(.vertical, 5)
+        .background(MacDesignColor.subtleFill, in: Capsule())
         .accessibilityElement(children: .contain)
         .accessibilityIdentifier("local-acquire-hardware")
     }
 
-    private func candidateRow(_ candidate: MacModelAcquisitionEvent.Candidate, index: Int) -> some View {
-        VStack(alignment: .leading, spacing: 5) {
-            HStack(alignment: .top, spacing: 12) {
-                VStack(alignment: .leading, spacing: 3) {
-                    Text(verbatim: candidate.repository).font(.headline).textSelection(.enabled)
-                    if let variant = candidate.variant { Text(verbatim: variant).font(.caption).foregroundStyle(.secondary).textSelection(.enabled) }
-                }
-                Spacer()
-                Button(String(localized: "Confirm download", table: "ModelCenter")) { acquisition.confirm(candidate) }
-                    .accessibilityIdentifier("local-acquire-confirm-\(index)")
-            }
-            let device = switch candidate.device {
-            case "unified": String(localized: "Unified memory", table: "ModelCenter")
-            case "gpu": "GPU"
-            case "cpu": "CPU"
-            default: nil as String?
-            }
-            Text(verbatim: [engine.title, source == "modelscope" ? "ModelScope" : "Hugging Face", device]
-                .compactMap { $0 }.joined(separator: " · "))
-                .font(.caption).foregroundStyle(.secondary)
-            ViewThatFits(in: .horizontal) {
-                HStack(spacing: 14) { estimates(candidate) }
-                VStack(alignment: .leading, spacing: 3) { estimates(candidate) }
-            }.font(.callout)
-            Text(verbatim: candidate.contextDescription)
-                .font(.callout.weight(candidate.estimates128K ? .semibold : .regular))
-                .accessibilityIdentifier("local-acquire-context-\(index)")
-        }.frame(maxWidth: .infinity, alignment: .leading)
+    private func compactHardwareText(_ hw: MacModelAcquisitionEvent.Hardware) -> String {
+        var parts: [String] = []
+        if let cpu = hw.cpu, !cpu.isEmpty {
+            parts.append(cpu)
+        }
+        if let memory = hw.memoryBytes {
+            parts.append(MacLocalModelAcquisition.formatGigabytes(memory) + (hw.unifiedMemory ? " 统一内存" : " RAM"))
+        }
+        if let disk = hw.freeDiskBytes {
+            parts.append("可用 " + MacLocalModelAcquisition.formatGigabytes(disk))
+        }
+        return parts.isEmpty ? String(localized: "This Mac", table: "ModelCenter") : parts.joined(separator: " · ")
     }
 
-    @ViewBuilder private func estimates(_ candidate: MacModelAcquisitionEvent.Candidate) -> some View {
-        Text(verbatim: String(localized: "Download size", table: "ModelCenter") + "  " + bytes(candidate.downloadBytes))
-        Text(verbatim: String(localized: "Estimated memory", table: "ModelCenter") + "  " + memorySize(candidate.estimatedMemoryBytes))
+    private func candidateRow(_ candidate: MacModelAcquisitionEvent.Candidate, index: Int) -> some View {
+        let fit = candidate.fitBadge(deviceMemoryBytes: acquisition.hardware?.memoryBytes)
+        return VStack(alignment: .leading, spacing: 8) {
+            HStack(alignment: .top, spacing: 12) {
+                VStack(alignment: .leading, spacing: 4) {
+                    HStack(spacing: 6) {
+                        Text(verbatim: candidate.displayTitle)
+                            .font(.headline)
+                            .lineLimit(1)
+                        Text(fit.label)
+                            .font(.caption2.weight(.semibold))
+                            .foregroundStyle(fit.isComfortable ? MacDesignColor.success : MacDesignColor.warning)
+                            .padding(.horizontal, 7)
+                            .padding(.vertical, 2)
+                            .background(
+                                (fit.isComfortable ? MacDesignColor.success : MacDesignColor.warning).opacity(0.12),
+                                in: Capsule()
+                            )
+                    }
+                    HStack(spacing: 10) {
+                        Label(MacLocalModelAcquisition.formatGigabytes(candidate.downloadBytes), systemImage: "arrow.down.circle")
+                        Text("·")
+                        Text(String(localized: "预计内存", table: "ModelCenter") + " " + MacLocalModelAcquisition.formatGigabytes(candidate.estimatedMemoryBytes))
+                    }
+                    .font(.caption.monospacedDigit())
+                    .foregroundStyle(.secondary)
+                }
+                Spacer(minLength: 8)
+                Button(String(localized: "Confirm download", table: "ModelCenter")) {
+                    acquisition.confirm(candidate)
+                }
+                .buttonStyle(.nolaProminent)
+                .controlSize(.small)
+                .accessibilityIdentifier("local-acquire-confirm-\(index)")
+            }
+
+            DisclosureGroup(String(localized: "技术详情", table: "ModelCenter")) {
+                VStack(alignment: .leading, spacing: 4) {
+                    Text(verbatim: candidate.repository)
+                        .font(.caption.monospaced())
+                        .foregroundStyle(.secondary)
+                        .textSelection(.enabled)
+                    if let variant = candidate.variant {
+                        Text(verbatim: variant)
+                            .font(.caption.monospaced())
+                            .foregroundStyle(.secondary)
+                            .textSelection(.enabled)
+                    }
+                    Text(verbatim: [engine.title, source == "modelscope" ? "ModelScope" : "Hugging Face", deviceLabel(candidate.device)]
+                        .compactMap { $0 }.joined(separator: " · "))
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                    Text(verbatim: candidate.contextDescription)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .accessibilityIdentifier("local-acquire-context-\(index)")
+                }
+                .padding(.top, 4)
+            }
+            .font(.caption)
+            .foregroundStyle(.secondary)
+        }
+        .padding(12)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(MacDesignColor.panel, in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+        .overlay {
+            RoundedRectangle(cornerRadius: 12, style: .continuous)
+                .strokeBorder(MacDesignColor.borderSubtle, lineWidth: 1)
+        }
+    }
+
+    private func downloadProgressCard(repository: String) -> some View {
+        let fraction = acquisition.total > 0 ? min(1, max(0, Double(acquisition.received) / Double(acquisition.total))) : 0
+        return VStack(alignment: .leading, spacing: 8) {
+            HStack {
+                Text(verbatim: repository)
+                    .font(.callout.weight(.semibold))
+                    .lineLimit(1)
+                Spacer()
+                if acquisition.total > 0 {
+                    Text("\(Int((fraction * 100).rounded()))%")
+                        .font(.callout.weight(.semibold).monospacedDigit())
+                        .foregroundStyle(MacDesignColor.brand)
+                }
+            }
+            if acquisition.total > 0 {
+                ProgressView(value: fraction)
+                HStack(spacing: 8) {
+                    Text(verbatim: "\(MacLocalModelAcquisition.formatGigabytes(acquisition.received)) / \(MacLocalModelAcquisition.formatGigabytes(acquisition.total))")
+                    if acquisition.downloadSpeedBytesPerSecond > 0 {
+                        Text("·")
+                        Text(verbatim: "\(MacLocalModelAcquisition.formatGigabytes(Int64(acquisition.downloadSpeedBytesPerSecond)))/s")
+                    }
+                    if let eta = MacLocalModelAcquisition.formatETA(acquisition.estimatedRemainingSeconds) {
+                        Text("·")
+                        Text(String(localized: "剩余", table: "ModelCenter") + " " + eta)
+                    }
+                    Spacer()
+                }
+                .font(.caption.monospacedDigit())
+                .foregroundStyle(.secondary)
+            } else {
+                ProgressView().controlSize(.small)
+            }
+        }
+        .padding(12)
+        .background(MacDesignColor.panel, in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+        .overlay {
+            RoundedRectangle(cornerRadius: 12, style: .continuous)
+                .strokeBorder(MacDesignColor.borderSubtle, lineWidth: 1)
+        }
+    }
+
+    private func failureCard(detail: String) -> some View {
+        HStack(alignment: .top, spacing: 10) {
+            Image(systemName: "exclamationmark.triangle.fill")
+                .foregroundStyle(MacDesignColor.danger)
+            VStack(alignment: .leading, spacing: 4) {
+                Text(verbatim: detail)
+                    .font(.callout)
+                    .foregroundStyle(MacDesignColor.danger)
+                    .textSelection(.enabled)
+                    .accessibilityIdentifier("local-acquire-error")
+            }
+            Spacer(minLength: 8)
+            if acquisition.lastAttemptedCandidate != nil {
+                Button {
+                    acquisition.retryLastDownload()
+                } label: {
+                    Label(String(localized: "Retry", table: "ModelCenter"), systemImage: "arrow.clockwise")
+                }
+                .buttonStyle(.nolaProminent)
+                .controlSize(.small)
+                .accessibilityIdentifier("local-acquire-retry")
+            }
+        }
+        .padding(12)
+        .background(MacDesignColor.danger.opacity(0.08), in: RoundedRectangle(cornerRadius: 10, style: .continuous))
+        .overlay {
+            RoundedRectangle(cornerRadius: 10, style: .continuous)
+                .strokeBorder(MacDesignColor.danger.opacity(0.24), lineWidth: 1)
+        }
+    }
+
+    private func deviceLabel(_ raw: String?) -> String? {
+        switch raw {
+        case "unified": return String(localized: "Unified memory", table: "ModelCenter")
+        case "gpu": return "GPU"
+        case "cpu": return "CPU"
+        default: return nil
+        }
     }
 
     private func recommend() {
@@ -203,14 +408,5 @@ struct MacModelAcquisitionSheet: View {
         if !suppressAutomaticSearch {
             acquisition.recommendOnOpen(engine: engine, source: source)
         }
-    }
-
-    private func bytes(_ value: Int64) -> String {
-        ByteCountFormatter.string(fromByteCount: value, countStyle: .file)
-    }
-
-    private func memorySize(_ value: Int64) -> String {
-        let gibibytes = Double(value) / 1_073_741_824
-        return gibibytes.formatted(.number.precision(.fractionLength(0...1))) + " GiB"
     }
 }

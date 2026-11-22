@@ -16,11 +16,13 @@
     import { locale, t } from '../lib/i18n';
     import type { Capability, CapabilityMode, CapabilitySettings } from '../lib/capabilities';
     import HarnessPlugins from '../components/HarnessPlugins.svelte';
-    const plugins = $derived(pageLocation.read().searchParams.get('tab') === 'plugins');
+    const initialTab = pageLocation.read().searchParams.get('tab');
+    let activeTab = $state<'skills' | 'mcp' | 'plugins'>(initialTab === 'plugins' ? 'plugins' : initialTab === 'mcp' ? 'mcp' : 'skills');
+    const plugins = $derived(activeTab === 'plugins');
     import ConfirmationDialog from '../components/ConfirmationDialog.svelte';
     import type { ConfirmationHandle } from '../lib/confirmation';
     let confirmation = $state<ConfirmationHandle>(null!);
-    let mode = $state<CapabilityMode>(pageLocation.read().searchParams.get('tab') === 'mcp' ? 'mcp' : 'skills');
+    let mode = $state<CapabilityMode>(initialTab === 'mcp' ? 'mcp' : 'skills');
     let settings = $state<CapabilitySettings>();
     let executionBackends = $state<Array<{id:string; display_name:string; capabilities:{supports_permission_bridge:boolean}}>>([]);
     let skillReview = $state<{ expected_revision: number; pending: boolean; previous: unknown; current: Capability[] }>();
@@ -136,6 +138,21 @@
                 ? new CapabilityValidationError('capability.requestFailed') : cause);
         } finally { busy = false; }
     }
+    async function toggleInline(item: Capability, index: number, enabled: boolean) {
+        if (disposed || busy || !settings) return;
+        busy = true; error = ''; notice = '';
+        try {
+            const replacement = { ...item, enabled };
+            const result = capabilitySnapshot(await api<unknown>('/api/agent/settings', { method: 'POST', body: JSON.stringify(capabilityMutation(settings, mode, index, replacement)) }));
+            if (disposed) return;
+            settings = result;
+            executionBackends = result.execution_backends;
+            notice = 'capability.saved';
+        } catch (cause) {
+            showError(cause instanceof CapabilityValidationError && cause.key === 'capability.loadFailed'
+                ? new CapabilityValidationError('capability.requestFailed') : cause);
+        } finally { busy = false; }
+    }
     async function save(event: SubmitEvent) {
         event.preventDefault(); if (!original || busy) return;
         try { await persist(updatedCapability(original, draft, mode)); } catch (cause) { showError(cause); }
@@ -153,17 +170,25 @@
         if (disposed || !original) return;
         try { await persist(restoredSkill(original)); } catch (cause) { showError(cause); }
     }
-    function switchMode(next: CapabilityMode) {
+    const allTabs = ['skills', 'mcp', 'plugins'] as const;
+    function switchTab(next: typeof allTabs[number]) {
         if (busy) return;
-        mode = next; source = 'all'; query = ''; notice = '';
-        if (settings) { error = ''; errorDetail = ''; }
-        else void load();
-        const url = pageLocation.read(); url.searchParams.set('tab', mode); pageLocation.replace(url);
+        activeTab = next;
+        if (next !== 'plugins') {
+            mode = next; source = 'all'; query = ''; notice = '';
+            if (settings) { error = ''; errorDetail = ''; }
+            else void load();
+        }
+        const url = pageLocation.read(); url.searchParams.set('tab', next); pageLocation.replace(url);
     }
     function tabKey(event: KeyboardEvent) {
         if (!['ArrowLeft', 'ArrowRight', 'Home', 'End'].includes(event.key)) return;
-        event.preventDefault(); switchMode(event.key === 'Home' ? 'skills' : event.key === 'End' ? 'mcp' : mode === 'skills' ? 'mcp' : 'skills');
-        pageElements.element(`capability-${mode}`)?.focus();
+        event.preventDefault();
+        const index = allTabs.indexOf(activeTab);
+        const next = event.key === 'Home' ? 0 : event.key === 'End' ? allTabs.length - 1
+            : event.key === 'ArrowRight' ? (index + 1) % allTabs.length : (index + allTabs.length - 1) % allTabs.length;
+        switchTab(allTabs[next]);
+        pageElements.element(`capability-${allTabs[next]}`)?.focus();
     }
     function beforeUnload(event: BeforeUnloadEvent) {
         if (!acceptsWorkspaceUnload(event)) return; if (dirty || busy && original) { event.preventDefault(); event.returnValue = ''; } }
@@ -172,18 +197,21 @@
 <svelte:window onbeforeunload={beforeUnload} />
 <svelte:head>{#if pageLocation.active()}<title>{t($locale, plugins ? 'plugin.title' : 'capability.title')} — Nola</title>{/if}</svelte:head>
 <ConfirmationDialog bind:this={confirmation} />
-{#if !plugins}
-<header class="page-header"><div><h1>{t($locale, 'capability.title')}</h1><p class="muted">{t($locale, 'capability.subtitle')}</p></div><div class="actions">{#if mode === 'mcp'}<button disabled={busy || !settings} onclick={addLocalMcp}>{t($locale, 'capability.addLocalMcp')}</button>{/if}<button class="primary" disabled={busy || !settings} onclick={() => edit()}>{t($locale, mode === 'skills' ? 'capability.addSkill' : 'capability.addMcp')}</button></div></header>
-{/if}
-<div class="content management-content">
-    <nav class="library-sections" aria-label={t($locale,'capability.title')}>
-    <div class="tabs" role="tablist" aria-label={t($locale, 'capability.type')}>
-        {#each ['skills', 'mcp'] as value}<button id="capability-{value}" role="tab" aria-selected={!plugins && mode === value} aria-controls="capability-panel" tabindex={mode === value ? 0 : -1} onkeydown={tabKey} disabled={busy} onclick={() => switchMode(value as CapabilityMode)}>{t($locale, value === 'skills' ? 'capability.skills' : 'capability.mcp')}</button>{/each}
+<header class="page-header">
+    <div><h1>{t($locale, 'capability.title')}</h1><p class="muted">{t($locale, 'capability.subtitle')}</p></div>
+    <div class="actions">
+        {#if !plugins}
+            {#if mode === 'mcp'}<button disabled={busy || !settings} onclick={addLocalMcp}>{t($locale, 'capability.addLocalMcp')}</button>{/if}
+            <button class="primary" disabled={busy || !settings} onclick={() => edit()}>{t($locale, mode === 'skills' ? 'capability.addSkill' : 'capability.addMcp')}</button>
+        {/if}
     </div>
-        <a class="plugin-entry" aria-current={plugins ? 'page' : undefined} href="/capabilities?tab=plugins">{t($locale,'plugin.title')}</a>
-    </nav>
+</header>
+<div class="content management-content">
+    <div class="tabs" role="tablist" aria-label={t($locale, 'capability.type')}>
+        {#each allTabs as value}<button id="capability-{value}" role="tab" aria-selected={activeTab === value} aria-controls="capability-panel" tabindex={activeTab === value ? 0 : -1} onkeydown={tabKey} disabled={busy} onclick={() => switchTab(value)}>{t($locale, value === 'skills' ? 'capability.skills' : value === 'mcp' ? 'capability.mcp' : 'plugin.title')}</button>{/each}
+    </div>
     {#if plugins}
-    <HarnessPlugins />
+    <div id="capability-panel" role="tabpanel" aria-labelledby="capability-plugins" tabindex="0"><HarnessPlugins /></div>
     {:else}
     <aside aria-label={t($locale, 'execution.scope.host')}>
         <p class="muted">{t($locale, 'execution.scope.host')}</p><p class="muted">{t($locale, 'execution.scope.child')}</p>
@@ -202,11 +230,22 @@
         {#each sections as section (section.id)}
         <section class="category" aria-label={t($locale, section.titleKey)}><h2>{t($locale, section.titleKey)} <span class="muted">{section.entries.length.toLocaleString($locale)}</span></h2>
         <div class="gallery">{#each section.entries as { item, index }}
-            <button class="card capability" onclick={() => edit(item, index)} disabled={busy}>
-                <span class="row between"><strong>{displayName(item)}</strong><span class="muted">{t($locale, item.enabled === false ? 'capability.disabled' : 'capability.enabled')}</span></span>
-                <span class="summary muted">{String(item.description || item.summary || t($locale, 'capability.noDescription'))}</span>
-                <span class="muted">{t($locale, builtin(item) ? 'capability.builtin' : 'capability.custom')}{item.category_name ? ` · ${item.category_name}` : ''}</span>
-            </button>
+            <div class="card capability">
+                <div class="row between capability-head">
+                    <button type="button" class="capability-open" onclick={() => edit(item, index)} disabled={busy}><strong>{displayName(item)}</strong></button>
+                    <label class="capability-switch" aria-label={displayName(item)}>
+                        <input type="checkbox" role="switch" checked={item.enabled !== false} disabled={busy} onchange={event => {
+                            const next = event.currentTarget.checked;
+                            event.currentTarget.checked = item.enabled !== false;
+                            void toggleInline(item, index, next);
+                        }} />
+                    </label>
+                </div>
+                <button type="button" class="capability-open capability-meta" onclick={() => edit(item, index)} disabled={busy}>
+                    <span class="summary muted">{String(item.description || item.summary || t($locale, 'capability.noDescription'))}</span>
+                    <span class="muted">{t($locale, builtin(item) ? 'capability.builtin' : 'capability.custom')}{item.category_name ? ` · ${item.category_name}` : ''}</span>
+                </button>
+            </div>
         {/each}</div></section>
         {:else}<div class="card"><h2>{t($locale, query || source !== 'all' ? 'capability.noMatches' : 'capability.empty')}</h2><p class="muted">{t($locale, query || source !== 'all' ? 'capability.noMatchesHint' : 'capability.emptyHint')}</p></div>{/each}
         {/if}
@@ -262,22 +301,22 @@
 </dialog>
 {/if}
 <style>
-    .library-sections { display:flex;align-items:center;gap:.25em;flex-wrap:wrap; }
-    .plugin-entry { display:inline-flex;align-items:center;min-height:44px;padding-inline:.85rem;border-radius:.6rem;color:var(--content);text-decoration:none; }
-    .plugin-entry:hover,.plugin-entry:focus-visible,.plugin-entry[aria-current="page"] { background:var(--accent-subtle); }
-    .plugin-entry[aria-current="page"] { font-weight:600; }
     .retained-settings:has(button) { margin-bottom: 16px; }
     .notice button[aria-disabled="true"] { color: var(--muted); background: var(--panel); border-color: var(--border); cursor: progress; }
     .category { display: grid; gap: 12px; margin-bottom: 24px; }
     .gallery { display: grid; grid-template-columns: minmax(0, 1fr); gap: 0; border-bottom: 1px solid var(--border); }
-    .capability { text-align: start; min-width: 0; overflow-wrap: anywhere; background: transparent; border: 0; border-top: 1px solid var(--border); border-radius: 0; padding: 20px 8px; gap: 8px; }
+    .capability { text-align: start; min-width: 0; overflow-wrap: anywhere; background: transparent; border: 0; border-top: 1px solid var(--border); border-radius: 0; padding: 16px 8px; gap: 6px; }
+    .capability-head { align-items: center; gap: 12px; }
+    .capability-open { display: grid; gap: 4px; flex: 1; min-width: 0; text-align: start; border: 0; background: transparent; box-shadow: none; padding: 2px 0; min-height: 0; }
+    .capability-open:hover:not(:disabled) { background: transparent; border-color: transparent; }
+    .capability-switch { display: inline-flex; align-items: center; flex: none; padding: 0; min-height: 36px; }
     .capability .summary { font-size: var(--text-body); }
     .capability strong { font-size: 1rem; font-weight: 600; }
-    .capability > span:last-child { font-size: .8125rem; }
+    .capability-meta > span:last-child { font-size: .8125rem; }
     .summary { display: -webkit-box; -webkit-line-clamp: 3; line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden; }
     fieldset { border: 0; padding: 0; margin: 0; min-width: 0; display: grid; gap: 12px; }
-    textarea { width: 100%; resize: vertical; min-height: 72px; font: inherit; color: inherit; background: var(--surface); border: 1px solid var(--outline); border-radius: var(--radius-control); padding: 12px; }
-    @media (max-width: 560px) { .capability > .row { display: grid; gap: 4px; } .capability > .row > .muted { font-size: var(--text-detail); } }
+    textarea { width: 100%; resize: vertical; min-height: 72px; font: inherit; color: inherit; background: var(--input-bg); border: 1px solid var(--input-border); border-radius: var(--radius-control); padding: 12px; }
+    @media (max-width: 560px) { .capability-head { gap: 8px; } }
     .instructions { font-family: ui-monospace, monospace; } .check { width: auto; }
     details { border-bottom: 1px solid var(--border); padding: 10px 0; overflow-wrap: anywhere; } summary { cursor: pointer; }
 </style>

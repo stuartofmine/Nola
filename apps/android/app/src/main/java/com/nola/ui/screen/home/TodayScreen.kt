@@ -14,9 +14,11 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
@@ -28,10 +30,14 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.nola.ui.components.NolaBadge
+import com.nola.ui.components.NolaCardCompact
+import com.nola.ui.components.NolaColors
 import com.nola.ui.components.nolaPageGutter
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.Lifecycle
@@ -114,13 +120,29 @@ internal fun TodayScreen(
             item { TodaySectionTitle(stringResource(R.string.today_next)) }
             if (snapshot.queuedInstances.isEmpty()) item { TodayEmpty(stringResource(R.string.today_no_queued_instances)) }
             items(snapshot.queuedInstances, key = { "queued:${it.occurrenceId}" }) { queued ->
-                Column(Modifier.fillMaxWidth().padding(horizontal = nolaPageGutter(), vertical = 12.dp)) {
-                    Text(queued.title?.takeIf(String::isNotBlank) ?: stringResource(R.string.today_queued_instance), style = MaterialTheme.typography.titleMedium)
-                    Text(DateFormat.getDateTimeInstance(DateFormat.SHORT, DateFormat.SHORT).format(Date(queued.scheduledForMs)),
-                        style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                    Text(stringResource(R.string.today_queued_status), style = MaterialTheme.typography.labelMedium,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant)
-                    TextButton(onClick = { onOpenWorkspace(2) }, modifier = Modifier.heightIn(min = 48.dp)) { Text(stringResource(R.string.today_view_plan)) }
+                NolaCardCompact(
+                    modifier = Modifier
+                        .padding(horizontal = nolaPageGutter())
+                        .clickable { onOpenWorkspace(2) },
+                ) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(10.dp),
+                    ) {
+                        Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                            Text(queued.title?.takeIf(String::isNotBlank) ?: stringResource(R.string.today_queued_instance), style = MaterialTheme.typography.titleMedium)
+                            Text(DateFormat.getDateTimeInstance(DateFormat.SHORT, DateFormat.SHORT).format(Date(queued.scheduledForMs)),
+                                style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                            NolaBadge(text = stringResource(R.string.today_queued_status), tint = MaterialTheme.colorScheme.primary)
+                        }
+                        Icon(
+                            painterResource(R.drawable.nola_chevron),
+                            contentDescription = stringResource(R.string.today_view_plan),
+                            modifier = Modifier.size(16.dp),
+                            tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
                 }
             }
             if (snapshot.hasMoreQueuedInstances) item {
@@ -143,25 +165,44 @@ internal fun TodayScreen(
 
 @Composable
 private fun TodayConversationRow(fact: TodayConversationFact, onOpenConversation: (String) -> Unit) {
-    Column(Modifier.fillMaxWidth().heightIn(min = 64.dp).clickable { onOpenConversation(fact.conversationId) }
-        .padding(horizontal = nolaPageGutter(), vertical = 12.dp).testTag("today.conversation.${fact.conversationId}")) {
-        Text(
-            ConversationTitlePresentationPolicy.displayTitle(
-                fact.title,
-                fact.conversationId,
-                stringResource(R.string.tab_chat)
-            ),
-            style = MaterialTheme.typography.titleMedium
-        )
-        val experts = fact.expertContexts.map { it.displayName }.distinct()
-        if (experts.isNotEmpty()) Text(experts.joinToString(" · "),
-            style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-        if (fact.needsResponse) Text(stringResource(R.string.today_core_needs_response), style = MaterialTheme.typography.labelMedium,
-            color = MaterialTheme.colorScheme.onSurfaceVariant)
-        Text(DateFormat.getDateTimeInstance(DateFormat.SHORT, DateFormat.SHORT).format(Date(fact.updatedAtMs)),
-            style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-        TextButton(onClick = { onOpenConversation(fact.conversationId) }, modifier = Modifier.heightIn(min = 48.dp)) {
-            Text(stringResource(R.string.today_open_conversation))
+    NolaCardCompact(
+        modifier = Modifier
+            .padding(horizontal = nolaPageGutter())
+            .testTag("today.conversation.${fact.conversationId}")
+            .clickable { onOpenConversation(fact.conversationId) },
+    ) {
+        Row(
+            modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(10.dp),
+        ) {
+            Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                Text(
+                    ConversationTitlePresentationPolicy.displayTitle(
+                        fact.title,
+                        fact.conversationId,
+                        stringResource(R.string.tab_chat)
+                    ),
+                    style = MaterialTheme.typography.titleMedium
+                )
+                val experts = fact.expertContexts.map { it.displayName }.distinct()
+                if (experts.isNotEmpty()) Text(experts.joinToString(" · "),
+                    style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                if (fact.needsResponse) {
+                    NolaBadge(
+                        text = stringResource(R.string.today_core_needs_response),
+                        tint = NolaColors.warning,
+                    )
+                }
+                Text(DateFormat.getDateTimeInstance(DateFormat.SHORT, DateFormat.SHORT).format(Date(fact.updatedAtMs)),
+                    style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            }
+            Icon(
+                painterResource(R.drawable.nola_chevron),
+                contentDescription = stringResource(R.string.today_open_conversation),
+                modifier = Modifier.size(16.dp),
+                tint = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
         }
     }
 }

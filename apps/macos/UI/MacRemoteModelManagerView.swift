@@ -2370,7 +2370,7 @@ struct MacAddRemoteModelSheet: View {
             Text(value)
                 .fontWeight(.semibold)
                 .monospacedDigit()
-                .contentTransition(.numericText())
+                .contentTransition(reduceMotion ? .identity : .numericText())
         }
         .font(.caption)
         .padding(.horizontal, 8)

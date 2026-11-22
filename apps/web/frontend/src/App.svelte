@@ -1,8 +1,12 @@
 <script lang="ts">
     import PrototypeIcon from './components/PrototypeIcon.svelte';
+    import ConfirmationDialog from './components/ConfirmationDialog.svelte';
+    import ToastHost from './components/ToastHost.svelte';
+    import type { ConfirmationHandle } from './lib/confirmation';
     import { onMount, setContext, tick } from 'svelte';
     import { loadWorkspaceWidths } from './lib/workspaceLayout';
     let viewportWidth = $state(1280);
+    let confirmation: ConfirmationHandle;
     import { mobileInformationTabs } from './lib/dataSources';
     import { resolveSettingsCategory } from './lib/settingsCategories';
     import { pageLoader } from './lib/pageRoutes';
@@ -34,12 +38,21 @@
     const primaryRoot = $derived(['/today', '/conversations', '/activity', '/settings', '/data-sources'].includes(path));
     let page = $state(loadPage(initialLocation.pathname));
     let content: HTMLDivElement;
-    function mayLeave() {
+    async function mayLeave() {
         // Preserve all existing editor guards when navigation no longer unloads
         // the document. The browser itself only prompts on trusted unload events.
         const event = new Event('beforeunload', {cancelable: true});
         window.dispatchEvent(event);
-        return !event.defaultPrevented || window.confirm(t($locale, 'shell.navigationDiscard'));
+        if (!event.defaultPrevented) return true;
+        if (confirmation) {
+            return confirmation.ask({
+                title: t($locale, 'shell.confirm'),
+                description: t($locale, 'shell.navigationDiscard'),
+                confirmLabel: t($locale, 'shell.confirm'),
+                destructive: true,
+            });
+        }
+        return false;
     }
     function show(target: URL) {
         path = target.pathname; loadingDetail = isMobileDetail(target); routeVersion++;
@@ -72,15 +85,16 @@
         const navigate = (href: string) => {
             const target = workspaceDestination(href, location.href);
             if (!target) return false;
-            if (viewportWidth <= 700 && target.pathname === '/chat' && !target.searchParams.has('conversation')) target.pathname = '/conversations';
-            if (path === '/chat' && viewportWidth > 700 && (target.pathname !== '/chat' || !target.searchParams.has('conversation'))) {
+            if (viewportWidth <= 760 && target.pathname === '/chat' && !target.searchParams.has('conversation')) target.pathname = '/conversations';
+            if (path === '/chat' && viewportWidth > 760 && (target.pathname !== '/chat' || !target.searchParams.has('conversation'))) {
                 const content = new CustomEvent(workspaceContentNavigationEvent, {detail: target.href, cancelable: true});
                 if (!window.dispatchEvent(content)) return true;
             }
-            if (mayLeave()) {
+            void mayLeave().then(allowed => {
+                if (!allowed) return;
                 history.pushState({nolaWorkspaceIndex: ++index}, '', target);
                 show(target);
-            }
+            });
             return true;
         };
         const click = (event: MouseEvent) => {
@@ -97,9 +111,12 @@
             // Native fragment entries keep the same workspace index. They do
             // not discard an editor and must not remount the current page.
             if (next === index) return;
-            if (!mayLeave()) { restoring = true; history.go(index - next); return; }
-            index = next;
-            show(new URL(location.href));
+            const prevIndex = index;
+            void mayLeave().then(allowed => {
+                if (!allowed) { restoring = true; history.go(prevIndex - next); return; }
+                index = next;
+                show(new URL(location.href));
+            });
         };
         const unload = (event: BeforeUnloadEvent) => {
             if (event.isTrusted && drafts.needsUnloadConfirmation) { event.preventDefault(); event.returnValue = ''; }
@@ -130,6 +147,8 @@
 {/snippet}
 
 <svelte:window bind:innerWidth={viewportWidth} />
+<ConfirmationDialog bind:this={confirmation} />
+<ToastHost />
 <a class="skip-content" href="#page-main" onclick={event => { event.preventDefault(); (document.getElementById('page-main') ?? content)?.focus(); }}>{t($locale, 'shell.skipContent')}</a>
 <div bind:this={content} tabindex="-1" class="workspace-content" class:with-mobile-navigation={path !== '/chat' && path !== '/login'}>
 {#if primaryRoot}<div class="mobile-brand-bar"><a href="/today" aria-label="Nola"><span class="nola-mark">n</span><strong>Nola</strong></a><button type="button" aria-label={t($locale, 'shell.toggleAppearance')} onclick={toggleAppearance}><svg aria-hidden="true" viewBox="0 0 24 24">{#if $darkAppearance}<circle cx="12" cy="12" r="4"/><path d="M12 2v2m0 16v2M2 12h2m16 0h2M5 5l1 1m12 12 1 1M5 19l1-1M18 6l1-1"/>{:else}<path d="M20 14A8 8 0 0 1 10 4a8 8 0 1 0 10 10Z"/>{/if}</svg></button></div>{/if}
@@ -137,13 +156,13 @@
     {@render pageContent()}
 {:else}
 <div class="management-shell">
-    {#if !primaryRoot}<header class="management-navigation">
+    {#if !primaryRoot || viewportWidth > 760}<header class="management-navigation">
         <button type="button" aria-label={t($locale, 'shell.back')} onclick={() => {
             if (path === '/data-sources' && new URL(window.location.href).searchParams.has('tab')) window.dispatchEvent(new CustomEvent(workspaceNavigationEvent, {detail: '/data-sources', cancelable: true}));
             else if ((history.state?.nolaWorkspaceIndex ?? 0) > 0) history.back();
-            else window.dispatchEvent(new CustomEvent(workspaceNavigationEvent, {detail: '/today', cancelable: true}));
+            else window.dispatchEvent(new CustomEvent(workspaceNavigationEvent, {detail: viewportWidth > 760 ? '/chat' : '/today', cancelable: true}));
         }}><PrototypeIcon name="back" size={18} /></button>
-        <a href="/conversations">{t($locale, 'chatInspector.list.conversations')}</a>
+        <a href={viewportWidth > 760 ? '/chat' : '/conversations'}>{t($locale, 'chatInspector.list.conversations')}</a>
     </header>{/if}
     <main id="page-main" tabindex="-1">{@render pageContent()}</main>
 </div>
@@ -161,7 +180,7 @@
 <style>
     .mobile-brand-bar { display: none; }
     .workspace-content:has(.loading-detail, :global(.information-back), :global(.settings-back)) .mobile-brand-bar { display:none; }
-    @media(max-width:700px) {
+    @media(max-width:760px) {
         .mobile-brand-bar { display:flex; align-items:center; justify-content:space-between; padding:calc(20px + env(safe-area-inset-top)) 20px 12px; min-height:80px; }
         .mobile-brand-bar a { display:flex; align-items:center; gap:14px; color:var(--content); }
         .mobile-brand-bar strong { font-size:22px; font-weight:600; letter-spacing:-.5px; }
@@ -172,7 +191,7 @@
     @media(max-width:359px) { .mobile-brand-bar { padding-inline:16px; } }
 
     .mobile-primary-navigation { display: none; }
-    @media (max-width: 700px) {
+    @media (max-width: 760px) {
         .with-mobile-navigation { display: flex; flex-direction: column; min-height: 100dvh; padding-bottom: calc(58px + max(7px, env(safe-area-inset-bottom, 0px))); }
         .with-mobile-navigation .management-shell { flex: 1; min-height: 0; }
         .mobile-primary-navigation { position: fixed; inset: auto 0 0; z-index: 30; display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 4px; padding: 5px 12px max(7px, env(safe-area-inset-bottom, 0px)); background: var(--canvas); border-top: 1px solid var(--border); }

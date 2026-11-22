@@ -15,6 +15,7 @@ import kotlinx.coroutines.launch
 import com.nola.domain.projection.ConversationProjectionV1
 import com.nola.domain.projection.ConversationProjectionWindowV1
 import com.nola.ui.components.MarkdownRenderer
+import com.nola.ui.components.NolaCardCompact
 
 internal typealias TaskRecoveryCommand = suspend (com.nola.data.local.UnknownEffectRecoveryDecision?, Boolean) -> Pair<UnknownEffectRecoveryPresentation?, Boolean>
 
@@ -81,16 +82,16 @@ internal fun TaskChildDetailSheet(load: suspend (Long?) -> ConversationProjectio
             if (loading) LinearProgressIndicator(Modifier.fillMaxWidth())
             error?.let { Text(it, color = MaterialTheme.colorScheme.error); TextButton(onClick = { request++ }) { Text(stringResource(R.string.common_retry)) } }
             if (hasMore && !loading) TextButton(onClick = { request++ }) { Text(stringResource(R.string.chat_task_details_earlier)) }
-            messages.forEach { message -> key(conversationId, message.messageId) {
+            messages.forEachIndexed { index, message -> key(conversationId, message.messageId) {
                 var activityChoices by remember { mutableStateOf(CanonicalActivityDisclosureChoices()) }
                 CanonicalPartReaderBoundary(checkNotNull(conversationId), message.messageId, message.parts) { onReadText ->
-                Column(Modifier.testTag("chat.task.detail.message.${message.messageId}"), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                NolaCardCompact(Modifier.testTag("chat.task.detail.message.${message.messageId}")) {
                     val roleLabel = when (message.role) {
                         ConversationProjectionV1.Role.User -> stringResource(R.string.chat_role_user)
                         ConversationProjectionV1.Role.Assistant -> stringResource(R.string.app_name)
-                        ConversationProjectionV1.Role.System -> stringResource(R.string.appearance_system)
+                        ConversationProjectionV1.Role.System -> stringResource(R.string.chat_role_system)
                     }
-                    Text(roleLabel, style = MaterialTheme.typography.labelMedium)
+                    Text(roleLabel, style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.primary)
                     canonicalMessageBlocks(message.parts).forEach { block -> key(block.key) {
                         when (block) {
                             is CanonicalMessageBlock.Activity -> CanonicalActivityCards(block.parts, isLive = false, choices = activityChoices, onChoicesChanged = { activityChoices = it }, onReadText = onReadText)
@@ -112,6 +113,9 @@ internal fun TaskChildDetailSheet(load: suspend (Long?) -> ConversationProjectio
                         }
                     } }
                 }
+                }
+                if (index < messages.lastIndex) {
+                    HorizontalDivider(thickness = 0.5.dp, color = MaterialTheme.colorScheme.outlineVariant)
                 }
             } }
             Spacer(Modifier.height(24.dp))

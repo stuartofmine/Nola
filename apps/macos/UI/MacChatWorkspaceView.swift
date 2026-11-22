@@ -502,11 +502,13 @@ struct MacChatWorkspaceView: View {
                 HStack(spacing: 0) {
                     if resolvedLayoutMode != .compactOverlay,
                        columnVisibility != .detailOnly {
-                        workspaceSidebar
-                            .frame(width: sidebarWidth(availableWidth: geometry.size.width))
-                            .background(MacDesignColor.sidebar)
-                            .transition(.move(edge: .leading).combined(with: .opacity))
-                        sidebarResizeHandle(availableWidth: geometry.size.width)
+                        HStack(spacing: 0) {
+                            workspaceSidebar
+                                .frame(width: sidebarWidth(availableWidth: geometry.size.width))
+                                .background(MacDesignColor.sidebar)
+                            sidebarResizeHandle(availableWidth: geometry.size.width)
+                        }
+                        .transition(.move(edge: .leading).combined(with: .opacity))
                     }
 
                     workspaceContent
@@ -523,10 +525,12 @@ struct MacChatWorkspaceView: View {
 
                     if resolvedLayoutMode == .threeColumn,
                        !isManagementContent, (showsInspector || forcesInspectorVisible) {
-                        inspectorResizeHandle(availableWidth: geometry.size.width)
-                        inspectorContent
-                            .frame(width: inspectorWidth(availableWidth: geometry.size.width))
-                            .transition(.move(edge: .trailing).combined(with: .opacity))
+                        HStack(spacing: 0) {
+                            inspectorResizeHandle(availableWidth: geometry.size.width)
+                            inspectorContent(showsHeader: false)
+                                .frame(width: inspectorWidth(availableWidth: geometry.size.width))
+                        }
+                        .transition(.move(edge: .trailing).combined(with: .opacity))
                     }
                 }
 
@@ -891,7 +895,7 @@ struct MacChatWorkspaceView: View {
     }
 
     @ViewBuilder
-    private var inspectorContent: some View {
+    private func inspectorContent(showsHeader: Bool) -> some View {
         if let codeReference {
             MacCodeReferenceInspector(
                 reference: codeReference,
@@ -905,6 +909,7 @@ struct MacChatWorkspaceView: View {
                 dependencies: inspectorDependencies,
                 navigation: inspectorNavigation,
                 close: { activeOverlay = nil; showsInspector = false; codeReference = nil },
+                showsHeader: showsHeader,
                 showsHeaderNavigation: false,
                 participants: inspectorParticipants,
                 expertHistory: AnyView(expertHistory),
@@ -955,6 +960,10 @@ struct MacChatWorkspaceView: View {
         Rectangle()
             .fill((isSidebarDividerHovered || sidebarDragStartWidth != nil) ? MacDesignColor.controlOutline : MacDesignColor.borderSubtle)
             .frame(width: 1)
+            .animation(
+                reduceMotion ? nil : .easeOut(duration: MacDesignTokens.Motion.hover),
+                value: isSidebarDividerHovered || sidebarDragStartWidth != nil
+            )
             .overlay {
                 Rectangle()
                     .fill(Color.clear)
@@ -1026,6 +1035,10 @@ struct MacChatWorkspaceView: View {
         Rectangle()
             .fill((isInspectorDividerHovered || inspectorDragStartWidth != nil) ? MacDesignColor.controlOutline : MacDesignColor.borderSubtle)
             .frame(width: 1)
+            .animation(
+                reduceMotion ? nil : .easeOut(duration: MacDesignTokens.Motion.hover),
+                value: isInspectorDividerHovered || inspectorDragStartWidth != nil
+            )
             .overlay {
                 Rectangle()
                     .fill(Color.clear)
@@ -1112,7 +1125,7 @@ struct MacChatWorkspaceView: View {
                 } else {
                     HStack(spacing: 0) {
                         Spacer(minLength: 0)
-                        inspectorContent
+                        inspectorContent(showsHeader: true)
                         .frame(
                             width: min(
                                 min(availableWidth <= 1_000 ? 380 : 480, max(320, CGFloat(storedInspectorWidth))),
@@ -1206,7 +1219,8 @@ struct MacChatWorkspaceView: View {
                     },
                     expertWorkspace: roomWorkspace,
                     modelSetupRequired: modelSetupRequired,
-                    conversationControls: AnyView(composerConversationControls),
+                    leadingComposerControls: AnyView(composerLeadingControls),
+                    trailingComposerControls: AnyView(composerTrailingControls),
                     modelControls: AnyView(composerModelControls),
                     onCommand: { command, argument in
                         let trimmedArgument = argument.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -1249,8 +1263,9 @@ struct MacChatWorkspaceView: View {
                     Spacer(minLength: 4)
                     newConversationButton
                 }
-                .padding(.leading, leadingPadding)
+                .padding(.leading, max(78, leadingPadding - 4))
                 .padding(.trailing, 10)
+                .padding(.bottom, 4)
                 .frame(width: sidebarWidth(availableWidth: availableWidth) + 1, height: 48)
                 .overlay(alignment: .trailing) {
                     Rectangle().fill(MacDesignColor.borderSubtle).frame(width: 1)
@@ -1261,8 +1276,9 @@ struct MacChatWorkspaceView: View {
                         .accessibilityIdentifier("workspace.toggleSidebar")
                     newConversationButton
                 }
-                .padding(.leading, max(12, leadingTrafficLightInset))
+                .padding(.leading, max(78, leadingTrafficLightInset - 4))
                 .padding(.trailing, 10)
+                .padding(.bottom, 4)
                 Rectangle()
                     .fill(MacDesignColor.borderSubtle)
                     .frame(width: 1, height: 48)
@@ -1292,10 +1308,24 @@ struct MacChatWorkspaceView: View {
             .frame(maxWidth: .infinity, alignment: .leading)
 
             if selectedSection == .chat {
+                let showsInspectorLabels = availableWidth >= 1_080
                 if inspectorColumnOpen {
-                    HStack(spacing: 4) {
+                    HStack(spacing: 6) {
+                        inspectorButtons(showsLabels: showsInspectorLabels)
                         Spacer(minLength: 0)
-                        inspectorButtons
+                        Button {
+                            activeOverlay = nil
+                            showsInspector = false
+                            codeReference = nil
+                        } label: {
+                            Image(systemName: "xmark")
+                                .font(.system(size: 11.5, weight: .semibold))
+                                .frame(width: 28, height: 28)
+                        }
+                        .macToolbarIcon()
+                        .help(String(localized: "Close"))
+                        .accessibilityLabel(String(localized: "Close"))
+                        .accessibilityIdentifier("mac-inspector-close")
                     }
                     .padding(.horizontal, 10)
                     .frame(width: inspectorWidth(availableWidth: availableWidth) + 1, height: 48)
@@ -1309,7 +1339,7 @@ struct MacChatWorkspaceView: View {
                             .fill(MacDesignColor.borderSubtle)
                             .frame(width: 1, height: 18)
                             .padding(.horizontal, 2)
-                        inspectorButtons
+                        inspectorButtons(showsLabels: showsInspectorLabels)
                     }
                     .padding(.trailing, 10)
                 }
@@ -1340,10 +1370,11 @@ struct MacChatWorkspaceView: View {
 
     private var newConversationButton: some View {
         Button(action: navigationActions.newConversation) {
-            Image("nola-edit").renderingMode(.template).resizable().scaledToFit()
-                .frame(width: 18, height: 18).frame(width: 36, height: 36)
+            Image(systemName: "square.and.pencil")
+                .font(.system(size: 14, weight: .medium))
+                .frame(width: 30, height: 30)
         }
-        .macToolbarIcon()
+        .macToolbarIcon(fixedWidth: false)
         .help(String(localized: "New Conversation"))
         .accessibilityLabel(String(localized: "New Conversation"))
         .accessibilityIdentifier("workspace.newConversation")
@@ -1372,9 +1403,10 @@ struct MacChatWorkspaceView: View {
             })
     }
 
-    private var inspectorButtons: some View {
+    private func inspectorButtons(showsLabels: Bool) -> some View {
         MacConversationInspectorButtons(selection: inspectorNavigation.selectedTab,
-            isVisible: !isManagementContent && (layoutMode == .threeColumn ? showsInspector : activeOverlay == .inspector)) { tab in
+            isVisible: !isManagementContent && (layoutMode == .threeColumn ? showsInspector : activeOverlay == .inspector),
+            showsLabels: showsLabels) { tab in
                     if isManagementContent {
                         navigationActions.navigate(to: .chat, then: {
                             inspectorNavigation.selectedTab = tab
@@ -1397,14 +1429,12 @@ struct MacChatWorkspaceView: View {
     private var sidebarToggleButton: some View {
         Button(action: toggleSidebar) {
             Image(systemName: "sidebar.left")
-                .font(.system(size: 13, weight: .semibold))
-                .frame(
-                    width: MacDesignTokens.Control.iconButton,
-                    height: MacDesignTokens.Control.iconButton
-                )
+                .font(.system(size: 14, weight: .medium))
+                .frame(width: 30, height: 30)
         }
         .macToolbarIcon(
-            isActive: layoutMode == .compactOverlay && activeOverlay == .sidebar
+            isActive: layoutMode == .compactOverlay && activeOverlay == .sidebar,
+            fixedWidth: false
         )
         .help(String(localized: "Toggle Sidebar"))
         .accessibilityLabel(String(localized: "Toggle Sidebar"))
@@ -1606,39 +1636,36 @@ struct MacChatWorkspaceView: View {
 
     private var expertManagementButton: some View {
         Button { showsAgentRooms = true } label: {
-            HStack(spacing: 5) {
+            HStack(spacing: 4) {
                 Text(verbatim: "@")
                     .font(.system(size: 12, weight: .semibold, design: .rounded))
                 Text("chat.experts.title")
                     .lineLimit(1)
-
             }
             .font(.system(size: 11.5, weight: .medium))
             .foregroundStyle(.secondary)
             .padding(.horizontal, 8)
             .frame(height: 28)
+            .fixedSize(horizontal: true, vertical: false)
             .macComposerPill(isActive: showsAgentRooms)
         }
         .buttonStyle(.plain)
+        .fixedSize(horizontal: true, vertical: false)
         .disabled(model.selectedConversationID == nil)
         .accessibilityIdentifier("chat.experts")
     }
 
-    private var composerConversationControls: some View {
-        ViewThatFits(in: .horizontal) {
-            HStack(spacing: 8) {
-                modelSelector
-                workspaceSelector
-                expertManagementButton
-            }.fixedSize(horizontal: true, vertical: false)
-            VStack(alignment: .leading, spacing: 8) {
-                HStack(spacing: 8) { modelSelector; workspaceSelector }
-                expertManagementButton
-            }
+    private var composerLeadingControls: some View {
+        HStack(spacing: 6) {
+            workspaceSelector
+            expertManagementButton
         }
-        .frame(maxWidth: .infinity, alignment: .leading)
         .accessibilityElement(children: .contain)
         .accessibilityIdentifier("chat.conversationControls")
+    }
+
+    private var composerTrailingControls: some View {
+        modelSelector
     }
 
     private var modelSetupRequired: Bool {
@@ -1872,6 +1899,14 @@ struct MacChatWorkspaceView: View {
                     Label(String(localized: "Refresh"), systemImage: "arrow.clockwise")
                 }
             }
+            if model.executionHost == .local {
+                Button {
+                    MacModelCenterNavigationState.shared.showLocalModels()
+                    openWindow(id: "model-center")
+                } label: {
+                    Label(String(localized: "管理与下载本地模型…", table: "ModelCenter"), systemImage: "arrow.down.circle")
+                }
+            }
             Button(action: manageChatModels) {
                 Label(String(localized: "Manage Models…"), systemImage: "slider.horizontal.3")
             }
@@ -1946,10 +1981,10 @@ struct MacChatWorkspaceView: View {
         guard model.executionHost == .remote else { return .secondary }
         switch remoteHostConnectionState {
         case .notConfigured: return .secondary
-        case .unverified: return .orange
+        case .unverified: return MacDesignColor.warning
         case .checking: return .secondary
         case .connected: return .secondary
-        case .failed: return .red
+        case .failed: return MacDesignColor.danger
         }
     }
 
@@ -2162,9 +2197,9 @@ private struct MacAgentTimelineRow: View {
         switch item.state {
         case .pending: return .secondary
         case .running: return .accentColor
-        case .waiting: return .orange
-        case .completed: return .green
-        case .failed: return .red
+        case .waiting: return MacDesignColor.warning
+        case .completed: return MacDesignColor.success
+        case .failed: return MacDesignColor.danger
         }
     }
 

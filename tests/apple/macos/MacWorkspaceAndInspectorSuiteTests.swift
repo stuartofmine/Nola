@@ -124,7 +124,7 @@ final class MacWorkspaceTabsLayoutAndComposerContractTests: XCTestCase {
         let data = MacDataCenterNavigationState()
         data.section = .usage; data.showWebSources()
         let otherData = MacDataCenterNavigationState()
-        XCTAssertEqual(data.section, .usage); XCTAssertEqual(otherData.section, .memory); XCTAssertEqual(otherData.route, .overview)
+        XCTAssertEqual(data.section, .usage); XCTAssertEqual(otherData.section, .sources); XCTAssertEqual(otherData.route, .overview)
         let automations = MacAutomationCenterNavigationState()
         automations.showRunHistory(); automations.searchText = "daily"; automations.selectedFilter = .paused
         let otherAutomations = MacAutomationCenterNavigationState()

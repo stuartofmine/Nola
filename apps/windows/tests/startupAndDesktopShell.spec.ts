@@ -130,8 +130,8 @@ test("startupPageHtml enforces Warm Paper/Ink tokens, WCAG contrast, layout boun
             expect(await page.locator("h1").textContent()).toBe(item.mode === "failed" ? strings.failedTitle : strings.startingTitle);
 
             if (item.forcedColors !== "active") {
-                const expectedBodyBg = item.scheme === "dark" ? "rgb(27, 28, 26)" : "rgb(250, 248, 244)";
-                const expectedCardBg = item.scheme === "dark" ? "rgb(34, 36, 32)" : "rgb(255, 255, 255)";
+                const expectedBodyBg = item.scheme === "dark" ? "rgb(11, 11, 12)" : "rgb(250, 250, 250)";
+                const expectedCardBg = item.scheme === "dark" ? "rgb(20, 20, 23)" : "rgb(255, 255, 255)";
                 const styles = await page.evaluate(() => ({
                     bodyBg: getComputedStyle(document.body).backgroundColor,
                     cardBg: getComputedStyle(document.querySelector(".card")!).backgroundColor,
@@ -338,7 +338,7 @@ test("Windows desktop shell integration against isolated real nola web renders S
         await page.goto(origin + '/chat');
         await expect(page.locator('html')).toHaveAttribute('data-nola-desktop', 'windows');
         await expect(page.locator('.chat-main')).toBeVisible();
-        expect(await page.evaluate(() => getComputedStyle(document.body).backgroundColor)).toBe('rgb(27, 28, 26)');
+        expect(await page.evaluate(() => getComputedStyle(document.body).backgroundColor)).toBe('rgb(11, 11, 12)');
         const composer = page.locator('#chat-composer');
         const settings = page.locator('.settings-overview');
         const settingsSidebar = page.locator('.settings-sidebar');

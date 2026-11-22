@@ -188,6 +188,7 @@ struct ChatContextSheet: View {
     @State private var pendingMCPDeletionID: UUID?
     @State private var initialDocuments: [UserUploadedContextItem]?
     @State private var initialMemoryText: [String]?
+    @State private var showContextDiagnostics = false
 
     init(
         displayMode: DisplayMode,
@@ -324,63 +325,73 @@ struct ChatContextSheet: View {
                                     .foregroundStyle(.secondary)
                             }
 
-                            LazyVGrid(
-                                columns: [GridItem(.adaptive(minimum: 112), alignment: .leading)],
-                                alignment: .leading,
-                                spacing: 12
-                            ) {
-                                contextMetric(title: tr("chat.context.metric.measurement", "上下文", "Context"),
-                                    value: contextUsage.contextIsEstimated
-                                        ? tr("chat.context.metric.estimated_request", "预计下次请求", "Estimated next request")
-                                        : tr("chat.context.metric.measured_request", "请求实测上下文", "Measured request context"))
-                                if let request = contextUsage.cacheDiagnosticRequestID {
-                                    contextMetric(title: tr("chat.context.metric.cache_request", "缓存诊断请求", "Cache diagnostic request"), value: request)
-                                }
-                                if let attempt = contextUsage.cacheDiagnosticAttemptID {
-                                    contextMetric(title: tr("chat.context.metric.cache_attempt", "物理尝试", "Physical attempt"), value: attempt)
-                                }
-                                if contextUsage.hasEstimatedBreakdown {
-                                    contextMetric(title: tr("chat.context.metric.active", "当前消息", "Active"), value: "\(contextUsage.activeMessageTokens)")
-                                    contextMetric(title: tr("chat.context.metric.memory", "记忆", "Memory"), value: "\(contextUsage.longTermMemoryTokens)")
-                                    contextMetric(title: tr("chat.context.metric.preferences", "偏好", "Preferences"), value: "\(contextUsage.userPreferencesTokens)")
-                                    contextMetric(title: tr("chat.context.metric.mcp", "MCP", "MCP"), value: "\(contextUsage.mcpServersTokens)")
-                                    contextMetric(title: tr("chat.context.metric.skills", "Skills", "Skills"), value: "\(contextUsage.uploadedSkillsTokens)")
-                                    contextMetric(title: tr("chat.context.metric.documents", "文档", "Documents"), value: "\(contextUsage.uploadedDocumentsTokens)")
-                                }
-                                if let status = contextUsage.promptCacheStatus {
+                            DisclosureGroup(isExpanded: $showContextDiagnostics) {
+                                LazyVGrid(
+                                    columns: [GridItem(.adaptive(minimum: 112), alignment: .leading)],
+                                    alignment: .leading,
+                                    spacing: 12
+                                ) {
+                                    contextMetric(title: tr("chat.context.metric.measurement", "上下文", "Context"),
+                                        value: contextUsage.contextIsEstimated
+                                            ? tr("chat.context.metric.estimated_request", "预计下次请求", "Estimated next request")
+                                            : tr("chat.context.metric.measured_request", "请求实测上下文", "Measured request context"))
+                                    if let request = contextUsage.cacheDiagnosticRequestID {
+                                        contextMetric(title: tr("chat.context.metric.cache_request", "缓存诊断请求", "Cache diagnostic request"), value: request)
+                                    }
+                                    if let attempt = contextUsage.cacheDiagnosticAttemptID {
+                                        contextMetric(title: tr("chat.context.metric.cache_attempt", "物理尝试", "Physical attempt"), value: attempt)
+                                    }
+                                    if contextUsage.hasEstimatedBreakdown {
+                                        contextMetric(title: tr("chat.context.metric.active", "当前消息", "Active"), value: "\(contextUsage.activeMessageTokens)")
+                                        contextMetric(title: tr("chat.context.metric.memory", "记忆", "Memory"), value: "\(contextUsage.longTermMemoryTokens)")
+                                        contextMetric(title: tr("chat.context.metric.preferences", "偏好", "Preferences"), value: "\(contextUsage.userPreferencesTokens)")
+                                        contextMetric(title: tr("chat.context.metric.mcp", "MCP", "MCP"), value: "\(contextUsage.mcpServersTokens)")
+                                        contextMetric(title: tr("chat.context.metric.skills", "Skills", "Skills"), value: "\(contextUsage.uploadedSkillsTokens)")
+                                        contextMetric(title: tr("chat.context.metric.documents", "文档", "Documents"), value: "\(contextUsage.uploadedDocumentsTokens)")
+                                    }
+                                    if let status = contextUsage.promptCacheStatus {
+                                        contextMetric(
+                                            title: tr("chat.context.metric.prompt_cache", "提示缓存", "Prompt cache"),
+                                            value: promptCacheStatusLabel(status)
+                                        )
+                                    }
                                     contextMetric(
-                                        title: tr("chat.context.metric.prompt_cache", "提示缓存", "Prompt cache"),
-                                        value: promptCacheStatusLabel(status)
+                                        title: tr("chat.context.metric.cache_hit_rate", "会话缓存命中率", "Conversation cache hit rate"),
+                                        value: contextUsage.cacheHitRateBps.map { (Double($0) / 10_000).formatted(.percent.precision(.fractionLength(1))) }
+                                            ?? tr("chat.context.metric.cache_unknown", "未知", "Unknown")
                                     )
+                                    if let value = contextUsage.cacheReportedRequests {
+                                        contextMetric(title: tr("chat.context.metric.cache_reported", "已报告请求", "Reported requests"), value: value.formatted())
+                                    }
+                                    if let value = contextUsage.cacheUnreportedRequests, value > 0 {
+                                        contextMetric(title: tr("chat.context.metric.cache_unreported", "缓存用量未知的请求", "Requests with unknown cache usage"), value: value.formatted())
+                                    }
+                                    if let value = contextUsage.cachedInputTokens {
+                                        contextMetric(
+                                            title: tr("chat.context.metric.cache_read", "缓存读取", "Cache read"),
+                                            value: formattedTokenCount(value)
+                                        )
+                                    }
+                                    if let value = contextUsage.cacheWriteInputTokens {
+                                        contextMetric(
+                                            title: tr("chat.context.metric.cache_write", "缓存写入", "Cache write"),
+                                            value: formattedTokenCount(value)
+                                        )
+                                    }
+                                    if contextUsage.hasEstimatedBreakdown {
+                                        contextMetric(title: tr("chat.context.metric.supplemental", "附加", "Supplemental"), value: "\(contextUsage.supplementalTokens)")
+                                        contextMetric(title: tr("chat.context.metric.archived", "已折叠", "Archived"), value: "\(contextUsage.archivedMessageCount)")
+                                    }
                                 }
-                                contextMetric(
-                                    title: tr("chat.context.metric.cache_hit_rate", "会话缓存命中率", "Conversation cache hit rate"),
-                                    value: contextUsage.cacheHitRateBps.map { (Double($0) / 10_000).formatted(.percent.precision(.fractionLength(1))) }
-                                        ?? tr("chat.context.metric.cache_unknown", "未知", "Unknown")
-                                )
-                                if let value = contextUsage.cacheReportedRequests {
-                                    contextMetric(title: tr("chat.context.metric.cache_reported", "已报告请求", "Reported requests"), value: value.formatted())
-                                }
-                                if let value = contextUsage.cacheUnreportedRequests, value > 0 {
-                                    contextMetric(title: tr("chat.context.metric.cache_unreported", "缓存用量未知的请求", "Requests with unknown cache usage"), value: value.formatted())
-                                }
-                                if let value = contextUsage.cachedInputTokens {
-                                    contextMetric(
-                                        title: tr("chat.context.metric.cache_read", "缓存读取", "Cache read"),
-                                        value: formattedTokenCount(value)
-                                    )
-                                }
-                                if let value = contextUsage.cacheWriteInputTokens {
-                                    contextMetric(
-                                        title: tr("chat.context.metric.cache_write", "缓存写入", "Cache write"),
-                                        value: formattedTokenCount(value)
-                                    )
-                                }
-                                if contextUsage.hasEstimatedBreakdown {
-                                    contextMetric(title: tr("chat.context.metric.supplemental", "附加", "Supplemental"), value: "\(contextUsage.supplementalTokens)")
-                                    contextMetric(title: tr("chat.context.metric.archived", "已折叠", "Archived"), value: "\(contextUsage.archivedMessageCount)")
-                                }
+                                .padding(.top, 8)
+                            } label: {
+                                Text(tr("chat.context.diagnostics.header", "诊断详情", "Diagnostics"))
+                                    .font(.subheadline.weight(.medium))
+                                    .foregroundStyle(DesignTokens.secondaryContentColor)
+                                    .frame(minHeight: 40)
                             }
+                            .disclosureGroupStyle(NolaRowDisclosureStyle(isPlain: true))
+                            .accessibilityIdentifier("chat.context.diagnostics")
 
                             if let lastCompactedAt = contextUsage.lastCompactedAt {
                                 Text("\(tr("chat.context.last_compact.prefix", "上次 compact：", "Last compact: "))\(lastCompactedAt.formatted(date: .abbreviated, time: .shortened))")

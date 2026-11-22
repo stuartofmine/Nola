@@ -18,6 +18,7 @@ struct ModelsView: View {
     @Environment(\.horizontalSizeClass) private var horizontalSizeClass
     @Environment(\.layoutDirection) private var layoutDirection
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @Environment(\.colorScheme) private var colorScheme
 
     @State private var apiDraft = IOSModelSetupDraft()
     @State private var hostHasDraft = false
@@ -78,6 +79,9 @@ struct ModelsView: View {
                 sourceTabButton(2, title: NSLocalizedString("model.center.host_models", value: "Host", comment: "Host"))
             }
             .padding(.horizontal, 20).padding(.vertical, 8)
+            .overlay(alignment: .bottom) {
+                Rectangle().fill(DesignTokens.hairlineBorderColor(for: colorScheme)).frame(height: 0.5)
+            }
             TabView(selection: $sourceTab) {
                 apiContent.tag(0)
                 ModelDownloadView(embedded: true) { model in
@@ -124,17 +128,10 @@ struct ModelsView: View {
             }
         }
         .navigationBarBackButtonHidden(!ownsNavigationStack)
-        .overlay(alignment: .leading) {
-            if !ownsNavigationStack && !hasDraft && !hostIsConnecting {
-                // Reserve the leading edge for Back. The paged model sources
-                // otherwise consume the same horizontal pan as a tab swipe.
-                Color.clear.frame(width: 16)
-                    .contentShape(Rectangle())
-                    .gesture(DragGesture(minimumDistance: 12).onEnded { drag in
-                        let forward = layoutDirection == .rightToLeft ? -drag.translation.width : drag.translation.width
-                        if forward > 60 && forward > abs(drag.translation.height) { dismiss() }
-                    })
-                    .accessibilityHidden(true)
+        .background {
+            if !ownsNavigationStack {
+                ChatNavigationGestureBridge(isEnabled: !hasDraft && !hostIsConnecting)
+                    .frame(width: 0, height: 0)
             }
         }
         .interactiveDismissDisabled(hasDraft || hostIsConnecting)
@@ -152,11 +149,11 @@ struct ModelsView: View {
     private func sourceTabButton(_ value: Int, title: String) -> some View {
         Button { withAnimation(reduceMotion ? nil : .snappy(duration: 0.22)) { sourceTab = value } } label: {
             Text(title).font(.subheadline.weight(sourceTab == value ? .semibold : .regular))
-                .foregroundStyle(sourceTab == value ? Color.primary : Color.secondary)
+                .foregroundStyle(sourceTab == value ? DesignTokens.primaryColor : DesignTokens.secondaryContentColor)
                 .frame(maxWidth: .infinity, minHeight: 44)
                 .contentShape(Rectangle())
                 .overlay(alignment: .bottom) {
-                    if sourceTab == value { Capsule().fill(Color.primary).frame(height: 2) }
+                    if sourceTab == value { Capsule().fill(DesignTokens.actionColor).frame(height: 2) }
                 }
         }
         .buttonStyle(.plain)
@@ -180,9 +177,9 @@ struct ModelsView: View {
                 }
                 if !models.isEmpty {
                     DisclosureGroup(isExpanded: $showsConfiguredModels) {
-                modelListSection(title: NSLocalizedString("model.center.local_models", value: "本地模型", comment: "Local models section"), items: localModels)
-                modelListSection(title: NSLocalizedString("model.center.cloud_models", value: "云端模型", comment: "Cloud models section"), items: cloudModels)
-                modelListSection(title: NSLocalizedString("model.center.host_models", value: "宿主机", comment: "Host models section"), items: hostModels)
+                modelListSection(title: NSLocalizedString("model.center.local_models", value: "Local models", comment: "Local models section"), items: localModels)
+                modelListSection(title: NSLocalizedString("model.center.cloud_models", value: "Cloud models", comment: "Cloud models section"), items: cloudModels)
+                modelListSection(title: NSLocalizedString("model.center.host_models", value: "Host", comment: "Host models section"), items: hostModels)
                     } label: {
                         Text(NSLocalizedString("model.setup.configured", value: "Configured models", comment: "Configured models"))
                             .font(.headline).frame(minHeight: 44)
@@ -429,13 +426,8 @@ struct ModelsView: View {
     }
 
     private func modelDetailContent(_ model: ModelInfo) -> some View {
-        VStack(alignment: .leading, spacing: DesignTokens.spacing_xs) {
+        VStack(alignment: .leading, spacing: DesignTokens.spacing_sm) {
             HStack(spacing: 6) {
-                if isSelected(model) {
-                    Image(systemName: "checkmark.circle.fill")
-                        .foregroundStyle(DesignTokens.primaryColor)
-                    Text(NSLocalizedString("model.center.selected", value: "Selected", comment: "Selected model badge"))
-                }
                 if model.isLocal {
                     Image(systemName: "arrow.down.circle.fill")
                     Text(NSLocalizedString("model.center.downloaded", value: "Downloaded", comment: "Downloaded local model badge"))
@@ -455,14 +447,35 @@ struct ModelsView: View {
             .foregroundStyle(.secondary)
             .padding(.leading, 28)
 
-            LazyVGrid(columns: modelActionColumns, alignment: .leading, spacing: 4) {
+            HStack(spacing: 10) {
+                if isSelected(model) {
+                    Label(
+                        NSLocalizedString("model.center.active", value: "Active", comment: "Active model badge"),
+                        systemImage: "checkmark.circle.fill"
+                    )
+                    .font(.subheadline.weight(.semibold))
+                    .foregroundStyle(DesignTokens.actionColor)
+                    .padding(.horizontal, 14)
+                    .padding(.vertical, 8)
+                    .background(DesignTokens.accentSubtleColor, in: Capsule())
+                } else {
+                    Button { select(model) } label: {
+                        Text(NSLocalizedString("model.center.use", value: "Use", comment: "Use model button"))
+                            .font(.subheadline.weight(.semibold))
+                            .padding(.horizontal, 16)
+                            .padding(.vertical, 8)
+                    }
+                    .buttonStyle(NolaPrimaryButtonStyle(cornerRadius: DesignTokens.radius_pill))
+                }
+
                 if model.isLocal,
                    let runtimeModel = resolveLocalModel(model) {
                     if localRuntime.isRunning(runtimeModel) {
                         Button { localRuntime.stop() } label: {
                             Label(NSLocalizedString("model.center.stop", value: "Stop", comment: "Stop local model"), systemImage: "stop.fill")
                                 .font(.caption.weight(.semibold))
-                                .frame(maxWidth: .infinity, minHeight: 44, alignment: .leading)
+                                .padding(.horizontal, 12)
+                                .frame(minHeight: 36)
                         }
                         .buttonStyle(.bordered)
                         .tint(.secondary)
@@ -470,26 +483,12 @@ struct ModelsView: View {
                         Button { startLocalModel(runtimeModel) } label: {
                             Label(NSLocalizedString("model.center.start", value: "Start", comment: "Start local model"), systemImage: "play.fill")
                                 .font(.caption.weight(.semibold))
-                                .frame(maxWidth: .infinity, minHeight: 44, alignment: .leading)
+                                .padding(.horizontal, 12)
+                                .frame(minHeight: 36)
                         }
-                        .buttonStyle(.borderedProminent)
-                        .tint(DesignTokens.actionColor)
-                        .foregroundStyle(DesignTokens.onActionColor)
-                        .buttonBorderShape(.roundedRectangle(radius: 12))
+                        .buttonStyle(NolaPrimaryButtonStyle(cornerRadius: DesignTokens.radius_pill))
                         .disabled(runningLocalModel != nil)
                     }
-                }
-
-                if !isSelected(model) {
-                    Button { select(model) } label: {
-                        Label(NSLocalizedString("model.center.use", value: "使用", comment: "Use model button"), systemImage: "checkmark.circle")
-                            .font(.caption.weight(.semibold))
-                            .frame(maxWidth: .infinity, minHeight: 44, alignment: .leading)
-                    }
-                    .buttonStyle(.borderedProminent)
-                    .tint(DesignTokens.actionColor)
-                    .foregroundStyle(DesignTokens.onActionColor)
-                    .buttonBorderShape(.roundedRectangle(radius: 12))
                 }
 
                 if model.isWebBackend {
@@ -501,67 +500,76 @@ struct ModelsView: View {
                             systemImage: "checkmark.shield"
                         )
                         .font(.caption.weight(.semibold))
-                        .frame(maxWidth: .infinity, minHeight: 44, alignment: .leading)
+                        .padding(.horizontal, 12)
+                        .frame(minHeight: 36)
                     }
                     .buttonStyle(.bordered)
-                    .accessibilityLabel(NSLocalizedString("model.center.configure_host", value: "配置宿主机", comment: "Configure host button"))
-                } else {
-                    if !model.isLocal {
-                        if model.wireProtocol == .chatCompletions || model.wireProtocol == .responses {
-                            Button { protocolTarget = model } label: {
-                                Label(NSLocalizedString("model.connections.protocol", comment: "Protocol"), systemImage: "arrow.triangle.branch")
-                                    .font(.caption.weight(.semibold))
-                                    .frame(maxWidth: .infinity, minHeight: 44, alignment: .leading)
-                            }.buttonStyle(.bordered)
-                                .accessibilityIdentifier("model.protocol.\(model.id)")
+                    .accessibilityLabel(NSLocalizedString("model.center.configure_host", value: "Configure host", comment: "Configure host button"))
+                }
+
+                Spacer(minLength: 8)
+
+                if !model.isWebBackend {
+                    Menu {
+                        Button {
+                            modelTestTarget = model
+                        } label: {
+                            Label(
+                                NSLocalizedString("model.test.title", value: "Test model", comment: "Test this configured model"),
+                                systemImage: "gauge.with.dots.needle.67percent"
+                            )
                         }
                         Button {
-                            capabilityTarget = model
+                            parameterTarget = model
                         } label: {
-                            Label(NSLocalizedString("model.center.execution_capabilities", value: "Capabilities", comment: "Cloud model execution capabilities"), systemImage: "checkmark.shield")
-                                .font(.caption.weight(.semibold))
-                                .frame(maxWidth: .infinity, minHeight: 44, alignment: .leading)
+                            Label(
+                                NSLocalizedString("model.center.parameters", value: "Parameters", comment: "Parameters button"),
+                                systemImage: "slider.horizontal.3"
+                            )
                         }
-                        .buttonStyle(.bordered)
-                        .accessibilityIdentifier("model.capabilities.\(model.id)")
-                    }
-                    Button {
-                        modelTestTarget = model
-                    } label: {
-                        Label(
-                            NSLocalizedString("model.test.title", value: "Test model", comment: "Test this configured model"),
-                            systemImage: "gauge.with.dots.needle.67percent"
-                        )
-                        .font(.caption.weight(.semibold))
-                        .frame(maxWidth: .infinity, minHeight: 44, alignment: .leading)
-                    }
-                    .buttonStyle(.bordered)
-                    Button {
-                        parameterTarget = model
-                    } label: {
-                        Label(
-                            NSLocalizedString("model.center.parameters", value: "Parameters", comment: "Parameters button"),
-                            systemImage: "slider.horizontal.3"
-                        )
-                        .font(.caption.weight(.semibold))
-                        .frame(maxWidth: .infinity, minHeight: 44, alignment: .leading)
-                    }
-                    .buttonStyle(.bordered)
-                    .accessibilityLabel(NSLocalizedString("model.center.parameters", value: "参数", comment: "Parameters button"))
-                    .accessibilityIdentifier("model.parameters.\(model.id)")
-                    if !model.isLocal {
-                        Button(role: .destructive) {
-                            deleteTarget = model
-                        } label: {
-                            Label(L10n.commonDelete, systemImage: "trash")
-                                .font(.caption.weight(.semibold))
-                                .frame(maxWidth: .infinity, minHeight: 44, alignment: .leading)
+                        .accessibilityIdentifier("model.parameters.\(model.id)")
+
+                        if !model.isLocal {
+                            Button {
+                                capabilityTarget = model
+                            } label: {
+                                Label(
+                                    NSLocalizedString("model.center.execution_capabilities", value: "Capabilities", comment: "Cloud model execution capabilities"),
+                                    systemImage: "checkmark.shield"
+                                )
+                            }
+                            .accessibilityIdentifier("model.capabilities.\(model.id)")
+
+                            if model.wireProtocol == .chatCompletions || model.wireProtocol == .responses || model.wireProtocol == .anthropic {
+                                Button { protocolTarget = model } label: {
+                                    Label(NSLocalizedString("model.connections.protocol", comment: "Protocol"), systemImage: "arrow.triangle.branch")
+                                }
+                                .accessibilityIdentifier("model.protocol.\(model.id)")
+                            }
+
+                            Divider()
+
+                            Button(role: .destructive) {
+                                deleteTarget = model
+                            } label: {
+                                Label(L10n.commonDelete, systemImage: "trash")
+                            }
+                            .accessibilityIdentifier("model.delete.\(model.id)")
                         }
-                        .buttonStyle(.bordered)
-                        .accessibilityIdentifier("model.delete.\(model.id)")
+                    } label: {
+                        Image(systemName: "ellipsis.circle")
+                            .font(.title3)
+                            .foregroundStyle(DesignTokens.secondaryContentColor)
+                            .frame(width: 44, height: 44)
+                            .contentShape(Rectangle())
                     }
+                    .buttonStyle(.plain)
+                    .accessibilityLabel(NSLocalizedString("model.center.more_actions", value: "Model actions", comment: "More actions menu for configured model"))
+                    .accessibilityIdentifier("model.actions.\(model.id)")
                 }
             }
+            .padding(.leading, 28)
+
             if model.isLocal,
                let runtimeModel = resolveLocalModel(model),
                !localRuntime.isRunning(runtimeModel),
@@ -582,15 +590,8 @@ struct ModelsView: View {
         .accessibilityElement(children: .contain)
     }
 
-    private var modelActionColumns: [GridItem] {
-        if horizontalSizeClass == .regular {
-            return [GridItem(.adaptive(minimum: 132, maximum: 210), alignment: .leading)]
-        }
-        return [GridItem(.flexible(), alignment: .leading), GridItem(.flexible(), alignment: .leading)]
-    }
-
     private func statusBanner(_ message: String, isError: Bool = false) -> some View {
-        let tint: Color = isError ? .red : DesignTokens.successColor
+        let tint: Color = isError ? DesignTokens.dangerColor : DesignTokens.successColor
         return HStack(alignment: .top, spacing: DesignTokens.spacing_sm) {
             Image(systemName: isError ? "exclamationmark.triangle.fill" : "checkmark.circle.fill")
                 .foregroundStyle(tint)
@@ -745,8 +746,10 @@ private struct IOSModelExecutionCapabilitiesView: View {
                 )) {
                     Text(NSLocalizedString("model.execution.output_auto", value: "Automatic", comment: "Provider default output field"))
                         .tag(ChatOutputTokenField.auto)
-                    Text(verbatim: "max_tokens").tag(ChatOutputTokenField.maxTokens)
-                    Text(verbatim: "max_completion_tokens").tag(ChatOutputTokenField.maxCompletionTokens)
+                    Text(NSLocalizedString("model.execution.output_standard", value: "Standard limit", comment: "Standard output token limit field"))
+                        .tag(ChatOutputTokenField.maxTokens)
+                    Text(NSLocalizedString("model.execution.output_completion", value: "Completion limit (newer models)", comment: "Completion output token limit field"))
+                        .tag(ChatOutputTokenField.maxCompletionTokens)
                 }
             }
             if let errorMessage {
@@ -992,7 +995,13 @@ struct WebHostConfigurationView: View {
                 }
             }
 
-            if embedded { Section { connectButton(paired: pairedURL != nil) } }
+            if embedded {
+                Section {
+                    connectButton(paired: pairedURL != nil, prominent: true)
+                }
+                .listRowInsets(EdgeInsets())
+                .listRowBackground(Color.clear)
+            }
 
             if let url = pairedURL {
                 Section {
@@ -1083,21 +1092,34 @@ struct WebHostConfigurationView: View {
         .onDisappear { connectionTask?.cancel() }
     }
 
-    private func connectButton(paired: Bool) -> some View {
-        Button {
+    @ViewBuilder
+    private func connectButton(paired: Bool, prominent: Bool = false) -> some View {
+        let button = Button {
             connect()
         } label: {
-            if isConnecting && !reduceMotion {
-                ProgressView().accessibilityLabel(Text("model.web_host.checking"))
-            } else if isConnecting {
-                Text("model.web_host.checking")
-            } else {
-                Text(paired ? LocalizedStringKey("model.web_host.recheck") : LocalizedStringKey("model.web_host.connect"))
+            Group {
+                if isConnecting && !reduceMotion {
+                    ProgressView()
+                        .tint(prominent ? DesignTokens.onActionColor : nil)
+                        .accessibilityLabel(Text("model.web_host.checking"))
+                } else if isConnecting {
+                    Text("model.web_host.checking")
+                } else {
+                    Text(paired ? LocalizedStringKey("model.web_host.recheck") : LocalizedStringKey("model.web_host.connect"))
+                        .font(prominent ? .headline : .body)
+                }
             }
+            .frame(maxWidth: prominent ? .infinity : nil, minHeight: prominent ? 48 : nil)
         }
         .disabled(isConnecting)
         .accessibilityIdentifier("model.web_host.connect")
         .accessibilityHint(paired ? Text("model.web_host.saved_token_hint") : Text("model.web_host.connect.accessibility_hint"))
+
+        if prominent {
+            button.buttonStyle(NolaPrimaryButtonStyle(cornerRadius: DesignTokens.radius_md))
+        } else {
+            button
+        }
     }
 
     private func connect() {
@@ -1178,6 +1200,7 @@ struct WebHostConfigurationView: View {
 struct IOSModelInferenceTestView: View {
     @EnvironmentObject private var container: ServiceContainer
     @Environment(\.dismiss) private var dismiss
+    @Environment(\.colorScheme) private var colorScheme
 
     let model: ModelInfo
     @State private var prompt = NSLocalizedString("model.test.default_prompt", value: "Explain what Nola can do in three concise bullet points.", comment: "Default model test prompt")
@@ -1207,7 +1230,7 @@ struct IOSModelInferenceTestView: View {
                     .background(DesignTokens.secondaryBackgroundColor, in: RoundedRectangle(cornerRadius: 12, style: .continuous))
                     .overlay {
                         RoundedRectangle(cornerRadius: 12, style: .continuous)
-                            .stroke(DesignTokens.borderColor, lineWidth: 0.5)
+                            .stroke(DesignTokens.hairlineBorderColor(for: colorScheme), lineWidth: 0.75)
                     }
                     .accessibilityIdentifier("model.test.prompt")
                 HStack {
@@ -1216,13 +1239,16 @@ struct IOSModelInferenceTestView: View {
                     }
                     .buttonStyle(.bordered)
                     Spacer()
-                    Button(isRunning
-                        ? NSLocalizedString("model.test.stop", value: "Stop", comment: "Stop model test")
-                        : NSLocalizedString("model.test.run", value: "Run", comment: "Run model test")) {
+                    Button {
                         isRunning ? stop() : run()
+                    } label: {
+                        Text(isRunning
+                            ? NSLocalizedString("model.test.stop", value: "Stop", comment: "Stop model test")
+                            : NSLocalizedString("model.test.run", value: "Run", comment: "Run model test"))
+                            .font(.subheadline.weight(.semibold))
+                            .padding(.horizontal, DesignTokens.spacing_lg)
                     }
-                    .buttonStyle(.borderedProminent)
-                    .foregroundStyle(DesignTokens.onActionColor)
+                    .buttonStyle(NolaPrimaryButtonStyle(cornerRadius: DesignTokens.radius_md))
                     .disabled(!isRunning && prompt.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
                 }
             }
@@ -1243,7 +1269,7 @@ struct IOSModelInferenceTestView: View {
                     if isRunning { ProgressView().controlSize(.small) }
                 }
                 if let errorMessage {
-                    Text(errorMessage).foregroundStyle(.red).textSelection(.enabled)
+                    Text(errorMessage).foregroundStyle(DesignTokens.dangerColor).textSelection(.enabled)
                 }
                 if output.isEmpty {
                     Text(NSLocalizedString("model.test.empty", value: "Run a model test to inspect its response here.", comment: "Empty model test output"))

@@ -144,6 +144,42 @@ fn gguf(files: &[FileSpec], budget: Option<u64>) -> Result<Vec<FileSpec>, String
     Ok(shards.into_iter().map(|(_, _, f)| f.clone()).collect())
 }
 
+fn gguf_matching_file(files: &[FileSpec], target_file: &str) -> Result<Vec<FileSpec>, String> {
+    let target_lower = target_file.trim().to_ascii_lowercase();
+    let Some((target_group, _, _)) = gguf_group(target_file) else {
+        return Err(format!("Requested file is not a supported GGUF model: {target_file}"));
+    };
+    let mut shards: Vec<(usize, usize, &FileSpec)> = files
+        .iter()
+        .filter_map(|f| {
+            let (group, idx, total) = gguf_group(&f.path)?;
+            if group == target_group {
+                Some((idx, total, f))
+            } else {
+                None
+            }
+        })
+        .collect();
+    shards.sort_by_key(|(idx, _, _)| *idx);
+    if !shards.is_empty()
+        && shards
+            .iter()
+            .enumerate()
+            .all(|(offset, (i, n, f))| *i == offset + 1 && *n == shards.len() && f.bytes > 0)
+    {
+        return Ok(shards.into_iter().map(|(_, _, f)| f.clone()).collect());
+    }
+    if let Some(exact) = files
+        .iter()
+        .find(|f| f.path.to_ascii_lowercase() == target_lower && f.bytes > 0)
+    {
+        return Ok(vec![exact.clone()]);
+    }
+    Err(format!(
+        "Requested GGUF file was not found in this repository: {target_file}"
+    ))
+}
+
 /// Try the longest supportable window first. A sub-three-bit variant is never
 /// selected just to cross a context threshold over a useful higher-precision build.
 pub(super) fn context_gguf_budget(
@@ -184,9 +220,23 @@ pub(super) fn primary_for_budget(
     manifest: &Manifest,
     budget: Option<u64>,
 ) -> Result<Vec<FileSpec>, String> {
+    primary_for_budget_with_file(engine, repo, manifest, budget, None)
+}
+
+pub(super) fn primary_for_budget_with_file(
+    engine: Engine,
+    repo: &str,
+    manifest: &Manifest,
+    budget: Option<u64>,
+    preferred_file: Option<&str>,
+) -> Result<Vec<FileSpec>, String> {
     let files = &manifest.files;
     let selected = if engine == Engine::Llama {
-        gguf(files, budget)?
+        if let Some(target_file) = preferred_file {
+            gguf_matching_file(files, target_file)?
+        } else {
+            gguf(files, budget)?
+        }
     } else {
         if engine == Engine::Vllm
             && files

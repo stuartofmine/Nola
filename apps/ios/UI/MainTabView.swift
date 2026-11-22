@@ -27,6 +27,7 @@ struct MainTabView: View {
     @Environment(\.locale) private var locale
     @Environment(\.layoutDirection) private var layoutDirection
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @Namespace private var tabPillNamespace
     @EnvironmentObject var container: ServiceContainer
     @SceneStorage("main.selectedTab") private var selectedTabRawValue = NolaTab.chat.rawValue
     @State private var overrideSelectedTab: NolaTab?
@@ -47,11 +48,11 @@ struct MainTabView: View {
         Group {
             if horizontalSizeClass == .compact {
                 IOSCompactTabContainer(selection: selectedTabBinding.wrappedValue,
-                    contentRevision: "\(colorScheme)-\(dynamicTypeSize)-\(locale.identifier)-\(layoutDirection)") { tab in
+                    contentRevision: "\(colorScheme)-\(dynamicTypeSize)-\(locale.identifier)-\(layoutDirection)-\(selectedTabBinding.wrappedValue.rawValue)") { tab in
                     AnyView(VStack(spacing: 0) {
                         tabContent(tab, compact: true)
                             .frame(maxWidth: .infinity, maxHeight: .infinity)
-                        if tab != .chat { compactNavigation(for: tab) }
+                        if tab != .chat { compactNavigation(for: selectedTabBinding.wrappedValue) }
                     }
                         .environmentObject(container)
                         .environment(\.colorScheme, colorScheme)
@@ -62,6 +63,7 @@ struct MainTabView: View {
                         .tint(DesignTokens.actionColor)
                         .toggleStyle(NolaSwitchToggleStyle()))
                 }
+                .ignoresSafeArea(.container)
             } else if #available(iOS 18.0, *) {
                 tabs
                     .tabViewStyle(.sidebarAdaptable)
@@ -174,13 +176,27 @@ struct MainTabView: View {
         HStack(spacing: 0) {
             ForEach([NolaTab.chat, .activity, .information, .settings], id: \.self) { tab in
                 let isSelected = selectedTab == tab
-                Button { selectedTabBinding.wrappedValue = tab } label: {
+                Button {
+                    withAnimation(reduceMotion ? nil : DesignTokens.disclosureAnimation) {
+                        selectedTabBinding.wrappedValue = tab
+                    }
+                } label: {
                     VStack(spacing: 2) {
                         Image(tab.icon).renderingMode(.template).resizable().scaledToFit()
                             .frame(width: 21, height: 21)
                             .frame(width: 44, height: 28)
-                            .background(isSelected ? DesignTokens.accentSubtleColor : Color.clear, in: Capsule())
-                            .animation(reduceMotion ? nil : DesignTokens.disclosureAnimation, value: isSelected)
+                            .background {
+                                if isSelected {
+                                    let pillFill = colorScheme == .dark ? Color.white.opacity(0.10) : DesignTokens.accentSubtleColor
+                                    if reduceMotion {
+                                        Capsule().fill(pillFill)
+                                    } else {
+                                        Capsule()
+                                            .fill(pillFill)
+                                            .matchedGeometryEffect(id: "main.tab.activePill", in: tabPillNamespace)
+                                    }
+                                }
+                            }
                         Text(tab.title)
                             .font(.caption2.weight(isSelected ? .semibold : .regular))
                             .lineLimit(1)
@@ -195,9 +211,10 @@ struct MainTabView: View {
                 .accessibilityAddTraits(isSelected ? .isSelected : [])
             }
         }
+        .animation(reduceMotion ? nil : DesignTokens.disclosureAnimation, value: selectedTab)
         .buttonStyle(.plain).padding(.horizontal, 8).padding(.top, 6).padding(.bottom, 4)
         .background(DesignTokens.backgroundColor.ignoresSafeArea(edges: .bottom))
-        .overlay(alignment: .top) { Rectangle().fill(DesignTokens.borderColor).frame(height: 0.5) }
+        .overlay(alignment: .top) { Rectangle().fill(DesignTokens.hairlineBorderColor(for: colorScheme)).frame(height: 0.5) }
         .accessibilityElement(children: .contain)
         .accessibilityAddTraits(.isTabBar)
     }
@@ -249,7 +266,7 @@ enum NolaTab: String, Hashable, CaseIterable {
 
     var icon: String {
         switch self {
-        case .activity: return "nola-clock"
+        case .activity: return "nola-bell"
         case .chat: return "nola-chat"
         case .information: return "nola-folder"
         case .settings: return "nola-settings"

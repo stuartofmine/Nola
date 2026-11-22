@@ -21,7 +21,11 @@
     import { latestRequest } from '../lib/latestRequest';
     import LocalEngineSetup from '../components/LocalEngineSetup.svelte';
     import LocalModelSearch from '../components/LocalModelSearch.svelte';
-    import { downloadActive, engineName, modelByteSize, modelMemorySize, type EngineStatus, type LocalEngine, type ModelDownload, type ModelSource } from '../lib/modelAcquisition';
+    import {
+        downloadActive, engineName, modelByteSize, modelMemorySize,
+        defaultModelSource, friendlyRuntimeLabel, formatUnifiedGb, cleanModelName,
+        type EngineStatus, type LocalEngine, type ModelDownload, type ModelSource
+    } from '../lib/modelAcquisition';
     import { localModelEditorSnapshot } from '../lib/localModelEditor';
     let confirmation: ConfirmationHandle;
 
@@ -38,7 +42,7 @@
         else apiPageOpened = true;
     });
     let engine = $state<LocalEngine>('llama.cpp');
-    let source = $state<ModelSource>('huggingface');
+    let source = $state<ModelSource>(defaultModelSource());
     let preferencesReady = $state(false);
     $effect(() => {
         if (preferencesReady) {
@@ -59,7 +63,10 @@
     let disposed = false;
     const catalogReads = latestRequest<Catalog>();
     const dirty = $derived(!!editing && JSON.stringify(draft) !== JSON.stringify(editing.parameters));
-    const visibleModels = $derived(catalog?.models.filter(model => (model.runtime ?? 'llama.cpp') === engine && (model.installed || model.download?.status === 'downloading')) ?? []);
+    const visibleModels = $derived(
+        (catalog?.models.filter(model => model.installed || model.download?.status === 'downloading') ?? [])
+            .sort((a, b) => Number(b.running) - Number(a.running) || Number(b.selected) - Number(a.selected))
+    );
     const selectedRuntime = $derived(catalog?.runtimes?.find(item => item.id === engine)
         ?? (engine === 'llama.cpp' && catalog ? { id: engine, binaryAvailable: catalog.binaryAvailable, installHint: catalog.installHint } : undefined));
     let engineSetup = $state<{reveal(): void}>();
@@ -138,16 +145,37 @@
     onMount(() => {
         try {
             if (localStorage.getItem('nola.localModel.engine') === 'vllm') engine = 'vllm';
-            if (localStorage.getItem('nola.localModel.source') === 'modelscope') source = 'modelscope';
-        } catch { /* Use the defaults when storage is unavailable. */ }
+            const savedSource = localStorage.getItem('nola.localModel.source');
+            if (savedSource === 'modelscope' || savedSource === 'huggingface') source = savedSource;
+            else source = defaultModelSource($locale);
+        } catch {
+            source = defaultModelSource($locale);
+        }
         preferencesReady = true;
         const desktop = (window as Window & { NolaDesktop?: { nativeRuntime?: () => Promise<{ backend: string; architecture: string }> } }).NolaDesktop;
         desktop?.nativeRuntime?.().then(runtime => {
-            if (!disposed && runtime.backend && runtime.architecture)
-                desktopRuntime = [runtime.backend, runtime.architecture].join(' · ').toUpperCase();
+            if (!disposed && (runtime.backend || runtime.architecture))
+                desktopRuntime = friendlyRuntimeLabel(runtime.backend || '', runtime.architecture || '', $locale);
         }).catch(() => {});
         return () => { disposed = true; clearTimeout(timer); catalogReads.cancel(); };
     });
+    async function switchAndUse(model: Model) {
+        if (busy) return;
+        busy = model.id; error = '';
+        catalogReads.cancel(); clearTimeout(timer);
+        try {
+            if (!model.selected) {
+                await api(`/api/local-models/${encodeURIComponent(model.id)}/select`, { method: 'POST' });
+            }
+            if (disposed) return;
+            if (!model.running) {
+                await api(`/api/local-models/${encodeURIComponent(model.id)}/start`, { method: 'POST' });
+            }
+            if (disposed) return;
+            await refresh();
+        } catch (cause) { if (!disposed) error = errorMessage(cause); }
+        finally { if (!disposed) busy = ''; }
+    }
     async function action(model: Model, name: string) {
         if (busy) return;
         if (name === 'installation' && !await confirmation.ask({ title: t($locale, 'models.deleteTitle'), description: t($locale, 'models.deleteBody', { name: model.displayName || model.name || model.id }), confirmLabel: t($locale, 'models.deleteConfirm'), destructive: true })) return;
@@ -234,37 +262,63 @@
         {#if error}<div class="notice error" role="alert">{error}{catalog ? t($locale, 'models.stale') : ''} <button onclick={refresh} disabled={!!busy}>{t($locale, 'models.retry')}</button></div>{/if}
         {#if !catalog}{#if !error}<p role="status">{t($locale, 'models.loading')}</p>{/if}
         {:else}
-            {#if localPageOpened}<LocalModelSearch bind:engine bind:source job={catalog.acquisition} onJob={trackDownload}>
+            {#if catalog.configurationError}<p class="notice error" role="alert">{t($locale, 'local.configuration_error', { detail: catalog.configurationError })}</p>{/if}
+            {#if visibleModels.length}
+                <section class="installed-section" aria-label={t($locale, 'local.myModels')}>
+                    <div class="section-heading">
+                        <h2>{t($locale, 'local.myModels')}</h2>
+                        <span class="muted">{formatBytes(catalog.diskUsageBytes)}</span>
+                    </div>
+                    <div class="models">
+                        {#each visibleModels as model (model.id)}
+                            {@const modelEngine = (model.runtime === 'vllm' ? 'vllm' : 'llama.cpp') as LocalEngine}
+                            {@const canRun = model.running || (readiness[modelEngine] ?? model.binaryAvailable ?? selectedRuntime?.binaryAvailable)}
+                            <article class="model-row" aria-busy={busy === model.id}>
+                                <div class="row between">
+                                    <div class="model-title">
+                                        <h3>{model.displayName || cleanModelName(model.name || model.id)}</h3>
+                                        <span class="status-pill" data-running={model.running || undefined}>{t($locale, model.running ? 'models.running' : model.selected ? 'models.selected' : model.installed ? 'models.installed' : 'models.notDownloaded')}</span>
+                                    </div>
+                                    <span class="muted tabular">{model.downloadBytes != null ? formatUnifiedGb(model.downloadBytes, $locale) : ''}</span>
+                                </div>
+                                {#if model.description || model.subtitle}<p class="muted">{model.description || model.subtitle}</p>{/if}
+                                <p class="model-details muted tabular">
+                                    {#if model.quantization || model.format}<span>{model.quantization || model.format}</span>{/if}
+                                    <span>{t($locale, 'local.context')} · {formatContext(model.parameters?.contextTokens ?? model.contextWindowTokens)}</span>
+                                    {#if model.estimatedRuntimeBytes}<span>{t($locale, 'local.runtime')} · {formatUnifiedGb(model.estimatedRuntimeBytes, $locale)}</span>{/if}
+                                    <span>{engineName(modelEngine)}</span>
+                                </p>
+                                {#if model.download?.status === 'downloading'}
+                                    <progress aria-label={t($locale, 'models.downloadProgress')} value={model.download.downloadedBytes} max={model.download.totalBytes || 1}></progress>
+                                {/if}
+                                {#if model.download?.error}<p class="error">{model.download.error}</p>{/if}
+                                <div class="actions">
+                                    {#if model.installed}
+                                        {#if model.running}
+                                            <button class="primary" onclick={() => action(model, 'stop')} disabled={!!busy}>{t($locale, 'models.stop')}</button>
+                                        {:else if canRun}
+                                            <button class="primary" onclick={() => switchAndUse(model)} disabled={!!busy}>{t($locale, 'local.switchAndUse')}</button>
+                                        {:else}
+                                            <button onclick={() => engineSetup?.reveal()}>{t($locale, 'local.setup.openSetup')}</button>
+                                        {/if}
+                                        <button onclick={() => configure(model)} disabled={!!busy}>{t($locale, 'models.configure')}</button>
+                                        <button class="danger" onclick={() => action(model, 'installation')} disabled={!!busy || model.running}>{t($locale, 'models.delete')}</button>
+                                    {/if}
+                                </div>
+                            </article>
+                        {/each}
+                    </div>
+                </section>
+            {/if}
+            {#if localPageOpened}<LocalModelSearch bind:engine bind:source job={catalog.acquisition} onJob={trackDownload} nativeRuntime={desktopRuntime}>
                 {#snippet engineControls()}
                     <LocalEngineSetup bind:this={engineSetup} bind:engine {alternative} runningName={runningModel?.displayName || runningModel?.name || runningModel?.id}
                         nativeRuntime={desktopRuntime} onStatus={updateEngine} openConnections={() => { selectTab('api'); requestedEndpointName = 'vLLM'; }} />
                 {/snippet}
             </LocalModelSearch>{/if}
-            {#if catalog.configurationError}<p class="notice error" role="alert">{t($locale, 'local.configuration_error', { detail: catalog.configurationError })}</p>{/if}
-            <div class="models">
-                {#each visibleModels as model (model.id)}
-                    <article class="model-row" aria-busy={busy === model.id}>
-                        <div class="row between"><h2>{model.displayName || model.name || model.id}</h2><span class="muted">{t($locale, model.running ? 'models.running' : model.selected ? 'models.selected' : model.installed ? 'models.installed' : 'models.notDownloaded')}</span></div>
-                        {#if model.description || model.subtitle}<p class="muted">{model.description || model.subtitle}</p>{/if}
-                        <p class="model-details muted">{#if model.quantization || model.format}<span>{model.quantization || model.format}</span>{/if}<span>{t($locale, 'local.context')} · {formatContext(model.parameters?.contextTokens ?? model.contextWindowTokens)}</span>{#if model.estimatedRuntimeBytes}<span>{t($locale, 'local.runtime')} · {modelMemorySize(model.estimatedRuntimeBytes, $locale)}</span>{/if}{#if model.recommendedMemoryBytes}<span>{t($locale, 'local.required_memory')} · {modelMemorySize(model.recommendedMemoryBytes, $locale)}</span>{/if}<span>{t($locale, 'local.download_size')} · {formatBytes(model.downloadBytes)}</span></p>
-                        {#if model.download?.status === 'downloading'}
-                            <progress aria-label={t($locale, 'models.downloadProgress')} value={model.download.downloadedBytes} max={model.download.totalBytes || 1}></progress>
-                        {/if}
-                        {#if model.download?.error}<p class="error">{model.download.error}</p>{/if}
-                        <div class="actions">
-                            {#if model.installed}
-                                <button onclick={() => configure(model)} disabled={!!busy}>{t($locale, 'models.configure')}</button>
-                                <button onclick={() => action(model, 'select')} disabled={!!busy || model.selected}>{t($locale, 'models.select')}</button>
-                                {#if model.running || (readiness[engine] ?? model.binaryAvailable ?? selectedRuntime?.binaryAvailable)}
-                                    <button class="primary" onclick={() => action(model, model.running ? 'stop' : 'start')} disabled={!!busy}>{t($locale, model.running ? 'models.stop' : 'models.start')}</button>
-                                {:else}<button onclick={() => engineSetup?.reveal()}>{t($locale, 'local.setup.openSetup')}</button>{/if}
-                                <button class="danger" onclick={() => action(model, 'installation')} disabled={!!busy || model.running}>{t($locale, 'models.delete')}</button>
-                            {/if}
-                        </div>
-                    </article>
-                {:else}<div class="card"><p class="muted">{t($locale, 'local.noInstalled', { engine: engineName(engine) })}</p></div>{/each}
-            </div>
-            <section class="card storage-card"><h2>{t($locale, 'local.storage')}</h2><p class="muted">{formatBytes(catalog.diskUsageBytes)}</p></section>
+            {#if !visibleModels.length && catalog.diskUsageBytes}
+                <section class="card storage-card"><h2>{t($locale, 'local.storage')}</h2><p class="muted">{formatBytes(catalog.diskUsageBytes)}</p></section>
+            {/if}
         {/if}
     </div>
     <div id="panel-api" role="tabpanel" tabindex="0" aria-labelledby="tab-api" hidden={tab !== 'api'}>
@@ -294,11 +348,18 @@
     .models-content { max-width: 1120px; padding: 0 32px 48px; gap: 24px; }
     .tabs { background: transparent; border: 0; padding: 0; gap: 8px; border-radius: 0; }
     .tabs button { padding-inline: 20px; }
-    .models { display: grid; margin-top: 24px; border-bottom: 1px solid var(--border); }
-    .model-row { display: grid; grid-template-columns: minmax(0, 1fr) auto; column-gap: 24px; row-gap: 8px; padding: 24px 0; border-top: 1px solid var(--border); min-width: 0; }
+    .installed-section { display: grid; gap: 12px; margin-bottom: 20px; padding-bottom: 16px; border-bottom: 1px solid var(--border); }
+    .section-heading { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; }
+    .section-heading h2 { font-size: 1rem; font-weight: 600; margin: 0; }
+    .model-title { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+    .model-title h3 { font-size: .9375rem; font-weight: 600; margin: 0; }
+    .status-pill { font-size: .75rem; padding: 2px 8px; border-radius: 999px; background: var(--panel); color: var(--muted); }
+    .status-pill[data-running] { background: var(--accent-subtle); color: var(--content); font-weight: 600; }
+    .tabular { font-variant-numeric: tabular-nums; }
+    .models { display: grid; gap: 10px; }
+    .model-row { display: grid; grid-template-columns: minmax(0, 1fr) auto; column-gap: 20px; row-gap: 6px; padding: 14px 16px; border: 1px solid var(--border); border-radius: 14px; background: var(--surface); min-width: 0; }
     .model-row > :not(.actions) { grid-column: 1; min-width: 0; overflow-wrap: anywhere; }
     .model-row > .actions { grid-column: 2; grid-row: 1 / span 5; align-content: center; align-items: center; max-width: 320px; }
-    .model-row h2 { font-size: 1rem; }
     .model-row .actions button:not(.primary) { border-color: transparent; background: transparent; }
     .storage-card { background: transparent; border: 0; border-radius: 0; padding: 16px 0; gap: 8px; }
     .model-details { display: flex; flex-wrap: wrap; gap: 4px 16px; margin: 0; font-size: .8125rem; }

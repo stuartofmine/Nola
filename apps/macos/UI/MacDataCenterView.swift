@@ -22,7 +22,7 @@ final class MacDataCenterNavigationState: ObservableObject {
     }
 
     @Published var route: Route = .overview
-    @Published var section: MacDataCenterSection = .memory
+    @Published var section: MacDataCenterSection = .sources
 
     func showOverview() { route = .overview }
     func showWebSources() { route = .webSources }
@@ -124,14 +124,12 @@ struct MacDataCenterView: View {
             }
 
             HStack(spacing: 12) {
-                Picker(macDataCenterText("mac.data_center.title", "Data Center"), selection: $navigation.section) {
-                    ForEach(MacDataCenterSection.allCases.filter { $0 != .overview }) { item in
-                        Text(item.title).tag(item)
-                    }
-                }
-                .pickerStyle(.segmented)
-                .labelsHidden()
-                .fixedSize()
+                MacSegmentedTabBar(
+                    options: MacDataCenterSection.allCases.filter { $0 != .overview },
+                    selection: $navigation.section,
+                    title: { $0.title }
+                )
+                .accessibilityLabel(macDataCenterText("mac.data_center.title", "Data Center"))
                 Spacer(minLength: 0)
             }
             .padding(.horizontal, MacDesignTokens.Layout.pageGutter)
@@ -235,6 +233,13 @@ struct MacDataCenterView: View {
 
     private var sources: some View {
         LazyVStack(alignment: .leading, spacing: 12) {
+            MacDataCenterHealthCard(
+                ready: readyCount,
+                total: totalSourceCount,
+                attention: attentionCount,
+                defaultCount: defaultEnabledCount,
+                isRefreshing: isRefreshing
+            )
             MacSectionLabel(LocalizedStringKey(macDataCenterText("mac.data_center.section.sources", "Sources")))
             if sourceSnapshots.isEmpty && webSources.sources.isEmpty {
                 MacEmptyState(
@@ -466,6 +471,7 @@ private struct MacDataCenterHealthCard: View {
     let attention: Int
     let defaultCount: Int
     let isRefreshing: Bool
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     var body: some View {
         ViewThatFits(in: .horizontal) {
@@ -508,7 +514,7 @@ private struct MacDataCenterHealthCard: View {
         VStack(alignment: .trailing, spacing: 5) {
             Text("\(ready)/\(total)")
                 .font(.system(size: 16, weight: .semibold, design: .rounded))
-                .contentTransition(.numericText())
+                .contentTransition(reduceMotion ? .identity : .numericText())
             Text(
                 String(
                     format: macDataCenterText("mac.data_center.health.default_count", "%d available by default"),

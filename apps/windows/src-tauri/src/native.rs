@@ -67,8 +67,35 @@ pub fn label_for(locale: Option<&str>, key: &str) -> &'static str {
 
 pub fn theme_background(theme: tauri::Theme) -> tauri::window::Color {
     match theme {
-        tauri::Theme::Dark => tauri::window::Color(0x1b, 0x1c, 0x1a, 0xff),
-        _ => tauri::window::Color(0xfa, 0xf8, 0xf4, 0xff),
+        tauri::Theme::Dark => tauri::window::Color(0x0b, 0x0b, 0x0c, 0xff),
+        _ => tauri::window::Color(0xfa, 0xfa, 0xfa, 0xff),
+    }
+}
+
+fn theme_preference_path(app: &AppHandle) -> Option<PathBuf> {
+    let dir = std::env::var_os("NOLA_E2E_USER_DATA")
+        .map(PathBuf::from)
+        .or_else(|| app.path().app_local_data_dir().ok())?;
+    Some(dir.join("theme-preference.txt"))
+}
+
+pub fn load_persisted_theme(app: &AppHandle) -> (String, Option<tauri::Theme>) {
+    let raw = theme_preference_path(app)
+        .and_then(|path| std::fs::read_to_string(path).ok())
+        .unwrap_or_default();
+    match raw.trim() {
+        "dark" => ("dark".into(), Some(tauri::Theme::Dark)),
+        "light" => ("light".into(), Some(tauri::Theme::Light)),
+        _ => ("system".into(), None),
+    }
+}
+
+fn save_persisted_theme(app: &AppHandle, theme: &str) {
+    if let Some(path) = theme_preference_path(app) {
+        if let Some(parent) = path.parent() {
+            let _ = std::fs::create_dir_all(parent);
+        }
+        let _ = std::fs::write(path, theme);
     }
 }
 
@@ -165,11 +192,22 @@ pub fn set_theme(window: WebviewWindow, theme: String) -> Result<(), String> {
         _ => return Err("Unsupported theme".into()),
     };
     if let Ok(mut pref) = window.state::<super::Desktop>().theme_preference.lock() {
-        *pref = theme;
+        *pref = theme.clone();
     }
+    save_persisted_theme(window.app_handle(), &theme);
     window.set_theme(target).map_err(|e| e.to_string())?;
     apply_theme_background(&window, target);
     Ok(())
+}
+
+#[tauri::command]
+pub fn open_logs_folder(window: WebviewWindow) -> Result<(), String> {
+    require_host(&window)?;
+    let dir = window
+        .path()
+        .app_local_data_dir()
+        .map_err(|e| e.to_string())?;
+    open::that_detached(dir).map_err(|e| e.to_string())
 }
 
 pub fn show(app: &AppHandle) {
@@ -238,6 +276,7 @@ pub fn set_tray_tooltip(app: &AppHandle, tooltip: &str) {
 pub fn tray(app: &AppHandle) -> tauri::Result<()> {
     let menu = MenuBuilder::new(app)
         .text("show", label("showNola"))
+        .text("settings", label("settings"))
         .text("workspace", label("openWorkspace"))
         .text("logs", label("openLogFolder"))
         .text("licenses", label("thirdPartyLicenses"))
@@ -251,6 +290,26 @@ pub fn tray(app: &AppHandle) -> tauri::Result<()> {
         .show_menu_on_left_click(false)
         .on_menu_event(|app, event| match event.id().as_ref() {
             "show" => show(app),
+            "settings" => {
+                show(app);
+                if let Some(window) = app.get_webview_window("main") {
+                    if let Some(origin) = app
+                        .state::<super::Desktop>()
+                        .origin
+                        .lock()
+                        .ok()
+                        .and_then(|guard| guard.clone())
+                    {
+                        if let Ok(url) = origin
+                            .ascii_serialization()
+                            .parse::<url::Url>()
+                            .and_then(|base| base.join("/settings"))
+                        {
+                            let _ = window.navigate(url);
+                        }
+                    }
+                }
+            }
             "logs" => {
                 if let Ok(dir) = app.path().app_local_data_dir() {
                     let _ = open::that_detached(dir);

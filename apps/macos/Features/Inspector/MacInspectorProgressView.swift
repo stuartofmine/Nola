@@ -116,7 +116,7 @@ nonisolated enum MacInspectorGoalControlPolicy {
     }
 }
 
-enum MacInspectorProgressMode { case progress, goal }
+enum MacInspectorProgressMode { case progress, goal, combined }
 
 struct MacInspectorProgressView: View {
     @Bindable var model: MacWorkspaceModel
@@ -129,6 +129,7 @@ struct MacInspectorProgressView: View {
     var draftStore: MacInspectorGoalDraftStore? = nil
     @State private var localDrafts = MacInspectorGoalDraftStore()
     @State private var goalToCancel: AppleGoalControl?
+    @State private var isGoalComposerExpanded = false
     private var draft: MacInspectorGoalDraft { (draftStore ?? localDrafts).draft(for: model.selectedConversationID ?? "") }
     private var objective: String {
         get { draft.objective }
@@ -163,14 +164,21 @@ struct MacInspectorProgressView: View {
                 Button(String(localized: "Retry")) { retry += 1 }
               }
               if refresh.loaded {
-                  if mode == .goal {
-                      goalControls.disabled(!refresh.controlsConfirmed || refresh.owner != model.selectedConversationID)
-                  }
-                  if mode != .goal || snapshot?.active != nil {
-                      MacInspectorProgressContent(snapshot: mode == .goal ? snapshot : nil,
-                          todos: mode == .progress ? todos : [],
-                          tasks: mode == .progress ? tasks : [])
+                  if mode == .combined {
+                      MacInspectorProgressContent(snapshot: snapshot, todos: todos, tasks: tasks)
                           .equatable()
+                      Rectangle().fill(MacDesignColor.borderSubtle).frame(height: 1)
+                      goalControls.disabled(!refresh.controlsConfirmed || refresh.owner != model.selectedConversationID)
+                  } else {
+                      if mode == .goal {
+                          goalControls.disabled(!refresh.controlsConfirmed || refresh.owner != model.selectedConversationID)
+                      }
+                      if mode != .goal || snapshot?.active != nil {
+                          MacInspectorProgressContent(snapshot: mode == .goal ? snapshot : nil,
+                              todos: mode == .progress ? todos : [],
+                              tasks: mode == .progress ? tasks : [])
+                              .equatable()
+                      }
                   }
               }
             }
@@ -279,27 +287,21 @@ struct MacInspectorProgressView: View {
                 .buttonStyle(MacActionButtonStyle())
                 .disabled(controlBusy)
             } else if MacInspectorGoalControlPolicy.canStart(snapshot) {
-                Text(String(localized: "goal.guidance", table: "ConversationInspector"))
-                    .font(.callout).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
-                MacInspectorDocumentEditor(text: Binding(get: { objective }, set: { objective = $0 }), placeholder: String(localized: "goal.example", table: "ConversationInspector"), minHeight: 88)
-                    .accessibilityLabel(String(localized: "Goal"))
-                    .accessibilityIdentifier("mac-goal-objective")
-                DisclosureGroup {
-                    MacInspectorDocumentEditor(text: Binding(get: { constraints }, set: { constraints = $0 }), placeholder: String(localized: "goal.constraints"), minHeight: 64)
-                        .accessibilityLabel(String(localized: "goal.constraints"))
-                } label: {
-                    Label(String(localized: "goal.optional_constraints", table: "ConversationInspector"), systemImage: "slider.horizontal.3")
-                        .font(.system(size: 13, weight: .medium))
+                if mode == .goal {
+                    newGoalComposerContent
+                } else {
+                    DisclosureGroup(isExpanded: Binding(
+                        get: { isGoalComposerExpanded || !objective.isEmpty },
+                        set: { isGoalComposerExpanded = $0 }
+                    )) {
+                        newGoalComposerContent
+                            .padding(.top, 8)
+                    } label: {
+                        Label(String(localized: "New Goal", table: "ConversationInspector"), systemImage: "target")
+                            .font(.system(size: 13, weight: .medium))
+                    }
+                    .disclosureGroupStyle(MacRowDisclosureStyle(toggleIdentifier: "mac-goal-new-toggle"))
                 }
-                .disclosureGroupStyle(MacRowDisclosureStyle(toggleIdentifier: "mac-goal-optional-constraints"))
-                Button("goal.start") {
-                    submit(.init(action: .start, objective: objective,
-                        constraints: constraints.split(separator: "\n").map(String.init)))
-                }
-                .buttonStyle(.nolaProminent)
-                .tint(MacDesignColor.primaryAction)
-                .disabled(controlBusy || model.selectedConversationID == nil || objective.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
-                .accessibilityIdentifier("mac-goal-start")
             } else {
                 Text("Goal controls are unavailable. Refresh to confirm the current goal state.", tableName: "ConversationInspector")
                     .font(.callout).foregroundStyle(.secondary)
@@ -317,6 +319,32 @@ struct MacInspectorProgressView: View {
             }
             Button(String(localized: "Close"), role: .cancel) { goalToCancel = nil }
         } message: { Text(String(localized: "goal.cancel_explanation", table: "ConversationInspector")) }
+    }
+
+    @ViewBuilder private var newGoalComposerContent: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text(String(localized: "goal.guidance", table: "ConversationInspector"))
+                .font(.callout).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+            MacInspectorDocumentEditor(text: Binding(get: { objective }, set: { objective = $0 }), placeholder: String(localized: "goal.example", table: "ConversationInspector"), minHeight: 88)
+                .accessibilityLabel(String(localized: "Goal"))
+                .accessibilityIdentifier("mac-goal-objective")
+            DisclosureGroup {
+                MacInspectorDocumentEditor(text: Binding(get: { constraints }, set: { constraints = $0 }), placeholder: String(localized: "goal.constraints"), minHeight: 64)
+                    .accessibilityLabel(String(localized: "goal.constraints"))
+            } label: {
+                Label(String(localized: "goal.optional_constraints", table: "ConversationInspector"), systemImage: "slider.horizontal.3")
+                    .font(.system(size: 13, weight: .medium))
+            }
+            .disclosureGroupStyle(MacRowDisclosureStyle(toggleIdentifier: "mac-goal-optional-constraints"))
+            Button("goal.start") {
+                submit(.init(action: .start, objective: objective,
+                    constraints: constraints.split(separator: "\n").map(String.init)))
+            }
+            .buttonStyle(.nolaProminent)
+            .tint(MacDesignColor.primaryAction)
+            .disabled(controlBusy || model.selectedConversationID == nil || objective.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+            .accessibilityIdentifier("mac-goal-start")
+        }
     }
 
     private func submit(_ control: AppleGoalControl?) {

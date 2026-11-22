@@ -132,17 +132,17 @@
     .code-block { margin: 1em 0; border: 1px solid var(--border); border-radius: 10px; overflow: hidden; }
     .code-header { display: flex; justify-content: space-between; align-items: center; gap: 12px; padding: 6px 12px; background: var(--panel); font-size: .85em; color: var(--muted); }
     .code-header button { padding: 3px 8px; min-height: max(32px, var(--control-hit-size)); min-width: 44px; }
-    pre { margin: 0; padding: 12px; overflow: auto; max-height: 480px; white-space: pre; line-height: 1.5; tab-size: 4; }
+    pre { margin: 0; padding: 12px; overflow: auto; max-height: 480px; white-space: pre; line-height: 1.5; tab-size: 4; background: var(--surface); }
     .markdown pre code { padding: 0; background: none; border-radius: 0; }
     .markdown :global(a.inline-reference) { color: var(--muted); font-size: .8125rem; font-weight: 400; text-decoration: none; text-underline-offset: .15em; }
     .markdown :global(a.inline-reference:hover), .markdown :global(a.inline-reference:focus-visible) { color: var(--content); text-decoration: underline; }
     .markdown :global(a.inline-reference strong) { font-weight: 400; }
     .table-scroll { overflow-x: auto; margin: 1em 0; border: 1px solid var(--border); border-radius: 8px; }
     table { border-collapse: collapse; min-width: 100%; font-size: .95em; }
-    th, td { padding: 8px 12px; border-bottom: 1px solid var(--border); min-width: 100px; vertical-align: top; }
+    th, td { padding: 8px 12px; border-bottom: 1px solid var(--border); min-width: 64px; vertical-align: top; }
     th { background: var(--panel); font-weight: 600; } tbody tr:last-child td { border-bottom: 0; }
     hr { border: 0; border-top: 1px solid var(--border); margin: 1.3em 0; }
-    .copy-notice { font-size: .85em; color: var(--muted); }
+    .copy-notice { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; margin: 0; }
     @media (pointer: coarse) { .code-header button { min-height: 44px; } }
-    @media (max-width: 700px) { .markdown { line-height: 1.6470588235; } }
+    @media (max-width: 760px) { .markdown { line-height: 1.6470588235; } }
 </style>

@@ -295,8 +295,9 @@
     .page-list .group-title::after { content: ''; flex: 1; height: 1px; background: var(--border); }
     .conversation-list { display: grid; gap: 3px; }
     .conversation-row { position: relative; display: grid; grid-template-columns: minmax(0, 1fr); min-width: 0; }
-    .conversation { display: grid; align-content: center; gap: 4px; min-width: 0; width: 100%; border: 0; border-radius: 6px; background: transparent; padding: 8px 40px 8px 12px; min-height: 40px; text-align: left; overflow-wrap: anywhere; }
-    .conversation[aria-current] { background: var(--accent-subtle); color: var(--accent); font-weight: 600; }
+    .conversation { display: grid; align-content: center; gap: 4px; min-width: 0; width: 100%; border: 1px solid transparent; border-radius: 8px; background: transparent; padding: 8px 40px 8px 12px; min-height: 40px; text-align: left; overflow-wrap: anywhere; }
+    .conversation:hover:not(:disabled) { background: var(--composer-pill-hover-bg); border-color: transparent; }
+    .conversation[aria-current], .conversation[aria-current]:hover { background: var(--glass-pill-bg); border-color: var(--glass-pill-border); box-shadow: var(--glass-pill-shadow); color: var(--content); font-weight: 600; }
     .conversation[aria-current] .conversation-heading > span { font-weight: 600; }
     @media (hover: hover) { .conversation:not([aria-current]):not(:disabled):hover { background: var(--panel); } .conversation[aria-current]:not(:disabled):hover { background: var(--accent-subtle); } }
     .conversation-heading { display: flex; align-items: baseline; gap: 8px; min-width: 0; }
@@ -312,8 +313,8 @@
     .page-list .conversation-heading > span { font-size: 17px; line-height: 24px; font-weight: 550; }
     .page-list .conversation :global(.row-details) { padding-right: 44px; }
     .sidebar-list .list-heading { min-height: 24px; padding-inline: 12px; flex-wrap: wrap; gap: 4px 8px; }
-    .sidebar-list .conversation-search { padding-left: 10px; gap: 0; }
-    .sidebar-list .conversation-search > svg { display: none; }
+    .sidebar-list .conversation-search { padding-left: 10px; gap: 6px; }
+    .sidebar-list .conversation-search > svg { width: 15px; height: 15px; }
     .sidebar-list .conversation-search input { min-height: 36px; font-size: 12px; }
     .sidebar-list .refresh-list { min-height: 36px; width: 36px; }
     .sidebar-list .group-title { margin-left: 12px; margin-top: 4px; }

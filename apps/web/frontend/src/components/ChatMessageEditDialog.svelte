@@ -21,13 +21,25 @@
     let draft=$state<EditedResendDraft>(untrack(()=>initial)), error=$state(''), sending=$state(false);
     let editor=$state<HTMLTextAreaElement>(), dialog=$state<HTMLDialogElement>();
     let copied=$state<'copied'|'manual'|null>(null);
+    let opener: HTMLElement | null = null;
     let alive=true;
     async function copyDraft(){
         const text=draft.input.edited_text;
         try{await navigator.clipboard.writeText(text);if(alive&&draft.input.edited_text===text)copied='copied';}
         catch{if(alive&&draft.input.edited_text===text){copied='manual';await tick();if(alive){editor?.focus();editor?.select();}}}
     }
-    function portal(node:HTMLDialogElement){document.body.appendChild(node);void tick().then(()=>{if(alive){node.showModal();editor?.focus();}});return{destroy(){node.close();node.remove();}};}
+    function portal(node:HTMLDialogElement){
+        opener=document.activeElement instanceof HTMLElement?document.activeElement:null;
+        document.body.appendChild(node);
+        void tick().then(()=>{if(alive){node.showModal();editor?.focus();}});
+        return{destroy(){
+            if(node.open)node.close();
+            node.remove();
+            const target=opener;
+            opener=null;
+            if(target?.isConnected)target.focus({preventScroll:true});
+        }};
+    }
     async function save(){
         if(sending||busy||ownerChanged||!draft.input.edited_text.trim())return;
         sending=true;error='';

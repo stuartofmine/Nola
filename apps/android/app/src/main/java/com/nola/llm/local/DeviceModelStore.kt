@@ -9,9 +9,18 @@ import java.security.MessageDigest
 import java.time.Instant
 import javax.inject.Inject
 import javax.inject.Singleton
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.ensureActive
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.update
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.encodeToString
@@ -35,6 +44,15 @@ data class DeviceModelDownloadProgress(
     val totalBytes: Long?,
 )
 
+data class DeviceModelDownloadState(
+    val downloadingModelId: String? = null,
+    val downloadingDisplayName: String? = null,
+    val progress: Float? = null,
+    val completedModelId: String? = null,
+    val completedDisplayName: String? = null,
+    val error: String? = null,
+)
+
 @Singleton
 class DeviceModelStore @Inject constructor(
     @ApplicationContext context: Context,
@@ -42,6 +60,59 @@ class DeviceModelStore @Inject constructor(
     private val directory = File(context.filesDir, "models")
     private val manifest = File(directory, "manifest.json")
     private val json = Json { prettyPrint = true }
+    private val downloadScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+    private val _downloadState = MutableStateFlow(DeviceModelDownloadState())
+    val downloadState: StateFlow<DeviceModelDownloadState> = _downloadState.asStateFlow()
+    private var activeDownloadJob: Job? = null
+
+    fun startDownload(entry: DeviceModelCatalogEntry, source: LocalModelDownloadSource) {
+        if (activeDownloadJob?.isActive == true) return
+        _downloadState.value = DeviceModelDownloadState(
+            downloadingModelId = entry.id,
+            downloadingDisplayName = entry.displayName,
+            progress = 0f,
+        )
+        activeDownloadJob = downloadScope.launch {
+            try {
+                install(
+                    id = entry.id,
+                    displayName = entry.displayName,
+                    sourceUrl = entry.downloadUrl(source),
+                    expectedSha256 = entry.sha256,
+                    contextWindow = entry.contextWindow,
+                    recommendedRamBytes = entry.recommendedRamBytes,
+                ) { progress ->
+                    val total = progress.totalBytes
+                    _downloadState.update { state ->
+                        state.copy(progress = total?.let { progress.downloadedBytes.toFloat() / it.toFloat() })
+                    }
+                }
+                _downloadState.value = DeviceModelDownloadState(
+                    completedModelId = entry.id,
+                    completedDisplayName = entry.displayName,
+                )
+            } catch (cancelled: CancellationException) {
+                _downloadState.value = DeviceModelDownloadState()
+                throw cancelled
+            } catch (error: Throwable) {
+                _downloadState.value = DeviceModelDownloadState(
+                    error = error.message.orEmpty(),
+                )
+            } finally {
+                activeDownloadJob = null
+            }
+        }
+    }
+
+    fun cancelDownload() {
+        activeDownloadJob?.cancel()
+        activeDownloadJob = null
+        _downloadState.update { it.copy(downloadingModelId = null, downloadingDisplayName = null, progress = null) }
+    }
+
+    fun consumeTerminalDownloadEvent() {
+        _downloadState.update { it.copy(completedModelId = null, completedDisplayName = null, error = null) }
+    }
 
     suspend fun installedModels(): List<DeviceModelRecord> = withContext(Dispatchers.IO) {
         readManifest().filter { record ->

@@ -128,41 +128,41 @@ enum MacDesignTokens {
     /// Native macOS chrome continues binding semantic Asset Catalog entries through `MacDesignColor`.
     enum Palette {
         enum Light {
-            static let canvas: UInt32 = 0xFAF8F4
+            static let canvas: UInt32 = 0xFAFAFA
             static let surface: UInt32 = 0xFFFFFF
-            static let surfaceSubtle: UInt32 = 0xF1EFE8
+            static let surfaceSubtle: UInt32 = 0xF2F2F4
             static let surfaceElevated: UInt32 = 0xFFFFFF
-            static let ink: UInt32 = 0x242923
-            static let inkSecondary: UInt32 = 0x5E665E
-            static let inkMuted: UInt32 = 0x626B62
-            static let border: UInt32 = 0xDEDCD3
-            static let outline: UInt32 = 0x777E74
-            static let accent: UInt32 = 0x345D50
+            static let ink: UInt32 = 0x111113
+            static let inkSecondary: UInt32 = 0x52525B
+            static let inkMuted: UInt32 = 0x63636E
+            static let border: UInt32 = 0xE4E4E7
+            static let outline: UInt32 = 0x71717A
+            static let accent: UInt32 = 0x18181B
             static let onAccent: UInt32 = 0xFFFFFF
-            static let accentSubtle: UInt32 = 0xE3EBE3
-            static let success: UInt32 = 0x237047
-            static let warning: UInt32 = 0x865400
-            static let danger: UInt32 = 0xAD3D34
-            static let info: UInt32 = 0x1F5F8B
+            static let accentSubtle: UInt32 = 0xEBEBEF
+            static let success: UInt32 = 0x147537
+            static let warning: UInt32 = 0x925605
+            static let danger: UInt32 = 0xC81E1E
+            static let info: UInt32 = 0x2563EB
         }
 
         enum Dark {
-            static let canvas: UInt32 = 0x1B1C1A
-            static let surface: UInt32 = 0x222420
-            static let surfaceSubtle: UInt32 = 0x292C27
-            static let surfaceElevated: UInt32 = 0x30332E
-            static let ink: UInt32 = 0xF1F1E9
-            static let inkSecondary: UInt32 = 0xB5BAAF
-            static let inkMuted: UInt32 = 0xA1AA9D
-            static let border: UInt32 = 0x383D35
-            static let outline: UInt32 = 0x899084
-            static let accent: UInt32 = 0xA8C9B7
-            static let onAccent: UInt32 = 0x192B22
-            static let accentSubtle: UInt32 = 0x303F36
-            static let success: UInt32 = 0x82C99B
-            static let warning: UInt32 = 0xE9BD66
-            static let danger: UInt32 = 0xEFAAA2
-            static let info: UInt32 = 0x8AB8E6
+            static let canvas: UInt32 = 0x0b0b0c
+            static let surface: UInt32 = 0x131315
+            static let surfaceSubtle: UInt32 = 0x1a1a1d
+            static let surfaceElevated: UInt32 = 0x242428
+            static let ink: UInt32 = 0xF5F5F7
+            static let inkSecondary: UInt32 = 0xA1A1AA
+            static let inkMuted: UInt32 = 0x8E8E93
+            static let border: UInt32 = 0x26262a
+            static let outline: UInt32 = 0x7a7a82
+            static let accent: UInt32 = 0xF5F5F7
+            static let onAccent: UInt32 = 0x0B0B0C
+            static let accentSubtle: UInt32 = 0x202024
+            static let success: UInt32 = 0x5CD68D
+            static let warning: UInt32 = 0xF0B85A
+            static let danger: UInt32 = 0xF28080
+            static let info: UInt32 = 0x78B4F8
         }
 
         static func fallbackNSColor(light: UInt32, dark: UInt32) -> NSColor {
@@ -338,7 +338,7 @@ enum MacDesignColor {
     static let success = Color("NolaSuccess")
     static let warning = Color("NolaWarning")
     static let danger = Color("NolaDanger")
-    static let switchTrackOn = MacDesignTokens.Palette.fallbackColor(light: 0x237047, dark: 0x2E8B57)
+    static let switchTrackOn = MacDesignTokens.Palette.fallbackColor(light: 0x147537, dark: 0x2E8B57)
     static let switchTrackOnHover = MacDesignTokens.Palette.fallbackColor(light: 0x1D5E3B, dark: 0x369B63)
     static let switchTrackOff = MacDesignTokens.Palette.fallbackColor(light: 0xDDDAD3, dark: 0x3A3935)
     static let switchTrackOffHover = MacDesignTokens.Palette.fallbackColor(light: 0xD2CEC6, dark: 0x45443F)
@@ -799,37 +799,43 @@ private struct MacComposerPillModifier: ViewModifier {
     var tint: Color = MacDesignColor.brand
     @State private var isHovered = false
     @Environment(\.isEnabled) private var isEnabled
+    @Environment(\.colorScheme) private var colorScheme
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @Environment(\.colorSchemeContrast) private var contrast
 
     private var fillColor: Color {
         if isActive {
-            return tint.opacity(isEnabled && isHovered ? 0.14 : 0.10)
+            return colorScheme == .dark
+                ? Color.white.opacity(isEnabled && isHovered ? 0.14 : 0.10)
+                : tint.opacity(isEnabled && isHovered ? 0.14 : 0.10)
         }
-        return isEnabled && isHovered ? MacDesignColor.hover : MacDesignColor.panel
+        if isEnabled && isHovered {
+            return colorScheme == .dark ? Color.white.opacity(0.08) : MacDesignColor.hover
+        }
+        return .clear
     }
 
     private var borderColor: Color {
         if contrast == .increased {
-            return Color.primary.opacity(0.45)
+            return Color.primary.opacity(0.35)
         }
         if isActive {
-            return tint.opacity(0.32)
+            return colorScheme == .dark ? Color.white.opacity(0.16) : tint.opacity(0.28)
         }
-        return isEnabled && isHovered ? MacDesignColor.controlOutline.opacity(0.6) : MacDesignColor.borderSubtle
+        return .clear
     }
 
     func body(content: Content) -> some View {
         content
             .background(
                 fillColor,
-                in: RoundedRectangle(cornerRadius: 7, style: .continuous)
+                in: RoundedRectangle(cornerRadius: 8, style: .continuous)
             )
             .overlay {
-                RoundedRectangle(cornerRadius: 7, style: .continuous)
-                    .strokeBorder(borderColor, lineWidth: contrast == .increased ? 1.2 : 0.75)
+                RoundedRectangle(cornerRadius: 8, style: .continuous)
+                    .strokeBorder(borderColor, lineWidth: contrast == .increased ? 1 : 0.75)
             }
-            .contentShape(RoundedRectangle(cornerRadius: 7, style: .continuous))
+            .contentShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
             .onHover { isHovered = isEnabled && $0 }
             .onChange(of: isEnabled) { _, enabled in if !enabled { isHovered = false } }
             .animation(reduceMotion ? nil : .easeOut(duration: MacDesignTokens.Motion.hover), value: isHovered)
@@ -1237,17 +1243,41 @@ private struct MacActionButtonBody<Label: View>: View {
     let contentInsets: EdgeInsets
     @State private var isHovered = false
     @Environment(\.isEnabled) private var isEnabled
+    @Environment(\.colorScheme) private var colorScheme
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
+
+    private var fillColor: Color {
+        if colorScheme == .dark {
+            if isSelected { return Color.white.opacity(0.14) }
+            if isEnabled && isPressed { return Color.white.opacity(0.15) }
+            if isEnabled && isHovered { return Color.white.opacity(0.10) }
+            return Color.white.opacity(0.055)
+        }
+        return isSelected ? MacDesignColor.selected : isEnabled && isPressed ? MacDesignColor.pressed : isEnabled && isHovered ? MacDesignColor.hover : MacDesignColor.panel
+    }
+
+    private var borderColor: Color {
+        if colorScheme == .dark {
+            if isSelected { return Color.white.opacity(0.22) }
+            if isEnabled && isHovered { return Color.white.opacity(0.20) }
+            return Color.white.opacity(0.10)
+        }
+        return isEnabled && isHovered ? MacDesignColor.controlOutline : MacDesignColor.borderSubtle
+    }
 
     var body: some View {
         label
             .padding(contentInsets)
             .frame(minWidth: MacDesignTokens.Control.iconButton, minHeight: MacDesignTokens.Control.iconButton)
             .contentShape(Rectangle())
-            .background(NolaSurfaceBackground(
-                fill: isSelected ? MacDesignColor.selected : isEnabled && isPressed ? MacDesignColor.pressed : isEnabled && isHovered ? MacDesignColor.hover : MacDesignColor.panel,
-                border: isEnabled && isHovered ? MacDesignColor.controlOutline : MacDesignColor.borderSubtle,
-                cornerRadius: MacDesignTokens.Radius.control, raised: false))
+            .background(
+                RoundedRectangle(cornerRadius: MacDesignTokens.Radius.control, style: .continuous)
+                    .fill(fillColor)
+                    .overlay(
+                        RoundedRectangle(cornerRadius: MacDesignTokens.Radius.control, style: .continuous)
+                            .strokeBorder(borderColor, lineWidth: colorScheme == .dark ? 0.75 : 1)
+                    )
+            )
             .foregroundStyle(isEnabled ? Color.primary : Color.secondary)
             .onHover { isHovered = isEnabled && $0 }
             .onChange(of: isEnabled) { _, enabled in if !enabled { isHovered = false } }
@@ -1281,6 +1311,7 @@ private struct NolaProminentButtonBody<Label: View>: View {
     let isDestructive: Bool
     @State private var isHovered = false
     @Environment(\.isEnabled) private var isEnabled
+    @Environment(\.colorScheme) private var colorScheme
     @Environment(\.controlSize) private var controlSize
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
@@ -1312,26 +1343,128 @@ private struct NolaProminentButtonBody<Label: View>: View {
     }
 
     private var fillColor: Color {
+        if colorScheme == .dark {
+            if isDestructive {
+                let base = Color(red: 0.84, green: 0.27, blue: 0.29)
+                if !isEnabled { return base }
+                if isPressed { return Color(red: 0.72, green: 0.22, blue: 0.24) }
+                if isHovered { return Color(red: 0.90, green: 0.32, blue: 0.34) }
+                return base
+            }
+            if !isEnabled { return Color.white.opacity(0.18) }
+            if isPressed { return Color(red: 0.86, green: 0.86, blue: 0.88) }
+            if isHovered { return Color.white }
+            return Color(red: 0.96, green: 0.96, blue: 0.97)
+        }
         let base = isDestructive ? MacDesignColor.danger : MacDesignColor.primaryAction
         if !isEnabled { return base }
-        if isPressed { return base.opacity(0.78) }
-        if isHovered { return base.opacity(0.88) }
+        if isPressed { return base.opacity(0.80) }
+        if isHovered { return base.opacity(0.90) }
         return base
     }
 
+    private var foregroundColor: Color {
+        if colorScheme == .dark {
+            return isDestructive ? Color.white : Color(red: 0.04, green: 0.04, blue: 0.05)
+        }
+        return MacDesignColor.onPrimaryAction
+    }
+
     var body: some View {
+        let shape = RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
         label
             .fontWeight(.medium)
-            .foregroundStyle(MacDesignColor.onPrimaryAction)
+            .foregroundStyle(foregroundColor)
             .padding(insets)
             .frame(minHeight: minHeight)
-            .background(fillColor, in: RoundedRectangle(cornerRadius: cornerRadius, style: .continuous))
-            .contentShape(RoundedRectangle(cornerRadius: cornerRadius, style: .continuous))
+            .background(
+                shape
+                    .fill(fillColor)
+                    .overlay(
+                        shape.strokeBorder(
+                            LinearGradient(
+                                colors: [Color.white.opacity(colorScheme == .dark ? 0.24 : 0.28), Color.white.opacity(0.02)],
+                                startPoint: .top,
+                                endPoint: .bottom
+                            ),
+                            lineWidth: 0.75
+                        )
+                    )
+            )
+            .contentShape(shape)
             .onHover { isHovered = isEnabled && $0 }
             .onChange(of: isEnabled) { _, enabled in if !enabled { isHovered = false } }
             .opacity(isEnabled ? 1 : 0.45)
             .animation(reduceMotion ? nil : .easeOut(duration: MacDesignTokens.Motion.hover), value: isHovered)
             .animation(reduceMotion ? nil : .easeOut(duration: MacDesignTokens.Motion.hover), value: isPressed)
+    }
+}
+
+/// Translucent obsidian-glass segmented tab bar that avoids neon accent-colored native picker blocks.
+struct MacSegmentedTabBar<Option: Hashable>: View {
+    let options: [Option]
+    @Binding var selection: Option
+    let title: (Option) -> String
+    @Environment(\.colorScheme) private var colorScheme
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+
+    private var pillFill: Color {
+        colorScheme == .dark ? Color.white.opacity(0.13) : Color.white
+    }
+
+    private var pillBorder: Color {
+        colorScheme == .dark ? Color.white.opacity(0.16) : MacDesignColor.borderSubtle
+    }
+
+    private var trackFill: Color {
+        colorScheme == .dark ? Color.white.opacity(0.045) : MacDesignColor.panel
+    }
+
+    private var trackBorder: Color {
+        colorScheme == .dark ? Color.white.opacity(0.08) : MacDesignColor.borderSubtle
+    }
+
+    private var trackBackground: some View {
+        let shape = RoundedRectangle(cornerRadius: 10, style: .continuous)
+        return shape
+            .fill(trackFill)
+            .overlay(shape.strokeBorder(trackBorder, lineWidth: 0.75))
+    }
+
+    @ViewBuilder
+    private func segmentButton(for option: Option) -> some View {
+        let isSelected = selection == option
+        let pillShape = RoundedRectangle(cornerRadius: 7, style: .continuous)
+        Button {
+            withAnimation(reduceMotion ? nil : .easeOut(duration: MacDesignTokens.Motion.selection)) {
+                selection = option
+            }
+        } label: {
+            Text(title(option))
+                .font(.system(size: 13, weight: isSelected ? .semibold : .medium))
+                .foregroundStyle(isSelected ? Color.primary : Color.secondary)
+                .padding(.horizontal, 14)
+                .padding(.vertical, 6)
+                .background {
+                    if isSelected {
+                        pillShape
+                            .fill(pillFill)
+                            .overlay(pillShape.strokeBorder(pillBorder, lineWidth: 0.75))
+                    }
+                }
+                .contentShape(pillShape)
+        }
+        .buttonStyle(.plain)
+    }
+
+    var body: some View {
+        HStack(spacing: 2) {
+            ForEach(options, id: \.self) { option in
+                segmentButton(for: option)
+            }
+        }
+        .padding(3)
+        .background(trackBackground)
     }
 }
 
