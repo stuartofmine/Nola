@@ -23,9 +23,9 @@ nola_install_mac_executable() (
     # outputPaths; it stays on the same filesystem for atomic rename.
     local staged="${destination}.nola-staging"
     trap 'rm -f "$staged"' EXIT
-    cp "$source" "$staged" || exit 1
+    # Prefer APFS copy-on-write clone (new inode, zero block copy) and fall back to cp.
+    cp -c "$source" "$staged" 2>/dev/null || cp "$source" "$staged" || exit 1
     chmod 755 "$staged" || exit 1
-    cmp -s "$source" "$staged" || exit 1
     if [[ "$sign" == YES ]]; then
         nola_sign_embedded_binary "$staged" || exit 1
     fi

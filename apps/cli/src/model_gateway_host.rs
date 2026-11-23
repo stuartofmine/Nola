@@ -320,6 +320,13 @@ pub fn gateway_response(
         Ok(secret) => secret,
         Err(_) => return error(409, "gateway_model_account_unavailable"),
     };
+    nola_core::model_privacy::redact_model_request_with_options(
+        &mut body,
+        credential.as_deref().unwrap_or_default(),
+        nola_core::model_privacy::RedactionOptions {
+            redact_pii: nola_core::model_privacy::should_redact_pii(endpoint),
+        },
+    );
     body["model"] = json!(profile.model_name);
     let client = match reqwest::blocking::Client::builder()
         .redirect(reqwest::redirect::Policy::none())

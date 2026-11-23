@@ -82,38 +82,145 @@ fn archive_selection_units(entries: &[Value], protocol: ModelProtocol)
     Ok(units)
 }
 
+struct Sha256Writer(Sha256);
+
+impl std::io::Write for Sha256Writer {
+    fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+        self.0.update(buf);
+        Ok(buf.len())
+    }
+    fn flush(&mut self) -> std::io::Result<()> {
+        Ok(())
+    }
+}
+
+struct LeadingSystemMessages<'a>(&'a [Value]);
+
+impl serde::Serialize for LeadingSystemMessages<'_> {
+    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        use serde::ser::SerializeSeq;
+        let mut seq = serializer.serialize_seq(None)?;
+        for item in self.0.iter().take_while(|item| {
+            matches!(
+                item.get("role").and_then(Value::as_str),
+                Some("system" | "developer")
+            )
+        }) {
+            seq.serialize_element(item)?;
+        }
+        seq.end()
+    }
+}
+
+struct PrefixBody<'a> {
+    body: &'a Value,
+    omit_tool_choice: bool,
+    tool_digest_override: Option<&'a str>,
+}
+
+impl serde::Serialize for PrefixBody<'_> {
+    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        use serde::ser::SerializeMap;
+        let Some(fields) = self.body.as_object() else {
+            return self.body.serialize(serializer);
+        };
+        let mut map = serializer.serialize_map(None)?;
+        for (key, value) in fields {
+            if self.omit_tool_choice && key == "tool_choice" {
+                continue;
+            }
+            if matches!(key.as_str(), "messages" | "input") {
+                if let Some(items) = value.as_array() {
+                    map.serialize_entry(key, &LeadingSystemMessages(items))?;
+                    continue;
+                }
+            }
+            if key == "tools" {
+                if let Some(digest) = self.tool_digest_override {
+                    map.serialize_entry(key, digest)?;
+                    continue;
+                }
+            }
+            map.serialize_entry(key, value)?;
+        }
+        map.end()
+    }
+}
+
+#[derive(serde::Serialize)]
+struct PrefixEnvelope<'a> {
+    body: PrefixBody<'a>,
+    endpoint: &'a str,
+    protocol: &'a Option<String>,
+}
+
 impl PreparedModelRequest {
     /// Cache diagnostics describe the actual provider body, including adapter
     /// changes and fallback routing. Growing conversation tails are excluded;
     /// leading system/developer messages, instructions and tools are not.
     pub(crate) fn prompt_cache_identity(&self) -> nola_core::prompt_cache::PromptCacheIdentity {
-        let mut prefix = self.body.clone();
-        if let Some(fields) = prefix.as_object_mut() {
+        self.prompt_cache_identity_with_tool_digest(None)
+    }
+
+    /// Variant that reuses Core's already-computed `tool_projection.schema_digest`
+    /// when available, avoiding re-serializing and re-hashing the full tool catalog.
+    pub(crate) fn prompt_cache_identity_with_tool_digest(
+        &self,
+        tool_manifest_override: Option<&str>,
+    ) -> nola_core::prompt_cache::PromptCacheIdentity {
+        let tool_digest_override = tool_manifest_override.filter(|digest| {
+            digest.len() == 64 && digest.bytes().all(|byte| byte.is_ascii_hexdigit())
+        });
+        let omit_tool_choice = self.body.as_object().is_some_and(|fields| {
             // OpenAI permits disabling tool use without changing its cached
             // prefix. Anthropic includes tool_choice in the message cache key.
-            if resolved_model_protocol(self.config.provider.as_deref(), &self.config.endpoint)
+            resolved_model_protocol(self.config.provider.as_deref(), &self.config.endpoint)
                 != ModelProtocol::Anthropic
-                && matches!(fields.get("tool_choice").and_then(Value::as_str), None | Some("auto" | "none"))
+                && matches!(
+                    fields.get("tool_choice").and_then(Value::as_str),
+                    None | Some("auto" | "none")
+                )
                 && !fields.get("tool_choice").is_some_and(Value::is_object)
-            {
-                fields.remove("tool_choice");
-            }
-            for key in ["messages", "input"] {
-                if let Some(items) = fields.get(key).and_then(Value::as_array) {
-                    let leading = items.iter().take_while(|item| matches!(item.get("role").and_then(Value::as_str),
-                        Some("system" | "developer"))).cloned().collect::<Vec<_>>();
-                    fields.insert(key.into(), Value::Array(leading));
+        });
+        let mut prefix_hasher = Sha256Writer(Sha256::new());
+        let envelope = PrefixEnvelope {
+            body: PrefixBody {
+                body: &self.body,
+                omit_tool_choice,
+                tool_digest_override,
+            },
+            endpoint: &self.config.endpoint,
+            protocol: &self.config.provider,
+        };
+        let _ = serde_json::to_writer(&mut prefix_hasher, &envelope);
+        let stable_prefix_sha256 = format!("{:x}", prefix_hasher.0.finalize());
+
+        let tool_manifest_sha256 = if let Some(digest) = tool_digest_override {
+            digest.to_string()
+        } else {
+            let mut tools_hasher = Sha256Writer(Sha256::new());
+            match self.body.get("tools") {
+                Some(tools) => {
+                    let _ = serde_json::to_writer(&mut tools_hasher, tools);
+                }
+                None => {
+                    tools_hasher.0.update(b"[]");
                 }
             }
-        }
-        let tools = self.body.get("tools").cloned().unwrap_or_else(|| json!([]));
-        let prefix = json!({"endpoint":self.config.endpoint,"protocol":self.config.provider,"body":prefix});
+            format!("{:x}", tools_hasher.0.finalize())
+        };
         nola_core::prompt_cache::PromptCacheIdentity {
             provider: super::streaming::prompt_cache_provider_id(&self.config).into(),
-            model: self.body.get("model").and_then(Value::as_str).unwrap_or(&self.config.model).into(),
-            stable_prefix_sha256: format!("{:x}", Sha256::digest(prefix.to_string().as_bytes())),
-            tool_manifest_sha256: format!("{:x}", Sha256::digest(tools.to_string().as_bytes())),
-            stable_fragment_sha256: Default::default(), cache_control: None,
+            model: self
+                .body
+                .get("model")
+                .and_then(Value::as_str)
+                .unwrap_or(&self.config.model)
+                .into(),
+            stable_prefix_sha256,
+            tool_manifest_sha256,
+            stable_fragment_sha256: Default::default(),
+            cache_control: None,
         }
     }
 

@@ -3589,6 +3589,15 @@ pub(super) fn stream_openai_body<F>(
     cfg: &LlmConfig, body: &Value, allow_transport_fallback: bool, mut on_event: F,
 ) -> Result<StreamedChoice, ProviderAttemptError>
 where F: FnMut(LlmEvent) -> Result<(), String> {
+    let mut wire = body.clone();
+    nola_core::model_privacy::redact_model_request_with_options(
+        &mut wire,
+        &cfg.api_key,
+        nola_core::model_privacy::RedactionOptions {
+            redact_pii: nola_core::model_privacy::should_redact_pii(&cfg.endpoint),
+        },
+    );
+    let body = &wire;
     let normalized_messages = body["messages"].as_array().map(Vec::as_slice).unwrap_or_default();
     let tools = body["tools"].as_array().map(Vec::as_slice).unwrap_or_default();
     let tool_choice = body["tool_choice"].as_str().unwrap_or("auto");
@@ -4556,6 +4565,15 @@ pub(super) fn stream_anthropic_body<F>(
     cfg: &LlmConfig, body: &Value, allow_transport_fallback: bool, mut on_event: F,
 ) -> Result<StreamedChoice, ProviderAttemptError>
 where F: FnMut(LlmEvent) -> Result<(), String> {
+    let mut wire = body.clone();
+    nola_core::model_privacy::redact_model_request_with_options(
+        &mut wire,
+        &cfg.api_key,
+        nola_core::model_privacy::RedactionOptions {
+            redact_pii: nola_core::model_privacy::should_redact_pii(&cfg.endpoint),
+        },
+    );
+    let body = &wire;
     let messages = body["messages"].as_array().map(Vec::as_slice).unwrap_or_default();
     let tools = body["tools"].as_array().map(Vec::as_slice).unwrap_or_default();
     let tool_choice = body["tool_choice"]["type"].as_str().unwrap_or("auto");

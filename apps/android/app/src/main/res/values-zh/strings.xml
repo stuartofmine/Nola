@@ -116,6 +116,16 @@
     <string name="models_verified_via_direct">已通过直连验证</string>
     <string name="models_verified_via_tailcat">已通过 Tailcat 验证</string>
     <string name="models_tailcat_verify_failed">Tailcat 未能连接宿主。请检查宿主上的 Tailcat，然后重新验证。</string>
+    <string name="models_tailcat_error_dns">Tailcat 无法解析宿主地址。请检查网络 DNS 设置后重试。</string>
+    <string name="models_tailcat_error_timeout">Tailcat 连接宿主超时。请确认宿主在线后重试。</string>
+    <string name="models_tailcat_error_certificate">Tailcat 拒绝了宿主的 TLS 证书。请检查宿主证书后重试。</string>
+    <string name="models_tailcat_error_permission">宿主拒绝了 Tailcat 访问。请检查访问令牌和宿主权限。</string>
+    <string name="models_tailcat_error_suspended">应用切到后台时 Tailcat 已暂停。请回到应用后重试。</string>
+    <string name="models_tailcat_error_identity_mismatch">宿主身份已变化，与已配对宿主不匹配。请重新配对目标宿主。</string>
+    <string name="models_tailcat_error_capacity">宿主的 Tailcat 并发会话数已达上限。请关闭宿主上未使用的会话后重试。</string>
+    <string name="models_tailcat_error_not_available">该宿主未启用 Tailcat。请在宿主上启用 Tailcat 或改用直连。</string>
+    <string name="models_tailcat_error_start_timeout">宿主上的 Tailcat 启动超时。请稍候再试。</string>
+    <string name="models_tailcat_error_grant">Tailcat 未能从宿主获取会话授权。请检查宿主令牌后重试。</string>
     <string name="models_direct_verify_failed_without_tailcat">直连宿主时收到 HTTP %1$d。请检查宿主地址和访问令牌。如果宿主要求使用 Tailcat，请安装包含 Tailcat 的 Nola 版本。</string>
     <string name="chat_empty_no_models">可以使用模型服务、本机模型或已配对的 Nola 宿主。</string>
     <string name="chat_empty_mode_device">已在本机就绪，适合写作、规划和设备操作。</string>
@@ -1056,7 +1066,8 @@
     <string name="models_web_host_setup_copy">在 Mac 端点击“复制连接信息”，然后在这里粘贴。也可以手动填写地址和令牌。</string>
     <string name="models_web_host_checking">正在检查宿主机</string>
     <string name="models_web_host_checking_detail">保存前正在验证令牌、权限协议和宿主机身份。</string>
-    <string name="models_save_and_verify">保存并验证</string>
+    <string name="models_save_and_verify">验证并连接</string>
+    <string name="models_cancel_host_verification">取消验证</string>
     <string name="models_verify_again">再次验证</string>
     <string name="models_error_host_protocol">此宿主机使用了不受支持的权限协议。请更新宿主机上的 Nola 后重试。</string>
     <string name="models_error_host_identity_changed">该地址现在对应另一台宿主机。请先忘记原有配对，再重新连接。</string>

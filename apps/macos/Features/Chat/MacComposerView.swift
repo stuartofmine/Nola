@@ -475,6 +475,16 @@ struct MacComposerView: View {
             .opacity(0.78)
 
             inputSurface
+            if let notice = state.attachmentImportNotice {
+                MacInlineNotice(
+                    message: notice,
+                    kind: .information,
+                    dismiss: {
+                        actions.perform(.dismissAttachmentImportNotice(conversationID: state.conversationID))
+                    }
+                )
+                .accessibilityIdentifier("chat.attachments.import-notice")
+            }
             if let failure = fileImportFailure, failure.conversationID == state.conversationID {
                 MacInlineNotice(message: failure.message, kind: .failure, dismiss: { fileImportFailure = nil })
                     .accessibilityIdentifier("chat.attachments.import-error")
@@ -614,6 +624,8 @@ struct MacComposerView: View {
                 let targets = pending.map { (id: $0.id, url: $0.url) }
                 let loaded: [(MacAttachment.ID, NSImage)] = await Task.detached(priority: .utility) {
                     targets.compactMap { item in
+                        let accessed = item.url.startAccessingSecurityScopedResource()
+                        defer { if accessed { item.url.stopAccessingSecurityScopedResource() } }
                         guard let image = NSImage(contentsOf: item.url) else { return nil }
                         return (item.id, image)
                     }
@@ -628,31 +640,40 @@ struct MacComposerView: View {
 
     private func attachmentChip(_ attachment: MacAttachment) -> some View {
         HStack(spacing: 7) {
-            if let image = attachmentThumbnails[attachment.id] {
-                Image(nsImage: image)
-                    .resizable()
-                    .scaledToFill()
-                    .frame(width: 30, height: 30)
-                    .clipShape(RoundedRectangle(cornerRadius: 6, style: .continuous))
-                    .overlay {
-                        RoundedRectangle(cornerRadius: 6, style: .continuous)
-                            .stroke(Color.primary.opacity(0.10), lineWidth: 0.5)
+            Button {
+                MacQuickLookController.shared.preview([attachment.url])
+            } label: {
+                HStack(spacing: 7) {
+                    if let image = attachmentThumbnails[attachment.id] {
+                        Image(nsImage: image)
+                            .resizable()
+                            .scaledToFill()
+                            .frame(width: 30, height: 30)
+                            .clipShape(RoundedRectangle(cornerRadius: 6, style: .continuous))
+                            .overlay {
+                                RoundedRectangle(cornerRadius: 6, style: .continuous)
+                                    .stroke(Color.primary.opacity(0.10), lineWidth: 0.5)
+                            }
+                    } else {
+                        Text(attachment.fileType)
+                            .font(.system(size: 10, weight: .semibold))
+                            .foregroundStyle(Color.accentColor)
+                            .frame(width: 30, height: 30)
+                            .background(
+                                Color.accentColor.opacity(0.08),
+                                in: RoundedRectangle(cornerRadius: 6, style: .continuous)
+                            )
                     }
-            } else {
-                Text(attachment.fileType)
-                    .font(.system(size: 10, weight: .semibold))
-                    .foregroundStyle(Color.accentColor)
-                    .frame(width: 30, height: 30)
-                    .background(
-                        Color.accentColor.opacity(0.08),
-                        in: RoundedRectangle(cornerRadius: 6, style: .continuous)
-                    )
+                    Text(attachment.name)
+                        .font(.system(size: 11.5, weight: .medium))
+                        .lineLimit(1)
+                        .truncationMode(.middle)
+                    attachmentStatus(attachment)
+                }
+                .contentShape(Rectangle())
             }
-            Text(attachment.name)
-                .font(.system(size: 11.5, weight: .medium))
-                .lineLimit(1)
-                .truncationMode(.middle)
-            attachmentStatus(attachment)
+            .buttonStyle(.plain)
+            .help(String(format: String(localized: "Quick Look %@"), attachment.name))
             Button {
                 actions.perform(.removeAttachment(
                     conversationID: state.conversationID,
@@ -679,10 +700,15 @@ struct MacComposerView: View {
         .accessibilityElement(children: .contain)
         .accessibilityLabel("\(attachment.name), \(attachmentAccessibilityStatus(attachment))")
         .contextMenu {
-            Button("Quick Look") { MacQuickLookController.shared.preview([attachment.url]) }
-            Button("Reveal in Finder") { NSWorkspace.shared.activateFileViewerSelecting([attachment.url]) }
+            Button(String(localized: "Quick Look")) { MacQuickLookController.shared.preview([attachment.url]) }
+            Button(String(localized: "Reveal in Finder")) { NSWorkspace.shared.activateFileViewerSelecting([attachment.url]) }
+            Button(String(localized: "Open with Default App")) { NSWorkspace.shared.open(attachment.url) }
+            Button(String(localized: "Copy Path")) {
+                NSPasteboard.general.clearContents()
+                NSPasteboard.general.setString(attachment.url.path, forType: .string)
+            }
             Divider()
-            Button("Remove") {
+            Button(String(localized: "Remove")) {
                 actions.perform(.removeAttachment(
                     conversationID: state.conversationID,
                     attachmentID: attachment.id

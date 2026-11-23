@@ -5,6 +5,18 @@ use serde::{Deserialize, Serialize};
 
 pub const MAX_PDF_RESOURCE_BYTES: usize = 8 * 1024 * 1024;
 
+pub const ALLOWED_CONVERSATION_RESOURCE_MIME_TYPES: &[&str] = &[
+    "application/pdf",
+    "image/png",
+    "image/jpeg",
+    "image/webp",
+    "image/gif",
+];
+
+pub fn is_supported_conversation_resource_mime(mime_type: &str) -> bool {
+    ALLOWED_CONVERSATION_RESOURCE_MIME_TYPES.contains(&mime_type)
+}
+
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct PutConversationPdfResource {

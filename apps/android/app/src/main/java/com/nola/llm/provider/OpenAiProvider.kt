@@ -208,7 +208,7 @@ class OpenAiProvider @Inject constructor(
         val response = httpClient.preparePost(openAiChatCompletionsUrl(cfg.baseUrl)) {
             contentType(ContentType.Application.Json)
             header("Authorization", "Bearer ${cfg.apiKey}")
-            setBody(body)
+            setBody(ModelRequestPrivacy.redact(body, cfg.apiKey))
         }.execute()
 
         val responseBody = response.body<String>()
@@ -303,7 +303,7 @@ class OpenAiProvider @Inject constructor(
             applyStreamingTimeouts(httpClient)
             contentType(ContentType.Application.Json)
             header("Authorization", "Bearer ${cfg.apiKey}")
-            setBody(body)
+            setBody(ModelRequestPrivacy.redact(body, cfg.apiKey))
         }.execute { response ->
             if (response.status.value !in 200..299) {
                 val errorBody = response.bodyAsText()
@@ -390,7 +390,7 @@ class OpenAiProvider @Inject constructor(
             applyStreamingTimeouts(httpClient)
             contentType(ContentType.Application.Json)
             header("Authorization", "Bearer ${cfg.apiKey}")
-            setBody(body)
+            setBody(ModelRequestPrivacy.redact(body, cfg.apiKey))
         }.execute { response ->
             if (response.status.value !in 200..299) {
                 throw llmRequestException(response.status.value, response.bodyAsText())

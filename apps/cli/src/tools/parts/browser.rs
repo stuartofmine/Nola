@@ -855,6 +855,27 @@ struct ManagedBrowserBridge {
     token: String,
 }
 
+fn kill_managed_browser_process_group(child: &mut std::process::Child) {
+    #[cfg(unix)]
+    {
+        if let Ok(pid) = libc::pid_t::try_from(child.id()) {
+            if pid > 0 {
+                unsafe {
+                    let _ = libc::kill(-pid, libc::SIGKILL);
+                }
+            }
+        }
+    }
+    let _ = child.kill();
+    let _ = child.wait();
+}
+
+impl Drop for ManagedBrowserBridge {
+    fn drop(&mut self) {
+        kill_managed_browser_process_group(&mut self.child);
+    }
+}
+
 static MANAGED_BROWSER_BRIDGE: std::sync::OnceLock<std::sync::Mutex<Option<ManagedBrowserBridge>>> =
     std::sync::OnceLock::new();
 
@@ -1101,14 +1122,19 @@ fn start_managed_browser_bridge(state_dir: &Path) -> Result<ManagedBrowserBridge
     }
     std::fs::create_dir_all(state_dir).map_err(|err| format!("Managed browser state directory failed: {err}"))?;
     let control_file = state_dir.join(format!(".runtime-control-{}.json", uuid::Uuid::new_v4()));
-    let mut child = std::process::Command::new(node)
+    let mut command = std::process::Command::new(node);
+    crate::native_sandbox::scrub_sensitive_env(&mut command);
+    command
         .arg(bridge_script)
         .env("NOLA_PLAYWRIGHT_STATE_ROOT", state_dir)
         .env("NOLA_PLAYWRIGHT_CONTROL_FILE", &control_file)
         .env("NOLA_PLAYWRIGHT_PARENT_PID", std::process::id().to_string())
         .stdin(std::process::Stdio::null())
         .stdout(std::process::Stdio::null())
-        .stderr(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null());
+    #[cfg(unix)]
+    command.process_group(0);
+    let mut child = command
         .spawn()
         .map_err(|err| format!("Failed to start Nola's managed browser runtime: {err}"))?;
     #[derive(serde::Deserialize)]
@@ -1136,9 +1162,8 @@ fn start_managed_browser_bridge(state_dir: &Path) -> Result<ManagedBrowserBridge
         Ok(control) => Ok(ManagedBrowserBridge { child, rpc_url: control.rpc_url, token: control.token }),
         Err(error) => {
             // Readiness has not admitted any action. Every failure path owns
-            // and reaps this child, including malformed control metadata.
-            let _ = child.kill();
-            let _ = child.wait();
+            // and reaps this child and its process group, including malformed control metadata.
+            kill_managed_browser_process_group(&mut child);
             Err(error)
         }
     }
@@ -2086,6 +2111,7 @@ fn run_python_once(
             let stderr =
                 File::create(&stderr_path).map_err(|err| format!("helper stderr failed: {err}"))?;
             let mut command = Command::new(&python);
+            crate::native_sandbox::scrub_sensitive_env(&mut command);
             command
                 .arg("-u")
                 .arg(&script_path)

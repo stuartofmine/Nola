@@ -231,25 +231,30 @@ fn agent_tools_response(config: &Config) -> Response<Box<dyn Read + Send>> {
     json_response(StatusCode(200), json!({"tools": tools}))
 }
 
-fn mobile_login_response(request: &mut Request) -> Response<Box<dyn Read + Send>> {
-    let loopback = request
-        .remote_addr()
-        .is_some_and(|address| address.ip().is_loopback());
+fn mobile_login_peer_allowed(
+    peer: Option<&std::net::SocketAddr>,
+    tailcat_ingress: bool,
+    trusted_https_proxy: bool,
+) -> bool {
+    web_loopback_is_trusted(peer, tailcat_ingress) || trusted_https_proxy
+}
+
+fn mobile_login_response(
+    request: &mut Request,
+    tailcat_ingress: bool,
+) -> Response<Box<dyn Read + Send>> {
     let trusted_https_proxy = std::env::var("NOLA_TRUST_HTTPS_PROXY")
         .ok()
         .is_some_and(|value| value.eq_ignore_ascii_case("true") || value == "1")
         && request_header(request, "X-Forwarded-Proto")
             .is_some_and(|value| value.eq_ignore_ascii_case("https"));
-    if !loopback && !trusted_https_proxy {
+    if !mobile_login_peer_allowed(request.remote_addr(), tailcat_ingress, trusted_https_proxy) {
         return json_response(
             StatusCode(403),
             json!({"error": "password pairing requires loopback or a configured trusted HTTPS proxy"}),
         );
     }
-    let login_key = request
-        .remote_addr()
-        .map(|address| address.ip().to_string())
-        .unwrap_or_else(|| "unknown".to_string());
+    let login_key = web_login_key(request, tailcat_ingress);
     if mobile_login_is_rate_limited(&login_key) {
         return json_response(
             StatusCode(429),
@@ -3020,6 +3025,27 @@ fn chat_agent_stream_response_body_with_room_retry(
         agent_config.context_files.clear();
         agent_config.host_attachments.clear();
         agent_config.host_turn_context=None;
+    } else {
+        let resource_ids = match parse_conversation_resource_ids(&body) {
+            Ok(ids) => ids,
+            Err(error) => {
+                return json_response(
+                    StatusCode(422),
+                    json!({"code": "invalid_conversation_resources", "error": error}),
+                );
+            }
+        };
+        if !resource_ids.is_empty() {
+            match materialize_conversation_resources_as_host_attachments(&host_session_id, &resource_ids) {
+                Ok(attachments) => agent_config.host_attachments.extend(attachments),
+                Err(error) => {
+                    return json_response(
+                        StatusCode(422),
+                        json!({"code": "invalid_conversation_resources", "error": error}),
+                    );
+                }
+            }
+        }
     }
     agent_config.max_iterations = max_iterations;
     agent_config.json_output = true;
@@ -3074,6 +3100,28 @@ fn chat_agent_stream_response_body_with_room_retry(
     agent_config.auto_approve = safe_web_only
         && normalize_network_policy_value(&turn_agent_settings.network_policy) == "allow";
     apply_agent_tool_settings(&mut agent_config, &turn_agent_settings);
+    let configured_workspace = conversation_configuration_state(&host_session_id)
+        .ok()
+        .flatten()
+        .and_then(|(_, settings)| {
+            settings
+                .get("workspaceRoot")
+                .and_then(Value::as_str)
+                .map(str::to_owned)
+        });
+    let conversation_workspace = resolve_conversation_workspace_root(
+        &agent_config,
+        &host_session_id,
+        configured_workspace.as_deref(),
+    );
+    agent_config.project_root = conversation_workspace.clone();
+    if !agent_config
+        .allowed_dirs
+        .iter()
+        .any(|dir| dir == &conversation_workspace)
+    {
+        agent_config.allowed_dirs.insert(0, conversation_workspace);
+    }
     agent_config.permission_profile = Some(permission_profile);
     agent_config.auto_approve = permission_profile.auto_approve();
     agent_config.network_policy = permission_profile.network_policy().to_string();

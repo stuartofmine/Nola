@@ -83,6 +83,16 @@
     <string name="models_verified_via_direct">Direktverbindung verifiziert</string>
     <string name="models_verified_via_tailcat">Über Tailcat verifiziert</string>
     <string name="models_tailcat_verify_failed">Tailcat konnte den Host nicht erreichen. Prüfe Tailcat auf dem Host und versuche es erneut.</string>
+    <string name="models_tailcat_error_dns">Tailcat konnte die Host-Adresse nicht auflösen. Prüfe deine DNS-Einstellungen und versuche es erneut.</string>
+    <string name="models_tailcat_error_timeout">Zeitüberschreitung bei der Tailcat-Verbindung zum Host. Prüfe, ob der Host online ist, und versuche es erneut.</string>
+    <string name="models_tailcat_error_certificate">Tailcat hat das TLS-Zertifikat des Hosts abgelehnt. Prüfe das Host-Zertifikat und versuche es erneut.</string>
+    <string name="models_tailcat_error_permission">Der Host hat den Tailcat-Zugriff verweigert. Prüfe dein Zugriffstoken und die Host-Berechtigungen.</string>
+    <string name="models_tailcat_error_suspended">Tailcat wurde im Hintergrund pausiert. Kehre zur App zurück und versuche es erneut.</string>
+    <string name="models_tailcat_error_identity_mismatch">Die Host-Identität hat sich geändert und stimmt nicht mit dem gekoppelten Host überein. Kopple den gewünschten Host neu.</string>
+    <string name="models_tailcat_error_capacity">Der Host hat das Limit für aktive Tailcat-Sitzungen erreicht. Schließe ungenutzte Sitzungen auf dem Host und versuche es erneut.</string>
+    <string name="models_tailcat_error_not_available">Tailcat ist auf diesem Host nicht aktiviert. Aktiviere Tailcat auf dem Host oder verbinde dich direkt.</string>
+    <string name="models_tailcat_error_start_timeout">Der Start von Tailcat auf dem Host hat zu lange gedauert. Warte einen Moment und versuche es erneut.</string>
+    <string name="models_tailcat_error_grant">Tailcat konnte keine Sitzungsfreigabe vom Host erhalten. Prüfe das Host-Token und versuche es erneut.</string>
     <string name="models_direct_verify_failed_without_tailcat">Die Direktverbindung lieferte HTTP %1$d. Prüfe die Hostadresse und das Zugriffstoken. Wenn der Host Tailcat erfordert, installiere eine Nola-Version mit Tailcat.</string>
     <string name="chat_empty_no_models">Nutze einen Modelldienst, ein lokales Modell oder einen gekoppelten Nola-Host.</string>
     <string name="chat_add_model_cta">Modell hinzufügen</string>
@@ -1003,7 +1013,8 @@
     <string name="models_web_host_setup_copy">Kopieren Sie die Verbindungsdaten auf dem Mac und fügen Sie sie hier ein. Adresse und Token lassen sich auch manuell eingeben.</string>
     <string name="models_web_host_checking">Host wird geprüft</string>
     <string name="models_web_host_checking_detail">Token, Berechtigungsprotokoll und Host-Identität werden vor dem Speichern geprüft.</string>
-    <string name="models_save_and_verify">Speichern und prüfen</string>
+    <string name="models_save_and_verify">Prüfen und verbinden</string>
+    <string name="models_cancel_host_verification">Prüfung abbrechen</string>
     <string name="models_verify_again">Erneut prüfen</string>
     <string name="models_error_host_protocol">Dieser Host verwendet ein nicht unterstütztes Berechtigungsprotokoll. Aktualisieren Sie Nola auf dem Host und versuchen Sie es erneut.</string>
     <string name="models_error_host_identity_changed">Diese Adresse gehört jetzt zu einem anderen Host. Entfernen Sie zuerst die frühere Kopplung.</string>

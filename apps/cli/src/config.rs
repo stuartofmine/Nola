@@ -1038,9 +1038,14 @@ impl Config {
         {
             return Err(ConfigStartError::Runtime(format!("{}\n  nola config\n  nola config edit", tr(Message::MissingEndpoint))));
         }
-        if tailcat_ingress && (!matches!(command, CommandMode::Web | CommandMode::Server)
-            || web_host != "127.0.0.1" || web_port == 0) {
-            return Err("--tailcat-ingress requires a 127.0.0.1 Web/Server listener and a nonzero port".into());
+        if tailcat_ingress
+            && (!matches!(command, CommandMode::Web | CommandMode::Server)
+                || web_host.trim().is_empty()
+                || web_port == 0)
+        {
+            return Err(
+                "--tailcat-ingress requires a Web/Server listener with a nonzero port".into(),
+            );
         }
         let tailcat_helper = match (tailcat_program, tailcat_digest) {
             (None, None) => None,
@@ -1759,13 +1764,20 @@ mod tests {
     #[test]
     fn tailcat_ingress_requires_an_explicit_private_host_listener() {
         let parse = |args: &[&str]| Config::from_args(args.iter().map(|arg| arg.to_string()));
-        let configured = parse(&["server", "--tailcat-ingress", "--host", "127.0.0.1", "--port", "5001"]).unwrap();
-        assert!(configured.tailcat_ingress);
+        for args in [
+            vec!["server", "--tailcat-ingress", "--host", "127.0.0.1", "--port", "5001"],
+            vec!["server", "--tailcat-ingress", "--host", "0.0.0.0", "--port", "5001"],
+            vec!["web", "--tailcat-ingress", "--host", "192.168.1.10", "--port", "5001"],
+        ] {
+            let configured = parse(&args).unwrap();
+            assert!(configured.tailcat_ingress);
+        }
         assert!(!parse(&["server"]).unwrap().tailcat_ingress);
-        for args in [vec!["server", "--tailcat-ingress", "--host", "0.0.0.0"],
-            vec!["server", "--tailcat-ingress", "--host", "localhost"],
+        for args in [
             vec!["server", "--tailcat-ingress", "--port", "0"],
-            vec!["sessions", "--tailcat-ingress"]] {
+            vec!["web", "--tailcat-ingress", "--host", "0.0.0.0", "--port", "0"],
+            vec!["sessions", "--tailcat-ingress"],
+        ] {
             assert!(parse(&args).is_err());
         }
     }

@@ -601,6 +601,20 @@ final class MacWorkspaceModel {
             persistDraft(conversationID: selectedConversationID, textChanged: false, attachmentsChanged: true)
         }
     }
+    var hasExtractingAttachments: Bool {
+        attachments.contains(where: { $0.status == .extracting })
+    }
+    var hasFailedAttachments: Bool {
+        attachments.contains(where: { $0.status == .failed })
+    }
+    private(set) var attachmentImportNotices: [String: String] = [:]
+    var selectedAttachmentImportNotice: String? {
+        selectedConversationID.flatMap { attachmentImportNotices[$0] }
+    }
+    func dismissAttachmentImportNotice(conversationID: String? = nil) {
+        guard let targetID = conversationID ?? selectedConversationID else { return }
+        attachmentImportNotices[targetID] = nil
+    }
     var selectedPromptTemplateID: UUID?
     var workspaceURL: URL?
     var knowledgeByConversation: [String: MacConversationKnowledge]
@@ -804,7 +818,8 @@ final class MacWorkspaceModel {
                 let localEndpoint = selection?.source == .local ? try MacLocalModelEndpointSelection.resolve(modelID: model) {
                     try MacMLXOpenAIService.shared.endpoint(for: $0)
                 } : nil
-                let workspace = bookmarkStore.restoreWorkspace(conversationID: owner) ?? MacAppEnvironment.shared.scratchWorkspaceURL
+                let workspace = bookmarkStore.restoreWorkspace(conversationID: owner)
+                    ?? MacAppEnvironment.shared.sessionWorkspaceURL(for: owner)
                 var request = try MacLocalAgentRunRequest(conversationID: owner,
                     prompt: intent.control.objective ?? "", projectURL: workspace, attachmentURLs: [],
                     modelID: provider?.model ?? model, modelProfileID: provider?.profileID, modelProfileRevision: provider?.profileRevision,
@@ -903,6 +918,12 @@ final class MacWorkspaceModel {
     @ObservationIgnored lazy var webSourceStore = MacWebSourceStore.shared
     @ObservationIgnored private lazy var platformDataService = MacPlatformDataService.shared
     private var activeConversationID: String?
+    #if DEBUG
+    func setActiveRunForTesting(conversationID: String?, isRunning: Bool) {
+        self.activeConversationID = conversationID
+        self.isRunning = isRunning
+    }
+    #endif
     var inspectorSelectedConversationIsRunning: Bool {
         isRunning && activeConversationID == selectedConversationID
     }
@@ -2858,7 +2879,14 @@ final class MacWorkspaceModel {
                     ? String(localized: "Conversation configuration is still being saved. Your message draft is retained.", table: "Chat")
                 : selectedKnowledgeHasPendingChanges
                     ? String(localized: "Save conversation knowledge before sending. Your message draft is retained.", table: "Chat")
-                    : isRunning && !ownsRun ? selectedConversationID.flatMap { submissionResourceWaits[$0] } : nil
+                : isRunning && !ownsRun
+                    ? selectedConversationID.flatMap { submissionResourceWaits[$0] }
+                : hasFailedAttachments
+                    ? String(localized: "Remove failed attachments before sending.", table: "Chat")
+                : hasExtractingAttachments
+                    ? String(localized: "Waiting for attachments to finish processing…", table: "Chat")
+                : nil,
+            attachmentImportNotice: selectedAttachmentImportNotice
         )
     }
 
@@ -3357,8 +3385,7 @@ final class MacWorkspaceModel {
         residencyPolicy.remove(conversationID: conversation.id)
         conversationWindowCache.evict(conversationID: conversation.id)
         bookmarkStore.removeWorkspace(conversationID: conversation.id)
-        // Generated files are user work, not disposable transcript cache.
-        // Deleting a conversation must not silently delete its workspace.
+        try? MacAppEnvironment.shared.removeSessionWorkspace(for: conversation.id)
         if selectedConversationID == conversation.id {
             if let next = conversations.first {
                 selectedConversationID = next.id
@@ -4151,8 +4178,10 @@ final class MacWorkspaceModel {
         let submittedMentions = preassignedText == nil && queuedUserCommandID == nil ? (selectedConversationID.map(draftMentions) ?? []) : []
         let mentionSegments = editedMentions ?? AppleDraftMention.segments(submittedMentions, in: submittedDraft)
         let text = exactResendText ?? preassignedText ?? (queuedUserCommandID == nil ? (mentionSegments == nil ? submittedDraft.trimmingCharacters(in: .whitespacesAndNewlines) : submittedDraft) : "表单操作")
+        let submitsComposerAttachments = exactResendText == nil && queuedUserCommandID == nil && preassignedText == nil
         guard !isRunning,
               (!text.isEmpty || !attachments.isEmpty),
+              (!submitsComposerAttachments || (!hasExtractingAttachments && !hasFailedAttachments)),
               let selectedConversationID else { return }
         let runExecutionBackend = executionBackend.id
         let runExecutionHost = executionHost
@@ -4765,15 +4794,32 @@ final class MacWorkspaceModel {
 
     func importFiles(_ urls: [URL], conversationID: String) {
         guard conversations.contains(where: { $0.id == conversationID }) else { return }
-        let normalizedURLs = urls
-            .map(\.standardizedFileURL)
-            .filter { url in
-                var isDirectory: ObjCBool = false
-                return url.isFileURL
-                    && FileManager.default.fileExists(atPath: url.path, isDirectory: &isDirectory)
-                    && !isDirectory.boolValue
+        var droppedFolderCount = 0
+        var acceptedURLs: [URL] = []
+        for url in urls {
+            guard url.isFileURL else { continue }
+            let accessed = url.startAccessingSecurityScopedResource()
+            defer { if accessed { url.stopAccessingSecurityScopedResource() } }
+            let standardized = url.standardizedFileURL
+            var isDirectory: ObjCBool = false
+            guard FileManager.default.fileExists(atPath: standardized.path, isDirectory: &isDirectory) else {
+                continue
             }
-        for url in normalizedURLs where !(attachmentsByConversation[conversationID] ?? []).contains(where: {
+            if isDirectory.boolValue {
+                droppedFolderCount += 1
+                continue
+            }
+            acceptedURLs.append(standardized)
+        }
+        if droppedFolderCount > 0 {
+            attachmentImportNotices[conversationID] = String(
+                localized: "Folders can't be attached as files. Choose a workspace folder from the folder picker instead.",
+                table: "Chat"
+            )
+        } else if !acceptedURLs.isEmpty {
+            attachmentImportNotices[conversationID] = nil
+        }
+        for url in acceptedURLs where !(attachmentsByConversation[conversationID] ?? []).contains(where: {
             $0.url.standardizedFileURL.path == url.path
         }) {
             let attachment = MacAttachment(url: url)
@@ -4960,9 +5006,13 @@ final class MacWorkspaceModel {
 
     @discardableResult
     func chooseWorkspace() async -> URL? {
-        guard let selectedConversationID,
+        guard executionHost == .local,
+              let selectedConversationID,
+              !(isRunning && activeConversationID == selectedConversationID),
               let selected = await bookmarkStore.chooseWorkspace(conversationID: selectedConversationID),
-              self.selectedConversationID == selectedConversationID else { return nil }
+              self.selectedConversationID == selectedConversationID,
+              executionHost == .local,
+              !(isRunning && activeConversationID == selectedConversationID) else { return nil }
         workspaceURL = selected
         return selected
     }

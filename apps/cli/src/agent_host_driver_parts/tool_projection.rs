@@ -1948,7 +1948,7 @@ mod provider_reasoning_channel_http_tests {
                     stream_reasoning: true,
                     stream_tool_calls: true,
                     ..ModelInvocationPlan::default()
-                }, "", BTreeMap::new(), None,
+                }, "", None, BTreeMap::new(), None,
                 ModelResponseMode::Conversational, false, &mut |response| { responses.push(response); Ok(()) }).unwrap();
             let started = responses
                 .iter()
@@ -4511,6 +4511,7 @@ impl AgentHostDriver for CliAgentHostDriver {
                         .pointer("/step_context/model_prefix_digest")
                         .and_then(Value::as_str)
                         .unwrap_or_default(),
+                    Some(tool_projection.schema_digest.as_str()),
                     settings
                         .pointer("/step_context/turn_context/stable_prompt_fragment_digests")
                         .cloned()

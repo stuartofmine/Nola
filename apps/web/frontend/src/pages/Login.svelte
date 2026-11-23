@@ -12,6 +12,9 @@
     let revealed = $state(false);
     let busy = $state(false);
     let canReturn = $state(false);
+    let pasteHint = $state(false);
+    let pastePending = $state(false);
+    let inputRevision = 0;
     let error = $state(params.has('error') ? loginErrorKind(params.get('error') ?? '') : '');
     let attempted = $state(false);
     const invalidToken = $derived(attempted && !validHostToken(token));
@@ -29,23 +32,32 @@
     const isWindows = typeof navigator !== 'undefined' && /Win/i.test(navigator.platform || navigator.userAgent);
 
     async function pasteToken() {
-        if (busy) return;
+        if (busy || pastePending) return;
+        const revision = inputRevision;
+        pastePending = true;
+        pasteHint = false;
         try {
-            const text = await navigator.clipboard?.readText();
-            if (text && !disposed) {
-                token = text.trim();
+            const text = (await navigator.clipboard?.readText())?.trim();
+            if (disposed || busy || revision !== inputRevision) return;
+            if (text) {
+                token = text;
                 error = '';
                 attempted = false;
+            } else {
+                pasteHint = true;
             }
         } catch {
-            /* Clipboard read may be blocked; focus input for manual paste. */
+            if (!disposed && !busy && revision === inputRevision) pasteHint = true;
+        } finally {
+            pastePending = false;
+            if (!disposed && !busy && revision === inputRevision) input?.focus();
         }
-        input?.focus();
     }
 
     async function connect(event: SubmitEvent) {
         event.preventDefault();
         if (busy) return;
+        inputRevision++; pasteHint = false;
         attempted = true;
         if (!validHostToken(token)) { input?.focus(); return; }
         busy = true; error = '';
@@ -85,10 +97,11 @@
         <form novalidate onsubmit={connect} aria-busy={busy} autocomplete="off">
             <label for="host-token">{t($locale, 'shell.login.token')}</label>
             <div class="secret">
-                <input id="host-token" bind:this={input} type={revealed ? 'text' : 'password'} bind:value={token} placeholder={t($locale, 'shell.login.token_placeholder')} oninput={() => { error = ''; attempted = false; }} required maxlength="256" autocomplete="off" spellcheck="false" autocapitalize="none" disabled={busy} aria-describedby={invalidToken ? "token-validation" : undefined} aria-invalid={invalidToken} />
-                <button type="button" disabled={busy} onclick={pasteToken}>{t($locale, 'shell.login.paste')}</button>
+                <input id="host-token" bind:this={input} type={revealed ? 'text' : 'password'} bind:value={token} placeholder={t($locale, 'shell.login.token_placeholder')} oninput={() => { inputRevision++; error = ''; attempted = false; pasteHint = false; }} required maxlength="256" autocomplete="off" spellcheck="false" autocapitalize="none" disabled={busy} aria-describedby={invalidToken ? "token-validation" : pasteHint ? "paste-help" : undefined} aria-invalid={invalidToken} />
+                <button type="button" disabled={busy || pastePending} onclick={pasteToken}>{t($locale, 'shell.login.paste')}</button>
                 <button type="button" disabled={busy} aria-controls="host-token" aria-pressed={revealed} onclick={() => { revealed = !revealed; input?.focus(); }}>{t($locale, revealed ? 'shell.login.hide' : 'shell.login.show')}</button>
             </div>
+            {#if pasteHint}<p id="paste-help" class="muted" role="status">{t($locale, 'shell.login.paste_help')}</p>{/if}
             {#if invalidToken}<p id="token-validation" class="error" role="alert">{t($locale, 'shell.login.token_validation')}</p>{/if}
             <button class="primary connect" disabled={busy || !token.trim()}>{t($locale, busy ? 'shell.login.connecting' : 'shell.login.connect')}</button>
             {#if canReturn}<button type="button" disabled={busy} onclick={() => window.location.replace(next)}>{t($locale, 'shell.cancel')}</button>{/if}

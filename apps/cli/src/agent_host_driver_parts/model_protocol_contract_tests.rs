@@ -101,7 +101,7 @@ fn incompatible_tool_projection_fails_before_contacting_provider() {
     let mut responses = Vec::new();
     driver.execute_model(&request(&driver), "fixture-model", "text", "reasoning",
         &[json!({"type":"message","id":"protocol-user","role":"user","content":"compile this"})], &schemas(),
-        &ModelInvocationPlan::default(), "", BTreeMap::new(), None,
+        &ModelInvocationPlan::default(), "", None, BTreeMap::new(), None,
         ModelResponseMode::Conversational, false,
         &mut |response| { responses.push(response); Ok(()) }).unwrap();
     assert_eq!(responses.len(), 1);
@@ -196,7 +196,7 @@ fn protocol_correction_respects_the_actual_wire_tool_surface() {
             &if has_tools { schemas() } else { Vec::new() },
             &ModelInvocationPlan { native_tool_calls: has_tools, stream_text: true,
                 stream_tool_calls: has_tools, ..Default::default() },
-            "", BTreeMap::new(), None, response_mode, false,
+            "", None, BTreeMap::new(), None, response_mode, false,
             &mut |response| { responses.push(response); Ok(()) }).unwrap();
         let requests = server.join().unwrap_or_else(|error| {
             panic!("provider fixture failed in {response_mode:?}: {error:?}; responses={responses:?}")

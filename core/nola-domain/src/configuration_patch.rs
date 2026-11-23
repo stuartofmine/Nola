@@ -92,6 +92,7 @@ pub fn validate_patch(raw: &str) -> Result<(), String> {
                 effort == "automatic" || crate::generation::REASONING_EFFORT_VALUES.contains(&effort)
             }),
             "language" | "selectedPromptTemplateID" | "promptResponseStyle" => value.is_null() || value.as_str().is_some_and(|value| value.len() <= 512),
+            "workspaceRoot" => value.is_null() || value.as_str().is_some_and(|value| !value.trim().is_empty() && value.len() <= 4096),
             "expertExecutor" => value.is_null() || serde_json::from_value::<crate::delegation::ExternalAgentExecutor>(value.clone())
                 .is_ok_and(|executor| executor.validate().is_ok()),
             "executionBackend" => value.as_str().is_some_and(|value| crate::execution_backend::ExecutionBackendKind::ALL.iter().any(|kind| kind.id() == value)),
@@ -107,7 +108,7 @@ pub fn validate_patch(raw: &str) -> Result<(), String> {
     if object
         .keys()
         .filter(|key| !matches!(key.as_str(), "expertReasoningEffort" | "expertExecutor"))
-        .any(|key| !matches!(key.as_str(), "modelSelectionID" | "executionHostRawValue" | "executionHostBinding" | "clientHostParameters" | "modelOverrides" | "clientModelPresentation" | "permissionProfile" | "isPinned" | "memoryEnabledOverride" | "retrievalEnabledOverride" | "knowledge" | "language" | "selectedPromptTemplateID" | "promptResponseStyle" | "executionBackend" | "externalExecutionSessions" | "persistenceEnabled" | "dataSourceOverrides" | "dataSourceIds" | "executionPolicy" | "promptTemplateSelectionIsExplicit" | "contextLimitOverride" | "externalExecutionModelIDs" | "externalExecutionModelProviderIDs"))
+        .any(|key| !matches!(key.as_str(), "modelSelectionID" | "executionHostRawValue" | "executionHostBinding" | "clientHostParameters" | "modelOverrides" | "clientModelPresentation" | "permissionProfile" | "isPinned" | "memoryEnabledOverride" | "retrievalEnabledOverride" | "knowledge" | "language" | "selectedPromptTemplateID" | "promptResponseStyle" | "executionBackend" | "externalExecutionSessions" | "persistenceEnabled" | "dataSourceOverrides" | "dataSourceIds" | "executionPolicy" | "promptTemplateSelectionIsExplicit" | "contextLimitOverride" | "externalExecutionModelIDs" | "externalExecutionModelProviderIDs" | "workspaceRoot"))
     {
         return Err("unsupported conversation configuration field".into());
     }

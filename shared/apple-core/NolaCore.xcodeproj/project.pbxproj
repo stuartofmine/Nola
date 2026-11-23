@@ -190,8 +190,6 @@
 			inputFileListPaths = (
 			);
 			inputPaths = (
-				"$(HOME)/.cargo",
-				"$(HOME)/.rustup",
 				"$(SRCROOT)/../../Cargo.toml",
 				"$(SRCROOT)/../../Cargo.lock",
 				"$(SRCROOT)/../../release/update-source.json",
@@ -213,8 +211,6 @@
 			outputFileListPaths = (
 			);
 			outputPaths = (
-				"$(SRCROOT)/../../target",
-				"$(BUILT_PRODUCTS_DIR)/NolaRuntime/",
 				"$(BUILT_PRODUCTS_DIR)/NolaRuntime/nola-agent-host.nola-staging",
 				"$(BUILT_PRODUCTS_DIR)/NolaRuntime/nola-service.nola-staging",
 				"$(BUILT_PRODUCTS_DIR)/NolaRuntime/nola-agent-host",

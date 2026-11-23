@@ -66,6 +66,8 @@ pub extern "C" fn nola_mobile_bindings_force_link_core() -> usize {
         nola_core::nola_core_memory_select_json as *const (),
         nola_core::nola_core_memory_selection_abi_version as *const (),
         nola_core::nola_core_prompt_cache_abi_version as *const (),
+        nola_core::model_privacy::nola_model_privacy_free as *const (),
+        nola_core::model_privacy::nola_core_redact_model_request_json as *const (),
         nola_core::nola_core_prompt_cache_diagnose as *const (),
         nola_core::nola_core_tool_policy_abi_version as *const (),
         nola_core::nola_core_tool_policy_mcp_allowed as *const (),

@@ -242,7 +242,7 @@
     {#if loading}<p role="status" class:sr-only={conversations.length > 0}>{t($locale, 'chatConversations.loading')}</p>{/if}
     <div class="conversation-list" bind:this={listElement}>{#each visible as conversation, index (conversation.conversationId)}
         {#if !query.trim() && (index === 0 || conversationGroup(conversation) !== conversationGroup(visible[index - 1]))}<h3 class="group-title">{conversationGroup(conversation)}</h3>{/if}
-        <div class="conversation-row">
+        <div class="conversation-row" data-conversation-id={conversation.conversationId}>
             <button class="conversation" aria-current={highlightSelection && activeId === conversation.conversationId ? 'true' : undefined} disabled={navigationDisabled || writing} onclick={() => selectConversation(conversation)}>
                 <span class="sr-only">{t($locale, 'chatConversations.open')} </span>
                 <span class="conversation-heading"><span>{conversation.title || t($locale, 'chatConversations.untitled')}</span>{#if layout === 'page'}<small title={new Date(conversation.updatedAt).toLocaleString($locale)}>{conversationTime(conversation.updatedAt)}</small>{/if}</span>

@@ -9,7 +9,7 @@ endif()
 add_library(nola_core STATIC IMPORTED GLOBAL)
 set_target_properties(nola_core PROPERTIES IMPORTED_LOCATION "${NOLA_RUST_ARCHIVE}")
 
-add_library(nola_core_jni SHARED nola_core_jni.cpp)
+add_library(nola_core_jni SHARED nola_core_jni.cpp model_privacy_jni.cpp)
 target_include_directories(
     nola_core_jni
     PRIVATE

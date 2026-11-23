@@ -1275,6 +1275,40 @@ final class MacSecondaryPageNavigationTests: XCTestCase {
         XCTAssertEqual(store.displayValues().url, "")
     }
 
+    func testShareSwitchCanStopStartupBeforeTheHandshake() async throws {
+        let session = try MacHostedAccessibilitySession()
+        defer { session.restore() }
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        let environment = MacAppEnvironment(applicationSupportRoot: root, cachesRoot: root.appendingPathComponent("cache"))
+        try environment.prepare()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let executable = root.appendingPathComponent("delayed-host")
+        try Data("#!/bin/sh\nexec /bin/sleep 30\n".utf8).write(to: executable)
+        try FileManager.default.setAttributes([.posixPermissions: 0o700], ofItemAtPath: executable.path)
+        let server = MacManagedNolaServer(environment: environment, executable: executable)
+        defer { server.stop() }
+        let suite = UUID().uuidString
+        let preferences = try XCTUnwrap(UserDefaults(suiteName: suite))
+        defer { preferences.removePersistentDomain(forName: suite) }
+        preferences.set(false, forKey: MacManagedNolaServer.enabledKey)
+        let store = MacRemoteHostConfigurationStore(applicationPort: try MacApplicationPort(databaseURL: root.appendingPathComponent("store.db")))
+        let host = NSHostingView(rootView: MacSettingsView(initialCategory: "connections", managedServer: server,
+            hostConfigurationStore: store).defaultAppStorage(preferences))
+        let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 1000, height: 760),
+                              styleMask: [.titled, .closable], backing: .buffered, defer: false)
+        window.isReleasedWhenClosed = false
+        window.contentView = host
+        window.orderFrontRegardless()
+        defer { window.close() }
+
+        try await pressIdentifier("mac.server.sharing", in: host)
+        XCTAssertEqual(server.state, .starting)
+        try await pressIdentifier("mac.server.sharing", in: host)
+        XCTAssertEqual(server.state, .stopped)
+        XCTAssertFalse(preferences.bool(forKey: MacManagedNolaServer.enabledKey))
+        XCTAssertFalse(accessibilityObjects(host).contains { $0.accessibilityIdentifier?() == "mac.server.copySetup" })
+    }
+
     func testShareSettingsCopiesUsablePhoneSetupFromRunningServer() async throws {
         let session = try MacHostedAccessibilitySession()
         defer { session.restore() }

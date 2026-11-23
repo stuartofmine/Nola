@@ -228,9 +228,25 @@ async function inspectView(page, label, scheme, width) {
 }
 
 async function verifyFirstConnection(page, origin, tokenPath) {
-    await page.goto(`${origin}/login?next=/chat`);
+    await page.goto(`${origin}/login?next=/conversations`);
     const token = page.locator('#host-token');
     const connect = page.getByRole('button', {name: 'Connect', exact: true});
+    const paste = page.getByRole('button', {name: 'Paste', exact: true});
+    await page.evaluate(() => Object.defineProperty(navigator, 'clipboard', {
+        configurable: true, value: {readText: async () => { throw new Error('Clipboard unavailable'); }},
+    }));
+    await paste.click();
+    await page.locator('#paste-help').waitFor();
+    assert.equal(await token.evaluate(node => node === document.activeElement), true);
+    await page.evaluate(() => {
+        navigator.clipboard.readText = () => new Promise(resolve => { window.finishTestPaste = resolve; });
+    });
+    await paste.click();
+    await token.fill('entered manually');
+    await page.evaluate(() => window.finishTestPaste('stale clipboard value'));
+    await page.waitForFunction(() => !document.querySelector('.secret button').disabled);
+    assert.equal(await token.inputValue(), 'entered manually');
+    assert.equal(await page.locator('#paste-help').count(), 0);
     await page.locator('.login-card summary').click();
     assert.deepEqual((await page.locator('.login-card details code').allTextContents()).sort(), [
         String.raw`%USERPROFILE%\.nola\web\mobile-access-token`, '~/.nola/web/mobile-access-token',
@@ -248,7 +264,8 @@ async function verifyFirstConnection(page, origin, tokenPath) {
     const accepted = page.waitForResponse(r => r.url().endsWith('/api/web/login'));
     await connect.click();
     assert.equal((await accepted).status(), 200);
-    await page.locator('#chat-composer').waitFor();
+    await page.waitForURL(origin + '/conversations');
+    await page.getByRole('heading', {name: 'Conversations', exact: true}).waitFor();
 }
 
 async function verifyModelSetupNavigation(page, origin, conversationId) {

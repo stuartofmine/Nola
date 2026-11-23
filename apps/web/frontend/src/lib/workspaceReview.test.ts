@@ -18,3 +18,26 @@ test('workspace review rejects cross-Host/cross-conversation data and ambiguous 
     const malformed = response(); malformed.review.staged.error = 'failed' as unknown as null;
     assert.throws(() => parseWorkspaceReview(malformed, 'host', 'conversation'));
 });
+test('workspace review parses non-git workspace file listings', () => {
+    const nonGit = {
+        source_host_id: 'host',
+        conversation_id: 'conversation',
+        workspace_root: '/tmp/nola/workspaces/sessions/conversation',
+        is_git_repository: false,
+        is_session_sandbox: true,
+        files: [
+            {path: 'notes.md', size: 42, is_dir: false, modified_at_ms: 1700000000000},
+            {path: 'docs', size: 0, is_dir: true, modified_at_ms: null},
+        ],
+        truncated: false,
+    };
+    const review = parseWorkspaceReview(nonGit, 'host', 'conversation');
+    assert.equal(review.isGitRepository, false);
+    assert.equal(review.isSessionSandbox, true);
+    assert.equal(review.root, '/tmp/nola/workspaces/sessions/conversation');
+    assert.equal(review.truncated, false);
+    assert.deepEqual(review.files, [
+        {path: 'notes.md', size: 42, isDir: false, modifiedAtMs: 1700000000000},
+        {path: 'docs', size: 0, isDir: true, modifiedAtMs: null},
+    ]);
+});

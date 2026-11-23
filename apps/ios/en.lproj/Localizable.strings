@@ -2605,7 +2605,7 @@
 "chat.task.guidance.send" = "Send guidance";
 "model.web_host.setup" = "Before connecting";
 "model.web_host.setup.start" = "On the Mac, open Nola Settings > Connections and enable “Share this Mac as a Nola Server”.";
-"model.web_host.setup.copy" = "Choose Copy Connection Setup on the Mac, then paste it below. Keep both devices on a trusted private network, or use HTTPS.";
+"model.web_host.setup.copy" = "Choose Copy Connection Setup on the Mac, then paste it on this device. Use a trusted private network or HTTPS.";
 "model.web_host.checking" = "Checking host";
 "model.web_host.checking.detail" = "Verifying the token, permission protocol, and host identity before saving.";
 "model.web_host.error.protocol" = "This host uses an unsupported permission protocol. Update Nola on the host and try again.";

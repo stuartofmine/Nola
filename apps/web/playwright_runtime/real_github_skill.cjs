@@ -47,7 +47,7 @@ const {browserOptions} = require('./test_environment.cjs');
         for (;;) {
             const panel = page.locator('.permission-panel').last();
             if (await panel.isVisible()) {
-                assert.equal((await panel.locator('.tool').innerText()).trim(), 'github_skill_install');
+                assert.equal(await panel.locator('.tool').getAttribute('data-tool-name'), 'github_skill_install');
                 assert.match(await panel.locator('pre').innerText(), /Yuan1z0825\/nature-skills/i);
                 const approve = panel.locator('button.primary');
                 if (await approve.isEnabled()) await approve.click();

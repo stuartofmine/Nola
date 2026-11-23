@@ -83,6 +83,16 @@
     <string name="models_verified_via_direct">Прямое соединение проверено</string>
     <string name="models_verified_via_tailcat">Соединение через Tailcat проверено</string>
     <string name="models_tailcat_verify_failed">Tailcat не смог подключиться к хосту. Проверьте Tailcat на хосте и повторите проверку.</string>
+    <string name="models_tailcat_error_dns">Tailcat не смог разрешить адрес хоста. Проверьте настройки DNS и повторите попытку.</string>
+    <string name="models_tailcat_error_timeout">Превышено время ожидания подключения Tailcat к хосту. Убедитесь, что хост в сети, и повторите попытку.</string>
+    <string name="models_tailcat_error_certificate">Tailcat отклонил TLS-сертификат хоста. Проверьте сертификат хоста и повторите попытку.</string>
+    <string name="models_tailcat_error_permission">Хост отклонил доступ Tailcat. Проверьте токен доступа и разрешения хоста.</string>
+    <string name="models_tailcat_error_suspended">Tailcat был приостановлен в фоновом режиме. Вернитесь в приложение и повторите попытку.</string>
+    <string name="models_tailcat_error_identity_mismatch">Идентификатор хоста изменился и не совпадает с привязанным хостом. Выполните повторную привязку.</string>
+    <string name="models_tailcat_error_capacity">Хост достиг лимита активных сеансов Tailcat. Закройте неиспользуемые сеансы на хосте и повторите попытку.</string>
+    <string name="models_tailcat_error_not_available">Tailcat не включен на этом хосте. Включите Tailcat на хосте или подключитесь напрямую.</string>
+    <string name="models_tailcat_error_start_timeout">Запуск Tailcat на хосте занял слишком много времени. Подождите немного и повторите попытку.</string>
+    <string name="models_tailcat_error_grant">Tailcat не смог получить разрешение на сеанс от хоста. Проверьте токен хоста и повторите попытку.</string>
     <string name="models_direct_verify_failed_without_tailcat">Прямое соединение вернуло HTTP %1$d. Проверьте адрес хоста и токен доступа. Если хост требует Tailcat, установите версию Nola с поддержкой Tailcat.</string>
     <string name="chat_empty_no_models">Используйте модель из сервиса, локальную модель или сопряжённый хост Nola.</string>
     <string name="chat_add_model_cta">Добавить модель</string>
@@ -1003,7 +1013,8 @@
     <string name="models_web_host_setup_copy">Скопируйте параметры подключения на Mac и вставьте их здесь. Адрес и токен также можно ввести вручную.</string>
     <string name="models_web_host_checking">Проверка хоста</string>
     <string name="models_web_host_checking_detail">Перед сохранением проверяются токен, протокол разрешений и идентификатор хоста.</string>
-    <string name="models_save_and_verify">Сохранить и проверить</string>
+    <string name="models_save_and_verify">Проверить и подключиться</string>
+    <string name="models_cancel_host_verification">Отменить проверку</string>
     <string name="models_verify_again">Проверить снова</string>
     <string name="models_error_host_protocol">Хост использует неподдерживаемый протокол разрешений. Обновите Nola на хосте и повторите попытку.</string>
     <string name="models_error_host_identity_changed">Теперь этот адрес соответствует другому хосту. Удалите прежнюю привязку перед повторным подключением.</string>

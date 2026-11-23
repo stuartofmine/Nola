@@ -16,6 +16,7 @@ import (
 	"strings"
 	"sync"
 	"syscall"
+	"time"
 
 	"github.com/tailscale/tailcat"
 	"tailscale.com/types/key"
@@ -23,6 +24,32 @@ import (
 )
 
 const ServicePort = 5001
+
+const closeWaitTimeout = 2 * time.Second
+
+type classifiedError struct {
+	code string
+	msg  string
+}
+
+func (e *classifiedError) Error() string { return e.msg }
+
+func newClassifiedError(code, msg string) error {
+	return &classifiedError{code: code, msg: msg}
+}
+
+// ClassifyError maps transport errors to a bounded, credential-free code safe
+// to surface across the private stdio boundary.
+func ClassifyError(err error) string {
+	if err == nil {
+		return ""
+	}
+	var ce *classifiedError
+	if errors.As(err, &ce) && ce.code != "" {
+		return ce.code
+	}
+	return inspectionFailureCode(err)
+}
 
 // HostConfig contains no private identity. A host generates ephemeral transport
 // keys only when explicitly started. Admission requires an explicit client key.
@@ -65,13 +92,13 @@ func checkHostStatus(body io.Reader, expected string) error {
 	d := json.NewDecoder(io.LimitReader(body, 64*1024))
 	if d.Decode(&raw) != nil || json.Unmarshal(raw, &status) != nil ||
 		status.Transport != "tailcat" || status.LocalTrust || status.Authenticated || status.HostID != expected || expected == "" {
-		return errors.New("Nola Host identity or authenticated ingress was not verified; tunnel not started")
+		return newClassifiedError("host_identity_mismatch", "Nola Host identity or authenticated ingress was not verified; tunnel not started")
 	}
 	// Missing booleans must not accidentally become a successful zero-value check.
 	var fields map[string]json.RawMessage
 	_ = json.Unmarshal(raw, &fields)
 	if string(fields["localTrust"]) != "false" || string(fields["authenticated"]) != "false" {
-		return errors.New("Nola Host did not explicitly refuse local trust")
+		return newClassifiedError("local_trust_enabled", "Nola Host did not explicitly refuse local trust")
 	}
 	return nil
 }
@@ -127,11 +154,11 @@ func (h *Host) Start(ctx context.Context) error {
 	defer client.CloseIdleConnections()
 	response, err := client.Do(request)
 	if err != nil {
-		return errors.New("Nola authenticated ingress is unavailable; tunnel not started")
+		return newClassifiedError("ingress_unavailable", "Nola authenticated ingress is unavailable; tunnel not started")
 	}
 	defer response.Body.Close()
 	if response.StatusCode != http.StatusOK {
-		return errors.New("Nola ingress refused identity inspection")
+		return newClassifiedError("ingress_refused", "Nola ingress refused identity inspection")
 	}
 	if err := checkHostStatus(response.Body, h.config.ExpectedHostID); err != nil {
 		return err
@@ -142,7 +169,12 @@ func (h *Host) Start(ctx context.Context) error {
 // SecretAddress returns a credential for an explicit private IPC/share action.
 // Call only after Start succeeds. Never include it in a normal URL or log.
 func (h *Host) SecretAddress() string { return string(h.server.TailcatAddr()) }
-func (h *Host) Close() error          { h.active.close(); return h.server.Close() }
+func (h *Host) Close() error {
+	h.active.beginClose()
+	err := h.server.Close()
+	h.active.wait(closeWaitTimeout)
+	return err
+}
 
 // Client owns one ephemeral identity. PublicKey can be shared for Host admission;
 // neither private key nor transport address is serialized by this type.
@@ -209,11 +241,12 @@ func (c *Client) VerifyHost(ctx context.Context, expected string) error {
 	defer httpClient.CloseIdleConnections()
 	response, err := httpClient.Do(request)
 	if err != nil {
-		return errors.New("encrypted Nola Host inspection failed (" + inspectionFailureCode(err) + ")")
+		code := inspectionFailureCode(err)
+		return newClassifiedError(code, "encrypted Nola Host inspection failed ("+code+")")
 	}
 	defer response.Body.Close()
 	if response.StatusCode != http.StatusOK {
-		return errors.New("remote Host inspection refused")
+		return newClassifiedError("ingress_refused", "remote Host inspection refused")
 	}
 	return checkHostStatus(response.Body, expected)
 }
@@ -243,11 +276,13 @@ func (c *Client) Close() error {
 	c.closed = true
 	tunnel := c.tunnel
 	c.mu.Unlock()
-	c.active.close()
+	c.active.beginClose()
+	var err error
 	if tunnel != nil {
-		return tunnel.Close()
+		err = tunnel.Close()
 	}
-	return nil
+	c.active.wait(closeWaitTimeout)
+	return err
 }
 
 // Tracks only this component's sockets. Closing transport does not cancel a Run.
@@ -302,7 +337,7 @@ func (c *connections) proxy(conn net.Conn, dial func(context.Context) (net.Conn,
 	}
 	tailcat.ProxyConns(conn, remote)
 }
-func (c *connections) close() {
+func (c *connections) beginClose() {
 	c.mu.Lock()
 	c.closed = true
 	c.cancel()
@@ -310,5 +345,29 @@ func (c *connections) close() {
 		_ = conn.Close()
 	}
 	c.mu.Unlock()
-	c.wg.Wait()
+}
+
+func (c *connections) wait(timeout time.Duration) bool {
+	done := make(chan struct{})
+	go func() {
+		c.wg.Wait()
+		close(done)
+	}()
+	if timeout <= 0 {
+		<-done
+		return true
+	}
+	timer := time.NewTimer(timeout)
+	defer timer.Stop()
+	select {
+	case <-done:
+		return true
+	case <-timer.C:
+		return false
+	}
+}
+
+func (c *connections) close() {
+	c.beginClose()
+	c.wait(closeWaitTimeout)
 }

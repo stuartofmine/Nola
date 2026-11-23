@@ -212,8 +212,17 @@ nola_rust_target_storage_warning() {
     # blind spot without silently deleting the developer's current binaries.
     case "${CARGO_TARGET_DIR:-}" in /*) ;; *) return 0 ;; esac
     [ -d "$CARGO_TARGET_DIR" ] || return 0
+    # Avoid scanning tens of thousands of files in target/ on every incremental build;
+    # check at most once every 24h unless NOLA_RUST_TARGET_SIZE_CHECK=1.
+    nola_size_stamp="$CARGO_TARGET_DIR/.nola-size-checked"
+    if [ "${NOLA_RUST_TARGET_SIZE_CHECK:-0}" != 1 ] && [ -f "$nola_size_stamp" ]; then
+        if [ -n "$(find "$nola_size_stamp" -mtime -1 -print 2>/dev/null)" ]; then
+            return 0
+        fi
+    fi
     command -v du >/dev/null 2>&1 || return 0
     nola_target_size=$(du -sk "$CARGO_TARGET_DIR/" 2>/dev/null) || return 0
+    touch "$nola_size_stamp" 2>/dev/null || true
     nola_target_size=${nola_target_size%%[!0-9]*}
     [ -n "$nola_target_size" ] || return 0
     if [ "$nola_target_size" -gt 25165824 ]; then

@@ -75,7 +75,7 @@
             {#if node.href}<a class:inline-reference={/^https?:/i.test(node.href)} href={node.href} title={node.title} target="_blank" rel="noopener noreferrer">{@render inlines(node.children)}</a>
             {:else}{@render inlines(node.children)}{/if}
         {:else if node.kind === 'image'}
-            {#if node.href}<a href={node.href} target="_blank" rel="noopener noreferrer">{t($locale, 'shell.markdown.image', { label: node.text || t($locale, 'shell.markdown.view_image') })}</a>
+            {#if node.href}<a class="markdown-image-link" href={node.href} target="_blank" rel="noopener noreferrer" aria-label={t($locale, 'shell.markdown.image', { label: node.text || t($locale, 'shell.markdown.view_image') })}><img class="markdown-image" src={node.href} alt={node.text || t($locale, 'shell.markdown.view_image')} loading="lazy" /></a>
             {:else}{node.text}{/if}
         {/if}
     {/each}
@@ -123,6 +123,8 @@
     .markdown :global(h1), .markdown :global(h2), .markdown :global(h3), .markdown :global(h4), .markdown :global(h5), .markdown :global(h6) { font-weight: 650; line-height: 1.35; margin: 1.2em 0 .5em; }
     .markdown :global(h1) { font-size: 1.5em; } .markdown :global(h2) { font-size: 1.3em; } .markdown :global(h3) { font-size: 1.15em; }
     .markdown :global(a) { color: var(--accent); text-decoration: underline; text-underline-offset: 3px; }
+    .markdown :global(a.markdown-image-link) { display: inline-block; max-width: 100%; text-decoration: none; }
+    .markdown :global(img.markdown-image) { display: block; max-width: 100%; max-height: 480px; width: auto; height: auto; border-radius: 10px; border: 1px solid var(--border); margin: 6px 0; object-fit: contain; }
     .markdown :global(ul), .markdown :global(ol) { padding-inline-start: 1.65em; margin: .65em 0; }
     .markdown :global(li) { margin: .3em 0; padding-inline-start: .15em; }
     .markdown :global(li > div > p:first-child) { margin-top: 0; } .markdown :global(li > div > p:last-child) { margin-bottom: 0; }

@@ -38,6 +38,11 @@
         if (code.includes('M')) return 'chatInspector.gitModified';
         return 'chatInspector.gitChanged';
     }
+    function formatFileSize(bytes: number): string {
+        if (bytes < 1024) return `${bytes} B`;
+        if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
+        return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+    }
 </script>
 {#snippet reviewBody()}
     {#if !selected}
@@ -47,19 +52,39 @@
     {#if loading}<p role="status">{t($locale, 'chatPage.loading')}</p>{/if}
     {#if failed}<p role="alert" class="error">{t($locale, 'chatInspector.reviewUnavailable')}</p>{/if}
     {#if review}
-        <p class="workspace-root">{t($locale, 'chatInspector.hostWorkspace')}<code>{review.root}</code></p>
-        {#if review.entries.length}<ul>{#each review.entries as entry}<li><span class="badge">{t($locale, entryStatusKey(entry.index, entry.worktree))}</span> <span>{entry.path}</span></li>{/each}</ul>
-        {:else}<p>{t($locale, 'chatInspector.noChanges')}</p>{/if}
-        {#if review.truncated}<p role="status">{t($locale, 'chatInspector.reviewTruncated')}</p>{/if}
-        {#each [{label: 'unstaged', value: review.unstaged}, {label: 'staged', value: review.staged}] as section}
-            <details open={!!section.value.text}><summary>{t($locale, `chatInspector.${section.label}`)}</summary>
-                {#if section.value.failed}<p role="alert" class="error">{t($locale, 'chatInspector.diffUnavailable')}</p>
-                {:else if section.value.text}
-                    <!-- svelte-ignore a11y_no_noninteractive_tabindex (Scrollable diff supports keyboard reading.) -->
-                    <pre tabindex="0" role="region" aria-label={t($locale, `chatInspector.${section.label}`)}>{section.value.text}</pre>
-                {:else}<p>{t($locale, 'chatInspector.noChanges')}</p>{/if}
-            </details>
-        {/each}
+        {#if review.isGitRepository === false}
+            <p class="workspace-root">
+                <span class="badge workspace-badge">{t($locale, review.isSessionSandbox ? 'chatInspector.temporaryWorkspace' : 'chatInspector.workspace')}</span>
+                <code>{review.root}</code>
+            </p>
+            {#if review.files.length}
+                <ul class="workspace-files">
+                    {#each review.files as file}
+                        <li>
+                            <span class="file-path">{file.path}</span>
+                            <span class="file-meta">{file.isDir ? t($locale, 'chatInspector.directory') : formatFileSize(file.size)}</span>
+                        </li>
+                    {/each}
+                </ul>
+            {:else}
+                <p>{t($locale, 'chatInspector.emptyWorkspace')}</p>
+            {/if}
+            {#if review.truncated}<p role="status">{t($locale, 'chatInspector.filesTruncated')}</p>{/if}
+        {:else}
+            <p class="workspace-root">{t($locale, 'chatInspector.hostWorkspace')}<code>{review.root}</code></p>
+            {#if review.entries.length}<ul>{#each review.entries as entry}<li><span class="badge">{t($locale, entryStatusKey(entry.index, entry.worktree))}</span> <span>{entry.path}</span></li>{/each}</ul>
+            {:else}<p>{t($locale, 'chatInspector.noChanges')}</p>{/if}
+            {#if review.truncated}<p role="status">{t($locale, 'chatInspector.reviewTruncated')}</p>{/if}
+            {#each [{label: 'unstaged', value: review.unstaged}, {label: 'staged', value: review.staged}] as section}
+                <details open={!!section.value.text}><summary>{t($locale, `chatInspector.${section.label}`)}</summary>
+                    {#if section.value.failed}<p role="alert" class="error">{t($locale, 'chatInspector.diffUnavailable')}</p>
+                    {:else if section.value.text}
+                        <!-- svelte-ignore a11y_no_noninteractive_tabindex (Scrollable diff supports keyboard reading.) -->
+                        <pre tabindex="0" role="region" aria-label={t($locale, `chatInspector.${section.label}`)}>{section.value.text}</pre>
+                    {:else}<p>{t($locale, 'chatInspector.noChanges')}</p>{/if}
+                </details>
+            {/each}
+        {/if}
     {/if}
 {/snippet}
 <section class="workspace-review" class:embedded-review={!!onopen} aria-label={t($locale, 'chatInspector.review')}>
@@ -82,6 +107,10 @@
     .review-header h2 { margin: 0; font-size: 1rem; }
     .embedded-review p { margin: 0; color: var(--muted); font-size: .875rem; line-height: 1.6; }
     .workspace-root code { display: block; overflow-wrap: anywhere; }
+    .workspace-badge { margin-bottom: 4px; display: inline-block; }
+    .workspace-files li { justify-content: space-between; align-items: baseline; }
+    .workspace-files .file-path { flex: 1 1 auto; }
+    .workspace-files .file-meta { flex: 0 0 auto; color: var(--muted); font-size: .75rem; white-space: nowrap; }
     .actions.start { justify-content: flex-start; }
     ul { list-style: none; margin: 0; padding: 0; } li { display: flex; gap: 8px; border-bottom: 1px solid var(--border); padding-block: 10px; font-size: .875rem; } li span { overflow-wrap: anywhere; min-width: 0; }
     summary { min-height: 44px; padding-block: 10px; cursor: pointer; font-size: .875rem; }

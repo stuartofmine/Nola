@@ -371,7 +371,7 @@ CREATE TABLE conversation_pdf_resources(
     resource_id TEXT PRIMARY KEY,
     conversation_id TEXT NOT NULL REFERENCES conversations(id) ON DELETE CASCADE,
     display_name TEXT NOT NULL,
-    mime_type TEXT NOT NULL CHECK(mime_type='application/pdf'),
+    mime_type TEXT NOT NULL CHECK(mime_type IN ('application/pdf','image/png','image/jpeg','image/webp','image/gif')),
     byte_count INTEGER NOT NULL CHECK(byte_count>0 AND byte_count<=8388608),
     sha256 TEXT NOT NULL,
     body BLOB NOT NULL,

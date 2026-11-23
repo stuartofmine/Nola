@@ -1069,14 +1069,27 @@ public struct WebAgentProvider: LLMClient, LLMRemoteAuxiliaryInvocationProviding
         }
     }
 
-    public static func validateToken(baseURL: URL, token: String, pinnedCertificateSHA256: String? = nil) async throws {
+    public static func validateToken(baseURL: URL, token: String, pinnedCertificateSHA256: String? = nil,
+                                     expectedHostID: String? = nil) async throws {
         guard MobileHostTransportPolicy.allows(baseURL) else {
             throw NolaError.llm(.invalidResponse(reason: "Public Web Host addresses require HTTPS. HTTP is limited to this device or a private local network."))
+        }
+        let resolvedHostID = expectedHostID?.trimmingCharacters(in: .whitespacesAndNewlines)
+        let registeredTransient = (resolvedHostID?.isEmpty == false)
+        if let resolvedHostID, !resolvedHostID.isEmpty {
+            NolaTailcatTransport.registerTransient(
+                origin: baseURL,
+                hostID: resolvedHostID,
+                token: token,
+                certificatePin: pinnedCertificateSHA256
+            )
+        } else if let pairedHostID = ModelSelectionManager.pairedWebHostIdentity(for: baseURL) {
+            NolaTailcatTransport.register(baseURL: baseURL, token: token, hostID: pairedHostID, certificatePin: pinnedCertificateSHA256)
         }
         let url = mobileURL(baseURL: baseURL, path: "me")
         var request = URLRequest(url: url)
         request.httpMethod = "GET"
-        request.timeoutInterval = 10
+        request.timeoutInterval = 50
         request.setValue("application/json", forHTTPHeaderField: "Accept")
         applyMobileAuth(to: &request, token: token)
 
@@ -1090,6 +1103,9 @@ public struct WebAgentProvider: LLMClient, LLMRemoteAuxiliaryInvocationProviding
             let (data, response) = try await session.data(for: request)
             try validateHTTP(response: response, data: data)
         } catch {
+            if registeredTransient {
+                NolaTailcatTransport.unregisterTransient(origin: baseURL)
+            }
             throw friendlyHostError(error, baseURL: baseURL)
         }
     }
@@ -1100,15 +1116,27 @@ public struct WebAgentProvider: LLMClient, LLMRemoteAuxiliaryInvocationProviding
     }
 
     public static func fetchHostAgentSettings(baseURL: URL, token: String, pinnedCertificateSHA256: String? = nil,
-                                              modelsOnly: Bool = false) async throws -> HostAgentSettings {
-        NolaTailcatTransport.register(baseURL: baseURL, token: token, hostID: ModelSelectionManager.pairedWebHostIdentity(for: baseURL), certificatePin: pinnedCertificateSHA256)
+                                              modelsOnly: Bool = false,
+                                              expectedHostID: String? = nil) async throws -> HostAgentSettings {
+        let resolvedHostID = expectedHostID?.trimmingCharacters(in: .whitespacesAndNewlines)
+        let registeredTransient = (resolvedHostID?.isEmpty == false)
+        if let resolvedHostID, !resolvedHostID.isEmpty {
+            NolaTailcatTransport.registerTransient(
+                origin: baseURL,
+                hostID: resolvedHostID,
+                token: token,
+                certificatePin: pinnedCertificateSHA256
+            )
+        } else {
+            NolaTailcatTransport.register(baseURL: baseURL, token: token, hostID: ModelSelectionManager.pairedWebHostIdentity(for: baseURL), certificatePin: pinnedCertificateSHA256)
+        }
         guard MobileHostTransportPolicy.allows(baseURL) else {
             throw NolaError.llm(.invalidResponse(reason: "Public Web Host addresses require HTTPS. HTTP is limited to this device or a private local network."))
         }
         let url = hostSettingsURL(baseURL: baseURL, modelsOnly: modelsOnly)
         var request = URLRequest(url: url)
         request.httpMethod = "GET"
-        request.timeoutInterval = 15
+        request.timeoutInterval = 45
         request.setValue("application/json", forHTTPHeaderField: "Accept")
         applyMobileAuth(to: &request, token: token)
 
@@ -1133,6 +1161,9 @@ public struct WebAgentProvider: LLMClient, LLMRemoteAuxiliaryInvocationProviding
             let normalized = try JSONSerialization.data(withJSONObject: decoded)
             return try JSONDecoder().decode(HostAgentSettings.self, from: normalized)
         } catch {
+            if registeredTransient {
+                NolaTailcatTransport.unregisterTransient(origin: baseURL)
+            }
             throw friendlyHostError(error, baseURL: baseURL)
         }
     }
@@ -1150,7 +1181,7 @@ public struct WebAgentProvider: LLMClient, LLMRemoteAuxiliaryInvocationProviding
         let url = mobileURL(baseURL: baseURL, path: "web-handoff")
         var request = URLRequest(url: url)
         request.httpMethod = "POST"
-        request.timeoutInterval = 15
+        request.timeoutInterval = 45
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
         request.setValue("application/json", forHTTPHeaderField: "Accept")
         request.setValue("aes-gcm-v1", forHTTPHeaderField: "X-Nola-Mobile-Crypto")
@@ -3438,6 +3469,21 @@ public struct WebAgentProvider: LLMClient, LLMRemoteAuxiliaryInvocationProviding
     }
 
     private static func friendlyHostError(_ error: Error, baseURL: URL) -> Error {
+        if let tailcatMessage = NolaTailcatTransport.userFacingErrorMessage(for: error) {
+            return NolaError.llm(.network(NSError(
+                domain: "WebAgentProvider.Tailcat",
+                code: (error as NSError).code,
+                userInfo: [NSLocalizedDescriptionKey: tailcatMessage]
+            )))
+        }
+        if case .failed(let stage) = NolaTailcatTransport.currentTransportMode(for: baseURL),
+           let stageMessage = NolaTailcatTransport.userFacingMessage(forCode: stage) {
+            return NolaError.llm(.network(NSError(
+                domain: "WebAgentProvider.Tailcat",
+                code: (error as NSError).code,
+                userInfo: [NSLocalizedDescriptionKey: stageMessage]
+            )))
+        }
         let host = baseURL.host ?? ""
         if let urlError = error as? URLError {
             switch urlError.code {

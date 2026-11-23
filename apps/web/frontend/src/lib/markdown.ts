@@ -62,6 +62,20 @@ export function markdownHref(value: string): string | undefined {
     } catch { return; }
 }
 
+export function markdownImageHref(value: string): string | undefined {
+    const text = decodeHTML(value).trim();
+    if (!text || /[\u0000-\u0020\u007f]/.test(text)) return;
+    if (text.startsWith('/api/chat/')) {
+        if (text.startsWith('//') || text.includes('..') || text.includes('\\')) return;
+        return text;
+    }
+    try {
+        const url = new URL(text);
+        if (!['http:', 'https:'].includes(url.protocol) || url.username || url.password) return;
+        return url.href;
+    } catch { return; }
+}
+
 function inline(tokens: Token[], depth = 0): InlineNode[] {
     return tokens.flatMap((token): InlineNode[] => {
         if (depth > 48) return [{ kind: 'text', text: token.raw }];
@@ -76,7 +90,7 @@ function inline(tokens: Token[], depth = 0): InlineNode[] {
             }
             case 'image': {
                 const image = token as Tokens.Image;
-                return [{ kind: 'image', text: decodeHTML(image.text), href: markdownHref(image.href) }];
+                return [{ kind: 'image', text: decodeHTML(image.text), href: markdownImageHref(image.href) }];
             }
             case 'text': {
                 const text = token as Tokens.Text;

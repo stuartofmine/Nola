@@ -42,6 +42,12 @@ import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import android.content.Context
+import android.content.Intent
+import android.net.Uri
+import androidx.core.content.FileProvider
+import androidx.compose.ui.semantics.Role
+import java.io.File
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.put
 import com.nola.R
@@ -271,12 +277,53 @@ internal fun ActivityStateBadge(state: ConversationProjectionV1.ActivityState) {
         style = MaterialTheme.typography.labelSmall, color = color)
 }
 
+internal fun canPreviewAttachmentUri(uriString: String): Boolean {
+    val trimmed = uriString.trim()
+    if (trimmed.isEmpty()) return false
+    return isExternalAnswerSource(trimmed) ||
+        trimmed.startsWith("content://") ||
+        trimmed.startsWith("file://") ||
+        trimmed.startsWith("/")
+}
+
+internal fun openAttachmentPreview(
+    context: Context,
+    uriString: String,
+    mimeType: String?,
+    title: String,
+) {
+    val trimmed = uriString.trim()
+    if (trimmed.isEmpty()) return
+    if (isExternalAnswerSource(trimmed)) {
+        openAnswerSource(context, AnswerSource(id = trimmed, sourceId = trimmed, title = title, uri = trimmed, mimeType = mimeType))
+        return
+    }
+    runCatching {
+        val targetUri: Uri = when {
+            trimmed.startsWith("content://") -> Uri.parse(trimmed)
+            trimmed.startsWith("file://") -> {
+                val path = Uri.parse(trimmed).path ?: return@runCatching
+                FileProvider.getUriForFile(context, "${context.packageName}.fileprovider", File(path))
+            }
+            trimmed.startsWith("/") -> {
+                FileProvider.getUriForFile(context, "${context.packageName}.fileprovider", File(trimmed))
+            }
+            else -> return@runCatching
+        }
+        val intent = Intent(Intent.ACTION_VIEW).apply {
+            setDataAndType(targetUri, mimeType?.takeIf { it.isNotBlank() } ?: "*/*")
+            addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+        }
+        context.startActivity(Intent.createChooser(intent, title))
+    }
+}
+
 @Composable
 private fun ArtifactCard(artifact: PartArtifact) {
     val context = LocalContext.current
-    val canOpen = isExternalAnswerSource(artifact.uri)
-    val titleModifier = if (canOpen) Modifier.fillMaxWidth().heightIn(min = 48.dp).clickable(role = androidx.compose.ui.semantics.Role.Button) {
-        openAnswerSource(context, AnswerSource(id = artifact.uri, sourceId = artifact.uri, title = artifact.name, uri = artifact.uri, mimeType = artifact.mimeType))
+    val canOpen = canPreviewAttachmentUri(artifact.uri)
+    val titleModifier = if (canOpen) Modifier.fillMaxWidth().heightIn(min = 48.dp).clickable(role = Role.Button) {
+        openAttachmentPreview(context, artifact.uri, artifact.mimeType, artifact.name)
     } else Modifier
     Text(artifact.name, titleModifier, style = MaterialTheme.typography.labelMedium,
         color = if (canOpen) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface)

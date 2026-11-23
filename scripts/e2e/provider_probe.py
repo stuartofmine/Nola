@@ -195,7 +195,7 @@ def inspect_response(body: bytes) -> dict:
                 error = (nested_response or {}).get("error") if isinstance(nested_response, dict) else value.get("error")
                 code = error.get("code") if isinstance(error, dict) else value.get("code")
                 public_codes = ("server_error", "rate_limit_exceeded", "slow_down", "invalid_prompt", "invalid_request_error",
-                                "insufficient_quota", "subscription_sharing_usage_limit_exceeded", "context_length_exceeded",
+                                "insufficient_quota", "credit_balance_exhausted", "subscription_sharing_usage_limit_exceeded", "context_length_exceeded",
                                 "server_is_overloaded", "service_unavailable", "content_filter", "bio_policy",
                                 "misalignment_policy_violation", "image_content_policy_violation")
                 safe_code = code if code in public_codes else "unknown"

@@ -1,5 +1,6 @@
 package com.nola.ui.screen.chat
 
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
@@ -17,9 +18,11 @@ import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.selected
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.unit.dp
@@ -421,16 +424,28 @@ internal fun ConversationResourcesPanel(state: ChatUiState, onClose: () -> Unit)
                 }
             }
             if (attachments.isNotEmpty()) {
+                val context = LocalContext.current
                 NolaCard {
                     NolaSectionTitle(icon = Icons.Filled.AttachFile, title = stringResource(R.string.inspector_resources))
                     attachments.forEachIndexed { index, attachment ->
                         if (index > 0) HorizontalDivider(thickness = 0.5.dp, color = MaterialTheme.colorScheme.outlineVariant)
+                        val canOpen = canPreviewAttachmentUri(attachment.uri)
                         Row(
-                            modifier = Modifier.fillMaxWidth(),
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .heightIn(min = 48.dp)
+                                .clickable(enabled = canOpen, role = Role.Button) {
+                                    openAttachmentPreview(context, attachment.uri, attachment.mimeType, attachment.name)
+                                },
                             verticalAlignment = Alignment.CenterVertically,
                             horizontalArrangement = Arrangement.spacedBy(8.dp),
                         ) {
-                            Text(attachment.name, style = MaterialTheme.typography.bodyMedium, modifier = Modifier.weight(1f))
+                            Text(
+                                attachment.name,
+                                style = MaterialTheme.typography.bodyMedium,
+                                color = if (canOpen) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface,
+                                modifier = Modifier.weight(1f),
+                            )
                             NolaBadge(text = attachment.sizeLabel, tint = MaterialTheme.colorScheme.onSurfaceVariant)
                         }
                     }

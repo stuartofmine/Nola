@@ -3,6 +3,7 @@
 // - Purpose: Owns the app-scoped Nola Server process used when this Mac is shared as a Host.
 // - Boundary: Conversation workers remain isolated; this service owns only the persistent control plane.
 
+import CryptoKit
 import Foundation
 import Darwin
 import Observation
@@ -40,12 +41,141 @@ nonisolated enum MacHostAdvertisedAddress {
     }
 }
 
+nonisolated struct MacManagedTailcatConfiguration: Equatable, Sendable {
+    let enabled: Bool
+    let helperPath: String
+    let helperSHA256: String
+
+    var normalizedHelperPath: String {
+        helperPath.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    var normalizedSHA256: String {
+        helperSHA256.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+    }
+
+    private static func isValidSHA256Digest(_ digest: String) -> Bool {
+        digest.utf8.count == 64 && digest.utf8.allSatisfy {
+            (48...57).contains($0) || (97...102).contains($0)
+        }
+    }
+
+    var isValidSHA256: Bool {
+        Self.isValidSHA256Digest(normalizedSHA256)
+    }
+
+    var usesCustomHelper: Bool {
+        !normalizedHelperPath.isEmpty
+    }
+
+    static func bundledHelperURL(bundle: Bundle = .main) -> URL? {
+        var candidates: [URL] = []
+        if let executableDir = bundle.executableURL?.deletingLastPathComponent() {
+            candidates.append(executableDir.appendingPathComponent("nola-tailcat"))
+        }
+        candidates.append(bundle.bundleURL.appendingPathComponent("Contents/MacOS/nola-tailcat"))
+        candidates.append(bundle.bundleURL.appendingPathComponent("Contents/Helpers/nola-tailcat"))
+        for candidate in candidates {
+            if FileManager.default.isExecutableFile(atPath: candidate.path) {
+                return candidate
+            }
+        }
+        return nil
+    }
+
+    static func bundledHelperSHA256(bundle: Bundle = .main) -> String? {
+        var candidates: [URL] = []
+        if let resourceURL = bundle.resourceURL {
+            candidates.append(resourceURL.appendingPathComponent("nola-tailcat.sha256"))
+        }
+        candidates.append(bundle.bundleURL.appendingPathComponent("Contents/Resources/nola-tailcat.sha256"))
+        for candidate in candidates {
+            guard let contents = try? String(contentsOf: candidate, encoding: .utf8) else { continue }
+            let digest = contents.trimmingCharacters(in: .whitespacesAndNewlines)
+            if isValidSHA256Digest(digest) {
+                return digest
+            }
+        }
+        return nil
+    }
+
+    func resolved(bundle: Bundle = .main) throws -> (helperPath: String, helperSHA256: String)? {
+        guard enabled else { return nil }
+        if usesCustomHelper {
+            try validate()
+            return (normalizedHelperPath, normalizedSHA256)
+        }
+        guard let bundled = Self.bundledHelperURL(bundle: bundle) else {
+            throw MacManagedNolaServerError.launchFailed(
+                String(localized: "Built-in nola-tailcat helper is unavailable in this build. Rebuild with Go installed or choose a custom helper binary.")
+            )
+        }
+        let digest: String
+        if let pinned = Self.bundledHelperSHA256(bundle: bundle) {
+            digest = pinned
+        } else {
+            digest = try Self.computeSHA256(forFileAt: bundled)
+        }
+        return (bundled.path, digest)
+    }
+
+    func validate() throws {
+        guard enabled else { return }
+        let path = normalizedHelperPath
+        guard path.hasPrefix("/"), FileManager.default.isExecutableFile(atPath: path) else {
+            throw MacManagedNolaServerError.launchFailed(
+                String(localized: "Select an executable Tailcat helper binary before enabling Tailcat ingress.")
+            )
+        }
+        guard isValidSHA256 else {
+            throw MacManagedNolaServerError.launchFailed(
+                String(localized: "Enter a valid 64-character SHA-256 digest for the Tailcat helper binary.")
+            )
+        }
+    }
+
+    static func load(from defaults: UserDefaults = .standard) -> Self {
+        Self(
+            enabled: defaults.bool(forKey: MacManagedNolaServer.tailcatEnabledKey),
+            helperPath: defaults.string(forKey: MacManagedNolaServer.tailcatHelperPathKey) ?? "",
+            helperSHA256: defaults.string(forKey: MacManagedNolaServer.tailcatHelperSHA256Key) ?? ""
+        )
+    }
+
+    static func computeSHA256(forFileAt url: URL) throws -> String {
+        let handle = try FileHandle(forReadingFrom: url)
+        defer { try? handle.close() }
+        var hasher = SHA256()
+        while let chunk = try handle.read(upToCount: 65_536), !chunk.isEmpty {
+            hasher.update(data: chunk)
+        }
+        return hasher.finalize().map { String(format: "%02x", $0) }.joined()
+    }
+}
+
 nonisolated struct MacManagedNolaServerInfo: Equatable, Sendable {
     let origin: URL
     let clientAPI: URL
     let hostID: String
     let accessToken: String
     let credentialsURL: URL
+    let tailcatIngressActive: Bool
+
+    init(
+        origin: URL,
+        clientAPI: URL,
+        hostID: String,
+        accessToken: String,
+        credentialsURL: URL,
+        tailcatIngressActive: Bool = false
+    ) {
+        self.origin = origin
+        self.clientAPI = clientAPI
+        self.hostID = hostID
+        self.accessToken = accessToken
+        self.credentialsURL = credentialsURL
+        self.tailcatIngressActive = tailcatIngressActive
+    }
 
     var connectionSetupText: String? {
         let payload: [String: Any] = [
@@ -132,6 +262,41 @@ final class MacManagedNolaServer {
     static let shared = MacManagedNolaServer()
     static let enabledKey = "nola.mac.server.enabled"
     static let permissionProfileKey = "nola.mac.server.permissionProfile"
+    static let tailcatEnabledKey = "nola.mac.server.tailcat.enabled"
+    static let tailcatHelperPathKey = "nola.mac.server.tailcat.helperPath"
+    static let tailcatHelperSHA256Key = "nola.mac.server.tailcat.helperSHA256"
+
+    nonisolated static func launchArguments(
+        bindAddress: String,
+        port: Int,
+        tailcat: MacManagedTailcatConfiguration?,
+        bundle: Bundle = .main
+    ) throws -> [String] {
+        if let tailcat, let resolved = try tailcat.resolved(bundle: bundle) {
+            guard port > 0 else {
+                throw MacManagedNolaServerError.launchFailed(
+                    String(localized: "Tailcat ingress requires a nonzero server port.")
+                )
+            }
+            // Keep bindAddress (e.g. 0.0.0.0) so LAN/mobile clients can reach the grant
+            // endpoint while --tailcat-ingress enforces authenticated remote ingress.
+            return [
+                "server",
+                "--host", bindAddress,
+                "--port", String(port),
+                "--tailcat-ingress",
+                "--tailcat-helper", resolved.helperPath,
+                "--tailcat-helper-sha256", resolved.helperSHA256,
+                "--json",
+            ]
+        }
+        return [
+            "server",
+            "--host", bindAddress,
+            "--port", String(port),
+            "--json",
+        ]
+    }
 
     private(set) var state: MacManagedNolaServerState = .stopped
     private var process: Process?
@@ -167,17 +332,23 @@ final class MacManagedNolaServer {
             guard let executableURL = executableOverride ?? MacAgentHostExecutableLocator.resolve() else {
                 throw MacManagedNolaServerError.executableUnavailable
             }
+            let tailcatConfig = MacManagedTailcatConfiguration.load()
+            let bindAddress = self.bindAddress
+            let port = self.port
+            let arguments = try await Task.detached(priority: .userInitiated) {
+                try Self.launchArguments(
+                    bindAddress: bindAddress,
+                    port: port,
+                    tailcat: tailcatConfig
+                )
+            }.value
+            guard revision == launchRevision else { return }
             let process = Process()
             let output = Pipe()
             let errors = Pipe()
             process.executableURL = executableURL
             process.currentDirectoryURL = environment.scratchWorkspaceURL
-            process.arguments = [
-                "server",
-                "--host", bindAddress,
-                "--port", String(port),
-                "--json",
-            ]
+            process.arguments = arguments
             process.standardOutput = output
             process.standardError = errors
             process.standardInput = FileHandle.nullDevice
@@ -278,7 +449,8 @@ final class MacManagedNolaServer {
                     clientAPI: advertisedClientAPI,
                     hostID: handshake.hostID,
                     accessToken: handshake.accessToken,
-                    credentialsURL: URL(fileURLWithPath: handshake.credentialsPath)
+                    credentialsURL: URL(fileURLWithPath: handshake.credentialsPath),
+                    tailcatIngressActive: tailcatConfig.enabled
                 )
             )
         } catch {

@@ -22,7 +22,7 @@ const assert=require('node:assert/strict');
             const recovery=process.env.NOLA_A2UI_EXPECT_RECOVERY==='1';
             const panel=page.locator(recovery?'.recovery':'.permission-panel');
             await panel.waitFor({timeout:30000});
-            if(!recovery)assert.equal((await panel.locator('.tool').innerText()).trim(),'render_ui');
+            if(!recovery)assert.equal(await panel.locator('.tool').getAttribute('data-tool-name'),'render_ui');
             const action=panel.locator(recovery?'button':'.actions button.primary').first();
             assert.equal(await action.isEnabled(),true);
             await page.waitForTimeout(fault==='failed'?500:100);

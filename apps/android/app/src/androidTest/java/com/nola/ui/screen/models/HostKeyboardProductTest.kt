@@ -266,7 +266,7 @@ class HostKeyboardProductTest {
                         token.performScrollTo().performClick().performTextReplacement("disposable-cancelled-request")
                         token.performImeAction()
                         compose.waitUntil(5_000) { arrived.count == 0L }
-                        compose.onNodeWithText(label(R.string.common_cancel)).performClick()
+                        compose.onNodeWithText(label(R.string.models_cancel_host_verification)).performClick()
                         release.countDown()
                         worker.join(2_000)
                         compose.onNodeWithText(label(R.string.models_save_and_verify)).assertIsEnabled()

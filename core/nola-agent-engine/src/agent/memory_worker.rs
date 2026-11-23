@@ -11,12 +11,10 @@ use crate::memory::{
     MemoryKind, MemoryNamespace, MemoryProvenance, MemoryProvenanceKind, MemoryQualityAssessment,
     MemoryRecord, MemoryRetention, MemoryScope, MemorySourceRole, MemoryTemporalMetadata,
 };
-use regex::Regex;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
 use std::collections::{BTreeMap, BTreeSet};
-use std::sync::OnceLock;
 
 pub const MEMORY_WORKER_PLAN_SCHEMA_VERSION: u32 = 1;
 const MAX_TRANSCRIPT_ITEMS: usize = 160;
@@ -317,24 +315,7 @@ pub fn plan_memory_worker(mut input: MemoryWorkerPlanInput) -> Result<MemoryWork
 }
 
 fn redact_memory_worker_text(input: &str) -> (String, u32) {
-    static PATTERNS: OnceLock<Vec<Regex>> = OnceLock::new();
-    let patterns = PATTERNS.get_or_init(|| {
-        [
-            r"(?i)\b(?:authorization|api[_-]?key|access[_-]?token|refresh[_-]?token|password|secret)\b\s*[:=]\s*[^\s,;]+",
-            r"(?i)\bbearer\s+[a-z0-9._~+/=-]{8,}",
-            r"\bsk-[A-Za-z0-9_-]{12,}\b",
-        ]
-        .into_iter()
-        .filter_map(|pattern| Regex::new(pattern).ok())
-        .collect()
-    });
-    let mut redacted = input.to_string();
-    let mut count = 0_u32;
-    for pattern in patterns {
-        count = count.saturating_add(pattern.find_iter(&redacted).count() as u32);
-        redacted = pattern.replace_all(&redacted, "[REDACTED]").into_owned();
-    }
-    (redacted, count)
+    nola_model_privacy::redact_secrets_text(input, "[REDACTED]")
 }
 
 fn validate_extraction_input(input: &MemoryWorkerPlanInput) -> Result<(), String> {
@@ -1008,8 +989,24 @@ mod tests {
         assert_eq!(plan.redacted_secret_count, 1);
         assert_eq!(
             plan.model_input["transcript"][0]["content"],
-            "Keep this preference; [REDACTED]"
+            "Keep this preference; api_key=[REDACTED]"
         );
+    }
+
+    #[test]
+    fn memory_worker_redacts_expanded_secret_patterns() {
+        let aws_key = concat!("AKIA", "IOSFODNN7EXAMPLE");
+        let input = format!(
+            "aws={aws_key} gh=ghp_1234567890abcdef1234 url=https://user:pass@repo.example.com/a.git -----BEGIN PRIVATE KEY-----\nabc\n-----END PRIVATE KEY----- email=alice@example.com"
+        );
+        let (redacted, count) = redact_memory_worker_text(&input);
+        assert_eq!(count, 4);
+        assert!(!redacted.contains(aws_key));
+        assert!(!redacted.contains("ghp_1234567890abcdef1234"));
+        assert!(!redacted.contains("user:pass"));
+        assert!(!redacted.contains("BEGIN PRIVATE KEY"));
+        assert!(redacted.contains("email=alice@example.com"));
+        assert!(redacted.contains("[REDACTED]"));
     }
 
     #[test]

@@ -55,6 +55,11 @@ const entries: Record<string, readonly string[]> = {
     gitUntracked: ['未跟踪', 'Untracked', 'Unverfolgt', 'Sin seguimiento', 'Non suivi', '未追跡', 'Неотслеживаемый'],
     gitConflicted: ['冲突', 'Conflicted', 'Konflikt', 'En conflicto', 'En conflit', '競合', 'Конфликт'],
     gitChanged: ['已变更', 'Changed', 'Geändert', 'Cambiado', 'Modifié', '変更あり', 'Изменён'],
+    temporaryWorkspace: ['临时工作区', 'Temporary Workspace', 'Temporärer Arbeitsbereich', 'Espacio temporal', 'Espace temporaire', '一時ワークスペース', 'Временная область'],
+    workspace: ['工作区', 'Workspace', 'Arbeitsbereich', 'Espacio de trabajo', 'Espace de travail', 'ワークスペース', 'Рабочая область'],
+    emptyWorkspace: ['工作区中暂无文件', 'No files in this workspace yet', 'Noch keine Dateien in diesem Arbeitsbereich', 'Aún no hay archivos en este espacio', 'Aucun fichier dans cet espace pour le moment', 'このワークスペースにはまだファイルがありません', 'В этой рабочей области пока нет файлов'],
+    filesTruncated: ['文件列表未全部展示', 'File list is truncated', 'Dateiliste ist unvollständig', 'La lista de archivos está incompleta', 'La liste des fichiers est tronquée', 'ファイル一覧は一部のみ表示されています', 'Список файлов неполный'],
+    directory: ['目录', 'Folder', 'Ordner', 'Carpeta', 'Dossier', 'フォルダ', 'Папка'],
 };
 export const chatInspectorMessages = Object.fromEntries(languages.map((language, index) => [language,
     Object.fromEntries(Object.entries(entries).map(([key, values]) => [`chatInspector.${key}`, values[index]])),

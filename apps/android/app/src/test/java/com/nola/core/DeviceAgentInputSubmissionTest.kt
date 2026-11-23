@@ -113,4 +113,22 @@ class DeviceAgentInputSubmissionTest {
             policy.getValue("allowed_sensitivities").jsonArray.size,
         )
     }
+
+    @Test
+    fun hostUiPresentationContextDeclaresAndroidGraphicalRenderingWithoutDuplication() {
+        val enriched = withHostUiPresentationContext(emptyList())
+        assertEquals(1, enriched.size)
+        val component = enriched.single()
+        assertEquals("system", component.kind)
+        assertEquals(HOST_UI_PRESENTATION_CONTEXT_ID, component.id)
+        assertEquals("android", component.source?.platform)
+        val body = component.content.jsonPrimitive.content
+        val factsJson = body.substringAfter('\n')
+        val facts = kotlinx.serialization.json.Json.parseToJsonElement(factsJson).jsonObject
+        assertEquals("android", facts.getValue("platform").jsonPrimitive.content)
+        assertEquals("true", facts.getValue("graphical").jsonPrimitive.content)
+        assertEquals("true", facts.getValue("supportsInteractiveForms").jsonPrimitive.content)
+        assertEquals("render_ui", facts.getValue("tool").jsonPrimitive.content)
+        assertEquals(1, withHostUiPresentationContext(enriched).size)
+    }
 }

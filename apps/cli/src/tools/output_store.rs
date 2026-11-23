@@ -118,7 +118,12 @@ impl ToolOutputStore {
     }
 
     pub fn persist_media(&self, bytes: &[u8]) -> std::io::Result<PathBuf> {
-        self.persist_bytes(bytes, format!("media-{:x}.bin", Sha256::digest(bytes)))
+        let digest = format!("{:x}", Sha256::digest(bytes));
+        self.persist_media_with_digest(bytes, &digest)
+    }
+
+    fn persist_media_with_digest(&self, bytes: &[u8], digest: &str) -> std::io::Result<PathBuf> {
+        self.persist_bytes(bytes, format!("media-{digest}.bin"))
     }
 
     /// Snapshot a tool-owned, already authorized media artifact before publishing
@@ -140,12 +145,20 @@ impl ToolOutputStore {
         if bytes.is_empty() || bytes.len() as u64 > LIMIT {
             return Err(std::io::Error::other("media is empty or exceeds 30 MiB"));
         }
+        let digest = format!("{:x}", Sha256::digest(&bytes));
         if source.parent() == Some(self.root.as_path())
-            && source.file_name().and_then(|value| value.to_str()).is_some_and(|name| name.starts_with("media-"))
-            && source.file_name().and_then(|value| value.to_str()) != Some(format!("media-{:x}.bin", Sha256::digest(&bytes)).as_str()) {
-            return Err(std::io::Error::other("media snapshot digest mismatch"));
+            && source
+                .file_name()
+                .and_then(|value| value.to_str())
+                .is_some_and(|name| name.starts_with("media-"))
+        {
+            let expected = format!("media-{digest}.bin");
+            if source.file_name().and_then(|value| value.to_str()) != Some(expected.as_str()) {
+                return Err(std::io::Error::other("media snapshot digest mismatch"));
+            }
+            return Ok(source.to_path_buf());
         }
-        self.persist_media(&bytes)
+        self.persist_media_with_digest(&bytes, &digest)
     }
 
     fn persist_bytes(&self, bytes: &[u8], name: String) -> std::io::Result<PathBuf> {
@@ -569,5 +582,23 @@ mod tests {
         assert!(store.persist("evidence").is_err());
         assert!(fs::symlink_metadata(&path).unwrap().file_type().is_symlink());
         assert_eq!(fs::read_to_string(outside).unwrap(), "evidence");
+    }
+
+    #[test]
+    fn snapshot_media_on_existing_content_addressed_file_does_not_rewrite() {
+        let root = tempfile::tempdir().unwrap();
+        let store = ToolOutputStore::new(root.path().join("outputs"));
+        let existing = store.persist_media(b"already persisted media").unwrap();
+        let before = fs::metadata(&existing).unwrap();
+        let reopened = store.snapshot_media(&existing).unwrap();
+        assert_eq!(reopened, existing);
+        let after = fs::metadata(&reopened).unwrap();
+        assert_eq!(before.modified().unwrap(), after.modified().unwrap());
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::MetadataExt;
+            assert_eq!(before.ino(), after.ino());
+        }
+        assert_eq!(fs::read_dir(store.root()).unwrap().count(), 1);
     }
 }

@@ -1297,6 +1297,7 @@ impl CliAgentHostDriver {
         tools: &[Value],
         invocation_plan: &ModelInvocationPlan,
         model_prefix_digest: &str,
+        tool_schema_digest: Option<&str>,
         stable_fragment_digests: std::collections::BTreeMap<String, String>,
         previous_prompt_cache_identity: Option<nola_core::prompt_cache::PromptCacheIdentity>,
         response_mode: ModelResponseMode,
@@ -1926,7 +1927,7 @@ impl CliAgentHostDriver {
             final_usage.cache_usage = Some(choice.usage.cache_usage(
                 choice.provider_namespace.as_deref() == Some("anthropic.messages"), false));
             physical_cache_identity = choice.request_snapshot.as_ref().map(|snapshot| {
-                let mut identity = snapshot.prompt_cache_identity();
+                let mut identity = snapshot.prompt_cache_identity_with_tool_digest(tool_schema_digest);
                 identity.stable_fragment_sha256 = stable_fragment_digests.clone();
                 identity.cache_control = Self::prompt_cache_control_identity(snapshot.config());
                 identity

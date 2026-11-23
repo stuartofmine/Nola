@@ -40,8 +40,21 @@ pub fn capability_descriptor() -> HostCapabilityDescriptor {
     let components = nola_kernel::generative_ui::schema::SUPPORTED_COMPONENTS.join(", ");
     let functions = nola_kernel::generative_ui::schema::SUPPORTED_FUNCTIONS.join(", ");
     schema["description"] = serde_json::json!(format!(
-        "Publish Intelligence UI in this conversation using A2UI v0.9.1: native forms, grouped detail cards, tabbed comparisons, adjustable choices and interactive controls. When the Host declares graphical rendering, proactively use this when it makes the requested information or next step clearer and easier to operate; the user need not ask for a form or name a tool. Keep simple conversational answers as text. For read-only cards, omit buttons and inputs; use supported Card/Column/Row/Tabs/Text components. This publishes native layouts, not diagrams. Do not simulate geographic maps, diagrams, arrows or spatial alignment with Text cards or whitespace. Use the client's declared graphical diagram renderer for those outputs. This catalog has no map, canvas, SVG or freeform drawing component; do not claim geographic or graphical precision that these components cannot represent. Catalog: {}. Use createSurface then updateComponents/updateDataModel; root component id is root. Messages in one call must target one surface and commit atomically. expected_revision=0 creates; otherwise use the latest known revision. User edits also advance revisions; on ui_revision_conflict inspect current_revision and current_summary, review the user action, then issue a new call only if the intended patch still applies. Never guess revisions or overwrite unrelated user data. Supported components: {components}. Use {{path:'/field'}} for input bindings; Button action={{event:{{name:'submit',context:{{field:{{path:'/field'}}}}}}}}. Pure functions: {functions}. Do not use HTML, scripts, remote catalogs, credentials or permission prompts. A ready result means the complete UI was committed and is available to the client; no additional render_ui call is needed to display it. If the user requested only this form/card, give a brief final response. Do not repeat unchanged content or simulate clicks. A real user action arrives in a later ui_action input; only then process submitted values. Its surface_revision is the revision committed for that user edit; use it as the latest known expected_revision unless a later publication returned a newer revision. UI publication does not perform the business operation represented by the form. Every messages element has its own version. Button labels are separate Text children, never a label property. Minimal valid arguments: {}",
+        "Render native interactive or structured UI in this conversation using A2UI v0.9.1. \
+         When the Host declares graphical rendering, proactively use render_ui whenever a native UI makes the answer clearer or easier to act on (the user does not need to name this tool): \
+         multi-field forms, preference/parameter inputs, tabbed comparisons, interactive checklists/calculators/filters, and grouped status or detail cards. \
+         Keep ordinary conversational replies as plain text; this is a native UI layout tool, not a diagram/map canvas, and does not allow HTML, scripts, or external catalogs. \
+         Rules: every item in messages needs version=\"v0.9.1\" and one operation (createSurface, updateComponents, updateDataModel, deleteSurface) targeting one surfaceId; \
+         createSurface requires catalogId=\"{}\"; updateComponents MUST include a root component with id=\"root\"; \
+         Button requires \"child\" pointing to a separate Text component ID (never \"label\") and action={{\"event\":{{\"name\":\"...\",\"context\":{{...}}}}}}; \
+         Card uses singular \"child\" (Column/Row/List use \"children\"); bind inputs with {{\"path\":\"/field\"}}; \
+         expected_revision=0 creates a new surface, otherwise pass the latest committed revision (or surface_revision from a ui_action); \
+         after a Ready result, give a brief final reply without re-calling render_ui; real user clicks arrive in a later ui_action turn. \
+         Components: {components}. Pure functions: {functions}. \
+         Example 1 (read-only tabbed comparison): {} \
+         Example 2 (interactive form): {}",
         nola_kernel::generative_ui::schema::NOLA_CATALOG_ID,
+        nola_kernel::generative_ui::schema::minimal_tabs_example(),
         nola_kernel::generative_ui::schema::minimal_form_example()
     ));
     HostCapabilityDescriptor {

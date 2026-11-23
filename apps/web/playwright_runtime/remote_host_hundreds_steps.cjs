@@ -17,7 +17,7 @@ async function permission() {
     if (!await panel.count()) return;
     const once = panel.getByRole('button', {name:'仅允许本次', exact:true});
     if (!await once.isEnabled()) return;
-    const tool = (await panel.locator('.tool').innerText()).trim();
+    const tool = await panel.locator('.tool').getAttribute('data-tool-name');
     const review = await panel.locator('pre').innerText();
     if (permissionMode === 'chain') {
         if (tool === 'conversation_recall') {

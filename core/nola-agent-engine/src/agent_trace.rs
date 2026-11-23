@@ -1650,16 +1650,18 @@ fn sanitize_trace_value(value: &Value, depth: usize) -> Value {
                 .collect(),
         ),
         Value::String(value) => {
-            if value.chars().count() <= MAX_TRACE_STRING_CHARS {
-                Value::String(value.clone())
+            let (redacted, _) = nola_model_privacy::redact_secrets_text(value, "[redacted]");
+            let char_count = redacted.chars().count();
+            if char_count <= MAX_TRACE_STRING_CHARS {
+                Value::String(redacted)
             } else {
-                let prefix = value
+                let prefix = redacted
                     .chars()
                     .take(MAX_TRACE_STRING_CHARS)
                     .collect::<String>();
                 Value::String(format!(
                     "{prefix}\n[truncated: {} additional characters]",
-                    value.chars().count().saturating_sub(MAX_TRACE_STRING_CHARS)
+                    char_count.saturating_sub(MAX_TRACE_STRING_CHARS)
                 ))
             }
         }
@@ -2719,6 +2721,37 @@ mod tests {
             .as_str()
             .unwrap_or_default()
             .contains("[truncated: 50 additional characters]"));
+    }
+
+    #[test]
+    fn tool_payload_redacts_secrets_embedded_in_strings_before_truncation() {
+        let mut context = AgentTraceContext::new("conversation-1", None);
+        let aws_key = concat!("AKIA", "IOSFODNN7EXAMPLE");
+        let secret_prefix = format!(
+            "aws={aws_key} gh=ghp_1234567890abcdef1234 Bearer token-secret-value-99 "
+        );
+        let body = format!("{secret_prefix}{}", "z".repeat(MAX_TRACE_STRING_CHARS));
+        let event = context
+            .project_external_event(&json!({
+                "type":"tool_started",
+                "call_id":"call-2",
+                "tool_name":"shell",
+                "arguments":{
+                    "command": "curl https://alice:hunter2@api.example.com/v1",
+                    "output": body
+                }
+            }))
+            .unwrap();
+        let arguments = event.payload.arguments.expect("tool arguments");
+        let command = arguments["command"].as_str().unwrap_or_default();
+        assert_eq!(command, "curl https://[redacted]@api.example.com/v1");
+
+        let output = arguments["output"].as_str().unwrap_or_default();
+        assert!(!output.contains(aws_key));
+        assert!(!output.contains("ghp_1234567890abcdef1234"));
+        assert!(!output.contains("token-secret-value-99"));
+        assert!(output.contains("[redacted]"));
+        assert!(output.contains("[truncated:"));
     }
 
     #[test]

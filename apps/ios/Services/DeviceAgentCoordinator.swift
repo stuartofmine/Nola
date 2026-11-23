@@ -802,7 +802,7 @@ public actor DeviceAgentCoordinator {
             let submission = try AgentCoreInputSubmission.make(
                 input: input,
                 origin: inputOrigin,
-                contextComponents: contextComponents,
+                contextComponents: Self.withHostUiPresentationContext(contextComponents),
                 messageId: turnIdentity?.userMessageID
                     ?? "ios-user:\(UUID().uuidString.lowercased())",
                 submissionId: turnIdentity?.submissionID
@@ -2166,6 +2166,43 @@ public actor DeviceAgentCoordinator {
             ]))
         }
         return configured
+    }
+
+    nonisolated static func withHostUiPresentationContext(
+        _ components: [AgentCoreContextComponent]
+    ) -> [AgentCoreContextComponent] {
+        let presentationId = "nola-host-ui-presentation-facts"
+        if components.contains(where: { $0.id == presentationId }) {
+            return components
+        }
+        let facts: [String: Any] = [
+            "platform": "ios",
+            "presentation": "graphical_projection",
+            "graphical": true,
+            "graphical_form_interaction": true,
+            "supportsInteractiveForms": true,
+            "tool": "render_ui",
+            "ui_publication_is_independent_of_presentation": true,
+            "guidance": "This graphical iOS client renders committed render_ui projections natively and submits real user interactions. Proactively use render_ui for interactive forms, preference/parameter inputs, tabbed comparisons, adjustable choices, checklists/filters, and grouped detail cards whenever a native UI is clearer or easier to operate than plain text; the user does not need to name this capability. Keep short explanations and ordinary conversation as text; do not publish a redundant card for every reply.",
+        ]
+        let factsJSON: String
+        if let data = try? JSONSerialization.data(withJSONObject: facts, options: [.sortedKeys]),
+           let json = String(data: data, encoding: .utf8) {
+            factsJSON = json
+        } else {
+            factsJSON = "{\"platform\":\"ios\",\"graphical\":true,\"supportsInteractiveForms\":true,\"tool\":\"render_ui\"}"
+        }
+        let component = AgentCoreContextComponent(
+            kind: .system,
+            id: presentationId,
+            content: .string("Current Host presentation facts, not new authorization:\n\(factsJSON)"),
+            source: AgentCoreContextComponentSource(
+                platform: .ios,
+                title: "Host UI presentation capabilities",
+                mimeType: "application/json"
+            )
+        )
+        return components + [component]
     }
 
     nonisolated static func promptTurnIdentity(

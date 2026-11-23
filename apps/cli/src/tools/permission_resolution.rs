@@ -611,6 +611,23 @@ fn sensitive_path(path: &Path, _context: &ToolContext) -> bool {
     super::bash_token_is_sensitive_path(&path.to_string_lossy())
 }
 
+fn path_touches_git_dir(path: &Path) -> bool {
+    path.components().any(|component| {
+        matches!(
+            component,
+            std::path::Component::Normal(name) if name.to_string_lossy().eq_ignore_ascii_case(".git")
+        )
+    })
+}
+
+fn path_within_workspace(path: &Path, context: &ToolContext) -> bool {
+    let target = crate::native_sandbox::canonicalize_for_sandbox(path);
+    context.allowed_dirs.iter().any(|allowed| {
+        let canonical = crate::native_sandbox::canonicalize_for_sandbox(allowed);
+        canonical.parent().is_some() && target.starts_with(&canonical)
+    })
+}
+
 fn path_identity(path: &Path) -> Result<Value, String> {
     match fs::metadata(path) {
         Ok(metadata) => {
@@ -687,12 +704,13 @@ fn inspect_read_tree(path: &Path, context: &ToolContext, capability: &str) -> Re
             let entry = entry.map_err(|error|error.to_string())?;
             let entry_path = entry.path();
             let canonical = entry_path.canonicalize().map_err(|error|error.to_string())?;
+            if canonical.is_dir() && should_skip_dir(&entry.file_name().to_string_lossy()) { continue; }
             if sensitive_path(&canonical,context) {
                 let selected_file = !source_only || is_text_source(&entry_path);
                 if canonical.is_dir() || selected_file { sensitive.push(path_identity(&canonical)?); }
                 continue;
             }
-            if canonical.is_dir() && !should_skip_dir(&entry.file_name().to_string_lossy()) { stack.push(canonical); }
+            if canonical.is_dir() { stack.push(canonical); }
         }
     }
     sensitive.sort_by_key(Value::to_string);
@@ -770,11 +788,14 @@ pub(crate) fn resolve_permission_resources(context: &ToolContext, request: &Perm
                     "read_instructions" => Some(inspect_instruction_resources(&path,context,input)?),
                     _ => None,
                 };
+                let in_workspace = path_within_workspace(&path, context);
+                let touches_git = path_touches_git_dir(&path);
+                let is_sensitive = sensitive_path(&path, context);
                 let observation = match demand.access.as_str() {
-                    "read" if sensitive_path(&path, context) => PermissionOperationRisk::SensitiveRead,
+                    "read" if is_sensitive => PermissionOperationRisk::SensitiveRead,
                     "read" => PermissionOperationRisk::OrdinaryRead,
                     "read_tree" | "read_instructions" => tree.as_ref().map(|(risk,_)|*risk).unwrap_or(PermissionOperationRisk::Unknown),
-                    "write" if !exists && !sensitive_path(&path, context) => PermissionOperationRisk::NewFile,
+                    "write" if !exists && in_workspace && !touches_git && !is_sensitive => PermissionOperationRisk::NewFile,
                     "write" | "overwrite" => PermissionOperationRisk::Overwrite,
                     "remove" => PermissionOperationRisk::Delete,
                     _ => PermissionOperationRisk::Unknown,
@@ -1090,7 +1111,7 @@ mod tests {
         assert_eq!(facts(&context,"write_file",json!({"path":ordinary,"content":"replacement"})).bindings[0].observation,
             PermissionOperationRisk::Overwrite);
         assert_eq!(facts(&context,"write_file",json!({"path":outside.path().join("new.txt"),"content":"new"})).bindings[0].observation,
-            PermissionOperationRisk::NewFile);
+            PermissionOperationRisk::Overwrite);
         #[cfg(unix)] {
             let alias = workspace.path().join("ordinary-name.txt");
             std::os::unix::fs::symlink(&secret,&alias).unwrap();
@@ -1737,6 +1758,71 @@ mod tests {
         assert_ne!(first.bindings[0].resource,second.bindings[0].resource);
         assert_ne!(first.bindings[0].evidence_id,second.bindings[0].evidence_id);
     }
+
+    #[test]
+    fn cautious_mode_requires_confirmation_for_sensitive_reads_outside_writes_and_git_hooks() {
+        let workspace = tempfile::tempdir().unwrap();
+        let outside = tempfile::tempdir().unwrap();
+        let context = context(workspace.path());
+
+        // Sensitive reads: ~/.nola/config.json and ~/Library/Application Support/Nola/state.db
+        let nola_read = facts(&context, "read_file", json!({"path": "~/.nola/config.json"}));
+        assert_eq!(nola_read.bindings[0].observation, PermissionOperationRisk::SensitiveRead);
+        assert!(nola_read.bindings[0].observation.requires_confirmation());
+
+        let app_support_read = facts(
+            &context,
+            "read_file",
+            json!({"path": "~/Library/Application Support/Nola/state.db"}),
+        );
+        assert_eq!(app_support_read.bindings[0].observation, PermissionOperationRisk::SensitiveRead);
+        assert!(app_support_read.bindings[0].observation.requires_confirmation());
+
+        // Write to ~/Library/LaunchAgents/evil.plist (outside workspace + sensitive)
+        let launch_agent_write = facts(
+            &context,
+            "write_file",
+            json!({"path": "~/Library/LaunchAgents/evil.plist", "content": "<plist/>"}),
+        );
+        assert_eq!(launch_agent_write.bindings[0].observation, PermissionOperationRisk::Overwrite);
+        assert!(launch_agent_write.bindings[0].observation.requires_confirmation());
+
+        // Write to <repo>/.git/hooks/pre-commit (and case-insensitive .GIT)
+        let hook_write = facts(
+            &context,
+            "write_file",
+            json!({"path": ".git/hooks/pre-commit", "content": "#!/bin/sh\n"}),
+        );
+        assert_eq!(hook_write.bindings[0].observation, PermissionOperationRisk::Overwrite);
+        assert!(hook_write.bindings[0].observation.requires_confirmation());
+
+        let upper_git_write = facts(
+            &context,
+            "write_file",
+            json!({"path": ".GIT/hooks/pre-commit", "content": "#!/bin/sh\n"}),
+        );
+        assert_eq!(upper_git_write.bindings[0].observation, PermissionOperationRisk::Overwrite);
+        assert!(upper_git_write.bindings[0].observation.requires_confirmation());
+
+        // New file outside workspace must require confirmation (not NewFile).
+        let outside_new = outside.path().join("escaped.txt");
+        let outside_write = facts(
+            &context,
+            "write_file",
+            json!({"path": outside_new.to_string_lossy(), "content": "x"}),
+        );
+        assert_eq!(outside_write.bindings[0].observation, PermissionOperationRisk::Overwrite);
+        assert!(outside_write.bindings[0].observation.requires_confirmation());
+
+        // Ordinary new file inside workspace remains NewFile.
+        let inside_write = facts(
+            &context,
+            "write_file",
+            json!({"path": "new_note.txt", "content": "hello"}),
+        );
+        assert_eq!(inside_write.bindings[0].observation, PermissionOperationRisk::NewFile);
+        assert!(!inside_write.bindings[0].observation.requires_confirmation());
+    }
 }
 
 pub(super) fn validate_bound_file_workspace(request:&ToolRequest,ctx:&ToolContext)->Result<(),String> {
@@ -1755,7 +1841,7 @@ pub(super) fn validate_bound_file_workspace(request:&ToolRequest,ctx:&ToolContex
             if !path.starts_with(root) {
                 return Err("File-only worktree task cannot write outside its frozen execution root".into());
             }
-            if path.starts_with(root.join(".git")) {
+            if path.starts_with(root.join(".git")) || path_touches_git_dir(&path) {
                 return Err("File-only worktree task cannot change its Git binding or metadata".into());
             }
         }

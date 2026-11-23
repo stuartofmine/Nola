@@ -308,13 +308,11 @@ impl AgentModelToolProjection {
     }
 
     fn capture_ordered(revision: u64, turn_projection_digest: String, definitions: &[Value]) -> Self {
-        let schema_token_estimate = serde_json::to_vec(definitions)
-            .expect("JSON model tool schemas serialize")
-            .len().saturating_add(3) / 4;
+        let schema_token_estimate = serialized_token_estimate(definitions);
         Self {
             revision,
             turn_projection_digest,
-            schema_digest: digest_json(&definitions),
+            schema_digest: digest_json_values(definitions),
             schema_token_estimate,
             capability_ids: definitions.iter().filter_map(configured_tool_id).collect(),
         }
@@ -407,20 +405,22 @@ impl AgentModelToolProjection {
     /// projection algorithm owned by Core. The array order is part of the
     /// physical prefix: additions, removals, reorderings and schema changes fail.
     pub fn matches_model_definitions(&self, model_definitions: &[Value]) -> bool {
-        let mut seen = BTreeSet::new();
-        if model_definitions.iter().any(|definition| {
-            exact_model_tool_id(definition).is_none_or(|id| !seen.insert(id))
-        }) {
+        if self.capability_ids.len() != model_definitions.len() {
             return false;
         }
-        let observed = Self::capture_ordered(
-            self.revision,
-            self.turn_projection_digest.clone(),
-            model_definitions,
-        );
-        self.capability_ids == observed.capability_ids
-            && self.schema_digest == observed.schema_digest
-            && self.schema_token_estimate == observed.schema_token_estimate
+        let mut seen = BTreeSet::new();
+        for (expected_id, definition) in self.capability_ids.iter().zip(model_definitions.iter()) {
+            let Some(id) = exact_model_tool_id(definition) else {
+                return false;
+            };
+            if id != expected_id || !seen.insert(id) {
+                return false;
+            }
+        }
+        if self.schema_token_estimate != serialized_token_estimate(model_definitions) {
+            return false;
+        }
+        self.schema_digest == digest_json_values(model_definitions)
     }
 }
 
@@ -462,10 +462,80 @@ fn canonical_json(value: &Value) -> Value {
     }
 }
 
+struct ByteCountWriter(usize);
+
+impl std::io::Write for ByteCountWriter {
+    fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+        self.0 += buf.len();
+        Ok(buf.len())
+    }
+    fn flush(&mut self) -> std::io::Result<()> {
+        Ok(())
+    }
+}
+
+struct Sha256Writer(Sha256);
+
+impl std::io::Write for Sha256Writer {
+    fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+        self.0.update(buf);
+        Ok(buf.len())
+    }
+    fn flush(&mut self) -> std::io::Result<()> {
+        Ok(())
+    }
+}
+
+fn serialized_token_estimate(definitions: &[Value]) -> usize {
+    let mut counter = ByteCountWriter(0);
+    serde_json::to_writer(&mut counter, definitions).expect("JSON model tool schemas serialize");
+    counter.0.saturating_add(3) / 4
+}
+
+fn write_canonical_value<W: std::io::Write>(writer: &mut W, value: &Value) -> std::io::Result<()> {
+    match value {
+        Value::Object(map) => {
+            writer.write_all(b"{")?;
+            let mut entries: Vec<(&String, &Value)> = map.iter().collect();
+            entries.sort_unstable_by(|(left, _), (right, _)| left.cmp(right));
+            for (index, (key, val)) in entries.into_iter().enumerate() {
+                if index > 0 {
+                    writer.write_all(b",")?;
+                }
+                serde_json::to_writer(&mut *writer, key)
+                    .map_err(std::io::Error::other)?;
+                writer.write_all(b":")?;
+                write_canonical_value(writer, val)?;
+            }
+            writer.write_all(b"}")
+        }
+        Value::Array(values) => write_canonical_slice(writer, values),
+        _ => serde_json::to_writer(writer, value).map_err(std::io::Error::other),
+    }
+}
+
+fn write_canonical_slice<W: std::io::Write>(writer: &mut W, values: &[Value]) -> std::io::Result<()> {
+    writer.write_all(b"[")?;
+    for (index, val) in values.iter().enumerate() {
+        if index > 0 {
+            writer.write_all(b",")?;
+        }
+        write_canonical_value(writer, val)?;
+    }
+    writer.write_all(b"]")
+}
+
+fn digest_json_values(values: &[Value]) -> String {
+    let mut hasher = Sha256Writer(Sha256::new());
+    let _ = write_canonical_slice(&mut hasher, values);
+    format!("{:x}", hasher.0.finalize())
+}
+
 fn digest_json<T: Serialize>(value: &T) -> String {
     let value = serde_json::to_value(value).unwrap_or(Value::Null);
-    let bytes = serde_json::to_vec(&canonical_json(&value)).unwrap_or_default();
-    format!("{:x}", Sha256::digest(bytes))
+    let mut hasher = Sha256Writer(Sha256::new());
+    let _ = write_canonical_value(&mut hasher, &value);
+    format!("{:x}", hasher.0.finalize())
 }
 
 #[cfg(test)]

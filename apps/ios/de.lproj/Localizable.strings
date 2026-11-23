@@ -2457,7 +2457,7 @@
 "chat.task.guidance.send" = "Hinweis senden";
 "model.web_host.setup" = "Vor dem Verbinden";
 "model.web_host.setup.start" = "Öffnen Sie auf dem Mac in Nola „Einstellungen > Verbindungen“ und aktivieren Sie „Diesen Mac als Nola Server freigeben“.";
-"model.web_host.setup.copy" = "Kopieren Sie die in Nola auf dem Mac angezeigte Adresse und das Kopplungstoken. Verwenden Sie ein vertrauenswürdiges privates Netzwerk oder HTTPS.";
+"model.web_host.setup.copy" = "Kopieren Sie die Verbindungsdaten auf dem Mac und fügen Sie sie auf diesem Gerät ein. Verwenden Sie ein vertrauenswürdiges privates Netzwerk oder HTTPS.";
 "model.web_host.checking" = "Host wird geprüft";
 "model.web_host.checking.detail" = "Token, Berechtigungsprotokoll und Host-Identität werden vor dem Speichern geprüft.";
 "model.web_host.error.protocol" = "Dieser Host verwendet ein nicht unterstütztes Berechtigungsprotokoll. Aktualisieren Sie Nola auf dem Host und versuchen Sie es erneut.";

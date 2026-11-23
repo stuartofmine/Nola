@@ -1,7 +1,112 @@
 // SPDX-License-Identifier: Apache-2.0
 //! Explicit local Host workspace inspection. No mutation, external diff, or network.
 use std::path::Path;
+use std::time::UNIX_EPOCH;
 use serde_json::{json, Value};
+
+const NON_GIT_MAX_DEPTH: usize = 3;
+const NON_GIT_MAX_ENTRIES: usize = 200;
+const NON_GIT_SKIP_NAMES: &[&str] = &[".git", "node_modules", "target", ".DS_Store"];
+
+#[cfg(unix)]
+pub(crate) fn is_git_repository(root: &Path) -> bool {
+    let Ok(observed) = root.canonicalize() else { return false; };
+    if !observed.is_dir() { return false; }
+    let Ok(repository) = read_git(&observed, &["rev-parse", "--show-toplevel"], 16 * 1024) else {
+        return false;
+    };
+    let Ok(repository) = std::str::from_utf8(&repository) else { return false; };
+    let Ok(repository) = Path::new(repository.trim_end_matches(['\r', '\n'])).canonicalize() else {
+        return false;
+    };
+    observed.starts_with(&repository)
+}
+
+#[cfg(not(unix))]
+pub(crate) fn is_git_repository(root: &Path) -> bool {
+    let Ok(observed) = root.canonicalize() else { return false; };
+    if !observed.is_dir() { return false; }
+    observed.ancestors().any(|ancestor| ancestor.join(".git").exists())
+}
+
+pub(crate) fn list_non_git_workspace_files(root: &Path) -> Result<(Vec<Value>, bool), String> {
+    let observed = root.canonicalize().map_err(|e| e.to_string())?;
+    if !observed.is_dir() {
+        return Err("Workspace is not a directory".into());
+    }
+    let mut entries = Vec::new();
+    let mut truncated = false;
+    scan_non_git_dir(&observed, &observed, 1, &mut entries, &mut truncated)?;
+    Ok((entries, truncated))
+}
+
+fn scan_non_git_dir(
+    root: &Path,
+    current: &Path,
+    depth: usize,
+    out: &mut Vec<Value>,
+    truncated: &mut bool,
+) -> Result<(), String> {
+    if depth > NON_GIT_MAX_DEPTH || *truncated {
+        return Ok(());
+    }
+    let mut children = std::fs::read_dir(current)
+        .map_err(|e| e.to_string())?
+        .filter_map(Result::ok)
+        .collect::<Vec<_>>();
+    children.sort_by_key(|entry| entry.file_name());
+    for entry in children {
+        let name = entry.file_name();
+        let name_str = name.to_string_lossy();
+        if NON_GIT_SKIP_NAMES.contains(&name_str.as_ref()) {
+            continue;
+        }
+        let Ok(file_type) = entry.file_type() else {
+            continue;
+        };
+        if file_type.is_symlink() {
+            continue;
+        }
+        if out.len() >= NON_GIT_MAX_ENTRIES {
+            *truncated = true;
+            return Ok(());
+        }
+        let path = entry.path();
+        let Ok(relative) = path.strip_prefix(root) else {
+            continue;
+        };
+        let relative_str = relative
+            .components()
+            .map(|c| c.as_os_str().to_string_lossy())
+            .collect::<Vec<_>>()
+            .join("/");
+        let is_dir = file_type.is_dir();
+        let metadata = std::fs::symlink_metadata(&path).ok();
+        let size = if is_dir {
+            0
+        } else {
+            metadata.as_ref().map_or(0, |m| m.len())
+        };
+        let modified_at_ms = metadata
+            .as_ref()
+            .and_then(|m| m.modified().ok())
+            .and_then(|t| t.duration_since(UNIX_EPOCH).ok())
+            .map(|d| d.as_millis() as u64);
+        out.push(json!({
+            "path": relative_str,
+            "size": size,
+            "is_dir": is_dir,
+            "modified_at_ms": modified_at_ms,
+        }));
+        if is_dir && depth < NON_GIT_MAX_DEPTH {
+            scan_non_git_dir(root, &path, depth + 1, out, truncated)?;
+            if *truncated {
+                return Ok(());
+            }
+        }
+    }
+    Ok(())
+}
 
 #[cfg(unix)]
 fn read_git(root: &Path, args: &[&str], maximum: usize) -> Result<Vec<u8>, String> {
@@ -61,5 +166,49 @@ mod tests {
         assert!(review["unstaged"]["text"].as_str().unwrap().contains("+second"));
         assert!(!marker.exists());
         assert_eq!(std::fs::read_to_string(root.join("note.txt")).unwrap(), "second\n");
+        assert!(is_git_repository(root));
+    }
+
+    #[test]
+    fn non_git_workspace_listing_respects_depth_skips_ignored_and_symlinks_and_truncates() {
+        let directory = tempfile::tempdir().unwrap();
+        let root = directory.path();
+        assert!(!is_git_repository(root));
+        std::fs::write(root.join("hello.txt"), "abc").unwrap();
+        std::fs::write(root.join(".DS_Store"), "ignored").unwrap();
+        std::fs::create_dir_all(root.join("node_modules/pkg")).unwrap();
+        std::fs::write(root.join("node_modules/pkg/index.js"), "ignored").unwrap();
+        std::fs::create_dir_all(root.join("target/debug")).unwrap();
+        std::fs::write(root.join("target/debug/bin"), "ignored").unwrap();
+        std::fs::create_dir_all(root.join("a/b/c")).unwrap();
+        std::fs::write(root.join("a/b/file_at_depth3.txt"), "ok").unwrap();
+        std::fs::write(root.join("a/b/c/too_deep.txt"), "no").unwrap();
+        std::os::unix::fs::symlink(root.join("hello.txt"), root.join("link.txt")).unwrap();
+
+        let (files, truncated) = list_non_git_workspace_files(root).unwrap();
+        assert!(!truncated);
+        let paths: Vec<&str> = files.iter().filter_map(|v| v["path"].as_str()).collect();
+        assert!(paths.contains(&"hello.txt"));
+        assert!(paths.contains(&"a"));
+        assert!(paths.contains(&"a/b"));
+        assert!(paths.contains(&"a/b/file_at_depth3.txt"));
+        assert!(!paths.iter().any(|p| p.contains("too_deep.txt")));
+        assert!(!paths.iter().any(|p| p.contains("node_modules")));
+        assert!(!paths.iter().any(|p| p.contains("target")));
+        assert!(!paths.iter().any(|p| p.contains(".DS_Store")));
+        assert!(!paths.iter().any(|p| p.contains("link.txt")));
+        let hello = files.iter().find(|v| v["path"] == "hello.txt").unwrap();
+        assert_eq!(hello["size"], 3);
+        assert_eq!(hello["is_dir"], false);
+        assert!(hello["modified_at_ms"].as_u64().is_some());
+
+        // Truncation at 200 entries
+        let many = tempfile::tempdir().unwrap();
+        for i in 0..215 {
+            std::fs::write(many.path().join(format!("f_{i:03}.txt")), "x").unwrap();
+        }
+        let (many_files, many_truncated) = list_non_git_workspace_files(many.path()).unwrap();
+        assert_eq!(many_files.len(), NON_GIT_MAX_ENTRIES);
+        assert!(many_truncated);
     }
 }

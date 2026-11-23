@@ -4,6 +4,9 @@ package com.nola.ui.screen.models
 import android.content.ClipData
 import android.content.ClipboardManager
 import android.content.Context
+import android.graphics.Bitmap
+import androidx.test.platform.app.InstrumentationRegistry
+import java.io.File
 import androidx.activity.ComponentActivity
 import androidx.compose.ui.test.*
 import androidx.compose.ui.test.junit4.createAndroidComposeRule
@@ -37,6 +40,25 @@ class WebHostConnectionInteractionTest {
         }
         compose.onNodeWithText(context.getString(R.string.models_save_and_verify)).assertIsNotEnabled()
         compose.onNodeWithText(context.getString(R.string.models_verify_again)).assertDoesNotExist()
+        val help = compose.onNodeWithText(context.getString(R.string.models_web_host_setup_title))
+        val setupInstructions = compose.onNodeWithText(context.getString(R.string.models_web_host_setup_copy))
+        setupInstructions.assertDoesNotExist()
+        help.performScrollTo().performClick()
+        setupInstructions.assertExists()
+        help.performScrollTo().performClick()
+        setupInstructions.assertDoesNotExist()
+        if (InstrumentationRegistry.getArguments().getString("screenshots") == "true") {
+            val automation = InstrumentationRegistry.getInstrumentation().uiAutomation
+            automation.waitForIdle(400, 3_000)
+            val bitmap = automation.takeScreenshot()
+            try {
+                File(context.cacheDir, "host-connection-form.png").outputStream().use {
+                    assertTrue(bitmap.compress(Bitmap.CompressFormat.PNG, 100, it))
+                }
+            } finally {
+                bitmap.recycle()
+            }
+        }
         val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
         compose.runOnIdle { clipboard.setPrimaryClip(ClipData.newPlainText("fixture", "{}")) }
         val paste = context.getString(R.string.models_web_host_paste_setup)
@@ -76,7 +98,8 @@ class WebHostConnectionInteractionTest {
         val pin = compose.onNodeWithTag("models.host.certificateSha256")
         pin.assertDoesNotExist()
         address.performScrollTo().performClick().performTextReplacement("https://studio.local")
-        address.performImeAction()
+        compose.onNodeWithText(context.getString(R.string.models_advanced_tls)).performScrollTo().performClick()
+        address.performScrollTo().performClick().performImeAction()
         token.assertIsFocused().performTextInput("test-token")
         compose.onNodeWithText(context.getString(R.string.models_host_token_new)).assertDoesNotExist()
         token.performImeAction()
@@ -116,7 +139,7 @@ class WebHostConnectionInteractionTest {
         compose.onNodeWithText(context.getString(R.string.models_web_host_setup_title)).assertDoesNotExist()
         val verify = context.getString(R.string.models_verify_again)
         compose.onNodeWithText(verify).performClick()
-        compose.onNodeWithText(context.getString(R.string.common_cancel)).performClick()
+        compose.onNodeWithText(context.getString(R.string.models_cancel_host_verification)).performClick()
         compose.runOnIdle { requireNotNull(finish)(true, "Late success"); assertEquals(1, cancelled); assertFalse(dismissed) }
         compose.onNodeWithText(verify).assertIsEnabled()
     }

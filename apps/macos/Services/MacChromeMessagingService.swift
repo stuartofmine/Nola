@@ -111,6 +111,102 @@ nonisolated struct MacChromeMessagingConfiguration: Equatable, Sendable {
     }
 }
 
+nonisolated enum MacChromiumBrowser: String, CaseIterable, Equatable, Hashable, Sendable {
+    case googleChrome
+    case googleChromeCanary
+    case microsoftEdge
+    case brave
+    case arc
+
+    var displayName: String {
+        switch self {
+        case .googleChrome: return "Google Chrome"
+        case .googleChromeCanary: return "Google Chrome Canary"
+        case .microsoftEdge: return "Microsoft Edge"
+        case .brave: return "Brave Browser"
+        case .arc: return "Arc"
+        }
+    }
+
+    var bundleIdentifier: String {
+        switch self {
+        case .googleChrome: return "com.google.Chrome"
+        case .googleChromeCanary: return "com.google.Chrome.canary"
+        case .microsoftEdge: return "com.microsoft.edgemac"
+        case .brave: return "com.brave.Browser"
+        case .arc: return "company.thebrowser.Browser"
+        }
+    }
+
+    var nativeMessagingRelativePath: String {
+        switch self {
+        case .googleChrome:
+            return "Library/Application Support/Google/Chrome/NativeMessagingHosts"
+        case .googleChromeCanary:
+            return "Library/Application Support/Google/Chrome Canary/NativeMessagingHosts"
+        case .microsoftEdge:
+            return "Library/Application Support/Microsoft Edge/NativeMessagingHosts"
+        case .brave:
+            return "Library/Application Support/BraveSoftware/Brave-Browser/NativeMessagingHosts"
+        case .arc:
+            return "Library/Application Support/Arc/User Data/NativeMessagingHosts"
+        }
+    }
+
+    var extensionsURLString: String {
+        switch self {
+        case .googleChrome, .googleChromeCanary, .arc:
+            return "chrome://extensions"
+        case .microsoftEdge:
+            return "edge://extensions"
+        case .brave:
+            return "brave://extensions"
+        }
+    }
+
+    var extensionsURL: URL {
+        URL(string: extensionsURLString)!
+    }
+
+    func nativeMessagingDirectoryURL(
+        homeDirectory: URL = FileManager.default.homeDirectoryForCurrentUser
+    ) -> URL {
+        homeDirectory.appendingPathComponent(nativeMessagingRelativePath, isDirectory: true)
+    }
+
+    func nativeManifestURL(
+        homeDirectory: URL = FileManager.default.homeDirectoryForCurrentUser
+    ) -> URL {
+        nativeMessagingDirectoryURL(homeDirectory: homeDirectory)
+            .appendingPathComponent("com.nola.native_browser.json")
+    }
+
+    static func installedBrowsers(
+        applicationURL: (String) -> URL? = {
+            NSWorkspace.shared.urlForApplication(withBundleIdentifier: $0)
+        }
+    ) -> [MacChromiumBrowser] {
+        allCases.filter { applicationURL($0.bundleIdentifier) != nil }
+    }
+
+    static func runningBrowsers(
+        runningApplications: (String) -> [NSRunningApplication] = {
+            NSRunningApplication.runningApplications(withBundleIdentifier: $0)
+        }
+    ) -> [MacChromiumBrowser] {
+        allCases.filter { !runningApplications($0.bundleIdentifier).isEmpty }
+    }
+}
+
+nonisolated enum MacChromeConnectionPresentationState: String, Equatable, Sendable {
+    case connected
+    case browserNotRunning
+    case extensionIdle
+    case needsSetup
+    case browserUnavailable
+    case failed
+}
+
 nonisolated struct MacChromeBridgeSnapshot: Equatable, Sendable {
     let isChromeInstalled: Bool
     let isServiceRunning: Bool
@@ -121,6 +217,40 @@ nonisolated struct MacChromeBridgeSnapshot: Equatable, Sendable {
     let capabilities: [String]
     let lastSeen: Date?
     let errorMessage: String?
+    let installedBrowserNames: [String]
+    let isBrowserRunning: Bool
+    let isNativeHostStale: Bool
+    let hasEverConnected: Bool
+
+    init(
+        isChromeInstalled: Bool,
+        isServiceRunning: Bool,
+        isNativeHostInstalled: Bool,
+        isExtensionPrepared: Bool,
+        isExtensionConnected: Bool,
+        extensionVersion: String?,
+        capabilities: [String],
+        lastSeen: Date?,
+        errorMessage: String?,
+        installedBrowserNames: [String] = [],
+        isBrowserRunning: Bool = false,
+        isNativeHostStale: Bool = false,
+        hasEverConnected: Bool = false
+    ) {
+        self.isChromeInstalled = isChromeInstalled
+        self.isServiceRunning = isServiceRunning
+        self.isNativeHostInstalled = isNativeHostInstalled
+        self.isExtensionPrepared = isExtensionPrepared
+        self.isExtensionConnected = isExtensionConnected
+        self.extensionVersion = extensionVersion
+        self.capabilities = capabilities
+        self.lastSeen = lastSeen
+        self.errorMessage = errorMessage
+        self.installedBrowserNames = installedBrowserNames
+        self.isBrowserRunning = isBrowserRunning
+        self.isNativeHostStale = isNativeHostStale
+        self.hasEverConnected = hasEverConnected
+    }
 
     var phase: MacChromeBridgePhase {
         if let errorMessage, !errorMessage.isEmpty { return .failed }
@@ -129,6 +259,17 @@ nonisolated struct MacChromeBridgeSnapshot: Equatable, Sendable {
         if !isServiceRunning { return .serviceStopped }
         if !isExtensionPrepared || !isNativeHostInstalled { return .installationRequired }
         return .waitingForChrome
+    }
+
+    var presentationState: MacChromeConnectionPresentationState {
+        if let errorMessage, !errorMessage.isEmpty { return .failed }
+        if isExtensionConnected { return .connected }
+        if !isChromeInstalled { return .browserUnavailable }
+        if !isServiceRunning { return .needsSetup }
+        if isNativeHostInstalled && isExtensionPrepared && !isNativeHostStale {
+            return isBrowserRunning ? .extensionIdle : .browserNotRunning
+        }
+        return .needsSetup
     }
 }
 
@@ -181,12 +322,49 @@ nonisolated struct MacChromeExtensionInstaller {
                 .appendingPathComponent("NativeMessagingHosts", isDirectory: true)
                 .appendingPathComponent("com.nola.native_browser.json")
         }
-        return FileManager.default.homeDirectoryForCurrentUser
-            .appendingPathComponent(
-                "Library/Application Support/Google/Chrome/NativeMessagingHosts",
-                isDirectory: true
-            )
-            .appendingPathComponent("com.nola.native_browser.json")
+        return MacChromiumBrowser.googleChrome.nativeManifestURL()
+    }
+
+    static func targetNativeManifestURLs(
+        installedBrowsers: [MacChromiumBrowser] = MacChromiumBrowser.installedBrowsers(),
+        homeDirectory: URL = FileManager.default.homeDirectoryForCurrentUser,
+        isRunningTests: Bool = MacProcessRuntimePolicy.isRunningTests
+    ) -> [URL] {
+        if isRunningTests {
+            return [
+                installationRootURL
+                    .appendingPathComponent("NativeMessagingHosts", isDirectory: true)
+                    .appendingPathComponent("com.nola.native_browser.json")
+            ]
+        }
+        let browsers = installedBrowsers.isEmpty ? [.googleChrome] : installedBrowsers
+        return browsers.map { $0.nativeManifestURL(homeDirectory: homeDirectory) }
+    }
+
+    static func isNativeHostValid(
+        manifestURL: URL = nativeManifestURL,
+        launcherURL: URL = launcherURL,
+        bundle: Bundle = .main,
+        fileManager: FileManager = .default
+    ) -> Bool {
+        guard fileManager.fileExists(atPath: manifestURL.path),
+              let manifestData = try? Data(contentsOf: manifestURL),
+              let manifest = try? JSONSerialization.jsonObject(with: manifestData) as? [String: Any],
+              let registeredPath = manifest["path"] as? String,
+              registeredPath == launcherURL.path else {
+            return false
+        }
+        guard fileManager.fileExists(atPath: launcherURL.path),
+              fileManager.isExecutableFile(atPath: launcherURL.path),
+              let launcherScript = try? String(contentsOf: launcherURL, encoding: .utf8) else {
+            return false
+        }
+        if let currentExecutablePath = bundle.executableURL?.path, !currentExecutablePath.isEmpty {
+            guard launcherScript.contains(currentExecutablePath) else {
+                return false
+            }
+        }
+        return true
     }
 
     @discardableResult
@@ -247,11 +425,6 @@ nonisolated struct MacChromeExtensionInstaller {
             ofItemAtPath: Self.launcherURL.path
         )
 
-        let manifestDirectory = Self.nativeManifestURL.deletingLastPathComponent()
-        try fileManager.createDirectory(
-            at: manifestDirectory,
-            withIntermediateDirectories: true
-        )
         let manifest: [String: Any] = [
             "name": "com.nola.native_browser",
             "description": "Nola for Mac Chrome bridge",
@@ -265,7 +438,14 @@ nonisolated struct MacChromeExtensionInstaller {
             withJSONObject: manifest,
             options: [.prettyPrinted, .sortedKeys]
         )
-        try data.write(to: Self.nativeManifestURL, options: .atomic)
+        for manifestURL in Self.targetNativeManifestURLs() {
+            let manifestDirectory = manifestURL.deletingLastPathComponent()
+            try fileManager.createDirectory(
+                at: manifestDirectory,
+                withIntermediateDirectories: true
+            )
+            try data.write(to: manifestURL, options: .atomic)
+        }
     }
 
     private var extensionResourceURL: URL? {
@@ -310,6 +490,7 @@ nonisolated private final class MacChromeBrokerCommand: @unchecked Sendable {
 
 nonisolated final class MacChromeMessagingService: @unchecked Sendable {
     static let shared = MacChromeMessagingService()
+    static let hasEverConnectedDefaultsKey = "nola.chrome.has-ever-connected"
 
     private let condition = NSCondition()
     private let lifecycleCondition = NSCondition()
@@ -325,6 +506,7 @@ nonisolated final class MacChromeMessagingService: @unchecked Sendable {
     )
     private let fileManager: FileManager
     private let installer: MacChromeExtensionInstaller?
+    private let userDefaults: UserDefaults
     private var listener: NWListener?
     private var activeConfiguration: MacChromeMessagingConfiguration?
     private var startupError: String?
@@ -348,6 +530,7 @@ nonisolated final class MacChromeMessagingService: @unchecked Sendable {
     init(
         fileManager: FileManager = .default,
         installer: MacChromeExtensionInstaller? = MacChromeExtensionInstaller(),
+        userDefaults: UserDefaults = .standard,
         managedBrowserAction: @escaping ManagedBrowserAction = { action, arguments in
             try await MacPlaywrightRuntimeService.shared.perform(action: action, arguments: arguments)
         },
@@ -355,6 +538,7 @@ nonisolated final class MacChromeMessagingService: @unchecked Sendable {
     ) {
         self.fileManager = fileManager
         self.installer = installer
+        self.userDefaults = userDefaults
         self.managedBrowserAction = managedBrowserAction
         self.setupAssistance = setupAssistance
     }
@@ -371,6 +555,10 @@ nonisolated final class MacChromeMessagingService: @unchecked Sendable {
         lifecycleCondition.lock()
         if let activeConfiguration, listener != nil, listenerReady {
             lifecycleCondition.unlock()
+            if needsNativeHostRepair() {
+                _ = try? installer?.install(configuration: activeConfiguration)
+                postStatusChanged()
+            }
             return activeConfiguration
         }
         listener?.cancel()
@@ -503,14 +691,27 @@ nonisolated final class MacChromeMessagingService: @unchecked Sendable {
         let version = extensionVersion
         condition.unlock()
 
+        let installedBrowsers = MacChromiumBrowser.installedBrowsers()
+        let runningBrowsers = MacChromiumBrowser.runningBrowsers()
+        let manifestURLs = MacChromeExtensionInstaller.targetNativeManifestURLs(
+            installedBrowsers: installedBrowsers
+        )
+        let anyManifestOnDisk = manifestURLs.contains { fileManager.fileExists(atPath: $0.path) }
+        let allManifestsValid = !manifestURLs.isEmpty && manifestURLs.allSatisfy { manifestURL in
+            MacChromeExtensionInstaller.isNativeHostValid(
+                manifestURL: manifestURL,
+                launcherURL: MacChromeExtensionInstaller.launcherURL,
+                bundle: installer?.bundle ?? .main,
+                fileManager: fileManager
+            )
+        }
+        let nativeHostStale = anyManifestOnDisk && !allManifestsValid
+        let everConnected = (lastSeen != nil) || persistedHasEverConnected()
+
         return MacChromeBridgeSnapshot(
-            isChromeInstalled: NSWorkspace.shared.urlForApplication(
-                withBundleIdentifier: "com.google.Chrome"
-            ) != nil,
+            isChromeInstalled: !installedBrowsers.isEmpty,
             isServiceRunning: running,
-            isNativeHostInstalled: fileManager.fileExists(
-                atPath: MacChromeExtensionInstaller.nativeManifestURL.path
-            ),
+            isNativeHostInstalled: allManifestsValid,
             isExtensionPrepared: fileManager.fileExists(
                 atPath: MacChromeExtensionInstaller.extensionDirectoryURL
                     .appendingPathComponent("manifest.json").path
@@ -519,8 +720,41 @@ nonisolated final class MacChromeMessagingService: @unchecked Sendable {
             extensionVersion: version,
             capabilities: capabilities,
             lastSeen: lastSeen,
-            errorMessage: error
+            errorMessage: error,
+            installedBrowserNames: installedBrowsers.map(\.displayName),
+            isBrowserRunning: !runningBrowsers.isEmpty,
+            isNativeHostStale: nativeHostStale,
+            hasEverConnected: everConnected
         )
+    }
+
+    private func needsNativeHostRepair() -> Bool {
+        guard let installer else { return false }
+        let manifestURLs = MacChromeExtensionInstaller.targetNativeManifestURLs()
+        let anyManifestOnDisk = manifestURLs.contains { fileManager.fileExists(atPath: $0.path) }
+        guard anyManifestOnDisk else { return false }
+        return !manifestURLs.allSatisfy { manifestURL in
+            MacChromeExtensionInstaller.isNativeHostValid(
+                manifestURL: manifestURL,
+                launcherURL: MacChromeExtensionInstaller.launcherURL,
+                bundle: installer.bundle,
+                fileManager: fileManager
+            )
+        }
+    }
+
+    private var shouldPersistHasEverConnected: Bool {
+        !MacProcessRuntimePolicy.isRunningTests || userDefaults !== UserDefaults.standard
+    }
+
+    private func persistedHasEverConnected() -> Bool {
+        guard shouldPersistHasEverConnected else { return false }
+        return userDefaults.bool(forKey: Self.hasEverConnectedDefaultsKey)
+    }
+
+    private func markHasEverConnected() {
+        guard shouldPersistHasEverConnected else { return }
+        userDefaults.set(true, forKey: Self.hasEverConnectedDefaultsKey)
     }
 
     func reinstall() throws {
@@ -595,21 +829,47 @@ nonisolated final class MacChromeMessagingService: @unchecked Sendable {
     @discardableResult
     func openChromeExtensions() -> Bool {
         runOnMainThread {
-            guard let url = URL(string: "chrome://extensions"),
-                  let chrome = NSWorkspace.shared.urlForApplication(
-                      withBundleIdentifier: "com.google.Chrome"
-                  ) else {
+            guard let (browser, applicationURL) = preferredChromiumBrowserApplication() else {
                 return false
             }
             let configuration = NSWorkspace.OpenConfiguration()
             configuration.activates = true
             NSWorkspace.shared.open(
-                [url],
-                withApplicationAt: chrome,
+                [browser.extensionsURL],
+                withApplicationAt: applicationURL,
                 configuration: configuration
             )
             return true
         }
+    }
+
+    @discardableResult
+    func openBrowser() -> Bool {
+        runOnMainThread {
+            guard let (_, applicationURL) = preferredChromiumBrowserApplication() else {
+                return false
+            }
+            let configuration = NSWorkspace.OpenConfiguration()
+            configuration.activates = true
+            NSWorkspace.shared.openApplication(
+                at: applicationURL,
+                configuration: configuration
+            )
+            return true
+        }
+    }
+
+    private func preferredChromiumBrowserApplication() -> (MacChromiumBrowser, URL)? {
+        let running = MacChromiumBrowser.runningBrowsers()
+        let candidates = running + MacChromiumBrowser.installedBrowsers().filter { !running.contains($0) }
+        for browser in candidates {
+            if let appURL = NSWorkspace.shared.urlForApplication(
+                withBundleIdentifier: browser.bundleIdentifier
+            ) {
+                return (browser, appURL)
+            }
+        }
+        return nil
     }
 
     private func accept(_ connection: NWConnection) {
@@ -865,6 +1125,7 @@ nonisolated final class MacChromeMessagingService: @unchecked Sendable {
         }
         condition.broadcast()
         condition.unlock()
+        markHasEverConnected()
         postStatusChanged()
         condition.lock()
         while true {
@@ -920,6 +1181,7 @@ nonisolated final class MacChromeMessagingService: @unchecked Sendable {
         lastHostSeen = .now
         condition.broadcast()
         condition.unlock()
+        markHasEverConnected()
         return HTTPResponse(status: 200, object: ["accepted": true])
     }
 

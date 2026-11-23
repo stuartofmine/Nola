@@ -18,7 +18,6 @@
 import Foundation
 import Combine
 import CryptoKit
-
 /// Protocol identity is data, not a model-name or endpoint heuristic.
 nonisolated public enum ModelWireProtocol: String, Codable, Hashable, Sendable {
     case chatCompletions = "chat_completions"
@@ -888,7 +887,7 @@ public final class OpenAIProvider: LLMClient, AgentPromptCacheIdentityClient, LL
         var request = URLRequest(url: requestURL)
         request.httpMethod = "POST"
         request.timeoutInterval = timeoutInterval
-        request.httpBody = body
+        request.httpBody = try redactedModelRequestBody(body, credential: config.apiKey)
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
         request.setValue(stream ? "text/event-stream" : "application/json", forHTTPHeaderField: "Accept")
         if !config.apiKey.isEmpty {
@@ -2033,7 +2032,7 @@ extension OpenAIProvider {
         let data = try JSONSerialization.data(withJSONObject: body)
         var request = URLRequest(url: try responsesURL())
         request.httpMethod = "POST"
-        request.httpBody = data
+        request.httpBody = try redactedModelRequestBody(data, credential: config.apiKey)
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
         request.setValue("text/event-stream", forHTTPHeaderField: "Accept")
         if !config.apiKey.isEmpty {

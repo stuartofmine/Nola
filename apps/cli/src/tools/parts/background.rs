@@ -2555,17 +2555,36 @@ fn run_bash_with_permission(
     attach_validation_evidence(outcome, before, validation_snapshot(args, ctx))
 }
 
+const MAX_SHELL_CAPTURE_BYTES: usize = 8 * 1024 * 1024;
+
 fn read_shell_capture(path: &Path) -> Result<String, ToolOutcome> {
-    let bytes = fs::read(path).map_err(|err| error_data_with_display(json!({
+    let file = File::open(path).map_err(|err| error_data_with_display(json!({
         "error": "shell_capture_read_failed",
         "path": path,
         "message": err.to_string(),
         "output_complete": false,
         "next_action": "Inspect the existing execution and capture; do not replay the command merely to recover output."
     }), "Unable to read command output".into()))?;
+    let mut bytes = Vec::new();
+    let mut limited = std::io::Read::take(file, (MAX_SHELL_CAPTURE_BYTES + 1) as u64);
+    std::io::Read::read_to_end(&mut limited, &mut bytes).map_err(|err| error_data_with_display(json!({
+        "error": "shell_capture_read_failed",
+        "path": path,
+        "message": err.to_string(),
+        "output_complete": false,
+        "next_action": "Inspect the existing execution and capture; do not replay the command merely to recover output."
+    }), "Unable to read command output".into()))?;
+    let truncated = bytes.len() > MAX_SHELL_CAPTURE_BYTES;
+    if truncated {
+        bytes.truncate(MAX_SHELL_CAPTURE_BYTES);
+    }
     // Shell streams are bytes, not guaranteed UTF-8. Preserve readable text
     // around binary bytes; the capture file retains the original byte stream.
-    Ok(String::from_utf8_lossy(&bytes).into_owned())
+    let mut text = String::from_utf8_lossy(&bytes).into_owned();
+    if truncated {
+        text.push_str("\n[output truncated at 8 MiB limit]");
+    }
+    Ok(text)
 }
 
 #[test]
@@ -3405,6 +3424,8 @@ fn run_bash_execution(
         crate::process_sandbox::isolate_shell_supervisor_environment(child_command);
         child_command.args(["--noprofile","--norc"]).env_remove("BASH_ENV").env_remove("ENV");
         for (name,_) in std::env::vars_os().filter(|(name,_)|name.to_string_lossy().starts_with("BASH_FUNC_")) {child_command.env_remove(name);}
+    } else {
+        crate::native_sandbox::scrub_sensitive_env(child_command);
     }
     if durable_task {
         child_command
@@ -3415,7 +3436,6 @@ fn run_bash_execution(
             .arg(&task_id)
             .arg(shell_evidence_script(&execution_command))
             .arg(crate::platform_paths::shell_path(&status_path));
-        child_command.stdin(Stdio::null());
     } else {
         child_command
             .arg("-o")
@@ -3431,7 +3451,35 @@ fn run_bash_execution(
     }
     child_command
         .env("NOLA_SHELL_EVIDENCE_PATH", crate::platform_paths::shell_path(&evidence_path))
-        .current_dir(&cwd)
+        .current_dir(&cwd);
+    if prepared_sandbox.is_none() && crate::native_sandbox::native_os_sandbox_available() {
+        let workspace_root = ctx
+            .allowed_dirs
+            .first()
+            .map(PathBuf::as_path)
+            .unwrap_or(&cwd);
+        let mut extra_write_roots = vec![cwd.clone()];
+        extra_write_roots.extend(ctx.allowed_dirs.iter().cloned());
+        for artifact_path in [&evidence_path, &status_path, &stdout_path, &stderr_path] {
+            if let Some(parent) = artifact_path.parent() {
+                extra_write_roots.push(parent.to_path_buf());
+            }
+        }
+        let mut native_policy =
+            crate::native_sandbox::NativeOsSandboxPolicy::for_workspace(workspace_root, &extra_write_roots);
+        if verified_read_only.is_some() {
+            native_policy.allow_network = false;
+        }
+        if let Ok(wrapped) =
+            crate::native_sandbox::wrap_command_in_native_sandbox(&native_policy, child_command)
+        {
+            *child_command = wrapped;
+        }
+    }
+    if durable_task {
+        child_command.stdin(Stdio::null());
+    }
+    child_command
         .stdout(Stdio::from(stdout))
         .stderr(Stdio::from(stderr));
     #[cfg(unix)]

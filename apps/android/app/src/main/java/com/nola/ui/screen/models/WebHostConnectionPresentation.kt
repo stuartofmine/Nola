@@ -80,11 +80,25 @@ internal suspend fun verifyWebHostConnection(
     return identity.id
 }
 
+internal fun tailcatErrorStringRes(code: String): Int = when {
+    code == "native_host_dns" -> R.string.models_tailcat_error_dns
+    code == "native_host_timeout" -> R.string.models_tailcat_error_timeout
+    code == "native_host_certificate" -> R.string.models_tailcat_error_certificate
+    code == "native_host_permission" -> R.string.models_tailcat_error_permission
+    code == "transport_suspended" -> R.string.models_tailcat_error_suspended
+    code == "transport_host_identity_mismatch" -> R.string.models_tailcat_error_identity_mismatch
+    code == "transport_capacity_reached" -> R.string.models_tailcat_error_capacity
+    code == "tailcat_not_available" -> R.string.models_tailcat_error_not_available
+    code == "tailcat_start_timeout" -> R.string.models_tailcat_error_start_timeout
+    code.startsWith("grant:") -> R.string.models_tailcat_error_grant
+    else -> R.string.models_tailcat_verify_failed
+}
+
 internal fun webHostConnectionMessage(context: Context, error: Throwable, verifyingPairedHost: Boolean = false): String {
     val raw = error.message.orEmpty()
     val normalized = raw.lowercase()
     return when {
-        error is com.nola.data.remote.api.TailcatConnectionException -> context.getString(R.string.models_tailcat_verify_failed)
+        error is com.nola.data.remote.api.TailcatConnectionException -> context.getString(tailcatErrorStringRes(error.code))
         verifyingPairedHost && error is com.nola.data.remote.api.WebHostStatusException &&
             error.verificationRoute == com.nola.data.remote.dto.VerifiedHostTransport.DirectWithoutTailcat ->
             context.getString(R.string.models_direct_verify_failed_without_tailcat, error.statusCode)

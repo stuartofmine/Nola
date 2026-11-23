@@ -21,6 +21,16 @@ Distinguish a catalog read from an inference attempt. Test repeated startup, a b
 - [cli/src/model_acquisition.rs](../../../../apps/cli/src/model_acquisition.rs)
 - [nola-application/src/model_connection.rs](../../../../core/nola-application/src/model_connection.rs)
 
+## Redaction before inference
+
+Every Nola provider adapter passes a request copy through Rust Core's `nola_model_privacy::redact_model_request`. CLI, desktop Host and model gateway adapters call Rust directly. Apple and Android direct and on-device adapters use the same C ABI. Replayed history, tool results and auxiliary requests are covered. The local conversation retains its original content.
+
+Recognized email addresses, supported phone formats and mainland Chinese identity number patterns become `[EMAIL]`, `[PHONE]` and `[ID]`. Recognized credentials, PEM private keys and sensitive structured fields become `[CREDENTIAL]`. Core processes human-readable tool descriptions, examples and serialized tool payloads. It preserves protocol identifiers, tool schemas, authentication headers, binary attachments and signed or encrypted continuation data.
+
+Placeholders identify a category. Core maintains no reverse lookup and grants no tool authority to recover an original value. The rules cannot identify arbitrary personal names, postal addresses, text inside images or the contents of binary files. A paired remote Host receives the original conversation under its existing authorization.
+
+Run `python3 scripts/test_model_request_privacy.py` to inspect first-turn and replayed HTTP requests for three protocols, a real file-tool result and the original local message.
+
 ## Detailed references
 
 [Desktop Local Models](DESKTOP_LOCAL_MODELS.en.md) · [Generation Override Contract](GENERATION_OVERRIDE_CONTRACT.md) · [Model Configuration Rewrite](MODEL_CONFIGURATION_REWRITE.md) · [Model Connection Import](MODEL_CONNECTION_IMPORT.md) · [Model File Configuration](MODEL_FILE_CONFIGURATION.en.md) · [Nola SIWC](NOLA_SIWC.md) · [Provider Instruction Projection](PROVIDER_INSTRUCTION_PROJECTION.md) · [Reasoning Catalog And Wire](REASONING_CATALOG_AND_WIRE.en.md) · [Shared Execution Host Configuration 20261015](SHARED_EXECUTION_HOST_CONFIGURATION_20261015.md)

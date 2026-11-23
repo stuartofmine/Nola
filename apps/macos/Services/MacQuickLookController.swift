@@ -50,7 +50,6 @@ final class MacQuickLookController: NSObject, NSWindowDelegate {
     }
 
     func windowWillClose(_ notification: Notification) {
-        (window?.contentView as? QLPreviewView)?.close()
         window = nil
         releaseAccess()
     }
@@ -67,27 +66,104 @@ private struct MacDocumentPreviewGallery: View {
     let urls: [URL]
     @State var index: Int
     let onSelectionChanged: (Int) -> Void
+    @State private var copiedPath = false
+    @State private var copyFeedbackTask: Task<Void, Never>?
+
+    private var currentURL: URL { urls[index] }
 
     var body: some View {
         VStack(spacing: 0) {
-            if urls.count > 1 {
-                HStack {
-                    Button { index -= 1 } label: { Image(systemName: "chevron.left") }
-                        .disabled(index == 0)
-                        .accessibilityLabel(String(localized: "Previous File"))
-                        .keyboardShortcut(.leftArrow, modifiers: .command)
-                    Text(urls[index].lastPathComponent).lineLimit(1)
-                    Spacer()
-                    Text("\(index + 1) / \(urls.count)").foregroundStyle(.secondary)
-                    Button { index += 1 } label: { Image(systemName: "chevron.right") }
-                        .disabled(index == urls.count - 1)
-                        .accessibilityLabel(String(localized: "Next File"))
-                        .keyboardShortcut(.rightArrow, modifiers: .command)
-                }.padding(10)
-                Divider()
+            HStack(spacing: 8) {
+                if urls.count > 1 {
+                    HStack(spacing: 4) {
+                        Button { index -= 1 } label: { Image(systemName: "chevron.left") }
+                            .buttonStyle(.borderless)
+                            .disabled(index == 0)
+                            .accessibilityLabel(String(localized: "Previous File"))
+                            .keyboardShortcut(.leftArrow, modifiers: .command)
+                        Text("\(index + 1) / \(urls.count)")
+                            .font(.system(size: 11, weight: .medium, design: .monospaced))
+                            .foregroundStyle(.secondary)
+                        Button { index += 1 } label: { Image(systemName: "chevron.right") }
+                            .buttonStyle(.borderless)
+                            .disabled(index == urls.count - 1)
+                            .accessibilityLabel(String(localized: "Next File"))
+                            .keyboardShortcut(.rightArrow, modifiers: .command)
+                    }
+                    Divider()
+                        .frame(height: 14)
+                }
+
+                Text(currentURL.lastPathComponent)
+                    .font(.system(size: 12, weight: .medium))
+                    .foregroundStyle(.primary)
+                    .lineLimit(1)
+                    .truncationMode(.middle)
+                    .help(currentURL.path)
+
+                Spacer(minLength: 12)
+
+                HStack(spacing: 4) {
+                    Button {
+                        NSWorkspace.shared.activateFileViewerSelecting([currentURL])
+                    } label: {
+                        Label(String(localized: "Reveal in Finder"), systemImage: "folder")
+                            .font(.system(size: 11.5, weight: .medium))
+                    }
+                    .buttonStyle(.borderless)
+                    .help(String(localized: "Reveal in Finder"))
+
+                    Divider()
+                        .frame(height: 12)
+
+                    Button {
+                        NSWorkspace.shared.open(currentURL)
+                    } label: {
+                        Label(String(localized: "Open"), systemImage: "arrow.up.forward.app")
+                            .font(.system(size: 11.5, weight: .medium))
+                    }
+                    .buttonStyle(.borderless)
+                    .help(String(localized: "Open with Default App"))
+
+                    Divider()
+                        .frame(height: 12)
+
+                    Button {
+                        NSPasteboard.general.clearContents()
+                        NSPasteboard.general.setString(currentURL.path, forType: .string)
+                        copiedPath = true
+                        copyFeedbackTask?.cancel()
+                        copyFeedbackTask = Task { @MainActor in
+                            try? await Task.sleep(for: .seconds(1.5))
+                            guard !Task.isCancelled else { return }
+                            copiedPath = false
+                        }
+                    } label: {
+                        Label(
+                            copiedPath ? String(localized: "Copied") : String(localized: "Copy Path"),
+                            systemImage: copiedPath ? "checkmark" : "doc.on.doc"
+                        )
+                        .font(.system(size: 11.5, weight: .medium))
+                    }
+                    .buttonStyle(.borderless)
+                    .help(String(localized: "Copy Path"))
+                }
+                .foregroundStyle(.secondary)
             }
-            MacNativeDocumentPreview(url: urls[index]).id(urls[index])
+            .padding(.horizontal, 12)
+            .padding(.vertical, 8)
+            .background(MacDesignColor.canvas)
+
+            Divider()
+
+            MacNativeDocumentPreview(url: currentURL).id(currentURL)
         }
-        .onChange(of: index) { _, value in onSelectionChanged(value) }
+        .onChange(of: index) { _, value in
+            copiedPath = false
+            onSelectionChanged(value)
+        }
+        .onDisappear {
+            copyFeedbackTask?.cancel()
+        }
     }
 }

@@ -46,6 +46,21 @@ revision 为正数。Core 新建、配置更新和 checkpoint 恢复均校验，
 
 有效调用并非一个已完成统一的抽象 DTO：当前代码有 ResolvedRemoteModelProfile/ResolvedModelRuntime、Host 绑定与 PreparedModelRequest。它们的解析和冻结时点须分开记录。 逐模块差距与证据边界见[源码核对](../../总体设计/ARCHITECTURE_SOURCE_AUDIT_20261108.md)。
 
+## 发送给模型前的脱敏
+
+Nola 在每次推理前调用 Rust Core 的 `nola_model_privacy::redact_model_request`。CLI、桌面宿主和模型网关调用 Rust 接口，Apple 和 Android 的直连、端侧适配器通过 C ABI 调用同一份实现。过滤作用于本次发给模型的副本，覆盖历史重放、工具返回和辅助模型请求。用户可以在本地会话中查看原文。
+
+| 内容 | 模型收到的内容 |
+| --- | --- |
+| 常见邮箱、大陆手机号、支持的国际电话号码、符合格式的大陆居民身份证号 | 对应的 `[EMAIL]`、`[PHONE]` 或 `[ID]` |
+| 已识别的令牌、私钥块、凭据字段，以及请求文本中出现的已配置长密钥 | `[CREDENTIAL]` |
+| 工具调用历史、工具结果中的 JSON、工具描述和参数示例 | 文本按同一规则处理。工具名、调用 ID、参数定义及关联关系保留 |
+| HTTP 认证头、模型 ID、附件二进制、提供方签名或加密的续传记录 | 按各自的协议传输 |
+
+占位符只表示类别。Core 不建立反查表，也不把占位符还原为工具执行参数。图片中的文字、附件文件内部以及自由文本中的人名和住址超出这套文本规则的识别范围。该功能保护模型请求，远程宿主仍按既有配对授权接收会话数据。
+
+运行 `python3 scripts/test_model_request_privacy.py` 可以用本地 HTTP 接收端检查三种协议中的首次请求与历史重放，还会检查一个真实的文件读取结果和本地保存的原文。
+
 ## 相关设计
 
 - [连接、账户与来源导入](MODEL_CONNECTION_IMPORT.md)

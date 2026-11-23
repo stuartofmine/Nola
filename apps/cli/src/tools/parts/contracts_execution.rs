@@ -3634,13 +3634,40 @@ fn bash_inline_program_paths_stay_in_allowed_dirs(
 
 fn bash_token_is_sensitive_path(token: &str) -> bool {
     let lower = token.to_ascii_lowercase();
+    let normalized = lower.replace('\\', "/");
+    if normalized.contains("library/application support/nola")
+        || normalized.contains("/.config/gh/")
+        || normalized.ends_with("/.config/gh")
+        || normalized == ".config/gh"
+        || normalized.starts_with(".config/gh/")
+    {
+        return true;
+    }
     lower.split(['/', '\\']).any(|component| {
         component == ".env"
             || (component.starts_with(".env.")
                 && !matches!(component, ".env.example" | ".env.sample" | ".env.template"))
             || matches!(
                 component,
-                ".ssh" | ".gnupg" | ".aws" | ".azure" | ".kube" | "keychains"
+                ".ssh"
+                    | ".gnupg"
+                    | ".aws"
+                    | ".azure"
+                    | ".kube"
+                    | ".docker"
+                    | ".nola"
+                    | ".git"
+                    | ".git-credentials"
+                    | ".netrc"
+                    | ".pgpass"
+                    | ".zsh_history"
+                    | ".bash_history"
+                    | "launchagents"
+                    | ".zshenv"
+                    | ".zprofile"
+                    | ".bash_profile"
+                    | ".bashrc"
+                    | "keychains"
                     | ".npmrc"
                     | ".pypirc"
                     | "credentials"

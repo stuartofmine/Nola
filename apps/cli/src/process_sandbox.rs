@@ -180,8 +180,15 @@ impl FrozenProcessSandbox {
         scoped
             .policy
             .deny_write
-            .push(PathBuf::from(&binding.selection.expected_common_directory));
-        scoped.policy.deny_write.push(root.join(".git"));
+            .push(crate::native_sandbox::canonicalize_for_sandbox(Path::new(
+                &binding.selection.expected_common_directory,
+            )));
+        scoped
+            .policy
+            .deny_write
+            .push(crate::native_sandbox::canonicalize_for_sandbox(
+                &root.join(".git"),
+            ));
         Ok(scoped)
     }
     pub(crate) fn prepare_shell(
@@ -394,13 +401,23 @@ pub(crate) fn prepare_anthropic_command(
         .canonicalize()
         .map_err(|error| error.to_string())?;
     let literal = |path: &Path| json!({"path": path, "literal": true});
+    let deny_read = policy
+        .deny_read
+        .iter()
+        .map(|p| crate::native_sandbox::canonicalize_for_sandbox(p))
+        .collect::<Vec<_>>();
+    let deny_write = policy
+        .deny_write
+        .iter()
+        .map(|p| crate::native_sandbox::canonicalize_for_sandbox(p))
+        .collect::<Vec<_>>();
     let settings = json!({
         "network": {"allowedDomains": policy.allowed_domains, "deniedDomains": []},
         "filesystem": {
-            "denyRead": std::iter::once(json!("/")).chain(policy.deny_read.iter().map(|p|literal(p))).collect::<Vec<_>>(),
+            "denyRead": std::iter::once(json!("/")).chain(deny_read.iter().map(|p|literal(p))).collect::<Vec<_>>(),
             "allowRead": readable.iter().map(|p|literal(p)).chain([literal(&home_path)]).collect::<Vec<_>>(),
             "allowWrite": writable.iter().map(|p|literal(p)).chain([literal(&home_path)]).collect::<Vec<_>>(),
-            "denyWrite": policy.deny_write.iter().map(|p|literal(p)).collect::<Vec<_>>()
+            "denyWrite": deny_write.iter().map(|p|literal(p)).collect::<Vec<_>>()
         }
     });
     let bytes = serde_json::to_vec(&settings).map_err(|error| error.to_string())?;

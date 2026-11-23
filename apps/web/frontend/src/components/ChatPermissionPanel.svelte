@@ -71,7 +71,7 @@
     </header>
     {#if parsed}
         <div class="permission-content" bind:this={content}>
-        <p class="tool">{toolDisplayName($locale, parsed.tool_name)}</p>
+        <p class="tool" data-tool-name={parsed.tool_name}>{toolDisplayName($locale, parsed.tool_name)}</p>
         {#if reviewText.trim()}<pre>{reviewText}</pre>{:else}<p>{t($locale, 'chatPermission.noDetails')}</p>{/if}
         <p class="muted">{t($locale, 'chatPermission.scope')}</p>
         {#if !active || status !== 'ready' || expired}

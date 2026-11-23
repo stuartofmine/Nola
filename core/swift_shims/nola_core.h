@@ -116,6 +116,8 @@ char* nola_core_lifecycle_hook_project_execution(const unsigned char* input_json
 
 // Prompt-cache diagnostics (digest-only; never accepts or returns prompt text).
 uint32_t nola_core_prompt_cache_abi_version(void);
+void nola_model_privacy_free(char* value);
+char* nola_core_redact_model_request_json(const unsigned char* input, size_t size, const unsigned char* credential, size_t credential_size);
 char* nola_core_prompt_cache_diagnose(const unsigned char* input_json, size_t input_len);
 // Typed Agent prompt composition. Core owns ordering, trust validation, reference
 // wrapping, and the stable cache prefix shape (ABI/schema v1).

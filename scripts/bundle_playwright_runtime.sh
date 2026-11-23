@@ -3,7 +3,13 @@ set -euo pipefail
 
 SOURCE="${NOLA_PLAYWRIGHT_SOURCE:-${SRCROOT}/apps/web/playwright_runtime}"
 DESTINATION="${NOLA_PLAYWRIGHT_OUTPUT:-${TARGET_BUILD_DIR}/${UNLOCALIZED_RESOURCES_FOLDER_PATH}/NolaPlaywrightRuntime}"
-CACHE="${NOLA_PLAYWRIGHT_CACHE:-${DERIVED_FILE_DIR}/nola-playwright-runtime}"
+SHARED_CACHE_ROOT="${HOME:+${HOME}/Library/Caches/NolaBuild}"
+CACHE="${NOLA_PLAYWRIGHT_CACHE:-${SHARED_CACHE_ROOT:+${SHARED_CACHE_ROOT}/playwright-runtime}}"
+CACHE="${CACHE:-${DERIVED_FILE_DIR}/nola-playwright-runtime}"
+
+clone_tree() {
+  cp -cR "$1" "$2" 2>/dev/null || cp -R "$1" "$2"
+}
 
 mkdir -p "$CACHE" "$(dirname "$DESTINATION")"
 cp "$SOURCE/package.json" "$SOURCE/package-lock.json" "$CACHE/"
@@ -43,17 +49,24 @@ if [[ "$NODE_MAJOR" -lt 20 || "$NPM_MAJOR" -lt 9 ]]; then
   echo "error: Playwright bundling requires Node >=20 and npm >=9 (found Node $NODE_MAJOR, npm $NPM_VERSION)" >&2
   exit 1
 fi
-if [[ ! -d "$CACHE/node_modules/playwright-core" ]]; then
+LOCK_HASH="$(/usr/bin/shasum -a 256 "$SOURCE/package-lock.json" | awk '{print $1}')"
+INSTALLED_HASH=""
+if [[ -f "$CACHE/.node_modules.sha256" ]]; then
+  INSTALLED_HASH="$(cat "$CACHE/.node_modules.sha256" 2>/dev/null || true)"
+fi
+if [[ ! -d "$CACHE/node_modules/playwright-core" || "$INSTALLED_HASH" != "$LOCK_HASH" ]]; then
   (cd "$CACHE" && PATH="$(dirname "$NODE_BIN"):$PATH" "$NODE_BIN" "$NPM_BIN" ci --omit=dev --ignore-scripts=false)
+  printf '%s\n' "$LOCK_HASH" > "$CACHE/.node_modules.sha256"
 fi
 cp "$SOURCE/bridge.cjs" "$CACHE/bridge.cjs"
 cp "$SOURCE/owner_queue.cjs" "$CACHE/owner_queue.cjs"
 cp "$SOURCE/browser_use.cjs" "$CACHE/browser_use.cjs"
 rm -rf "$DESTINATION"
 mkdir -p "$DESTINATION"
-cp -R "$CACHE/bridge.cjs" "$CACHE/owner_queue.cjs" "$CACHE/browser_use.cjs" "$CACHE/package.json" "$CACHE/package-lock.json" "$CACHE/node_modules" "$DESTINATION/"
+cp "$CACHE/bridge.cjs" "$CACHE/owner_queue.cjs" "$CACHE/browser_use.cjs" "$CACHE/package.json" "$CACHE/package-lock.json" "$DESTINATION/"
+clone_tree "$CACHE/node_modules" "$DESTINATION/node_modules"
 mkdir -p "$DESTINATION/bin"
-cp "$NODE_BIN" "$DESTINATION/bin/node"
+cp -c "$NODE_BIN" "$DESTINATION/bin/node" 2>/dev/null || cp "$NODE_BIN" "$DESTINATION/bin/node"
 chmod 755 "$DESTINATION/bin/node"
 if [[ "${CODE_SIGNING_ALLOWED:-NO}" == "YES" ]]; then
   . "$(dirname "$0")/lib/install_mac_executable.sh"

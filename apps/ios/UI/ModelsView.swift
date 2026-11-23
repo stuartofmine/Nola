@@ -283,8 +283,14 @@ struct ModelsView: View {
                 )
                 .accessibilityIdentifier("model.host.messaging.card")
                 VStack(alignment: .leading, spacing: 5) {
-                    Text(NSLocalizedString("model.host.messaging.title", value: "Messaging channels", comment: "Host messaging channels title"))
-                        .font(.subheadline.weight(.semibold))
+                    HStack(spacing: 6) {
+                        Text(NSLocalizedString("model.host.messaging.title", value: "Messaging channels", comment: "Host messaging channels title"))
+                            .font(.subheadline.weight(.semibold))
+                        if let model = hostModels.first,
+                           let connection = resolvedHostConnection(for: model) {
+                            iosTransportModeBadge(for: connection.baseURL)
+                        }
+                    }
                     Text(String(format: NSLocalizedString(
                         "model.host.messaging.summary",
                         value: "%lld connected of %lld · background worker %@",
@@ -861,38 +867,6 @@ struct WebHostConfigurationView: View {
         let pairedURL = pairedHost
         return Form {
             Group {
-            if pairedURL == nil {
-                Section {
-                    VStack(alignment: .leading, spacing: 12) {
-                        Label {
-                            Text(NSLocalizedString(
-                                "model.web_host.setup.start",
-                                value: "On the Mac, open Nola Settings > Connections and enable “Share this Mac as a Nola Server”.",
-                                comment: "Web Host setup first step"
-                            ))
-                        } icon: {
-                            Image(systemName: "1.circle.fill")
-                                .foregroundStyle(DesignTokens.primaryColor)
-                        }
-
-                        Label {
-                            Text(NSLocalizedString(
-                                "model.web_host.setup.copy",
-                                value: "Copy the address and pairing token shown by Nola on the Mac. Keep both devices on a trusted private network, or use HTTPS.",
-                                comment: "Web Host setup second step"
-                            ))
-                        } icon: {
-                            Image(systemName: "2.circle.fill")
-                                .foregroundStyle(DesignTokens.primaryColor)
-                        }
-                    }
-                    .font(.subheadline)
-                } header: {
-                    Text(NSLocalizedString("model.web_host.setup", value: "Before connecting", comment: "Web Host setup section"))
-                        .accessibilityIdentifier("model.web_host.first_steps")
-                }
-            }
-
             Section {
                 // Page-style tabs may build offscreen siblings during presentation.
                 // Constructing a system paste control contacts the pasteboard service.
@@ -903,6 +877,7 @@ struct WebHostConfigurationView: View {
                                 errorMessage = NSLocalizedString("model.web_host.invalid_setup", value: "Copy Connection Setup from Nola on the host, then paste it here.", comment: "Invalid host setup")
                                 return
                             }
+                            connectionField = nil
                             importedSetup = setup
                             hostURL = setup.origin.absoluteString
                             accessToken = setup.accessToken
@@ -915,12 +890,28 @@ struct WebHostConfigurationView: View {
                         .accessibilityLabel(Text("model.web_host.paste_setup"))
                         .accessibilityIdentifier("model.web_host.paste_setup")
                     } else {
-                        ProgressView().controlSize(.small)
-                            .accessibilityLabel(Text("model.web_host.paste_setup"))
+                        Image(systemName: "doc.on.clipboard")
+                            .foregroundStyle(.secondary)
                             .frame(minHeight: 44)
+                            .accessibilityHidden(true)
                     }
                 } label: {
                     Text("model.web_host.setup_payload")
+                }
+
+                if pairedURL == nil {
+                    DisclosureGroup {
+                        VStack(alignment: .leading, spacing: 8) {
+                            Text("model.web_host.setup.start")
+                            Text("model.web_host.setup.copy")
+                        }
+                        .font(.subheadline)
+                        .foregroundStyle(.secondary)
+                        .padding(.vertical, 4)
+                    } label: {
+                        Label("model.web_host.setup", systemImage: "questionmark.circle")
+                    }
+                    .accessibilityIdentifier("model.web_host.first_steps")
                 }
 
                 // Both responders must exist when Next is pressed, even when
@@ -982,10 +973,20 @@ struct WebHostConfigurationView: View {
                         .foregroundStyle(.red)
                         .accessibilityIdentifier("model.web_host.validation_error")
                 } else if verifiedAddress == hostURL && accessToken.isEmpty {
-                    Label("chat.host_pairing.verified", systemImage: "checkmark.circle")
-                        .accessibilityIdentifier("model.web_host.verified")
+                    HStack(spacing: 8) {
+                        Label("chat.host_pairing.verified", systemImage: "checkmark.circle")
+                            .accessibilityIdentifier("model.web_host.verified")
+                        if let url = IOSHostConnectionDraftPolicy.endpoint(hostURL) {
+                            iosTransportModeBadge(for: url)
+                        }
+                    }
                 } else if pairedURL != nil && accessToken.isEmpty {
-                    Label("chat.host_pairing.identity", systemImage: "checkmark.shield")
+                    HStack(spacing: 8) {
+                        Label("chat.host_pairing.identity", systemImage: "checkmark.shield")
+                        if let url = pairedURL {
+                            iosTransportModeBadge(for: url)
+                        }
+                    }
                 } else {
                     Text(NSLocalizedString(
                         "model.web_host.connection.footer",
@@ -1098,12 +1099,15 @@ struct WebHostConfigurationView: View {
             connect()
         } label: {
             Group {
-                if isConnecting && !reduceMotion {
-                    ProgressView()
-                        .tint(prominent ? DesignTokens.onActionColor : nil)
-                        .accessibilityLabel(Text("model.web_host.checking"))
-                } else if isConnecting {
-                    Text("model.web_host.checking")
+                if isConnecting {
+                    HStack(spacing: 8) {
+                        if !reduceMotion {
+                            ProgressView().controlSize(.small)
+                                .tint(prominent ? DesignTokens.onActionColor : nil)
+                                .accessibilityHidden(true)
+                        }
+                        Text("model.web_host.checking")
+                    }
                 } else {
                     Text(paired ? LocalizedStringKey("model.web_host.recheck") : LocalizedStringKey("model.web_host.connect"))
                         .font(prominent ? .headline : .body)
@@ -1146,25 +1150,45 @@ struct WebHostConfigurationView: View {
             errorMessage = NSLocalizedString("model.web_host.missing_token", value: "Enter the access token for this host.", comment: "Missing Web Host token error")
             return
         }
+        let draftHostID: String? = {
+            if let setup = importedSetup, AppleHostConnectionSetup.sameOrigin(setup.origin, url) {
+                return setup.hostID
+            }
+            return ModelSelectionManager.pairedWebHostIdentity(for: url)
+        }()
         connectionField = nil
         isConnecting = true
         connectionTask = Task { @MainActor in
+            var committed = false
             defer {
+                if !committed {
+                    NolaTailcatTransport.unregisterTransient(origin: url)
+                }
                 isConnecting = false
                 connectionTask = nil
                 onVerificationChanged(nil)
             }
             do {
+                if let draftHostID, !draftHostID.isEmpty {
+                    NolaTailcatTransport.registerTransient(
+                        origin: url,
+                        hostID: draftHostID,
+                        token: token,
+                        certificatePin: nil
+                    )
+                }
                 try await WebAgentProvider.validateToken(
                     baseURL: url,
                     token: token,
-                    pinnedCertificateSHA256: nil
+                    pinnedCertificateSHA256: nil,
+                    expectedHostID: draftHostID
                 )
                 let settings = try await WebAgentProvider.fetchHostAgentSettings(
                     baseURL: url,
                     token: token,
                     pinnedCertificateSHA256: nil,
-                    modelsOnly: true
+                    modelsOnly: true,
+                    expectedHostID: draftHostID
                 )
                 try Task.checkCancellation()
                 guard settings.host_identity?.permission_protocol_version == WebAgentProvider.hostPermissionProtocolVersion,
@@ -1176,6 +1200,9 @@ struct WebHostConfigurationView: View {
                     throw WebHostPairingFailure.identityChanged
                 }
                 try ModelSelectionManager.saveVerifiedHostPairing(identity, token: token, for: url)
+                NolaTailcatTransport.register(baseURL: url, token: token, hostID: identity, certificatePin: nil)
+                NolaTailcatTransport.unregisterTransient(origin: url)
+                committed = true
                 let model = ModelSelectionManager.webBackendModel(
                     baseURL: rawURL,
                     pinnedCertificateSHA256: nil
@@ -1409,7 +1436,35 @@ enum IOSModelInferenceTestRoute {
 }
 
 
+@ViewBuilder
+private func iosTransportModeBadge(for url: URL) -> some View {
+    let mode = NolaTailcatTransport.currentTransportMode(for: url)
+    let isTailcat: Bool = {
+        if case .tailcat = mode { return true }
+        return false
+    }()
+    let label = isTailcat
+        ? NSLocalizedString("model.host.transport.tailcat", value: "Tailcat", comment: "Tailcat transport badge")
+        : NSLocalizedString("model.host.transport.direct", value: "Direct", comment: "Direct transport badge")
+    let symbol = isTailcat ? "point.3.connected.trianglepath.dotted" : "network"
+    Label(label, systemImage: symbol)
+        .font(.caption2.weight(.medium))
+        .foregroundStyle(.secondary)
+        .padding(.horizontal, 7)
+        .padding(.vertical, 2)
+        .background(DesignTokens.surfaceColor, in: Capsule())
+        .overlay(Capsule().stroke(DesignTokens.borderColor, lineWidth: 0.5))
+        .accessibilityIdentifier("model.host.transport_badge")
+}
+
 func webHostPairingErrorMessage(_ error: Error) -> String {
+    if let tailcatMessage = NolaTailcatTransport.userFacingErrorMessage(for: error) {
+        return tailcatMessage
+    }
+    if case let NolaError.llm(.network(underlying)) = error,
+       underlying.domain == "WebAgentProvider.Tailcat" {
+        return underlying.localizedDescription
+    }
     switch error {
     case WebHostPairingFailure.unsupportedPermissionProtocol:
         return NSLocalizedString("model.web_host.error.protocol", value: "This host uses an unsupported permission protocol. Update Nola on the host and try again.", comment: "Unsupported Web Host protocol")

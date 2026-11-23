@@ -145,9 +145,9 @@ final class OpenAIProviderTests: XCTestCase {
         let payload: [String: Any] = [
             "system_prompt": "system",
             "messages": [
-                ["role": "user", "content": "read"],
+                ["role": "user", "content": "read for person@example.org"],
                 ["role": "assistant", "content": "", "tool_calls": [["id": "turn::call_1", "name": "read", "arguments": [:]]]],
-                ["role": "tool", "content": "done", "tool_call_id": "turn::call_1"],
+                ["role": "tool", "content": "done for 13800138000", "tool_call_id": "turn::call_1"],
             ],
             "tools": [["type": "function", "function": ["name": "read", "parameters": ["type": "object"]]]],
         ]
@@ -172,6 +172,10 @@ final class OpenAIProviderTests: XCTestCase {
         let request = try provider.responsesRequest(input: input)
         XCTAssertEqual(request.url?.path, "/v1/responses")
         let body = try XCTUnwrap(try JSONSerialization.jsonObject(with: XCTUnwrap(request.httpBody)) as? [String: Any])
+        let wire = String(decoding: try XCTUnwrap(request.httpBody), as: UTF8.self)
+        XCTAssertTrue(wire.contains("[EMAIL]") && wire.contains("[PHONE]"))
+        XCTAssertFalse(wire.contains("person@example.org") || wire.contains("13800138000"))
+        XCTAssertEqual(request.value(forHTTPHeaderField: "Authorization"), "Bearer fixture")
         XCTAssertEqual(body["store"] as? Bool, false)
         XCTAssertEqual(body["include"] as? [String], ["reasoning.encrypted_content"])
         XCTAssertEqual((body["reasoning"] as? [String: String])?["summary"], "auto")

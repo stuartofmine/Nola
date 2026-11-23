@@ -388,23 +388,87 @@ public final class ModelDownloader: ObservableObject {
         incompleteModels.contains(model) && !downloadedModels.contains(model)
     }
 
+    private struct VerifiedFileReceipt: Codable, Equatable, Sendable {
+        let size: Int64
+        let mtime: Double
+        let sha256: String
+    }
+
+    private nonisolated static let verifiedReceiptFilename = ".nola-verified.json"
+
+    private nonisolated static func verifiedReceiptURL(in modelPath: URL) -> URL {
+        modelPath.appendingPathComponent(verifiedReceiptFilename)
+    }
+
+    private nonisolated static func loadVerifiedReceipts(in modelPath: URL) -> [String: VerifiedFileReceipt] {
+        let url = verifiedReceiptURL(in: modelPath)
+        guard let data = try? Data(contentsOf: url),
+              let receipts = try? JSONDecoder().decode([String: VerifiedFileReceipt].self, from: data) else {
+            return [:]
+        }
+        return receipts
+    }
+
+    private nonisolated static func saveVerifiedReceipts(_ receipts: [String: VerifiedFileReceipt], in modelPath: URL) {
+        let url = verifiedReceiptURL(in: modelPath)
+        guard let data = try? JSONEncoder().encode(receipts) else { return }
+        try? data.write(to: url, options: .atomic)
+    }
+
+    private nonisolated static func fileMetadata(at url: URL) -> (size: Int64, mtime: Double)? {
+        guard let attributes = try? FileManager.default.attributesOfItem(atPath: url.path),
+              let size = (attributes[.size] as? NSNumber)?.int64Value,
+              let modifiedDate = attributes[.modificationDate] as? Date else {
+            return nil
+        }
+        return (size, modifiedDate.timeIntervalSince1970)
+    }
+
+    private nonisolated static func receiptMatches(
+        _ receipt: VerifiedFileReceipt,
+        size: Int64,
+        mtime: Double,
+        expectedHash: String
+    ) -> Bool {
+        receipt.size == size
+            && abs(receipt.mtime - mtime) < 0.001
+            && receipt.sha256.lowercased() == expectedHash.lowercased()
+    }
+
     /// Validate a model directory on disk (safe to run off @MainActor).
     public nonisolated static func validateDownloadedModelOnDisk(_ model: ModelType, at modelPath: URL) -> Bool {
         guard model.validatesDownloadedFiles(at: modelPath) else {
             return false
         }
-        let fileManager = FileManager.default
+        let needsHashVerification = model.requiredFiles.contains { !$0.sha256.isEmpty }
+        var receipts = needsHashVerification ? loadVerifiedReceipts(in: modelPath) : [:]
+        var receiptsDirty = false
+
         for fileInfo in model.requiredFiles {
             let filePath = modelPath.appendingPathComponent(fileInfo.name)
-            if !fileManager.fileExists(atPath: filePath.path) {
+            guard let metadata = fileMetadata(at: filePath), metadata.size > 0 else {
                 return false
             }
             if !fileInfo.sha256.isEmpty {
+                let expectedHash = fileInfo.sha256.lowercased()
+                if let receipt = receipts[fileInfo.name],
+                   receiptMatches(receipt, size: metadata.size, mtime: metadata.mtime, expectedHash: expectedHash) {
+                    continue
+                }
                 guard let actualHash = try? calculateSHA256(for: filePath),
-                      actualHash.lowercased() == fileInfo.sha256.lowercased() else {
+                      actualHash.lowercased() == expectedHash else {
                     return false
                 }
+                receipts[fileInfo.name] = VerifiedFileReceipt(
+                    size: metadata.size,
+                    mtime: metadata.mtime,
+                    sha256: expectedHash
+                )
+                receiptsDirty = true
             }
+        }
+        if receiptsDirty {
+            saveVerifiedReceipts(receipts, in: modelPath)
         }
         return true
     }
@@ -496,6 +560,7 @@ public final class ModelDownloader: ObservableObject {
             try FileManager.default.createDirectory(at: modelPath, withIntermediateDirectories: true)
             
             var accumulatedBytes: Int64 = 0
+            var verifiedReceipts: [String: VerifiedFileReceipt] = [:]
             for (index, fileInfo) in model.requiredFiles.enumerated() {
                 guard let fileURL = model.fileURL(fileName: fileInfo.name, source: preferredSource) else {
                     throw NSError(domain: "ModelDownloader", code: -2, userInfo: [
@@ -543,6 +608,13 @@ public final class ModelDownloader: ObservableObject {
                         let isValid = try verifyFileIntegrity(at: destinationURL, expectedHash: fileInfo.sha256)
                         
                         if isValid {
+                            if let metadata = Self.fileMetadata(at: destinationURL) {
+                                verifiedReceipts[fileInfo.name] = VerifiedFileReceipt(
+                                    size: metadata.size,
+                                    mtime: metadata.mtime,
+                                    sha256: fileInfo.sha256.lowercased()
+                                )
+                            }
                             logger.log(.info, "ModelDownloader", "File verified", metadata: ["file": fileInfo.name])
                             downloadSucceeded = true
                         } else {
@@ -579,7 +651,9 @@ public final class ModelDownloader: ObservableObject {
                 
                 accumulatedBytes += fileInfo.size
             }
-            
+
+            Self.saveVerifiedReceipts(verifiedReceipts, in: modelPath)
+
             await MainActor.run {
                 downloadedModels.insert(model)
                 incompleteModels.remove(model)

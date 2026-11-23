@@ -200,11 +200,17 @@ class MLXService {
         // Explicit start has already populated the cache.
         let modelContainer = try await load(model: model)
 
+        let body: [String: String] = ["prompt": prompt, "system": systemPrompt ?? ""]
+        let wire = try redactedModelRequestBody(JSONEncoder().encode(body), credential: "")
+        let filtered = try JSONDecoder().decode([String: String].self, from: wire)
+        guard let safePrompt = filtered["prompt"], let safeSystem = filtered["system"] else {
+            throw NolaError.llm(.invalidInput(reason: "Model request privacy filter unavailable."))
+        }
         let effectivePrompt: String
         if !enableThinking, model.name.localizedCaseInsensitiveContains("qwen3") {
-            effectivePrompt = prompt + "\n/no_think"
+            effectivePrompt = safePrompt + "\n/no_think"
         } else {
-            effectivePrompt = prompt
+            effectivePrompt = safePrompt
         }
         if let seed {
             MLXRandom.seed(UInt64(bitPattern: Int64(seed)))
@@ -213,8 +219,8 @@ class MLXService {
         // Generate response using the model
         return try await modelContainer.perform { (context: ModelContext) in
             var messages: [Chat.Message] = []
-            if let systemPrompt {
-                messages.append(Chat.Message(role: .system, content: systemPrompt))
+            if systemPrompt != nil {
+                messages.append(Chat.Message(role: .system, content: safeSystem))
             }
             messages.append(Chat.Message(role: .user, content: effectivePrompt))
             let lmInput = try await context.processor.prepare(input: UserInput(chat: messages))

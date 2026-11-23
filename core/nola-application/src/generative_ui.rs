@@ -7,13 +7,26 @@ use serde::{Deserialize, Serialize};
 use serde_json::json;
 use sha2::{Digest, Sha256};
 
-fn ui_protocol_failure(error: nola_domain::generative_ui::UiError) -> String {
+fn ui_protocol_failure(error: nola_domain::generative_ui::UiError, messages: &[serde_json::Value]) -> String {
     use nola_domain::generative_ui::UiError;
     match error {
-        UiError::UnsupportedProtocol | UiError::UnsupportedCatalog | UiError::InvalidMessage => format!(
-            "{error}. render_ui accepts only v0.9.1: each messages element must include version=\"v0.9.1\" and exactly one message payload. createSurface requires surfaceId and catalogId=\"{}\"; updateComponents and updateDataModel keep surfaceId inside their payload. Button requires child referencing a separate Text node, not label. The entire rejected batch committed nothing; retry corrected arguments with the same expected_revision. Minimal valid arguments: {}",
-            nola_kernel::generative_ui::schema::NOLA_CATALOG_ID,
-            nola_kernel::generative_ui::schema::minimal_form_example()),
+        UiError::UnsupportedProtocol
+        | UiError::UnsupportedCatalog
+        | UiError::UnsupportedComponent
+        | UiError::UnsupportedFunction
+        | UiError::InvalidMessage => {
+            let diagnostics = nola_kernel::generative_ui::schema::diagnose_messages(messages);
+            let details = if diagnostics.is_empty() {
+                String::new()
+            } else {
+                format!(" Validation details: {}.", diagnostics.join(" | "))
+            };
+            format!(
+                "{error}.{details} render_ui accepts only v0.9.1: each messages element must include version=\"v0.9.1\" and exactly one message payload. createSurface requires surfaceId and catalogId=\"{}\"; updateComponents and updateDataModel keep surfaceId inside their payload. Button requires child referencing a separate Text node, not label; Card uses singular child. The entire rejected batch committed nothing; retry corrected arguments with the same expected_revision. Minimal valid arguments: {}",
+                nola_kernel::generative_ui::schema::NOLA_CATALOG_ID,
+                nola_kernel::generative_ui::schema::minimal_form_example()
+            )
+        }
         _ => error.to_string(),
     }
 }
@@ -32,7 +45,12 @@ where R: GenerativeUiRepository + ProjectionJournalRepository + CommandProtocolR
     crate::assistant_publication_transaction::with_publication_transaction(store, |store| {
         let previous = store.read_ui_surface(&input.identity).map_err(|error| error.to_string())?;
         let next = transition_messages(previous.as_ref(), &input.identity, &input.input)
-            .map_err(ui_protocol_failure)?;
+            .map_err(|error| ui_protocol_failure(error, &input.input.messages))?;
+        let has_create = input.input.messages.iter().any(|message| message.get("createSurface").is_some());
+        let has_components = input.input.messages.iter().any(|message| message.get("updateComponents").is_some());
+        if has_create && has_components && !next.components.contains_key("root") {
+            return Err("updateComponents must include a root component with id \"root\". The entire rejected batch committed nothing; retry corrected arguments with the same expected_revision.".into());
+        }
         // Projection admission is part of the write: unsupported bindings or
         // functions cannot commit a state that no renderer can consume.
         let projected = project_surface(&next).map_err(|error| error.to_string())?;
@@ -228,7 +246,7 @@ where R: GenerativeUiRepository + ProjectionJournalRepository + CommandProtocolR
         let owner = store.ui_tool_owner(&stored.run_id, turn_id, call_id).map_err(|error| error.to_string())?;
         let first = input.messages.first().ok_or("UI message batch is empty")?;
         let first = nola_kernel::generative_ui::parse_a2ui_message(&serde_json::to_vec(first).map_err(|error| error.to_string())?)
-            .map_err(ui_protocol_failure)?;
+            .map_err(|error| ui_protocol_failure(error, std::slice::from_ref(first)))?;
         let surface_id = first.surface_id().to_owned();
         let existing = store.list_ui_surfaces(&owner.authority_id, &owner.conversation_id).map_err(|error| error.to_string())?
             .into_iter().filter(|surface| surface.identity.owner.context_id == owner.context_id
@@ -549,5 +567,137 @@ mod projection_changes_tests {
             }
             _ => panic!("deletion must materialize the new projection"),
         }
+    }
+
+    #[test]
+    fn ui_protocol_failure_surfaces_concrete_field_diagnostics() {
+        let messages = vec![
+            json!({
+                "version": "v0.9.1",
+                "updateComponents": {
+                    "surfaceId": "form",
+                    "components": [
+                        {"id": "root", "component": "Column", "children": ["submit"]},
+                        {"id": "submit", "component": "Button", "label": "Submit", "action": {"event": {"name": "submit"}}}
+                    ]
+                }
+            }),
+        ];
+        let failure = ui_protocol_failure(UiError::InvalidMessage, &messages);
+        assert!(failure.contains("Validation details:"), "{failure}");
+        assert!(failure.contains("Button") && failure.contains("\"child\""), "{failure}");
+    }
+
+    #[test]
+    fn publish_ui_messages_fast_fails_missing_root_when_create_and_components_are_batched() {
+        use nola_store_port::protocol_journal::{
+            AppendProjectionEventInput, BeginCommandReceiptInput, BeginCommandReceiptResult,
+            CommandProtocolRepositoryProvider, CommandReceiptRepository, CommandRevisionEntity,
+            CommandTransactionRepository, CompleteCommandReceiptOutcome, ProjectionJournalRepository,
+            ProjectionScopeKey, ReceiptAdmissionError, StoredCommandReceipt, StoredProjectionCursor,
+            StoredProjectionEvent,
+        };
+        struct MemStore {
+            saved: Option<UiSurfaceState>,
+        }
+        impl GenerativeUiRepository for MemStore {
+            type Error = String;
+            fn ui_authority_id(&self) -> Result<String, String> { Ok("host".into()) }
+            fn read_ui_surface(&self, _: &UiSurfaceIdentity) -> Result<Option<UiSurfaceState>, String> { Ok(self.saved.clone()) }
+            fn read_ui_surface_revision(&self, _: &UiSurfaceIdentity, _: u64) -> Result<Option<UiSurfaceState>, String> { Ok(None) }
+            fn ui_tool_owner(&self, _: &str, _: &str, _: &str) -> Result<UiSurfaceOwner, String> { unreachable!() }
+            fn next_ui_generation(&self, _: &UiSurfaceOwner, _: &str) -> Result<u64, String> { unreachable!() }
+            fn ui_tool_publication(&self, _: &str) -> Result<Option<(String, String)>, String> { unreachable!() }
+            fn record_ui_tool_publication(&mut self, _: &str, _: &str, _: &str) -> Result<(), String> { unreachable!() }
+            fn write_ui_surface(&mut self, _: u64, state: &UiSurfaceState) -> Result<(), String> { self.saved = Some(state.clone()); Ok(()) }
+            fn write_ui_surface_part(&mut self, _: &UiSnapshot, _: i64) -> Result<(), String> { Ok(()) }
+            fn list_ui_surfaces(&self, _: &str, _: &str) -> Result<Vec<UiSurfaceState>, String> { Ok(self.saved.clone().into_iter().collect()) }
+        }
+        impl ProjectionJournalRepository for MemStore {
+            type Error = String;
+            fn projection_cursor(&self, _: &ProjectionScopeKey) -> Result<Option<StoredProjectionCursor>, String> { Ok(None) }
+            fn append_projection_event(&mut self, input: &AppendProjectionEventInput) -> Result<StoredProjectionEvent, String> {
+                Ok(StoredProjectionEvent {
+                    event_id: input.event_id.clone(),
+                    scope: input.scope.clone(),
+                    sequence: 1,
+                    payload_json: input.payload_json.clone(),
+                    occurred_at: input.occurred_at.clone(),
+                })
+            }
+            fn projection_events_after(&self, _: &ProjectionScopeKey, _: u64, _: usize) -> Result<Vec<StoredProjectionEvent>, String> { Ok(vec![]) }
+        }
+        impl CommandReceiptRepository for MemStore {
+            type Error = String;
+            fn begin_command_receipt(&mut self, _: &BeginCommandReceiptInput) -> Result<BeginCommandReceiptResult, ReceiptAdmissionError<String>> { unreachable!() }
+            fn command_receipt(&self, _: &str, _: &str) -> Result<Option<StoredCommandReceipt>, String> { Ok(None) }
+            fn complete_command_receipt(&mut self, _: &str, _: &str, _: &str, _: &CompleteCommandReceiptOutcome) -> Result<StoredCommandReceipt, String> { unreachable!() }
+        }
+        impl CommandTransactionRepository for MemStore {
+            type Error = String;
+            fn has_write_unit_of_work(&self) -> bool { false }
+            fn begin_write_unit_of_work(&mut self) -> Result<(), String> { Ok(()) }
+            fn commit_write_unit_of_work(&mut self) -> Result<(), String> { Ok(()) }
+            fn rollback_write_unit_of_work(&mut self) -> Result<(), String> { Ok(()) }
+            fn begin_command_mutations(&mut self) -> Result<(), String> { Ok(()) }
+            fn commit_command_mutations(&mut self) -> Result<(), String> { Ok(()) }
+            fn rollback_command_mutations(&mut self) -> Result<(), String> { Ok(()) }
+            fn command_revision(&self, _: CommandRevisionEntity<'_>) -> Result<Option<i64>, String> { Ok(None) }
+        }
+        impl CommandProtocolRepositoryProvider for MemStore {
+            type Error = String;
+            type Repository<'a> = &'a mut Self;
+            fn command_protocol_repository(&mut self) -> Self::Repository<'_> { self }
+        }
+        impl CommandReceiptRepository for &mut MemStore {
+            type Error = String;
+            fn begin_command_receipt(&mut self, input: &BeginCommandReceiptInput) -> Result<BeginCommandReceiptResult, ReceiptAdmissionError<String>> { (**self).begin_command_receipt(input) }
+            fn command_receipt(&self, client_id: &str, request_id: &str) -> Result<Option<StoredCommandReceipt>, String> { (**self).command_receipt(client_id, request_id) }
+            fn complete_command_receipt(&mut self, client_id: &str, request_id: &str, completed_at: &str, outcome: &CompleteCommandReceiptOutcome) -> Result<StoredCommandReceipt, String> { (**self).complete_command_receipt(client_id, request_id, completed_at, outcome) }
+        }
+        impl CommandTransactionRepository for &mut MemStore {
+            type Error = String;
+            fn has_write_unit_of_work(&self) -> bool { (**self).has_write_unit_of_work() }
+            fn begin_write_unit_of_work(&mut self) -> Result<(), String> { (**self).begin_write_unit_of_work() }
+            fn commit_write_unit_of_work(&mut self) -> Result<(), String> { (**self).commit_write_unit_of_work() }
+            fn rollback_write_unit_of_work(&mut self) -> Result<(), String> { (**self).rollback_write_unit_of_work() }
+            fn begin_command_mutations(&mut self) -> Result<(), String> { (**self).begin_command_mutations() }
+            fn commit_command_mutations(&mut self) -> Result<(), String> { (**self).commit_command_mutations() }
+            fn rollback_command_mutations(&mut self) -> Result<(), String> { (**self).rollback_command_mutations() }
+            fn command_revision(&self, entity: CommandRevisionEntity<'_>) -> Result<Option<i64>, String> { (**self).command_revision(entity) }
+        }
+
+        let identity = fixture().identity;
+        let mut store = MemStore { saved: None };
+        let missing_root = PublishUiMessages {
+            identity: identity.clone(),
+            input: nola_domain::generative_ui_tool::UiToolInput {
+                expected_revision: 0,
+                messages: vec![
+                    json!({"version":"v0.9.1","createSurface":{"surfaceId":"form","catalogId":nola_kernel::generative_ui::schema::NOLA_CATALOG_ID}}),
+                    json!({"version":"v0.9.1","updateComponents":{"surfaceId":"form","components":[
+                        {"id":"main","component":"Text","text":"Forgot root id"}
+                    ]}}),
+                ],
+            },
+            occurred_at: "100".into(),
+        };
+        let err = publish_ui_messages(&mut store, missing_root).unwrap_err();
+        assert!(err.contains("updateComponents must include a root component with id \"root\""), "{err}");
+        assert!(store.saved.is_none());
+
+        // createSurface alone is still permitted to commit as Pending.
+        let create_only = PublishUiMessages {
+            identity,
+            input: nola_domain::generative_ui_tool::UiToolInput {
+                expected_revision: 0,
+                messages: vec![
+                    json!({"version":"v0.9.1","createSurface":{"surfaceId":"form","catalogId":nola_kernel::generative_ui::schema::NOLA_CATALOG_ID}}),
+                ],
+            },
+            occurred_at: "100".into(),
+        };
+        let snapshot = publish_ui_messages(&mut store, create_only).unwrap();
+        assert_eq!(snapshot.phase, UiSurfacePhase::Pending);
     }
 }

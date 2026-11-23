@@ -136,6 +136,7 @@ enum MacAgentOrchestrationService {
         requestID: String,
         arguments: [String: Any],
         workspaceURL: URL?,
+        conversationID: String? = nil,
         appEnvironment: MacAppEnvironment = .shared
     ) async -> Data {
         let response: [String: Any]
@@ -144,7 +145,12 @@ enum MacAgentOrchestrationService {
             let request = try JSONDecoder().decode(MacAgentOrchestrationRequest.self, from: data)
             let result: MacAgentOrchestrationResult
             if appEnvironment.supportRoot == MacAppEnvironment.shared.supportRoot {
-                result = try await apply(request, workspaceURL: workspaceURL)
+                result = try await apply(
+                    request,
+                    workspaceURL: workspaceURL,
+                    conversationID: conversationID,
+                    appEnvironment: appEnvironment
+                )
             } else {
                 let registry = MacDataSourceRegistry(
                     storeURL: appEnvironment.supportRoot
@@ -175,6 +181,8 @@ enum MacAgentOrchestrationService {
                 result = try await apply(
                     request,
                     workspaceURL: workspaceURL,
+                    conversationID: conversationID,
+                    appEnvironment: appEnvironment,
                     automationStore: automationStore,
                     workspaceIsAuthorized: { candidate in
                         guard let workspaceURL else { return false }
@@ -225,21 +233,29 @@ enum MacAgentOrchestrationService {
 
     static func apply(
         arguments: String,
-        workspaceURL: URL?
+        workspaceURL: URL?,
+        conversationID: String? = nil,
+        appEnvironment: MacAppEnvironment = .shared
     ) async throws -> MacAgentOrchestrationResult {
         try await apply(
             MacAgentOrchestrationRequest.decode(arguments: arguments),
-            workspaceURL: workspaceURL
+            workspaceURL: workspaceURL,
+            conversationID: conversationID,
+            appEnvironment: appEnvironment
         )
     }
 
     static func apply(
         _ request: MacAgentOrchestrationRequest,
-        workspaceURL: URL?
+        workspaceURL: URL?,
+        conversationID: String? = nil,
+        appEnvironment: MacAppEnvironment = .shared
     ) async throws -> MacAgentOrchestrationResult {
         try await apply(
             request,
             workspaceURL: workspaceURL,
+            conversationID: conversationID,
+            appEnvironment: appEnvironment,
             automationStore: .shared,
             workspaceIsAuthorized: { workspace in
                 MacSecurityScopedBookmarkStore.shared.isAuthorizedWorkspace(workspace)
@@ -250,6 +266,8 @@ enum MacAgentOrchestrationService {
     static func apply(
         _ request: MacAgentOrchestrationRequest,
         workspaceURL: URL?,
+        conversationID: String? = nil,
+        appEnvironment: MacAppEnvironment = .shared,
         automationStore: MacAutomationStore,
         workspaceIsAuthorized: (URL) -> Bool,
         webSourceStore: MacWebSourceStore? = nil
@@ -272,7 +290,14 @@ enum MacAgentOrchestrationService {
             throw MacAgentOrchestrationError.invalidSchedule
         }
 
-        let workspace = workspaceURL ?? MacAppEnvironment.shared.scratchWorkspaceURL
+        let workspace: URL
+        if let workspaceURL {
+            workspace = workspaceURL
+        } else if let conversationID, !conversationID.isEmpty {
+            workspace = appEnvironment.sessionWorkspaceURL(for: conversationID)
+        } else {
+            workspace = appEnvironment.scratchWorkspaceURL
+        }
         guard workspaceIsAuthorized(workspace) else {
             throw MacAgentOrchestrationError.unauthorizedWorkspace
         }

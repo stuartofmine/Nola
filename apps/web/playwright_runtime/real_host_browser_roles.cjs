@@ -55,6 +55,28 @@ async function main() {
         await other.goto(url(login));
         await signIn(other);
         assert.equal((await session(page)).sessionAuthenticated,true);
+        await page.goto(url('/conversations'));
+        const create = page.locator('.new-conversation');
+        if (!await create.isVisible()) await page.locator('.navigation-toggle').tap();
+        const [creation] = await Promise.all([
+            page.waitForResponse(r => new URL(r.url()).pathname === '/api/chat/conversations' && r.request().method() === 'POST'),
+            create.tap(),
+        ]);
+        assert.ok(creation.ok());
+        const {conversationId} = await creation.json();
+        assert.ok(conversationId);
+        await page.waitForURL(u => u.searchParams.get('conversation') === conversationId);
+        await page.goto(url('/conversations'));
+        const row = page.locator('.page-list .conversation-row').and(page.locator(`[data-conversation-id="${conversationId}"]`));
+        const title = 'Paired conversation ' + conversationId;
+        await row.locator('.row-actions > summary').tap();
+        await row.getByRole('button',{name:'Rename',exact:true}).tap();
+        await row.locator('.rename-form input').fill(title);
+        await row.getByRole('button',{name:'Save',exact:true}).tap();
+        await row.locator('.conversation').getByText(title,{exact:true}).waitFor();
+        await other.goto(url('/conversations'));
+        await other.locator('.page-list .conversation').getByText(title,{exact:true}).tap();
+        await other.waitForURL(u => u.searchParams.get('conversation') === conversationId);
         const ownerReads = [];
         page.on('request', request => {
             if (/\/api\/model-connections\/[^/]+-login\/owners$/.test(new URL(request.url()).pathname)) ownerReads.push(request);
@@ -97,7 +119,7 @@ async function main() {
         assert.equal((await session(page)).sessionAuthenticated,false);
         assert.equal((await session(other)).sessionAuthenticated,true);
         assert.equal((await page.request.get(url('/api/chat/conversations'))).status(), local ? 200 : 401);
-        console.log('PASS',mode,'sign-in and return, source-account visibility, plugin inventory, cancel, logout scoped to one browser, access after logout');
+        console.log('PASS',mode,'sign-in and return, persisted conversation across clients, source-account visibility, plugin inventory, cancel, logout scoped to one browser, access after logout');
     } finally {await browser.close();}
 }
 

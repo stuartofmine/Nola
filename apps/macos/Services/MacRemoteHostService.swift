@@ -800,6 +800,9 @@ nonisolated struct MacRemoteExecutionBackend: Identifiable, Hashable, Sendable, 
 }
 
 nonisolated func macRemoteHostUserFacingError(_ error: Error) -> String {
+    if let tailcatMessage = NolaTailcatTransport.userFacingErrorMessage(for: error) {
+        return tailcatMessage
+    }
     if let urlError = error as? URLError {
         switch urlError.code {
         case .timedOut:
@@ -1285,7 +1288,7 @@ actor MacRemoteHostService: MacRemoteAgentRunning {
         var request = URLRequest(url: mobileURL(baseURL: configuration.baseURL, path: "web-handoff"))
         request.httpMethod = "POST"
         request.httpBody = body
-        request.timeoutInterval = 15
+        request.timeoutInterval = 45
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
         request.setValue("application/json", forHTTPHeaderField: "Accept")
         request.setValue("aes-gcm-v1", forHTTPHeaderField: "X-Nola-Mobile-Crypto")
@@ -1315,7 +1318,7 @@ actor MacRemoteHostService: MacRemoteAgentRunning {
     ) async throws -> MacRemoteHostConnectionReport {
         let settings = try await fetchSettingsObject(
             configuration: configuration,
-            timeoutInterval: 8
+            timeoutInterval: 50
         )
         guard let identity = settings["host_identity"] as? [String: Any],
               let hostID = identity["id"] as? String,
@@ -1366,7 +1369,7 @@ actor MacRemoteHostService: MacRemoteAgentRunning {
         }
         var request = URLRequest(url: mobileURL(baseURL: configuration.baseURL, path: "agent/settings"))
         request.httpMethod = "GET"
-        request.timeoutInterval = 20
+        request.timeoutInterval = 45
         request.setValue("application/json", forHTTPHeaderField: "Accept")
         applyAuthentication(to: &request, token: configuration.token)
         let (data, response) = try await NolaTailcatTransport.session.data(for: request)

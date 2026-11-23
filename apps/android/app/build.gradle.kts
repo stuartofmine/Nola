@@ -27,7 +27,32 @@ jacoco {
     toolVersion = "0.8.12"
 }
 
+// JVM provider tests inspect the production wire body. Build only the small Core
+// privacy crate for the host JVM, independent of the Android NDK and mobile store.
+val privacyTestDir = layout.buildDirectory.dir("model-privacy-jvm").get().asFile
+val privacyRustTarget = privacyTestDir.resolve("cargo")
+val privacyWorkspace = rootProject.projectDir.parentFile.parentFile
+val privacyCore = tasks.register<Exec>("buildJvmModelPrivacyCore") {
+    workingDir(privacyWorkspace)
+    inputs.files(fileTree(privacyWorkspace.resolve("core/nola-model-privacy")), privacyWorkspace.resolve("Cargo.lock"),
+        privacyWorkspace.resolve("Cargo.toml"), privacyWorkspace.resolve("rust-toolchain.toml"))
+    outputs.file(privacyRustTarget.resolve("debug/" + System.mapLibraryName("nola_model_privacy")))
+    commandLine("cargo", "rustc", "--locked", "-p", "nola_model_privacy", "--lib", "--crate-type", "cdylib",
+        "--target-dir", privacyRustTarget)
+}
+val privacyCmake = tasks.register<Exec>("configureJvmModelPrivacy") {
+    dependsOn(privacyCore)
+    commandLine("cmake", "-S", file("src/test/cpp"), "-B", privacyTestDir,
+        "-DRUST_OUTPUT=" + privacyRustTarget.resolve("debug"), "-DCMAKE_BUILD_TYPE=Release")
+}
+val privacyAdapter = tasks.register<Exec>("buildJvmModelPrivacyAdapter") {
+    dependsOn(privacyCmake)
+    commandLine("cmake", "--build", privacyTestDir, "--config", "Release")
+}
+
 tasks.withType<Test>().configureEach {
+    dependsOn(privacyAdapter)
+    systemProperty("nola.test.modelPrivacyLibrary", privacyTestDir.resolve("lib/" + System.mapLibraryName("nola_privacy_test")).absolutePath)
     extensions.configure(JacocoTaskExtension::class.java) {
         isIncludeNoLocationClasses = true
         excludes = listOf("jdk.internal.*")

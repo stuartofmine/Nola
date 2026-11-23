@@ -21,6 +21,30 @@ struct Options {
 }
 const USAGE:&str="nola web --connect-host <Host origin> --expected-host-id <ID> --tailcat-helper <absolute executable> --tailcat-helper-sha256 <SHA256> --token-stdin [--control-stdin] [--json]";
 
+fn take_flag_value<'a>(
+    arg: &'a str,
+    flag: &str,
+    rest: &mut impl Iterator<Item = &'a String>,
+) -> Result<Option<String>, String> {
+    if arg == flag {
+        return rest
+            .next()
+            .cloned()
+            .ok_or_else(|| USAGE.to_string())
+            .map(Some);
+    }
+    if let Some(value) = arg
+        .strip_prefix(flag)
+        .and_then(|tail| tail.strip_prefix('='))
+    {
+        if value.is_empty() {
+            return Err(USAGE.into());
+        }
+        return Ok(Some(value.to_owned()));
+    }
+    Ok(None)
+}
+
 fn parse(args: &[String]) -> Result<Options, String> {
     let mut origin = None;
     let mut host = None;
@@ -31,15 +55,21 @@ fn parse(args: &[String]) -> Result<Options, String> {
     let mut json = false;
     let mut args = args.iter().skip(1);
     while let Some(arg) = args.next() {
-        match arg.as_str() {
-            "--connect-host" => origin = Some(args.next().ok_or(USAGE)?.clone()),
-            "--expected-host-id" => host = Some(args.next().ok_or(USAGE)?.clone()),
-            "--tailcat-helper" => program = Some(PathBuf::from(args.next().ok_or(USAGE)?)),
-            "--tailcat-helper-sha256" => digest = Some(args.next().ok_or(USAGE)?.clone()),
-            "--token-stdin" => token_input = true,
-            "--control-stdin" => control = true,
-            "--json" => json = true,
-            _ => return Err(USAGE.into()),
+        if let Some(value) = take_flag_value(arg, "--connect-host", &mut args)? {
+            origin = Some(value);
+        } else if let Some(value) = take_flag_value(arg, "--expected-host-id", &mut args)? {
+            host = Some(value);
+        } else if let Some(value) = take_flag_value(arg, "--tailcat-helper", &mut args)? {
+            program = Some(PathBuf::from(value));
+        } else if let Some(value) = take_flag_value(arg, "--tailcat-helper-sha256", &mut args)? {
+            digest = Some(value);
+        } else {
+            match arg.as_str() {
+                "--token-stdin" => token_input = true,
+                "--control-stdin" => control = true,
+                "--json" => json = true,
+                _ => return Err(USAGE.into()),
+            }
         }
     }
     if !token_input {
@@ -58,6 +88,17 @@ fn parse(args: &[String]) -> Result<Options, String> {
         control,
         json,
     })
+}
+
+fn parse_token_input(raw: &str) -> Result<String, String> {
+    if raw.len() > 8192 {
+        return Err("Invalid Host credential input".into());
+    }
+    let trimmed = raw.trim_start_matches('\u{FEFF}').trim();
+    if trimmed.is_empty() {
+        return Err("Invalid Host credential input".into());
+    }
+    Ok(trimmed.to_owned())
 }
 
 fn validated_origin(raw: &str) -> Result<reqwest::Url, String> {
@@ -86,6 +127,42 @@ fn validated_origin(raw: &str) -> Result<reqwest::Url, String> {
     Ok(url)
 }
 
+fn format_helper_error(value: &Value) -> String {
+    if value["protocolVersion"] == 1 && value["event"] == "error" {
+        let stage = value["stage"].as_str().unwrap_or("unknown");
+        if let Some(detail) = value["detail"]
+            .as_str()
+            .filter(|detail| !detail.trim().is_empty())
+        {
+            return format!("Tailcat helper failed at {stage} ({detail})");
+        }
+        return format!("Tailcat helper failed at {stage}");
+    }
+    "Tailcat helper startup failed".into()
+}
+
+fn format_http_error_body(status: u16, bytes: &[u8], token: &str) -> String {
+    use nola_core::mobile_crypto::decrypt_mobile_json;
+    let decoded = serde_json::from_slice(bytes)
+        .ok()
+        .and_then(|envelope| decrypt_mobile_json(&envelope, token).ok())
+        .or_else(|| serde_json::from_slice::<Value>(bytes).ok());
+    if let Some(value) = decoded {
+        if let Some(code) = value.get("error").and_then(Value::as_str) {
+            let extra = value
+                .get("detail")
+                .and_then(Value::as_str)
+                .or_else(|| value.get("message").and_then(Value::as_str))
+                .filter(|text| !text.trim().is_empty());
+            return match extra {
+                Some(extra) => format!("Host transport refused HTTP {status} ({code}: {extra})"),
+                None => format!("Host transport refused HTTP {status} ({code})"),
+            };
+        }
+    }
+    format!("Host transport refused HTTP {status}")
+}
+
 struct SignalRegistrations(Vec<signal_hook::SigId>);
 impl Drop for SignalRegistrations {
     fn drop(&mut self) {
@@ -99,6 +176,15 @@ struct Bridge {
     child: Child,
     input: Option<ChildStdin>,
     events: mpsc::Receiver<Result<Value, ()>>,
+}
+impl Drop for Bridge {
+    fn drop(&mut self) {
+        drop(self.input.take());
+        if let Ok(None) = self.child.try_wait() {
+            let _ = self.child.kill();
+            let _ = self.child.wait();
+        }
+    }
 }
 impl Bridge {
     fn start(mut command: Command) -> Result<Self, String> {
@@ -149,7 +235,8 @@ impl Bridge {
                 Ok(Ok(value)) if value["protocolVersion"] == 1 && value["event"] == kind => {
                     return Ok(value)
                 }
-                Ok(_) | Err(mpsc::RecvTimeoutError::Disconnected) => {
+                Ok(Ok(value)) => return Err(format_helper_error(&value)),
+                Ok(Err(())) | Err(mpsc::RecvTimeoutError::Disconnected) => {
                     return Err("Tailcat helper startup failed".into())
                 }
                 Err(mpsc::RecvTimeoutError::Timeout) if Instant::now() < deadline => {}
@@ -158,7 +245,8 @@ impl Bridge {
         }
     }
     fn close(&mut self) -> Result<(), String> {
-        // EOF closes startup as well as active transport. No signal is sent.
+        // EOF closes startup as well as active transport. No signal is sent
+        // unless the helper exceeds the bounded shutdown deadline.
         drop(self.input.take());
         let deadline = Instant::now() + Duration::from_secs(10);
         loop {
@@ -173,10 +261,14 @@ impl Bridge {
                 Ok(None) if Instant::now() < deadline => {
                     std::thread::sleep(Duration::from_millis(20))
                 }
-                _ => return Err(
-                    "Tailcat helper stop remains unconfirmed; no Run cancellation ACK is implied"
-                        .into(),
-                ),
+                _ => {
+                    let _ = self.child.kill();
+                    let _ = self.child.wait();
+                    return Err(
+                        "Tailcat helper stop remains unconfirmed; no Run cancellation ACK is implied"
+                            .into(),
+                    );
+                }
             }
         }
     }
@@ -213,17 +305,15 @@ fn exchange(
         .body(body)
         .send()
         .map_err(|_| "Host transport request failed")?;
-    if !response.status().is_success() {
-        return Err(format!(
-            "Host transport refused HTTP {}",
-            response.status().as_u16()
-        ));
-    }
+    let status = response.status();
     let mut bytes = Vec::new();
     response
         .take(65537)
         .read_to_end(&mut bytes)
         .map_err(|_| "Host transport response failed")?;
+    if !status.is_success() {
+        return Err(format_http_error_body(status.as_u16(), &bytes, token));
+    }
     if bytes.len() > 65536 {
         return Err("Host transport response exceeds limit".into());
     }
@@ -247,7 +337,9 @@ fn verify_host(status: &Value, expected_host: &str) -> Result<(), String> {
 
 pub(crate) fn run_if_requested(args: &[String]) -> Option<Result<(), String>> {
     if args.first().map(String::as_str) != Some("web")
-        || !args.iter().any(|arg| arg == "--connect-host")
+        || !args
+            .iter()
+            .any(|arg| arg == "--connect-host" || arg.starts_with("--connect-host="))
     {
         return None;
     }
@@ -257,6 +349,163 @@ pub(crate) fn run_if_requested(args: &[String]) -> Option<Result<(), String>> {
     }
     Some(run(args))
 }
+
+enum SessionOutcome {
+    Stopped,
+    Reconnect(String),
+}
+
+fn run_single_session(
+    options: &Options,
+    client: &reqwest::blocking::Client,
+    token: &str,
+    stop: &AtomicBool,
+    stable_listen_addr: &mut Option<String>,
+    announced: &mut bool,
+) -> Result<SessionOutcome, String> {
+    let mut bridge = Bridge::start(crate::tailcat_transport::verified_command(
+        &options.program,
+        &options.digest,
+    )?)?;
+    let mut lease: Option<String> = None;
+    let outcome = (|| -> Result<SessionOutcome, String> {
+        bridge.send(json!({"version":1,"kind":"client"}))?;
+        let identity = bridge.event("identity", stop)?;
+        let public = identity["clientPublicKey"]
+            .as_str()
+            .ok_or("Missing ephemeral client identity")?;
+        let requested = Instant::now();
+        let grant = exchange(
+            client,
+            &options.origin,
+            token,
+            json!({"operation":"connect","expectedHostId":options.host,"clientPublicKey":public}),
+            Duration::from_secs(40),
+        )?;
+        if grant["version"] != 1 || grant["hostId"].as_str() != Some(&options.host) {
+            return Err("Host grant identity mismatch".into());
+        }
+        let id = grant["leaseId"]
+            .as_str()
+            .filter(|id| !id.is_empty())
+            .ok_or("Missing temporary lease")?
+            .to_owned();
+        lease = Some(id.clone());
+        let mut seconds = grant["expiresIn"]
+            .as_u64()
+            .filter(|value| (31..=1200).contains(value))
+            .ok_or("Invalid temporary lease expiry")?;
+        let address = grant["address"]
+            .as_str()
+            .ok_or("Missing temporary transport address")?;
+        let mut connect_frame = json!({
+            "version": 1,
+            "kind": "connect",
+            "address": address,
+            "expectedHostId": options.host,
+        });
+        if let Some(listen_addr) = stable_listen_addr.as_deref() {
+            connect_frame["listenAddress"] = json!(listen_addr);
+        }
+        bridge.send(connect_frame)?;
+        let ready = bridge.event("ready", stop)?;
+        let local = ready["origin"].as_str().ok_or("Missing local Web origin")?;
+        let local = validated_origin(local)?;
+        if local.host_str() != Some("127.0.0.1")
+            || local.scheme() != "http"
+            || local.port().is_none()
+        {
+            return Err("Unsafe local Web endpoint".into());
+        }
+        if stable_listen_addr.is_none() {
+            if let Some(port) = local.port() {
+                *stable_listen_addr = Some(format!("127.0.0.1:{port}"));
+            }
+        }
+        let mut deadline = requested + Duration::from_secs(seconds);
+        let mut renew_at = requested + Duration::from_secs((seconds / 2).max(1));
+        if !*announced {
+            *announced = true;
+            if options.json {
+                println!(
+                    "{}",
+                    json!({"type":"web.remote.started","protocol_version":1,"origin":local.as_str(),"host_id":options.host,"transport":"tailcat","auth":"web_session","expires_in":deadline.saturating_duration_since(Instant::now()).as_secs()})
+                );
+            } else {
+                println!("Nola Web client: {local}\nNormal Host sign-in is required. Temporary connection; Ctrl-C to close.");
+            }
+        } else if options.json {
+            println!(
+                "{}",
+                json!({"type":"web.remote.reconnected","protocol_version":1,"origin":local.as_str(),"host_id":options.host,"transport":"tailcat","auth":"web_session","expires_in":deadline.saturating_duration_since(Instant::now()).as_secs()})
+            );
+        } else {
+            eprintln!("Nola Web client reconnected on {local}");
+        }
+        while !stop.load(Ordering::SeqCst) {
+            let now = Instant::now();
+            if now >= renew_at {
+                let renew_started = Instant::now();
+                match exchange(
+                    client,
+                    &options.origin,
+                    token,
+                    json!({"operation":"renew","leaseId":id}),
+                    Duration::from_secs(15),
+                ) {
+                    Ok(renewed) if renewed["renewed"] == true => {
+                        seconds = renewed["expiresIn"]
+                            .as_u64()
+                            .filter(|value| (31..=1200).contains(value))
+                            .unwrap_or(seconds);
+                        deadline = renew_started + Duration::from_secs(seconds);
+                        renew_at = renew_started + Duration::from_secs((seconds / 2).max(1));
+                    }
+                    Ok(_) | Err(_) => {
+                        return Ok(SessionOutcome::Reconnect(
+                            "Temporary Web lease renewal failed; reconnecting".into(),
+                        ));
+                    }
+                }
+            }
+            if Instant::now() >= deadline {
+                return Ok(SessionOutcome::Reconnect(
+                    "Temporary Web lease expired; reconnecting".into(),
+                ));
+            }
+            if bridge
+                .child
+                .try_wait()
+                .map_err(|_| "Cannot inspect owned transport")?
+                .is_some()
+            {
+                return Ok(SessionOutcome::Reconnect(
+                    "Web transport exited; reconnecting".into(),
+                ));
+            }
+            std::thread::sleep(Duration::from_millis(100));
+        }
+        Ok(SessionOutcome::Stopped)
+    })();
+    let closed = bridge.close();
+    // Best effort remote release, using the same frozen Host credential. The
+    // finite lease remains the bound when bootstrap is no longer reachable.
+    if let Some(id) = lease {
+        let _ = exchange(
+            client,
+            &options.origin,
+            token,
+            json!({"operation":"close","leaseId":id}),
+            Duration::from_secs(6),
+        );
+    }
+    match outcome {
+        Ok(SessionOutcome::Reconnect(reason)) => Ok(SessionOutcome::Reconnect(reason)),
+        Ok(SessionOutcome::Stopped) => closed.map(|()| SessionOutcome::Stopped),
+        Err(err) => Err(err),
+    }
+}
+
 fn run(args: &[String]) -> Result<(), String> {
     let options = parse(args)?;
     if std::io::stdin().is_terminal() {
@@ -266,16 +515,13 @@ fn run(args: &[String]) -> Result<(), String> {
         );
     }
     let mut reader = BufReader::new(std::io::stdin());
-    let mut token = String::new();
+    let mut raw_token = String::new();
     reader
         .by_ref()
         .take(8193)
-        .read_line(&mut token)
+        .read_line(&mut raw_token)
         .map_err(|_| "Cannot read Host credential")?;
-    if token.len() > 8192 || token.trim().is_empty() {
-        return Err("Invalid Host credential input".into());
-    }
-    let token = token.trim().to_owned();
+    let token = parse_token_input(&raw_token)?;
     let stop = Arc::new(AtomicBool::new(false));
     let mut signals = SignalRegistrations(Vec::new());
     let interrupt = signal_hook::flag::register(signal_hook::consts::SIGINT, stop.clone())
@@ -319,94 +565,36 @@ fn run(args: &[String]) -> Result<(), String> {
         serde_json::from_slice(&bytes).map_err(|_| "Invalid Host identity response".into())
     })()?;
     verify_host(&status, &options.host)?;
-    let mut bridge = Bridge::start(crate::tailcat_transport::verified_command(
-        &options.program,
-        &options.digest,
-    )?)?;
-    let mut lease = None;
-    let result = (|| -> Result<(), String> {
-        bridge.send(json!({"version":1,"kind":"client"}))?;
-        let identity = bridge.event("identity", &stop)?;
-        let public = identity["clientPublicKey"]
-            .as_str()
-            .ok_or("Missing ephemeral client identity")?;
-        let requested = Instant::now();
-        let grant = exchange(
+
+    let mut stable_listen_addr: Option<String> = None;
+    let mut announced = false;
+    let mut consecutive_failures = 0u32;
+    loop {
+        match run_single_session(
+            &options,
             &client,
-            &options.origin,
             &token,
-            json!({"operation":"connect","expectedHostId":options.host,"clientPublicKey":public}),
-            Duration::from_secs(40),
-        )?;
-        if grant["version"] != 1 || grant["hostId"].as_str() != Some(&options.host) {
-            return Err("Host grant identity mismatch".into());
-        }
-        let id = grant["leaseId"]
-            .as_str()
-            .filter(|id| !id.is_empty())
-            .ok_or("Missing temporary lease")?
-            .to_owned();
-        lease = Some(id);
-        let seconds = grant["expiresIn"]
-            .as_u64()
-            .filter(|value| (31..=1200).contains(value))
-            .ok_or("Invalid temporary lease expiry")?;
-        let address = grant["address"]
-            .as_str()
-            .ok_or("Missing temporary transport address")?;
-        bridge.send(
-            json!({"version":1,"kind":"connect","address":address,"expectedHostId":options.host}),
-        )?;
-        let ready = bridge.event("ready", &stop)?;
-        let local = ready["origin"].as_str().ok_or("Missing local Web origin")?;
-        let local = validated_origin(local)?;
-        if local.host_str() != Some("127.0.0.1")
-            || local.scheme() != "http"
-            || local.port().is_none()
-        {
-            return Err("Unsafe local Web endpoint".into());
-        }
-        let deadline = requested + Duration::from_secs(seconds);
-        if options.json {
-            println!(
-                "{}",
-                json!({"type":"web.remote.started","protocol_version":1,"origin":local.as_str(),"host_id":options.host,"transport":"tailcat","auth":"web_session","expires_in":deadline.saturating_duration_since(Instant::now()).as_secs()})
-            );
-        } else {
-            println!("Nola Web client: {local}\nNormal Host sign-in is required. Temporary connection; Ctrl-C to close.");
-        }
-        while !stop.load(Ordering::SeqCst) {
-            if Instant::now() >= deadline {
-                return Err(
-                    "Temporary Web connection expired; reconnect. Host Tasks were not cancelled"
-                        .into(),
-                );
+            &stop,
+            &mut stable_listen_addr,
+            &mut announced,
+        ) {
+            Ok(SessionOutcome::Stopped) => return Ok(()),
+            Ok(SessionOutcome::Reconnect(_reason)) => {
+                consecutive_failures = 0;
+                if stop.load(Ordering::SeqCst) {
+                    return Ok(());
+                }
+                std::thread::sleep(Duration::from_millis(500));
             }
-            if bridge
-                .child
-                .try_wait()
-                .map_err(|_| "Cannot inspect owned transport")?
-                .is_some()
-            {
-                return Err("Web transport exited; no Run stop ACK is implied".into());
+            Err(err) => {
+                if !announced || stop.load(Ordering::SeqCst) || consecutive_failures >= 3 {
+                    return Err(err);
+                }
+                consecutive_failures += 1;
+                std::thread::sleep(Duration::from_secs(u64::from(consecutive_failures)));
             }
-            std::thread::sleep(Duration::from_millis(100));
         }
-        Ok(())
-    })();
-    let closed = bridge.close();
-    // Best effort remote release, using the same frozen Host credential. The
-    // finite lease remains the bound when bootstrap is no longer reachable.
-    if let Some(id) = lease {
-        let _ = exchange(
-            &client,
-            &options.origin,
-            &token,
-            json!({"operation":"close","leaseId":id}),
-            Duration::from_secs(6),
-        );
     }
-    result.and(closed)
 }
 
 #[cfg(test)]
@@ -417,13 +605,19 @@ mod tests {
         let expected = "paired";
         let valid = json!({"hostId": expected, "localTrust": false, "tailcatAvailable": true});
         assert!(verify_host(&valid, expected).is_ok());
-        assert!(verify_host(&valid, "other").unwrap_err().contains("--expected-host-id"));
+        assert!(verify_host(&valid, "other")
+            .unwrap_err()
+            .contains("--expected-host-id"));
         let mut direct = valid.clone();
         direct["localTrust"] = json!(true);
-        assert!(verify_host(&direct, expected).unwrap_err().contains("--tailcat-ingress"));
+        assert!(verify_host(&direct, expected)
+            .unwrap_err()
+            .contains("--tailcat-ingress"));
         let mut missing_helper = valid;
         missing_helper["tailcatAvailable"] = json!(false);
-        assert!(verify_host(&missing_helper, expected).unwrap_err().contains("--tailcat-helper"));
+        assert!(verify_host(&missing_helper, expected)
+            .unwrap_err()
+            .contains("--tailcat-helper"));
     }
 
     #[test]
@@ -441,6 +635,89 @@ mod tests {
             assert!(validated_origin(raw).is_err());
         }
         assert!(run_if_requested(&["web".into()]).is_none());
-        assert_eq!(run_if_requested(&["web".into(), "--connect-host".into(), "--help".into()]), Some(Ok(())));
+        assert_eq!(
+            run_if_requested(&["web".into(), "--connect-host".into(), "--help".into()]),
+            Some(Ok(()))
+        );
+        assert_eq!(
+            run_if_requested(&[
+                "web".into(),
+                "--connect-host=https://host.example".into(),
+                "--help".into()
+            ]),
+            Some(Ok(()))
+        );
+    }
+
+    #[test]
+    fn parse_supports_equals_flag_syntax_and_token_strips_utf8_bom() {
+        use sha2::{Digest, Sha256};
+
+        let root = tempfile::tempdir().unwrap();
+        let helper = root.path().canonicalize().unwrap().join("helper-fixture");
+        std::fs::write(&helper, b"fixture").unwrap();
+        let digest = format!("{:x}", Sha256::digest(b"fixture"));
+
+        let args = vec![
+            "web".into(),
+            "--connect-host=https://host.example".into(),
+            "--expected-host-id=host-123".into(),
+            format!("--tailcat-helper={}", helper.display()),
+            format!("--tailcat-helper-sha256={digest}"),
+            "--token-stdin".into(),
+            "--json".into(),
+        ];
+        let parsed = parse(&args).unwrap();
+        assert_eq!(parsed.origin.as_str(), "https://host.example/");
+        assert_eq!(parsed.host, "host-123");
+        assert_eq!(parsed.program, helper);
+        assert_eq!(parsed.digest, digest);
+        assert!(parsed.json);
+
+        assert_eq!(
+            parse_token_input("\u{FEFF}  my-secret-token \r\n").unwrap(),
+            "my-secret-token"
+        );
+        assert!(parse_token_input("\u{FEFF}   \n").is_err());
+    }
+
+    #[test]
+    fn error_formatting_surfaces_helper_detail_and_decrypted_host_errors() {
+        use nola_core::mobile_crypto::encrypt_mobile_json;
+
+        assert_eq!(
+            format_helper_error(
+                &json!({"protocolVersion": 1, "event": "error", "stage": "client_host_identity", "detail": "timeout"})
+            ),
+            "Tailcat helper failed at client_host_identity (timeout)"
+        );
+        assert_eq!(
+            format_helper_error(
+                &json!({"protocolVersion": 1, "event": "error", "stage": "host_start"})
+            ),
+            "Tailcat helper failed at host_start"
+        );
+
+        let token = "fixture-host-token";
+        let encrypted = serde_json::to_vec(
+            &encrypt_mobile_json(
+                &json!({"error": "tailcat_start_failed", "detail": "host_start:ingress_unavailable"}),
+                token,
+            )
+            .unwrap(),
+        )
+        .unwrap();
+        assert_eq!(
+            format_http_error_body(503, &encrypted, token),
+            "Host transport refused HTTP 503 (tailcat_start_failed: host_start:ingress_unavailable)"
+        );
+        assert_eq!(
+            format_http_error_body(401, br#"{"error":"unauthorized"}"#, token),
+            "Host transport refused HTTP 401 (unauthorized)"
+        );
+        assert_eq!(
+            format_http_error_body(500, b"plain text", token),
+            "Host transport refused HTTP 500"
+        );
     }
 }

@@ -2595,7 +2595,7 @@
 "chat.task.guidance.send" = "发送引导";
 "model.web_host.setup" = "连接前";
 "model.web_host.setup.start" = "在 Mac 的 Nola 中打开“设置 > 连接”，开启“将这台 Mac 共享为 Nola 服务器”。";
-"model.web_host.setup.copy" = "在 Mac 端点击“复制连接信息”，然后在下方粘贴。两台设备需位于可信私有网络，或使用 HTTPS。";
+"model.web_host.setup.copy" = "在 Mac 上点“复制连接信息”，然后在这台设备上粘贴。请使用可信的私有网络或 HTTPS。";
 "model.web_host.checking" = "正在检查宿主机";
 "model.web_host.checking.detail" = "保存前正在验证令牌、权限协议和宿主机身份。";
 "model.web_host.error.protocol" = "此宿主机使用了不受支持的权限协议。请更新宿主机上的 Nola 后重试。";

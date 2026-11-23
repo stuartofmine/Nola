@@ -13,6 +13,7 @@ members = [
     "core/nola-host-protocol",
     "core/nola-mobile-bindings",
     "core/nola-model-runtime-host",
+    "core/nola-model-privacy",
     "core/nola-mcp-host",
     "core/nola-measurement",
     "core/nola-protocol",

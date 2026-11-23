@@ -68,6 +68,7 @@ import androidx.compose.material.icons.filled.Tune
 import androidx.compose.material.icons.filled.Visibility
 import androidx.compose.material.icons.filled.VisibilityOff
 import androidx.compose.material3.Button
+import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.DropdownMenu
@@ -110,6 +111,8 @@ import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
+import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.focus.FocusDirection
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.input.ImeAction
@@ -1564,6 +1567,8 @@ fun WebHostConfigSheet(
     ) {
         val focus = LocalFocusManager.current
         val keyboard = LocalSoftwareKeyboardController.current
+        val tokenFocus = remember { FocusRequester() }
+        val pinFocus = remember { FocusRequester() }
         val canSubmit = !isConnecting && url.isNotBlank() && (token.isNotBlank() || canUseSavedToken)
         fun submit() {
             if (isConnecting || !canSubmit) return
@@ -1583,7 +1588,7 @@ fun WebHostConfigSheet(
         Column(
             modifier = Modifier
                 .fillMaxWidth()
-                .fillMaxHeight(0.92f)
+                .heightIn(max = androidx.compose.ui.platform.LocalConfiguration.current.screenHeightDp.dp * 0.92f)
                 .imePadding()
                 .navigationBarsPadding()
                 .padding(horizontal = 24.dp)
@@ -1594,40 +1599,16 @@ fun WebHostConfigSheet(
 
             Column(
                 modifier = Modifier
-                    .weight(1f)
+                    .weight(1f, fill = false)
                     .verticalScroll(rememberScrollState()).testTag("models.host.fields"),
                 verticalArrangement = Arrangement.spacedBy(10.dp)
             ) {
-                if (!hasExistingConnection) {
-                    Column(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .clip(RoundedCornerShape(NolaRadius.lg))
-                            .background(MaterialTheme.colorScheme.primary.copy(alpha = 0.07f))
-                            .padding(NolaSpacing.md),
-                        verticalArrangement = Arrangement.spacedBy(NolaSpacing.sm)
-                    ) {
-                        Text(
-                            stringResource(R.string.models_web_host_setup_title),
-                            style = MaterialTheme.typography.titleSmall
-                        )
-                        Text(
-                            stringResource(R.string.models_web_host_setup_start),
-                            style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant
-                        )
-                        Text(
-                            stringResource(R.string.models_web_host_setup_copy),
-                            style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant
-                        )
-                    }
-                }
-
-                TextButton(enabled = !isConnecting, onClick = {
+                OutlinedButton(modifier = Modifier.fillMaxWidth(), enabled = !isConnecting, onClick = {
                     val setup = clipboard.getText()?.text?.let { WebHostConnectionSetup.decode(it) }
                     if (setup == null) inlineError = context.getString(R.string.models_web_host_invalid_setup)
                     else {
+                        focus.clearFocus()
+                        keyboard?.hide()
                         importedSetup = setup
                         url = setup.origin
                         token = setup.token
@@ -1636,6 +1617,20 @@ fun WebHostConfigSheet(
                     }
                 }) { Text(stringResource(R.string.models_web_host_paste_setup)) }
 
+                if (!hasExistingConnection) {
+                    var showSetupHelp by rememberSaveable { mutableStateOf(false) }
+                    NolaDisclosureBar(
+                        title = stringResource(R.string.models_web_host_setup_title),
+                        expanded = showSetupHelp,
+                        onToggle = { showSetupHelp = !showSetupHelp },
+                    )
+                    if (showSetupHelp) {
+                        Column(verticalArrangement = Arrangement.spacedBy(NolaSpacing.sm)) {
+                            Text(stringResource(R.string.models_web_host_setup_start))
+                            Text(stringResource(R.string.models_web_host_setup_copy))
+                        }
+                    }
+                }
                 OutlinedTextField(
                     value = url,
                     enabled = !isConnecting,
@@ -1651,7 +1646,7 @@ fun WebHostConfigSheet(
                     label = { Text(stringResource(R.string.models_host_url)) },
                     placeholder = { Text(stringResource(R.string.models_web_host_url_placeholder)) },
                     keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Uri, autoCorrect = false, imeAction = ImeAction.Next),
-                    keyboardActions = KeyboardActions(onNext = { focus.moveFocus(FocusDirection.Next) }),
+                    keyboardActions = KeyboardActions(onNext = { tokenFocus.requestFocus() }),
                     modifier = Modifier.fillMaxWidth().testTag("models.host.url"),
                     singleLine = true
                 )
@@ -1676,8 +1671,8 @@ fun WebHostConfigSheet(
                     },
                     keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password, autoCorrect = false,
                         imeAction = if (showCertificate && showAdvancedTls) ImeAction.Next else ImeAction.Done),
-                    keyboardActions = KeyboardActions(onNext = { focus.moveFocus(FocusDirection.Next) }, onDone = { submit() }),
-                    modifier = Modifier.fillMaxWidth().testTag("models.host.token"),
+                    keyboardActions = KeyboardActions(onNext = { pinFocus.requestFocus() }, onDone = { submit() }),
+                    modifier = Modifier.fillMaxWidth().focusRequester(tokenFocus).testTag("models.host.token"),
                     singleLine = true,
                     visualTransformation = if (showToken) VisualTransformation.None else PasswordVisualTransformation()
                 )
@@ -1701,7 +1696,7 @@ fun WebHostConfigSheet(
                             supportingText = { Text(stringResource(R.string.models_certificate_sha256_help)) },
                             keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Ascii, autoCorrect = false, imeAction = ImeAction.Done),
                             keyboardActions = KeyboardActions(onDone = { submit() }),
-                            modifier = Modifier.fillMaxWidth().testTag("models.host.certificateSha256"),
+                            modifier = Modifier.fillMaxWidth().focusRequester(pinFocus).testTag("models.host.certificateSha256"),
                             singleLine = true
                         )
                     }
@@ -1750,6 +1745,7 @@ fun WebHostConfigSheet(
                 !dirty && canUseSavedToken -> R.string.models_verify_again
                 else -> R.string.models_save_and_verify
             }
+            val cancelLabel = stringResource(if (isConnecting) R.string.models_cancel_host_verification else R.string.common_cancel)
             val onCancelClick: () -> Unit = {
                 if (isConnecting) {
                     connectionGeneration++
@@ -1772,12 +1768,12 @@ fun WebHostConfigSheet(
                                 CircularProgressIndicator(modifier = Modifier.size(16.dp), strokeWidth = 2.dp)
                                 Spacer(Modifier.width(6.dp))
                             }
-                            Text(stringResource(actionRes), maxLines = 1, overflow = TextOverflow.Ellipsis)
+                            Text(stringResource(actionRes), textAlign = TextAlign.Center)
                         }
                         TextButton(
                             onClick = onCancelClick,
                             modifier = Modifier.fillMaxWidth()
-                        ) { Text(stringResource(R.string.common_cancel), maxLines = 1, overflow = TextOverflow.Ellipsis) }
+                        ) { Text(cancelLabel, textAlign = TextAlign.Center) }
                     }
                 } else {
                     Row(
@@ -1788,7 +1784,7 @@ fun WebHostConfigSheet(
                         TextButton(
                             onClick = onCancelClick,
                             modifier = Modifier.weight(1f)
-                        ) { Text(stringResource(R.string.common_cancel), maxLines = 1, overflow = TextOverflow.Ellipsis) }
+                        ) { Text(cancelLabel, textAlign = TextAlign.Center) }
                         Button(
                             onClick = ::submit,
                             enabled = canSubmit,
@@ -1798,7 +1794,7 @@ fun WebHostConfigSheet(
                                 CircularProgressIndicator(modifier = Modifier.size(16.dp), strokeWidth = 2.dp)
                                 Spacer(Modifier.width(6.dp))
                             }
-                            Text(stringResource(actionRes), maxLines = 1, overflow = TextOverflow.Ellipsis)
+                            Text(stringResource(actionRes), textAlign = TextAlign.Center)
                         }
                     }
                 }

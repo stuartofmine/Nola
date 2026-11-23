@@ -721,14 +721,74 @@ struct ChatBubble: View {
         case .uiAction(let action):
             Label(action.summary, systemImage: "hand.tap").font(.caption).foregroundStyle(.secondary)
         case .attachment(let attachment):
-            VStack(alignment: .leading, spacing: 2) {
-                Label(attachment.name, systemImage: "doc")
-                let facts = [attachment.operation, attachment.mimeType].compactMap { $0 }
-                if !facts.isEmpty { Text(facts.joined(separator: " · ")).foregroundStyle(.secondary) }
-                Text(attachment.uri).font(.caption2.monospaced()).foregroundStyle(.secondary).textSelection(.enabled)
-            }.font(.caption)
+            let previewURL = previewableCanonicalAttachmentURL(for: attachment.uri)
+            let facts = [attachment.operation, attachment.mimeType].compactMap { $0 }.filter { !$0.isEmpty }
+            let iconName: String = {
+                if let mime = attachment.mimeType?.lowercased() {
+                    if mime.hasPrefix("image/") { return "photo" }
+                    if mime == "application/pdf" { return "doc.richtext" }
+                }
+                return "doc"
+            }()
+            if let previewURL {
+                Button {
+                    previewAttachment = ChatAttachmentPreviewItem(url: previewURL)
+                } label: {
+                    HStack(spacing: 9) {
+                        Image(systemName: iconName)
+                            .font(.system(size: 15, weight: .medium))
+                            .foregroundStyle(DesignTokens.primaryColor)
+                            .frame(width: 24, height: 24)
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text(attachment.name)
+                                .font(.caption.weight(.semibold))
+                                .foregroundStyle(.primary)
+                                .lineLimit(1)
+                            if !facts.isEmpty {
+                                Text(facts.joined(separator: " · "))
+                                    .font(.caption2)
+                                    .foregroundStyle(.secondary)
+                            }
+                        }
+                        Image(systemName: "arrow.up.right.square")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
+                    .padding(.horizontal, 11)
+                    .padding(.vertical, 8)
+                    .frame(maxWidth: 360, alignment: .leading)
+                    .background(Color.primary.opacity(0.055), in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+                    .overlay {
+                        RoundedRectangle(cornerRadius: 12, style: .continuous)
+                            .stroke(Color.primary.opacity(0.09), lineWidth: 0.5)
+                    }
+                }
+                .buttonStyle(NolaActionButtonStyle())
+                .accessibilityLabel(String(
+                    format: NSLocalizedString("chat.attachment.open_format", value: "Open attachment %@", comment: "Open a chat attachment"),
+                    attachment.name
+                ))
+            } else {
+                VStack(alignment: .leading, spacing: 2) {
+                    Label(attachment.name, systemImage: iconName)
+                    if !facts.isEmpty { Text(facts.joined(separator: " · ")).foregroundStyle(.secondary) }
+                    Text(attachment.uri).font(.caption2.monospaced()).foregroundStyle(.secondary).textSelection(.enabled)
+                }.font(.caption)
+            }
         case .reasoning, .tool: EmptyView() // Shared flow sends these through the process renderer.
         }
+    }
+
+    private func previewableCanonicalAttachmentURL(for uri: String) -> URL? {
+        let trimmed = uri.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return nil }
+        if let url = URL(string: trimmed), url.isFileURL {
+            return FileManager.default.fileExists(atPath: url.path) ? url : nil
+        }
+        if trimmed.hasPrefix("/") {
+            return FileManager.default.fileExists(atPath: trimmed) ? URL(fileURLWithPath: trimmed) : nil
+        }
+        return nil
     }
 
     private var assistantMessage: some View {

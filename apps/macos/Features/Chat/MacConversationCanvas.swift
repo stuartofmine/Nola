@@ -4,6 +4,7 @@
 
 import Observation
 import SwiftUI
+import UniformTypeIdentifiers
 
 struct MacConversationCanvas: View {
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
@@ -42,6 +43,7 @@ struct MacConversationCanvas: View {
     @State private var commandError: String?
     @State private var highlightedCommand: String?
     @State private var dismissedCommand: String?
+    @State private var isCanvasDropTargeted = false
     @State private var composerActions: MacComposerActionSink
 
     init(
@@ -93,6 +95,9 @@ struct MacConversationCanvas: View {
                 return model.importPasteboardAttachments(pasteboard, conversationID: conversationID)
             case .removeAttachment(let conversationID, let attachmentID):
                 return model.removeAttachment(attachmentID: attachmentID, conversationID: conversationID)
+            case .dismissAttachmentImportNotice(let conversationID):
+                model.dismissAttachmentImportNotice(conversationID: conversationID)
+                return true
             case .selectReasoningPreference(let conversationID, let preference):
                 return model.selectComposerReasoningPreference(preference, conversationID: conversationID)
             case .selectPermissionMode(let conversationID, let mode):
@@ -472,6 +477,22 @@ struct MacConversationCanvas: View {
                 .accessibilityIdentifier("chat.composer-region")
             }
             .clipped()
+            .overlay {
+                if isCanvasDropTargeted {
+                    RoundedRectangle(cornerRadius: 12, style: .continuous)
+                        .strokeBorder(Color.primary.opacity(0.28), lineWidth: 1.5)
+                        .padding(6)
+                        .allowsHitTesting(false)
+                }
+            }
+            .animation(reduceMotion ? nil : MacDesignTokens.Motion.responsive, value: isCanvasDropTargeted)
+            .onDrop(
+                of: [UTType.fileURL.identifier, UTType.image.identifier],
+                isTargeted: $isCanvasDropTargeted
+            ) { providers in
+                guard showsComposer, let conversationID = model.selectedConversationID else { return false }
+                return model.importDroppedAttachments(providers, conversationID: conversationID)
+            }
             // Do not animate this ancestor: permission changes can coincide
             // with streamed text reflow and must not animate the transcript.
         }

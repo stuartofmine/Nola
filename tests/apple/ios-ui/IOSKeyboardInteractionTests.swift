@@ -115,6 +115,8 @@ final class IOSKeyboardInteractionTests: XCTestCase {
         let change = UIPasteboard.general.changeCount
         defer { if UIPasteboard.general.changeCount == change { UIPasteboard.general.setItems([], options: [.localOnly: true]) } }
         app.activate()
+        let pasteReady = XCTNSPredicateExpectation(predicate: NSPredicate(format: "enabled == true AND hittable == true"), object: paste)
+        XCTAssertEqual(XCTWaiter.wait(for: [pasteReady], timeout: 5), .completed)
         paste.tap()
         let pasted = XCTNSPredicateExpectation(predicate: NSPredicate(format: "value == %@", original), object: address)
         XCTAssertEqual(XCTWaiter.wait(for: [pasted], timeout: 5), .completed)
@@ -315,9 +317,15 @@ final class IOSKeyboardInteractionTests: XCTestCase {
         let address = app.textFields["model.web_host.url_field"]
         let token = app.secureTextFields["model.web_host.token_field"]
         XCTAssertTrue(address.waitForExistence(timeout: 5))
-        let firstSteps = app.staticTexts["model.web_host.first_steps"]
+        let firstSteps = app.buttons["model.web_host.first_steps"]
         let connect = app.buttons["model.web_host.connect"]
         XCTAssertTrue(firstSteps.exists)
+        let setupStep = app.staticTexts.containing(NSPredicate(format: "label CONTAINS[c] %@", "Copy Connection Setup")).firstMatch
+        XCTAssertFalse(setupStep.exists)
+        firstSteps.tap()
+        XCTAssertTrue(setupStep.waitForExistence(timeout: 3))
+        firstSteps.tap()
+        XCTAssertFalse(setupStep.exists)
         XCTAssertEqual(connect.label, "Connect")
         let paste = app.buttons["model.web_host.paste_setup"]
         XCTAssertTrue(paste.exists, "The native paste action must stay visible on an empty clipboard")

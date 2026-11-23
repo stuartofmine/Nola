@@ -9,9 +9,14 @@ import SwiftUI
 struct MacInspectorWorkingContextView: View {
     @Bindable var model: MacWorkspaceModel
     var resourcesOnly = false
+    var canReadLocalFiles = true
     @Environment(\.openWindow) private var openWindow
     @State private var displayedMemoryDefault: Bool?
     @State private var displayedRetrievalDefault: Bool?
+
+    private var allowsLocalFileActions: Bool {
+        canReadLocalFiles && model.executionHost == .local
+    }
 
     private func pendingAttachmentStatus(_ attachment: MacAttachment) -> String {
         switch attachment.status {
@@ -54,31 +59,50 @@ struct MacInspectorWorkingContextView: View {
 
             if !conversationAttachments.isEmpty {
                 ForEach(conversationAttachments) { attachment in
-                    Button {
-                        MacQuickLookController.shared.preview([attachment.url])
-                    } label: {
+                    if allowsLocalFileActions {
+                        Button {
+                            MacQuickLookController.shared.preview([attachment.url])
+                        } label: {
+                            MacInspectorRow(
+                                symbol: "paperclip",
+                                title: attachment.name,
+                                value: attachment.locationLabel
+                            )
+                        }
+                        .buttonStyle(.plain)
+                        .help(attachment.url.path)
+                        .contextMenu {
+                            Button(String(localized: "Quick Look")) {
+                                MacQuickLookController.shared.preview([attachment.url])
+                            }
+                            Button(String(localized: "Reveal in Finder")) {
+                                NSWorkspace.shared.activateFileViewerSelecting([attachment.url])
+                            }
+                            Button(String(localized: "Open with Default App")) {
+                                NSWorkspace.shared.open(attachment.url)
+                            }
+                            Divider()
+                            Button(String(localized: "Copy Path")) {
+                                NSPasteboard.general.clearContents()
+                                NSPasteboard.general.setString(attachment.url.path, forType: .string)
+                            }
+                        }
+                    } else {
                         MacInspectorRow(
                             symbol: "paperclip",
                             title: attachment.name,
-                            value: attachment.locationLabel
+                            value: String(localized: "Remote Host")
                         )
-                    }
-                    .buttonStyle(.plain)
-                    .help(attachment.url.path)
-                    .contextMenu {
-                        Button(String(localized: "Open")) {
-                            NSWorkspace.shared.open(attachment.url)
-                        }
-                        Button(String(localized: "Quick Look")) {
-                            MacQuickLookController.shared.preview([attachment.url])
-                        }
-                        Button(String(localized: "Reveal in Finder")) {
-                            NSWorkspace.shared.activateFileViewerSelecting([attachment.url])
-                        }
-                        Divider()
-                        Button(String(localized: "Copy Path")) {
-                            NSPasteboard.general.clearContents()
-                            NSPasteboard.general.setString(attachment.url.path, forType: .string)
+                        .opacity(0.85)
+                        .help(String(localized: "This file belongs to a remote Host.", table: "Chat"))
+                        .contextMenu {
+                            Button(attachment.url.isFileURL ? String(localized: "Copy Path") : String(localized: "Copy URI")) {
+                                NSPasteboard.general.clearContents()
+                                NSPasteboard.general.setString(
+                                    attachment.url.isFileURL ? attachment.url.path : attachment.url.absoluteString,
+                                    forType: .string
+                                )
+                            }
                         }
                     }
                 }

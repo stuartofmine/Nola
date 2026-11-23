@@ -779,7 +779,7 @@ private struct MacMarkdownDocumentView: View {
 
 enum MacMarkdownFileLinkifier {
     static func linkify(_ source: String) -> String {
-        let pattern = #"`((?:/|~/)[^`\n]+)`"#
+        let pattern = #"`([^`\n]+)`"#
         guard let regex = try? NSRegularExpression(pattern: pattern) else {
             return source
         }
@@ -794,32 +794,122 @@ enum MacMarkdownFileLinkifier {
                   let pathRange = Range(match.range(at: 1), in: result) else {
                 continue
             }
+            if wholeRange.lowerBound > result.startIndex,
+               result[result.index(before: wholeRange.lowerBound)] == "[" {
+                continue
+            }
             let rawPath = String(result[pathRange])
-            let expandedPath = NSString(string: rawPath).expandingTildeInPath
-            guard let reference = MacCodeReferenceParser.parse(
-                URL(fileURLWithPath: expandedPath)
-            ) else {
+            guard let linked = linkDestination(for: rawPath) else {
                 continue
             }
-            let isExistingPath = FileManager.default.fileExists(atPath: reference.url.path)
-            guard isExistingPath
-                    || !reference.url.pathExtension.isEmpty
-                    || reference.line != nil else {
-                continue
-            }
-            var label = reference.url.lastPathComponent
-            if let target = reference.targetDescription {
-                label += ":\(target.dropFirst())"
-            }
-            label = label
+            let escapedLabel = linked.label
                 .replacingOccurrences(of: "[", with: "\\[")
                 .replacingOccurrences(of: "]", with: "\\]")
             result.replaceSubrange(
                 wholeRange,
-                with: "[\(label)](\(reference.url.absoluteString))"
+                with: "[\(escapedLabel)](\(linked.destination))"
             )
         }
         return result
+    }
+
+    private static func linkDestination(for rawPath: String) -> (label: String, destination: String)? {
+        if rawPath.hasPrefix("/") || rawPath.hasPrefix("~/") {
+            let expandedPath = NSString(string: rawPath).expandingTildeInPath
+            let (pathPart, fragment) = splitFragment(expandedPath)
+            var fileURL = URL(fileURLWithPath: pathPart)
+            if let fragment, var components = URLComponents(url: fileURL, resolvingAgainstBaseURL: false) {
+                components.fragment = fragment
+                if let urlWithFragment = components.url {
+                    fileURL = urlWithFragment
+                }
+            }
+            guard let reference = MacCodeReferenceParser.parse(fileURL) else {
+                return nil
+            }
+            let hasExtensionOrLine = !reference.url.pathExtension.isEmpty || reference.line != nil
+            guard hasExtensionOrLine || FileManager.default.fileExists(atPath: reference.url.path) else {
+                return nil
+            }
+            var destination = reference.url.absoluteString
+            if let locationFragment = fragmentString(line: reference.line, column: reference.column) {
+                destination += "#\(locationFragment)"
+            }
+            return (formattedLabel(for: reference), destination)
+        }
+
+        // Workspace-relative paths: require a slash, no scheme, no whitespace, and either
+        // a file extension or an explicit line reference. Never hit the filesystem here.
+        guard rawPath.contains("/"),
+              !rawPath.contains("://"),
+              !rawPath.hasPrefix("//"),
+              !rawPath.hasPrefix("-"),
+              !rawPath.contains(where: \.isWhitespace) else {
+            return nil
+        }
+        let trimmed = rawPath.hasPrefix("./") ? String(rawPath.dropFirst(2)) : rawPath
+        guard !trimmed.isEmpty,
+              trimmed.contains("/"),
+              !trimmed.hasPrefix("/"),
+              !trimmed.contains("..") else {
+            return nil
+        }
+        let (pathPart, fragment) = splitFragment(trimmed)
+        var syntheticURL = URL(fileURLWithPath: "/" + pathPart)
+        if let fragment, var components = URLComponents(url: syntheticURL, resolvingAgainstBaseURL: false) {
+            components.fragment = fragment
+            if let urlWithFragment = components.url {
+                syntheticURL = urlWithFragment
+            }
+        }
+        guard let reference = MacCodeReferenceParser.parse(syntheticURL) else {
+            return nil
+        }
+        let ext = reference.url.pathExtension
+        let hasValidExtension = !ext.isEmpty
+            && ext.count <= 12
+            && ext.contains(where: \.isLetter)
+            && ext.allSatisfy { $0.isLetter || $0.isNumber }
+        guard reference.line != nil || hasValidExtension else {
+            return nil
+        }
+        let relativePath = String(reference.url.path.dropFirst())
+        guard !relativePath.isEmpty, relativePath.contains("/") else {
+            return nil
+        }
+        var components = URLComponents()
+        components.path = relativePath
+        components.fragment = fragmentString(line: reference.line, column: reference.column)
+        guard let destination = components.string, !destination.isEmpty else {
+            return nil
+        }
+        return (formattedLabel(for: reference), destination)
+    }
+
+    private static func splitFragment(_ value: String) -> (path: String, fragment: String?) {
+        guard let hashIndex = value.lastIndex(of: "#"),
+              hashIndex > value.startIndex else {
+            return (value, nil)
+        }
+        let fragment = String(value[value.index(after: hashIndex)...])
+        guard !fragment.isEmpty else { return (value, nil) }
+        return (String(value[..<hashIndex]), fragment)
+    }
+
+    private static func fragmentString(line: Int?, column: Int?) -> String? {
+        guard let line else { return nil }
+        if let column {
+            return "L\(line)C\(column)"
+        }
+        return "L\(line)"
+    }
+
+    private static func formattedLabel(for reference: MacCodeReference) -> String {
+        var label = reference.url.lastPathComponent
+        if let target = reference.targetDescription {
+            label += ":\(target.dropFirst())"
+        }
+        return label
     }
 }
 

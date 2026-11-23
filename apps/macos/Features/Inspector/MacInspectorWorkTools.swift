@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 // Conversation tools present existing owner-scoped facts; they never invent work.
+import AppKit
 import SwiftUI
 
 struct MacInspectorParticipant: Identifiable {
@@ -91,6 +92,41 @@ struct MacInspectorArtifactRow: View {
             .buttonStyle(MacHorizontalBarButtonStyle(isSubtle: true))
             .disabled(destination == nil)
             .help(name)
+            .contextMenu {
+                switch destination {
+                case .localFile(let localURL):
+                    Button(String(localized: "Quick Look")) {
+                        MacQuickLookController.shared.preview([localURL])
+                    }
+                    Button(String(localized: "Reveal in Finder")) {
+                        NSWorkspace.shared.activateFileViewerSelecting([localURL])
+                    }
+                    Button(String(localized: "Open with Default App")) {
+                        NSWorkspace.shared.open(localURL)
+                    }
+                    Divider()
+                    Button(String(localized: "Copy Path")) {
+                        NSPasteboard.general.clearContents()
+                        NSPasteboard.general.setString(localURL.path, forType: .string)
+                    }
+                case .web(let webURL):
+                    Button(String(localized: "Open Link")) {
+                        openURL(webURL)
+                    }
+                    Button(String(localized: "Copy Link")) {
+                        NSPasteboard.general.clearContents()
+                        NSPasteboard.general.setString(webURL.absoluteString, forType: .string)
+                    }
+                case nil:
+                    Button(url.isFileURL ? String(localized: "Copy Path") : String(localized: "Copy URI")) {
+                        NSPasteboard.general.clearContents()
+                        NSPasteboard.general.setString(
+                            url.isFileURL ? url.path : url.absoluteString,
+                            forType: .string
+                        )
+                    }
+                }
+            }
             if destination == nil {
                 Text("This artifact requires its source Host to provide a preview.")
                     .font(.caption).foregroundStyle(.secondary)
@@ -137,11 +173,94 @@ struct MacInspectorArtifactsView: View {
                     type: artifact.type, canReadLocalFiles: canReadLocalFiles,
                     isLocalHost: model.executionHost == .local, inspectFile: inspectFile)
             }
-            // Input attachments are a distinct source, retained through the existing reader.
-            if canReadLocalFiles && model.executionHost == .local {
-                MacInspectorWorkingContextView(model: model, resourcesOnly: true)
+            // Input attachments are a distinct source; show them on both local and remote
+            // conversations while gating local file actions on local provenance inside the view.
+            MacInspectorWorkingContextView(
+                model: model,
+                resourcesOnly: true,
+                canReadLocalFiles: canReadLocalFiles
+            )
+        }
+    }
+}
+
+struct MacWorkspaceFileEntry: Identifiable, Equatable, Sendable {
+    let url: URL
+    let relativePath: String
+    let size: Int64
+    var id: String { relativePath }
+}
+
+enum MacWorkspaceFileBrowser {
+    static let defaultMaxDepth = 3
+    static let defaultMaxEntries = 150
+    static let skippedDirectoryNames: Set<String> = [".git", "node_modules", "target"]
+
+    nonisolated static func listFiles(
+        in rootURL: URL,
+        maxDepth: Int = defaultMaxDepth,
+        maxEntries: Int = defaultMaxEntries,
+        fileManager: FileManager = .default
+    ) -> (entries: [MacWorkspaceFileEntry], truncated: Bool) {
+        let resolvedRoot = rootURL.standardizedFileURL.resolvingSymlinksInPath()
+        var isDir: ObjCBool = false
+        guard fileManager.fileExists(atPath: resolvedRoot.path, isDirectory: &isDir), isDir.boolValue else {
+            return ([], false)
+        }
+
+        let keys: [URLResourceKey] = [.isDirectoryKey, .isRegularFileKey, .isSymbolicLinkKey, .fileSizeKey, .isHiddenKey]
+        var entries: [MacWorkspaceFileEntry] = []
+        var truncated = false
+        var queue: [(url: URL, prefix: String, depth: Int)] = [(resolvedRoot, "", 0)]
+        var head = 0
+
+        while head < queue.count {
+            let current = queue[head]
+            head += 1
+            guard let children = try? fileManager.contentsOfDirectory(
+                at: current.url,
+                includingPropertiesForKeys: keys,
+                options: [.skipsHiddenFiles]
+            ) else {
+                continue
+            }
+
+            let sortedChildren = children.sorted {
+                $0.lastPathComponent.localizedStandardCompare($1.lastPathComponent) == .orderedAscending
+            }
+
+            for child in sortedChildren {
+                let name = child.lastPathComponent
+                if name.hasPrefix(".") { continue }
+                guard let values = try? child.resourceValues(forKeys: Set(keys)) else { continue }
+                if values.isHidden == true || values.isSymbolicLink == true { continue }
+
+                let relativePath = current.prefix.isEmpty ? name : "\(current.prefix)/\(name)"
+                if values.isDirectory == true {
+                    if skippedDirectoryNames.contains(name) { continue }
+                    if current.depth < maxDepth {
+                        queue.append((child, relativePath, current.depth + 1))
+                    }
+                } else if values.isRegularFile == true {
+                    if entries.count >= maxEntries {
+                        truncated = true
+                        return (entries, truncated)
+                    }
+                    entries.append(
+                        MacWorkspaceFileEntry(
+                            url: child,
+                            relativePath: relativePath,
+                            size: Int64(values.fileSize ?? 0)
+                        )
+                    )
+                }
             }
         }
+
+        entries.sort {
+            $0.relativePath.localizedStandardCompare($1.relativePath) == .orderedAscending
+        }
+        return (entries, truncated)
     }
 }
 
@@ -150,6 +269,8 @@ struct MacInspectorReviewView: View {
     let openReview: (URL) -> Void
     @State private var snapshot: MacGitWorkspaceSnapshot?
     @State private var isNotRepository = false
+    @State private var workspaceFiles: [MacWorkspaceFileEntry] = []
+    @State private var workspaceFilesTruncated = false
     @State private var selected: String?
     @State private var diff = ""
     @State private var error: String?
@@ -167,23 +288,109 @@ struct MacInspectorReviewView: View {
                 Text("Workspace review requires the source Host's Git reader.").font(.callout).foregroundStyle(.secondary)
             } else {
                 HStack(spacing: 8) {
-                    if let snapshot { Label(snapshot.branch, systemImage: "arrow.triangle.branch").lineLimit(1) }
+                    if let snapshot {
+                        Label(snapshot.branch, systemImage: "arrow.triangle.branch").lineLimit(1)
+                    } else if isNotRepository {
+                        Label(String(localized: "Workspace Files"), systemImage: "folder").lineLimit(1)
+                    }
                     Spacer()
                     if let snapshot {
                         Button(String(localized: "Open Full Review")) { openReview(snapshot.repositoryURL) }
                             .buttonStyle(MacActionButtonStyle())
                             .controlSize(.small)
+                    } else if isNotRepository {
+                        Button {
+                            NSWorkspace.shared.open(model.effectiveWorkspaceURL)
+                        } label: {
+                            Image(systemName: "folder").frame(width: 28, height: 28)
+                        }
+                        .buttonStyle(MacPressFeedbackButtonStyle())
+                        .help(String(localized: "Open Workspace in Finder"))
+                        .accessibilityLabel(String(localized: "Open Workspace in Finder"))
                     }
                     Button { retry += 1 } label: { Image(systemName: "arrow.clockwise").frame(width: 32, height: 32) }
                         .buttonStyle(MacPressFeedbackButtonStyle()).help(String(localized: "Refresh")).accessibilityLabel(String(localized: "Refresh"))
                 }
                 if loading { ProgressView() }
                 if isNotRepository {
-                    Label(String(localized: "The selected workspace is not a Git repository."), systemImage: "folder")
-                        .font(.callout).foregroundStyle(.secondary)
-                        .fixedSize(horizontal: false, vertical: true)
-                    Button(String(localized: "Choose Folder…")) { Task { await model.chooseWorkspace() } }
-                        .buttonStyle(MacActionButtonStyle())
+                    HStack(spacing: 8) {
+                        Text(String(localized: "Not a Git repository"))
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                        Spacer()
+                        Button(String(localized: "Choose Folder…")) { Task { await model.chooseWorkspace() } }
+                            .buttonStyle(MacActionButtonStyle())
+                            .controlSize(.small)
+                            .disabled(model.isSelectedConversationVisiblyRunning)
+                    }
+                    if workspaceFiles.isEmpty && !loading {
+                        Label(String(localized: "No files in this workspace yet."), systemImage: "doc")
+                            .font(.callout)
+                            .foregroundStyle(.secondary)
+                            .padding(10)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .background(Color.primary.opacity(0.03), in: RoundedRectangle(cornerRadius: 8, style: .continuous))
+                    } else {
+                        VStack(alignment: .leading, spacing: 4) {
+                            ForEach(workspaceFiles) { entry in
+                                Button {
+                                    MacQuickLookController.shared.preview([entry.url])
+                                } label: {
+                                    HStack(alignment: .center, spacing: 9) {
+                                        Image(systemName: "doc")
+                                            .font(.system(size: 12, weight: .medium))
+                                            .foregroundStyle(.secondary)
+                                            .frame(width: 22, height: 22)
+                                            .background(
+                                                Color.primary.opacity(0.05),
+                                                in: RoundedRectangle(cornerRadius: 6, style: .continuous)
+                                            )
+                                        VStack(alignment: .leading, spacing: 2) {
+                                            Text(entry.relativePath)
+                                                .font(.system(size: 12.5, weight: .medium))
+                                                .lineLimit(2)
+                                                .truncationMode(.middle)
+                                                .fixedSize(horizontal: false, vertical: true)
+                                            Text(ByteCountFormatter.string(fromByteCount: entry.size, countStyle: .file))
+                                                .font(.caption)
+                                                .foregroundStyle(.secondary)
+                                        }
+                                        Spacer(minLength: 8)
+                                        Image(systemName: "eye")
+                                            .font(.system(size: 11, weight: .medium))
+                                            .foregroundStyle(.tertiary)
+                                            .accessibilityHidden(true)
+                                    }
+                                    .frame(maxWidth: .infinity, alignment: .leading)
+                                    .contentShape(Rectangle())
+                                }
+                                .buttonStyle(MacHorizontalBarButtonStyle(isSubtle: true))
+                                .help(entry.relativePath)
+                                .contextMenu {
+                                    Button(String(localized: "Quick Look")) {
+                                        MacQuickLookController.shared.preview([entry.url])
+                                    }
+                                    Button(String(localized: "Reveal in Finder")) {
+                                        NSWorkspace.shared.activateFileViewerSelecting([entry.url])
+                                    }
+                                    Button(String(localized: "Open with Default App")) {
+                                        NSWorkspace.shared.open(entry.url)
+                                    }
+                                    Divider()
+                                    Button(String(localized: "Copy Path")) {
+                                        NSPasteboard.general.clearContents()
+                                        NSPasteboard.general.setString(entry.url.path, forType: .string)
+                                    }
+                                }
+                            }
+                            if workspaceFilesTruncated {
+                                Text(String(localized: "Showing first \(MacWorkspaceFileBrowser.defaultMaxEntries) files."))
+                                    .font(.caption)
+                                    .foregroundStyle(.secondary)
+                                    .padding(.top, 4)
+                            }
+                        }
+                    }
                 }
                 if let error { Text(error).font(.caption).foregroundStyle(.red).textSelection(.enabled) }
                 if let snapshot {
@@ -199,7 +406,8 @@ struct MacInspectorReviewView: View {
         .task(id: "\(owner)/\(retry)/\(model.executionHost)/\(model.effectiveWorkspaceURL.path)") {
             let scopeKey = "\(owner)/\(model.executionHost)/\(model.effectiveWorkspaceURL.path)"
             if loadedOwner != scopeKey {
-                snapshot = nil; selected = nil; diff = ""; loadedOwner = scopeKey
+                snapshot = nil; workspaceFiles = []; workspaceFilesTruncated = false
+                selected = nil; diff = ""; loadedOwner = scopeKey
             }
             error = nil; loading = false; isNotRepository = false
             guard model.executionHost == .local else { return }
@@ -212,9 +420,18 @@ struct MacInspectorReviewView: View {
                     at: url, allowEnclosingRepository: !model.usesSessionSandbox)
                 guard !Task.isCancelled, owner == requestedOwner, loadRequestID == requestID else { return }
                 snapshot = result
+                workspaceFiles = []
+                workspaceFilesTruncated = false
             } catch MacWorkspaceGitError.notRepository {
                 guard !Task.isCancelled, owner == requestedOwner, loadRequestID == requestID else { return }
+                snapshot = nil
                 isNotRepository = true
+                let listing = await Task.detached(priority: .utility) {
+                    MacWorkspaceFileBrowser.listFiles(in: url)
+                }.value
+                guard !Task.isCancelled, owner == requestedOwner, loadRequestID == requestID else { return }
+                workspaceFiles = listing.entries
+                workspaceFilesTruncated = listing.truncated
             } catch {
                 guard !Task.isCancelled, owner == requestedOwner, loadRequestID == requestID else { return }
                 self.error = error.localizedDescription

@@ -120,6 +120,16 @@
     <string name="models_verified_via_direct">Verified over a direct connection</string>
     <string name="models_verified_via_tailcat">Verified through Tailcat</string>
     <string name="models_tailcat_verify_failed">Tailcat could not reach the host. Check Tailcat on the host, then verify again.</string>
+    <string name="models_tailcat_error_dns">Tailcat could not resolve the host address. Check your network DNS settings and try again.</string>
+    <string name="models_tailcat_error_timeout">Tailcat timed out while reaching the host. Check that the host is online and try again.</string>
+    <string name="models_tailcat_error_certificate">Tailcat rejected the host TLS certificate. Verify the host certificate and try again.</string>
+    <string name="models_tailcat_error_permission">Tailcat was denied access by the host. Check your access token and host permissions.</string>
+    <string name="models_tailcat_error_suspended">Tailcat paused while the app was in the background. Return to the app and try again.</string>
+    <string name="models_tailcat_error_identity_mismatch">The host identity changed and does not match the paired host. Re-pair with the intended host.</string>
+    <string name="models_tailcat_error_capacity">The host reached its active Tailcat session limit. Close unused sessions on the host and try again.</string>
+    <string name="models_tailcat_error_not_available">Tailcat is not enabled on this host. Enable Tailcat on the host or connect directly.</string>
+    <string name="models_tailcat_error_start_timeout">Tailcat took too long to start on the host. Wait a moment and try again.</string>
+    <string name="models_tailcat_error_grant">Tailcat could not obtain a session grant from the host. Check the host token and try again.</string>
     <string name="models_direct_verify_failed_without_tailcat">The direct connection returned HTTP %1$d. Check the host address and access token. If the host requires Tailcat, install a Nola build with Tailcat support.</string>
     <string name="chat_empty_no_models">Use a model service, a local model, or a paired Nola host.</string>
     <string name="chat_empty_mode_device">Ready on this device for writing, planning, and device actions.</string>
@@ -1069,7 +1079,8 @@
     <string name="models_web_host_setup_copy">Choose Copy Connection Setup on the Mac, then paste it here. You can also enter the address and token manually.</string>
     <string name="models_web_host_checking">Checking host</string>
     <string name="models_web_host_checking_detail">Verifying the token, permission protocol, and host identity before saving.</string>
-    <string name="models_save_and_verify">Save &amp; verify</string>
+    <string name="models_save_and_verify">Verify and connect</string>
+    <string name="models_cancel_host_verification">Cancel verification</string>
     <string name="models_verify_again">Verify again</string>
     <string name="models_error_host_protocol">This host uses an unsupported permission protocol. Update Nola on the host and try again.</string>
     <string name="models_error_host_identity_changed">This address now identifies a different host. Forget the previous pairing before reconnecting.</string>

@@ -2487,7 +2487,7 @@
 "chat.task.guidance.send" = "Envoyer les instructions";
 "model.web_host.setup" = "Avant la connexion";
 "model.web_host.setup.start" = "Sur le Mac, ouvrez « Réglages > Connexions » dans Nola et activez « Partager ce Mac comme Nola Server ».";
-"model.web_host.setup.copy" = "Copiez l’adresse et le jeton de jumelage affichés par Nola sur le Mac. Utilisez un réseau privé de confiance ou HTTPS.";
+"model.web_host.setup.copy" = "Copiez les informations de connexion sur le Mac et collez-les sur cet appareil. Utilisez un réseau privé de confiance ou HTTPS.";
 "model.web_host.checking" = "Vérification de l’hôte";
 "model.web_host.checking.detail" = "Vérification du jeton, du protocole d’autorisation et de l’identité de l’hôte avant l’enregistrement.";
 "model.web_host.error.protocol" = "Cet hôte utilise un protocole d’autorisation non pris en charge. Mettez Nola à jour sur l’hôte, puis réessayez.";

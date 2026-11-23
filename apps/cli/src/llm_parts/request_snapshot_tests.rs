@@ -258,6 +258,14 @@ fn cache_identity_tracks_sent_tools_system_policy_and_actual_route_not_history_g
     let route = request.prompt_cache_identity();
     request.body["messages"][0] = json!({"role":"system","content":"Changed actual system instructions"});
     assert_ne!(request.prompt_cache_identity().stable_prefix_sha256, route.stable_prefix_sha256);
+
+    let core_digest = "a".repeat(64);
+    let reused = request.prompt_cache_identity_with_tool_digest(Some(&core_digest));
+    assert_eq!(reused.tool_manifest_sha256, core_digest);
+    let other_digest = "b".repeat(64);
+    let changed_tools = request.prompt_cache_identity_with_tool_digest(Some(&other_digest));
+    assert_eq!(changed_tools.tool_manifest_sha256, other_digest);
+    assert_ne!(changed_tools.stable_prefix_sha256, reused.stable_prefix_sha256);
 }
 
 #[test]

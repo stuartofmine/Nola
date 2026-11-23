@@ -100,5 +100,83 @@ func TestInspectionFailureCodesNeverIncludeCredentialBearingErrorText(t *testing
 		if got := inspectionFailureCode(example.err); got != example.code {
 			t.Fatalf("unexpected bounded failure code %q", got)
 		}
+		if got := ClassifyError(example.err); got != example.code {
+			t.Fatalf("unexpected classified failure code %q", got)
+		}
+	}
+	if got := ClassifyError(checkHostStatus(strings.NewReader(`{"hostId":"other","transportIngress":"tailcat","authenticated":false,"localTrust":false}`), "expected")); got != "host_identity_mismatch" {
+		t.Fatalf("expected host_identity_mismatch, got %q", got)
+	}
+	if got := ClassifyError(checkHostStatus(strings.NewReader(`{"hostId":"expected","transportIngress":"tailcat"}`), "expected")); got != "local_trust_enabled" {
+		t.Fatalf("expected local_trust_enabled, got %q", got)
+	}
+}
+
+func TestHostAndClientCloseDoNotDeadlockWithActiveConnections(t *testing.T) {
+	client := NewClient()
+	config := HostConfig{
+		Origin:            "http://127.0.0.1:5001",
+		ExpectedHostID:    "fixture-host",
+		AllowedClientKeys: []string{client.PublicKey()},
+	}
+	host, err := NewHost(config)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Simulate an active proxied connection on Host.
+	a1, b1 := net.Pipe()
+	c1, d1 := net.Pipe()
+	defer a1.Close()
+	defer d1.Close()
+	go host.active.proxy(b1, func(context.Context) (net.Conn, error) { return c1, nil })
+	time.Sleep(20 * time.Millisecond)
+
+	hostDone := make(chan error, 1)
+	go func() { hostDone <- host.Close() }()
+	select {
+	case <-hostDone:
+	case <-time.After(3 * time.Second):
+		t.Fatal("Host.Close() deadlocked with active connection")
+	}
+
+	// Simulate an active proxied connection on Client.
+	a2, b2 := net.Pipe()
+	c2, d2 := net.Pipe()
+	defer a2.Close()
+	defer d2.Close()
+	go client.active.proxy(b2, func(context.Context) (net.Conn, error) { return c2, nil })
+	time.Sleep(20 * time.Millisecond)
+
+	clientDone := make(chan error, 1)
+	go func() { clientDone <- client.Close() }()
+	select {
+	case <-clientDone:
+	case <-time.After(3 * time.Second):
+		t.Fatal("Client.Close() deadlocked with active connection")
+	}
+}
+
+func TestConnectionsCloseWaitIsBoundedOnStalledDial(t *testing.T) {
+	state := newConnections()
+	a, b := net.Pipe()
+	defer a.Close()
+	unblock := make(chan struct{})
+	defer close(unblock)
+
+	// Dial ignores ctx cancellation to simulate a wedged socket/syscall.
+	go state.proxy(b, func(context.Context) (net.Conn, error) {
+		<-unblock
+		return nil, io.EOF
+	})
+	time.Sleep(20 * time.Millisecond)
+
+	start := time.Now()
+	state.beginClose()
+	if state.wait(80 * time.Millisecond) {
+		t.Fatal("expected bounded wait to time out on wedged dial")
+	}
+	if time.Since(start) > time.Second {
+		t.Fatal("bounded close wait took too long")
 	}
 }

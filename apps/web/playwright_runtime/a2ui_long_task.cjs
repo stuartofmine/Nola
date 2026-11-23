@@ -76,7 +76,7 @@ const prompt = '请认真设计一个本地优先跨平台知识工作助手的�
     async function approveUiOnly() {
         const panel = page.locator('.permission-panel');
         if (!await panel.isVisible()) return;
-        const tool = (await panel.locator('.tool').innerText()).trim();
+        const tool = await panel.locator('.tool').getAttribute('data-tool-name');
         if (tool !== 'render_ui') throw Error(`Unexpected permission ${tool}; no authorization granted`);
         const allow = panel.locator('.actions button.primary');
         if (await allow.isEnabled()) await allow.click();

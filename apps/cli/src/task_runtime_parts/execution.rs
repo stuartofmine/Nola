@@ -1868,6 +1868,8 @@ fn run_shell_task(request: ShellTaskProcessRequest) -> i32 {
         crate::process_sandbox::isolate_shell_supervisor_environment(&mut command);
         command.args(["--noprofile","--norc"]).env_remove("BASH_ENV").env_remove("ENV");
         for (name,_) in std::env::vars_os().filter(|(name,_)|name.to_string_lossy().starts_with("BASH_FUNC_")) {command.env_remove(name);}
+    } else {
+        crate::native_sandbox::scrub_sensitive_env(&mut command);
     }
     command
         .arg("-o")
@@ -1875,7 +1877,30 @@ fn run_shell_task(request: ShellTaskProcessRequest) -> i32 {
         .arg(if prepared_sandbox.is_some() {"-c"}else{"-lc"})
         .arg(tools::shell_evidence_script(&execution_command))
         .env("NOLA_SHELL_EVIDENCE_PATH", crate::platform_paths::shell_path(&evidence_path))
-        .current_dir(&task.cwd)
+        .current_dir(&task.cwd);
+    if prepared_sandbox.is_none() && crate::native_sandbox::native_os_sandbox_available() {
+        let mut extra_write_roots = Vec::new();
+        for artifact_path in [
+            evidence_path.as_path(),
+            Path::new(&task.status_path),
+            Path::new(&task.stdout_path),
+            Path::new(&task.stderr_path),
+        ] {
+            if let Some(parent) = artifact_path.parent() {
+                extra_write_roots.push(parent.to_path_buf());
+            }
+        }
+        let native_policy = crate::native_sandbox::NativeOsSandboxPolicy::for_workspace(
+            Path::new(&task.cwd),
+            &extra_write_roots,
+        );
+        if let Ok(wrapped) =
+            crate::native_sandbox::wrap_command_in_native_sandbox(&native_policy, &command)
+        {
+            command = wrapped;
+        }
+    }
+    command
         .stdin(Stdio::null())
         .stdout(Stdio::from(stdout))
         .stderr(Stdio::from(stderr));

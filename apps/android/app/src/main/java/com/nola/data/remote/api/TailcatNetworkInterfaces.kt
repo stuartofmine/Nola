@@ -11,14 +11,20 @@ import java.io.IOException
 import java.net.NetworkInterface
 import kotlinx.serialization.json.*
 
+internal interface TailcatNetworkMonitor {
+    fun start(changed: () -> Unit)
+    fun stop()
+    fun snapshot(): String
+}
+
 /** Platform enumeration only: no socket probes, routes, VPN, or stored identity.
  * ACCESS_NETWORK_STATE is already declared by the app. Registration belongs to
  * the foreground lifecycle; each connection also obtains a fresh snapshot. */
-internal class TailcatNetworkInterfaces(context: Context) {
+internal class TailcatNetworkInterfaces(context: Context) : TailcatNetworkMonitor {
     private val connectivity = context.getSystemService(ConnectivityManager::class.java)
     private var callback: ConnectivityManager.NetworkCallback? = null
 
-    @Synchronized fun start(changed: () -> Unit) {
+    @Synchronized override fun start(changed: () -> Unit) {
         if (callback != null) return
         val observer = object : ConnectivityManager.NetworkCallback() {
             override fun onAvailable(network: Network) = changed()
@@ -44,13 +50,13 @@ internal class TailcatNetworkInterfaces(context: Context) {
         }
     }
 
-    @Synchronized fun stop() {
+    @Synchronized override fun stop() {
         val observer = callback ?: return
-        connectivity.unregisterNetworkCallback(observer)
         callback = null
+        runCatching { connectivity.unregisterNetworkCallback(observer) }
     }
 
-    fun snapshot(): String = try {
+    override fun snapshot(): String = try {
         val interfaces = NetworkInterface.getNetworkInterfaces()?.toList()
             ?: throw IOException("Android network interfaces unavailable")
         buildJsonArray {

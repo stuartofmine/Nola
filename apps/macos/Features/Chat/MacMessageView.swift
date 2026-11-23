@@ -412,39 +412,45 @@ struct MacMessageView: View {
                         spacing: 6
                     ) {
                         ForEach(uncoveredAttachments, id: \.offset) { index, name in
-                            Button {
-                                guard index < message.attachmentURLs.count else { return }
-                                openAttachments([message.attachmentURLs[index]])
-                            } label: {
-                                HStack(spacing: 9) {
-                                    Image(systemName: attachmentIconName(at: index))
-                                        .font(.system(size: 14, weight: .medium))
-                                        .foregroundStyle(MacDesignColor.brand)
-                                        .frame(width: 22, height: 22)
-                                    VStack(alignment: .leading, spacing: 2) {
-                                        Text(name)
-                                            .font(.system(size: 12, weight: .semibold))
-                                            .foregroundStyle(.primary)
-                                            .lineLimit(1)
-                                        Text(attachmentTypeLabel(at: index, fallbackName: name))
-                                            .font(.system(size: 12, weight: .medium))
-                                            .foregroundStyle(.secondary)
-                                    }
-                                    Spacer(minLength: 12)
+                            let attachmentURL = index < message.attachmentURLs.count ? message.attachmentURLs[index] : nil
+                            Group {
+                                if let attachmentURL, isLocalImageAttachment(at: index, url: attachmentURL) {
+                                    MacMessageImageThumbnail(
+                                        url: attachmentURL,
+                                        name: name,
+                                        allowsLocalPreview: allowsLocalThumbnailPreview,
+                                        onOpen: { openAttachments([attachmentURL]) },
+                                        fallback: {
+                                            attachmentFileButton(index: index, name: name, url: attachmentURL)
+                                        }
+                                    )
+                                } else {
+                                    attachmentFileButton(index: index, name: name, url: attachmentURL)
                                 }
-                                .padding(.horizontal, 11)
-                                .padding(.vertical, 8)
-                                .frame(width: 280, alignment: .leading)
                             }
-                            .buttonStyle(MacActionButtonStyle(contentInsets: .init()))
-                            .disabled(index >= message.attachmentURLs.count)
-                            .help(String(
-                                format: NSLocalizedString(
-                                    "Open attachment %@",
-                                    comment: "Open a chat attachment"
-                                ),
-                                name
-                            ))
+                            .contextMenu {
+                                if let attachmentURL {
+                                    Button(String(localized: "Quick Look")) {
+                                        openAttachments([attachmentURL])
+                                    }
+                                    if attachmentURL.isFileURL {
+                                        Button(String(localized: "Reveal in Finder")) {
+                                            openAttachments([attachmentURL], reveal: true)
+                                        }
+                                        Button(String(localized: "Open with Default App")) {
+                                            openAttachments([attachmentURL], openWithDefaultApp: true)
+                                        }
+                                    }
+                                    Divider()
+                                    Button(attachmentURL.isFileURL ? String(localized: "Copy Path") : String(localized: "Copy URI")) {
+                                        NSPasteboard.general.clearContents()
+                                        NSPasteboard.general.setString(
+                                            attachmentURL.isFileURL ? attachmentURL.path : attachmentURL.absoluteString,
+                                            forType: .string
+                                        )
+                                    }
+                                }
+                            }
                         }
                     }
                     .frame(
@@ -663,7 +669,7 @@ struct MacMessageView: View {
         }
     }
 
-    private func openAttachments(_ urls: [URL], reveal: Bool = false) {
+    private func openAttachments(_ urls: [URL], reveal: Bool = false, openWithDefaultApp: Bool = false) {
         guard !urls.isEmpty else { return }
         let reference = message.journalReference
         Task { @MainActor in
@@ -692,13 +698,79 @@ struct MacMessageView: View {
                     }
                 }
                 if !files.isEmpty {
-                    if reveal { NSWorkspace.shared.activateFileViewerSelecting(files) }
-                    else { MacQuickLookController.shared.preview(files) }
+                    if reveal {
+                        NSWorkspace.shared.activateFileViewerSelecting(files)
+                    } else if openWithDefaultApp {
+                        for file in files {
+                            NSWorkspace.shared.open(file)
+                        }
+                    } else {
+                        MacQuickLookController.shared.preview(files)
+                    }
                 }
             } catch {
                 if !Task.isCancelled { attachmentOpenError = error.localizedDescription }
             }
         }
+    }
+
+    private var allowsLocalThumbnailPreview: Bool {
+        if message.journalReference != nil {
+            return (try? messageSourceContext?.readLocalSource()) ?? false
+        }
+        if message.canonicalMessageID != nil {
+            return (try? messageSourceContext?.readLocalSource()) ?? false
+        }
+        return true
+    }
+
+    private func isLocalImageAttachment(at index: Int, url: URL) -> Bool {
+        guard url.isFileURL else { return false }
+        let ext = url.pathExtension.lowercased()
+        if ["png", "jpg", "jpeg", "gif", "heic", "webp", "tiff", "bmp"].contains(ext) {
+            return true
+        }
+        if let mime = message.attachmentMetadata?.first(where: { $0.uri == url.absoluteString || $0.uri == url.path })?.mimeType,
+           mime.lowercased().hasPrefix("image/") {
+            return true
+        }
+        return false
+    }
+
+    private func attachmentFileButton(index: Int, name: String, url: URL?) -> some View {
+        Button {
+            guard let url else { return }
+            openAttachments([url])
+        } label: {
+            HStack(spacing: 9) {
+                Image(systemName: attachmentIconName(at: index))
+                    .font(.system(size: 14, weight: .medium))
+                    .foregroundStyle(MacDesignColor.brand)
+                    .frame(width: 22, height: 22)
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(name)
+                        .font(.system(size: 12, weight: .semibold))
+                        .foregroundStyle(.primary)
+                        .lineLimit(1)
+                    Text(attachmentTypeLabel(at: index, fallbackName: name))
+                        .font(.system(size: 12, weight: .medium))
+                        .foregroundStyle(.secondary)
+                }
+                Spacer(minLength: 12)
+            }
+            .padding(.horizontal, 11)
+            .padding(.vertical, 8)
+            .frame(width: 280, alignment: .leading)
+        }
+        .buttonStyle(MacActionButtonStyle(contentInsets: .init()))
+        .disabled(url == nil)
+        .help(String(
+            format: NSLocalizedString(
+                "Open attachment %@",
+                comment: "Open a chat attachment"
+            ),
+            name
+        ))
     }
 
     private var uncoveredLocalAttachmentURLs: [URL] {
@@ -745,6 +817,59 @@ struct MacMessageView: View {
             ? message.attachmentMetadata?.first { $0.uri == message.attachmentURLs[index].absoluteString }
             : nil
         return [fileType, metadata?.mimeType, metadata?.operation].compactMap { $0 }.joined(separator: " · ")
+    }
+}
+
+private struct MacMessageImageThumbnail<Fallback: View>: View {
+    let url: URL
+    let name: String
+    let allowsLocalPreview: Bool
+    let onOpen: () -> Void
+    @ViewBuilder let fallback: () -> Fallback
+    @State private var image: NSImage?
+    @State private var loadFailed = false
+
+    var body: some View {
+        Group {
+            if let image {
+                Button(action: onOpen) {
+                    Image(nsImage: image)
+                        .resizable()
+                        .scaledToFit()
+                        .frame(maxWidth: 220, maxHeight: 160)
+                        .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
+                        .overlay {
+                            RoundedRectangle(cornerRadius: 10, style: .continuous)
+                                .strokeBorder(Color.primary.opacity(0.12), lineWidth: 0.5)
+                        }
+                }
+                .buttonStyle(.plain)
+                .help(String(
+                    format: NSLocalizedString(
+                        "Open attachment %@",
+                        comment: "Open a chat attachment"
+                    ),
+                    name
+                ))
+            } else {
+                fallback()
+            }
+        }
+        .task(id: url) {
+            guard allowsLocalPreview, !loadFailed else { return }
+            let targetURL = url
+            let loaded: NSImage? = await Task.detached(priority: .utility) {
+                let accessed = targetURL.startAccessingSecurityScopedResource()
+                defer { if accessed { targetURL.stopAccessingSecurityScopedResource() } }
+                return NSImage(contentsOf: targetURL)
+            }.value
+            guard !Task.isCancelled else { return }
+            if let loaded {
+                image = loaded
+            } else {
+                loadFailed = true
+            }
+        }
     }
 }
 

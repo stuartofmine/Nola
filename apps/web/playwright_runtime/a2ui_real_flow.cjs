@@ -63,7 +63,7 @@ const {chromium}=require('playwright-core');const fs=require('node:fs');const as
    }
    const panel=page.locator('.permission-panel');
    if(await panel.isVisible()){
-    const tool=(await panel.locator('.tool').innerText()).trim();
+    const tool=await panel.locator('.tool').getAttribute('data-tool-name');
     if(tool!=='render_ui')throw Error('unexpected permission '+tool);
     const allow=panel.locator('.actions button.primary');
     if(await allow.isEnabled()){await panel.screenshot({path:`${out}/${label}-approval.png`});await allow.click();approvals++;}

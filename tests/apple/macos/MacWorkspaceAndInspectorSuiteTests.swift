@@ -2061,3 +2061,127 @@ private struct RowProbe: View {
         }.padding(12)
     }
 }
+
+@MainActor
+final class MacWorkspaceIsolationAndFileBrowserTests: XCTestCase {
+    private func makeIsolatedModel(conversationID: String) throws -> (root: URL, model: MacWorkspaceModel) {
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent("nola-workspace-iso-test-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        let port = try MacApplicationPort(databaseURL: root.appendingPathComponent("store.db"))
+        let repository = MacCanonicalConversationRepository(store: port)
+        let model = MacWorkspaceModel(
+            initialConversationID: conversationID,
+            canonicalRepository: repository,
+            localAgentRuntime: PersistenceTestLocalRuntime(),
+            remoteHost: PersistenceTestRemoteHost()
+        )
+        return (root, model)
+    }
+
+    func testChooseWorkspaceIsBlockedWhileRunningAndOnRemoteHost() async throws {
+        let conversationID = "choose-workspace-guard-\(UUID().uuidString)"
+        let (root, model) = try makeIsolatedModel(conversationID: conversationID)
+        defer { try? FileManager.default.removeItem(at: root) }
+        model.selectedConversationID = conversationID
+
+        XCTAssertEqual(model.executionHost, .local)
+        model.setActiveRunForTesting(conversationID: conversationID, isRunning: true)
+        let whileRunningResult = await model.chooseWorkspace()
+        XCTAssertNil(whileRunningResult)
+        XCTAssertNil(model.workspaceURL)
+
+        model.setActiveRunForTesting(conversationID: nil, isRunning: false)
+        let convIndex = try XCTUnwrap(model.conversations.firstIndex { $0.id == conversationID })
+        model.conversations[convIndex].executionHostRawValue = MacExecutionHost.remote.rawValue
+        XCTAssertEqual(model.executionHost, .remote)
+        let remoteHostResult = await model.chooseWorkspace()
+        XCTAssertNil(remoteHostResult)
+        XCTAssertNil(model.workspaceURL)
+    }
+
+    func testDeletingConversationRemovesSessionSandboxDirectory() async throws {
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent("nola-session-cleanup-\(UUID().uuidString)", isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let isolatedEnvironment = MacAppEnvironment(
+            applicationSupportRoot: root,
+            cachesRoot: root.appendingPathComponent("Caches", isDirectory: true)
+        )
+        let isolatedID = "isolated-\(UUID().uuidString)"
+        let isolatedDir = isolatedEnvironment.sessionWorkspaceURL(for: isolatedID)
+        try "hello".write(
+            to: isolatedDir.appendingPathComponent("note.txt"),
+            atomically: true,
+            encoding: .utf8
+        )
+        XCTAssertTrue(FileManager.default.fileExists(atPath: isolatedDir.path))
+        try isolatedEnvironment.removeSessionWorkspace(for: isolatedID)
+        XCTAssertFalse(FileManager.default.fileExists(atPath: isolatedDir.path))
+
+        let conversationID = "delete-session-\(UUID().uuidString)"
+        let (modelRoot, model) = try makeIsolatedModel(conversationID: conversationID)
+        defer { try? FileManager.default.removeItem(at: modelRoot) }
+        let index = try XCTUnwrap(model.conversations.firstIndex { $0.id == conversationID })
+        model.conversations[index].isPersisted = false
+        let conversation = model.conversations[index]
+        let sessionDir = MacAppEnvironment.shared.sessionWorkspaceURL(for: conversationID)
+        defer { try? FileManager.default.removeItem(at: sessionDir) }
+        try "scratch".write(
+            to: sessionDir.appendingPathComponent("output.md"),
+            atomically: true,
+            encoding: .utf8
+        )
+        XCTAssertTrue(FileManager.default.fileExists(atPath: sessionDir.path))
+
+        model.deleteConversation(conversation)
+        for _ in 0..<200 where model.deletingConversationIDs.contains(conversationID) {
+            await Task.yield()
+        }
+
+        XCTAssertFalse(model.conversations.contains { $0.id == conversationID })
+        XCTAssertFalse(FileManager.default.fileExists(atPath: sessionDir.path))
+    }
+
+    func testNonGitWorkspaceFileBrowserListsFilesSkipsIgnoredDirectoriesAndHandlesEmpty() throws {
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent("nola-workspace-browser-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+
+        let emptyListing = MacWorkspaceFileBrowser.listFiles(in: root)
+        XCTAssertTrue(emptyListing.entries.isEmpty)
+        XCTAssertFalse(emptyListing.truncated)
+
+        let filesToCreate: [(String, String)] = [
+            ("README.md", "hello"),
+            ("src/app.swift", "print(1)"),
+            ("src/nested/deep/file.txt", "depth3"),
+            ("src/nested/deep/too_deep/hidden_by_depth.txt", "depth4"),
+            (".env", "SECRET=1"),
+            (".git/HEAD", "ref: refs/heads/main"),
+            ("node_modules/pkg/index.js", "module.exports = {}"),
+            ("target/debug/app", "binary"),
+        ]
+        for (relPath, contents) in filesToCreate {
+            let fileURL = root.appendingPathComponent(relPath)
+            try FileManager.default.createDirectory(
+                at: fileURL.deletingLastPathComponent(),
+                withIntermediateDirectories: true
+            )
+            try contents.write(to: fileURL, atomically: true, encoding: .utf8)
+        }
+
+        let listing = MacWorkspaceFileBrowser.listFiles(in: root)
+        XCTAssertFalse(listing.truncated)
+        XCTAssertEqual(
+            listing.entries.map(\.relativePath),
+            ["README.md", "src/app.swift", "src/nested/deep/file.txt"]
+        )
+        XCTAssertEqual(listing.entries.first?.size, 5)
+
+        let truncatedListing = MacWorkspaceFileBrowser.listFiles(in: root, maxEntries: 2)
+        XCTAssertEqual(truncatedListing.entries.count, 2)
+        XCTAssertTrue(truncatedListing.truncated)
+    }
+}

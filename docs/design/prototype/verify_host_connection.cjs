@@ -45,6 +45,12 @@ async function main() {
                     await click('关闭共享'); await at('2');
                 }
                 await go('host-pair');
+                if (mobile) {
+                    const help = device.locator('.hp-setup-help');
+                    await help.locator('summary').click();
+                    assert.ok(await help.locator('p').isVisible());
+                    await help.locator('summary').click();
+                }
                 await click('手动填写');
                 await click('验证并连接');
                 assert.match(await device.locator('#field-error').innerText(),/地址/);
@@ -54,6 +60,7 @@ async function main() {
                 assert.equal(await address.inputValue(),sample);
                 if (platform === 'mac') {
                     await click('验证并连接'); await at('checking');
+                    assert.ok(await address.isDisabled());
                     await click('取消验证'); await at('draft');
                     await page.waitForTimeout(1250); await at('draft');
                 }
@@ -86,8 +93,10 @@ async function main() {
                 await click(forget); await page.locator('#confirm-apply').click(); await at('0');
                 if (mobile) {
                     await click('粘贴连接信息'); await click('验证并连接'); await at('checking');
-                    await click(platform === 'ios' ? '取消验证' : '取消');
-                    await page.waitForTimeout(1250); await at(platform === 'ios' ? 'draft' : '0');
+                    await click('取消验证');
+                    await page.waitForTimeout(1250); await at('draft');
+                    assert.equal(await address.inputValue(),sample);
+                    assert.ok(await token.inputValue());
                     await page.setViewportSize({width:320,height:800});
                     await page.locator('#state-list [data-state="storage"]').click();
                     assert.ok(await device.evaluate(el => el.scrollWidth <= el.clientWidth + 1));

@@ -5,6 +5,7 @@
 
 use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
+use std::collections::HashMap;
 use std::io::Read;
 #[cfg(unix)]
 use std::os::unix::ffi::OsStrExt as _;
@@ -38,6 +39,7 @@ pub(crate) fn attach_result_provenance(capability_id: &str, workspace: &Path, ou
     let mut raw_facts = Vec::new();
     let mut fact_limit_exceeded = false;
     collect_code_facts(output, 0, &mut raw_facts, &mut fact_limit_exceeded);
+    let mut file_cache: HashMap<PathBuf, Option<(Vec<u8>, String)>> = HashMap::new();
     let facts = raw_facts
         .into_iter()
         .map(|raw| {
@@ -53,23 +55,34 @@ pub(crate) fn attach_result_provenance(capability_id: &str, workspace: &Path, ou
                 .is_some_and(|path| path.starts_with(&workspace));
             let path_exists =
                 inside_workspace && canonical.as_ref().is_some_and(|path| path.is_file());
-            let bytes = path_exists
-                .then(|| canonical.as_ref().expect("checked path"))
-                .filter(|path| {
-                    path.metadata()
-                        .is_ok_and(|metadata| metadata.len() <= MAX_PROVENANCE_FILE_BYTES)
-                })
-                .and_then(|path| std::fs::read(path).ok());
-            let current_digest = bytes
-                .as_ref()
-                .map(|bytes| format!("{:x}", Sha256::digest(bytes)));
-            let evidence_matches = match (raw.evidence.as_deref(), bytes.as_deref()) {
+            let cached = if path_exists {
+                let canonical_path = canonical.as_ref().expect("checked path");
+                file_cache
+                    .entry(canonical_path.clone())
+                    .or_insert_with(|| {
+                        let within_limit = canonical_path
+                            .metadata()
+                            .is_ok_and(|metadata| metadata.len() <= MAX_PROVENANCE_FILE_BYTES);
+                        if !within_limit {
+                            return None;
+                        }
+                        let bytes = std::fs::read(canonical_path).ok()?;
+                        let digest = format!("{:x}", Sha256::digest(&bytes));
+                        Some((bytes, digest))
+                    })
+                    .as_ref()
+            } else {
+                None
+            };
+            let bytes = cached.map(|(bytes, _)| bytes.as_slice());
+            let current_digest = cached.map(|(_, digest)| digest.clone());
+            let evidence_matches = match (raw.evidence.as_deref(), bytes) {
                 (Some(evidence), Some(bytes)) => std::str::from_utf8(bytes)
                     .ok()
                     .map(|source| source.contains(evidence.trim())),
                 _ => None,
             };
-            let symbol_matches = match (raw.symbol.as_deref(), bytes.as_deref()) {
+            let symbol_matches = match (raw.symbol.as_deref(), bytes) {
                 (Some(symbol), Some(bytes)) => std::str::from_utf8(bytes).ok().and_then(|source| {
                     symbol_leaf(symbol).map(|leaf| contains_symbol(source, leaf))
                 }),
@@ -362,13 +375,28 @@ fn dirty_git_revision(workspace: &Path, revision: &str, porcelain: &[u8]) -> Str
             digest.update(b"non-file");
             continue;
         }
-        let Ok(mut file) = std::fs::File::open(&path) else {
+        if metadata.len() > MAX_PROVENANCE_FILE_BYTES {
+            digest.update(b"oversized-file-metadata");
+            digest.update((path_bytes.len() as u64).to_le_bytes());
+            digest.update(path_bytes);
+            digest.update(metadata.len().to_le_bytes());
+            let mtime_nanos = metadata
+                .modified()
+                .ok()
+                .and_then(|modified| modified.duration_since(std::time::UNIX_EPOCH).ok())
+                .map(|duration| duration.as_nanos())
+                .unwrap_or(0);
+            digest.update(mtime_nanos.to_le_bytes());
+            continue;
+        }
+        let Ok(file) = std::fs::File::open(&path) else {
             digest.update(b"unreadable-file");
             continue;
         };
+        let mut limited = file.take(MAX_PROVENANCE_FILE_BYTES);
         let mut buffer = [0u8; 64 * 1024];
         loop {
-            match file.read(&mut buffer) {
+            match limited.read(&mut buffer) {
                 Ok(0) => break,
                 Ok(count) => digest.update(&buffer[..count]),
                 Err(_) => {
@@ -745,6 +773,77 @@ mod tests {
             "current"
         );
         assert!(output.to_string().contains("NO-SOURCE-EVIDENCE"));
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn dirty_git_revision_hashes_metadata_for_oversized_untracked_files() {
+        let root = provenance_fixture();
+        let large_path = root.join("large-untracked.bin");
+        let file = std::fs::File::create(&large_path).unwrap();
+        // Use a sparse oversized file so the test proves full contents are not read.
+        file.set_len(MAX_PROVENANCE_FILE_BYTES + 4096).unwrap();
+        let porcelain = b"?? large-untracked.bin\0";
+        let first = dirty_git_revision(&root, "abc123", porcelain);
+        assert!(first.starts_with("abc123:dirty:"));
+        let same = dirty_git_revision(&root, "abc123", porcelain);
+        assert_eq!(first, same);
+        // Mutating file size changes the metadata-based digest.
+        file.set_len(MAX_PROVENANCE_FILE_BYTES + 8192).unwrap();
+        let resized = dirty_git_revision(&root, "abc123", porcelain);
+        assert_ne!(first, resized);
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn multiple_facts_on_same_file_share_cached_digest_and_attestation() {
+        let root = provenance_fixture();
+        std::fs::write(
+            root.join("src/lib.rs"),
+            "pub fn alpha() -> u32 { 1 }\npub fn beta() -> u32 { 2 }\n",
+        )
+        .unwrap();
+        let expected_digest = format!(
+            "{:x}",
+            Sha256::digest(std::fs::read(root.join("src/lib.rs")).unwrap())
+        );
+        let mut output = json!({
+            "structuredContent": {
+                "results": [
+                    {
+                        "file_path": "src/lib.rs",
+                        "qualified_name": "fixture::alpha",
+                        "content_digest": expected_digest,
+                        "source": "pub fn alpha() -> u32 { 1 }"
+                    },
+                    {
+                        "file_path": "src/lib.rs",
+                        "qualified_name": "fixture::beta",
+                        "content_digest": expected_digest,
+                        "source": "pub fn beta() -> u32 { 2 }"
+                    },
+                    {
+                        "file_path": "./src/lib.rs",
+                        "qualified_name": "fixture::beta",
+                        "content_digest": expected_digest
+                    }
+                ]
+            }
+        });
+
+        attach_result_provenance("codebase_search", &root, &mut output);
+
+        assert!(output.get("type").is_none());
+        let provenance = &output["_nola_code_intelligence_provenance"];
+        assert_eq!(provenance["freshness"], "current");
+        let facts = provenance["facts"].as_array().unwrap();
+        assert_eq!(facts.len(), 3);
+        for fact in facts {
+            assert_eq!(fact["current_content_sha256"], expected_digest);
+            assert_eq!(fact["symbol_matches_current_source"], true);
+        }
+        assert_eq!(facts[0]["evidence_matches_current_source"], true);
+        assert_eq!(facts[1]["evidence_matches_current_source"], true);
         let _ = std::fs::remove_dir_all(root);
     }
 }

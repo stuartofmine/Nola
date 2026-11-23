@@ -969,7 +969,7 @@ fn route_request(
             return native_host_result_response(request, NativeBridgeKind::Browser);
         }
         (&Method::Post, "/api/mobile/login") => {
-            return mobile_login_response(request);
+            return mobile_login_response(request, config.tailcat_ingress);
         }
         (&Method::Post, "/api/mobile/web-handoff") => {
             return mobile_web_handoff_response(request);
@@ -978,7 +978,7 @@ fn route_request(
             return web_session_response(request, config);
         }
         (&Method::Post, "/api/web/login") => {
-            return web_json_login_response(request);
+            return web_json_login_response(request, config.tailcat_ingress);
         }
         (&Method::Post, "/api/web/logout") => {
             return web_logout_response(request, false);
@@ -1258,6 +1258,12 @@ fn route_request(
             (&Method::Get, "workspace-review") | (&Method::Head, "workspace-review") => {
                 conversation_workspace_review_response(conversation_id, config)
             }
+            (&Method::Get, "workspace") | (&Method::Head, "workspace") => {
+                conversation_workspace_get_response(conversation_id, config)
+            }
+            (&Method::Patch, "workspace") => {
+                conversation_workspace_patch_response(request, conversation_id, config)
+            }
             (&Method::Get, "context-usage") | (&Method::Head, "context-usage") => {
                 conversation_context_usage_response(conversation_id)
             }
@@ -1520,7 +1526,7 @@ fn route_request(
         }
         (&Method::Get, "/rooms") | (&Method::Head, "/rooms") => redirect_response("/chat"),
         (&Method::Get, "/register") | (&Method::Head, "/register") => redirect_response("/login"),
-        (&Method::Post, "/login") => web_form_login_response(request),
+        (&Method::Post, "/login") => web_form_login_response(request, config.tailcat_ingress),
         (&Method::Post, "/register") => redirect_response("/login?error=registration_unavailable"),
         (&Method::Post, "/logout") => web_logout_response(request, true),
         (&Method::Post, "/settings/password") => redirect_response("/settings"),
@@ -1795,40 +1801,90 @@ fn encode_query_component(value: &str) -> String {
     encoded
 }
 
-fn web_login_key(request: &Request) -> String {
-    request
-        .remote_addr()
+const WEB_LOGIN_TAILCAT_GLOBAL_FAILURE_LIMIT: u32 = 60;
+
+fn web_login_key_from_parts(
+    peer: Option<&std::net::SocketAddr>,
+    tailcat_ingress: bool,
+    client_id: Option<&str>,
+    forwarded_for: Option<&str>,
+    user_agent: Option<&str>,
+) -> String {
+    let ip = peer
         .map(|address| address.ip().to_string())
-        .unwrap_or_else(|| "unknown".to_string())
+        .unwrap_or_else(|| "unknown".to_string());
+    if !tailcat_ingress || !peer.is_some_and(|address| address.ip().is_loopback()) {
+        return ip;
+    }
+    let hint = client_id
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .or_else(|| forwarded_for.map(str::trim).filter(|value| !value.is_empty()))
+        .or_else(|| user_agent.map(str::trim).filter(|value| !value.is_empty()))
+        .unwrap_or("default");
+    let ua = user_agent.map(str::trim).unwrap_or("");
+    let digest = web_secret_digest(&format!("{hint}\n{ua}"));
+    format!("tailcat:{ip}:{}", &digest[..16])
+}
+
+fn web_login_key(request: &Request, tailcat_ingress: bool) -> String {
+    web_login_key_from_parts(
+        request.remote_addr(),
+        tailcat_ingress,
+        request_header(request, "X-Nola-Client-Id"),
+        request_header(request, "X-Forwarded-For"),
+        request_header(request, "User-Agent"),
+    )
 }
 
 fn web_login_is_rate_limited(key: &str) -> bool {
     let now = Instant::now();
-    let Ok(mut failures) = web_login_failures().lock() else {
-        return true;
-    };
+    let mut failures = web_login_failures()
+        .lock()
+        .unwrap_or_else(|err| err.into_inner());
     failures.retain(|_, (_, last)| {
         now.saturating_duration_since(*last).as_secs() < WEB_LOGIN_FAILURE_WINDOW_SEC
     });
-    failures
+    if failures
         .get(key)
         .is_some_and(|(count, _)| *count >= WEB_LOGIN_FAILURE_LIMIT)
+    {
+        return true;
+    }
+    if key.starts_with("tailcat:") {
+        let total_tailcat_failures: u32 = failures
+            .iter()
+            .filter(|(candidate, _)| candidate.starts_with("tailcat:"))
+            .map(|(_, (count, _))| *count)
+            .fold(0u32, u32::saturating_add);
+        if total_tailcat_failures >= WEB_LOGIN_TAILCAT_GLOBAL_FAILURE_LIMIT {
+            return true;
+        }
+    }
+    false
 }
 
 fn record_web_login_failure(key: &str) {
-    if let Ok(mut failures) = web_login_failures().lock() {
-        let entry = failures
-            .entry(key.to_string())
-            .or_insert((0, Instant::now()));
-        entry.0 = entry.0.saturating_add(1);
-        entry.1 = Instant::now();
+    let now = Instant::now();
+    let mut failures = web_login_failures()
+        .lock()
+        .unwrap_or_else(|err| err.into_inner());
+    failures.retain(|_, (_, last)| {
+        now.saturating_duration_since(*last).as_secs() < WEB_LOGIN_FAILURE_WINDOW_SEC
+    });
+    if failures.len() >= 1024 && !failures.contains_key(key) {
+        return;
     }
+    let entry = failures.entry(key.to_string()).or_insert((0, now));
+    entry.0 = entry.0.saturating_add(1);
+    entry.1 = now;
 }
 
 fn clear_web_login_failures(key: &str) {
-    if let Ok(mut failures) = web_login_failures().lock() {
-        failures.remove(key);
-    }
+    let mut failures = web_login_failures()
+        .lock()
+        .unwrap_or_else(|err| err.into_inner());
+    failures.remove(key);
 }
 
 fn web_host_token_matches(candidate: &str) -> bool {
@@ -1947,8 +2003,9 @@ fn with_web_session_cookies(
 fn web_login_result(
     request: &Request,
     token: &str,
+    tailcat_ingress: bool,
 ) -> Result<(String, String), Response<Box<dyn Read + Send>>> {
-    let key = web_login_key(request);
+    let key = web_login_key(request, tailcat_ingress);
     if web_login_is_rate_limited(&key) {
         return Err(json_response(
             StatusCode(429),
@@ -1985,12 +2042,52 @@ mod tailcat_ingress_security_tests {
             assert!(web_loopback_is_trusted(Some(&address), false));
             assert!(!web_loopback_is_trusted(Some(&address), true));
             assert!(!source_management_peer_allowed(Some(&address), true));
+            assert!(mobile_login_peer_allowed(Some(&address), false, false));
+            assert!(!mobile_login_peer_allowed(Some(&address), true, false));
+            assert!(mobile_login_peer_allowed(Some(&address), true, true));
         }
         assert!(!web_loopback_is_trusted(None, false));
         assert!(!web_loopback_is_trusted(Some(&"192.0.2.1:5001".parse().unwrap()), false));
         // Authentication stays at the existing gate; journal mutation isn't a
         // public route/CSRF exemption merely because the peer is a tunnel.
         assert!(!remote_web_host_route_allowed(&Method::Post, "/api/assistant-journal"));
+    }
+
+    #[test]
+    fn tailcat_login_rate_limit_isolates_distinct_clients_on_loopback() {
+        let loopback: std::net::SocketAddr = "127.0.0.1:5001".parse().unwrap();
+        let nonce = uuid::Uuid::new_v4().to_string();
+        let client_a = web_login_key_from_parts(
+            Some(&loopback),
+            true,
+            Some(&format!("client-a-{nonce}")),
+            None,
+            Some("Mozilla/5.0 A"),
+        );
+        let client_b = web_login_key_from_parts(
+            Some(&loopback),
+            true,
+            Some(&format!("client-b-{nonce}")),
+            None,
+            Some("Mozilla/5.0 B"),
+        );
+        assert_ne!(client_a, client_b);
+        assert!(client_a.starts_with("tailcat:127.0.0.1:"));
+        assert_eq!(
+            web_login_key_from_parts(Some(&loopback), false, Some("client-a"), None, None),
+            "127.0.0.1"
+        );
+
+        for _ in 0..WEB_LOGIN_FAILURE_LIMIT {
+            record_web_login_failure(&client_a);
+        }
+        assert!(web_login_is_rate_limited(&client_a));
+        assert!(
+            !web_login_is_rate_limited(&client_b),
+            "one tailcat client failing login must not lock out distinct remote clients"
+        );
+        clear_web_login_failures(&client_a);
+        clear_web_login_failures(&client_b);
     }
 }
 
@@ -2012,13 +2109,16 @@ fn web_session_response(request: &Request, config: &Config) -> Response<Box<dyn 
     .with_header(Header::from_bytes(&b"Cache-Control"[..], &b"no-store"[..]).unwrap())
 }
 
-fn web_json_login_response(request: &mut Request) -> Response<Box<dyn Read + Send>> {
+fn web_json_login_response(
+    request: &mut Request,
+    tailcat_ingress: bool,
+) -> Response<Box<dyn Read + Send>> {
     let body = match read_json_value(request) {
         Ok(value) => value,
         Err(response) => return response,
     };
     let token = body.get("token").and_then(Value::as_str).unwrap_or("");
-    let (session, csrf) = match web_login_result(request, token) {
+    let (session, csrf) = match web_login_result(request, token, tailcat_ingress) {
         Ok(value) => value,
         Err(response) => return response,
     };
@@ -2055,7 +2155,10 @@ fn read_urlencoded_form(
         .collect())
 }
 
-fn web_form_login_response(request: &mut Request) -> Response<Box<dyn Read + Send>> {
+fn web_form_login_response(
+    request: &mut Request,
+    tailcat_ingress: bool,
+) -> Response<Box<dyn Read + Send>> {
     let form = match read_urlencoded_form(request) {
         Ok(value) => value,
         Err((status, message)) => {
@@ -2064,7 +2167,7 @@ fn web_form_login_response(request: &mut Request) -> Response<Box<dyn Read + Sen
     };
     let next = safe_web_next(form.get("next").map(String::as_str).unwrap_or("/dashboard"));
     let token = form.get("token").map(String::as_str).unwrap_or("");
-    let (session, csrf) = match web_login_result(request, token) {
+    let (session, csrf) = match web_login_result(request, token, tailcat_ingress) {
         Ok(value) => value,
         Err(response) => {
             let status = response.status_code();
@@ -2518,7 +2621,7 @@ fn update_conversation_response(request:&mut Request,conversation_id:&str)->Resp
 }
 
 fn delete_conversation_response(
-    _config: &Config,
+    config: &Config,
     conversation_id: &str,
 ) -> Response<Box<dyn Read + Send>> {
     let result = NolaStore::open_default().and_then(|store| {
@@ -2532,6 +2635,7 @@ fn delete_conversation_response(
         let deleted = store.delete_web_conversation(conversation_id)?;
         if deleted {
             crate::core_agent_runtime::invalidate_core_agent_session(conversation_id)?;
+            cleanup_conversation_session_workspace(config, conversation_id);
         }
         Ok(deleted)
     });

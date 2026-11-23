@@ -20,7 +20,46 @@ nonisolated struct AppleUISurfaceIdentity: Codable, Hashable, Sendable {
 
     /// Compact and stable across process restarts; includes every ownership
     /// field while keeping the native accessibility identifier bounded.
-    var accessibilityIdentifier: String {
+    let accessibilityIdentifier: String
+
+    private enum CodingKeys: String, CodingKey {
+        case owner, surface_id, generation
+    }
+
+    init(owner: AppleUISurfaceOwner, surface_id: String, generation: UInt64) {
+        self.owner = owner
+        self.surface_id = surface_id
+        self.generation = generation
+        self.accessibilityIdentifier = Self.makeAccessibilityIdentifier(
+            owner: owner,
+            surface_id: surface_id,
+            generation: generation
+        )
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        let owner = try container.decode(AppleUISurfaceOwner.self, forKey: .owner)
+        let surface_id = try container.decode(String.self, forKey: .surface_id)
+        let generation = try container.decode(UInt64.self, forKey: .generation)
+        self.init(owner: owner, surface_id: surface_id, generation: generation)
+    }
+
+    static func == (lhs: Self, rhs: Self) -> Bool {
+        lhs.owner == rhs.owner && lhs.surface_id == rhs.surface_id && lhs.generation == rhs.generation
+    }
+
+    func hash(into hasher: inout Hasher) {
+        hasher.combine(owner)
+        hasher.combine(surface_id)
+        hasher.combine(generation)
+    }
+
+    private static func makeAccessibilityIdentifier(
+        owner: AppleUISurfaceOwner,
+        surface_id: String,
+        generation: UInt64
+    ) -> String {
         let values = [owner.authority_id, owner.conversation_id, owner.participant_id,
             owner.context_id, owner.originating_run_id, owner.message_id, owner.part_id,
             surface_id, String(generation)]

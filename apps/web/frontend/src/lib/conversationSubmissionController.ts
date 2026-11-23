@@ -751,9 +751,13 @@ export function createConversationSubmissionController(options: {
         // including the debounce interval before a write has even started.
         if (!detached && knowledgePending(workspaceHost?.knowledge.get(identity.conversationId))) return;
         const captured = attachments.map(item => ({ ...item }));
+        const resourceIds = captured.filter(item => item.resourceId).map(item => item.resourceId!);
         let modelContent: string;
         try { modelContent = attachmentModelContent(text, captured, identity.conversationId); }
         catch (cause) { state.error = 'chatPage.sendFailed'; if (detached) throw cause; return; }
+        if (!modelContent.trim() && resourceIds.length) {
+            modelContent = captured.map(item => item.name).join(', ');
+        }
         const submissionId = queuedCommandId ?? input.submissionId ?? randomId();
         stopWitnessRead(); terminalWitness = null;
         if (!queuedCommandId && !detached) workspaceHost?.submissions.set(identity.conversationId, {submissionId, text, attachmentIds: captured.map(item => item.id)});
@@ -776,6 +780,7 @@ export function createConversationSubmissionController(options: {
             execution_backend: active.executionBackend,
             expected_configuration_revision: (edited ?? inPlace)?.target.configuration_revision ?? active.configurationRevision,
             expected_parent_message_id: edited ? null : state.timeline.submissionParentMessageId,
+            ...(resourceIds.length ? { resourceIds } : {}),
             ...(edited ? {edited_resend_operation_id:edited.prepared.input.operation_id} : {}),
             ...(inPlace ? {in_place_resend_operation_id:inPlace.prepared.input.operation_id} : {}),
             ...(queuedCommandId ? {queued_user_command_id: queuedCommandId} : {}),

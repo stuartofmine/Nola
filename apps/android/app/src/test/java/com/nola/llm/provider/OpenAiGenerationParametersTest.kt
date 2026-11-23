@@ -81,6 +81,9 @@ class OpenAiGenerationParametersTest {
                 requests++
                 val raw = (request.body as OutgoingContent.ByteArrayContent).bytes().decodeToString()
                 val body = Json.parseToJsonElement(raw).jsonObject
+                assertTrue(raw.contains("[EMAIL]") && raw.contains("[PHONE]"))
+                assertTrue(!raw.contains("person@example.org") && !raw.contains("13800138000"))
+                assertEquals("Bearer fixture", request.headers["Authorization"])
                 assertEquals("64000", body["max_tokens"]?.jsonPrimitive?.content)
                 assertEquals("0.0", body["temperature"]?.jsonPrimitive?.content)
                 assertEquals("0.875", body["top_p"]?.jsonPrimitive?.content)
@@ -90,7 +93,7 @@ class OpenAiGenerationParametersTest {
             }) { install(ContentNegotiation) { json() } }
             try {
                 val provider = OpenAiProvider(client).apply { config = config() }
-                val input = ModelInput(messages = listOf(mapOf("role" to "user", "content" to "hello")))
+                val input = ModelInput(messages = listOf(mapOf("role" to "user", "content" to "Email person@example.org or call 13800138000")))
                 when (mode) {
                     "single" -> assertEquals("ok", provider.generateSummary(input).text)
                     "text" -> assertEquals("ok", provider.generateSummaryStream(input).toList().joinToString(""))

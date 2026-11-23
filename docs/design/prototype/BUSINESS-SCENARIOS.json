@@ -3236,13 +3236,7 @@
                             "style": "secondary",
                             "platforms": [
                                 "ios",
-                                "mac"
-                            ]
-                        },
-                        {
-                            "label": "取消",
-                            "to": "0",
-                            "platforms": [
+                                "mac",
                                 "android"
                             ]
                         }

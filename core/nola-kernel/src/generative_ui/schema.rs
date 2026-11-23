@@ -48,14 +48,174 @@ pub fn validate_client_message(value: &Value) -> Result<(), UiError> {
     }
 }
 pub fn validate_message(value: &Value) -> Result<(), UiError> {
+    validate_message_detailed(value).map_err(|_| UiError::InvalidMessage)
+}
+
+/// Validates a single A2UI v0.9.1 server-to-client message against the full
+/// pinned Draft 2020-12 schema and returns up to 5 actionable field-level
+/// errors plus targeted hints for common LLM schema mistakes.
+pub fn validate_message_detailed(value: &Value) -> Result<(), Vec<String>> {
     let validator = MESSAGE_VALIDATOR.get_or_init(|| {
         let schema: Value = serde_json::from_str(SERVER).map_err(|error| error.to_string())?;
         build_validator(&schema)
     });
     match validator {
         Ok(validator) if validator.is_valid(value) => Ok(()),
-        _ => Err(UiError::InvalidMessage),
+        Ok(validator) => {
+            let mut details = collect_targeted_hints(value);
+            for error in validator.iter_errors(value) {
+                if details.len() >= 5 {
+                    break;
+                }
+                let path = error.instance_path.to_string();
+                let path_label = if path.is_empty() { "/" } else { path.as_str() };
+                let message = truncate_diagnostic(&error.to_string(), 220);
+                let formatted = format!("{path_label}: {message}");
+                if !details.contains(&formatted) {
+                    details.push(formatted);
+                }
+            }
+            if details.is_empty() {
+                details.push("message failed A2UI v0.9.1 schema validation".into());
+            }
+            Err(details)
+        }
+        Err(error) => Err(vec![format!("internal A2UI schema validator error: {error}")]),
     }
+}
+
+/// Collects up to 5 concise, deduplicated diagnostics across a `render_ui`
+/// message batch so model retries receive concrete field-level feedback.
+pub fn diagnose_messages(messages: &[Value]) -> Vec<String> {
+    let mut diagnostics = Vec::new();
+    for (index, message) in messages.iter().enumerate() {
+        let prefix = format!("messages[{index}]");
+        for hint in collect_targeted_hints(message) {
+            push_unique_bounded(&mut diagnostics, format!("{prefix}: {hint}"), 5);
+        }
+        if diagnostics.len() >= 5 {
+            break;
+        }
+        if let Err(errors) = validate_message_detailed(message) {
+            for error in errors {
+                push_unique_bounded(&mut diagnostics, format!("{prefix}: {error}"), 5);
+                if diagnostics.len() >= 5 {
+                    break;
+                }
+            }
+        }
+    }
+    diagnostics
+}
+
+fn push_unique_bounded(target: &mut Vec<String>, item: String, limit: usize) {
+    if target.len() < limit && !target.contains(&item) {
+        target.push(item);
+    }
+}
+
+fn truncate_diagnostic(text: &str, max_chars: usize) -> String {
+    let mut chars = text.chars();
+    let collected: String = chars.by_ref().take(max_chars).collect();
+    if chars.next().is_some() {
+        format!("{collected}…")
+    } else {
+        collected
+    }
+}
+
+fn collect_targeted_hints(value: &Value) -> Vec<String> {
+    let mut hints = Vec::new();
+    let Some(envelope) = value.as_object() else {
+        hints.push("message must be a JSON object".into());
+        return hints;
+    };
+    match envelope.get("version").and_then(Value::as_str) {
+        Some(version) if version == nola_domain::generative_ui::A2UI_WIRE_VERSION => {}
+        Some(other) => push_unique_bounded(
+            &mut hints,
+            format!("version is \"{other}\", must be \"{}\"", nola_domain::generative_ui::A2UI_WIRE_VERSION),
+            5,
+        ),
+        None => push_unique_bounded(
+            &mut hints,
+            format!("missing required \"version\": \"{}\"", nola_domain::generative_ui::A2UI_WIRE_VERSION),
+            5,
+        ),
+    }
+    if envelope.contains_key("surfaceId") {
+        push_unique_bounded(
+            &mut hints,
+            "\"surfaceId\" belongs inside createSurface/updateComponents/updateDataModel/deleteSurface, not at the message root".into(),
+            5,
+        );
+    }
+    let op_count = ["createSurface", "updateComponents", "updateDataModel", "deleteSurface"]
+        .iter()
+        .filter(|key| envelope.contains_key(**key))
+        .count();
+    if op_count != 1 {
+        push_unique_bounded(
+            &mut hints,
+            "each message must contain \"version\" and exactly one of createSurface, updateComponents, updateDataModel, or deleteSurface".into(),
+            5,
+        );
+    }
+    if let Some(create) = envelope.get("createSurface").and_then(Value::as_object) {
+        match create.get("catalogId").and_then(Value::as_str) {
+            Some(catalog_id) if catalog_id == NOLA_CATALOG_ID => {}
+            Some(other) => push_unique_bounded(
+                &mut hints,
+                format!("createSurface.catalogId is \"{other}\", must be \"{NOLA_CATALOG_ID}\""),
+                5,
+            ),
+            None => push_unique_bounded(
+                &mut hints,
+                format!("createSurface requires \"catalogId\": \"{NOLA_CATALOG_ID}\""),
+                5,
+            ),
+        }
+    }
+    if let Some(components) = envelope
+        .get("updateComponents")
+        .and_then(|payload| payload.get("components"))
+        .and_then(Value::as_array)
+    {
+        for component in components {
+            let Some(obj) = component.as_object() else { continue; };
+            let id = obj.get("id").and_then(Value::as_str).unwrap_or("?");
+            let kind = obj.get("component").and_then(Value::as_str).unwrap_or("");
+            if !kind.is_empty() && !SUPPORTED_COMPONENTS.contains(&kind) {
+                push_unique_bounded(
+                    &mut hints,
+                    format!("component \"{kind}\" (id \"{id}\") is unsupported; use one of: {}", SUPPORTED_COMPONENTS.join(", ")),
+                    5,
+                );
+            }
+            if kind == "Button" && (obj.contains_key("label") || !obj.contains_key("child")) {
+                push_unique_bounded(
+                    &mut hints,
+                    format!("Button (id \"{id}\") must use \"child\" referencing a separate Text component ID, not \"label\""),
+                    5,
+                );
+            }
+            if kind == "Card" && obj.contains_key("children") {
+                push_unique_bounded(
+                    &mut hints,
+                    format!("Card (id \"{id}\") uses singular \"child\" (string component ID), not \"children\""),
+                    5,
+                );
+            }
+            if obj.get("action").is_some_and(|action| action.get("functionCall").is_some()) {
+                push_unique_bounded(
+                    &mut hints,
+                    format!("Button (id \"{id}\") action must use {{\"event\":{{\"name\":\"...\"}}}} rather than functionCall"),
+                    5,
+                );
+            }
+        }
+    }
+    hints
 }
 
 pub fn catalog_digest() -> String {
@@ -167,46 +327,82 @@ mod action_catalog_tests {
     }
 }
 
-/// A self-contained model-visible contract, derived from the same pinned wire
-/// and admitted catalog schemas as execution. All references remain local.
+/// A compact, flat, provider-friendly JSON Schema for `render_ui` model calls.
+/// Runtime execution still validates every message against the full pinned
+/// Draft 2020-12 A2UI wire and catalog schemas in `validate_message()`.
 pub fn tool_input_schema() -> Result<Value, UiError> {
-    fn localize(value: &mut Value, namespace: &str) -> Result<(), UiError> {
-        match value {
-            Value::Object(fields) => {
-                fields.remove("$id");
-                fields.remove("$schema");
-                if let Some(Value::String(reference)) = fields.get_mut("$ref") {
-                    let (document, fragment) = reference.split_once('#').unwrap_or((reference.as_str(), ""));
-                    let target = match document {
-                        "" => namespace,
-                        "catalog.json" | "https://a2ui.org/specification/v0_9/catalog.json"
-                        | "https://a2ui.org/specification/v0_9/catalogs/basic/catalog.json" => "catalog",
-                        "https://a2ui.org/specification/v0_9/common_types.json" => "common",
-                        _ => return Err(UiError::InvalidMessage),
-                    };
-                    *reference = format!("#/$defs/{target}{fragment}");
-                }
-                for child in fields.values_mut() { localize(child, namespace)?; }
-            }
-            Value::Array(values) => for child in values { localize(child, namespace)?; },
-            _ => {}
-        }
-        Ok(())
-    }
-    let mut message: Value = serde_json::from_str(SERVER).map_err(|_| UiError::InvalidMessage)?;
-    for definition in message["$defs"].as_object_mut().ok_or(UiError::InvalidMessage)?.values_mut() {
-        definition["properties"]["version"] = serde_json::json!({"const": "v0.9.1"});
-    }
-    message["$defs"]["CreateSurfaceMessage"]["properties"]["createSurface"]["properties"]["catalogId"] = serde_json::json!({"const":NOLA_CATALOG_ID});
-    let mut common: Value = serde_json::from_str(COMMON).map_err(|_| UiError::InvalidMessage)?;
-    let mut catalog = catalog_schema()?;
-    localize(&mut message, "message")?;
-    localize(&mut common, "common")?;
-    localize(&mut catalog, "catalog")?;
     let mut input = nola_domain::generative_ui_tool::UiToolInput::input_schema();
-    input["$defs"] = serde_json::json!({"message":message,"common":common,"catalog":catalog});
-    input["properties"]["messages"]["items"] = serde_json::json!({"$ref":"#/$defs/message"});
-    input["examples"] = serde_json::json!([minimal_form_example(), minimal_card_example()]);
+    input["properties"]["messages"]["description"] = serde_json::json!(
+        "Ordered A2UI v0.9.1 messages for one surface. Each element requires version=\"v0.9.1\" and exactly one operation: createSurface, updateComponents, updateDataModel, or deleteSurface."
+    );
+    input["properties"]["messages"]["items"] = serde_json::json!({
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["version"],
+        "properties": {
+            "version": {
+                "type": "string",
+                "const": "v0.9.1",
+                "description": "Always \"v0.9.1\"."
+            },
+            "createSurface": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": ["surfaceId", "catalogId"],
+                "properties": {
+                    "surfaceId": { "type": "string" },
+                    "catalogId": { "type": "string", "const": NOLA_CATALOG_ID },
+                    "sendDataModel": { "type": "boolean" },
+                    "theme": { "type": "object" }
+                }
+            },
+            "updateComponents": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": ["surfaceId", "components"],
+                "properties": {
+                    "surfaceId": { "type": "string" },
+                    "components": {
+                        "type": "array",
+                        "minItems": 1,
+                        "description": "Flat list of UI nodes. Root node MUST have id \"root\".",
+                        "items": {
+                            "type": "object",
+                            "required": ["id", "component"],
+                            "properties": {
+                                "id": { "type": "string" },
+                                "component": { "type": "string", "enum": SUPPORTED_COMPONENTS },
+                                "text": { "description": "String or {\"path\":\"/field\"} for Text." },
+                                "child": { "type": "string", "description": "Single child component ID (required for Button -> Text node, and Card)." },
+                                "children": { "description": "Array of child IDs for Column/Row/List, or template {\"componentId\":\"...\",\"path\":\"/items\"}." },
+                                "label": { "description": "Field label for TextField, CheckBox, ChoicePicker, Slider, DateTimeInput (never Button)." },
+                                "value": { "description": "Literal or {\"path\":\"/field\"} data binding." },
+                                "action": { "type": "object", "description": "Button action: {\"event\":{\"name\":\"...\",\"context\":{...}}}." }
+                            }
+                        }
+                    }
+                }
+            },
+            "updateDataModel": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": ["surfaceId"],
+                "properties": {
+                    "surfaceId": { "type": "string" },
+                    "path": { "type": "string", "description": "JSON Pointer path, default \"/\"." },
+                    "value": { "description": "New value to set; omit to delete." }
+                }
+            },
+            "deleteSurface": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": ["surfaceId"],
+                "properties": {
+                    "surfaceId": { "type": "string" }
+                }
+            }
+        }
+    });
     Ok(input)
 }
 
@@ -218,6 +414,23 @@ pub fn minimal_card_example() -> Value {
             {"id":"root","component":"Column","children":["summary-card"]},
             {"id":"summary-card","component":"Card","child":"summary-text"},
             {"id":"summary-text","component":"Text","text":"A concise, source-supported summary."}
+        ]}}
+    ]})
+}
+
+/// Compact read-only tabbed comparison example.
+pub fn minimal_tabs_example() -> Value {
+    serde_json::json!({"expected_revision":0,"messages":[
+        {"version":"v0.9.1","createSurface":{"surfaceId":"compare","catalogId":NOLA_CATALOG_ID}},
+        {"version":"v0.9.1","updateComponents":{"surfaceId":"compare","components":[
+            {"id":"root","component":"Tabs","tabs":[
+                {"title":"Option A","child":"tab-a"},
+                {"title":"Option B","child":"tab-b"}
+            ]},
+            {"id":"tab-a","component":"Card","child":"a-text"},
+            {"id":"a-text","component":"Text","text":"Fastest option with lower cost."},
+            {"id":"tab-b","component":"Card","child":"b-text"},
+            {"id":"b-text","component":"Text","text":"Higher capacity with flexible schedule."}
         ]}}
     ]})
 }
@@ -239,21 +452,32 @@ pub fn minimal_form_example() -> Value {
 mod model_contract_tests {
     use super::*;
     #[test]
-    fn advertised_read_only_card_validates_and_projects_without_a_submit_action() {
+    fn tool_input_schema_is_compact_and_provider_friendly() {
+        let schema = tool_input_schema().unwrap();
+        let serialized = serde_json::to_string(&schema).unwrap();
+        assert!(serialized.len() < 4096, "schema too large: {} bytes", serialized.len());
+        for forbidden in ["\"$defs\"", "\"unevaluatedProperties\"", "\"if\":", "\"then\":", "\"not\":"] {
+            assert!(!serialized.contains(forbidden), "schema must not contain {forbidden}");
+        }
+    }
+
+    #[test]
+    fn advertised_read_only_card_and_tabs_validate_and_project_without_a_submit_action() {
         let schema = tool_input_schema().unwrap();
         let validator = jsonschema::draft202012::options().build(&schema).unwrap();
-        let example = minimal_card_example();
-        assert!(validator.is_valid(&example));
-        let input: nola_domain::generative_ui_tool::UiToolInput = serde_json::from_value(example).unwrap();
-        let identity = nola_domain::generative_ui::UiSurfaceIdentity {
-            owner: nola_domain::generative_ui::UiSurfaceOwner { authority_id:"store".into(), conversation_id:"c".into(),
-                participant_id:"agent".into(), context_id:"ctx".into(), originating_run_id:"run".into(),message_id:"message".into(),part_id:"part".into() },
-            surface_id:"summary".into(), generation:1 };
-        let state = super::super::state::transition_messages(None,&identity,&input).unwrap();
-        let projected = super::super::projection::project_surface(&state).unwrap();
-        assert_eq!(projected.snapshot.phase,nola_domain::generative_ui::UiSurfacePhase::Ready);
-        assert!(projected.snapshot.nodes.values().any(|node|node.component=="Card"));
-        assert!(!projected.snapshot.nodes.values().any(|node|node.component=="Button"));
+        for (surface_id, example) in [("summary", minimal_card_example()), ("compare", minimal_tabs_example())] {
+            assert!(validator.is_valid(&example), "compact schema rejected {surface_id}");
+            let input: nola_domain::generative_ui_tool::UiToolInput = serde_json::from_value(example).unwrap();
+            let identity = nola_domain::generative_ui::UiSurfaceIdentity {
+                owner: nola_domain::generative_ui::UiSurfaceOwner { authority_id:"store".into(), conversation_id:"c".into(),
+                    participant_id:"agent".into(), context_id:"ctx".into(), originating_run_id:"run".into(),message_id:"message".into(),part_id:"part".into() },
+                surface_id:surface_id.into(), generation:1 };
+            let state = super::super::state::transition_messages(None,&identity,&input).unwrap();
+            let projected = super::super::projection::project_surface(&state).unwrap();
+            assert_eq!(projected.snapshot.phase,nola_domain::generative_ui::UiSurfacePhase::Ready);
+            assert!(projected.snapshot.nodes.values().any(|node|node.component=="Card"));
+            assert!(!projected.snapshot.nodes.values().any(|node|node.component=="Button"));
+        }
     }
 
     #[test]
@@ -282,10 +506,34 @@ mod model_contract_tests {
         let mut wrong = example.clone();
         let button = &mut wrong["messages"][1]["updateComponents"]["components"][2];
         button.as_object_mut().unwrap().remove("child"); button["label"] = serde_json::json!("Submit");
-        assert!(!validator.is_valid(&wrong));
+        let button_errors = validate_message_detailed(&wrong["messages"][1]).unwrap_err();
+        assert!(button_errors.iter().any(|error| error.contains("Button") && error.contains("\"child\"")));
         let mut wrong = example;
         wrong["messages"][2]["updateDataModel"].as_object_mut().unwrap().remove("surfaceId");
         wrong["messages"][2]["surfaceId"] = serde_json::json!("form");
         assert!(!validator.is_valid(&wrong));
+    }
+
+    #[test]
+    fn validate_message_detailed_reports_targeted_hints_for_common_llm_mistakes() {
+        let card_with_children = serde_json::json!({
+            "version": "v0.9.1",
+            "updateComponents": {
+                "surfaceId": "summary",
+                "components": [
+                    {"id": "root", "component": "Card", "children": ["text-1"]},
+                    {"id": "text-1", "component": "Text", "text": "Hello"}
+                ]
+            }
+        });
+        let errors = validate_message_detailed(&card_with_children).unwrap_err();
+        assert!(errors.iter().any(|e| e.contains("Card") && e.contains("singular \"child\"")), "{errors:?}");
+
+        let wrong_catalog = serde_json::json!({
+            "version": "v0.9.1",
+            "createSurface": {"surfaceId": "s", "catalogId": "https://example.com/bad"}
+        });
+        let diag = diagnose_messages(&[wrong_catalog]);
+        assert!(diag.iter().any(|e| e.contains(NOLA_CATALOG_ID)), "{diag:?}");
     }
 }

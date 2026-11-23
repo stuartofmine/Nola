@@ -135,6 +135,7 @@ mod terminal_document;
 #[cfg(any(feature = "terminal-ui", test))]
 mod terminal_input;
 mod tool_policy;
+pub(crate) mod native_sandbox;
 mod process_sandbox;
 mod tailcat_transport;
 mod tailcat_web_client;

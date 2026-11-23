@@ -364,6 +364,218 @@ struct MacChromeMessagingEndToEndTests {
         #expect(recovered.serverURL.port != active.serverURL.port)
     }
 
+    @Test("Native host validation detects stale launcher paths, missing permissions, and manifest mismatches")
+    func nativeHostValidationDetectsStaleLauncherPath() throws {
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent(UUID().uuidString, isDirectory: true)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+
+        let bundleURL = directory.appendingPathComponent("NolaFixture.bundle", isDirectory: true)
+        let contentsURL = bundleURL.appendingPathComponent("Contents", isDirectory: true)
+        let macOSURL = contentsURL.appendingPathComponent("MacOS", isDirectory: true)
+        try FileManager.default.createDirectory(at: macOSURL, withIntermediateDirectories: true)
+        let plist = try PropertyListSerialization.data(fromPropertyList: [
+            "CFBundleIdentifier": "com.nola.tests.native-host-validation",
+            "CFBundlePackageType": "BNDL",
+            "CFBundleExecutable": "NolaTestBinary"
+        ], format: .xml, options: 0)
+        try plist.write(to: contentsURL.appendingPathComponent("Info.plist"))
+        let currentExecutable = macOSURL.appendingPathComponent("NolaTestBinary")
+        try Data("#!/bin/sh\nexit 0\n".utf8).write(to: currentExecutable)
+        try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: currentExecutable.path)
+        let bundle = try #require(Bundle(url: bundleURL))
+        let resolvedExecutablePath = try #require(bundle.executableURL?.path)
+
+        let launcherURL = directory.appendingPathComponent("nola_chrome_native_host.sh")
+        let manifestURL = directory.appendingPathComponent("com.nola.native_browser.json")
+        let manifestData = try JSONSerialization.data(withJSONObject: [
+            "name": "com.nola.native_browser",
+            "path": launcherURL.path,
+            "type": "stdio"
+        ])
+        try manifestData.write(to: manifestURL)
+
+        // Stale launcher pointing to a moved app path must be rejected.
+        let staleLauncher = """
+        #!/bin/sh
+        exec '/Users/example/Downloads/Nola.app/Contents/MacOS/Nola' --nola-chrome-native-host
+        """
+        try Data(staleLauncher.utf8).write(to: launcherURL)
+        try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: launcherURL.path)
+        #expect(!MacChromeExtensionInstaller.isNativeHostValid(
+            manifestURL: manifestURL,
+            launcherURL: launcherURL,
+            bundle: bundle
+        ))
+
+        // Valid launcher pointing to the current bundle executable must pass.
+        let validLauncher = """
+        #!/bin/sh
+        exec '\(resolvedExecutablePath)' --nola-chrome-native-host
+        """
+        try Data(validLauncher.utf8).write(to: launcherURL)
+        try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: launcherURL.path)
+        #expect(MacChromeExtensionInstaller.isNativeHostValid(
+            manifestURL: manifestURL,
+            launcherURL: launcherURL,
+            bundle: bundle
+        ))
+
+        // Non-executable launcher must be rejected.
+        try FileManager.default.setAttributes([.posixPermissions: 0o644], ofItemAtPath: launcherURL.path)
+        #expect(!MacChromeExtensionInstaller.isNativeHostValid(
+            manifestURL: manifestURL,
+            launcherURL: launcherURL,
+            bundle: bundle
+        ))
+
+        // Manifest pointing to a different launcher path must be rejected.
+        try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: launcherURL.path)
+        let mismatchedManifest = try JSONSerialization.data(withJSONObject: [
+            "name": "com.nola.native_browser",
+            "path": "/tmp/other_launcher.sh",
+            "type": "stdio"
+        ])
+        try mismatchedManifest.write(to: manifestURL)
+        #expect(!MacChromeExtensionInstaller.isNativeHostValid(
+            manifestURL: manifestURL,
+            launcherURL: launcherURL,
+            bundle: bundle
+        ))
+    }
+
+    @Test("Multi-Chromium browser registry maps native messaging paths and extension URLs")
+    func multiChromiumBrowserManifestMapping() {
+        let home = URL(fileURLWithPath: "/tmp/nola-test-home", isDirectory: true)
+        #expect(MacChromiumBrowser.googleChrome.bundleIdentifier == "com.google.Chrome")
+        #expect(MacChromiumBrowser.googleChrome.nativeManifestURL(homeDirectory: home).path
+            == "/tmp/nola-test-home/Library/Application Support/Google/Chrome/NativeMessagingHosts/com.nola.native_browser.json")
+        #expect(MacChromiumBrowser.googleChrome.extensionsURL.absoluteString == "chrome://extensions")
+
+        #expect(MacChromiumBrowser.googleChromeCanary.bundleIdentifier == "com.google.Chrome.canary")
+        #expect(MacChromiumBrowser.googleChromeCanary.nativeManifestURL(homeDirectory: home).path
+            == "/tmp/nola-test-home/Library/Application Support/Google/Chrome Canary/NativeMessagingHosts/com.nola.native_browser.json")
+
+        #expect(MacChromiumBrowser.microsoftEdge.bundleIdentifier == "com.microsoft.edgemac")
+        #expect(MacChromiumBrowser.microsoftEdge.nativeManifestURL(homeDirectory: home).path
+            == "/tmp/nola-test-home/Library/Application Support/Microsoft Edge/NativeMessagingHosts/com.nola.native_browser.json")
+        #expect(MacChromiumBrowser.microsoftEdge.extensionsURL.absoluteString == "edge://extensions")
+
+        #expect(MacChromiumBrowser.brave.bundleIdentifier == "com.brave.Browser")
+        #expect(MacChromiumBrowser.brave.nativeManifestURL(homeDirectory: home).path
+            == "/tmp/nola-test-home/Library/Application Support/BraveSoftware/Brave-Browser/NativeMessagingHosts/com.nola.native_browser.json")
+        #expect(MacChromiumBrowser.brave.extensionsURL.absoluteString == "brave://extensions")
+
+        #expect(MacChromiumBrowser.arc.bundleIdentifier == "company.thebrowser.Browser")
+        #expect(MacChromiumBrowser.arc.nativeManifestURL(homeDirectory: home).path
+            == "/tmp/nola-test-home/Library/Application Support/Arc/User Data/NativeMessagingHosts/com.nola.native_browser.json")
+
+        let manifests = MacChromeExtensionInstaller.targetNativeManifestURLs(
+            installedBrowsers: [.googleChrome, .microsoftEdge, .arc],
+            homeDirectory: home,
+            isRunningTests: false
+        )
+        #expect(manifests.map(\.path) == [
+            "/tmp/nola-test-home/Library/Application Support/Google/Chrome/NativeMessagingHosts/com.nola.native_browser.json",
+            "/tmp/nola-test-home/Library/Application Support/Microsoft Edge/NativeMessagingHosts/com.nola.native_browser.json",
+            "/tmp/nola-test-home/Library/Application Support/Arc/User Data/NativeMessagingHosts/com.nola.native_browser.json"
+        ])
+    }
+
+    @Test("Bridge snapshot distinguishes browser not running, extension idle, needs setup, and connected states")
+    func snapshotDistinguishesBrowserClosedIdleAndConnectedStates() {
+        let connected = MacChromeBridgeSnapshot(
+            isChromeInstalled: true,
+            isServiceRunning: true,
+            isNativeHostInstalled: true,
+            isExtensionPrepared: true,
+            isExtensionConnected: true,
+            extensionVersion: "1.0.0",
+            capabilities: ["open_page"],
+            lastSeen: .now,
+            errorMessage: nil,
+            installedBrowserNames: ["Google Chrome"],
+            isBrowserRunning: true,
+            isNativeHostStale: false,
+            hasEverConnected: true
+        )
+        #expect(connected.presentationState == .connected)
+        #expect(connected.phase == .connected)
+
+        let browserClosed = MacChromeBridgeSnapshot(
+            isChromeInstalled: true,
+            isServiceRunning: true,
+            isNativeHostInstalled: true,
+            isExtensionPrepared: true,
+            isExtensionConnected: false,
+            extensionVersion: nil,
+            capabilities: [],
+            lastSeen: nil,
+            errorMessage: nil,
+            installedBrowserNames: ["Google Chrome", "Arc"],
+            isBrowserRunning: false,
+            isNativeHostStale: false,
+            hasEverConnected: true
+        )
+        #expect(browserClosed.presentationState == .browserNotRunning)
+        #expect(browserClosed.phase == .waitingForChrome)
+
+        let extensionIdle = MacChromeBridgeSnapshot(
+            isChromeInstalled: true,
+            isServiceRunning: true,
+            isNativeHostInstalled: true,
+            isExtensionPrepared: true,
+            isExtensionConnected: false,
+            extensionVersion: nil,
+            capabilities: [],
+            lastSeen: Date().addingTimeInterval(-120),
+            errorMessage: nil,
+            installedBrowserNames: ["Microsoft Edge"],
+            isBrowserRunning: true,
+            isNativeHostStale: false,
+            hasEverConnected: true
+        )
+        #expect(extensionIdle.presentationState == .extensionIdle)
+        #expect(extensionIdle.phase == .waitingForChrome)
+
+        let staleNativeHost = MacChromeBridgeSnapshot(
+            isChromeInstalled: true,
+            isServiceRunning: true,
+            isNativeHostInstalled: false,
+            isExtensionPrepared: true,
+            isExtensionConnected: false,
+            extensionVersion: nil,
+            capabilities: [],
+            lastSeen: nil,
+            errorMessage: nil,
+            installedBrowserNames: ["Google Chrome"],
+            isBrowserRunning: true,
+            isNativeHostStale: true,
+            hasEverConnected: true
+        )
+        #expect(staleNativeHost.presentationState == .needsSetup)
+        #expect(staleNativeHost.phase == .installationRequired)
+
+        let noBrowser = MacChromeBridgeSnapshot(
+            isChromeInstalled: false,
+            isServiceRunning: true,
+            isNativeHostInstalled: false,
+            isExtensionPrepared: false,
+            isExtensionConnected: false,
+            extensionVersion: nil,
+            capabilities: [],
+            lastSeen: nil,
+            errorMessage: nil,
+            installedBrowserNames: [],
+            isBrowserRunning: false,
+            isNativeHostStale: false,
+            hasEverConnected: false
+        )
+        #expect(noBrowser.presentationState == .browserUnavailable)
+        #expect(noBrowser.phase == .chromeUnavailable)
+    }
+
     private func post(
         configuration: MacChromeMessagingConfiguration,
         path: String,

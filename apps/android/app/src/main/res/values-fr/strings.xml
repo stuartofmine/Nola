@@ -83,6 +83,16 @@
     <string name="models_verified_via_direct">Connexion directe vérifiée</string>
     <string name="models_verified_via_tailcat">Connexion via Tailcat vérifiée</string>
     <string name="models_tailcat_verify_failed">Tailcat ne peut pas joindre l’hôte. Vérifiez Tailcat sur l’hôte, puis réessayez.</string>
+    <string name="models_tailcat_error_dns">Tailcat n’a pas pu résoudre l’adresse de l’hôte. Vérifiez vos paramètres DNS et réessayez.</string>
+    <string name="models_tailcat_error_timeout">La connexion Tailcat à l’hôte a expiré. Vérifiez que l’hôte est en ligne et réessayez.</string>
+    <string name="models_tailcat_error_certificate">Tailcat a rejeté le certificat TLS de l’hôte. Vérifiez le certificat de l’hôte et réessayez.</string>
+    <string name="models_tailcat_error_permission">L’hôte a refusé l’accès à Tailcat. Vérifiez votre jeton d’accès et les autorisations de l’hôte.</string>
+    <string name="models_tailcat_error_suspended">Tailcat a été mis en pause en arrière-plan. Revenez dans l’application et réessayez.</string>
+    <string name="models_tailcat_error_identity_mismatch">L’identité de l’hôte a changé et ne correspond plus à l’hôte jumelé. Jumelez de nouveau l’hôte souhaité.</string>
+    <string name="models_tailcat_error_capacity">L’hôte a atteint sa limite de sessions Tailcat actives. Fermez les sessions inutilisées sur l’hôte et réessayez.</string>
+    <string name="models_tailcat_error_not_available">Tailcat n’est pas activé sur cet hôte. Activez Tailcat sur l’hôte ou connectez-vous directement.</string>
+    <string name="models_tailcat_error_start_timeout">Le démarrage de Tailcat sur l’hôte a pris trop de temps. Patientez un instant et réessayez.</string>
+    <string name="models_tailcat_error_grant">Tailcat n’a pas pu obtenir d’autorisation de session auprès de l’hôte. Vérifiez le jeton de l’hôte et réessayez.</string>
     <string name="models_direct_verify_failed_without_tailcat">La connexion directe a renvoyé HTTP %1$d. Vérifiez l’adresse de l’hôte et le jeton. Si l’hôte exige Tailcat, installez une version de Nola compatible avec Tailcat.</string>
     <string name="chat_empty_no_models">Utilisez un service de modèles, un modèle local ou un hôte Nola associé.</string>
     <string name="chat_add_model_cta">Ajouter un modèle</string>
@@ -1003,7 +1013,8 @@
     <string name="models_web_host_setup_copy">Copiez les informations de connexion sur le Mac et collez-les ici. Vous pouvez aussi saisir manuellement l’adresse et le jeton.</string>
     <string name="models_web_host_checking">Vérification de l’hôte</string>
     <string name="models_web_host_checking_detail">Vérification du jeton, du protocole d’autorisation et de l’identité de l’hôte avant l’enregistrement.</string>
-    <string name="models_save_and_verify">Enregistrer et vérifier</string>
+    <string name="models_save_and_verify">Vérifier et connecter</string>
+    <string name="models_cancel_host_verification">Annuler la vérification</string>
     <string name="models_verify_again">Vérifier à nouveau</string>
     <string name="models_error_host_protocol">Cet hôte utilise un protocole d’autorisation non pris en charge. Mettez Nola à jour sur l’hôte, puis réessayez.</string>
     <string name="models_error_host_identity_changed">Cette adresse correspond désormais à un autre hôte. Oubliez l’association précédente avant de vous reconnecter.</string>

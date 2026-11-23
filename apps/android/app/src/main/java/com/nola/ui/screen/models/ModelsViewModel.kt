@@ -129,6 +129,7 @@ class ModelsViewModel @Inject constructor(
     private val deviceModelStore: DeviceModelStore,
     private val webAgentProvider: WebAgentProvider,
     private val webHostApi: com.nola.data.remote.api.WebHostApiService,
+    private val tailcatTransport: com.nola.data.remote.api.NolaTailcatTransport,
     private val applicationRuntime: com.nola.data.local.AndroidApplicationRuntime,
     private val memoryProfileDataStore: com.nola.data.local.datastore.MemoryProfileDataStore,
     @ApplicationContext private val context: Context
@@ -739,11 +740,20 @@ class ModelsViewModel @Inject constructor(
                 val savedOrigin = prefs.webHostBaseUrl.first()
                 val previousIdentity = if (sameWebHostDestination(savedOrigin, normalizedUrl)) prefs.webHostIdentity.first() else ""
                 verifyingPairedHost = previousIdentity.isNotEmpty()
-                val settings = kotlinx.coroutines.withTimeout(15_000) { webHostApi.getAgentSettings(
-                        hostBaseUrl = normalizedUrl,
+                val settings = kotlinx.coroutines.withTimeout(55_000) {
+                    tailcatTransport.withDraftPairing(
+                        baseUrl = normalizedUrl,
                         token = token.trim(),
-                        pinnedCertificateSha256 = normalizedPin
-                    ) }
+                        hostId = importedHostIdentity ?: previousIdentity,
+                        certificateSha256 = normalizedPin
+                    ) {
+                        webHostApi.getAgentSettings(
+                            hostBaseUrl = normalizedUrl,
+                            token = token.trim(),
+                            pinnedCertificateSha256 = normalizedPin
+                        )
+                    }
+                }
                 val identity = verifyWebHostConnection(previousIdentity, importedHostIdentity) { settings }
                 prefs.saveWebHostConfig(url, token, normalizedPin, verifiedHostId = identity)
                 val saved = checkNotNull(prefs.pairedWebHost())

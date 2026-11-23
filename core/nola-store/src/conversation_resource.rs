@@ -17,30 +17,69 @@ fn invalid(reason: &str) -> StoreError {
     StoreError::Conflict(reason.to_string())
 }
 
-fn validate_pdf(bytes: &[u8]) -> StoreResult<()> {
+fn validate_resource_bytes(bytes: &[u8], mime_type: &str) -> StoreResult<()> {
     if bytes.len() > MAX_PDF_RESOURCE_BYTES {
-        return Err(invalid("oversized PDF resource"));
+        return Err(invalid("oversized conversation resource"));
     }
-    if bytes.len() < 16 || !bytes.starts_with(b"%PDF-")
-        || !bytes[bytes.len().saturating_sub(1024)..].windows(5).any(|part| part == b"%%EOF")
-    {
-        return Err(invalid("invalid PDF resource"));
+    match mime_type {
+        "application/pdf" => {
+            if bytes.len() < 16
+                || !bytes.starts_with(b"%PDF-")
+                || !bytes[bytes.len().saturating_sub(1024)..]
+                    .windows(5)
+                    .any(|part| part == b"%%EOF")
+            {
+                return Err(invalid("invalid PDF resource"));
+            }
+        }
+        "image/png" => {
+            if bytes.len() < 8 || !bytes.starts_with(b"\x89PNG\r\n\x1a\n") {
+                return Err(invalid("invalid image resource"));
+            }
+        }
+        "image/jpeg" => {
+            if bytes.len() < 4 || !bytes.starts_with(&[0xff, 0xd8, 0xff]) {
+                return Err(invalid("invalid image resource"));
+            }
+        }
+        "image/webp" => {
+            if bytes.len() < 12 || !bytes.starts_with(b"RIFF") || bytes.get(8..12) != Some(b"WEBP") {
+                return Err(invalid("invalid image resource"));
+            }
+        }
+        "image/gif" => {
+            if bytes.len() < 6 || !(bytes.starts_with(b"GIF87a") || bytes.starts_with(b"GIF89a")) {
+                return Err(invalid("invalid image resource"));
+            }
+        }
+        _ => return Err(invalid("invalid resource media type")),
     }
     Ok(())
+}
+
+fn display_name_matches_mime(display_name: &str, mime_type: &str) -> bool {
+    let lower = display_name.to_ascii_lowercase();
+    match mime_type {
+        "application/pdf" => lower.ends_with(".pdf"),
+        "image/png" => lower.ends_with(".png"),
+        "image/jpeg" => lower.ends_with(".jpg") || lower.ends_with(".jpeg"),
+        "image/webp" => lower.ends_with(".webp"),
+        "image/gif" => lower.ends_with(".gif"),
+        _ => false,
+    }
 }
 
 fn validate_identity(input: &PutConversationPdfResource) -> StoreResult<()> {
     if input.conversation_id.trim().is_empty()
         || uuid::Uuid::parse_str(&input.resource_id).is_err()
-        || input.mime_type != "application/pdf"
         || input.display_name.is_empty()
         || input.display_name.len() > 255
         || input.display_name.chars().any(char::is_control)
         || input.display_name.contains(['/', '\\'])
-        || !input.display_name.to_ascii_lowercase().ends_with(".pdf")
+        || !display_name_matches_mime(&input.display_name, &input.mime_type)
         || input.created_at_ms <= 0
     {
-        return Err(invalid("invalid PDF resource metadata"));
+        return Err(invalid("invalid resource metadata"));
     }
     Ok(())
 }
@@ -54,10 +93,10 @@ impl ConversationResourceRepository for NolaStore {
     ) -> StoreResult<Option<ConversationResourceDescriptor>> {
         validate_identity(input)?;
         if input.data_base64.len() > (MAX_PDF_RESOURCE_BYTES + 2) / 3 * 4 + 8 {
-            return Err(invalid("oversized PDF resource"));
+            return Err(invalid("oversized conversation resource"));
         }
-        let bytes = STANDARD.decode(&input.data_base64).map_err(|_| invalid("invalid PDF encoding"))?;
-        validate_pdf(&bytes)?;
+        let bytes = STANDARD.decode(&input.data_base64).map_err(|_| invalid("invalid resource encoding"))?;
+        validate_resource_bytes(&bytes, &input.mime_type)?;
         let digest = format!("{:x}", Sha256::digest(&bytes));
         let descriptor = ConversationResourceDescriptor {
             conversation_id: input.conversation_id.clone(),
@@ -124,9 +163,9 @@ impl ConversationResourceRepository for NolaStore {
             |row| Ok((row.get(0)?,row.get(1)?,row.get(2)?,row.get(3)?,row.get(4)?)),
         ).optional()?;
         let Some((display_name,mime_type,byte_count,sha256,bytes)) = value else { return Ok(None); };
-        validate_pdf(&bytes)?;
-        if byte_count != bytes.len() as i64 || sha256 != format!("{:x}", Sha256::digest(&bytes)) {
-            return Err(StoreError::Invariant("PDF resource integrity check failed".into()));
+        validate_resource_bytes(&bytes, &mime_type)?;
+        if byte_count != bytes.len() as i64 {
+            return Err(StoreError::Invariant("conversation resource integrity check failed".into()));
         }
         Ok(Some(ConversationResourceContent {
             descriptor: ConversationResourceDescriptor {

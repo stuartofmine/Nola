@@ -118,6 +118,13 @@ pub(crate) fn invoke_auxiliary_once(
             super::provider_protocols::anthropic_request_body(cfg, messages, &[], "none")?
         }
     };
+    nola_core::model_privacy::redact_model_request_with_options(
+        &mut body,
+        &cfg.api_key,
+        nola_core::model_privacy::RedactionOptions {
+            redact_pii: nola_core::model_privacy::should_redact_pii(&cfg.endpoint),
+        },
+    );
     body["stream"] = json!(false);
     if let Some(object) = body.as_object_mut() {
         object.remove("stream_options");

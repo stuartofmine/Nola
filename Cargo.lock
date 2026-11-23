@@ -2500,6 +2500,7 @@ dependencies = [
  "nola_domain",
  "nola_host_protocol",
  "nola_kernel",
+ "nola_model_privacy",
  "regex",
  "serde",
  "serde_json",
@@ -2632,6 +2633,7 @@ dependencies = [
  "nola_domain",
  "nola_host_protocol",
  "nola_kernel",
+ "nola_model_privacy",
  "regex",
  "serde",
  "serde_json",
@@ -2736,6 +2738,14 @@ dependencies = [
  "serde_json",
  "tempfile",
  "uuid",
+]
+
+[[package]]
+name = "nola_model_privacy"
+version = "0.1.0"
+dependencies = [
+ "regex",
+ "serde_json",
 ]
 
 [[package]]

@@ -100,7 +100,7 @@ impl NolaStore {
         let fields = settings.as_object_mut().ok_or_else(|| {
             StoreError::Invariant("conversation settings must be an object".into())
         })?;
-        for key in ["language", "selectedPromptTemplateID", "expertReasoningEffort", "expertExecutor", "promptResponseStyle", "executionBackend", "persistenceEnabled", "dataSourceIds", "executionPolicy", "promptTemplateSelectionIsExplicit", "contextLimitOverride"] {
+        for key in ["language", "selectedPromptTemplateID", "expertReasoningEffort", "expertExecutor", "promptResponseStyle", "executionBackend", "persistenceEnabled", "dataSourceIds", "executionPolicy", "promptTemplateSelectionIsExplicit", "contextLimitOverride", "workspaceRoot"] {
             if let Some(value) = patch.get(key) {
                 if value.is_null() { fields.remove(key); } else { fields.insert(key.into(), value.clone()); }
             }
@@ -258,6 +258,7 @@ impl NolaStore {
             context_limit_override: field("contextLimitOverride"),
             external_execution_model_ids: field("externalExecutionModelIDs"),
             external_execution_model_provider_ids: field("externalExecutionModelProviderIDs"),
+            workspace_root: settings.get("workspaceRoot").and_then(Value::as_str).map(str::to_owned),
             execution_policy: settings.get("executionPolicy").filter(|value| !value.is_null())
                 .cloned().map(serde_json::from_value).transpose()?,
         };

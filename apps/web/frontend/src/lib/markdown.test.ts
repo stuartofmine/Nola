@@ -62,11 +62,14 @@ test('entities decode as text but inline and fenced code preserve literal conten
     assert.ok(value.includes('复制'));
 });
 
-test('HTML and dangerous links cannot create active content or remote image requests', () => {
-    const value = html('<script>alert(1)</script>\n\n[bad](javascript:alert%281%29) [encoded](javascript&#58;alert%281%29) ![track](https://example.com/pixel)\n\n<iframe src="https://example.com"></iframe>');
-    assert.ok(!/<script|<iframe|<img|href="javascript:/i.test(value));
+test('HTML and dangerous links cannot create active content while safe images render lazily', () => {
+    const value = html('<script>alert(1)</script>\n\n[bad](javascript:alert%281%29) [encoded](javascript&#58;alert%281%29) ![unsafe](javascript:alert%281%29) ![private](/api/private/secret.png) ![track](https://example.com/pixel) ![local](/api/chat/conversations/c1/resources/r1)\n\n<iframe src="https://example.com"></iframe>');
+    assert.ok(!/<script|<iframe|href="javascript:|src="javascript:|\/api\/private/i.test(value));
     assert.ok(value.includes('&lt;script>'));
-    assert.ok(value.includes('图片：track'));
+    assert.match(value, /class="[^"]*\bmarkdown-image\b[^"]*"/);
+    assert.ok(value.includes('loading="lazy"'));
+    assert.ok(value.includes('src="https://example.com/pixel"'));
+    assert.ok(value.includes('src="/api/chat/conversations/c1/resources/r1"'));
     assert.ok(value.includes('rel="noopener noreferrer"'));
 });
 

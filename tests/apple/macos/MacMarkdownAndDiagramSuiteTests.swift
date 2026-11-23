@@ -629,8 +629,32 @@ final class MacMarkdownParserTests: XCTestCase {
             "See `/tmp/Nola/Sources/Agent.swift:42` for the reducer."
         )
 
-        XCTAssertTrue(linked.contains("[Agent.swift:42](file:///tmp/Nola/Sources/Agent.swift)"))
+        XCTAssertTrue(linked.contains("[Agent.swift:42](file:///tmp/Nola/Sources/Agent.swift#L42)"))
         XCTAssertFalse(linked.contains("`/tmp/Nola/Sources/Agent.swift:42`"))
+    }
+
+    func testInlineCodeFilePathPreservesLineColumnAndWorkspaceRelativePaths() throws {
+        let withColumn = MacMarkdownFileLinkifier.linkify(
+            "Check `/tmp/Nola/Sources/Agent.swift:42:8` and `apps/macos/UI/MacMarkdownView.swift:780` and `src/main.rs:12:4`."
+        )
+        XCTAssertTrue(withColumn.contains("[Agent.swift:42:8](file:///tmp/Nola/Sources/Agent.swift#L42C8)"))
+        XCTAssertTrue(withColumn.contains("[MacMarkdownView.swift:780](apps/macos/UI/MacMarkdownView.swift#L780)"))
+        XCTAssertTrue(withColumn.contains("[main.rs:12:4](src/main.rs#L12C4)"))
+
+        let workspaceRoot = URL(fileURLWithPath: "/tmp/NolaWorkspace", isDirectory: true)
+        let relativeURL = try XCTUnwrap(URL(string: "src/main.rs#L12C4"))
+        let resolved = try XCTUnwrap(MacCodeReferenceParser.parse(relativeURL, relativeTo: workspaceRoot))
+        XCTAssertEqual(resolved.url.path, "/tmp/NolaWorkspace/src/main.rs")
+        XCTAssertEqual(resolved.line, 12)
+        XCTAssertEqual(resolved.column, 4)
+
+        let unchanged = MacMarkdownFileLinkifier.linkify(
+            "Keep `https://example.com/index.html`, `feat/branch-name`, `a / b.swift`, and `v1.0/v2.0` as code."
+        )
+        XCTAssertEqual(
+            unchanged,
+            "Keep `https://example.com/index.html`, `feat/branch-name`, `a / b.swift`, and `v1.0/v2.0` as code."
+        )
     }
 
     func testTextDocumentParserPreservesBlockStructure() {

@@ -65,7 +65,7 @@ test('conversation drafts survive A→B→A and a confirmed turn consumes only i
     store.clear(); assert.deepEqual(store.read('A'), []);
 });
 
-test('real Svelte attachment controls render localized file support and text-only input', async () => {
+test('real Svelte attachment controls render localized file support including images and PDFs', async () => {
     const server = await createServer({ server: { middlewareMode: true, ws: false }, appType: 'custom' });
     try {
         const { default: Component } = await server.ssrLoadModule('/src/components/ChatTextAttachments.svelte');
@@ -77,7 +77,8 @@ test('real Svelte attachment controls render localized file support and text-onl
             assert.ok(html.includes(t(language, 'chatTextAttachment.help')));
             assert.ok(html.includes(t(language, 'chatTextAttachment.select')));
             assert.match(html, /accept="[^"]*\.md/);
-            assert.ok(!html.includes('application/pdf'));
+            assert.ok(html.includes('application/pdf'));
+            assert.ok(html.includes('image/png'));
         }
     } finally { await server.close(); }
 });

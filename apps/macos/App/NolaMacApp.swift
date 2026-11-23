@@ -847,6 +847,10 @@ struct MacSettingsView: View {
     @AppStorage(MacManagedNolaServer.enabledKey) private var managedServerEnabled = false
     @AppStorage(MacManagedNolaServer.permissionProfileKey)
     private var managedServerPermissionProfile = MacPermissionMode.cautious.permissionProfile
+    @AppStorage(MacManagedNolaServer.tailcatEnabledKey) private var managedServerTailcatEnabled = false
+    @AppStorage(MacManagedNolaServer.tailcatHelperPathKey) private var managedServerTailcatHelperPath = ""
+    @AppStorage(MacManagedNolaServer.tailcatHelperSHA256Key) private var managedServerTailcatHelperSHA256 = ""
+    @State private var managedServerTailcatError: String?
     @State private var hostVerificationRevision = 0
     @State private var hostVerificationTask: Task<Void, Never>?
     @State private var showsRemoveHostConfirmation = false
@@ -1183,10 +1187,16 @@ struct MacSettingsView: View {
             .frame(width: 32, height: 32)
 
             VStack(alignment: .leading, spacing: 3) {
-                Text(hostStatusTitle)
-                    .font(.callout.weight(.semibold))
-                    .accessibilityIdentifier(hostConnectionState == .unverified && hasUnsavedHostChanges
-                        ? "mac.host.status.unsaved" : "mac.host.status")
+                HStack(spacing: 6) {
+                    Text(hostStatusTitle)
+                        .font(.callout.weight(.semibold))
+                        .accessibilityIdentifier(hostConnectionState == .unverified && hasUnsavedHostChanges
+                            ? "mac.host.status.unsaved" : "mac.host.status")
+                    if case .connected = hostConnectionState,
+                       let activeURL = savedHostURL ?? AppleHostConnectionSetup.endpoint(hostURL) {
+                        macTransportModeBadge(for: activeURL)
+                    }
+                }
                 Text(hostStatusDetail)
                     .font(.caption)
                     .foregroundStyle(.secondary)
@@ -1200,6 +1210,27 @@ struct MacSettingsView: View {
             RoundedRectangle(cornerRadius: 10)
                 .stroke(hostStatusColor.opacity(0.18), lineWidth: 0.5)
         }
+    }
+
+    @ViewBuilder
+    private func macTransportModeBadge(for url: URL) -> some View {
+        let mode = NolaTailcatTransport.currentTransportMode(for: url)
+        let isTailcat: Bool = {
+            if case .tailcat = mode { return true }
+            return false
+        }()
+        let title = isTailcat
+            ? macSettingsText("mac.settings.host.transport.tailcat", "Tailcat")
+            : macSettingsText("mac.settings.host.transport.direct", "Direct")
+        let symbol = isTailcat ? "point.3.connected.trianglepath.dotted" : "network"
+        Label(title, systemImage: symbol)
+            .font(.caption2.weight(.medium))
+            .foregroundStyle(.secondary)
+            .padding(.horizontal, 7)
+            .padding(.vertical, 2)
+            .background(MacDesignColor.subtleFill, in: Capsule())
+            .overlay(Capsule().stroke(MacDesignColor.borderSubtle, lineWidth: 0.5))
+            .accessibilityIdentifier("mac.host.transportBadge")
     }
 
     private var managedServerStatusColor: Color {
@@ -1224,11 +1255,6 @@ struct MacSettingsView: View {
         }
     }
 
-    private var isManagedServerStarting: Bool {
-        if case .starting = managedServer.state { return true }
-        return false
-    }
-
     private func commitContextLimit() {
         contextLimit = min(max(contextLimit, 16_384), 2_000_000)
         MacAssistantPreferences.setContextLimit(contextLimit)
@@ -1242,7 +1268,7 @@ struct MacSettingsView: View {
             )
             .font(.callout.weight(.semibold))
             .toggleStyle(.macSwitch)
-            .disabled(isManagedServerStarting)
+            .accessibilityIdentifier("mac.server.sharing")
             .onChange(of: managedServerEnabled) { _, enabled in
                 if enabled {
                     Task {
@@ -1253,26 +1279,6 @@ struct MacSettingsView: View {
                     managedServer.stop()
                 }
             }
-
-            if managedServerPermissionModeIsEditable {
-                Picker(macSettingsText("mac.settings.server.permission_mode", "Server permission mode"),
-                       selection: $managedServerPermissionProfile) {
-                    ForEach(MacPermissionMode.allCases) { mode in
-                        Text(mode.title).tag(mode.permissionProfile)
-                    }
-                }
-                .pickerStyle(.segmented)
-            } else if let mode = managedServerPermissionMode {
-                LabeledContent(macSettingsText("mac.settings.server.permission_mode", "Server permission mode")) {
-                    Label(mode.title, systemImage: "shield")
-                        .foregroundStyle(.primary)
-                }
-            }
-
-            Text(managedServerPermissionMode?.detail ?? String(localized: "Invalid permission configuration. Select a valid permission mode before starting."))
-                .font(.caption)
-                .foregroundStyle(.secondary)
-                .fixedSize(horizontal: false, vertical: true)
 
             HStack(alignment: .top, spacing: 12) {
                 ZStack {
@@ -1297,9 +1303,24 @@ struct MacSettingsView: View {
                         .contentTransition(reduceMotion ? .identity : .opacity)
                     switch managedServer.state {
                     case .ready(let info):
-                        Text(info.origin.absoluteString)
-                            .font(.system(.caption, design: .monospaced))
-                            .textSelection(.enabled)
+                        HStack(spacing: 6) {
+                            Text(info.origin.absoluteString)
+                                .font(.system(.caption, design: .monospaced))
+                                .textSelection(.enabled)
+                            if info.tailcatIngressActive {
+                                Label(
+                                    macSettingsText("mac.settings.server.tailcat.active", "Tailcat"),
+                                    systemImage: "point.3.connected.trianglepath.dotted"
+                                )
+                                .font(.caption2.weight(.medium))
+                                .foregroundStyle(.secondary)
+                                .padding(.horizontal, 7)
+                                .padding(.vertical, 2)
+                                .background(MacDesignColor.subtleFill, in: Capsule())
+                                .overlay(Capsule().stroke(MacDesignColor.borderSubtle, lineWidth: 0.5))
+                                .accessibilityIdentifier("mac.server.tailcatActiveBadge")
+                            }
+                        }
                         HStack(spacing: 8) {
                             if let setup = info.connectionSetupText {
                                 Button {
@@ -1354,6 +1375,26 @@ struct MacSettingsView: View {
                 Spacer(minLength: 8)
             }
             .animation(reduceMotion ? nil : MacDesignTokens.Motion.reveal, value: managedServer.state)
+            if managedServerPermissionModeIsEditable {
+                Picker(macSettingsText("mac.settings.server.permission_mode", "Server permission mode"),
+                       selection: $managedServerPermissionProfile) {
+                    ForEach(MacPermissionMode.allCases) { mode in
+                        Text(mode.title).tag(mode.permissionProfile)
+                    }
+                }
+                .pickerStyle(.segmented)
+            } else if let mode = managedServerPermissionMode {
+                LabeledContent(macSettingsText("mac.settings.server.permission_mode", "Server permission mode")) {
+                    Label(mode.title, systemImage: "shield")
+                        .foregroundStyle(.primary)
+                }
+            }
+
+            Text(managedServerPermissionMode?.detail ?? String(localized: "Invalid permission configuration. Select a valid permission mode before starting."))
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+
             Label(
                 macSettingsText(
                     "mac.settings.server.security",
@@ -1363,8 +1404,149 @@ struct MacSettingsView: View {
             )
             .font(.caption)
             .foregroundStyle(.secondary)
+
+            VStack(alignment: .leading, spacing: 8) {
+                HStack(spacing: 8) {
+                    Toggle(
+                        macSettingsText("mac.settings.server.tailcat.title", "Tailcat 远程隧道"),
+                        isOn: $managedServerTailcatEnabled
+                    )
+                    .font(.callout)
+                    .toggleStyle(.macSwitch)
+                    .disabled(!managedServerPermissionModeIsEditable)
+                    .accessibilityIdentifier("mac.server.tailcat.enable")
+
+                    if case .ready(let info) = managedServer.state, info.tailcatIngressActive {
+                        Text(macSettingsText("mac.settings.server.tailcat.badge_on", "Active"))
+                            .font(.caption2.weight(.medium))
+                            .foregroundStyle(.secondary)
+                            .padding(.horizontal, 6)
+                            .padding(.vertical, 1)
+                            .background(MacDesignColor.subtleFill, in: Capsule())
+                    }
+                }
+
+                if let managedServerTailcatError {
+                    Text(managedServerTailcatError)
+                        .font(.caption)
+                        .foregroundStyle(.red)
+                } else if case .ready(let info) = managedServer.state, info.tailcatIngressActive {
+                    Label(
+                        macSettingsText("mac.settings.server.tailcat.status_active", "Tailcat 远程隧道已启用。"),
+                        systemImage: "checkmark.circle"
+                    )
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                } else if MacManagedTailcatConfiguration.bundledHelperURL() != nil &&
+                            managedServerTailcatHelperPath.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                    Text(macSettingsText(
+                        "mac.settings.server.tailcat.bundled_note",
+                        "使用应用内置的 nola-tailcat 助手，开启后即可接受远程客户端的加密隧道连接，无需手动配置。停止服务后可切换。"
+                    ))
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+                } else {
+                    Text(macSettingsText(
+                        "mac.settings.server.tailcat.note",
+                        "可选。开启后通过已校验的 Tailcat 助手接受远程客户端的加密隧道连接。停止服务后可修改设置。"
+                    ))
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+                }
+
+                DisclosureGroup(macSettingsText("mac.settings.server.tailcat.advanced", "高级：自定义 Tailcat 助手")) {
+                    VStack(alignment: .leading, spacing: 10) {
+                        VStack(alignment: .leading, spacing: 5) {
+                            Text(macSettingsText("mac.settings.server.tailcat.helper_path", "Helper executable path"))
+                                .font(.caption.weight(.medium))
+                                .foregroundStyle(.secondary)
+                            HStack(spacing: 8) {
+                                TextField(
+                                    macSettingsText("mac.settings.server.tailcat.helper_placeholder", "/path/to/nola-tailcat"),
+                                    text: $managedServerTailcatHelperPath
+                                )
+                                .font(.system(.caption, design: .monospaced))
+                                .textFieldStyle(.roundedBorder)
+                                .disabled(!managedServerPermissionModeIsEditable)
+                                .accessibilityIdentifier("mac.server.tailcat.helperPath")
+                                Button(macSettingsText("mac.settings.server.tailcat.choose", "Choose…")) {
+                                    chooseTailcatHelperBinary()
+                                }
+                                .buttonStyle(.bordered)
+                                .controlSize(.small)
+                                .disabled(!managedServerPermissionModeIsEditable)
+                                .accessibilityIdentifier("mac.server.tailcat.choose")
+                            }
+                        }
+
+                        VStack(alignment: .leading, spacing: 5) {
+                            Text(macSettingsText("mac.settings.server.tailcat.sha256", "Helper SHA-256"))
+                                .font(.caption.weight(.medium))
+                                .foregroundStyle(.secondary)
+                            HStack(spacing: 8) {
+                                TextField(
+                                    macSettingsText("mac.settings.server.tailcat.sha256_placeholder", "64-character lowercase hex digest"),
+                                    text: $managedServerTailcatHelperSHA256
+                                )
+                                .font(.system(.caption, design: .monospaced))
+                                .textFieldStyle(.roundedBorder)
+                                .disabled(!managedServerPermissionModeIsEditable)
+                                .accessibilityIdentifier("mac.server.tailcat.sha256")
+                                Button(macSettingsText("mac.settings.server.tailcat.compute", "Compute SHA-256")) {
+                                    computeTailcatHelperSHA256()
+                                }
+                                .buttonStyle(.bordered)
+                                .controlSize(.small)
+                                .disabled(!managedServerPermissionModeIsEditable || managedServerTailcatHelperPath.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                                if !managedServerTailcatHelperPath.isEmpty || !managedServerTailcatHelperSHA256.isEmpty {
+                                    Button(macSettingsText("mac.settings.server.tailcat.clear", "恢复内置")) {
+                                        managedServerTailcatHelperPath = ""
+                                        managedServerTailcatHelperSHA256 = ""
+                                        managedServerTailcatError = nil
+                                    }
+                                    .buttonStyle(.bordered)
+                                    .controlSize(.small)
+                                    .disabled(!managedServerPermissionModeIsEditable)
+                                }
+                            }
+                        }
+                    }
+                    .padding(.top, 6)
+                }
+                .font(.caption)
+                .foregroundStyle(.secondary)
+            }
+            .disclosureGroupStyle(MacRowDisclosureStyle())
+            .font(.callout)
+            .foregroundStyle(.secondary)
         }
         .padding(.vertical, 4)
+    }
+
+    private func chooseTailcatHelperBinary() {
+        let panel = NSOpenPanel()
+        panel.canChooseFiles = true
+        panel.canChooseDirectories = false
+        panel.allowsMultipleSelection = false
+        panel.title = macSettingsText("mac.settings.server.tailcat.panel_title", "Select Tailcat Helper Executable")
+        guard panel.runModal() == .OK, let url = panel.url else { return }
+        managedServerTailcatHelperPath = url.path
+        computeTailcatHelperSHA256()
+    }
+
+    private func computeTailcatHelperSHA256() {
+        let path = managedServerTailcatHelperPath.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !path.isEmpty else { return }
+        do {
+            managedServerTailcatHelperSHA256 = try MacManagedTailcatConfiguration.computeSHA256(
+                forFileAt: URL(fileURLWithPath: path)
+            )
+            managedServerTailcatError = nil
+        } catch {
+            managedServerTailcatError = error.localizedDescription
+        }
     }
 
     private func copyServerValue(_ value: String, feedback: String) {
@@ -1805,9 +1987,6 @@ struct MacSettingsView: View {
             }
             Section(macSettingsText("mac.settings.section.connected_host", "Connect to a Nola Server")) {
                 hostConnectionStatusCard
-                if case .connected(let report) = hostConnectionState {
-                    messagingChannelStatusCard(report)
-                }
                 Button {
                     importHostConnectionSetupFromPasteboard()
                 } label: {
@@ -1817,6 +1996,7 @@ struct MacSettingsView: View {
                     )
                 }
                 .buttonStyle(.bordered)
+                .disabled(checkingHost)
                 .accessibilityIdentifier("mac.host.pasteSetup")
                 VStack(alignment: .leading, spacing: 7) {
                     Text(macSettingsText("mac.settings.host.url", "Nola Server URL"))
@@ -1832,6 +2012,7 @@ struct MacSettingsView: View {
                         .labelsHidden()
                         .accessibilityLabel(macSettingsText("mac.settings.host.url", "Nola Server URL"))
                         .accessibilityIdentifier("mac.host.url")
+                        .disabled(checkingHost)
                         .textContentType(.URL)
                         .textFieldStyle(.roundedBorder)
                         .multilineTextAlignment(.leading)
@@ -1850,6 +2031,7 @@ struct MacSettingsView: View {
                         .labelsHidden()
                         .accessibilityLabel(macSettingsText("mac.settings.host.token", "Access token"))
                         .textContentType(.password)
+                        .disabled(checkingHost)
                         .textFieldStyle(.roundedBorder)
                         .multilineTextAlignment(.leading)
                         .frame(maxWidth: .infinity)
@@ -1888,10 +2070,7 @@ struct MacSettingsView: View {
                         startHostVerification(saved: false)
                     } label: {
                         if case .checking = hostConnectionState {
-                            Label(
-                                macSettingsText("mac.settings.host.status.checking", "Verifying connection…"),
-                                systemImage: "network"
-                            )
+                            Text(macSettingsText("mac.settings.host.status.checking", "Verifying connection…"))
                         } else {
                             Label(hostPrimaryActionTitle, systemImage: "checkmark.shield")
                         }
@@ -1901,6 +2080,9 @@ struct MacSettingsView: View {
                     .controlSize(.large)
                     .disabled(checkingHost || !canVerifyHostDraft)
                     .accessibilityIdentifier("mac.host.verify")
+                }
+                if case .connected(let report) = hostConnectionState {
+                    messagingChannelStatusCard(report)
                 }
                 DisclosureGroup {
                     VStack(alignment: .leading, spacing: 9) {

@@ -65,10 +65,31 @@ struct StdioMcpClient {
     catalog_dirty: bool,
 }
 
+fn kill_child_process_group(child: &mut Child) {
+    #[cfg(unix)]
+    {
+        if let Ok(pid) = i32::try_from(child.id()) {
+            if pid > 0 {
+                unsafe {
+                    extern "C" {
+                        fn kill(pid: i32, sig: i32) -> i32;
+                    }
+                    const SIGKILL: i32 = 9;
+                    let _ = kill(-pid, SIGKILL);
+                }
+            }
+        }
+    }
+    let _ = child.kill();
+    let _ = child.wait();
+}
+
 struct InitializingChild(Option<Child>);
 impl Drop for InitializingChild {
     fn drop(&mut self) {
-        if let Some(child) = self.0.as_mut() { let _ = child.kill(); let _ = child.wait(); }
+        if let Some(child) = self.0.as_mut() {
+            kill_child_process_group(child);
+        }
     }
 }
 
@@ -741,6 +762,7 @@ impl StdioMcpClient {
         {
             use std::os::unix::process::CommandExt;
             command.arg0(&config.command_argv0);
+            command.process_group(0);
         }
         command
             .args(&config.args)
@@ -772,21 +794,30 @@ impl StdioMcpClient {
         thread::spawn(move || {
             let mut reader = BufReader::new(stdout);
             loop {
-                let mut line = String::new();
-                match reader.read_line(&mut line) {
+                let mut raw_line = Vec::new();
+                match (&mut reader)
+                    .take((MAX_MESSAGE_BYTES + 1) as u64)
+                    .read_until(b'\n', &mut raw_line)
+                {
                     Ok(0) => {
                         let _ = sender.send(StdoutEvent::Closed);
                         break;
                     }
-                    Ok(_) if line.len() > MAX_MESSAGE_BYTES => {
+                    Ok(_) if raw_line.len() > MAX_MESSAGE_BYTES => {
                         let _ = sender.send(StdoutEvent::Failed(
                             "MCP stdio response exceeded the 4 MB limit".to_string(),
                         ));
                         break;
                     }
-                    Ok(_) => {
-                        let _ = sender.send(StdoutEvent::Line(line));
-                    }
+                    Ok(_) => match String::from_utf8(raw_line) {
+                        Ok(line) => {
+                            let _ = sender.send(StdoutEvent::Line(line));
+                        }
+                        Err(error) => {
+                            let _ = sender.send(StdoutEvent::Failed(error.to_string()));
+                            break;
+                        }
+                    },
                     Err(error) => {
                         let _ = sender.send(StdoutEvent::Failed(error.to_string()));
                         break;
@@ -1104,8 +1135,7 @@ impl StdioMcpClient {
 
 impl Drop for StdioMcpClient {
     fn drop(&mut self) {
-        let _ = self.child.kill();
-        let _ = self.child.wait();
+        kill_child_process_group(&mut self.child);
     }
 }
 

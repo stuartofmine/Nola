@@ -446,11 +446,20 @@ where F: FnMut(LlmEvent) -> Result<(), String> {
     } else {
         build_async_stream_client(url.host_str(), None)?
     };
+    let bearer = credential.as_ref().map(|value| value.bearer()).unwrap_or(&cfg.api_key);
+    let mut wire = body.clone();
+    nola_core::model_privacy::redact_model_request_with_options(
+        &mut wire,
+        bearer,
+        nola_core::model_privacy::RedactionOptions {
+            redact_pii: nola_core::model_privacy::should_redact_pii(&cfg.endpoint),
+        },
+    );
+    let body = &wire;
     let mut request = client
         .post(url)
         .header(ACCEPT, "text/event-stream")
-        .json(&body);
-    let bearer = credential.as_ref().map(|value| value.bearer()).unwrap_or(&cfg.api_key);
+        .json(body);
     if !bearer.is_empty() {
         request = request.bearer_auth(bearer);
     }
@@ -535,7 +544,7 @@ fn responses_failure_event(event: &Value, output_started: bool) -> ProviderAttem
             ("provider_unavailable", "The provider is temporarily unavailable. Try again shortly.", true),
         Some("rate_limit_exceeded" | "slow_down") =>
             ("rate_limited", "The provider rate limit was reached. Wait before retrying.", true),
-        Some("insufficient_quota" | "subscription_sharing_usage_limit_exceeded") =>
+        Some("insufficient_quota" | "credit_balance_exhausted" | "subscription_sharing_usage_limit_exceeded") =>
             ("quota_exhausted", "The provider usage limit was reached. Check the selected account's limits.", false),
         Some("context_length_exceeded") =>
             ("context_length_exceeded", "The model context window was exceeded.", false),
@@ -1332,6 +1341,18 @@ mod responses_contract_tests {
         let mut streamed = "Hello".to_string();
         assert!(finish_streamed_text(&mut streamed, "Different", |_| Ok(())).is_err());
         assert_eq!(streamed, "Hello");
+    }
+
+    #[test]
+    fn exhausted_credit_balance_in_error_stream_is_non_retryable() {
+        let event = json!({"type":"error","error":{
+            "code":"credit_balance_exhausted","type":"insufficient_quota","message":"private account details"
+        }});
+        let failure = fixture_stream(format!("data: {event}\n\n")).unwrap_err()
+            .into_failure(&config("http://localhost/v1".into()));
+        assert_eq!(failure.code, "quota_exhausted");
+        assert!(!failure.same_target_retryable);
+        assert!(!failure.message.contains("private"));
     }
 
     #[test]

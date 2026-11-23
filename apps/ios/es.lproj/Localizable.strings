@@ -2457,7 +2457,7 @@
 "chat.task.guidance.send" = "Enviar orientación";
 "model.web_host.setup" = "Antes de conectar";
 "model.web_host.setup.start" = "En el Mac, abre «Ajustes > Conexiones» en Nola y activa «Compartir este Mac como Nola Server».";
-"model.web_host.setup.copy" = "Copia la dirección y el token de emparejamiento que muestra Nola en el Mac. Usa una red privada de confianza o HTTPS.";
+"model.web_host.setup.copy" = "Copia los datos de conexión en el Mac y pégalos en este dispositivo. Usa una red privada de confianza o HTTPS.";
 "model.web_host.checking" = "Comprobando el host";
 "model.web_host.checking.detail" = "Verificando el token, el protocolo de permisos y la identidad del host antes de guardar.";
 "model.web_host.error.protocol" = "Este host usa un protocolo de permisos no compatible. Actualiza Nola en el host e inténtalo de nuevo.";

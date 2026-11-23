@@ -95,6 +95,40 @@ enum class DeviceAgentInputOrigin {
     SCHEDULED_ACTION,
 }
 
+internal const val HOST_UI_PRESENTATION_CONTEXT_ID = "nola-host-ui-presentation-facts"
+
+internal fun withHostUiPresentationContext(
+    components: List<AgentCoreContextComponent>,
+): List<AgentCoreContextComponent> {
+    if (components.any { it.id == HOST_UI_PRESENTATION_CONTEXT_ID }) {
+        return components
+    }
+    val facts = buildJsonObject {
+        put("platform", "android")
+        put("presentation", "graphical_projection")
+        put("graphical", true)
+        put("graphical_form_interaction", true)
+        put("supportsInteractiveForms", true)
+        put("tool", "render_ui")
+        put("ui_publication_is_independent_of_presentation", true)
+        put(
+            "guidance",
+            "This graphical Android client renders committed render_ui projections natively and submits real user interactions. Proactively use render_ui for interactive forms, preference/parameter inputs, tabbed comparisons, adjustable choices, checklists/filters, and grouped detail cards whenever a native UI is clearer or easier to operate than plain text; the user does not need to name this capability. Keep short explanations and ordinary conversation as text; do not publish a redundant card for every reply.",
+        )
+    }
+    val component = AgentCoreContextComponent(
+        kind = "system",
+        id = HOST_UI_PRESENTATION_CONTEXT_ID,
+        content = JsonPrimitive("Current Host presentation facts, not new authorization:\n$facts"),
+        source = AgentCoreContextComponentSource(
+            platform = "android",
+            title = "Host UI presentation capabilities",
+            mimeType = "application/json",
+        ),
+    )
+    return components + component
+}
+
 internal fun encodeDeviceAgentInputSubmission(
     input: String,
     inputOrigin: DeviceAgentInputOrigin = DeviceAgentInputOrigin.INTERACTIVE_USER,
@@ -289,7 +323,7 @@ class DeviceAgentCoordinator internal constructor(
                         encodeDeviceAgentInputSubmission(
                             input = input,
                             inputOrigin = inputOrigin,
-                            turnContextComponents = turnContextComponents,
+                            turnContextComponents = withHostUiPresentationContext(turnContextComponents),
                             submissionId = canonicalApplication.descriptor.submissionId,
                             messageId = canonicalApplication.descriptor.userMessageId,
                         ),

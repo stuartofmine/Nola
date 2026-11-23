@@ -104,3 +104,6 @@
 @media (prefers-reduced-motion: no-preference) {
     :root:not([data-reduce=true]) .hp-switch span { transition: left 120ms ease-out; }
 }
+
+.hp-setup-help { margin-block-start: 12px; }
+.hp-setup-help summary { cursor: pointer; min-height: 44px; align-content: center; color: var(--muted); }

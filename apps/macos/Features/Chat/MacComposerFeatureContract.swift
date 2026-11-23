@@ -34,12 +34,21 @@ struct MacComposerDisplayState: Equatable {
     var activePermissionMode: MacPermissionMode? = nil
     var isSubmissionBlocked: Bool = false
     var submissionBlockReason: String? = nil
+    var attachmentImportNotice: String? = nil
+
+    var hasExtractingAttachments: Bool {
+        attachments.contains(where: { $0.status == .extracting })
+    }
+
+    var hasFailedAttachments: Bool {
+        attachments.contains(where: { $0.status == .failed })
+    }
 
     var canSend: Bool {
         guard !isSubmissionBlocked, !isRunning else { return false }
         let hasContent = !draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
             || !attachments.isEmpty
-        return hasContent && !attachments.contains(where: { $0.status == .extracting })
+        return hasContent && !hasExtractingAttachments && !hasFailedAttachments
     }
 
     var isPrimaryActionDisabled: Bool {
@@ -56,6 +65,7 @@ enum MacComposerAction {
     case importDroppedAttachments(conversationID: String, providers: [NSItemProvider])
     case importPasteboardAttachments(conversationID: String, pasteboard: NSPasteboard)
     case removeAttachment(conversationID: String, attachmentID: UUID)
+    case dismissAttachmentImportNotice(conversationID: String)
     case selectReasoningPreference(conversationID: String, String)
     case selectPermissionMode(conversationID: String, MacPermissionMode)
     case reloadPermissionConfiguration(conversationID: String)

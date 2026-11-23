@@ -29,7 +29,9 @@ import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeout
-import kotlinx.serialization.encodeToString
+import kotlinx.serialization.json.JsonArray
+import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.Json
 
 sealed interface LocalModelRuntimeState {
@@ -183,13 +185,18 @@ class LocalLlamaProvider @Inject constructor(
     ).text
 
     internal fun buildPrompt(input: ModelInput): String = buildString {
+        val wire = ModelRequestPrivacy.redact(JsonObject(mapOf(
+            "messages" to JsonArray(input.providerMessages()),
+            "tools" to JsonArray(input.tools),
+        )), "")
+        val filtered = json.parseToJsonElement(wire.decodeToString()).jsonObject
         append("<nola_request>\n")
         append("<messages>")
-        append(json.encodeToString(input.providerMessages()))
+        append(filtered.getValue("messages"))
         append("</messages>\n")
         if (input.tools.isNotEmpty()) {
             append("<tools>")
-            append(json.encodeToString(input.tools))
+            append(filtered.getValue("tools"))
             append("</tools>\n")
         }
         append("Respond to the final user message. Use only the supplied tool contract when a tool is needed.\n")

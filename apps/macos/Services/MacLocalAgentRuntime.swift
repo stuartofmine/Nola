@@ -1879,6 +1879,7 @@ actor MacAgentHostRuntime: MacLocalAgentRuntime {
                             requestID: bridgeRequest.id,
                             arguments: bridgeRequest.arguments,
                             workspaceURL: request.projectURL,
+                            conversationID: request.conversationID,
                             appEnvironment: request.appEnvironment
                         )
                     } else if bridgeRequest.toolName == "conversation_recall" {
@@ -2328,6 +2329,8 @@ actor MacAgentHostRuntime: MacLocalAgentRuntime {
             "vision_input": request.visionInput && (remoteCapabilities?.imageInput ?? (localEndpoint != nil)),
             "max_iterations": request.maxModelIterations,
             "attachments": request.attachmentURLs.compactMap { url -> [String: Any]? in
+                let accessed = url.startAccessingSecurityScopedResource()
+                defer { if accessed { url.stopAccessingSecurityScopedResource() } }
                 let normalized = url.standardizedFileURL
                 guard normalized.isFileURL else { return nil }
                 let values = try? normalized.resourceValues(forKeys: [

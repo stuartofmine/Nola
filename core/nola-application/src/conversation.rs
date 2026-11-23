@@ -440,7 +440,7 @@ fn validate_settings_object(settings: &str) -> Result<(), String> {
             for key in ["modelSelectionID", "executionHostRawValue", "executionHostBinding", "clientHostParameters", "clientModelPresentation",
                 "memoryEnabledOverride", "retrievalEnabledOverride", "isPinned", "language", "selectedPromptTemplateID", "expertReasoningEffort", "expertExecutor", "promptResponseStyle",
                 "executionBackend", "externalExecutionSessions", "persistenceEnabled", "dataSourceOverrides", "dataSourceIds", "executionPolicy",
-                "promptTemplateSelectionIsExplicit", "contextLimitOverride", "externalExecutionModelIDs", "externalExecutionModelProviderIDs"] {
+                "promptTemplateSelectionIsExplicit", "contextLimitOverride", "externalExecutionModelIDs", "externalExecutionModelProviderIDs", "workspaceRoot"] {
                 if let Some(value) = settings.get(key).filter(|value| !value.is_null()) {
                     configuration.insert(key.into(), value.clone());
                 }

@@ -12,6 +12,7 @@ name = "nola_core"
 crate-type = ["rlib"]
 
 [dependencies]
+nola_model_privacy = { path = "nola-model-privacy" }
 nola_agent_engine = { path = "nola-agent-engine" }
 nola_domain = { path = "nola-domain" }
 nola_kernel = { path = "nola-kernel" }

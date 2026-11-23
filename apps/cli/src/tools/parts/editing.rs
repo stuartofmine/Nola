@@ -1159,6 +1159,7 @@ fn run_shell_command(
             "message":"This direct formatter entry has no supervised sandbox lifecycle. Run the command through the normal bash tool; the required policy was not dropped."})));
     }
     let mut cmd = Command::new("sh");
+    crate::native_sandbox::scrub_sensitive_env(&mut cmd);
     cmd.arg("-lc")
         .arg(command)
         .current_dir(root)
@@ -1178,6 +1179,27 @@ fn run_shell_command(
     )
 }
 
+const MAX_CHILD_OUTPUT_BYTES: usize = 8 * 1024 * 1024;
+
+fn read_bounded_pipe(mut pipe: impl std::io::Read) -> Vec<u8> {
+    let mut output = Vec::new();
+    let mut limited = std::io::Read::take(&mut pipe, (MAX_CHILD_OUTPUT_BYTES + 1) as u64);
+    let _ = std::io::Read::read_to_end(&mut limited, &mut output);
+    let truncated = output.len() > MAX_CHILD_OUTPUT_BYTES;
+    if truncated {
+        output.truncate(MAX_CHILD_OUTPUT_BYTES);
+        // Drain remaining bytes in a small fixed buffer so the child does not block on a full pipe.
+        let mut discard = [0u8; 8192];
+        while let Ok(count) = pipe.read(&mut discard) {
+            if count == 0 {
+                break;
+            }
+        }
+        output.extend_from_slice(b"\n[output truncated at 8 MiB limit]");
+    }
+    output
+}
+
 fn wait_for_child_output(
     mut child: Child,
     cancellation: &RuntimeExecutionControl,
@@ -1185,19 +1207,11 @@ fn wait_for_child_output(
     label: &str,
 ) -> Result<std::process::Output, ToolOutcome> {
     drop(child.stdin.take());
-    let stdout_reader = child.stdout.take().map(|mut pipe| {
-        std::thread::spawn(move || {
-            let mut output = Vec::new();
-            let _ = std::io::Read::read_to_end(&mut pipe, &mut output);
-            output
-        })
+    let stdout_reader = child.stdout.take().map(|pipe| {
+        std::thread::spawn(move || read_bounded_pipe(pipe))
     });
-    let stderr_reader = child.stderr.take().map(|mut pipe| {
-        std::thread::spawn(move || {
-            let mut output = Vec::new();
-            let _ = std::io::Read::read_to_end(&mut pipe, &mut output);
-            output
-        })
+    let stderr_reader = child.stderr.take().map(|pipe| {
+        std::thread::spawn(move || read_bounded_pipe(pipe))
     });
     let started = Instant::now();
     let status = loop {

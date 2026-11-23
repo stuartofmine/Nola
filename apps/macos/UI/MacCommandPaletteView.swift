@@ -107,6 +107,7 @@ struct MacCommandPaletteView: View {
                                     title: command.title,
                                     detail: command.detail,
                                     shortcut: command.shortcut,
+                                    isDisabled: command.isDisabled,
                                     action: command.action
                                 )
                             }
@@ -218,7 +219,8 @@ struct MacCommandPaletteView: View {
                 title: String(localized: "Open Workspace…"),
                 detail: String(localized: "Choose the folder used by local tools"),
                 symbol: "folder",
-                shortcut: "⇧⌘O"
+                shortcut: "⇧⌘O",
+                isDisabled: model.executionHost != .local || model.isSelectedConversationVisiblyRunning
             ) {
                 dismiss()
                 Task { await model.chooseWorkspace() }
@@ -356,13 +358,14 @@ struct MacCommandPaletteView: View {
         title: String,
         detail: String,
         shortcut: String?,
+        isDisabled: Bool = false,
         action: @escaping () -> Void
     ) -> some View {
         Button(action: action) {
             HStack(spacing: 11) {
                 Image(systemName: symbol)
                     .font(.system(size: 12, weight: .medium))
-                    .foregroundStyle(selectedIndex == index ? MacDesignColor.brand : Color.secondary)
+                    .foregroundStyle(selectedIndex == index && !isDisabled ? MacDesignColor.brand : Color.secondary)
                     .frame(width: 22, height: 22)
                 VStack(alignment: .leading, spacing: 2) {
                     Text(title)
@@ -384,10 +387,12 @@ struct MacCommandPaletteView: View {
             }
             .padding(.horizontal, 10)
             .frame(height: 46)
-            .macSelectionHighlight(isSelected: selectedIndex == index)
+            .macSelectionHighlight(isSelected: selectedIndex == index && !isDisabled)
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
+        .disabled(isDisabled)
+        .opacity(isDisabled ? 0.45 : 1)
         .id(index)
         .onHover { hovering in
             if hovering {
@@ -425,7 +430,8 @@ struct MacCommandPaletteView: View {
             return
         }
         let commandIndex = selectedIndex - displayedConversations.count
-        guard matchingCommands.indices.contains(commandIndex) else { return }
+        guard matchingCommands.indices.contains(commandIndex),
+              !matchingCommands[commandIndex].isDisabled else { return }
         matchingCommands[commandIndex].action()
     }
 
@@ -455,5 +461,6 @@ private struct PaletteCommand: Identifiable {
     let detail: String
     let symbol: String
     let shortcut: String?
+    var isDisabled: Bool = false
     let action: () -> Void
 }

@@ -83,6 +83,16 @@
     <string name="models_verified_via_direct">直接接続で確認済み</string>
     <string name="models_verified_via_tailcat">Tailcat 経由で確認済み</string>
     <string name="models_tailcat_verify_failed">Tailcat がホストに接続できません。ホストの Tailcat を確認してから、もう一度接続を確認してください。</string>
+    <string name="models_tailcat_error_dns">Tailcat がホストアドレスを解決できませんでした。ネットワークの DNS 設定を確認して再試行してください。</string>
+    <string name="models_tailcat_error_timeout">Tailcat のホスト接続がタイムアウトしました。ホストがオンラインであることを確認して再試行してください。</string>
+    <string name="models_tailcat_error_certificate">Tailcat がホストの TLS 証明書を拒否しました。ホスト証明書を確認して再試行してください。</string>
+    <string name="models_tailcat_error_permission">ホストによって Tailcat アクセスが拒否されました。アクセストークンとホスト権限を確認してください。</string>
+    <string name="models_tailcat_error_suspended">アプリがバックグラウンドに移行したため Tailcat が一時停止しました。アプリに戻って再試行してください。</string>
+    <string name="models_tailcat_error_identity_mismatch">ホストの識別子が変更され、ペアリング済みホストと一致しません。対象ホストを再ペアリングしてください。</string>
+    <string name="models_tailcat_error_capacity">ホストのアクティブな Tailcat セッション数が上限に達しました。不要なセッションを閉じて再試行してください。</string>
+    <string name="models_tailcat_error_not_available">このホストでは Tailcat が有効になっていません。ホストで Tailcat を有効にするか直接接続してください。</string>
+    <string name="models_tailcat_error_start_timeout">ホストでの Tailcat 起動がタイムアウトしました。しばらく待ってから再試行してください。</string>
+    <string name="models_tailcat_error_grant">Tailcat がホストからセッション許可を取得できませんでした。ホストトークンを確認して再試行してください。</string>
     <string name="models_direct_verify_failed_without_tailcat">直接接続で HTTP %1$d が返されました。ホストのアドレスとアクセストークンを確認してください。ホストが Tailcat を必要とする場合は、Tailcat 対応版の Nola をインストールしてください。</string>
     <string name="chat_empty_no_models">モデルサービス、端末上のモデル、またはペアリング済みの Nola ホストを利用できます。</string>
     <string name="chat_add_model_cta">モデルを追加</string>
@@ -1003,7 +1013,8 @@
     <string name="models_web_host_setup_copy">Mac で接続情報をコピーし、ここに貼り付けてください。アドレスとトークンを手入力することもできます。</string>
     <string name="models_web_host_checking">ホストを確認中</string>
     <string name="models_web_host_checking_detail">保存前にトークン、権限プロトコル、ホスト識別情報を検証しています。</string>
-    <string name="models_save_and_verify">保存して検証</string>
+    <string name="models_save_and_verify">確認して接続</string>
+    <string name="models_cancel_host_verification">確認をキャンセル</string>
     <string name="models_verify_again">再検証</string>
     <string name="models_error_host_protocol">このホストの権限プロトコルはサポートされていません。ホスト側の Nola を更新して再試行してください。</string>
     <string name="models_error_host_identity_changed">このアドレスは別のホストを示しています。以前のペアリングを解除してから再接続してください。</string>

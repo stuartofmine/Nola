@@ -63,7 +63,7 @@ struct MacInspectorBrowserView: View {
                         .font(.system(size: MacDesignTokens.Typography.inspectorCaption, weight: .semibold))
                         .foregroundStyle(
                             model.selectedConversationHasManagedBrowser
-                                ? Color.green
+                                ? MacDesignColor.success
                                 : Color.secondary
                         )
                 }
@@ -145,15 +145,38 @@ struct MacInspectorBrowserView: View {
             ? AnyLayout(HStackLayout(spacing: 8))
             : AnyLayout(VStackLayout(alignment: .leading, spacing: 8))
         layout {
-            Button {
-                chrome.installAndOpenExtensions()
-            } label: {
-                Label(String(localized: "Install Extension", table: "Chat"), systemImage: "square.and.arrow.down")
-            }
-            Button {
-                chrome.openExtensions()
-            } label: {
-                Label(String(localized: "Open Chrome", table: "Chat"), systemImage: "arrow.up.right.square")
+            switch chrome.snapshot.presentationState {
+            case .connected:
+                EmptyView()
+            case .browserNotRunning:
+                Button {
+                    chrome.openBrowser()
+                } label: {
+                    Label(String(localized: "Open Browser", table: "Chat"), systemImage: "arrow.up.right.square")
+                }
+            case .extensionIdle:
+                Button {
+                    chrome.checkConnection()
+                } label: {
+                    Label(String(localized: "Check Connection", table: "Chat"), systemImage: "arrow.clockwise")
+                }
+                .disabled(chrome.isCheckingConnection)
+                Button {
+                    chrome.openExtensions()
+                } label: {
+                    Label(String(localized: "Open Extensions", table: "Chat"), systemImage: "puzzlepiece.extension")
+                }
+            case .needsSetup, .browserUnavailable, .failed:
+                Button {
+                    chrome.installAndOpenExtensions()
+                } label: {
+                    Label(String(localized: "Install Extension", table: "Chat"), systemImage: "square.and.arrow.down")
+                }
+                Button {
+                    chrome.openBrowser()
+                } label: {
+                    Label(String(localized: "Open Browser", table: "Chat"), systemImage: "arrow.up.right.square")
+                }
             }
         }
         .buttonStyle(.bordered)
@@ -202,18 +225,39 @@ struct MacInspectorBrowserView: View {
         if model.executionLocation == .connectedHost {
             return String(localized: "Connected Host", table: "Chat")
         }
-        return chrome.snapshot.isExtensionConnected
-            ? NSLocalizedString("mac.extensions.status.connected", value: "Connected", comment: "Chrome connection state")
-            : String(localized: "Setup Required", table: "Chat")
+        switch chrome.snapshot.presentationState {
+        case .connected:
+            return NSLocalizedString("mac.extensions.status.connected", value: "Connected", comment: "Chrome connection state")
+        case .browserNotRunning:
+            return String(localized: "Browser Not Running", table: "Chat")
+        case .extensionIdle:
+            return String(localized: "Extension Idle", table: "Chat")
+        case .browserUnavailable:
+            return String(localized: "Browser Unavailable", table: "Chat")
+        case .needsSetup, .failed:
+            return String(localized: "Setup Required", table: "Chat")
+        }
     }
 
     private var browserStatusDetail: String {
         if model.executionLocation == .connectedHost {
             return String(localized: "Browser actions are provided by the connected host.", table: "Chat")
         }
-        return chrome.snapshot.isExtensionConnected
-            ? NSLocalizedString("mac.extensions.chrome.detail.connected", value: "Nola can inspect and operate your active Chrome tabs.", comment: "Chrome connection detail")
-            : NSLocalizedString("mac.extensions.chrome.detail.waiting", value: "Open Chrome and enable the Nola extension to finish connecting.", comment: "Chrome connection detail")
+        switch chrome.snapshot.presentationState {
+        case .connected:
+            return NSLocalizedString("mac.extensions.chrome.detail.connected", value: "Nola can inspect and operate your active Chrome tabs.", comment: "Chrome connection detail")
+        case .browserNotRunning:
+            return String(localized: "浏览器未运行，打开浏览器后将自动连接", table: "Chat")
+        case .extensionIdle:
+            return String(localized: "浏览器扩展休眠或等待唤醒", table: "Chat")
+        case .browserUnavailable:
+            return String(localized: "Install Chrome, Edge, Brave, or Arc to use the browser extension.", table: "Chat")
+        case .failed:
+            return chrome.snapshot.errorMessage
+                ?? NSLocalizedString("mac.extensions.chrome.detail.waiting", value: "Open Chrome and enable the Nola extension to finish connecting.", comment: "Chrome connection detail")
+        case .needsSetup:
+            return NSLocalizedString("mac.extensions.chrome.detail.waiting", value: "Open Chrome and enable the Nola extension to finish connecting.", comment: "Chrome connection detail")
+        }
     }
 
     private func toolStatus(
@@ -235,7 +279,7 @@ struct MacInspectorBrowserView: View {
             Spacer()
             Text(status ?? (available ? String(localized: "Enabled") : String(localized: "Disabled")))
                 .font(.system(size: MacDesignTokens.Typography.inspectorCaption, weight: .medium))
-                .foregroundStyle(available ? Color.green : Color.secondary)
+                .foregroundStyle(available ? MacDesignColor.success : Color.secondary)
         }
         .font(.system(size: MacDesignTokens.Typography.inspectorBody))
         .frame(minHeight: 34)

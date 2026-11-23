@@ -2457,7 +2457,7 @@
 "chat.task.guidance.send" = "指示を送信";
 "model.web_host.setup" = "接続する前に";
 "model.web_host.setup.start" = "Mac の Nola で「設定 > 接続」を開き、「この Mac を Nola Server として共有」をオンにします。";
-"model.web_host.setup.copy" = "Mac の Nola に表示されるアドレスとペアリングトークンをコピーします。信頼できるプライベートネットワークまたは HTTPS を使用してください。";
+"model.web_host.setup.copy" = "Mac で接続情報をコピーし、このデバイスに貼り付けてください。信頼できるプライベートネットワークまたは HTTPS を使用してください。";
 "model.web_host.checking" = "ホストを確認中";
 "model.web_host.checking.detail" = "保存前にトークン、権限プロトコル、ホスト識別情報を検証しています。";
 "model.web_host.error.protocol" = "このホストの権限プロトコルはサポートされていません。ホスト側の Nola を更新して再試行してください。";

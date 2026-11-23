@@ -400,6 +400,7 @@ struct MacChatWorkspaceView: View {
     @State private var hasResolvedLayout = false
     @State private var activeOverlay: MacWorkspaceOverlay?
     @State private var codeReference: MacCodeReference?
+    @State private var blockedFileReference: MacCodeReference?
     @State private var detailScrollPositions = MacDetailScrollPositions()
     @State private var localPreviewOwner: String?
     @State private var localPreviewSourceConfirmed = false
@@ -662,6 +663,21 @@ struct MacChatWorkspaceView: View {
         .alert(String(localized: "Edit and resend"), isPresented: Binding(get: { messageEditError != nil }, set: { if !$0 { messageEditError = nil } })) {
             Button("OK", role: .cancel) { messageEditError = nil }
         } message: { Text(messageEditError ?? "") }
+        .alert(
+            String(localized: "Remote Host File", table: "Chat"),
+            isPresented: Binding(get: { blockedFileReference != nil }, set: { if !$0 { blockedFileReference = nil } })
+        ) {
+            if let blockedFileReference {
+                Button(String(localized: "Copy Path")) {
+                    NSPasteboard.general.clearContents()
+                    NSPasteboard.general.setString(blockedFileReference.url.path, forType: .string)
+                    self.blockedFileReference = nil
+                }
+            }
+            Button("OK", role: .cancel) { blockedFileReference = nil }
+        } message: {
+            Text(String(localized: "This file belongs to a remote Host and cannot be opened directly from this Mac.", table: "Chat"))
+        }
         .environment(\.macDetailScrollPositions, detailScrollPositions)
         .environment(\.macFileReferenceBaseURL, model.effectiveWorkspaceURL)
         .environment(
@@ -1519,82 +1535,112 @@ struct MacChatWorkspaceView: View {
             .accessibilityHidden(true)
     }
 
+    @ViewBuilder
     private var workspaceSelector: some View {
-        Menu {
-            Section(String(localized: "Working Environment")) {
-                Button {
-                    model.useSessionSandbox()
-                } label: {
-                    Label(
-                        String(localized: "Temporary Workspace"),
-                        systemImage: model.usesSessionSandbox
-                            ? "checkmark"
-                            : "folder.badge.questionmark"
-                    )
-                }
-                .disabled(model.isSelectedConversationVisiblyRunning)
-                Button {
-                    Task { await model.chooseWorkspace() }
-                } label: {
-                    Label(
-                        String(localized: "Choose Folder…"),
-                        systemImage: model.usesSessionSandbox
-                            ? "folder.badge.plus"
-                            : "checkmark"
-                    )
-                }
-            }
-            Divider()
-            Button {
-                NSWorkspace.shared.open(model.effectiveWorkspaceURL)
-            } label: {
-                Label(
-                    String(localized: "Open Workspace in Finder"),
-                    systemImage: "folder"
-                )
-            }
-            Button {
-                openWindow(
-                    value: MacWorkspaceReviewRoute(
-                        path: model.effectiveWorkspaceURL.path
-                    )
-                )
-            } label: {
-                Label(
-                    String(localized: "Review Workspace Changes"),
-                    systemImage: "doc.text.magnifyingglass"
-                )
-            }
-            if !model.usesSessionSandbox {
-                Divider()
-                Button(role: .destructive) {
-                    model.useSessionSandbox()
-                } label: {
-                    Label(
-                        String(localized: "Disconnect Folder"),
-                        systemImage: "xmark.circle"
-                    )
-                }
-                .disabled(model.isSelectedConversationVisiblyRunning)
-            }
-        } label: {
-            Label {
-                Text(model.usesSessionSandbox ? String(localized: "Choose Folder") : model.workspaceDisplayName)
+        if model.executionHost != .local {
+            HStack(spacing: 5) {
+                Image(systemName: "server.rack")
+                    .font(.system(size: 11, weight: .medium))
+                    .foregroundStyle(.secondary)
+                    .accessibilityHidden(true)
+                Text(String(localized: "Remote Workspace"))
                     .lineLimit(1)
                     .truncationMode(.middle)
                     .frame(maxWidth: 168, alignment: .leading)
-            } icon: {
-                conversationMenuIcon("nola-folder")
             }
             .font(.system(size: 11.5, weight: .medium))
             .foregroundStyle(.secondary)
+            .padding(.horizontal, 10)
+            .frame(height: 28)
+            .background(
+                Color.primary.opacity(0.045),
+                in: Capsule(style: .continuous)
+            )
+            .overlay(
+                Capsule(style: .continuous)
+                    .strokeBorder(Color.primary.opacity(0.08), lineWidth: 1)
+            )
+            .fixedSize(horizontal: true, vertical: false)
+            .help(String(localized: "This conversation runs on a remote Host. Its workspace is managed on that Host."))
+            .accessibilityLabel(String(localized: "Remote Workspace"))
+        } else {
+            Menu {
+                Section(String(localized: "Working Environment")) {
+                    Button {
+                        model.useSessionSandbox()
+                    } label: {
+                        Label(
+                            String(localized: "Temporary Workspace"),
+                            systemImage: model.usesSessionSandbox
+                                ? "checkmark"
+                                : "folder.badge.questionmark"
+                        )
+                    }
+                    .disabled(model.isSelectedConversationVisiblyRunning)
+                    Button {
+                        Task { await model.chooseWorkspace() }
+                    } label: {
+                        Label(
+                            String(localized: "Choose Folder…"),
+                            systemImage: model.usesSessionSandbox
+                                ? "folder.badge.plus"
+                                : "checkmark"
+                        )
+                    }
+                    .disabled(model.isSelectedConversationVisiblyRunning)
+                }
+                Divider()
+                Button {
+                    NSWorkspace.shared.open(model.effectiveWorkspaceURL)
+                } label: {
+                    Label(
+                        String(localized: "Open Workspace in Finder"),
+                        systemImage: "folder"
+                    )
+                }
+                Button {
+                    openWindow(
+                        value: MacWorkspaceReviewRoute(
+                            path: model.effectiveWorkspaceURL.path
+                        )
+                    )
+                } label: {
+                    Label(
+                        String(localized: "Review Workspace Changes"),
+                        systemImage: "doc.text.magnifyingglass"
+                    )
+                }
+                if !model.usesSessionSandbox {
+                    Divider()
+                    Button(role: .destructive) {
+                        model.useSessionSandbox()
+                    } label: {
+                        Label(
+                            String(localized: "Disconnect Folder"),
+                            systemImage: "xmark.circle"
+                        )
+                    }
+                    .disabled(model.isSelectedConversationVisiblyRunning)
+                }
+            } label: {
+                Label {
+                    Text(model.usesSessionSandbox ? String(localized: "Temporary Workspace") : model.workspaceDisplayName)
+                        .lineLimit(1)
+                        .truncationMode(.middle)
+                        .frame(maxWidth: 168, alignment: .leading)
+                } icon: {
+                    conversationMenuIcon("nola-folder")
+                }
+                .font(.system(size: 11.5, weight: .medium))
+                .foregroundStyle(.secondary)
+            }
+            .menuStyle(MacPillMenuStyle(height: 28))
+            .fixedSize(horizontal: true, vertical: false)
+            .help(model.effectiveWorkspaceURL.path)
+            .accessibilityLabel(
+                "\(String(localized: "Workspace")): \(model.workspaceDisplayName)"
+            )
         }
-        .menuStyle(MacPillMenuStyle(height: 28))
-        .fixedSize(horizontal: true, vertical: false)
-        .help(model.effectiveWorkspaceURL.path)
-        .accessibilityLabel(
-            "\(String(localized: "Workspace")): \(model.workspaceDisplayName)"
-        )
     }
 
     private var selectedExecutionBackendDisplayName: String {
@@ -2119,10 +2165,14 @@ struct MacChatWorkspaceView: View {
     private func openCodeReference(_ reference: MacCodeReference) {
         // A file URI carries no Host authority. Recheck canonical ownership at
         // the action boundary; selecting a local endpoint cannot relabel history.
-        guard let owner = model.selectedConversationID,
-              MacFilePreviewPolicy.allowsLocalRead(
-                sourceOwner: try? previewRepository.conversationSourceOwner(conversationID: owner),
-                isLocalExecutionHost: model.executionHost == .local, url: reference.url) else { return }
+        guard let owner = model.selectedConversationID else { return }
+        guard MacFilePreviewPolicy.allowsLocalRead(
+            sourceOwner: try? previewRepository.conversationSourceOwner(conversationID: owner),
+            isLocalExecutionHost: model.executionHost == .local, url: reference.url
+        ) else {
+            blockedFileReference = reference
+            return
+        }
         withAnimation(reduceMotion ? nil : MacDesignTokens.Motion.structure) {
             codeReference = reference
             showsInspector = true

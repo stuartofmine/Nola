@@ -40,6 +40,8 @@ pub struct ConversationConfigurationSnapshot {
     #[serde(rename = "externalExecutionModelProviderIDs")]
     pub external_execution_model_provider_ids: Value,
     pub execution_policy: Option<crate::execution_policy::ConversationExecutionPolicy>,
+    #[serde(default, skip_serializing_if = "Option::is_none", rename = "workspaceRoot")]
+    pub workspace_root: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]

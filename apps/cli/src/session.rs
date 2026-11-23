@@ -2918,39 +2918,28 @@ pub(crate) fn redact_sensitive_text(text: &str) -> String {
     if text.is_empty() {
         return String::new();
     }
-    let mut redacted = text.to_string();
-    for (regex, replacement) in session_redaction_patterns() {
-        redacted = regex.replace_all(&redacted, *replacement).into_owned();
-    }
-    redacted
-}
-
-fn session_redaction_patterns() -> &'static [(Regex, &'static str)] {
-    static PATTERNS: OnceLock<Vec<(Regex, &'static str)>> = OnceLock::new();
-    PATTERNS.get_or_init(|| {
+    let (mut redacted, _) = nola_core::model_privacy::redact_secrets_text(text, "[redacted]");
+    static EXTRA_PATTERNS: OnceLock<Vec<(Regex, &'static str)>> = OnceLock::new();
+    let patterns = EXTRA_PATTERNS.get_or_init(|| {
         vec![
-            (
-                Regex::new(r#"(?i)(["']?\b(?:api[_-]?key|apikey|access[_-]?token|refresh[_-]?token|id[_-]?token|token|password|passwd|pwd|secret|credential|session[_-]?id|session|cookie|auth|authorization)\b["']?\s*(?::|=|\bis\b)\s*)(?:"[^"]*"|'[^']*'|(?:Bearer\s+)?[A-Za-z0-9._~+/=-]{8,})"#)
-                    .expect("valid redaction regex"),
-                "${1}[redacted]",
-            ),
             (
                 Regex::new(r#"(?i)\b(token|secret|password|passwd)\s+([A-Za-z0-9._~+/=-]{8,})\b"#)
                     .expect("valid whitespace redaction regex"),
                 "${1} [redacted]",
             ),
             (
-                Regex::new(r#"(?i)\bBearer\s+[A-Za-z0-9._~+/=-]{8,}"#)
-                    .expect("valid redaction regex"),
-                "Bearer [redacted]",
-            ),
-            (
                 Regex::new(r#"\b(?:sk-[A-Za-z0-9_-]{8,}|ghp_[A-Za-z0-9_]{8,}|github_pat_[A-Za-z0-9_]{8,})\b"#)
-                    .expect("valid redaction regex"),
+                    .expect("valid short token redaction regex"),
                 "[redacted]",
             ),
         ]
-    })
+    });
+    for (regex, replacement) in patterns {
+        if let std::borrow::Cow::Owned(result) = regex.replace_all(&redacted, *replacement) {
+            redacted = result;
+        }
+    }
+    redacted
 }
 
 #[cfg(test)]

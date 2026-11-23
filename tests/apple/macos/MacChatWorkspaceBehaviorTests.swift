@@ -763,6 +763,64 @@ final class MacChatWorkspaceBehaviorTests: XCTestCase {
         XCTAssertTrue(FileManager.default.fileExists(atPath: attachment.url.path))
     }
 
+    func testWorkspaceBlocksSendWhileAttachmentsAreExtractingOrFailedAndNotifiesOnFolderDrop() throws {
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent("nola-mac-attachment-guards-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let repository = MacCanonicalConversationRepository(
+            store: try MacApplicationPort(databaseURL: root.appendingPathComponent("nola.db"))
+        )
+        let model = MacWorkspaceModel(
+            canonicalRepository: repository,
+            localAgentRuntime: PersistenceTestLocalRuntime(),
+            remoteHost: PersistenceTestRemoteHost()
+        )
+        model.draft = "Check this file"
+
+        let sampleFile = root.appendingPathComponent("notes.txt")
+        try Data("hello".utf8).write(to: sampleFile)
+
+        var extracting = MacAttachment(url: sampleFile)
+        extracting.status = .extracting
+        model.attachments = [extracting]
+        XCTAssertTrue(model.hasExtractingAttachments)
+        XCTAssertFalse(model.hasFailedAttachments)
+        XCTAssertFalse(model.selectedComposerState.canSend)
+        XCTAssertNotNil(model.selectedComposerState.submissionBlockReason)
+        model.send()
+        XCTAssertFalse(model.isRunning)
+        XCTAssertTrue(model.selectedMessages.isEmpty)
+
+        var failed = MacAttachment(url: sampleFile)
+        failed.status = .failed
+        failed.errorMessage = "Unsupported format"
+        model.attachments = [failed]
+        XCTAssertFalse(model.hasExtractingAttachments)
+        XCTAssertTrue(model.hasFailedAttachments)
+        XCTAssertFalse(model.selectedComposerState.canSend)
+        XCTAssertNotNil(model.selectedComposerState.submissionBlockReason)
+        model.send()
+        XCTAssertFalse(model.isRunning)
+        XCTAssertTrue(model.selectedMessages.isEmpty)
+
+        var ready = MacAttachment(url: sampleFile)
+        ready.status = .ready
+        model.attachments = [ready]
+        XCTAssertFalse(model.hasExtractingAttachments)
+        XCTAssertFalse(model.hasFailedAttachments)
+        XCTAssertTrue(model.selectedComposerState.canSend)
+        XCTAssertNil(model.selectedComposerState.submissionBlockReason)
+
+        let droppedFolder = root.appendingPathComponent("MyFolder", isDirectory: true)
+        try FileManager.default.createDirectory(at: droppedFolder, withIntermediateDirectories: true)
+        model.importFiles([droppedFolder])
+        XCTAssertNotNil(model.selectedAttachmentImportNotice)
+        XCTAssertEqual(model.attachments.count, 1)
+        model.dismissAttachmentImportNotice()
+        XCTAssertNil(model.selectedAttachmentImportNotice)
+    }
+
     func testExternalExecutionBackendDoesNotRequireSelectedNolaModel() {
         XCTAssertTrue(MacExecutionBackendPolicy.requiresNolaModel("nola"))
         XCTAssertFalse(MacExecutionBackendPolicy.requiresNolaModel("codex"))
@@ -3911,7 +3969,7 @@ final class MacChatWorkspaceBehaviorTests: XCTestCase {
         )
     }
 
-    func testDeletingDraftConversationPreservesGeneratedFiles() async throws {
+    func testDeletingDraftConversationRemovesSessionSandboxDirectory() async throws {
         let conversationID = "delete-draft-\(UUID().uuidString)"
         let (root, archiveStore) = makeIsolatedArchiveStore("delete-draft")
         defer { try? FileManager.default.removeItem(at: root) }
@@ -3927,7 +3985,7 @@ final class MacChatWorkspaceBehaviorTests: XCTestCase {
         let workspace = MacAppEnvironment.shared.sessionWorkspaceURL(for: conversationID)
         defer { try? FileManager.default.removeItem(at: workspace) }
         let generated = workspace.appendingPathComponent("generated.txt")
-        try "Keep user work".write(to: generated, atomically: true, encoding: .utf8)
+        try "Disposable session scratch".write(to: generated, atomically: true, encoding: .utf8)
 
         model.deleteConversation(conversation)
         model.deleteConversation(conversation)
@@ -3937,7 +3995,7 @@ final class MacChatWorkspaceBehaviorTests: XCTestCase {
 
         XCTAssertFalse(model.conversations.contains { $0.id == conversationID })
         XCTAssertNil(model.conversationOperationError)
-        XCTAssertEqual(try String(contentsOf: generated, encoding: .utf8), "Keep user work")
+        XCTAssertFalse(FileManager.default.fileExists(atPath: workspace.path))
     }
 
     func testFailedConversationDeletionKeepsEntryAndExposesError() async throws {

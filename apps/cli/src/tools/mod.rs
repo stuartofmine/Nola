@@ -8,7 +8,9 @@ mod execution_policy;
 mod permission_resolution;
 mod git_read_plan;
 mod workspace_review;
-pub(crate) use workspace_review::read_host_workspace_review;
+pub(crate) use workspace_review::{
+    is_git_repository, list_non_git_workspace_files, read_host_workspace_review,
+};
 mod shell_read_plan;
 mod process_execution;
 mod language_service_wire;

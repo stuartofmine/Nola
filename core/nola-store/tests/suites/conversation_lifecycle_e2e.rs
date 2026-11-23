@@ -608,6 +608,64 @@ fn conversation_pdf_resources_enforce_immutability_validation_cascade_and_concur
 }
 
 #[test]
+fn conversation_pdf_resources_also_support_validated_images() {
+    let root = tempfile::tempdir().unwrap();
+    let database = root.path().join("image-resources.sqlite");
+    let mut store = NolaStore::open(&database).unwrap();
+    create_conv(&mut store, "media");
+
+    let png_bytes = b"\x89PNG\r\n\x1a\n\x00\x00\x00\rIHDRfake-png";
+    let jpeg_bytes = b"\xff\xd8\xff\xe0fake-jpeg";
+    let webp_bytes = b"RIFF\x10\x00\x00\x00WEBPfake-webp";
+    let gif_bytes = b"GIF89afake-gif";
+
+    for (name, mime, bytes) in [
+        ("shot.png", "image/png", png_bytes.as_slice()),
+        ("photo.jpg", "image/jpeg", jpeg_bytes.as_slice()),
+        ("banner.webp", "image/webp", webp_bytes.as_slice()),
+        ("anim.gif", "image/gif", gif_bytes.as_slice()),
+    ] {
+        let id = uuid::Uuid::new_v4().to_string();
+        let input = PutConversationPdfResource {
+            conversation_id: "media".into(),
+            resource_id: id.clone(),
+            display_name: name.into(),
+            mime_type: mime.into(),
+            data_base64: STANDARD.encode(bytes),
+            created_at_ms: 2_000,
+        };
+        let descriptor = store.put_conversation_pdf_resource(&input).unwrap().unwrap();
+        assert_eq!(descriptor.mime_type, mime);
+        assert_eq!(descriptor.display_name, name);
+        let read = store.read_conversation_resource("media", &id).unwrap().unwrap();
+        assert_eq!(read.descriptor.mime_type, mime);
+        assert_eq!(STANDARD.decode(read.data_base64).unwrap(), bytes);
+    }
+
+    // Disguised HTML with .png extension and image/png MIME must be rejected.
+    let spoofed = PutConversationPdfResource {
+        conversation_id: "media".into(),
+        resource_id: uuid::Uuid::new_v4().to_string(),
+        display_name: "spoof.png".into(),
+        mime_type: "image/png".into(),
+        data_base64: STANDARD.encode(b"<html>not a png</html>"),
+        created_at_ms: 2_001,
+    };
+    assert!(store.put_conversation_pdf_resource(&spoofed).is_err());
+
+    // Extension mismatch (JPEG bytes/MIME claiming .png) must be rejected.
+    let mismatch = PutConversationPdfResource {
+        conversation_id: "media".into(),
+        resource_id: uuid::Uuid::new_v4().to_string(),
+        display_name: "wrong.png".into(),
+        mime_type: "image/jpeg".into(),
+        data_base64: STANDARD.encode(jpeg_bytes),
+        created_at_ms: 2_002,
+    };
+    assert!(store.put_conversation_pdf_resource(&mismatch).is_err());
+}
+
+#[test]
 fn conversation_deletion_guards_tombstones_and_sync_projections_survive_cold_reopen() {
     use nola_domain::agent_room::{AgentRoom, RoomParticipant};
 

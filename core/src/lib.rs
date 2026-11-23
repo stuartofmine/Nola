@@ -25,6 +25,7 @@ pub mod lifecycle_hooks;
 pub mod memory;
 pub mod messaging_channel;
 pub mod mobile_crypto;
+pub use nola_model_privacy as model_privacy;
 pub mod tool_catalog;
 pub mod tool_policy;
 

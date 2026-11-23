@@ -88,4 +88,18 @@ class WebHostConnectionWorkflowTest {
             assertEquals("new-fixture-token", webHostConnectionToken("https://studio.local", saved, destination, " new-fixture-token "))
         }
     }
+
+    @Test fun tailcatErrorCodesMapToSpecificActionableMessages() {
+        assertEquals(com.nola.R.string.models_tailcat_error_dns, tailcatErrorStringRes("native_host_dns"))
+        assertEquals(com.nola.R.string.models_tailcat_error_timeout, tailcatErrorStringRes("native_host_timeout"))
+        assertEquals(com.nola.R.string.models_tailcat_error_certificate, tailcatErrorStringRes("native_host_certificate"))
+        assertEquals(com.nola.R.string.models_tailcat_error_permission, tailcatErrorStringRes("native_host_permission"))
+        assertEquals(com.nola.R.string.models_tailcat_error_suspended, tailcatErrorStringRes("transport_suspended"))
+        assertEquals(com.nola.R.string.models_tailcat_error_identity_mismatch, tailcatErrorStringRes("transport_host_identity_mismatch"))
+        assertEquals(com.nola.R.string.models_tailcat_error_capacity, tailcatErrorStringRes("transport_capacity_reached"))
+        assertEquals(com.nola.R.string.models_tailcat_error_not_available, tailcatErrorStringRes("tailcat_not_available"))
+        assertEquals(com.nola.R.string.models_tailcat_error_start_timeout, tailcatErrorStringRes("tailcat_start_timeout"))
+        assertEquals(com.nola.R.string.models_tailcat_error_grant, tailcatErrorStringRes("grant:IOException"))
+        assertEquals(com.nola.R.string.models_tailcat_verify_failed, tailcatErrorStringRes("unknown_stage"))
+    }
 }
