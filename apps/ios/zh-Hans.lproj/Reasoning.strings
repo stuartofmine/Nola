@@ -8,3 +8,6 @@
 "reasoning.effort.high" = "高";
 "reasoning.effort.xhigh" = "极高";
 "reasoning.effort.max" = "最高";
+"reasoning.effort.fast" = "快速";
+"reasoning.effort.balanced" = "均衡";
+"reasoning.effort.detailed" = "深度";

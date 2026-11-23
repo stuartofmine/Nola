@@ -1464,4 +1464,19 @@
     <string name="knowledge_search_empty">一致するナレッジが見つかりません</string>
     <string name="expert_empty_title">エキスパートはまだありません</string>
     <string name="expert_empty_message">エキスパートを作成すると、指示・モデル・ツールを再利用できます。</string>
+    <string name="chat_host_tool_name_pty_exec">ターミナルコマンドを実行</string>
+    <string name="chat_host_tool_name_pty_write">ターミナルに入力を送信</string>
+    <string name="chat_host_tool_name_pty_screenshot">ターミナル画面を取得</string>
+    <string name="chat_host_tool_name_pty_close">ターミナルセッションを終了</string>
+    <string name="chat_task_stall_warning">停滞警告</string>
+    <string name="chat_task_stall_timeout">停滞 · タイムアウト</string>
+    <string name="chat_task_status_queued">待機中</string>
+    <string name="chat_task_status_running">実行中</string>
+    <string name="chat_task_status_waiting">待機中</string>
+    <string name="chat_task_status_suspended">一時停止中</string>
+    <string name="chat_task_status_retrying">再試行中</string>
+    <string name="chat_task_status_cancelling">キャンセル中</string>
+    <string name="permission_from_subagent">サブエージェント: %1$s</string>
+    <string name="permission_queue_pending">%1$d 件中 1 件保留中</string>
+    <string name="chat_response_failed_empty">応答に失敗しました。</string>
 </resources>

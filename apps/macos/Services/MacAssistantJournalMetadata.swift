@@ -60,16 +60,24 @@ nonisolated struct MacJournalActivityCoverage: Equatable {
     private var identity: MacAssistantJournalIdentity?
     private var partIDs = Set<String>()
     private var taskIDs = Set<String>()
+    private var failurePartIDs = Set<String>()
 
-    mutating func adopt(identity: MacAssistantJournalIdentity, partIDs: Set<String>, taskIDs: Set<String> = []) {
+    mutating func adopt(
+        identity: MacAssistantJournalIdentity,
+        partIDs: Set<String>,
+        taskIDs: Set<String> = [],
+        failurePartIDs: Set<String> = []
+    ) {
         if self.identity != identity {
             self.identity = identity
             self.partIDs = partIDs
             self.taskIDs = taskIDs
+            self.failurePartIDs = failurePartIDs
         } else {
             // A removed Part must not return through an older trace snapshot.
             self.partIDs.formUnion(partIDs)
             self.taskIDs.formUnion(taskIDs)
+            self.failurePartIDs.formUnion(failurePartIDs)
         }
     }
 
@@ -79,6 +87,10 @@ nonisolated struct MacJournalActivityCoverage: Equatable {
 
     func containsTask(identity: MacAssistantJournalIdentity, taskID: String) -> Bool {
         self.identity == identity && taskIDs.contains(taskID)
+    }
+
+    func hasFailure(identity: MacAssistantJournalIdentity) -> Bool {
+        self.identity == identity && !failurePartIDs.isEmpty
     }
 }
 

@@ -48,11 +48,19 @@ class ModelParametersStore @Inject constructor(
         check(profile.revision >= 0) { "Invalid model revision" }
         val parameters = json.decodeFromString<ModelParameters>(profile.parametersJson)
         val source = json.parseToJsonElement(profile.sourceJson).jsonObject
+        val reasoning = source["reasoning"] as? JsonObject
+        val control = (reasoning?.get("control") as? JsonPrimitive)?.contentOrNull
         val efforts = if (profile.runtime == "remote" &&
-            (source["executionCapabilities"] as? JsonObject)?.get("reasoning") == JsonPrimitive(true) &&
-            (source["reasoning"] as? JsonObject)?.get("control") == JsonPrimitive("effort")) {
-            (source.getValue("reasoning").jsonObject["efforts"] as? JsonArray)
-                ?.map { it.jsonPrimitive.content }.orEmpty()
+            (source["executionCapabilities"] as? JsonObject)?.get("reasoning") == JsonPrimitive(true)) {
+            when (control) {
+                "effort" -> (reasoning["efforts"] as? JsonArray)
+                    ?.mapNotNull { (it as? JsonPrimitive)?.contentOrNull }.orEmpty()
+                "budget" -> {
+                    val budgets = (reasoning["budgets"] as? JsonArray).orEmpty()
+                    if (budgets.isNotEmpty()) listOf("concise", "balanced", "detailed") else emptyList()
+                }
+                else -> emptyList()
+            }
         } else emptyList()
         return ParameterSnapshot(parameters, profile, efforts)
     }

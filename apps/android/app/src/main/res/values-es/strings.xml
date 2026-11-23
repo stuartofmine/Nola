@@ -1462,4 +1462,19 @@
     <string name="knowledge_search_empty">No se encontró conocimiento coincidente</string>
     <string name="expert_empty_title">Aún no hay expertos</string>
     <string name="expert_empty_message">Crea un experto para reutilizar instrucciones, modelos y herramientas.</string>
+    <string name="chat_host_tool_name_pty_exec">Ejecutar comando de terminal</string>
+    <string name="chat_host_tool_name_pty_write">Enviar entrada al terminal</string>
+    <string name="chat_host_tool_name_pty_screenshot">Capturar pantalla del terminal</string>
+    <string name="chat_host_tool_name_pty_close">Cerrar sesión de terminal</string>
+    <string name="chat_task_stall_warning">Aviso de bloqueo</string>
+    <string name="chat_task_stall_timeout">Bloqueado · agotando tiempo</string>
+    <string name="chat_task_status_queued">En cola</string>
+    <string name="chat_task_status_running">En ejecución</string>
+    <string name="chat_task_status_waiting">En espera</string>
+    <string name="chat_task_status_suspended">Suspendido</string>
+    <string name="chat_task_status_retrying">Reintentando</string>
+    <string name="chat_task_status_cancelling">Cancelando</string>
+    <string name="permission_from_subagent">De subagente: %1$s</string>
+    <string name="permission_queue_pending">1 de %1$d pendientes</string>
+    <string name="chat_response_failed_empty">La respuesta falló.</string>
 </resources>

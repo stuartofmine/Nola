@@ -686,11 +686,22 @@ struct ChatBubble: View {
             if taskProjection(value.taskID) != nil { taskPresentation(value.taskID) }
             else { Label(String(localized: "chat.task.details_unavailable"), systemImage: "exclamationmark.circle").font(.caption).foregroundStyle(.secondary) }
         case .task(_, _, _, let title, let state, let progress, let step, let result, _):
+            let stallKind = ChatTaskStallPresentation.kind(forStep: step)
             VStack(alignment: .leading, spacing: 4) {
-                Label(ChatExecutionProcessPolicy.displayTitle(title, fallbackKey: "chat.part.task"), systemImage: "checklist")
+                Label(
+                    ChatExecutionProcessPolicy.displayTitle(title, fallbackKey: "chat.part.task"),
+                    systemImage: stallKind?.iconName ?? "checklist"
+                )
+                .foregroundStyle(stallKind?.tint ?? .primary)
                 Text(ChatExecutionProcessPolicy.activityTitle(state)).font(.caption).foregroundStyle(.secondary)
                 if !ChatExecutionProcessPolicy.isTerminal(state) {
-                    if let step, !step.isEmpty { Text(step).font(.caption) }
+                    if let stallKind {
+                        Label(stallKind.displayMessage(statusMessage: nil), systemImage: stallKind.iconName)
+                            .font(.caption)
+                            .foregroundStyle(stallKind.tint)
+                    } else if let step, !step.isEmpty {
+                        Text(step).font(.caption)
+                    }
                     if let progress { ProgressView(value: progress) }
                 }
                 if let result, !result.isEmpty {
@@ -730,50 +741,53 @@ struct ChatBubble: View {
                 }
                 return "doc"
             }()
-            if let previewURL {
-                Button {
-                    previewAttachment = ChatAttachmentPreviewItem(url: previewURL)
-                } label: {
-                    HStack(spacing: 9) {
-                        Image(systemName: iconName)
-                            .font(.system(size: 15, weight: .medium))
-                            .foregroundStyle(DesignTokens.primaryColor)
-                            .frame(width: 24, height: 24)
-                        VStack(alignment: .leading, spacing: 2) {
-                            Text(attachment.name)
-                                .font(.caption.weight(.semibold))
-                                .foregroundStyle(.primary)
-                                .lineLimit(1)
-                            if !facts.isEmpty {
-                                Text(facts.joined(separator: " · "))
-                                    .font(.caption2)
-                                    .foregroundStyle(.secondary)
+            VStack(alignment: .leading, spacing: 6) {
+                ChatArtifactImagePreview(uri: attachment.uri, mimeType: attachment.mimeType)
+                if let previewURL {
+                    Button {
+                        previewAttachment = ChatAttachmentPreviewItem(url: previewURL)
+                    } label: {
+                        HStack(spacing: 9) {
+                            Image(systemName: iconName)
+                                .font(.system(size: 15, weight: .medium))
+                                .foregroundStyle(DesignTokens.primaryColor)
+                                .frame(width: 24, height: 24)
+                            VStack(alignment: .leading, spacing: 2) {
+                                Text(attachment.name)
+                                    .font(.caption.weight(.semibold))
+                                    .foregroundStyle(.primary)
+                                    .lineLimit(1)
+                                if !facts.isEmpty {
+                                    Text(facts.joined(separator: " · "))
+                                        .font(.caption2)
+                                        .foregroundStyle(.secondary)
+                                }
                             }
+                            Image(systemName: "arrow.up.right.square")
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
                         }
-                        Image(systemName: "arrow.up.right.square")
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
+                        .padding(.horizontal, 11)
+                        .padding(.vertical, 8)
+                        .frame(maxWidth: 360, alignment: .leading)
+                        .background(Color.primary.opacity(0.055), in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+                        .overlay {
+                            RoundedRectangle(cornerRadius: 12, style: .continuous)
+                                .stroke(Color.primary.opacity(0.09), lineWidth: 0.5)
+                        }
                     }
-                    .padding(.horizontal, 11)
-                    .padding(.vertical, 8)
-                    .frame(maxWidth: 360, alignment: .leading)
-                    .background(Color.primary.opacity(0.055), in: RoundedRectangle(cornerRadius: 12, style: .continuous))
-                    .overlay {
-                        RoundedRectangle(cornerRadius: 12, style: .continuous)
-                            .stroke(Color.primary.opacity(0.09), lineWidth: 0.5)
-                    }
+                    .buttonStyle(NolaActionButtonStyle())
+                    .accessibilityLabel(String(
+                        format: NSLocalizedString("chat.attachment.open_format", value: "Open attachment %@", comment: "Open a chat attachment"),
+                        attachment.name
+                    ))
+                } else {
+                    VStack(alignment: .leading, spacing: 2) {
+                        Label(attachment.name, systemImage: iconName)
+                        if !facts.isEmpty { Text(facts.joined(separator: " · ")).foregroundStyle(.secondary) }
+                        Text(attachment.uri).font(.caption2.monospaced()).foregroundStyle(.secondary).textSelection(.enabled)
+                    }.font(.caption)
                 }
-                .buttonStyle(NolaActionButtonStyle())
-                .accessibilityLabel(String(
-                    format: NSLocalizedString("chat.attachment.open_format", value: "Open attachment %@", comment: "Open a chat attachment"),
-                    attachment.name
-                ))
-            } else {
-                VStack(alignment: .leading, spacing: 2) {
-                    Label(attachment.name, systemImage: iconName)
-                    if !facts.isEmpty { Text(facts.joined(separator: " · ")).foregroundStyle(.secondary) }
-                    Text(attachment.uri).font(.caption2.monospaced()).foregroundStyle(.secondary).textSelection(.enabled)
-                }.font(.caption)
             }
         case .reasoning, .tool: EmptyView() // Shared flow sends these through the process renderer.
         }
@@ -908,7 +922,7 @@ struct ChatBubble: View {
                 if let terminalState = ChatResponseStatusPolicy.terminalState(message.metadata) {
                     Label(
                         terminalState == .failed
-                            ? NSLocalizedString("chat.response.failed", value: "Response failed. Open the process for details.", comment: "Visible terminal failure")
+                            ? ChatResponseStatusPolicy.failedSummary(for: message)
                             : NSLocalizedString("chat.response.cancelled", value: "Response stopped", comment: "Visible cancellation"),
                         systemImage: terminalState == .failed ? "exclamationmark.circle" : "stop.circle"
                     )
@@ -2519,8 +2533,21 @@ private struct ChatCoreTaskProjectionView: View {
                             .font(.caption.weight(.medium))
                             .foregroundStyle(.secondary)
                     }
-                    if let step = task.currentStep, !task.state.isTerminal {
+                    if let stallKind = ChatTaskStallPresentation.kind(for: task), !task.state.isTerminal {
+                        Label(
+                            stallKind.displayMessage(statusMessage: task.trimmedStatusMessage),
+                            systemImage: stallKind.iconName
+                        )
+                        .font(.caption.weight(.medium))
+                        .foregroundStyle(stallKind.tint)
+                        .fixedSize(horizontal: false, vertical: true)
+                    } else if let step = task.currentStep, !task.state.isTerminal {
                         Text(step)
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                            .fixedSize(horizontal: false, vertical: true)
+                    } else if let statusMessage = task.trimmedStatusMessage, !task.state.isTerminal {
+                        Text(statusMessage)
                             .font(.caption)
                             .foregroundStyle(.secondary)
                             .fixedSize(horizontal: false, vertical: true)
@@ -2648,6 +2675,9 @@ private struct ChatCoreTaskProjectionView: View {
     }
 
     private func icon(for task: AgentCoreTaskHandle) -> String {
+        if let stallKind = ChatTaskStallPresentation.kind(for: task), !task.state.isTerminal {
+            return stallKind.iconName
+        }
         if task.state == .sealed { return "archivebox" }
         if task.state == .completed { return "checkmark.circle.fill" }
         if task.state == .failed || task.state == .cancelled { return "xmark.circle.fill" }
@@ -2660,6 +2690,9 @@ private struct ChatCoreTaskProjectionView: View {
     }
 
     private func color(for task: AgentCoreTaskHandle) -> Color {
+        if let stallKind = ChatTaskStallPresentation.kind(for: task), !task.state.isTerminal {
+            return stallKind.tint
+        }
         switch task.state {
         case .sealed: return .secondary
         case .completed: return .green
@@ -3059,6 +3092,12 @@ private struct HostToolEventCard: View {
     }
 
     private var iconName: String {
+        let normalized = event.name
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+            .lowercased()
+            .replacingOccurrences(of: "-", with: "_")
+        if normalized == "pty_screenshot" { return "camera.viewfinder" }
+        if normalized == "pty_exec" || normalized == "pty_write" || normalized == "pty_close" { return "terminal" }
         if event.isBrowserTool { return "globe.badge.chevron.backward" }
         if event.isComputerTool { return "display.and.arrow.down" }
         return "wrench.and.screwdriver"
@@ -3200,8 +3239,8 @@ private struct HostToolEventCard: View {
                     .font(.caption2).foregroundStyle(.secondary)
             }
             if let started = tool.startedAtMs {
-                Text("\(started) ms" + (tool.finishedAtMs.map { " → \($0) ms" } ?? ""))
-                    .font(.caption2).foregroundStyle(.secondary)
+                Text(ChatToolTimestampFormatter.format(startedAtMs: started, finishedAtMs: tool.finishedAtMs))
+                    .font(.caption2).foregroundStyle(.secondary).monospacedDigit()
             }
             // fullOutput is an owner descriptor only. No path, read or permission action.
         }
@@ -3215,7 +3254,8 @@ private struct HostToolEventCard: View {
                 }
                 if let tool = canonicalTool, !event.containsSensitiveData {
                     ForEach(Array(tool.artifacts.enumerated()), id: \.offset) { _, artifact in
-                        VStack(alignment: .leading, spacing: 2) {
+                        VStack(alignment: .leading, spacing: 4) {
+                            ChatArtifactImagePreview(uri: artifact.uri, mimeType: artifact.mimeType)
                             Text(artifact.name).font(.caption2.weight(.semibold))
                             Text([artifact.operation, artifact.mimeType].compactMap { $0 }.joined(separator: " · "))
                                 .font(.caption2).foregroundStyle(.secondary)
@@ -3533,6 +3573,24 @@ struct HostPermissionDecisionCard: View {
                     .background(tint.opacity(0.14), in: Capsule())
             }
 
+            if let taskID = request.taskID?.trimmingCharacters(in: .whitespacesAndNewlines), !taskID.isEmpty {
+                Label(
+                    String(
+                        format: NSLocalizedString(
+                            "chat.permission.subagent_task_format",
+                            value: "Subagent task · %@",
+                            comment: "Delegated subagent task attribution on permission card"
+                        ),
+                        taskID
+                    ),
+                    systemImage: "person.crop.circle.badge.clock"
+                )
+                .font(.caption.weight(.medium))
+                .foregroundStyle(DesignTokens.secondaryContentColor)
+                .lineLimit(1)
+                .accessibilityIdentifier("chat.permission.task_attribution")
+            }
+
             let summary = permissionMessage(for: request)
             if !summary.isEmpty {
                 Text(summary)
@@ -3568,8 +3626,31 @@ struct HostPermissionDecisionCard: View {
                 .accessibilityIdentifier("chat.permission.allow_conversation")
             }
 
+            if isHost && request.deviceBridge != true {
+                Button {
+                    NolaHaptics.warning()
+                    onPermissionDecision(request.id, .returnToComposer)
+                } label: {
+                    Label(
+                        NSLocalizedString("chat.permission.return_to_composer", value: "Return to composer", comment: "Pause permission prompt and return to composer"),
+                        systemImage: "arrow.uturn.backward"
+                    )
+                    .font(.caption.weight(.semibold))
+                    .frame(maxWidth: .infinity, minHeight: 38)
+                }
+                .buttonStyle(.bordered)
+                .accessibilityIdentifier("chat.permission.return_to_composer")
+            }
+
             DisclosureGroup(isExpanded: $showDetails) {
                 VStack(alignment: .leading, spacing: 8) {
+                    if let taskID = request.taskID?.trimmingCharacters(in: .whitespacesAndNewlines), !taskID.isEmpty {
+                        permissionDetail(
+                            icon: "person.crop.circle.badge.clock",
+                            title: NSLocalizedString("chat.permission.subagent", value: "Subagent", comment: "Delegated subagent label"),
+                            value: taskID
+                        )
+                    }
                     permissionDetail(
                         icon: "location",
                         title: NSLocalizedString("chat.permission.location", value: "Location", comment: "Permission execution location"),
@@ -3761,6 +3842,14 @@ private func localizedHostToolDisplayName(_ rawName: String) -> String {
     let key: String
     let fallback: String
     switch normalized {
+    case "pty_exec":
+        (key, fallback) = ("chat.host_tool.name.pty_exec", "Run terminal command")
+    case "pty_write":
+        (key, fallback) = ("chat.host_tool.name.pty_write", "Write to terminal")
+    case "pty_screenshot":
+        (key, fallback) = ("chat.host_tool.name.pty_screenshot", "Capture terminal")
+    case "pty_close":
+        (key, fallback) = ("chat.host_tool.name.pty_close", "Close terminal")
     case "bash", "shell", "run_command", "execute_command", "bash_command_review",
          "bash_background_status", "bash_background_wait", "bash_background_stop", "terminal_input":
         (key, fallback) = ("chat.host_tool.name.command", "Run command")
@@ -3967,12 +4056,211 @@ private extension String {
     }
 }
 
+enum ChatTaskStallPresentation {
+    enum Kind: Equatable {
+        case warning
+        case timeout
+
+        var iconName: String {
+            switch self {
+            case .warning: "exclamationmark.triangle.fill"
+            case .timeout: "clock.badge.exclamationmark"
+            }
+        }
+
+        var tint: Color {
+            switch self {
+            case .warning: DesignTokens.warningColor
+            case .timeout: DesignTokens.dangerColor
+            }
+        }
+
+        func displayMessage(statusMessage: String?) -> String {
+            if let message = statusMessage?.trimmingCharacters(in: .whitespacesAndNewlines), !message.isEmpty {
+                return message
+            }
+            switch self {
+            case .warning:
+                return NSLocalizedString(
+                    "chat.task.stall_warning",
+                    value: "Subagent appears stalled — no recent progress.",
+                    comment: "Fallback subagent stall warning"
+                )
+            case .timeout:
+                return NSLocalizedString(
+                    "chat.task.stall_timeout",
+                    value: "Subagent timed out due to inactivity.",
+                    comment: "Fallback subagent stall timeout"
+                )
+            }
+        }
+    }
+
+    static func kind(for task: AgentCoreTaskHandle) -> Kind? {
+        if task.isStallTimeout { return .timeout }
+        if task.isStallWarning { return .warning }
+        return nil
+    }
+
+    static func kind(forStep step: String?) -> Kind? {
+        guard let normalized = step?.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() else { return nil }
+        switch normalized {
+        case "stall_warning": return .warning
+        case "stall_timeout": return .timeout
+        default: return nil
+        }
+    }
+}
+
+enum ChatToolTimestampFormatter {
+    private static let clockFormatter: DateFormatter = {
+        let formatter = DateFormatter()
+        formatter.locale = Locale(identifier: "en_US_POSIX")
+        formatter.dateFormat = "HH:mm:ss"
+        return formatter
+    }()
+
+    static func format(startedAtMs: UInt64, finishedAtMs: UInt64?, timeZone: TimeZone = .current) -> String {
+        let formatter = clockFormatter.copy() as? DateFormatter ?? clockFormatter
+        formatter.timeZone = timeZone
+        let startDate = Date(timeIntervalSince1970: TimeInterval(startedAtMs) / 1_000.0)
+        let startText = formatter.string(from: startDate)
+        guard let finishedAtMs else { return startText }
+        let endDate = Date(timeIntervalSince1970: TimeInterval(finishedAtMs) / 1_000.0)
+        let endText = formatter.string(from: endDate)
+        let elapsedMs = finishedAtMs >= startedAtMs ? (finishedAtMs - startedAtMs) : 0
+        let durationText: String
+        if elapsedMs < 1_000 {
+            durationText = "\(elapsedMs) ms"
+        } else if elapsedMs < 60_000 {
+            durationText = String(format: "%.1fs", Double(elapsedMs) / 1_000.0)
+        } else {
+            durationText = Duration.seconds(Double(elapsedMs) / 1_000.0)
+                .formatted(.units(allowed: [.hours, .minutes, .seconds], width: .abbreviated))
+        }
+        return "\(startText) → \(endText) (\(durationText))"
+    }
+}
+
+private struct ChatArtifactImagePreview: View {
+    let uri: String
+    let mimeType: String?
+
+    private var isImageMime: Bool {
+        mimeType?.trimmingCharacters(in: .whitespacesAndNewlines).lowercased().hasPrefix("image/") == true
+    }
+
+    private var localFilePath: String? {
+        let trimmed = uri.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return nil }
+        if let url = URL(string: trimmed), url.isFileURL {
+            return FileManager.default.fileExists(atPath: url.path) ? url.path : nil
+        }
+        if trimmed.hasPrefix("/") {
+            return FileManager.default.fileExists(atPath: trimmed) ? trimmed : nil
+        }
+        return nil
+    }
+
+    private var remoteImageURL: URL? {
+        let trimmed = uri.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard let url = URL(string: trimmed),
+              let scheme = url.scheme?.lowercased(),
+              scheme == "http" || scheme == "https" else { return nil }
+        return url
+    }
+
+    var body: some View {
+        if isImageMime {
+            if let localPath = localFilePath, let uiImage = UIImage(contentsOfFile: localPath) {
+                Image(uiImage: uiImage)
+                    .resizable()
+                    .scaledToFit()
+                    .frame(maxWidth: 260, maxHeight: 180)
+                    .clipShape(RoundedRectangle(cornerRadius: DesignTokens.radius_sm, style: .continuous))
+            } else if let remoteURL = remoteImageURL {
+                AsyncImage(url: remoteURL) { phase in
+                    if case .success(let image) = phase {
+                        image
+                            .resizable()
+                            .scaledToFit()
+                            .frame(maxWidth: 260, maxHeight: 180)
+                            .clipShape(RoundedRectangle(cornerRadius: DesignTokens.radius_sm, style: .continuous))
+                    }
+                }
+            }
+        }
+    }
+}
+
 enum ChatResponseStatusPolicy {
     static func terminalState(_ metadata: [String: String]) -> IOSConversationProjectionV1.MessageState? {
         guard let raw = metadata[ChatConversationSurfaceMeta.stateKey],
               let state = IOSConversationProjectionV1.MessageState(rawValue: raw),
               state == .failed || state == .cancelled else { return nil }
         return state
+    }
+
+    static func hasProcessSteps(_ message: ChatMessage) -> Bool {
+        if message.canonicalParts.contains(where: { part in
+            switch part {
+            case .reasoning, .tool: return true
+            default: return false
+            }
+        }) {
+            return true
+        }
+        if !message.hostToolEvents.isEmpty || !message.liveHostToolEvents.isEmpty {
+            return true
+        }
+        return !message.thinking.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+    }
+
+    static func failedSummary(for message: ChatMessage) -> String {
+        if hasProcessSteps(message) {
+            return NSLocalizedString(
+                "chat.response.failed",
+                value: "Response failed. Open the process for details.",
+                comment: "Visible terminal failure"
+            )
+        }
+        if let detail = directFailureDetail(for: message) {
+            return detail
+        }
+        return NSLocalizedString(
+            "chat.response.failed_no_process",
+            value: "Response failed.",
+            comment: "Visible terminal failure without process details"
+        )
+    }
+
+    private static func directFailureDetail(for message: ChatMessage) -> String? {
+        for part in message.canonicalParts.reversed() {
+            if case .modelAttempt(let attempt) = part {
+                let text = attempt.failure.message.trimmingCharacters(in: .whitespacesAndNewlines)
+                if !text.isEmpty { return text }
+            }
+        }
+        for key in ["nola.failureMessage", "nola.error", "error"] {
+            if let text = message.metadata[key]?.trimmingCharacters(in: .whitespacesAndNewlines), !text.isEmpty {
+                return text
+            }
+        }
+        for part in message.canonicalParts.reversed() {
+            if case .error(_, _, let code, let displayKey, _) = part {
+                let localized = ChatExecutionProcessPolicy.errorTitle(displayKey: displayKey)
+                if !localized.isEmpty { return localized }
+                let trimmedCode = code.trimmingCharacters(in: .whitespacesAndNewlines)
+                if !trimmedCode.isEmpty { return trimmedCode }
+            }
+        }
+        for part in message.canonicalParts.reversed() {
+            if case .journalDetail(_, _, _, _, let content) = part {
+                let text = content.trimmingCharacters(in: .whitespacesAndNewlines)
+                if !text.isEmpty { return text }
+            }
+        }
+        return nil
     }
 }
 

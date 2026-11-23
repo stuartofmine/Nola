@@ -108,7 +108,7 @@ internal class ChatRunRegistry(
     fun find(key: String): ChatRunSession? = sessions[key]?.takeUnless { it.retired }
     fun permissionOwner(requestId: String): ChatRunSession? = sessions.values.filter {
         !it.retired && (it.state.value.agentPermissionRequest?.requestId == requestId ||
-            it.permission.deviceToolRequest()?.id == requestId || it.permission.hostRequest()?.id == requestId)
+            it.permission.deviceToolRequest()?.id == requestId || it.permission.findHostRequest(requestId) != null)
     }.singleOrNull()
     fun session(key: String, initial: ChatUiState): ChatRunSession = find(key) ?: create(key, initial)
     fun localAvailable(key: String): Boolean = ChatDeviceExecutionLease.available()

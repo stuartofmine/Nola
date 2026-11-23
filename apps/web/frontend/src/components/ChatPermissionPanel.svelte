@@ -9,7 +9,7 @@
     // reviewText must be the caller's safe tool-detail projection, never raw secret-bearing args.
     let { challenge, runId = null, active = true, reviewText = '', onAccepted, onRefresh }: {
         challenge: unknown; runId?: string | null; active?: boolean; reviewText?: string;
-        onAccepted?: (identity: string) => void; onRefresh?: () => void;
+        onAccepted?: (identity: string, choice?: PermissionChoice) => void; onRefresh?: () => void;
     } = $props();
     let parsed = $derived(parseChatPermission(challenge));
     let identity = $derived(parsed ? permissionIdentity(parsed) : '');
@@ -50,7 +50,7 @@
             await pending;
             if (controller !== current) return;
             status = current.state;
-            if (status === 'accepted') { instruction = ''; onAccepted?.(permissionIdentity(current.challenge)); }
+            if (status === 'accepted') { instruction = ''; onAccepted?.(permissionIdentity(current.challenge), choice); }
         } catch (cause) {
             if (controller === current) {
                 status = current.state;
@@ -62,7 +62,10 @@
 
 <section tabindex="-1" use:activityRequestFocus={{conversationId: parsed?.session_id ?? '', runId, active: active && !expired && status === 'ready'}} class="permission-panel" aria-label={t($locale, 'chatPermission.title')} aria-busy={status === 'submitting'}>
     <header class="permission-header">
-        <h3>{t($locale, 'chatPermission.title')}</h3>
+        <div class="permission-title-group">
+            <h3>{t($locale, 'chatPermission.title')}</h3>
+            {#if parsed?.task_id}<span class="task-badge" data-task-id={parsed.task_id}>{t($locale, 'chatPage.taskIdentifier')} · {parsed.task_id}</span>{/if}
+        </div>
         {#if onRefresh}
             <button type="button" class="refresh-icon" disabled={status === 'submitting'} aria-label={t($locale, 'chatPermission.refresh')} title={t($locale, 'chatPermission.refresh')} onclick={() => onRefresh?.()}>
                 <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M20 7v5h-5M20 12a8 8 0 1 0-2 5" /></svg>
@@ -99,6 +102,8 @@
 <style>
     .permission-panel { flex-shrink: 0; align-self: center; width: calc(100% - 24px); max-width: 752px; max-height: min(420px, 50dvh); overflow: hidden; margin: 8px 12px; background: var(--surface); border: 1px solid var(--border); border-radius: 12px; padding: 16px; display: flex; flex-direction: column; gap: 12px; }
     .permission-header { flex-shrink: 0; display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+    .permission-title-group { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; min-width: 0; }
+    .task-badge { display: inline-flex; align-items: center; padding: 2px 8px; border-radius: 999px; border: 1px solid var(--border); background: var(--panel); color: var(--muted); font-size: .75rem; font-family: ui-monospace, monospace; max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
     .refresh-icon { flex: none; display: grid; place-items: center; width: 32px; height: 32px; min-width: 32px; min-height: 32px; padding: 0; border: 0; background: transparent; box-shadow: none; color: var(--muted); border-radius: 8px; }
     .refresh-icon:hover:not(:disabled) { background: var(--panel); color: var(--content); }
     .refresh-icon svg { width: 16px; height: 16px; fill: none; stroke: currentColor; stroke-width: 1.7; stroke-linecap: round; stroke-linejoin: round; }

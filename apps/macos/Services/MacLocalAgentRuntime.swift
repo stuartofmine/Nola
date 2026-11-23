@@ -1344,6 +1344,20 @@ actor MacAgentHostRuntime: MacLocalAgentRuntime {
         try input.write(contentsOf: data)
     }
 
+    private func isAdmittedPermissionSession(
+        _ request: MacRemotePermissionRequest,
+        conversationID: String
+    ) -> Bool {
+        guard let admittedControl = admittedControlSessionID(conversationID: conversationID) else {
+            return false
+        }
+        if request.sessionID == admittedControl {
+            return true
+        }
+        return request.isDelegatedSubagentRequest
+            && pendingPermissionRequests[conversationID]?[request.id] == request
+    }
+
     func activePermissionRequest(
         conversationID: String,
         requestID: String
@@ -1352,7 +1366,7 @@ actor MacAgentHostRuntime: MacLocalAgentRuntime {
               controlInputs[conversationID] != nil,
               toolPlans[conversationID] != nil,
               let request = pendingPermissionRequests[conversationID]?[requestID],
-              request.sessionID == admittedControlSessionID(conversationID: conversationID) else {
+              isAdmittedPermissionSession(request, conversationID: conversationID) else {
             return nil
         }
         return request
@@ -1372,7 +1386,7 @@ actor MacAgentHostRuntime: MacLocalAgentRuntime {
     }
 
     private func sendPermissionDecision(conversationID: String, request: MacRemotePermissionRequest, decision: MacRemotePermissionDecision) throws {
-        guard request.sessionID == admittedControlSessionID(conversationID: conversationID) else {
+        guard isAdmittedPermissionSession(request, conversationID: conversationID) else {
             throw NSError(
                 domain: "NolaMac.AgentHost.Permission",
                 code: 1,
@@ -1406,11 +1420,14 @@ actor MacAgentHostRuntime: MacLocalAgentRuntime {
                 ]
             )
         }
+        let policySessionID = request.isDelegatedSubagentRequest
+            ? (admittedControlSessionID(conversationID: conversationID) ?? request.sessionID)
+            : request.sessionID
         guard toolPlan.matchesPermissionChallenge(
             toolId: request.toolName,
             hostId: request.hostID,
             clientId: request.clientID,
-            sessionId: request.sessionID,
+            sessionId: policySessionID,
             policyDigest: request.policyDigest,
             manifestDigest: request.manifestDigest,
             mcpDescriptorData: request.mcpDescriptorData
@@ -1434,7 +1451,7 @@ actor MacAgentHostRuntime: MacLocalAgentRuntime {
                 toolId: request.toolName,
                 hostId: request.hostID,
                 clientId: request.clientID,
-                sessionId: request.sessionID,
+                sessionId: policySessionID,
                 policyDigest: freshPlan.output.policyDigest,
                 manifestDigest: freshPlan.output.manifestDigest,
                 mcpDescriptorData: request.mcpDescriptorData
@@ -2917,6 +2934,9 @@ actor MacAgentHostRuntime: MacLocalAgentRuntime {
                 eventID: trace.eventID
             )
         }
+        let taskID = optionalString(in: object, keys: ["task_id"])
+        let subagentName = optionalString(in: object, keys: ["subagent_name", "agent_name"])
+        let isDelegatedChildSession = (taskID != nil || subagentName != nil) && coreSessionID != nil
         guard let requestID = optionalString(in: object, keys: ["request_id", "id"]),
               let allowConversation = object["allow_conversation"] as? Bool,
               let protocolVersion = (object["protocol_version"] as? NSNumber)?.intValue,
@@ -2924,7 +2944,8 @@ actor MacAgentHostRuntime: MacLocalAgentRuntime {
               let nonce = optionalString(in: object, keys: ["nonce"]),
               let hostID = optionalString(in: object, keys: ["host_id"]),
               let clientID = optionalString(in: object, keys: ["client_id"]),
-              let sessionID = optionalString(in: object, keys: ["session_id"]), sessionID == coreSessionID,
+              let sessionID = optionalString(in: object, keys: ["session_id"]),
+              (sessionID == coreSessionID || isDelegatedChildSession),
               let toolName = optionalString(in: object, keys: ["tool_name"]) else {
             return protocolFailure(
                 "The Agent Host emitted an incomplete permission request envelope.",
@@ -2956,7 +2977,9 @@ actor MacAgentHostRuntime: MacLocalAgentRuntime {
             toolCatalogEvidence: MacRemotePermissionToolEvidence.decode(object["tool_catalog_evidence"], toolName: toolName),
             mcpDescriptorData: (object["mcp_descriptor"] as? [String: Any]).flatMap {
                 try? JSONSerialization.data(withJSONObject: $0, options: [.sortedKeys])
-            }
+            },
+            taskID: taskID,
+            subagentName: subagentName
         )
         return MacLocalAgentEvent(
             kind: .permissionRequested,

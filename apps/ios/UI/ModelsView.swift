@@ -1462,7 +1462,7 @@ func webHostPairingErrorMessage(_ error: Error) -> String {
         return tailcatMessage
     }
     if case let NolaError.llm(.network(underlying)) = error,
-       underlying.domain == "WebAgentProvider.Tailcat" {
+       (underlying as NSError).domain == "WebAgentProvider.Tailcat" {
         return underlying.localizedDescription
     }
     switch error {

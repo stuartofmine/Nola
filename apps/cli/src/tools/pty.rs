@@ -715,10 +715,20 @@ mod unix_impl {
                     "exit_code": exit_code,
                     "screen": screen_text,
                 });
-                ok(
+                let mut outcome = ok(
                     serde_json::to_string_pretty(&payload).unwrap_or_else(|_| payload.to_string()),
                     format!("PTY screenshot {} ({width}x{height})", path.display()),
                 )
+                .with_file_artifact(&path, "screenshot");
+                if let Some(artifact) = outcome.artifacts.last_mut() {
+                    artifact.mime_type = Some("image/png".into());
+                    artifact.name = path
+                        .file_name()
+                        .unwrap_or_default()
+                        .to_string_lossy()
+                        .into_owned();
+                }
+                outcome
             }
             Err(msg) => error(msg),
         }
@@ -1308,6 +1318,12 @@ mod tests {
             bytes.starts_with(b"\x89PNG\r\n\x1a\n"),
             "screenshot does not start with PNG magic bytes"
         );
+        assert_eq!(shot_outcome.artifacts.len(), 1);
+        assert_eq!(
+            shot_outcome.artifacts[0].mime_type.as_deref(),
+            Some("image/png")
+        );
+        assert_eq!(shot_outcome.artifacts[0].name, "pty-capture.png");
 
         // 4. Close the session cleanly.
         let close_outcome = pty_close(

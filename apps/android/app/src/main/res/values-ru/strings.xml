@@ -1462,4 +1462,19 @@
     <string name="knowledge_search_empty">Подходящие знания не найдены</string>
     <string name="expert_empty_title">Экспертов пока нет</string>
     <string name="expert_empty_message">Создайте эксперта, чтобы повторно использовать инструкции, модели и инструменты.</string>
+    <string name="chat_host_tool_name_pty_exec">Выполнить команду терминала</string>
+    <string name="chat_host_tool_name_pty_write">Отправить ввод в терминал</string>
+    <string name="chat_host_tool_name_pty_screenshot">Снять экран терминала</string>
+    <string name="chat_host_tool_name_pty_close">Закрыть сеанс терминала</string>
+    <string name="chat_task_stall_warning">Предупреждение о зависании</string>
+    <string name="chat_task_stall_timeout">Зависание · превышено время ожидания</string>
+    <string name="chat_task_status_queued">В очереди</string>
+    <string name="chat_task_status_running">Выполняется</string>
+    <string name="chat_task_status_waiting">Ожидание</string>
+    <string name="chat_task_status_suspended">Приостановлено</string>
+    <string name="chat_task_status_retrying">Повторная попытка</string>
+    <string name="chat_task_status_cancelling">Отмена</string>
+    <string name="permission_from_subagent">От субагента: %1$s</string>
+    <string name="permission_queue_pending">1 из %1$d ожидает</string>
+    <string name="chat_response_failed_empty">Не удалось получить ответ.</string>
 </resources>

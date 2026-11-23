@@ -473,6 +473,11 @@ nonisolated struct MacRemotePermissionRequest: Identifiable, Hashable, Sendable 
             sessionID: sessionID, requestID: id, nonce: nonce, callID: callID)
     }
 
+    var isDelegatedSubagentRequest: Bool {
+        !(taskID ?? "").trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            || !(subagentName ?? "").trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+    }
+
     static let supportedProtocolVersion = 1
     let id: String
     let allowConversation: Bool
@@ -493,6 +498,8 @@ nonisolated struct MacRemotePermissionRequest: Identifiable, Hashable, Sendable 
     let manifestValidUntilMs: Int64?
     let toolCatalogEvidence: MacRemotePermissionToolEvidence?
     let mcpDescriptorData: Data?
+    let taskID: String?
+    let subagentName: String?
 
     init(
         id: String,
@@ -513,7 +520,9 @@ nonisolated struct MacRemotePermissionRequest: Identifiable, Hashable, Sendable 
         manifestDigest: String? = nil,
         manifestValidUntilMs: Int64? = nil,
         toolCatalogEvidence: MacRemotePermissionToolEvidence? = nil,
-        mcpDescriptorData: Data? = nil
+        mcpDescriptorData: Data? = nil,
+        taskID: String? = nil,
+        subagentName: String? = nil
     ) {
         self.id = id
         self.allowConversation = allowConversation
@@ -534,6 +543,8 @@ nonisolated struct MacRemotePermissionRequest: Identifiable, Hashable, Sendable 
         self.manifestValidUntilMs = manifestValidUntilMs
         self.toolCatalogEvidence = toolCatalogEvidence
         self.mcpDescriptorData = mcpDescriptorData
+        self.taskID = taskID
+        self.subagentName = subagentName
     }
 
     func decision(
@@ -3058,7 +3069,9 @@ actor MacRemoteHostService: MacRemoteAgentRunning {
             policyDigest: object["policy_digest"] as? String,
             manifestDigest: object["manifest_digest"] as? String,
             manifestValidUntilMs: (object["manifest_valid_until_ms"] as? NSNumber)?.int64Value,
-            toolCatalogEvidence: toolCatalogEvidence
+            toolCatalogEvidence: toolCatalogEvidence,
+            taskID: (object["task_id"] as? String).flatMap { $0.isEmpty ? nil : $0 },
+            subagentName: ((object["subagent_name"] as? String) ?? (object["agent_name"] as? String)).flatMap { $0.isEmpty ? nil : $0 }
         )
     }
 

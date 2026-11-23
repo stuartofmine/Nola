@@ -38,6 +38,7 @@ data class SseEventDto(
     @SerialName("host_id") val hostId: String? = null,
     @SerialName("client_id") val clientId: String? = null,
     @SerialName("session_id") val sessionId: String? = null,
+    @SerialName("task_id") val taskId: String? = null,
     @SerialName("submission_id") val submissionId: String? = null,
     @SerialName("backend_id") val backendId: String? = null,
     @SerialName("external_session_id") val externalSessionId: String? = null,
@@ -88,6 +89,7 @@ data class SseEventDto(
                 hostId = hostId,
                 clientId = clientId,
                 sessionId = sessionId,
+                taskId = taskId?.takeIf { it.isNotBlank() },
                 expiresAt = expiresAt,
                 protocolVersion = protocolVersion
             )

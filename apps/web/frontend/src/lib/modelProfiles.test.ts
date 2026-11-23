@@ -167,3 +167,19 @@ test('native efforts retain exact defaults and do not become token budgets', () 
     assert.ok(reasoningValidationError({...draft, defaultPreference:'none'}, 'anthropic', 8192));
     assert.equal(reasoningValidationError({...draft, defaultPreference:'balanced'}, 'chat_completions', 8192), null);
 });
+
+test('siwc_responses protocol supports effort reasoning and responses parameter constraints', () => {
+    const draft = reasoningDraft({ control: 'effort', efforts: ['none', 'low', 'medium', 'high', 'xhigh'], defaultPreference: 'medium' });
+    assert.equal(reasoningValidationError(draft, 'siwc_responses', 16384), null);
+    assert.deepEqual(reasoningOptions(draft, 'siwc_responses'), ['none', 'low', 'medium', 'high', 'xhigh']);
+    const profile: RemoteProfile = {
+        id: 'siwc-1', displayName: 'SIWC', modelName: 'gpt-5', revision: 1,
+        enabled: true, selected: true, priority: 50, order: 0, capabilities: ['chat'],
+        endpoint: { id: 'siwc', name: 'ChatGPT', baseURL: 'https://api.openai.com/v1', wireProtocol: 'siwc_responses', enabled: true, order: 0 },
+        parameters: { temperature: 0.7, topP: 0.9 },
+        reasoning: draft,
+        executionCapabilities: { toolCalls: true, imageInput: true, reasoning: true, samplingParameters: true, samplingRequiresNoReasoning: true },
+    };
+    assert.equal(executionParameterValidationError(profile), null);
+    assert.equal(executionParameterValidationError({ ...profile, parameters: { ...profile.parameters, seed: 42 } })?.code, 'modelValidation.protocolParameters');
+});

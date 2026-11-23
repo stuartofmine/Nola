@@ -378,7 +378,7 @@
                         <label><input type="checkbox" value={effort} bind:group={thinking.efforts} />{protocolEfforts.includes(effort) ? thinkingTitle(effort) : t($locale, 'remote.thinking.check', { value: effort })}</label>
                     {/each}
                 </div>
-                {#if editing.endpoint.wireProtocol !== 'responses'}<p class="muted">{t($locale, 'remote.thinking.tiers_hint')}</p>{/if}
+                {#if !['responses', 'siwc_responses'].includes(editing.endpoint.wireProtocol)}<p class="muted">{t($locale, 'remote.thinking.tiers_hint')}</p>{/if}
             {:else if thinking.control === 'budget'}
                 <div class="fields">
                     {#each ['concise', 'balanced', 'detailed'] as title, index}

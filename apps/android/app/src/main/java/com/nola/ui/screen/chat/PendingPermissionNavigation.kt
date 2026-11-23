@@ -9,11 +9,12 @@ internal data class PendingPermissionNavigationTarget(
 )
 
 internal fun ChatUiState.pendingPermissionNavigation(messageCount: Int): PendingPermissionNavigationTarget? {
-    val host = permissionRequest
+    val hostQueue = hostPermissionQueue
+    val host = hostQueue.firstOrNull()
     // Once the system picker/permission UI has taken over, its local card is
     // deliberately absent; do not offer a shortcut to a nonexistent item.
     val local = agentPermissionRequest.takeIf { agentPermissionAction == null }
-    val count = (if (host != null) 1 else 0) + (if (local != null) 1 else 0)
+    val count = hostQueue.size + (if (local != null) 1 else 0)
     if (count == 0) return null
     val emptyStateCount = if (messageCount == 0 && !processingState.isGenerating) 1 else 0
     val sourceStatusCount = if (compactionSourceStatus != CompactionSourceStatus.Idle) 1 else 0

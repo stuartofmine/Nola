@@ -1461,4 +1461,19 @@
     <string name="knowledge_search_empty">未找到匹配的知识点</string>
     <string name="expert_empty_title">暂无专家</string>
     <string name="expert_empty_message">创建专家以复用专属指令、模型与工具配置。</string>
+    <string name="chat_host_tool_name_pty_exec">执行终端命令</string>
+    <string name="chat_host_tool_name_pty_write">发送终端输入</string>
+    <string name="chat_host_tool_name_pty_screenshot">截取终端画面</string>
+    <string name="chat_host_tool_name_pty_close">关闭终端会话</string>
+    <string name="chat_task_stall_warning">停滞警告</string>
+    <string name="chat_task_stall_timeout">任务超时停滞</string>
+    <string name="chat_task_status_queued">排队中</string>
+    <string name="chat_task_status_running">运行中</string>
+    <string name="chat_task_status_waiting">等待中</string>
+    <string name="chat_task_status_suspended">已挂起</string>
+    <string name="chat_task_status_retrying">重试中</string>
+    <string name="chat_task_status_cancelling">取消中</string>
+    <string name="permission_from_subagent">来自子任务：%1$s</string>
+    <string name="permission_queue_pending">第 1 / %1$d 项待处理</string>
+    <string name="chat_response_failed_empty">回复失败。</string>
 </resources>

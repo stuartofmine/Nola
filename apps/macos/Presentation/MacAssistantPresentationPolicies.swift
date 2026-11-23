@@ -56,9 +56,22 @@ enum MacToolPresentationPolicy {
         switch normalized {
         case "workspace_access":
             presentation = ("chat.host_tool.name.workspace_access", "Authorize folder access", false)
-        case "bash", "shell", "run_command", "execute_command", "bash_command_review",
-             "bash_background_status", "bash_background_wait", "bash_background_stop", "terminal_input":
+        case "bash", "shell", "run_command", "execute_command", "bash_command_review", "terminal_input":
             presentation = ("chat.host_tool.name.command", "Run command", true)
+        case "bash_background_status":
+            presentation = ("chat.host_tool.name.bash_background_status", "Check background command", false)
+        case "bash_background_wait":
+            presentation = ("chat.host_tool.name.bash_background_wait", "Wait for background command", false)
+        case "bash_background_stop":
+            presentation = ("chat.host_tool.name.bash_background_stop", "Stop background command", false)
+        case "pty_exec":
+            presentation = ("chat.host_tool.name.pty_exec", "Run terminal command", true)
+        case "pty_write":
+            presentation = ("chat.host_tool.name.pty_write", "Write to terminal", false)
+        case "pty_screenshot":
+            presentation = ("chat.host_tool.name.pty_screenshot", "Capture terminal", false)
+        case "pty_close":
+            presentation = ("chat.host_tool.name.pty_close", "Close terminal", false)
         case "read_file", "read_text_file", "read_many_files", "notebook_read", "file_outline", "read_symbol":
             presentation = ("chat.host_tool.name.read_file", "Read file", true)
         case "write_file", "create_file", "append_file":
@@ -207,7 +220,7 @@ enum MacToolPresentationPolicy {
                 as? [String: Any] else {
             return nil
         }
-        if ["bash", "shell", "run_command", "execute_command", "bash_command_review"]
+        if ["bash", "shell", "run_command", "execute_command", "bash_command_review", "pty_exec"]
             .contains(toolName),
            let command = object["command"] as? String {
             return conciseCommandTarget(command)

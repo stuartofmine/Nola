@@ -903,6 +903,7 @@
             draft = snapshot.draft; occurrences=sourceWorkspace.mentions.get(conversation.conversationId)?.occurrences??[]; attachments = snapshot.attachments; textAttachments?.sync();
         }, {
             cacheChanged: () => { conversationCacheReader.refresh(); void conversationManager?.refresh(); },
+            returnedToComposer: () => focusComposer(),
             captureHistory: reason => {
                 if (reason === 'metadata' && scroll.followsLatest) return null;
                 if (!transcript) return null;
@@ -1311,7 +1312,17 @@
         // discard the visible transcript and composer draft.
         if (active?.conversationId === conversation.conversationId && !disposed) { active = conversation; submissionController?.updateConversation(conversation); }
     }
-    function permissionAccepted(identity: string) { submissionController?.permissionAccepted(identity); }
+    function focusComposer() {
+        void tick().then(() => {
+            if (!disposed && contentTabs.selected === conversationTabKey && !document.querySelector('dialog:modal')) {
+                (composer ?? document.getElementById('chat-composer'))?.focus();
+            }
+        });
+    }
+    function permissionAccepted(identity: string, choice?: import('../lib/chatPermission').PermissionChoice) {
+        submissionController?.permissionAccepted(identity);
+        if (choice === 'return_to_composer') focusComposer();
+    }
 </script>
 
 <svelte:head>{#if !managementContentSelected}<title>{t($locale, 'chatPage.title')} — Nola</title>{/if}</svelte:head>
@@ -1519,11 +1530,11 @@
                         {/if}
                     {/if}
                     {#each replyNotices.filter(item => item.assistantMessageId === message.id || item.userMessageId === message.id && !messages.some(candidate => candidate.id === item.assistantMessageId)) as reply (reply.submissionId)}
-                        <article class="reply-notice" data-reply-submission={reply.submissionId}><div class="message-content"><ChatReplyError kind={reply.kind} oncontinue={continueConversation} continuing={conversationWriting} /></div></article>
+                        <article class="reply-notice" data-reply-submission={reply.submissionId}><div class="message-content"><ChatReplyError kind={reply.kind} detail={reply.detail ?? ''} oncontinue={continueConversation} continuing={conversationWriting} /></div></article>
                     {/each}
                 {/each}
                 {#each replyNotices.filter(item => !messages.some(message => message.id === item.userMessageId || message.id === item.assistantMessageId)) as reply (reply.submissionId)}
-                    <article class="reply-notice" data-reply-submission={reply.submissionId}><div class="message-content"><ChatReplyError kind={reply.kind} oncontinue={continueConversation} continuing={conversationWriting} /></div></article>
+                    <article class="reply-notice" data-reply-submission={reply.submissionId}><div class="message-content"><ChatReplyError kind={reply.kind} detail={reply.detail ?? ''} oncontinue={continueConversation} continuing={conversationWriting} /></div></article>
                 {/each}
                 {#if (pendingText || pendingAttachmentNames.length) && busy && !messages.some(message => message.id === turn?.identity.userMessageId || message.id === turn?.identity.assistantMessageId)}<article class="user pending"><div class="message-content">{#if pendingText}<Markdown source={pendingText} />{/if}{#if pendingAttachmentNames.length}<ul class="attached-files">{#each pendingAttachmentNames as name}<li>{name}</li>{/each}</ul>{/if}<small>{t($locale, 'chatPage.pendingUser')}</small></div></article>{/if}
                 {#if turn && busy && !messages.some(message => message.id === turn?.identity.assistantMessageId)}<p class="run-status live" role="status">{t($locale, runStatusKey)}</p>{/if}

@@ -2061,6 +2061,50 @@
       "ko": "계획 제안",
       "ru": "Предложить план"
     },
+    "pty_close": {
+      "en": "Close terminal session",
+      "zh-Hans": "关闭终端会话",
+      "zh-Hant": "關閉終端工作階段",
+      "de": "Terminalsitzung schließen",
+      "es": "Cerrar sesión de terminal",
+      "fr": "Fermer la session de terminal",
+      "ja": "ターミナルセッションを閉じる",
+      "ko": "터미널 세션 닫기",
+      "ru": "Закрыть сеанс терминала"
+    },
+    "pty_exec": {
+      "en": "Run in interactive terminal",
+      "zh-Hans": "在交互式终端中运行",
+      "zh-Hant": "在互動式終端中執行",
+      "de": "Im interaktiven Terminal ausführen",
+      "es": "Ejecutar en terminal interactiva",
+      "fr": "Exécuter dans un terminal interactif",
+      "ja": "対話型ターミナルで実行",
+      "ko": "대화형 터미널에서 실행",
+      "ru": "Выполнить в интерактивном терминале"
+    },
+    "pty_screenshot": {
+      "en": "Capture terminal screenshot",
+      "zh-Hans": "截取终端画面",
+      "zh-Hant": "擷取終端畫面",
+      "de": "Terminal-Bildschirmfoto aufnehmen",
+      "es": "Capturar pantalla de terminal",
+      "fr": "Capturer l’écran du terminal",
+      "ja": "ターミナル画面を撮影",
+      "ko": "터미널 화면 캡처",
+      "ru": "Сделать снимок терминала"
+    },
+    "pty_write": {
+      "en": "Send input to terminal",
+      "zh-Hans": "向终端发送输入",
+      "zh-Hant": "向終端傳送輸入",
+      "de": "Eingabe an Terminal senden",
+      "es": "Enviar entrada a la terminal",
+      "fr": "Envoyer une entrée au terminal",
+      "ja": "ターミナルに入力を送信",
+      "ko": "터미널에 입력 보내기",
+      "ru": "Отправить ввод в терминал"
+    },
     "read_file": {
       "en": "Read file",
       "zh-Hans": "读取文件",

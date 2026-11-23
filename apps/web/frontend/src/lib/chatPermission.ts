@@ -7,6 +7,9 @@ export interface ChatPermissionChallenge {
     nonce: string; request_id: string; host_id: string; client_id: string; session_id: string; tool_name: string;
     expires_at: number;
     permission_instructions: { permission_request_id: string; instruction: string }[];
+    task_id?: string;
+    reason?: string;
+    message?: string;
 }
 const identityFields = ['nonce', 'request_id', 'host_id', 'client_id', 'session_id', 'tool_name'] as const;
 const object = (value: unknown): value is Record<string, unknown> => !!value && typeof value === 'object' && !Array.isArray(value);
@@ -19,8 +22,12 @@ export function parseChatPermission(value: unknown): ChatPermissionChallenge | n
     if (!Array.isArray(instructions) || instructions.length > 16 || !instructions.every(entry => object(entry)
         && Object.keys(entry).sort().join(',') === 'instruction,permission_request_id'
         && typeof entry.instruction === 'string' && typeof entry.permission_request_id === 'string')) return null;
+    const optional: Partial<Pick<ChatPermissionChallenge, 'task_id' | 'reason' | 'message'>> = {};
+    if (typeof value.task_id === 'string' && value.task_id.trim()) optional.task_id = value.task_id;
+    if (typeof value.reason === 'string' && value.reason.trim()) optional.reason = value.reason;
+    if (typeof value.message === 'string' && value.message.trim()) optional.message = value.message;
     return { protocol_version: 1, allow_conversation: value.allow_conversation, ...Object.fromEntries(identityFields.map(key => [key, value[key]])),
-        expires_at: Number(value.expires_at), permission_instructions: instructions.map(entry => ({ ...entry })) } as ChatPermissionChallenge;
+        expires_at: Number(value.expires_at), permission_instructions: instructions.map(entry => ({ ...entry })), ...optional } as ChatPermissionChallenge;
 }
 
 export function permissionIdentity(value: ChatPermissionChallenge): string {

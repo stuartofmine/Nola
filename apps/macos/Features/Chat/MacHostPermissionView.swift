@@ -70,6 +70,16 @@ struct MacHostPermissionCard: View {
             mcpDescriptorData: request.mcpDescriptorData)
     }
 
+    private var attributionLabel: String? {
+        if let subagent = request.subagentName?.trimmingCharacters(in: .whitespacesAndNewlines), !subagent.isEmpty {
+            return subagent
+        }
+        if let taskID = request.taskID?.trimmingCharacters(in: .whitespacesAndNewlines), !taskID.isEmpty {
+            return String(format: String(localized: "Task %@", table: "Chat"), String(taskID.prefix(12)))
+        }
+        return nil
+    }
+
     private var requestContent: some View {
         VStack(alignment: .leading, spacing: 10) {
             HStack(alignment: .center, spacing: 10) {
@@ -91,6 +101,16 @@ struct MacHostPermissionCard: View {
                         .padding(.horizontal, 7)
                         .padding(.vertical, 2)
                         .background(MacDesignColor.subtleFill, in: Capsule())
+
+                    if let attributionLabel {
+                        Label(attributionLabel, systemImage: "arrow.triangle.branch")
+                            .font(.system(size: 11, weight: .medium))
+                            .foregroundStyle(.secondary)
+                            .padding(.horizontal, 7)
+                            .padding(.vertical, 2)
+                            .background(MacDesignColor.subtleFill, in: Capsule())
+                            .accessibilityIdentifier("chat.permission.attribution")
+                    }
                 }
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .fixedSize(horizontal: false, vertical: true)
@@ -180,6 +200,11 @@ struct MacHostPermissionCard: View {
 
     @ViewBuilder
     private var permissionActions: some View {
+        if isResolving {
+            ProgressView()
+                .controlSize(.small)
+                .accessibilityIdentifier("chat.permission.resolving")
+        }
         Button(String(localized: "Deny"), role: .destructive, action: deny)
             .buttonStyle(.bordered)
             .accessibilityIdentifier("chat.permission.deny")

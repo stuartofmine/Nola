@@ -210,6 +210,8 @@ final class MacJournalPresentationOwner {
                             }
                         }), taskIDs: Set(values.compactMap { part in
                             if case .task(let task) = part.metadata { return task.task_id }; return nil
+                        }), failurePartIDs: Set(values.compactMap { part in
+                            if case .error = part.metadata { return part.part_id }; return nil
                         }))
                     if activityCoverage != self.activityCoverage { self.activityCoverage = activityCoverage }
                     var referenceCoverage = self.referenceCoverage
@@ -480,7 +482,8 @@ nonisolated enum MacJournalActivityTitle {
         switch state {
         case "completed": "checkmark.circle"
         case "failed": "exclamationmark.circle"
-        case "cancelled": "xmark.circle"
+        case "cancelled", "cancelling": "xmark.circle"
+        case "stall_warning", "stall_timeout": "exclamationmark.triangle"
         case "pending", "queued": "clock"
         case "waiting", "waiting_for_input", "waiting_for_permission", "suspended", "retry_waiting": "pause.circle"
         case "sealed": "circle.dotted"
@@ -1326,12 +1329,35 @@ private struct MacJournalTaskView: View {
             : String(localized: "Task")
     }
 
+    private var isStallCondition: Bool {
+        task.state == "stall_warning"
+            || task.state == "stall_timeout"
+            || task.display_key.localizedCaseInsensitiveContains("stall_warning")
+            || task.display_key.localizedCaseInsensitiveContains("stall_timeout")
+            || part.bodies.contains { $0.field.localizedCaseInsensitiveContains("stall") }
+    }
+
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
             HStack {
-                Label { Text(verbatim: taskTitle) } icon: { Image(systemName: "list.bullet.rectangle") }
+                Label {
+                    Text(verbatim: taskTitle)
+                } icon: {
+                    Image(systemName: isStallCondition ? "exclamationmark.triangle.fill" : "list.bullet.rectangle")
+                        .foregroundStyle(isStallCondition ? MacDesignColor.warning : .primary)
+                }
                 Spacer(minLength: 8)
                 MacJournalStatusText(state: task.state)
+            }
+            if isStallCondition {
+                Label(
+                    task.state == "stall_timeout" || task.display_key.localizedCaseInsensitiveContains("stall_timeout")
+                        ? String(localized: "Task timed out due to inactivity", table: "Chat")
+                        : String(localized: "Task appears stalled", table: "Chat"),
+                    systemImage: "exclamationmark.triangle.fill"
+                )
+                .font(.caption.weight(.medium))
+                .foregroundStyle(MacDesignColor.warning)
             }
             if let fraction = task.progress?.fraction { ProgressView(value: fraction) }
             ForEach(part.bodies, id: \.field) { content in
@@ -1387,13 +1413,17 @@ private struct MacJournalStatusText: View {
         case "blocked": "Blocked"
         case "finished", "sealed": "Finished"
         case "failed": "Failed"
+        case "cancelling": "Cancelling"
         case "cancelled": "Cancelled"
+        case "stall_warning": "Stall warning"
+        case "stall_timeout": "Timed out"
         default: "Unknown"
         }
     }
     var body: some View {
-        MacFlowingStatusText(text: Text(label), isRunning: state == "running")
+        MacFlowingStatusText(text: Text(label), isRunning: state == "running" || state == "cancelling")
             .font(.caption)
+            .foregroundStyle((state == "stall_warning" || state == "stall_timeout") ? MacDesignColor.warning : .primary)
     }
 }
 
@@ -2142,14 +2172,17 @@ private struct MacJournalArtifactList: View {
                     } else if referenceStyle {
                         Button { open(destination) } label: { referenceLabel(artifact, highlighted: hoveredReference == index) }
                             .buttonStyle(.plain).disabled(destination == nil)
-                    } else {
-                        Button { open(destination) } label: {
-                            VStack(alignment: .leading, spacing: 2) {
-                                Label(artifact.name, systemImage: "doc")
-                                if let mime = artifact.mimeType { Text(verbatim: mime).font(.caption).foregroundStyle(.secondary) }
-                                if let operation = artifact.operation { Text(verbatim: operation).font(.caption).foregroundStyle(.secondary) }
+                    } else if case .some(.localFile(let url)) = destination, Self.isImageArtifact(artifact, url: url) {
+                        MacJournalArtifactImageThumbnail(
+                            url: url,
+                            name: artifact.name,
+                            onOpen: { open(destination) },
+                            fallback: {
+                                artifactLabelButton(artifact: artifact, destination: destination)
                             }
-                        }.buttonStyle(.link).disabled(destination == nil)
+                        )
+                    } else {
+                        artifactLabelButton(artifact: artifact, destination: destination)
                     }
                 }
                 .onHover { hoveredReference = $0 ? index : nil }
@@ -2189,6 +2222,24 @@ private struct MacJournalArtifactList: View {
         }
     }
 
+    private func artifactLabelButton(artifact: MacCorePartArtifact, destination: MacJournalArtifactDestination?) -> some View {
+        Button { open(destination) } label: {
+            VStack(alignment: .leading, spacing: 2) {
+                Label(artifact.name, systemImage: "doc")
+                if let mime = artifact.mimeType { Text(verbatim: mime).font(.caption).foregroundStyle(.secondary) }
+                if let operation = artifact.operation { Text(verbatim: operation).font(.caption).foregroundStyle(.secondary) }
+            }
+        }.buttonStyle(.link).disabled(destination == nil)
+    }
+
+    private static func isImageArtifact(_ artifact: MacCorePartArtifact, url: URL) -> Bool {
+        if let mime = artifact.mimeType?.lowercased(), mime.hasPrefix("image/") {
+            return true
+        }
+        let ext = url.pathExtension.lowercased()
+        return ["png", "jpg", "jpeg", "gif", "heic", "webp", "tiff", "bmp"].contains(ext)
+    }
+
     private func open(_ destination: MacJournalArtifactDestination?) {
         switch destination {
         case .web(let url): openURL(url)
@@ -2211,6 +2262,53 @@ private struct MacJournalArtifactList: View {
         .contentShape(Rectangle())
     }
 
+}
+
+@MainActor
+private struct MacJournalArtifactImageThumbnail<Fallback: View>: View {
+    let url: URL
+    let name: String
+    let onOpen: () -> Void
+    @ViewBuilder let fallback: () -> Fallback
+    @State private var image: NSImage?
+    @State private var loadFailed = false
+
+    var body: some View {
+        Group {
+            if let image {
+                Button(action: onOpen) {
+                    Image(nsImage: image)
+                        .resizable()
+                        .scaledToFit()
+                        .frame(maxWidth: 220, maxHeight: 160)
+                        .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
+                        .overlay {
+                            RoundedRectangle(cornerRadius: 10, style: .continuous)
+                                .strokeBorder(Color.primary.opacity(0.12), lineWidth: 0.5)
+                        }
+                }
+                .buttonStyle(.plain)
+                .help(name)
+            } else {
+                fallback()
+            }
+        }
+        .task(id: url) {
+            guard !loadFailed else { return }
+            let targetURL = url
+            let loaded: NSImage? = await Task.detached(priority: .utility) {
+                let accessed = targetURL.startAccessingSecurityScopedResource()
+                defer { if accessed { targetURL.stopAccessingSecurityScopedResource() } }
+                return NSImage(contentsOf: targetURL)
+            }.value
+            guard !Task.isCancelled else { return }
+            if let loaded {
+                image = loaded
+            } else {
+                loadFailed = true
+            }
+        }
+    }
 }
 
 @MainActor

@@ -627,6 +627,19 @@ final class MacWorkspaceModel {
     var activity: [MacAgentActivity] = []
     var activityConversationID: String?
     var pendingRemotePermission: MacRemotePermissionRequest?
+    private struct PendingPermissionQueueEntry {
+        let request: MacRemotePermissionRequest
+        let prompt: String?
+        let conversationID: String
+        let modelID: String?
+        let attachmentURLs: [URL]
+        let assistantMessageID: UUID?
+        let generationID: UInt64
+        let usesLocalRuntime: Bool
+        let trace: MacRemotePermissionTraceIdentity?
+        let createdAt: Date
+    }
+    @ObservationIgnored private var pendingPermissionQueue: [PendingPermissionQueueEntry] = []
     private var userInputWaitsByConversation: [String: [MacRemoteUserInputRequest]] = [:]
     private var deferredUserInputWaitIDs: Set<String> = []
     @ObservationIgnored private var userInputWaitReadRevisions: [String: UInt64] = [:]
@@ -2867,11 +2880,16 @@ final class MacWorkspaceModel {
             || selectedModelConfigurationPending
             || selectedPermissionHasUncommittedChanges
             || goalSubmissionAdmission[selectedConversationID ?? ""] == false
+        let availableReasoningOptions = executionHost == .local ? reasoningConfiguration.options : []
+        let rawReasoningPreference = effectiveModelParameters.reasoningPreference ?? "automatic"
+        let effectiveReasoningPreference = (rawReasoningPreference == "automatic" || availableReasoningOptions.contains(rawReasoningPreference))
+            ? rawReasoningPreference
+            : "automatic"
         return MacComposerDisplayState(
             conversationID: selectedConversationID ?? "", draft: draft, attachments: attachments,
             isRunning: isRunning && ownsRun, isVisiblyRunning: isSelectedConversationVisiblyRunning,
-            reasoningOptions: executionHost == .local ? reasoningConfiguration.options : [],
-            reasoningPreference: effectiveModelParameters.reasoningPreference ?? "automatic",
+            reasoningOptions: availableReasoningOptions,
+            reasoningPreference: effectiveReasoningPreference,
             permissionMode: permissionMode,
             permissionConfigurationState: selectedPermissionConfigurationState,
             activePermissionMode: selectedPermissionActiveMode, isSubmissionBlocked: blocked,
@@ -4259,7 +4277,10 @@ final class MacWorkspaceModel {
             ? runRemoteConfiguration?.reasoning ?? .init() : MacReasoningConfiguration()
         runReasoningConfiguration.responses = runWireProtocol.usesResponsesTransport
         runReasoningConfiguration.outputLimit = runModelParameters.maxOutputTokens
-        let runReasoningPreference = runModelParameters.reasoningPreference ?? "automatic"
+        let rawRunReasoningPreference = runModelParameters.reasoningPreference ?? "automatic"
+        let runReasoningPreference = (rawRunReasoningPreference == "automatic" || runReasoningConfiguration.options.contains(rawRunReasoningPreference))
+            ? rawRunReasoningPreference
+            : "automatic"
         let declaredSamplingCapabilities = runRemoteConfiguration?.executionCapabilities
         let declaredSampling = declaredSamplingCapabilities?.samplingParameters == true
             && declaredSamplingCapabilities?.samplingRequiresNoReasoning != true
@@ -5398,7 +5419,8 @@ final class MacWorkspaceModel {
               expectedRequest == nil || expectedRequest == request,
               let conversationID = pendingRemoteConversationID,
               let generationID = pendingRemoteGenerationID,
-              generationID == activeGenerationID,
+              (generationID == activeGenerationID
+                  || (request.isDelegatedSubagentRequest && conversationID == selectedConversationID)),
               cancellationRequestedGenerationID != generationID,
               !isResolvingPermission else { return }
         // Workspace persistence belongs to the OS bookmark registry. A second
@@ -5450,7 +5472,8 @@ final class MacWorkspaceModel {
             }
             guard pendingRemotePermission == request,
                   pendingRemoteConversationID == conversationID,
-                  generationID == activeGenerationID else { return }
+                  (generationID == activeGenerationID
+                      || (request.isDelegatedSubagentRequest && conversationID == selectedConversationID)) else { return }
         }
         permissionResolutionErrors[conversationID] = nil
         let resolutionToken = UUID()
@@ -5466,7 +5489,8 @@ final class MacWorkspaceModel {
                 }
                 let resolvedAllow = allow
                 do {
-                    guard generationID == activeGenerationID,
+                    guard (generationID == activeGenerationID
+                              || (request.isDelegatedSubagentRequest && conversationID == selectedConversationID)),
                           pendingRemoteConversationID == conversationID,
                           pendingRemotePermission == request,
                           permissionRequestIsValid(request, conversationID: conversationID,
@@ -5483,12 +5507,13 @@ final class MacWorkspaceModel {
                         allow: resolvedAllow,
                         scope: scope
                     )
-                    guard generationID == activeGenerationID,
+                    guard (generationID == activeGenerationID
+                              || (request.isDelegatedSubagentRequest && conversationID == selectedConversationID)),
                           pendingRemoteConversationID == conversationID,
                           pendingRemotePermission == request,
                           permissionRequestIsValid(request, conversationID: conversationID,
                                                    usesLocalRuntime: true) else { return }
-                    clearPendingPermission()
+                    advancePendingPermission(afterResolving: request, conversationID: conversationID, usesLocalRuntime: true)
                     updateAssistantPermissionTool(
                         request,
                         allow: resolvedAllow,
@@ -5497,7 +5522,8 @@ final class MacWorkspaceModel {
                         messageID: assistantMessageID
                     )
                 } catch {
-                    guard generationID == activeGenerationID,
+                    guard (generationID == activeGenerationID
+                              || (request.isDelegatedSubagentRequest && conversationID == selectedConversationID)),
                           pendingRemoteConversationID == conversationID,
                           pendingRemotePermission == request,
                           permissionRequestIsValid(request, conversationID: conversationID,
@@ -5526,10 +5552,11 @@ final class MacWorkspaceModel {
                     allow: resolvedAllow,
                     scope: scope
                 )
-                guard generationID == activeGenerationID,
+                guard (generationID == activeGenerationID
+                          || (request.isDelegatedSubagentRequest && conversationID == selectedConversationID)),
                           pendingRemoteConversationID == conversationID,
                           pendingRemotePermission == request else { return }
-                clearPendingPermission()
+                advancePendingPermission(afterResolving: request, conversationID: conversationID, usesLocalRuntime: false)
                 updateAssistantPermissionTool(
                     request,
                     allow: resolvedAllow,
@@ -5538,7 +5565,9 @@ final class MacWorkspaceModel {
                     messageID: assistantMessageID
                 )
             } catch {
-                guard generationID == activeGenerationID, pendingRemotePermission == request else { return }
+                guard (generationID == activeGenerationID
+                          || (request.isDelegatedSubagentRequest && conversationID == selectedConversationID)),
+                      pendingRemotePermission == request else { return }
                 permissionResolutionErrors[conversationID] = error.localizedDescription
                 updateActivity(
                     title: request.toolName,
@@ -5555,7 +5584,9 @@ final class MacWorkspaceModel {
               expectedRequest == nil || expectedRequest == request,
               let conversationID = pendingRemoteConversationID,
               let generationID = pendingRemoteGenerationID,
-              generationID == activeGenerationID, !isResolvingPermission,
+              (generationID == activeGenerationID
+                  || (request.isDelegatedSubagentRequest && conversationID == selectedConversationID)),
+              !isResolvingPermission,
               cancellationRequestedGenerationID != generationID,
               permissionRequestIsValid(request, conversationID: conversationID,
                                        usesLocalRuntime: pendingPermissionUsesLocalRuntime) else {
@@ -5580,14 +5611,15 @@ final class MacWorkspaceModel {
             } else {
                 try await remoteHost.providePermissionInstruction(request: request, instruction: instruction)
             }
-            guard generationID == activeGenerationID,
+            guard (generationID == activeGenerationID
+                      || (request.isDelegatedSubagentRequest && conversationID == selectedConversationID)),
                   pendingRemoteConversationID == conversationID,
                   pendingRemotePermission == request,
                   permissionRequestIsValid(request, conversationID: conversationID,
                                            usesLocalRuntime: usesLocalRuntime) else { return }
             // Only this transport request is answered. The original tool stays
             // waiting until Core publishes its successor permission request.
-            clearPendingPermission()
+            advancePendingPermission(afterResolving: request, conversationID: conversationID, usesLocalRuntime: usesLocalRuntime)
         } catch {
             throw error
         }
@@ -5630,9 +5662,105 @@ final class MacWorkspaceModel {
         _ = try canonicalRepository.upsertPermissionGrant(input)
     }
 
-    private func clearPendingPermission() {
+    private func activatePendingPermission(_ entry: PendingPermissionQueueEntry) {
+        pendingRemotePermission = entry.request
+        pendingRemotePrompt = entry.prompt
+        pendingRemoteConversationID = entry.conversationID
+        pendingRemoteModelID = entry.modelID
+        pendingRemoteAttachmentURLs = entry.attachmentURLs
+        pendingRemoteAssistantMessageID = entry.assistantMessageID
+        pendingRemoteGenerationID = entry.generationID
+        pendingRemotePermissionTrace = entry.trace
+        pendingPermissionUsesLocalRuntime = entry.usesLocalRuntime
+        pendingPermissionCreatedAt = entry.createdAt
+        permissionResolutionToken = nil
+        isResolvingPermission = false
+    }
+
+    private func enqueueOrActivatePermission(_ entry: PendingPermissionQueueEntry) {
+        if pendingRemotePermission == nil {
+            activatePendingPermission(entry)
+            return
+        }
+        if pendingRemoteConversationID == entry.conversationID,
+           let current = pendingRemotePermission,
+           current.id == entry.request.id {
+            if current != entry.request {
+                activatePendingPermission(entry)
+            }
+            return
+        }
+        if let index = pendingPermissionQueue.firstIndex(where: {
+            $0.conversationID == entry.conversationID && $0.request.id == entry.request.id
+        }) {
+            pendingPermissionQueue[index] = entry
+        } else {
+            pendingPermissionQueue.append(entry)
+        }
+    }
+
+    private func advancePendingPermission(
+        afterResolving resolvedRequest: MacRemotePermissionRequest,
+        conversationID: String,
+        usesLocalRuntime: Bool
+    ) {
+        pendingPermissionQueue.removeAll {
+            $0.conversationID == conversationID && $0.request.id == resolvedRequest.id
+        }
+        while !pendingPermissionQueue.isEmpty {
+            let next = pendingPermissionQueue.removeFirst()
+            if permissionRequestIsValid(
+                next.request,
+                conversationID: next.conversationID,
+                usesLocalRuntime: next.usesLocalRuntime
+            ) {
+                activatePendingPermission(next)
+                return
+            }
+        }
+        let savedPrompt = pendingRemotePrompt ?? ""
+        let savedModelID = pendingRemoteModelID ?? ""
+        let savedAttachmentURLs = pendingRemoteAttachmentURLs
+        let savedAssistantMessageID = pendingRemoteAssistantMessageID
+        let savedGenerationID = pendingRemoteGenerationID ?? activeGenerationID
+        clearPendingPermission(clearQueue: false)
+        if usesLocalRuntime,
+           let remaining = permissionProjectionsByConversation[conversationID]?.pending.first(where: {
+               $0.requestID != resolvedRequest.id
+           }) {
+            Task { @MainActor in
+                guard self.pendingRemotePermission == nil,
+                      let nextRequest = await self.localAgentRuntime.activePermissionRequest(
+                          conversationID: conversationID,
+                          requestID: remaining.requestID
+                      ),
+                      self.permissionRequestIsValid(nextRequest, conversationID: conversationID, usesLocalRuntime: true) else {
+                    return
+                }
+                self.enqueueOrActivatePermission(PendingPermissionQueueEntry(
+                    request: nextRequest,
+                    prompt: savedPrompt,
+                    conversationID: conversationID,
+                    modelID: savedModelID,
+                    attachmentURLs: savedAttachmentURLs,
+                    assistantMessageID: savedAssistantMessageID,
+                    generationID: savedGenerationID,
+                    usesLocalRuntime: true,
+                    trace: nil,
+                    createdAt: Date()
+                ))
+            }
+        }
+    }
+
+    private func clearPendingPermission(clearQueue: Bool = true) {
         if let pendingRemoteConversationID {
             permissionResolutionErrors[pendingRemoteConversationID] = nil
+            if clearQueue {
+                pendingPermissionQueue.removeAll { $0.conversationID == pendingRemoteConversationID }
+            }
+        } else if clearQueue {
+            pendingPermissionQueue.removeAll()
         }
         pendingRemotePermission = nil
         pendingRemotePrompt = nil
@@ -5746,7 +5874,17 @@ final class MacWorkspaceModel {
         let expectedSessionID = usesLocalRuntime
             ? localControlSessionID(conversationID: conversationID, generationID: activeGenerationID)
             : conversationID
-        guard request.sessionID == expectedSessionID else {
+        let sessionMatches: Bool
+        if request.sessionID == expectedSessionID {
+            sessionMatches = true
+        } else if request.isDelegatedSubagentRequest {
+            sessionMatches = usesLocalRuntime
+                ? (expectedSessionID != nil || localCoreSessionWitnesses[conversationID] != nil)
+                : true
+        } else {
+            sessionMatches = false
+        }
+        guard sessionMatches else {
             return false
         }
         if let expiresAt = request.expiresAt,
@@ -6681,23 +6819,33 @@ final class MacWorkspaceModel {
                             // Exact source/client/Run/root and live nonce were
                             // verified by the read adapter. Trace is not required.
                             if self.pendingRemotePermission?.nonce == request.nonce { continue }
-                            self.pendingRemotePermissionTrace = nil
-                            self.pendingRemotePermission = request
-                            self.pendingRemoteConversationID = conversationID
-                            self.pendingRemoteAssistantMessageID = assistant
-                            self.pendingRemoteGenerationID = generation
-                            self.pendingPermissionUsesLocalRuntime = false
-                            self.pendingPermissionCreatedAt = Date()
-                            self.isResolvingPermission = false
+                            self.enqueueOrActivatePermission(PendingPermissionQueueEntry(
+                                request: request,
+                                prompt: nil,
+                                conversationID: conversationID,
+                                modelID: nil,
+                                attachmentURLs: [],
+                                assistantMessageID: assistant,
+                                generationID: generation,
+                                usesLocalRuntime: false,
+                                trace: nil,
+                                createdAt: Date()
+                            ))
                         }
+                    }
+                    let liveBatchNonces = Set(batch.events.compactMap { $0.permissionRequest?.nonce })
+                    self.pendingPermissionQueue.removeAll {
+                        $0.conversationID == conversationID
+                            && !$0.usesLocalRuntime
+                            && !liveBatchNonces.contains($0.request.nonce)
                     }
                     if !self.isResolvingPermission,
                        self.pendingRemoteConversationID == conversationID,
                        self.pendingRemoteGenerationID == generation,
                        !self.pendingPermissionUsesLocalRuntime,
                        let pending = self.pendingRemotePermission,
-                       !batch.events.contains(where: { $0.permissionRequest?.nonce == pending.nonce }) {
-                        self.clearPendingPermission()
+                       !liveBatchNonces.contains(pending.nonce) {
+                        self.advancePendingPermission(afterResolving: pending, conversationID: conversationID, usesLocalRuntime: false)
                     }
                     if await self.reconcileCanonicalRunTerminal(conversationID: conversationID) {
                         guard self.remoteObservationLease == lease else { return }
@@ -7845,7 +7993,9 @@ final class MacWorkspaceModel {
             // Projection and authenticated Host challenge are independent
             // streams. Either arrival must reconcile their latest state; a
             // challenge alone is never authority to present a permission.
-            if request.sessionID == localControlSessionID(conversationID: conversationID, generationID: generationID),
+            let matchesControlSession = request.sessionID == localControlSessionID(conversationID: conversationID, generationID: generationID)
+                || request.isDelegatedSubagentRequest
+            if matchesControlSession,
                let coreSessionID = localCoreSessionID(conversationID: conversationID, generationID: generationID),
                let projection = permissionProjectionsByConversation[conversationID] {
                 await consumeCorePermissionProjection(
@@ -7863,9 +8013,10 @@ final class MacWorkspaceModel {
             return
         }
         if !permissionUsesLocalRuntime, let request = event.permissionRequest {
-            guard generationID == activeGenerationID,
+            guard (generationID == activeGenerationID
+                      || (request.isDelegatedSubagentRequest && conversationID == selectedConversationID)),
                   cancellationRequestedGenerationID != generationID,
-                  request.sessionID == conversationID,
+                  (request.sessionID == conversationID || request.isDelegatedSubagentRequest),
                   !request.id.isEmpty, !request.nonce.isEmpty,
                   !request.hostID.isEmpty, !request.clientID.isEmpty,
                   request.protocolVersion == MacRemotePermissionRequest.supportedProtocolVersion,
@@ -7897,22 +8048,22 @@ final class MacWorkspaceModel {
             let sequenceKey = MacRemotePermissionStreamIdentity(generationID: generationID, conversationID: conversationID, traceID: trace.traceID)
             guard remotePermissionEventSequence[sequenceKey].map({ trace.sequence > $0 }) ?? true else { return }
             remotePermissionEventSequence[sequenceKey] = trace.sequence
-            pendingRemotePermissionTrace = MacRemotePermissionTraceIdentity(
+            let traceIdentity = MacRemotePermissionTraceIdentity(
                 stream: sequenceKey, runID: trace.runID, turnID: trace.turnID,
                 requestID: request.id, callID: callID, createdSequence: trace.sequence
             )
-            pendingRemotePermission = request
-            pendingRemotePrompt = prompt
-            pendingRemoteConversationID = conversationID
-            pendingRemoteModelID = modelID
-            pendingRemoteAttachmentURLs = permissionAttachmentURLs
-            pendingRemoteAssistantMessageID = assistantMessageID
-            pendingRemoteGenerationID = generationID
-            pendingPermissionUsesLocalRuntime = false
-            pendingPermissionCreatedAt = Date()
-            // A successor interaction is independent of an in-flight response
-            // for its predecessor. That response cannot clear this request.
-            isResolvingPermission = false
+            enqueueOrActivatePermission(PendingPermissionQueueEntry(
+                request: request,
+                prompt: prompt,
+                conversationID: conversationID,
+                modelID: modelID,
+                attachmentURLs: permissionAttachmentURLs,
+                assistantMessageID: assistantMessageID,
+                generationID: generationID,
+                usesLocalRuntime: false,
+                trace: traceIdentity,
+                createdAt: Date()
+            ))
             return
         }
         if let permissionProjection = event.corePermissionProjection {
@@ -8066,41 +8217,59 @@ final class MacWorkspaceModel {
         // Remote cards carry a live Host nonce. A separately delivered Core
         // snapshot cannot retire that challenge before its matching response.
         guard permissionUsesLocalRuntime else { return }
+        let livePendingIDs = Set(envelope.permissionProjection.pending.map(\.requestID))
+        pendingPermissionQueue.removeAll {
+            $0.conversationID == conversationID
+                && $0.usesLocalRuntime
+                && !livePendingIDs.contains($0.request.id)
+        }
         if pendingRemoteConversationID == conversationID,
            pendingPermissionUsesLocalRuntime,
-           let requestID = pendingRemotePermission?.id {
-            if envelope.permissionProjection.pending.contains(where: { $0.requestID == requestID }) {
-                return
+           let activeRequest = pendingRemotePermission {
+            if !livePendingIDs.contains(activeRequest.id) {
+                advancePendingPermission(afterResolving: activeRequest, conversationID: conversationID, usesLocalRuntime: true)
             }
-            clearPendingPermission()
         }
         guard permissionUsesLocalRuntime,
               generationID == activeGenerationID,
-              cancellationRequestedGenerationID != generationID,
-              let identity = envelope.permissionProjection.pending.first,
-              let request = await localAgentRuntime.activePermissionRequest(
-                  conversationID: conversationID,
-                  requestID: identity.requestID
-              ),
-              request.sessionID == localControlSessionID(conversationID: conversationID, generationID: generationID),
-              request.callID == identity.callID,
-              request.toolName == identity.capabilityID,
-              generationID == activeGenerationID,
-              cancellationRequestedGenerationID != generationID,
-              expectedSessionID == localCoreSessionID(conversationID: conversationID, generationID: generationID),
-              permissionProjectionsByConversation[conversationID] == envelope.permissionProjection else {
+              cancellationRequestedGenerationID != generationID else {
             return
         }
-        pendingRemotePermission = request
-        pendingRemotePrompt = prompt
-        pendingRemoteConversationID = conversationID
-        pendingRemoteModelID = modelID
-        pendingRemoteAttachmentURLs = permissionAttachmentURLs
-        pendingRemoteAssistantMessageID = assistantMessageID
-        pendingRemoteGenerationID = generationID
-        pendingPermissionUsesLocalRuntime = true
-        pendingRemotePermissionTrace = nil
-        pendingPermissionCreatedAt = Date()
+        for identity in envelope.permissionProjection.pending {
+            if pendingRemoteConversationID == conversationID,
+               pendingRemotePermission?.id == identity.requestID {
+                continue
+            }
+            if pendingPermissionQueue.contains(where: { $0.conversationID == conversationID && $0.request.id == identity.requestID }) {
+                continue
+            }
+            guard let request = await localAgentRuntime.activePermissionRequest(
+                      conversationID: conversationID,
+                      requestID: identity.requestID
+                  ),
+                  (request.sessionID == localControlSessionID(conversationID: conversationID, generationID: generationID)
+                      || request.isDelegatedSubagentRequest),
+                  request.callID == identity.callID,
+                  request.toolName == identity.capabilityID,
+                  generationID == activeGenerationID,
+                  cancellationRequestedGenerationID != generationID,
+                  expectedSessionID == localCoreSessionID(conversationID: conversationID, generationID: generationID),
+                  permissionProjectionsByConversation[conversationID] == envelope.permissionProjection else {
+                continue
+            }
+            enqueueOrActivatePermission(PendingPermissionQueueEntry(
+                request: request,
+                prompt: prompt,
+                conversationID: conversationID,
+                modelID: modelID,
+                attachmentURLs: permissionAttachmentURLs,
+                assistantMessageID: assistantMessageID,
+                generationID: generationID,
+                usesLocalRuntime: true,
+                trace: nil,
+                createdAt: Date()
+            ))
+        }
     }
 
     private func localCoreSessionID(conversationID: String, generationID: UInt64) -> String? {

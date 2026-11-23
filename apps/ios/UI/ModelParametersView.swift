@@ -79,7 +79,7 @@ struct ModelParametersView: View {
         let topKValue = Double(LocalSamplingSettings(parameters: params).topK)
         let repetitionValue = LocalSamplingSettings(parameters: params).repetitionPenalty
         let seedValue = params.seed.map(String.init) ?? ""
-        let reasoningValue = params.reasoningPreference ?? "automatic"
+        let reasoningValue = params.effectiveReasoningDisplayPreference
         _maxContextLength = State(initialValue: params.maxContextLength)
         _maxOutputTokens = State(initialValue: params.maxOutputTokens)
         _topK = State(initialValue: topKValue)
@@ -299,6 +299,9 @@ struct ModelParametersView: View {
                         ForEach(reasoningEfforts, id: \.self) { effort in
                             Text(ReasoningEffortPresentation.label(effort)).tag(effort)
                         }
+                        if reasoningPreference != "automatic", !reasoningEfforts.contains(reasoningPreference) {
+                            Text(ReasoningEffortPresentation.label(reasoningPreference)).tag(reasoningPreference)
+                        }
                     }
                     .labelsHidden()
                     .accessibilityIdentifier("model-parameters-reasoning")
@@ -494,7 +497,7 @@ struct ModelParametersView: View {
         if isLocal { params.repetitionPenalty = repetitionPenalty }
         params.seed = Int(seedText.trimmingCharacters(in: .whitespacesAndNewlines))
         params.stopSequences = stopSequences
-        if reasoningPreference != (editingSnapshot?.parameters.reasoningPreference ?? "automatic") {
+        if reasoningPreference != (editingSnapshot?.parameters.effectiveReasoningDisplayPreference ?? "automatic") {
             params.reasoningPreference = reasoningPreference
             params.reasoningTier = nil
         }
@@ -542,7 +545,7 @@ struct ModelParametersView: View {
         repetitionPenalty = LocalSamplingSettings(parameters: params).repetitionPenalty
         seedText = params.seed.map(String.init) ?? ""
         stopSequences = params.stopSequences
-        reasoningPreference = params.reasoningPreference ?? "automatic"
+        reasoningPreference = params.effectiveReasoningDisplayPreference
         showThinking = params.showThinking
         streamOutput = params.streamOutput
         responseStyle = params.responseStyle

@@ -22,8 +22,9 @@ internal fun acceptHostPermissionEvent(
         event.id.isBlank() || event.nonce.isNullOrBlank() ||
         event.expiresAt == null || event.expiresAt < nowSeconds
     ) return null
-    // A replayed predecessor ask cannot replace the successor carrying its instruction.
-    if (state.permissionRequest?.permissionInstructions?.any { it.permissionRequestId == event.id } == true) return null
+    val existingQueue = state.hostPermissionQueue
+    // A replayed predecessor ask cannot replace or duplicate the successor carrying its instruction.
+    if (existingQueue.any { queued -> queued.permissionInstructions.any { it.permissionRequestId == event.id } }) return null
     val request = HostAgentPermissionRequest(
         allowConversation = event.allowConversation,
         id = event.id, toolName = event.toolName, args = event.args.mapValues { it.value },
@@ -31,15 +32,22 @@ internal fun acceptHostPermissionEvent(
         message = event.message, nonce = event.nonce, hostId = event.hostId,
         safeReviewText = event.safeReviewText,
         clientId = event.clientId, sessionId = event.sessionId,
+        taskId = event.taskId,
         expiresAt = event.expiresAt, protocolVersion = event.protocolVersion,
     )
-    // SSE recovery may replay an already visible challenge. Preserve the
-    // current object and interaction state so Compose does not reopen the
+    // SSE recovery may replay an already queued or visible challenge. Preserve
+    // the current object and interaction state so Compose does not reopen the
     // prompt or repeat its transition animation.
-    if (state.permissionRequest == request) return state
+    if (existingQueue.any { it == request }) return state
+    val nextQueue = if (existingQueue.any { it.id == request.id }) {
+        existingQueue.map { if (it.id == request.id) request else it }
+    } else {
+        existingQueue + request
+    }
     return state.copy(
         toolEvents = transitionHostToolPermission(state.toolEvents, request, "permission_required"),
-        permissionRequest = request,
+        pendingPermissionRequests = nextQueue,
+        permissionRequest = nextQueue.firstOrNull(),
         processingState = ProcessingState.Streaming,
         thinkingFinished = true,
     )

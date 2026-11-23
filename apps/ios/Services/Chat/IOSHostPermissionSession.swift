@@ -11,6 +11,16 @@ final class IOSHostPermissionSession {
         let conversationID: UUID?
         let submissionError: String?
         let isSubmitting: Bool
+        let pendingCount: Int
+    }
+
+    private struct QueuedInteraction {
+        let request: HostAgentPermissionRequest
+        let conversationID: UUID?
+        let isCurrent: () -> Bool
+        let send: ([String: Any]) async throws -> Void
+        let onSubmitted: (HostAgentPermissionDecision) -> Void
+        let onSubmissionFailure: (HostAgentPermissionRequest, Error) -> Void
     }
 
     var onStateChange: (@MainActor (State) -> Void)?
@@ -18,9 +28,11 @@ final class IOSHostPermissionSession {
     private var request: HostAgentPermissionRequest?
     private var conversationID: UUID?
     private var submissionError: String?
+    private var isActiveSubmitting = false
     private var continuation: CheckedContinuation<HostAgentPermissionDecision, Error>?
     private var interactionTask: Task<Void, Never>?
     private var interactionToken: UUID?
+    private var pendingQueue: [QueuedInteraction] = []
 
     func resolve(requestID: String, decision: HostAgentPermissionDecision) {
         guard let request, request.id == requestID, let continuation else { return }
@@ -31,8 +43,11 @@ final class IOSHostPermissionSession {
                     requestID: request.id,
                     existing: request.permissionInstructions ?? []
                   ) != nil else { return }
+        } else if case .returnToComposer = decision {
+            guard request.deviceBridge != true else { return }
         }
         self.continuation = nil
+        self.isActiveSubmitting = true
         publish(request: request, conversationID: conversationID, error: nil, isSubmitting: true)
         continuation.resume(returning: decision)
     }
@@ -70,7 +85,56 @@ final class IOSHostPermissionSession {
         // its nonce, expiry or review content. Only an exact replay is inert.
         if self.request == request, self.conversationID == conversationID,
            let interactionTask { return interactionTask }
-        cancel()
+        if pendingQueue.contains(where: { $0.request == request && $0.conversationID == conversationID }) {
+            return Task {}
+        }
+        // Renewed challenge for an already-queued request updates in place.
+        if let queuedIndex = pendingQueue.firstIndex(where: { $0.request.id == request.id }) {
+            pendingQueue[queuedIndex] = QueuedInteraction(
+                request: request,
+                conversationID: conversationID,
+                isCurrent: isCurrent,
+                send: send,
+                onSubmitted: onSubmitted,
+                onSubmissionFailure: onSubmissionFailure
+            )
+            return Task {}
+        }
+        // Queue concurrent distinct requests (e.g. multiple subagents) in FIFO order
+        // when the active card is still waiting for the user's decision.
+        // If the active request has the same ID (renewed nonce) or is already submitting
+        // (e.g. successor arrived while an earlier HTTP reply is in flight), replace active.
+        if let active = self.request, active.id != request.id, !isActiveSubmitting {
+            pendingQueue.append(QueuedInteraction(
+                request: request,
+                conversationID: conversationID,
+                isCurrent: isCurrent,
+                send: send,
+                onSubmitted: onSubmitted,
+                onSubmissionFailure: onSubmissionFailure
+            ))
+            publish(request: active, conversationID: self.conversationID, error: submissionError, isSubmitting: false)
+            return Task {}
+        }
+        return activate(
+            request,
+            conversationID: conversationID,
+            isCurrent: isCurrent,
+            send: send,
+            onSubmitted: onSubmitted,
+            onSubmissionFailure: onSubmissionFailure
+        )
+    }
+
+    private func activate(
+        _ request: HostAgentPermissionRequest,
+        conversationID: UUID?,
+        isCurrent: @escaping () -> Bool,
+        send: @escaping ([String: Any]) async throws -> Void,
+        onSubmitted: @escaping (HostAgentPermissionDecision) -> Void,
+        onSubmissionFailure: @escaping (HostAgentPermissionRequest, Error) -> Void
+    ) -> Task<Void, Never> {
+        cancelActiveOnly()
         let token = UUID()
         interactionToken = token
         let task = Task { @MainActor [weak self] in
@@ -97,10 +161,28 @@ final class IOSHostPermissionSession {
     }
 
     func cancel(requestID: String? = nil) {
-        if let requestID, request?.id != requestID { return }
+        if let requestID {
+            let removedQueued = pendingQueue.contains { $0.request.id == requestID }
+            pendingQueue.removeAll { $0.request.id == requestID }
+            if request?.id != requestID {
+                if removedQueued, let active = request {
+                    publish(request: active, conversationID: conversationID, error: submissionError, isSubmitting: isActiveSubmitting)
+                }
+                return
+            }
+            cancelActiveOnly()
+            promoteNextQueuedIfNeeded()
+            return
+        }
+        pendingQueue.removeAll()
+        cancelActiveOnly()
+    }
+
+    private func cancelActiveOnly() {
         interactionToken = nil
         interactionTask?.cancel()
         interactionTask = nil
+        isActiveSubmitting = false
         continuation?.resume(throwing: CancellationError())
         continuation = nil
         clear(requestID: request?.id)
@@ -116,6 +198,7 @@ final class IOSHostPermissionSession {
         var pendingFailure: Error?
         while true {
             guard isCurrent(), !Task.isCancelled else { throw CancellationError() }
+            isActiveSubmitting = false
             let decision = try await waitForDecision(request, conversationID: conversationID, onReady: {
                 if let pendingFailure { onSubmissionFailure(request, pendingFailure) }
             })
@@ -127,9 +210,11 @@ final class IOSHostPermissionSession {
             do {
                 try await send(Self.decisionPayload(for: request, decision: decision))
                 guard isCurrent(), !Task.isCancelled else { throw CancellationError() }
+                isActiveSubmitting = false
                 clear(requestID: request.id)
                 return decision
             } catch {
+                isActiveSubmitting = false
                 guard isCurrent(), !Task.isCancelled else {
                     clear(requestID: request.id)
                     throw CancellationError()
@@ -150,6 +235,7 @@ final class IOSHostPermissionSession {
         return try await withCheckedThrowingContinuation { continuation in
             self.continuation?.resume(throwing: CancellationError())
             self.continuation = continuation
+            self.isActiveSubmitting = false
             // Rendering can synchronously deliver a decision. Expose the card
             // only after its receiver exists; an early tap must not be lost.
             publish(request: request, conversationID: conversationID, error: submissionError)
@@ -159,6 +245,7 @@ final class IOSHostPermissionSession {
 
     func clear(requestID: String?) {
         guard let requestID, request?.id == requestID else { return }
+        isActiveSubmitting = false
         publish(request: nil, conversationID: nil, error: nil)
     }
 
@@ -166,6 +253,25 @@ final class IOSHostPermissionSession {
         guard interactionToken == token else { return }
         interactionTask = nil
         interactionToken = nil
+        isActiveSubmitting = false
+        promoteNextQueuedIfNeeded()
+    }
+
+    private func promoteNextQueuedIfNeeded() {
+        guard request == nil else { return }
+        while !pendingQueue.isEmpty {
+            let next = pendingQueue.removeFirst()
+            guard next.isCurrent() else { continue }
+            _ = activate(
+                next.request,
+                conversationID: next.conversationID,
+                isCurrent: next.isCurrent,
+                send: next.send,
+                onSubmitted: next.onSubmitted,
+                onSubmissionFailure: next.onSubmissionFailure
+            )
+            return
+        }
     }
 
     private func publish(
@@ -181,7 +287,8 @@ final class IOSHostPermissionSession {
             request: request,
             conversationID: conversationID,
             submissionError: error,
-            isSubmitting: isSubmitting
+            isSubmitting: isSubmitting,
+            pendingCount: request == nil ? 0 : 1 + pendingQueue.count
         ))
     }
 }

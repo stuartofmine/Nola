@@ -39,7 +39,9 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Computer
 import androidx.compose.material.icons.filled.Description
+import androidx.compose.material.icons.filled.PhotoCamera
 import androidx.compose.material.icons.filled.Public
+import androidx.compose.material.icons.filled.Terminal
 import androidx.compose.material.icons.filled.Warning
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
@@ -143,6 +145,10 @@ internal fun hostToolDisplayNameStringRes(toolName: String): Int? {
     return when (normalized) {
         "bash", "shell", "run_command", "execute_command", "bash_command_review",
         "bash_background_status", "bash_background_wait", "bash_background_stop", "terminal_input" -> R.string.chat_host_tool_name_command
+        "pty_exec" -> R.string.chat_host_tool_name_pty_exec
+        "pty_write" -> R.string.chat_host_tool_name_pty_write
+        "pty_screenshot" -> R.string.chat_host_tool_name_pty_screenshot
+        "pty_close" -> R.string.chat_host_tool_name_pty_close
         "read_file", "read_text_file", "read_many_files", "notebook_read", "file_outline",
         "read_symbol", "device_read_file" -> R.string.chat_host_tool_name_read_file
         "write_file", "create_file", "device_write_file" -> R.string.chat_host_tool_name_write_file
@@ -684,9 +690,11 @@ fun HostToolCard(
     }
 }
 
-private fun hostToolIcon(toolName: String): ImageVector {
-    val normalized = toolName.trim().lowercase()
+internal fun hostToolIcon(toolName: String): ImageVector {
+    val normalized = toolName.trim().lowercase().replace(Regex("[\\s-]+"), "_")
     return when {
+        normalized == "pty_screenshot" -> Icons.Filled.PhotoCamera
+        normalized.startsWith("pty_") -> Icons.Filled.Terminal
         hostToolIsBrowserTool(toolName) || normalized.contains("search") || normalized.contains("web") -> Icons.Filled.Public
         normalized.contains("file") || normalized.contains("read") || normalized.contains("write") -> Icons.Filled.Description
         else -> Icons.Filled.Computer
@@ -905,6 +913,8 @@ fun PermissionDialog(
     onProvideInstruction: ((String) -> Unit)? = null,
     permissionIdentity: String = toolName,
     permissionInstructions: List<com.nola.core.AgentPermissionInstruction> = emptyList(),
+    taskAttribution: String? = null,
+    pendingCount: Int = 1,
     modifier: Modifier = Modifier,
     allowEnabled: Boolean = true,
 ) {
@@ -923,6 +933,9 @@ fun PermissionDialog(
                 Column(Modifier.heightIn(max = 360.dp).verticalScroll(rememberScrollState())) {
                     androidx.compose.foundation.text.selection.SelectionContainer { Text(message) }
                     Spacer(Modifier.height(12.dp))
+                    if (!taskAttribution.isNullOrBlank()) {
+                        PermissionDetailRow(stringResource(R.string.chat_task_agent), taskAttribution)
+                    }
                     PermissionDetailRow(stringResource(R.string.permission_detail_location), executionLocation)
                     PermissionDetailRow(stringResource(R.string.permission_detail_data), dataBoundary)
                     PermissionDetailRow(stringResource(R.string.permission_detail_validity), validity)
@@ -952,7 +965,26 @@ fun PermissionDialog(
                 Spacer(modifier = Modifier.width(8.dp))
                 Text(
                     text = stringResource(R.string.permission_required_title, displayName),
-                    style = MaterialTheme.typography.titleSmall
+                    style = MaterialTheme.typography.titleSmall,
+                    modifier = Modifier.weight(1f),
+                )
+                if (pendingCount > 1) {
+                    Text(
+                        text = stringResource(R.string.permission_queue_pending, pendingCount),
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.tertiary,
+                        fontWeight = FontWeight.SemiBold,
+                    )
+                }
+            }
+            if (!taskAttribution.isNullOrBlank()) {
+                Spacer(modifier = Modifier.height(4.dp))
+                Text(
+                    text = stringResource(R.string.permission_from_subagent, taskAttribution),
+                    style = MaterialTheme.typography.labelMedium,
+                    color = MaterialTheme.colorScheme.primary,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
                 )
             }
             Spacer(modifier = Modifier.height(8.dp))

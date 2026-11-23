@@ -166,6 +166,12 @@ export function selectableSessionProfile(conversation: ChatConversation, profile
     return profile && profile.enabled && profile.endpoint.enabled !== false && profile.capabilities?.includes('chat') ? profile : null;
 }
 
+export function defaultCloudSessionProfile(conversation: ChatConversation, profiles: RemoteProfile[]): RemoteProfile | null {
+    if (conversation.selectedModelSource !== 'auto') return null;
+    const selectable = profiles.filter(item => item.enabled && item.endpoint.enabled !== false && item.capabilities?.includes('chat'));
+    return selectable.find(item => item.selected) ?? selectable[0] ?? null;
+}
+
 export function sessionReasoningOptions(profile: RemoteProfile, override: Record<string, unknown> = {}): string[] {
     const protocol = typeof override.wireProtocol === 'string' ? override.wireProtocol : profile.endpoint.wireProtocol;
     const value = override.reasoning && typeof override.reasoning === 'object' && !Array.isArray(override.reasoning)

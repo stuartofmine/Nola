@@ -213,9 +213,19 @@ public final class ModelSelectionManager {
         var request: [String: AgentCoreJSONValue] = [:]
         if let parameters {
             request["max_output_tokens"] = .signedInteger(Int64(parameters.maxOutputTokens))
+            let reasoningControl: String? = {
+                guard let source = try? JSONSerialization.jsonObject(with: Data(profile.sourceJSON.utf8)) as? [String: Any],
+                      let reasoning = source["reasoning"] as? [String: Any] else { return nil }
+                return reasoning["control"] as? String
+            }()
             if let preference = parameters.reasoningPreference {
-                request["reasoning_selection"] = preference == "automatic" ? .null
-                    : .object(["kind": .string("effort"), "value": .string(preference)])
+                if preference == "automatic" {
+                    request["reasoning_selection"] = .null
+                } else if reasoningControl == "budget", let tokens = Int64(preference) {
+                    request["reasoning_selection"] = .object(["kind": .string("budget"), "tokens": .signedInteger(tokens)])
+                } else {
+                    request["reasoning_selection"] = .object(["kind": .string("effort"), "value": .string(preference)])
+                }
             } else if let tier = parameters.reasoningTier { request["reasoning_tier"] = .string(tier) }
         }
         let resolution = try store.executeAgentCommand(.object(["type":.string("resolve_remote_model_profile"),

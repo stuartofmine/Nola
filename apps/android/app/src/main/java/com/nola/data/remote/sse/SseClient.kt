@@ -56,6 +56,7 @@ sealed class SseEvent {
         val hostId: String? = null,
         val clientId: String? = null,
         val sessionId: String? = null,
+        val taskId: String? = null,
         val expiresAt: Long? = null,
         val protocolVersion: Int? = null,
         val safeReviewText: String? = null

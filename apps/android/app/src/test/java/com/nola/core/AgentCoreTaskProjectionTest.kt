@@ -185,6 +185,39 @@ class AgentCoreTaskProjectionTest {
         assertEquals("task-1", submission["task_id"]?.jsonPrimitive?.content)
     }
 
+    @Test
+    fun taskHandleDecodesStatusMessageAndRecognizesStallStates() {
+        val warnTask = buildJsonObject {
+            put("id", "task-stall")
+            put("owner_session_id", "session-1")
+            put("owner_turn_id", "turn-1")
+            put("kind", "agent")
+            put("state", "running")
+            put("current_step", "stall_warning")
+            put("status_message", "No progress for 120 seconds")
+            put("cancel_requested", false)
+        }
+        val projection = decodeAgentCoreTaskProjection(
+            buildJsonObject {
+                put("revision", 1)
+                put("order", buildJsonArray { add("task-stall") })
+                put("tasks", buildJsonObject { put("task-stall", warnTask) })
+            },
+            expectedSessionId = "session-1",
+        ) ?: error("projection must decode")
+
+        val handle = projection.tasks.getValue("task-stall")
+        assertTrue(handle.isStallWarning)
+        assertFalse(handle.isStallTimeout)
+        assertTrue(handle.hasStallAlert)
+        assertEquals("No progress for 120 seconds", handle.statusMessage)
+
+        val timeoutHandle = handle.copy(currentStep = "stall_timeout", statusMessage = "Stalled beyond timeout")
+        assertFalse(timeoutHandle.isStallWarning)
+        assertTrue(timeoutHandle.isStallTimeout)
+        assertTrue(timeoutHandle.hasStallAlert)
+    }
+
     private fun update(
         cursor: Long,
         eventRevision: Long,

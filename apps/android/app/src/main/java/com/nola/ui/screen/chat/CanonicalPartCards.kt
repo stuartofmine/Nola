@@ -44,12 +44,28 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import android.content.Context
 import android.content.Intent
+import android.graphics.Bitmap
+import android.graphics.BitmapFactory
 import android.net.Uri
+import androidx.compose.foundation.Image
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.asImageBitmap
+import androidx.compose.ui.layout.ContentScale
 import androidx.core.content.FileProvider
 import androidx.compose.ui.semantics.Role
+import java.io.ByteArrayOutputStream
 import java.io.File
+import java.net.HttpURLConnection
+import java.net.URL
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
+import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.JsonElement
+import kotlinx.serialization.json.JsonNull
+import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.put
+import com.nola.ui.components.openableToolUri
 import com.nola.R
 import com.nola.ui.components.ThinkingBody
 import com.nola.ui.components.thinkingExpandedAfterStatusChange
@@ -130,13 +146,40 @@ internal fun CanonicalActivityCards(
     }
 }
 
-/** Error parts expose only typed code/display-key facts, never a display body.
- * Unknown keys therefore use the named local failure state at this exact anchor. */
+private val prettyToolJson = Json { prettyPrint = true }
+
+internal fun formatToolJsonPayload(element: JsonElement): String = when (element) {
+    is JsonNull -> ""
+    is JsonPrimitive -> if (element.isString) element.content else element.toString()
+    else -> runCatching {
+        prettyToolJson.encodeToString(JsonElement.serializer(), element)
+    }.getOrElse { element.toString() }
+}
+
+internal fun formatCanonicalErrorMessage(code: String, displayKey: String?, fallback: String): String {
+    fun humanize(raw: String): String {
+        val trimmed = raw.trim()
+        if (trimmed.isEmpty()) return ""
+        if (trimmed.any { it.isWhitespace() }) return trimmed
+        val leaf = trimmed.substringAfterLast('.')
+        val spaced = leaf.replace('_', ' ').replace('-', ' ').trim()
+        return spaced.replaceFirstChar { if (it.isLowerCase()) it.titlecase() else it.toString() }
+    }
+    val primary = displayKey?.let(::humanize).orEmpty().ifBlank { humanize(code) }
+    return primary.ifBlank { fallback }
+}
+
+/** Error parts expose typed code/display-key facts and surface a readable summary directly. */
 @Composable
 internal fun CanonicalErrorPart(part: ConversationProjectionV1.Part.Error, onReadText: (CanonicalPartTextSnapshot) -> Unit) {
     var details by remember(part.partId, part.code, part.displayKey) { mutableStateOf(false) }
-    Column(Modifier.fillMaxWidth().testTag("chat.error.${part.partId}")) {
-        Text(stringResource(R.string.canonical_part_error), color = MaterialTheme.colorScheme.error)
+    val headline = formatCanonicalErrorMessage(part.code, part.displayKey, stringResource(R.string.canonical_part_error))
+    Column(Modifier.fillMaxWidth().testTag("chat.error.${part.partId}"), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+        Text(headline, color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodyMedium)
+        val rawCode = part.code.trim()
+        if (rawCode.isNotEmpty() && !headline.equals(rawCode, ignoreCase = true)) {
+            Text(rawCode, color = MaterialTheme.colorScheme.onSurfaceVariant, style = MaterialTheme.typography.labelSmall)
+        }
         NolaDisclosureBar(
             title = stringResource(if (details) R.string.canonical_hide_details else R.string.canonical_details),
             expanded = details,
@@ -182,7 +225,12 @@ private fun CanonicalActivityRow(part: ConversationProjectionV1.Part.Tool, detai
                 facts.permission?.let { permission ->
                     Fact(part.partId, CanonicalPartReadField.ToolPermission, onReadText, stringResource(R.string.canonical_permission_record), listOfNotNull(permission.rationale, permission.permissionDomain, permission.decision).joinToString(" · "))
                 }
-                facts.result?.let { Fact(part.partId, CanonicalPartReadField.ToolResult, onReadText, stringResource(R.string.canonical_result), it.toString(), code = true) }
+                facts.result?.let { result ->
+                    val formatted = formatToolJsonPayload(result)
+                    if (formatted.isNotBlank()) {
+                        Fact(part.partId, CanonicalPartReadField.ToolResult, onReadText, stringResource(R.string.canonical_result), formatted, code = true)
+                    }
+                }
                 facts.preview?.let { Fact(part.partId, CanonicalPartReadField.ToolPreview, onReadText, stringResource(R.string.canonical_preview), it, code = true) }
                 facts.startedAtMs?.let {
                     Fact(part.partId, CanonicalPartReadField.ToolStarted, onReadText, stringResource(R.string.canonical_started),
@@ -201,7 +249,10 @@ private fun CanonicalActivityRow(part: ConversationProjectionV1.Part.Tool, detai
                     Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
                         Text(listOfNotNull(facts.capabilityId, facts.origin.providerTitle, facts.origin.namespace).joinToString(" · "),
                             style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                        Fact(part.partId, CanonicalPartReadField.ToolInput, onReadText, stringResource(R.string.canonical_input), facts.input.toString(), code = true)
+                        val formattedInput = formatToolJsonPayload(facts.input)
+                        if (formattedInput.isNotBlank()) {
+                            Fact(part.partId, CanonicalPartReadField.ToolInput, onReadText, stringResource(R.string.canonical_input), formattedInput, code = true)
+                        }
                         Fact(part.partId, CanonicalPartReadField.ToolOrigin, onReadText, stringResource(R.string.canonical_origin), listOfNotNull(facts.origin.kind, facts.origin.providerId, facts.origin.providerTitle, facts.origin.namespace).joinToString(" · "))
                         facts.permission?.let { Fact(part.partId, CanonicalPartReadField.ToolPermissionIdentity, onReadText, stringResource(R.string.canonical_permission_record), it.requestId) }
                         // Owner facts are selectable display only; there is intentionally no open/download action.
@@ -318,17 +369,101 @@ internal fun openAttachmentPreview(
     }
 }
 
+private const val ARTIFACT_IMAGE_MAX_BYTES = 5 * 1024 * 1024
+
+internal fun isImageArtifact(artifact: PartArtifact): Boolean {
+    val mime = artifact.mimeType?.trim()?.lowercase().orEmpty()
+    if (mime.startsWith("image/")) return true
+    val lowerUri = artifact.uri.trim().lowercase().substringBefore('?')
+    return lowerUri.endsWith(".png") || lowerUri.endsWith(".jpg") || lowerUri.endsWith(".jpeg") ||
+        lowerUri.endsWith(".webp") || lowerUri.endsWith(".gif")
+}
+
+private suspend fun loadArtifactImageBitmap(context: Context, uriString: String): Bitmap? = withContext(Dispatchers.IO) {
+    val trimmed = uriString.trim()
+    if (trimmed.isEmpty()) return@withContext null
+    runCatching {
+        val bytes = when {
+            openableToolUri(trimmed) != null -> {
+                val safeUrl = openableToolUri(trimmed) ?: return@runCatching null
+                val connection = (URL(safeUrl).openConnection() as? HttpURLConnection) ?: return@runCatching null
+                connection.connectTimeout = 5_000
+                connection.readTimeout = 10_000
+                connection.instanceFollowRedirects = false
+                try {
+                    if (connection.responseCode !in 200..299) return@runCatching null
+                    val contentType = connection.contentType?.lowercase().orEmpty()
+                    if (contentType.isNotBlank() && !contentType.startsWith("image/")) return@runCatching null
+                    readArtifactBoundedBytes(connection.inputStream, ARTIFACT_IMAGE_MAX_BYTES)
+                } finally {
+                    connection.disconnect()
+                }
+            }
+            trimmed.startsWith("content://") -> {
+                context.contentResolver.openInputStream(Uri.parse(trimmed))?.use {
+                    readArtifactBoundedBytes(it, ARTIFACT_IMAGE_MAX_BYTES)
+                }
+            }
+            trimmed.startsWith("file://") || trimmed.startsWith("/") -> {
+                val path = if (trimmed.startsWith("file://")) Uri.parse(trimmed).path ?: return@runCatching null else trimmed
+                val file = File(path)
+                if (!file.isFile || file.length() > ARTIFACT_IMAGE_MAX_BYTES) return@runCatching null
+                file.inputStream().use { readArtifactBoundedBytes(it, ARTIFACT_IMAGE_MAX_BYTES) }
+            }
+            else -> null
+        } ?: return@runCatching null
+        BitmapFactory.decodeByteArray(bytes, 0, bytes.size)
+    }.getOrNull()
+}
+
+private fun readArtifactBoundedBytes(stream: java.io.InputStream, maxBytes: Int): ByteArray? {
+    val output = ByteArrayOutputStream()
+    val buffer = ByteArray(8 * 1024)
+    var total = 0
+    while (true) {
+        val read = stream.read(buffer)
+        if (read < 0) break
+        total += read
+        if (total > maxBytes) return null
+        output.write(buffer, 0, read)
+    }
+    return output.toByteArray()
+}
+
 @Composable
 private fun ArtifactCard(artifact: PartArtifact) {
     val context = LocalContext.current
     val canOpen = canPreviewAttachmentUri(artifact.uri)
-    val titleModifier = if (canOpen) Modifier.fillMaxWidth().heightIn(min = 48.dp).clickable(role = Role.Button) {
-        openAttachmentPreview(context, artifact.uri, artifact.mimeType, artifact.name)
-    } else Modifier
-    Text(artifact.name, titleModifier, style = MaterialTheme.typography.labelMedium,
-        color = if (canOpen) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface)
-    val metadata = listOfNotNull(artifact.mimeType, artifact.operation).filter { it.isNotBlank() }.joinToString(" · ")
-    if (metadata.isNotEmpty()) Text(metadata, style = MaterialTheme.typography.labelSmall)
+    val showImagePreview = canOpen && isImageArtifact(artifact)
+    var previewBitmap by remember(artifact.uri) { mutableStateOf<Bitmap?>(null) }
+    if (showImagePreview) {
+        LaunchedEffect(artifact.uri) {
+            previewBitmap = loadArtifactImageBitmap(context, artifact.uri)
+        }
+    }
+    Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+        previewBitmap?.let { bitmap ->
+            Image(
+                bitmap = bitmap.asImageBitmap(),
+                contentDescription = artifact.name,
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .heightIn(max = 220.dp)
+                    .clip(RoundedCornerShape(8.dp))
+                    .clickable(role = Role.Button) {
+                        openAttachmentPreview(context, artifact.uri, artifact.mimeType, artifact.name)
+                    },
+                contentScale = ContentScale.Fit,
+            )
+        }
+        val titleModifier = if (canOpen) Modifier.fillMaxWidth().heightIn(min = 48.dp).clickable(role = Role.Button) {
+            openAttachmentPreview(context, artifact.uri, artifact.mimeType, artifact.name)
+        } else Modifier
+        Text(artifact.name, titleModifier, style = MaterialTheme.typography.labelMedium,
+            color = if (canOpen) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface)
+        val metadata = listOfNotNull(artifact.mimeType, artifact.operation).filter { it.isNotBlank() }.joinToString(" · ")
+        if (metadata.isNotEmpty()) Text(metadata, style = MaterialTheme.typography.labelSmall)
+    }
 }
 
 @Composable

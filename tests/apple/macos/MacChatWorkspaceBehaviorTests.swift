@@ -4736,3 +4736,99 @@ private func brightPixelCount(
     }
     return count
 }
+
+final class MacAuditFixesRegressionTests: XCTestCase {
+    func testPTYAndBackgroundBashToolLabelsAndSymbols() {
+        XCTAssertTrue(
+            MacToolPresentationPolicy.displayTitle(
+                for: "pty_exec",
+                arguments: #"{"command":"python3 run_demo.py"}"#
+            ).contains("run_demo.py")
+        )
+        XCTAssertNotEqual(MacToolPresentationPolicy.displayTitle(for: "pty_write"), "pty_write")
+        XCTAssertNotEqual(MacToolPresentationPolicy.displayTitle(for: "pty_screenshot"), "pty_screenshot")
+        XCTAssertNotEqual(MacToolPresentationPolicy.displayTitle(for: "pty_close"), "pty_close")
+
+        let statusTitle = MacToolPresentationPolicy.displayTitle(for: "bash_background_status")
+        let waitTitle = MacToolPresentationPolicy.displayTitle(for: "bash_background_wait")
+        let stopTitle = MacToolPresentationPolicy.displayTitle(for: "bash_background_stop")
+        XCTAssertEqual(Set([statusTitle, waitTitle, stopTitle]).count, 3)
+
+        let ptyScreenshot = MacAssistantTrace(kind: .tool, title: "pty_screenshot", detail: "", state: .completed)
+        let ptyWrite = MacAssistantTrace(kind: .tool, title: "pty_write", detail: "", state: .completed)
+        let ptyExec = MacAssistantTrace(kind: .tool, title: "pty_exec", detail: "", state: .completed)
+        let ptyClose = MacAssistantTrace(kind: .tool, title: "pty_close", detail: "", state: .completed)
+        XCTAssertEqual(ptyScreenshot.toolSymbol, "camera.viewfinder")
+        XCTAssertEqual(ptyWrite.toolSymbol, "terminal")
+        XCTAssertEqual(ptyExec.toolSymbol, "terminal")
+        XCTAssertEqual(ptyClose.toolSymbol, "terminal")
+    }
+
+    func testJournalActivityCoverageTracksFailurePartsAndStallSymbols() {
+        let identity = MacAssistantJournalIdentity(
+            source_store_epoch: "test",
+            conversation_id: "conv-1",
+            run_id: "run-1",
+            assistant_message_id: "msg-1"
+        )
+        var coverage = MacJournalActivityCoverage()
+        coverage.adopt(identity: identity, partIDs: ["p1"], taskIDs: [], failurePartIDs: ["p1"])
+        XCTAssertTrue(coverage.hasFailure(identity: identity))
+
+        XCTAssertEqual(MacJournalActivityTitle.symbol(state: "cancelling"), "xmark.circle")
+        XCTAssertEqual(MacJournalActivityTitle.symbol(state: "stall_warning"), "exclamationmark.triangle")
+        XCTAssertEqual(MacJournalActivityTitle.symbol(state: "stall_timeout"), "exclamationmark.triangle")
+    }
+
+    func testDelegatedSubagentPermissionAttributionFlag() {
+        let base = MacRemotePermissionRequest(
+            id: "req-1",
+            allowConversation: false,
+            protocolVersion: 1,
+            nonce: "n1",
+            hostID: "local",
+            clientID: "c1",
+            sessionID: "child-session-1",
+            toolName: "bash",
+            arguments: "{}",
+            reason: "Run command",
+            message: "Allow?",
+            expiresAt: nil
+        )
+        XCTAssertFalse(base.isDelegatedSubagentRequest)
+
+        let delegated = MacRemotePermissionRequest(
+            id: "req-2",
+            allowConversation: false,
+            protocolVersion: 1,
+            nonce: "n2",
+            hostID: "local",
+            clientID: "c1",
+            sessionID: "child-session-1",
+            toolName: "bash",
+            arguments: "{}",
+            reason: "Run command",
+            message: "Allow?",
+            expiresAt: nil,
+            taskID: "task-123"
+        )
+        XCTAssertTrue(delegated.isDelegatedSubagentRequest)
+    }
+
+    func testReasoningConfigSupportsAnthropicEffortAndSiwcResponses() {
+        let anthropicEffort = MacReasoningConfiguration(
+            control: .effort,
+            responses: false,
+            efforts: ["low", "medium", "high", "xhigh", "max"]
+        )
+        XCTAssertTrue(anthropicEffort.isValid(for: .anthropic))
+        XCTAssertTrue(MacReasoningConfiguration.availableControls(for: .anthropic).contains(.effort))
+
+        let siwc = MacReasoningConfiguration(
+            control: .effort,
+            responses: true,
+            efforts: ["none", "minimal", "low", "medium", "high", "xhigh", "max"]
+        )
+        XCTAssertTrue(siwc.isValid(for: .siwcResponses))
+    }
+}

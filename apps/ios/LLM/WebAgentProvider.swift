@@ -362,6 +362,7 @@ public struct HostAgentPermissionRequest: Identifiable, Codable, Equatable {
     public let protocolVersion: Int?
     public let originKind: String?
     public let deviceBridge: Bool?
+    public let taskID: String?
     public let permissionInstructions: [AgentPermissionInstruction]?
 
     public init(
@@ -381,6 +382,7 @@ public struct HostAgentPermissionRequest: Identifiable, Codable, Equatable {
         protocolVersion: Int? = nil,
         deviceBridge: Bool = false,
         originKind: String? = nil,
+        taskID: String? = nil,
         permissionInstructions: [AgentPermissionInstruction] = []
     ) {
         self.id = id
@@ -399,6 +401,7 @@ public struct HostAgentPermissionRequest: Identifiable, Codable, Equatable {
         self.protocolVersion = protocolVersion
         self.deviceBridge = deviceBridge
         self.originKind = originKind
+        self.taskID = taskID
         self.permissionInstructions = permissionInstructions
     }
 }
@@ -407,17 +410,24 @@ public enum HostAgentPermissionDecision: Equatable, Sendable {
     case deny
     case allowOnce
     case allowConversation
-
+    case returnToComposer
     case provideInstruction(String)
 
     public var isAllowed: Bool {
-        switch self { case .allowOnce, .allowConversation: true; case .deny, .provideInstruction: false }
+        switch self {
+        case .allowOnce, .allowConversation: true
+        case .deny, .returnToComposer, .provideInstruction: false
+        }
     }
     public var resolutionPayload: [String: Any] {
-        if case .provideInstruction(let instruction) = self {
+        switch self {
+        case .provideInstruction(let instruction):
             return ["type": "intervention", "intervention": ["type": "provide_instruction", "instruction": instruction]]
+        case .returnToComposer:
+            return ["type": "intervention", "intervention": ["type": "return_to_composer"]]
+        case .deny, .allowOnce, .allowConversation:
+            return ["type": "authorization", "decision": wireValue]
         }
-        return ["type": "authorization", "decision": wireValue]
     }
     nonisolated public static func validatedInstruction(_ text: String, requestID: String = "", existing: [AgentPermissionInstruction] = []) -> HostAgentPermissionDecision? {
         let instruction = text.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -436,6 +446,7 @@ public enum HostAgentPermissionDecision: Equatable, Sendable {
         case .deny: "deny"
         case .allowOnce: "allow_once"
         case .allowConversation: "allow_conversation"
+        case .returnToComposer: "return_to_composer"
         case .provideInstruction: "provide_instruction"
         }
     }
@@ -3182,6 +3193,9 @@ public struct WebAgentProvider: LLMClient, LLMRemoteAuxiliaryInvocationProviding
             }
             return text
         }()
+        let taskID = (object["task_id"] as? String)
+            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+            .flatMap { $0.isEmpty ? nil : $0 }
         return HostAgentPermissionRequest(
             id: id,
             allowConversation: allowConversation,
@@ -3197,6 +3211,7 @@ public struct WebAgentProvider: LLMClient, LLMRemoteAuxiliaryInvocationProviding
             canonicalRunID: object["canonical_run_id"] as? String,
             expiresAt: (object["expires_at"] as? NSNumber)?.int64Value,
             protocolVersion: (object["protocol_version"] as? NSNumber)?.intValue,
+            taskID: taskID,
             permissionInstructions: instructions
         )
     }

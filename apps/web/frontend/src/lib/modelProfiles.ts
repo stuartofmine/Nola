@@ -43,7 +43,7 @@ export function canSelectProfile(profile: RemoteProfile): boolean {
 const efforts = ['none', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max'];
 
 export function reasoningOptions(value: ReasoningConfiguration, protocol: string, outputLimit = value.outputLimit ?? 16384) {
-    if (value.control === 'effort' && ['responses', 'chat_completions', 'anthropic'].includes(protocol)) {
+    if (value.control === 'effort' && ['responses', 'siwc_responses', 'chat_completions', 'anthropic'].includes(protocol)) {
         return efforts.filter(option => value.efforts?.includes(option));
     }
     return value.control === 'budget' && protocol === 'anthropic'
@@ -54,7 +54,7 @@ export function reasoningOptions(value: ReasoningConfiguration, protocol: string
 }
 
 export function reasoningValidationError(value: ReasoningConfiguration, protocol: string, outputLimit: number): ModelValidationIssue | null {
-    if (!['responses', 'chat_completions', 'anthropic'].includes(protocol)) return { code: 'modelValidation.protocol' };
+    if (!['responses', 'siwc_responses', 'chat_completions', 'anthropic'].includes(protocol)) return { code: 'modelValidation.protocol' };
     if (value.efforts?.some(option => !efforts.includes(option))) return { code: 'modelValidation.efforts' };
     if (value.budgets?.some(budget => !Number.isSafeInteger(budget) || budget < 0)) return { code: 'modelValidation.budgets' };
     if (value.control === 'budget' && protocol !== 'anthropic') {
@@ -82,7 +82,7 @@ export function executionParameterValidationError(profile: RemoteProfile): Model
     const parameters = profile.parameters;
     if (profile.executionCapabilities?.samplingRequiresNoReasoning
         && (!profile.executionCapabilities.samplingParameters || !profile.executionCapabilities.reasoning
-            || profile.endpoint.wireProtocol !== 'responses' || profile.reasoning?.control !== 'effort'
+            || !['responses', 'siwc_responses'].includes(profile.endpoint.wireProtocol) || profile.reasoning?.control !== 'effort'
             || !profile.reasoning.efforts?.includes('none'))) return { code: 'modelValidation.executionSamplingReasoning' };
     if (!profile.executionCapabilities?.samplingParameters
         && (Number(parameters.temperature ?? 0.7) !== 0.7 || Number(parameters.topP ?? 0.9) !== 0.9)) {
@@ -91,7 +91,7 @@ export function executionParameterValidationError(profile: RemoteProfile): Model
     const penalty = Number(parameters.presencePenalty ?? 0) !== 0 || Number(parameters.frequencyPenalty ?? 0) !== 0;
     const seed = parameters.seed != null;
     const stop = String(parameters.stopSequences ?? '') !== '';
-    if (profile.endpoint.wireProtocol === 'responses' && (penalty || seed || stop)
+    if (['responses', 'siwc_responses'].includes(profile.endpoint.wireProtocol) && (penalty || seed || stop)
         || profile.endpoint.wireProtocol === 'anthropic' && (penalty || seed)) {
         return { code: 'modelValidation.protocolParameters' };
     }

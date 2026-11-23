@@ -38,6 +38,7 @@ internal fun ChatUiState.newConversationPresentation(defaultPermission: AndroidA
     thinkingFinished = false,
     toolEvents = emptyList(),
     permissionRequest = null,
+    pendingPermissionRequests = emptyList(),
     contextUsage = 0f,
     contextTokens = 0,
     contextMaxTokens = currentParameters.maxContextTokens,

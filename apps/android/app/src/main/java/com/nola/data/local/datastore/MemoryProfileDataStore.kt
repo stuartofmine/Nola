@@ -105,9 +105,13 @@ class MemoryProfileDataStore @Inject constructor(
         val response=applicationRuntime.execute(kotlinx.serialization.json.buildJsonObject {
             put("type","resolve_remote_model_profile"); put("profile_id",profile.id); put("expected_revision",profile.revision)
             put("request",kotlinx.serialization.json.buildJsonObject {
-                if (parameters?.reasoningPreference != null) {
-                    put("reasoning_selection", if (parameters.reasoningPreference == "automatic") kotlinx.serialization.json.JsonNull
-                        else kotlinx.serialization.json.buildJsonObject { put("kind", "effort"); put("value", parameters.reasoningPreference) })
+                val selectedPref = parameters?.reasoningPreference
+                if (selectedPref != null) {
+                    when (selectedPref) {
+                        "automatic" -> put("reasoning_selection", kotlinx.serialization.json.JsonNull)
+                        "concise", "balanced", "detailed" -> put("reasoning_tier", selectedPref)
+                        else -> put("reasoning_selection", kotlinx.serialization.json.buildJsonObject { put("kind", "effort"); put("value", selectedPref) })
+                    }
                 } else parameters?.reasoningTier?.let { put("reasoning_tier",it) }
             })
         }).jsonObject

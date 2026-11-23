@@ -112,6 +112,7 @@ import androidx.compose.material.icons.filled.ExpandLess
 import androidx.compose.material.icons.filled.ExpandMore
 import androidx.compose.material.icons.filled.Error
 import androidx.compose.material.icons.filled.Info
+import androidx.compose.material.icons.filled.Warning
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.CircularProgressIndicator
@@ -1558,9 +1559,12 @@ internal fun ChatScreen(
                             )
                         }
                         }
-                        ReasoningEffortMenu(efforts, state.currentParameters.reasoningPreference ?: "automatic",
+                        ReasoningEffortMenu(
+                            efforts,
+                            state.currentParameters.reasoningPreference ?: state.currentParameters.reasoningTier ?: "automatic",
                             enabled = !savingReasoning && !state.processingState.blocksInput,
-                            onSelect = viewModel::selectReasoningPreference)
+                            onSelect = viewModel::selectReasoningPreference,
+                        )
                     }
                 },
                 inputText = inputText,
@@ -2138,8 +2142,17 @@ internal fun ChatTranscript(
             }
 
             state.permissionRequest?.let { request ->
+                val taskAttribution = request.taskId?.let { taskId ->
+                    state.coreTaskProjection.tasks[taskId]?.lineage?.title?.takeIf { it.isNotBlank() } ?: taskId
+                }
                 item(key = "host_permission_${request.id}") {
-                    HostPermissionCard(request, onResolveHostPermission, onHostPermissionInstruction)
+                    HostPermissionCard(
+                        request = request,
+                        onDecision = onResolveHostPermission,
+                        onInstruction = onHostPermissionInstruction,
+                        taskAttribution = taskAttribution,
+                        pendingCount = state.hostPermissionQueue.size,
+                    )
                 }
             }
             state.agentPermissionRequest?.takeIf { state.agentPermissionAction == null }?.let { request ->
@@ -2990,8 +3003,13 @@ internal fun ConversationExpertReplyBubble(reply: ChatViewModel.ConversationExpe
 }
 
 @Composable
-private fun HostPermissionCard(request: com.nola.domain.model.HostAgentPermissionRequest,
-    onDecision: (String, Boolean, Boolean) -> Unit, onInstruction: (String, String) -> Unit) {
+private fun HostPermissionCard(
+    request: com.nola.domain.model.HostAgentPermissionRequest,
+    onDecision: (String, Boolean, Boolean) -> Unit,
+    onInstruction: (String, String) -> Unit,
+    taskAttribution: String? = request.taskId,
+    pendingCount: Int = 1,
+) {
     PermissionDialog(toolName = request.toolName,
         message = listOf(request.safeReviewText.orEmpty(), request.message, if (request.permissionInstructions.isEmpty()) "" else
             stringResource(R.string.permission_guidance_recorded) + "\n" + request.permissionInstructions.joinToString("\n") { it.instruction }
@@ -3006,6 +3024,7 @@ private fun HostPermissionCard(request: com.nola.domain.model.HostAgentPermissio
         onAllowConversation = if (!request.deviceBridge && request.allowConversation) ({ onDecision(request.id, true, true) }) else null,
         onAllow = { onDecision(request.id, true, false) }, onDeny = { onDecision(request.id, false, false) },
         permissionIdentity = request.id, permissionInstructions = request.permissionInstructions,
+        taskAttribution = taskAttribution, pendingCount = pendingCount,
         onProvideInstruction = if (!request.deviceBridge) ({ instruction -> onInstruction(request.id, instruction) }) else null)
 }
 
@@ -3339,7 +3358,10 @@ fun MessageBubble(
                 }
                 if (message.meta?.get(com.nola.domain.projection.CONVERSATION_SURFACE_MESSAGE_STATE_META_KEY) == "failed") {
                     Text(
-                        text = stringResource(R.string.chat_response_failed),
+                        text = stringResource(
+                            if (failedMessageHasVisibleText(message)) R.string.chat_response_failed
+                            else R.string.chat_response_failed_empty
+                        ),
                         color = MaterialTheme.colorScheme.error,
                         style = MaterialTheme.typography.bodyMedium,
                         modifier = Modifier.fillMaxWidth().padding(vertical = 8.dp),
@@ -3525,6 +3547,16 @@ private fun AgentCoreTaskList(
     }
 }
 
+internal fun failedMessageHasVisibleText(message: ConversationMessage): Boolean =
+    if (message.canonicalParts.isNotEmpty()) {
+        message.canonicalParts.any { part ->
+            (part is ConversationProjectionV1.Part.Text && part.disclosedMarkdown.isNotBlank()) ||
+                (part is ConversationProjectionV1.Part.Historical && !part.projection.timelineText.isNullOrBlank())
+        }
+    } else {
+        message.text.isNotBlank()
+    }
+
 @Composable
 internal fun AgentCoreTaskCard(
     task: AgentCoreTaskHandle,
@@ -3546,6 +3578,8 @@ internal fun AgentCoreTaskCard(
     val guidanceScope = rememberCoroutineScope()
     val active = task.state.isActive
     val waitingForInput = control?.state == ConversationProjectionV1.ActivityState.WaitingForInput
+    val stallTimeout = task.isStallTimeout
+    val stallWarning = task.isStallWarning
     val terminalIcon = when (task.state) {
         AgentCoreTaskState.Sealed -> Icons.Filled.Info
         AgentCoreTaskState.Completed -> Icons.Filled.Check
@@ -3553,11 +3587,38 @@ internal fun AgentCoreTaskCard(
         AgentCoreTaskState.Cancelled -> Icons.Filled.Close
         else -> null
     }
+    val statusBadgeText = when {
+        stallTimeout -> stringResource(R.string.chat_task_stall_timeout)
+        stallWarning -> stringResource(R.string.chat_task_stall_warning)
+        task.cancelRequested && active -> stringResource(R.string.chat_task_status_cancelling)
+        task.state == AgentCoreTaskState.Queued -> stringResource(R.string.chat_task_status_queued)
+        task.state == AgentCoreTaskState.Running -> stringResource(R.string.chat_task_status_running)
+        task.state == AgentCoreTaskState.Waiting -> stringResource(R.string.chat_task_status_waiting)
+        task.state == AgentCoreTaskState.Suspended -> stringResource(R.string.chat_task_status_suspended)
+        task.state == AgentCoreTaskState.RetryWaiting -> stringResource(R.string.chat_task_status_retrying)
+        else -> null
+    }
+    val statusBadgeTint = when {
+        stallTimeout -> MaterialTheme.colorScheme.error
+        stallWarning -> com.nola.ui.components.NolaColors.warning
+        task.cancelRequested && active -> MaterialTheme.colorScheme.error
+        else -> MaterialTheme.colorScheme.primary
+    }
+    val readableDetailText = when {
+        task.hasStallAlert -> task.statusMessage?.takeIf { it.isNotBlank() }
+        else -> task.statusMessage?.takeIf { it.isNotBlank() } ?: task.currentStep?.takeIf { it.isNotBlank() }
+    }
     Column(
         modifier = Modifier
             .fillMaxWidth()
             .clip(RoundedCornerShape(NolaRadius.md))
-            .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.34f)),
+            .background(
+                when {
+                    stallTimeout -> MaterialTheme.colorScheme.errorContainer.copy(alpha = 0.28f)
+                    stallWarning -> com.nola.ui.components.NolaColors.warning.copy(alpha = 0.10f)
+                    else -> MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.34f)
+                }
+            ),
     ) {
         val toggleLabel = stringResource(if (expanded) R.string.common_collapse else R.string.common_expand)
         Row(
@@ -3570,7 +3631,14 @@ internal fun AgentCoreTaskCard(
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.spacedBy(10.dp),
         ) {
-            if (waitingForInput) {
+            if (stallTimeout || stallWarning) {
+                Icon(
+                    imageVector = Icons.Filled.Warning,
+                    contentDescription = statusBadgeText,
+                    modifier = Modifier.size(18.dp),
+                    tint = if (stallTimeout) MaterialTheme.colorScheme.error else com.nola.ui.components.NolaColors.warning,
+                )
+            } else if (waitingForInput) {
                 Icon(Icons.Filled.Info, contentDescription = null, modifier = Modifier.size(18.dp),
                     tint = MaterialTheme.colorScheme.tertiary)
             } else if (active) {
@@ -3601,7 +3669,15 @@ internal fun AgentCoreTaskCard(
                     style = MaterialTheme.typography.labelLarge,
                     fontWeight = FontWeight.SemiBold,
                 )
-                task.currentStep?.let { step ->
+                if (statusBadgeText != null) {
+                    Text(
+                        text = statusBadgeText,
+                        style = MaterialTheme.typography.labelSmall,
+                        color = statusBadgeTint,
+                        fontWeight = FontWeight.SemiBold,
+                    )
+                }
+                readableDetailText?.let { step ->
                     Text(step, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 2, overflow = TextOverflow.Ellipsis)
                 }
                 if (waitingForInput) ActivityStateBadge(ConversationProjectionV1.ActivityState.WaitingForInput)
@@ -3613,6 +3689,12 @@ internal fun AgentCoreTaskCard(
             task.progress?.takeIf { active }?.let { progress ->
                 Text("${(progress * 100).toInt()}%", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
             }
+            com.nola.ui.components.NolaDisclosureChevron(
+                expanded = expanded,
+                reduceMotion = reduceMotion,
+                modifier = Modifier.size(18.dp),
+                contentDescription = toggleLabel,
+            )
         }
         AnimatedVisibility(visible = expanded, enter = nolaDisclosureEnter(reduceMotion), exit = nolaDisclosureExit(reduceMotion)) {
             Column(

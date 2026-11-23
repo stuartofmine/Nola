@@ -35,10 +35,23 @@
     const expanded = $derived(userExpanded ?? (value.kind === 'error' || value.kind !== 'model_attempt' && value.state === 'failed'));
     const terminal = $derived(['sealed', 'completed', 'cancelled', 'failed'].includes(String(value.state)));
     const hasSuccessor = $derived(value.kind === 'model_attempt' && typeof value.fallback_attempt_id === 'string' && !!value.fallback_attempt_id.trim());
-    const title = $derived(['task', 'task_control'].includes(value.kind) ? t($locale, 'chatPage.backgroundTaskNumber', {number: taskNumber}) : value.kind === 'model_attempt' ? t($locale, hasSuccessor ? 'chatPage.requestRestarted' : 'chatPage.modelAttempt') :
+    const namedTitle = $derived([value.title, value.display_name, value.name]
+        .find(item => typeof item === 'string' && item.trim().length > 0) as string | undefined);
+    const title = $derived(['task', 'task_control'].includes(value.kind) ? (namedTitle ?? t($locale, 'chatPage.backgroundTaskNumber', {number: taskNumber})) : value.kind === 'model_attempt' ? t($locale, hasSuccessor ? 'chatPage.requestRestarted' : 'chatPage.modelAttempt') :
         value.kind === 'compaction' ? t($locale, 'chatPage.compactionRecord') : value.kind === 'historical' ? t($locale, 'chatPage.historicalRecord') :
-        [value.title, value.display_name, value.name]
-        .find(item => typeof item === 'string' && item.length) as string | undefined);
+        namedTitle);
+    const warningKind = $derived(
+        value.current_step === 'stall_warning' ? 'stall_warning'
+        : value.state === 'stall_timeout' || value.current_step === 'stall_timeout' ? 'stall_timeout'
+        : value.state === 'cancelling' ? 'cancelling'
+        : null
+    );
+    const warningLabel = $derived(
+        warningKind === 'stall_warning' ? t($locale, 'chatPage.stallWarning')
+        : warningKind === 'stall_timeout' ? t($locale, 'chatPage.stallTimeout')
+        : warningKind === 'cancelling' ? t($locale, 'chatPage.stateCancelling')
+        : ''
+    );
     const failure = $derived(typeof value.failure === 'string' ? value.failure : value.failure && typeof value.failure === 'object' && !Array.isArray(value.failure) && 'message' in value.failure ? value.failure.message : null);
     const detail = $derived([terminal ? null : value.current_step, value.snippet, failure, value.preview, value.kind === 'compaction' ? value.summary : null]
         .filter(item => typeof item === 'string' && item.length).join('\n\n'));
@@ -77,8 +90,8 @@
         {#if detail}<div class="skill-body"><Markdown source={detail} /></div>{/if}
     </section>
 {:else if showSummary}
-    <details use:replyDisclosure class="journal-detail" data-part-id={part.id} open={expanded}>
-        <summary class="part-summary" onclick={event => { event.preventDefault(); userExpanded = !expanded; }}>{title || t($locale, 'chatPage.details')}{#if stateLabel} · {stateLabel}{/if}</summary>
+    <details use:replyDisclosure class="journal-detail" class:warning={!!warningKind} data-part-id={part.id} open={expanded}>
+        <summary class="part-summary" onclick={event => { event.preventDefault(); userExpanded = !expanded; }}>{title || t($locale, 'chatPage.details')}{#if stateLabel} · {stateLabel}{/if}{#if warningLabel} <span class="warning-badge" data-warning={warningKind}>{warningLabel}</span>{/if}</summary>
         {@render content()}
     </details>
 {:else}
@@ -98,6 +111,8 @@
     .skill-info p { margin: 4px 0; }
     @media (pointer: coarse) { .skill-info > summary { min-height: 44px; } }
     .journal-detail { margin: .55rem 0; }
+    .journal-detail.warning { border-inline-start: 3px solid var(--warning, #d97706); padding-inline-start: 10px; }
+    .warning-badge { display: inline-flex; align-items: center; margin-inline-start: 6px; padding: 1px 6px; border-radius: 999px; font-size: .75rem; font-weight: 600; color: var(--warning, #d97706); background: color-mix(in srgb, var(--warning, #d97706) 14%, transparent); }
     .task-conversation, button { display: inline-flex; align-items: center; min-height: 44px; }
     summary { cursor: pointer; overflow-wrap: anywhere; min-height: 44px; box-sizing: border-box; padding-block: 12px; }
     pre { white-space: pre-wrap; overflow-wrap: anywhere; font-size: .8125rem; }

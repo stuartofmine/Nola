@@ -373,15 +373,26 @@ public final class ModelParametersStore: ObservableObject {
             guard let source = try? JSONSerialization.jsonObject(with: Data(profile.sourceJSON.utf8)) as? [String: Any],
                   let reasoning = source["reasoning"] as? [String: Any] else { return false }
             let capabilities = source["executionCapabilities"] as? [String: Any]
+            let control = reasoning["control"] as? String
             return profile.runtime == "remote" && capabilities?["reasoning"] as? Bool == true
-                && reasoning["control"] as? String == "effort"
+                && (control == "effort" || control == "budget")
         }
     }
 
     func reasoningEfforts(for snapshot: ParameterSnapshot) throws -> [String] {
         guard snapshot.offersReasoningTiers else { return [] }
         let source = try JSONSerialization.jsonObject(with: Data(snapshot.profile.sourceJSON.utf8)) as? [String: Any]
-        return (source?["reasoning"] as? [String: Any])?["efforts"] as? [String] ?? []
+        guard let reasoning = source?["reasoning"] as? [String: Any] else { return [] }
+        if reasoning["control"] as? String == "budget" {
+            if let budgets = reasoning["budgets"] as? [Int] {
+                return budgets.filter { $0 > 0 }.map(String.init)
+            }
+            if let numbers = reasoning["budgets"] as? [NSNumber] {
+                return numbers.map(\.intValue).filter { $0 > 0 }.map(String.init)
+            }
+            return []
+        }
+        return reasoning["efforts"] as? [String] ?? []
     }
 
     func parameterSnapshot(for modelID: String) throws -> ParameterSnapshot {
@@ -407,4 +418,20 @@ public final class ModelParametersStore: ObservableObject {
         return revision
     }
     #endif
+}
+
+extension ModelParameters {
+    /// Reflects an explicit reasoning preference, falling back to an explicitly
+    /// set `reasoningTier` before defaulting to `"automatic"`.
+    public var effectiveReasoningDisplayPreference: String {
+        if let preference = reasoningPreference?.trimmingCharacters(in: .whitespacesAndNewlines),
+           !preference.isEmpty {
+            return preference
+        }
+        if let tier = reasoningTier?.trimmingCharacters(in: .whitespacesAndNewlines),
+           !tier.isEmpty {
+            return tier
+        }
+        return "automatic"
+    }
 }

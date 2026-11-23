@@ -4,7 +4,10 @@ import SwiftUI
 nonisolated enum ReasoningEffortPresentation {
     static var title: String { label("title") }
     static func label(_ value: String) -> String {
-        NSLocalizedString("reasoning.effort." + value, tableName: "Reasoning", value: value, comment: "Model reasoning effort")
+        if let tokens = Int(value), tokens > 0 {
+            return "\(tokens) tokens"
+        }
+        return NSLocalizedString("reasoning.effort." + value, tableName: "Reasoning", value: value, comment: "Model reasoning effort")
     }
 }
 
@@ -21,6 +24,9 @@ struct ReasoningEffortMenu: View {
                     Text(ReasoningEffortPresentation.label("automatic")).tag("automatic")
                     ForEach(efforts, id: \.self) { effort in
                         Text(ReasoningEffortPresentation.label(effort)).tag(effort)
+                    }
+                    if preference != "automatic", !efforts.contains(preference) {
+                        Text(ReasoningEffortPresentation.label(preference)).tag(preference)
                     }
                 }
             } label: {

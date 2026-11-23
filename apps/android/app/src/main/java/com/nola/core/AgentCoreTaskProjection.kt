@@ -91,11 +91,21 @@ data class AgentCoreTaskHandle(
     val state: AgentCoreTaskState,
     val progress: Double? = null,
     val currentStep: String? = null,
+    val statusMessage: String? = null,
     val resultRef: String? = null,
     val cancelRequested: Boolean = false,
     val lineage: AgentCoreTaskLineage = AgentCoreTaskLineage(),
     val durability: AgentCoreTaskDurability = AgentCoreTaskDurability(),
 ) {
+    val isStallWarning: Boolean
+        get() = currentStep.equals("stall_warning", ignoreCase = true)
+
+    val isStallTimeout: Boolean
+        get() = currentStep.equals("stall_timeout", ignoreCase = true)
+
+    val hasStallAlert: Boolean
+        get() = isStallWarning || isStallTimeout
+
     /** Shape/owner check only. Core and Store remain responsible for receipt authenticity. */
     val hasValidResultShape: Boolean get() {
         if (state != AgentCoreTaskState.Sealed) {
@@ -345,6 +355,7 @@ private fun JsonObject.toAgentCoreTaskHandle(): AgentCoreTaskHandle? {
         state = state,
         progress = (this["progress"] as? JsonPrimitive)?.doubleOrNull,
         currentStep = stringValue("current_step"),
+        statusMessage = stringValue("status_message")?.takeIf { it.isNotBlank() },
         resultRef = stringValue("result_ref"),
         cancelRequested = (this["cancel_requested"] as? JsonPrimitive)?.booleanOrNull ?: false,
         lineage = objectValue("lineage")?.toAgentCoreTaskLineage()

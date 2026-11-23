@@ -62,6 +62,7 @@ data class ChatUiState(
     val thinkingFinished: Boolean = false,
     val toolEvents: List<HostAgentToolEvent> = emptyList(),
     val permissionRequest: HostAgentPermissionRequest? = null,
+    val pendingPermissionRequests: List<HostAgentPermissionRequest> = emptyList(),
     val contextUsage: Float = 0f,
     val contextTokens: Int = 0,
     val contextMaxTokens: Int = 32000,
@@ -145,6 +146,12 @@ data class ChatUiState(
     }
     val responseStyle: String get() = responseStyleOverride ?: currentParameters.responseStyle
     val effectiveGenerationParameters: ModelParameters get() = generationOverride.applyingTo(currentParameters)
+    val hostPermissionQueue: List<HostAgentPermissionRequest>
+        get() = when {
+            pendingPermissionRequests.isNotEmpty() -> pendingPermissionRequests
+            permissionRequest != null -> listOf(permissionRequest)
+            else -> emptyList()
+        }
 }
 
 enum class CompactionSourceStatus { Idle, Loading, Unavailable, Failed }
@@ -240,6 +247,7 @@ internal fun ChatUiState.beginAssistantTurn(
     thinkingFinished = false,
     toolEvents = emptyList(),
     permissionRequest = null,
+    pendingPermissionRequests = emptyList(),
     answerSources = emptyList(),
     coreTaskProjection = AgentCoreTaskProjection(),
     coreSkillProjection = com.nola.core.AgentCoreSkillRuntimeProjection(),
@@ -307,6 +315,7 @@ internal fun ChatUiState.completeAssistantTurn(message: ConversationMessage): Ch
         thinkingFinished = false,
         toolEvents = emptyList(),
         permissionRequest = null,
+        pendingPermissionRequests = emptyList(),
     )
 }
 
@@ -351,7 +360,8 @@ internal fun ChatUiState.applyCanonicalContextUsage(
 
 /** Absence of a Run does not erase a committed rejection of its submission. */
 internal fun ChatUiState.withRemoteOwnerAbsent(preserveSubmissionOutcome: Boolean): ChatUiState = copy(
-    processingState = ProcessingState.Idle, hostGoalInProgress = false, permissionRequest = null,
+    processingState = ProcessingState.Idle, hostGoalInProgress = false,
+    permissionRequest = null, pendingPermissionRequests = emptyList(),
     activeResponseId = null, activeResponseStartedAt = null,
     error = if (preserveSubmissionOutcome) error else null,
     permissionConfigurationOwner = com.nola.data.local.PermissionConfigurationOwner.Inactive,

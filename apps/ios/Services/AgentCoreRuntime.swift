@@ -495,6 +495,7 @@ nonisolated public struct AgentCoreTaskHandle: Codable, Equatable, Identifiable,
     public let state: AgentCoreTaskState
     public let progress: Double?
     public let currentStep: String?
+    public let statusMessage: String?
     public let resultRef: String?
     public let cancelRequested: Bool
     public let lineage: AgentCoreTaskLineage?
@@ -505,8 +506,27 @@ nonisolated public struct AgentCoreTaskHandle: Codable, Equatable, Identifiable,
         case ownerSessionId = "owner_session_id"
         case ownerTurnId = "owner_turn_id"
         case currentStep = "current_step"
+        case statusMessage = "status_message"
         case resultRef = "result_ref"
         case cancelRequested = "cancel_requested"
+    }
+
+    public var isStallWarning: Bool {
+        currentStep?.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() == "stall_warning"
+    }
+
+    public var isStallTimeout: Bool {
+        currentStep?.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() == "stall_timeout"
+    }
+
+    public var isStalled: Bool {
+        isStallWarning || isStallTimeout
+    }
+
+    public var trimmedStatusMessage: String? {
+        guard let trimmed = statusMessage?.trimmingCharacters(in: .whitespacesAndNewlines),
+              !trimmed.isEmpty else { return nil }
+        return trimmed
     }
 
     var isValid: Bool {

@@ -213,7 +213,7 @@ export function createWorkspaceDrafts(repository: ConversationDraftRepository | 
         contentTabs, readingPositions,
         knowledge: new SvelteMap<string, KnowledgeDraft>(),
         rooms: new SvelteMap<string, RoomDraft>(),
-        replyNotices: new SvelteMap<string, { submissionId: string; userMessageId: string; assistantMessageId: string; kind: 'notSent' | 'uncertain' }[]>(),
+        replyNotices: new SvelteMap<string, { submissionId: string; userMessageId: string; assistantMessageId: string; kind: 'notSent' | 'uncertain'; detail?: string }[]>(),
         submissions: new Map<string, {submissionId: string; text: string; attachmentIds: string[]}>(),
         transports: new Set<AbortController>(),
         completions, sources: createBrowserSourceRecovery(completions, pending =>

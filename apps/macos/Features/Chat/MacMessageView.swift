@@ -149,8 +149,23 @@ struct MacMessageView: View {
         return false
     }
 
+    private var hasJournalFailureCard: Bool {
+        guard let reference = message.journalReference else { return false }
+        if journalActivityCoverage.hasFailure(identity: reference.cursor.identity) {
+            return true
+        }
+        if let parts = journalPresentationOwner?.projection(matching: reference)?.parts {
+            return parts.contains {
+                if case .error = $0.metadata { return true }
+                return false
+            }
+        }
+        return false
+    }
+
     private var showsAssistantFailureFallback: Bool {
-        MacAssistantFailurePresentationPolicy.showsFallbackCard(
+        guard !hasJournalFailureCard else { return false }
+        return MacAssistantFailurePresentationPolicy.showsFallbackCard(
             deliveryState: message.deliveryState,
             traces: message.presentation?.traceItems ?? []
         )
@@ -963,6 +978,13 @@ private struct MacAssistantTaskCard: View {
 
     private var model: MacCoreTaskUIModel { .init(task: task) }
 
+    private var hasStallWarning: Bool {
+        let step = task.currentStep?.lowercased() ?? ""
+        let detail = model.detail.lowercased()
+        return step.contains("stall_warning") || step.contains("stall_timeout")
+            || detail.contains("stall_warning") || detail.contains("stall_timeout")
+    }
+
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
             Button {
@@ -977,11 +999,18 @@ private struct MacAssistantTaskCard: View {
                             .font(.system(size: 12.5, weight: .semibold))
                             .foregroundStyle(.primary)
                         if !model.detail.isEmpty {
-                            Text(model.detail)
-                                .font(.system(size: 12))
-                                .foregroundStyle(.secondary)
-                                .lineLimit(2)
-                                .transaction { $0.animation = nil }
+                            HStack(spacing: 4) {
+                                if hasStallWarning {
+                                    Image(systemName: "exclamationmark.triangle.fill")
+                                        .font(.system(size: 11, weight: .semibold))
+                                        .foregroundStyle(MacDesignColor.warning)
+                                }
+                                Text(model.detail)
+                                    .font(.system(size: 12))
+                                    .foregroundStyle(hasStallWarning ? MacDesignColor.warning : .secondary)
+                                    .lineLimit(2)
+                                    .transaction { $0.animation = nil }
+                            }
                         }
                     }
                     Spacer(minLength: 8)
@@ -1060,7 +1089,7 @@ private struct MacAssistantTaskCard: View {
                         .frame(height: 30)
                         .background(Color.primary.opacity(0.045), in: RoundedRectangle(cornerRadius: 8, style: .continuous))
                     }
-                    if !readOnly, canControlTasks, model.isActive {
+                    if !readOnly, canControlTasks, model.canCancel {
                         Button(role: .destructive) {
                             showsCancelConfirmation = true
                         } label: {

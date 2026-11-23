@@ -129,5 +129,13 @@ test('actual permission component never renders raw arguments or nonce and disab
         const parsedOnce = parseChatPermission(onceOnly)!;
         assert.throws(() => permissionDecision(parsedOnce, 'allow_conversation'));
         assert.equal(permissionDecision(parsedOnce, 'allow_once').resolution.decision, 'allow_once');
+        const delegated = { ...input, task_id: 'subagent-task-42', message: 'Needs permission' };
+        const parsedDelegated = parseChatPermission(delegated)!;
+        assert.equal(parsedDelegated.task_id, 'subagent-task-42');
+        assert.equal(parsedDelegated.reason, 'secret-reason');
+        assert.equal(parsedDelegated.message, 'Needs permission');
+        const delegatedHtml = render(Component, { props: { challenge: delegated, reviewText: 'Run command' } }).body;
+        assert.ok(delegatedHtml.includes('data-task-id="subagent-task-42"'));
+        assert.ok(!delegatedHtml.includes('secret-reason'));
     } finally { await server.close(); }
 });

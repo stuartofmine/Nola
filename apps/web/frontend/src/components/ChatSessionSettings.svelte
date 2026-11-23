@@ -11,7 +11,7 @@
     import { commitSessionModel, recoverSessionModel } from '../lib/sessionModelCommit';
     import { canSelectProfile } from '../lib/modelProfiles';
     import { sessionConfigurationPatchConfirmed, sessionPermissionApplicationStatus } from '../lib/chatSessionSettings';
-    import { localSessionProfile, parseSessionConfiguration, parseSessionLocalModels, parseSessionProfiles, permissionPatchConfirmed, sessionConfigurationPatch, sessionDraft, sessionDraftError, sessionModelKey, sessionModelSelectionConfirmed, sessionPatchHasChanges, sessionPermissionPatch, sessionReasoningOptions, selectableSessionProfile } from '../lib/chatSessionSettings';
+    import { defaultCloudSessionProfile, localSessionProfile, parseSessionConfiguration, parseSessionLocalModels, parseSessionProfiles, permissionPatchConfirmed, sessionConfigurationPatch, sessionDraft, sessionDraftError, sessionModelKey, sessionModelSelectionConfirmed, sessionPatchHasChanges, sessionPermissionPatch, sessionReasoningOptions, selectableSessionProfile } from '../lib/chatSessionSettings';
     import type { PermissionChoice, SessionConfiguration, SessionDraft, SessionLocalModel, SessionNumberField, SessionPermissionModeState, SessionReasoningQuickState, SessionModelChoiceState } from '../lib/chatSessionSettings';
     import ConfirmationDialog from './ConfirmationDialog.svelte';
     import type { ConfirmationHandle } from '../lib/confirmation';
@@ -38,10 +38,12 @@
     let controller: AbortController | undefined;
     const modelKey = $derived(sessionModelKey(conversation));
     const profile = $derived(localSessionProfile(conversation, localModels) ?? selectableSessionProfile(conversation, profiles));
+    const autoProfile = $derived(defaultCloudSessionProfile(conversation, profiles));
+    const effectiveProfile = $derived(profile ?? autoProfile);
     $effect(() => { const name = profile?.displayName ?? ''; untrack(() => onmodelname?.(name)); });
-    const editKey = $derived(profile ? modelKey : null);
+    const editKey = $derived(profile ? modelKey : autoProfile ? `configured:${autoProfile.id}` : null);
     const override = $derived(editKey && snapshot ? snapshot.modelOverrides[editKey] ?? {} : {});
-    const reasoningOptions = $derived(profile ? sessionReasoningOptions(profile, override) : []);
+    const reasoningOptions = $derived(effectiveProfile ? sessionReasoningOptions(effectiveProfile, override) : []);
     const validation = $derived(draft ? sessionDraftError(draft, reasoningOptions) : null);
     const original = $derived(snapshot ? sessionDraft(snapshot, editKey) : null);
     const changed = $derived(!!draft && !!original && JSON.stringify(draft) !== JSON.stringify(original));
@@ -57,7 +59,7 @@
     const reasoningState: SessionReasoningQuickState = $derived({
         preference: draft?.reasoningPreference ?? 'inherit',
         options: reasoningOptions,
-        ready: !!snapshot && !!draft && !!profile,
+        ready: !!snapshot && !!draft && !!effectiveProfile,
         busy: locked || conflict || changed,
         errorKey: error,
     });
@@ -97,8 +99,12 @@
             if (configuration.status === 'rejected') throw configuration.reason;
             const parsed = configuration.value;
             snapshot = parsed;
-            if (discardDraft || !draft) draft = sessionDraft(parsed,
-                localSessionProfile(conversation, localModels) || selectableSessionProfile(conversation, profiles) ? sessionModelKey(conversation) : null);
+            if (discardDraft || !draft) {
+                const resolvedKey = localSessionProfile(conversation, localModels) || selectableSessionProfile(conversation, profiles)
+                    ? sessionModelKey(conversation)
+                    : (() => { const fallback = defaultCloudSessionProfile(conversation, profiles); return fallback ? `configured:${fallback.id}` : null; })();
+                draft = sessionDraft(parsed, resolvedKey);
+            }
             conflict = false;
         } catch {
             if (sameOwner(id, epoch) && request === version && !next.signal.aborted) error = 'chatSession.loadFailed';
@@ -204,7 +210,7 @@
         } finally { if (sameOwner(id, epoch)) saving = false; }
     }
     export async function selectReasoningPreference(preference: string): Promise<void> {
-        if (!snapshot || !draft || !profile || locked || conflict || changed
+        if (!snapshot || !draft || !effectiveProfile || locked || conflict || changed
             || !['inherit', 'automatic', ...reasoningOptions].includes(preference)
             || preference === draft.reasoningPreference) return;
         const id = conversation.conversationId, epoch = generation;

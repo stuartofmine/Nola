@@ -690,3 +690,187 @@ final class IOSPermissionModeAndProviderUsageTests: XCTestCase {
         XCTAssertNil(LLMStreamUsage().promptTokens); XCTAssertNil(LLMStreamUsage().totalTokens)
     }
 }
+
+final class IOSAuditFixesRegressionTests: XCTestCase {
+    func testReasoningDisplayPreferenceFallsBackToReasoningTier() {
+        var params = ModelParameters.webAlignedCloudDefaults
+        params.reasoningPreference = nil
+        params.reasoningTier = "detailed"
+        XCTAssertEqual(params.effectiveReasoningDisplayPreference, "detailed")
+
+        params.reasoningPreference = "high"
+        XCTAssertEqual(params.effectiveReasoningDisplayPreference, "high")
+
+        params.reasoningPreference = nil
+        params.reasoningTier = nil
+        XCTAssertEqual(params.effectiveReasoningDisplayPreference, "automatic")
+    }
+
+    func testTaskHandleDecodesStatusMessageAndDetectsStallStates() throws {
+        let warnJSON = """
+        {
+            "id": "task-1",
+            "owner_session_id": "conv-1",
+            "owner_turn_id": "turn-1",
+            "kind": "agent",
+            "state": "running",
+            "current_step": "stall_warning",
+            "status_message": "No progress for 90s while waiting on model.",
+            "cancel_requested": false
+        }
+        """
+        let warned = try JSONDecoder().decode(AgentCoreTaskHandle.self, from: Data(warnJSON.utf8))
+        XCTAssertEqual(warned.statusMessage, "No progress for 90s while waiting on model.")
+        XCTAssertTrue(warned.isStallWarning)
+        XCTAssertFalse(warned.isStallTimeout)
+        XCTAssertEqual(ChatTaskStallPresentation.kind(for: warned), .warning)
+        XCTAssertEqual(
+            ChatTaskStallPresentation.kind(for: warned)?.displayMessage(statusMessage: warned.trimmedStatusMessage),
+            "No progress for 90s while waiting on model."
+        )
+
+        let timeoutJSON = """
+        {
+            "id": "task-2",
+            "owner_session_id": "conv-1",
+            "owner_turn_id": "turn-1",
+            "kind": "agent",
+            "state": "running",
+            "current_step": "stall_timeout",
+            "cancel_requested": false
+        }
+        """
+        let timedOut = try JSONDecoder().decode(AgentCoreTaskHandle.self, from: Data(timeoutJSON.utf8))
+        XCTAssertNil(timedOut.statusMessage)
+        XCTAssertTrue(timedOut.isStallTimeout)
+        XCTAssertEqual(ChatTaskStallPresentation.kind(for: timedOut), .timeout)
+        XCTAssertNotEqual(
+            ChatTaskStallPresentation.kind(for: timedOut)?.displayMessage(statusMessage: nil),
+            "stall_timeout"
+        )
+    }
+
+    func testPermissionRequestDecodesTaskIDAndReturnToComposerPayload() throws {
+        let object: [String: Any] = [
+            "id": "perm-sub-1",
+            "allow_conversation": true,
+            "tool_name": "pty_exec",
+            "match": "ls",
+            "reason": "Run command",
+            "task_id": "subtask-42",
+            "permission_instructions": [],
+        ]
+        let parsed = try XCTUnwrap(WebAgentProvider.permissionRequest(from: object))
+        XCTAssertEqual(parsed.taskID, "subtask-42")
+
+        let payload = HostAgentPermissionDecision.returnToComposer.resolutionPayload
+        XCTAssertEqual(payload["type"] as? String, "intervention")
+        let intervention = try XCTUnwrap(payload["intervention"] as? [String: Any])
+        XCTAssertEqual(intervention["type"] as? String, "return_to_composer")
+        XCTAssertFalse(HostAgentPermissionDecision.returnToComposer.isAllowed)
+        XCTAssertEqual(HostAgentPermissionDecision.returnToComposer.wireValue, "return_to_composer")
+    }
+
+    @MainActor
+    func testHostPermissionSessionQueuesConcurrentRequestsInFIFOOrder() async throws {
+        let session = IOSHostPermissionSession()
+        let conversation = UUID()
+        let first = HostAgentPermissionRequest(
+            id: "subagent-1", allowConversation: true, toolName: "pty_exec",
+            match: "cmd1", nonce: "n1", taskID: "task-a"
+        )
+        let second = HostAgentPermissionRequest(
+            id: "subagent-2", allowConversation: true, toolName: "pty_write",
+            match: "cmd2", nonce: "n2", taskID: "task-b"
+        )
+        var visibleIDs: [String] = []
+        var sentIDs: [String] = []
+        let firstReady = expectation(description: "First card visible")
+        let secondReady = expectation(description: "Second card promoted")
+        let bothSubmitted = expectation(description: "Both decisions submitted")
+        bothSubmitted.expectedFulfillmentCount = 2
+
+        session.onStateChange = { state in
+            guard let req = state.request, !state.isSubmitting else { return }
+            if visibleIDs.last != req.id {
+                visibleIDs.append(req.id)
+                if req.id == first.id { firstReady.fulfill() }
+                if req.id == second.id { secondReady.fulfill() }
+            }
+        }
+
+        _ = session.start(first, conversationID: conversation, isCurrent: { true }, send: { payload in
+            sentIDs.append(payload["request_id"] as! String)
+        }, onSubmitted: { _ in bothSubmitted.fulfill() }, onSubmissionFailure: { _, err in
+            XCTFail("Unexpected error: \(err)")
+        })
+        await fulfillment(of: [firstReady], timeout: 1)
+
+        // Second concurrent request must queue rather than overwrite active unanswered request.
+        _ = session.start(second, conversationID: conversation, isCurrent: { true }, send: { payload in
+            sentIDs.append(payload["request_id"] as! String)
+        }, onSubmitted: { _ in bothSubmitted.fulfill() }, onSubmissionFailure: { _, err in
+            XCTFail("Unexpected error: \(err)")
+        })
+        XCTAssertEqual(visibleIDs, [first.id])
+
+        // Resolving first promotes second in FIFO order.
+        session.resolve(requestID: first.id, decision: .allowOnce)
+        await fulfillment(of: [secondReady], timeout: 1)
+        XCTAssertEqual(visibleIDs, [first.id, second.id])
+
+        session.resolve(requestID: second.id, decision: .returnToComposer)
+        await fulfillment(of: [bothSubmitted], timeout: 1)
+        XCTAssertEqual(sentIDs, [first.id, second.id])
+    }
+
+    func testToolTimestampFormatterProducesCleanClockAndDuration() {
+        let utc = TimeZone(secondsFromGMT: 0)!
+        let startMs: UInt64 = 1_700_000_000_000 // 2023-11-14 22:13:20 UTC
+        XCTAssertEqual(
+            ChatToolTimestampFormatter.format(startedAtMs: startMs, finishedAtMs: nil, timeZone: utc),
+            "22:13:20"
+        )
+        XCTAssertEqual(
+            ChatToolTimestampFormatter.format(startedAtMs: startMs, finishedAtMs: startMs + 450, timeZone: utc),
+            "22:13:20 → 22:13:20 (450 ms)"
+        )
+        XCTAssertEqual(
+            ChatToolTimestampFormatter.format(startedAtMs: startMs, finishedAtMs: startMs + 2_500, timeZone: utc),
+            "22:13:20 → 22:13:22 (2.5s)"
+        )
+    }
+
+    func testFailedSummaryShowsDirectErrorWhenNoProcessStepsExist() {
+        let emptyFailed = ChatMessage(
+            role: .assistant,
+            content: "",
+            metadata: [
+                ChatConversationSurfaceMeta.stateKey: IOSConversationProjectionV1.MessageState.failed.rawValue,
+                "nola.error": "Quota exhausted for this billing period."
+            ]
+        )
+        XCTAssertEqual(
+            ChatResponseStatusPolicy.failedSummary(for: emptyFailed),
+            "Quota exhausted for this billing period."
+        )
+
+        let bareFailed = ChatMessage(
+            role: .assistant,
+            content: "",
+            metadata: [ChatConversationSurfaceMeta.stateKey: IOSConversationProjectionV1.MessageState.failed.rawValue]
+        )
+        XCTAssertEqual(ChatResponseStatusPolicy.failedSummary(for: bareFailed), "Response failed.")
+
+        let failedWithThinking = ChatMessage(
+            role: .assistant,
+            content: "",
+            thinking: "Checking files",
+            metadata: [ChatConversationSurfaceMeta.stateKey: IOSConversationProjectionV1.MessageState.failed.rawValue]
+        )
+        XCTAssertEqual(
+            ChatResponseStatusPolicy.failedSummary(for: failedWithThinking),
+            NSLocalizedString("chat.response.failed", value: "Response failed. Open the process for details.", comment: "Visible terminal failure")
+        )
+    }
+}

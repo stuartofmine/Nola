@@ -61,6 +61,7 @@ export interface ConversationSubmissionSnapshot {
 }
 export interface ConversationPresentation {
     cacheChanged?(): void;
+    returnedToComposer?(): void;
     captureHistory?(reason?: 'prepend' | 'metadata'): unknown;
     restoreHistory?(anchor: unknown, isCurrent?: () => boolean, reason?: 'metadata'): Promise<void>;
 }
@@ -289,7 +290,8 @@ export function createConversationSubmissionController(options: {
             state.turn = reduceChatTurn(state.turn, { type: 'submission_not_admitted', owner: state.turn.owner, outcome: receipt.phase as 'rejected' | 'cancelled' }).state;
             state.pendingText = ''; state.pendingAttachmentNames = []; state.challenge = null;
             submissionStorage().clear(state.pendingSubmission); state.pendingSubmission = null;
-            replyNotice(state.turn, receipt.phase === 'rejected' ? 'notSent' : null);
+            replyNotice(state.turn, receipt.phase === 'rejected' ? 'notSent' : null, workspaceHost,
+                receipt.phase === 'rejected' && typeof receipt.rejection_code === 'string' ? receipt.rejection_code : undefined);
             state.error = mainExpertSelectionError(receipt.rejection_code) ?? (state.error === 'rooms.mainRequiresTools' ? state.error : '');
         }
     }
@@ -505,6 +507,9 @@ export function createConversationSubmissionController(options: {
         state.timeline = rendered.state; state.turn = accepted.state;
         terminalWitness = evidence;
         state.error = blockedRunGuidance(evidence.seal.result.value) ?? '';
+        if (evidence.seal.result.value.kind === 'cancelled' && evidence.seal.result.value.cancellation_id === 'returned_to_composer') {
+            presentation?.returnedToComposer?.();
+        }
         if(evidence.seal.result.value.kind === 'blocked' && evidence.seal.result.value.reason.code === 'context.input_budget_exceeded')workspaceHost.restoreBlockedSubmission?.(state.turn.identity.submissionId);
         if (!observedTaskReadOnly) {
             replyNotice(state.turn, null);
@@ -550,11 +555,11 @@ export function createConversationSubmissionController(options: {
             // user draft and submission authority remain untouched.
         } finally { if (witnessController === controller) witnessController = null; }
     }
-    function replyNotice(snapshot: ChatTurn, kind: 'notSent' | 'uncertain' | null, workspace = workspaceHost) {
+    function replyNotice(snapshot: ChatTurn, kind: 'notSent' | 'uncertain' | null, workspace = workspaceHost, detail?: string) {
         if (!workspace || snapshot.owner.hostId !== hostId || disposed) return;
         const id = snapshot.owner.conversationId;
         const remaining = (workspace.replyNotices.get(id) ?? []).filter(item => item.submissionId !== snapshot.identity.submissionId);
-        workspace.replyNotices.set(id, kind ? [...remaining, {...snapshot.identity, kind}] : remaining);
+        workspace.replyNotices.set(id, kind ? [...remaining, {...snapshot.identity, kind, ...(detail ? {detail} : {})}] : remaining);
     }
     async function releaseUnsent(snapshot: ChatTurn) {
         if (!sameActive(snapshot.owner) || state.turn?.identity.submissionId !== snapshot.identity.submissionId || state.turn.runId) return;
@@ -639,6 +644,9 @@ export function createConversationSubmissionController(options: {
         if (value.type === 'error' || value.type === 'submission_rejected') {
             const guidance = mainExpertSelectionError(value.type === 'submission_rejected' ? value.reason_code : value.code);
             if (guidance) state.error = guidance;
+        }
+        if (value.reason === 'returned_to_composer' || value.cancellation_reason === 'returned_to_composer') {
+            presentation?.returnedToComposer?.();
         }
         if (value.type === 'submission_receipt') {
             if (state.pendingSubmission) await acceptSubmission(value.receipt);

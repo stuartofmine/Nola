@@ -10,18 +10,52 @@ import com.nola.domain.model.HostAgentPermissionRequest
  * Output: the request currently eligible for resolution and duplicate-submission guards.
  */
 internal class ChatPermissionSession {
-    private var hostRequest: HostAgentPermissionRequest? = null
+    private val hostRequests = ArrayDeque<HostAgentPermissionRequest>()
     private var deviceToolRequest: SseEvent.DeviceToolRequest? = null
     private var instructionSubmissionId: String? = null
     private var rememberLocalGrant = false
 
-    fun hostRequest(): HostAgentPermissionRequest? = hostRequest
+    fun hostRequest(): HostAgentPermissionRequest? = hostRequests.firstOrNull()
+
+    fun hostRequests(): List<HostAgentPermissionRequest> = hostRequests.toList()
+
+    fun findHostRequest(requestId: String): HostAgentPermissionRequest? =
+        hostRequests.firstOrNull { it.id == requestId }
 
     fun setHostRequest(request: HostAgentPermissionRequest?) {
-        hostRequest = request
+        hostRequests.clear()
+        if (request != null) hostRequests.addLast(request)
     }
 
-    fun takeHostRequest(): HostAgentPermissionRequest? = hostRequest.also { hostRequest = null }
+    fun setHostRequests(requests: List<HostAgentPermissionRequest>) {
+        hostRequests.clear()
+        requests.forEach { enqueueHostRequest(it) }
+    }
+
+    fun enqueueHostRequest(request: HostAgentPermissionRequest) {
+        val index = hostRequests.indexOfFirst { it.id == request.id }
+        if (index >= 0) {
+            hostRequests[index] = request
+        } else {
+            hostRequests.addLast(request)
+        }
+    }
+
+    fun prependHostRequest(request: HostAgentPermissionRequest) {
+        if (hostRequests.none { it.id == request.id }) {
+            hostRequests.addFirst(request)
+        }
+    }
+
+    fun takeHostRequest(requestId: String? = null): HostAgentPermissionRequest? {
+        if (requestId == null) return hostRequests.removeFirstOrNull()
+        return removeHostRequest(requestId)
+    }
+
+    fun removeHostRequest(requestId: String): HostAgentPermissionRequest? {
+        val index = hostRequests.indexOfFirst { it.id == requestId }
+        return if (index >= 0) hostRequests.removeAt(index) else null
+    }
 
     fun deviceToolRequest(): SseEvent.DeviceToolRequest? = deviceToolRequest
 
@@ -55,7 +89,7 @@ internal class ChatPermissionSession {
     }
 
     fun clear() {
-        hostRequest = null
+        hostRequests.clear()
         deviceToolRequest = null
         instructionSubmissionId = null
         rememberLocalGrant = false

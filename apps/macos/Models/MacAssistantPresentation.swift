@@ -1646,20 +1646,23 @@ nonisolated struct MacAssistantTrace: Identifiable, Codable, Hashable, Sendable 
 
     var toolSymbol: String {
         let value = "\(title) \(detail)".lowercased()
+        if value.contains("pty_screenshot") || value.contains("screenshot") || value.contains("capture terminal") || value.contains("截图") {
+            return "camera.viewfinder"
+        }
         if value.contains("search") || value.contains("find") || value.contains("检索") || value.contains("搜索") {
             return "magnifyingglass"
         }
         if value.contains("read") || value.contains("file") || value.contains("读取") || value.contains("文件") {
             return "doc.text"
         }
-        if value.contains("shell") || value.contains("terminal") || value.contains("command") || value.contains("bash") {
+        if value.contains("pty") || value.contains("shell") || value.contains("terminal") || value.contains("command") || value.contains("bash") {
             return "terminal"
         }
         if value.contains("edit") || value.contains("write") || value.contains("patch")
             || value.contains("编辑") || value.contains("写入") {
             return "pencil.and.outline"
         }
-        if value.contains("screenshot") || value.contains("computer") || value.contains("截图") {
+        if value.contains("computer") {
             return "camera.viewfinder"
         }
         if value.contains("browser") || value.contains("web") || value.contains("网页") {

@@ -77,7 +77,8 @@ fun ModelParametersContent(
     var topK by remember(draftVersion) { mutableIntStateOf((parameters.topK ?: 40).coerceIn(1, 200)) }
     var maxTokensText by remember(draftVersion) { mutableStateOf(parameters.maxCompletionTokens.toString()) }
     var maxContextText by remember(draftVersion) { mutableStateOf(parameters.maxContextTokens.toString()) }
-    var reasoningPreference by remember(draftVersion) { mutableStateOf(parameters.reasoningPreference ?: "automatic") }
+    val initialReasoningSelection = baseline.reasoningPreference ?: baseline.reasoningTier ?: "automatic"
+    var reasoningPreference by remember(draftVersion) { mutableStateOf(parameters.reasoningPreference ?: parameters.reasoningTier ?: "automatic") }
     var enableThinking by remember(draftVersion) { mutableStateOf(parameters.enableThinking) }
     var streamOutput by remember(draftVersion) { mutableStateOf(parameters.streamOutput) }
     var customPrompt by remember(draftVersion) { mutableStateOf(parameters.customSystemPrompt) }
@@ -90,7 +91,7 @@ fun ModelParametersContent(
         || (supportsTopK && topK != (baseline.topK ?: 40))
         || maxTokensText != initialMaxTokens
         || maxContextText != initialMaxContext
-        || reasoningPreference != (baseline.reasoningPreference ?: "automatic")
+        || reasoningPreference != initialReasoningSelection
         || enableThinking != baseline.enableThinking
         || streamOutput != baseline.streamOutput
         || customPrompt != baseline.customSystemPrompt
@@ -106,7 +107,7 @@ fun ModelParametersContent(
         topK = (defaults.topK ?: 40).coerceIn(1, 200)
         maxTokensText = defaults.maxCompletionTokens.toString()
         maxContextText = defaults.maxContextTokens.toString()
-        reasoningPreference = defaults.reasoningPreference ?: "automatic"
+        reasoningPreference = defaults.reasoningPreference ?: defaults.reasoningTier ?: "automatic"
         enableThinking = defaults.enableThinking
         streamOutput = defaults.streamOutput
         customPrompt = defaults.customSystemPrompt
@@ -267,8 +268,16 @@ fun ModelParametersContent(
                         topK = if (supportsTopK) topK else baseline.topK,
                         maxCompletionTokens = maxTokensValue ?: baseline.maxCompletionTokens,
                         maxContextTokens = maxContextValue ?: baseline.maxContextTokens,
-                        reasoningTier = if (reasoningPreference == (baseline.reasoningPreference ?: "automatic")) baseline.reasoningTier else null,
-                        reasoningPreference = if (reasoningPreference == (baseline.reasoningPreference ?: "automatic")) baseline.reasoningPreference else reasoningPreference,
+                        reasoningTier = when {
+                            reasoningPreference == initialReasoningSelection -> baseline.reasoningTier
+                            reasoningPreference in setOf("concise", "balanced", "detailed") -> reasoningPreference
+                            else -> null
+                        },
+                        reasoningPreference = when {
+                            reasoningPreference == initialReasoningSelection -> baseline.reasoningPreference
+                            reasoningPreference in setOf("concise", "balanced", "detailed") -> null
+                            else -> reasoningPreference
+                        },
                         enableThinking = enableThinking,
                         streamOutput = streamOutput,
                         customSystemPrompt = customPrompt.trim()

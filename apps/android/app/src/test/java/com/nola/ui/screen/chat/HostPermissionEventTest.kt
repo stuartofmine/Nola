@@ -76,4 +76,27 @@ class HostPermissionEventTest {
 
         assertSame(current, replayed)
     }
+
+    @Test fun concurrentSubagentPermissionsQueueFifoAndDecodeTaskId() {
+        val firstJson = """{"type":"permission_request","allow_conversation":true,"id":"perm-a","tool_name":"pty_exec","task_id":"task-alpha","protocol_version":1,"nonce":"nonce-a","host_id":"host","client_id":"client","session_id":"session","expires_at":200}"""
+        val secondJson = """{"type":"permission_request","allow_conversation":false,"id":"perm-b","tool_name":"write_file","task_id":"task-beta","protocol_version":1,"nonce":"nonce-b","host_id":"host","client_id":"client","session_id":"session","expires_at":200}"""
+        val firstEvent = decodeSsePayload(firstJson, null) as SseEvent.PermissionRequest
+        val secondEvent = decodeSsePayload(secondJson, null) as SseEvent.PermissionRequest
+        assertEquals("task-alpha", firstEvent.taskId)
+        assertEquals("task-beta", secondEvent.taskId)
+
+        val afterFirst = acceptHostPermissionEvent(ChatUiState(conversationId = "session"), firstEvent, "session", "host", "client", 100)!!
+        val afterSecond = acceptHostPermissionEvent(afterFirst, secondEvent, "session", "host", "client", 100)!!
+
+        assertEquals("perm-a", afterSecond.permissionRequest?.id)
+        assertEquals("task-alpha", afterSecond.permissionRequest?.taskId)
+        assertEquals(listOf("perm-a", "perm-b"), afterSecond.hostPermissionQueue.map { it.id })
+        assertEquals(2, afterSecond.pendingPermissionNavigation(1)?.count)
+
+        val session = ChatPermissionSession()
+        session.setHostRequests(afterSecond.hostPermissionQueue)
+        assertEquals("perm-a", session.takeHostRequest("perm-a")?.id)
+        assertEquals("perm-b", session.hostRequest()?.id)
+        assertEquals("task-beta", session.hostRequest()?.taskId)
+    }
 }

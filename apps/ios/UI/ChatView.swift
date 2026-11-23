@@ -1941,7 +1941,7 @@ struct ChatView: View {
             let parameters = container.chatManager.currentConversationId == nil
                 ? composerDrafts.current.configuration?.parameters ?? snapshot.parameters
                 : try container.chatManager.generationParameters(for: model, conversationID: container.chatManager.currentConversationId)
-            composerReasoningPreference = parameters.reasoningPreference ?? "automatic"
+            composerReasoningPreference = parameters.effectiveReasoningDisplayPreference
         } catch { composerReasoningError = error.localizedDescription }
     }
 

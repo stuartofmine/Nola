@@ -1462,4 +1462,19 @@
     <string name="knowledge_search_empty">Kein passendes Wissen gefunden</string>
     <string name="expert_empty_title">Noch keine Experten</string>
     <string name="expert_empty_message">Erstelle einen Experten, um eigene Anweisungen, Modelle und Tools wiederzuverwenden.</string>
+    <string name="chat_host_tool_name_pty_exec">Terminalbefehl ausführen</string>
+    <string name="chat_host_tool_name_pty_write">Terminaleingabe senden</string>
+    <string name="chat_host_tool_name_pty_screenshot">Terminalbildschirm erfassen</string>
+    <string name="chat_host_tool_name_pty_close">Terminalsitzung schließen</string>
+    <string name="chat_task_stall_warning">Stillstandswarnung</string>
+    <string name="chat_task_stall_timeout">Stillstand · Zeitüberschreitung</string>
+    <string name="chat_task_status_queued">In Warteschlange</string>
+    <string name="chat_task_status_running">Wird ausgeführt</string>
+    <string name="chat_task_status_waiting">Wartet</string>
+    <string name="chat_task_status_suspended">Pausiert</string>
+    <string name="chat_task_status_retrying">Wird erneut versucht</string>
+    <string name="chat_task_status_cancelling">Wird abgebrochen</string>
+    <string name="permission_from_subagent">Von Unteraufgabe: %1$s</string>
+    <string name="permission_queue_pending">1 von %1$d ausstehend</string>
+    <string name="chat_response_failed_empty">Antwort fehlgeschlagen.</string>
 </resources>

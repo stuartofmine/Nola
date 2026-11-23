@@ -34,6 +34,9 @@ import com.nola.ui.components.rememberReduceMotionEnabled
     "high" -> stringResource(R.string.reasoning_effort_high)
     "xhigh" -> stringResource(R.string.reasoning_effort_xhigh)
     "max" -> stringResource(R.string.reasoning_effort_max)
+    "concise" -> stringResource(R.string.models_reasoning_simple)
+    "balanced" -> stringResource(R.string.models_reasoning_medium)
+    "detailed" -> stringResource(R.string.models_reasoning_complex)
     else -> value
 }
 

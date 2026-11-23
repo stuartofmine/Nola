@@ -2287,7 +2287,7 @@ public final class ChatManager: ObservableObject {
                 switch decision {
                 case .allowOnce: self.resolveLocalAgentPermission(requestId: requestID, .allowOnce)
                 case .allowConversation: self.resolveLocalAgentPermission(requestId: requestID, .allowConversation)
-                case .deny: self.resolveLocalAgentPermission(requestId: requestID, .deny)
+                case .deny, .returnToComposer: self.resolveLocalAgentPermission(requestId: requestID, .deny)
                 case .provideInstruction(let instruction):
                     self.provideLocalAgentPermissionInstruction(requestId: requestID, instruction)
                 }
@@ -2927,8 +2927,8 @@ public final class ChatManager: ObservableObject {
             self.applyCommittedJournalText()
             let permissions = try observation.permissionRequests(host: host, client: client,
                 now: Int64(Date().timeIntervalSince1970))
-            if let request = permissions.first {
-                if self.pendingHostPermissionRequest?.nonce != request.nonce {
+            if !permissions.isEmpty {
+                for request in permissions {
                     self.startHostPermissionInteraction(request, conversationId: conversationID,
                         isCurrent: isCurrent, send: { try await provider.submitHostPermissionDecision($0) },
                         onSubmitted: { _ in })

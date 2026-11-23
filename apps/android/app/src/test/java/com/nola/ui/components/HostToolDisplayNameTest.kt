@@ -1,5 +1,8 @@
 package com.nola.ui.components
 
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.PhotoCamera
+import androidx.compose.material.icons.filled.Terminal
 import com.nola.R
 import org.junit.Assert.assertEquals
 import org.junit.Test
@@ -30,5 +33,18 @@ class HostToolDisplayNameTest {
                 hostToolDisplayNameStringRes(alias),
             )
         }
+    }
+
+    @Test
+    fun ptyToolsHaveCleanLabelsAndTerminalOrCameraIcons() {
+        assertEquals(R.string.chat_host_tool_name_pty_exec, hostToolDisplayNameStringRes("pty_exec"))
+        assertEquals(R.string.chat_host_tool_name_pty_write, hostToolDisplayNameStringRes("pty_write"))
+        assertEquals(R.string.chat_host_tool_name_pty_screenshot, hostToolDisplayNameStringRes("pty_screenshot"))
+        assertEquals(R.string.chat_host_tool_name_pty_close, hostToolDisplayNameStringRes("pty_close"))
+
+        assertEquals(Icons.Filled.Terminal, hostToolIcon("pty_exec"))
+        assertEquals(Icons.Filled.Terminal, hostToolIcon("pty_write"))
+        assertEquals(Icons.Filled.Terminal, hostToolIcon("pty_close"))
+        assertEquals(Icons.Filled.PhotoCamera, hostToolIcon("pty_screenshot"))
     }
 }

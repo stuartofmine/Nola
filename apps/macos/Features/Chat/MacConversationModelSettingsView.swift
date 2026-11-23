@@ -56,9 +56,34 @@ struct MacConversationModelSettingsView: View {
 
     private var draftReasoning: MacReasoningConfiguration {
         var value = model.selectedRemoteConfiguration?.reasoning ?? .init()
-        value.responses = draftProtocol == .responses
+        value.responses = draftProtocol.usesResponsesTransport
         value.outputLimit = draft.maxOutputTokens ?? inheritedParameters.maxOutputTokens
         return value
+    }
+
+    private var reasoningPreferenceOptions: [(String?, String)] {
+        var options: [(String?, String)] = [
+            (nil, String(localized: "Use model defaults")),
+            ("automatic", String(localized: "Automatic"))
+        ]
+        for value in draftReasoning.options {
+            options.append((value, value))
+        }
+        return options
+    }
+
+    private func normalizeReasoningPreferenceForCurrentConfiguration() {
+        guard model.executionHost != .remote else { return }
+        let options = draftReasoning.options
+        let inherited = inheritedParameters.reasoningPreference ?? "automatic"
+        let inheritedIsValid = inherited == "automatic" || options.contains(inherited)
+        if let current = draft.reasoningPreference {
+            if current != "automatic", !options.contains(current) {
+                draft.reasoningPreference = inheritedIsValid ? nil : "automatic"
+            }
+        } else if !inheritedIsValid {
+            draft.reasoningPreference = "automatic"
+        }
     }
 
     private func validateSelectedReasoningPreference() throws {
@@ -103,6 +128,13 @@ struct MacConversationModelSettingsView: View {
                         options: [(MacModelWireProtocol?.none, String(localized: "Use model defaults"))]
                             + MacModelWireProtocol.allCases.map { (Optional($0), $0.title) }
                     )
+                    if !draftReasoning.options.isEmpty || draft.reasoningPreference != nil || reasoningValidationError != nil {
+                        MacSelectionDropdownBar(
+                            title: String(localized: "Reasoning"),
+                            selection: $draft.reasoningPreference,
+                            options: reasoningPreferenceOptions
+                        )
+                    }
                 }
                 Group {
                     parameter("Temperature", value: $draft.temperature, fallback: inheritedParameters.temperature, range: 0...2)
@@ -215,6 +247,12 @@ struct MacConversationModelSettingsView: View {
             }
         }.padding(24).frame(minWidth: 440, idealWidth: 520, maxWidth: 680)
             .background(MacDesignColor.canvas)
+            .onChange(of: draft.wireProtocol) { _, _ in
+                normalizeReasoningPreferenceForCurrentConfiguration()
+            }
+            .onChange(of: draft.maxOutputTokens) { _, _ in
+                normalizeReasoningPreferenceForCurrentConfiguration()
+            }
             .interactiveDismissDisabled(hasUnsavedChanges)
             .confirmationDialog(String(localized: "Discard unsaved changes?"), isPresented: $showsDiscardConfirmation, titleVisibility: .visible) {
                 Button(String(localized: "Discard Changes"), role: .destructive) { dismiss() }
@@ -315,13 +353,13 @@ struct MacReasoningConfigurationEditor: View {
     @Binding var configuration: MacReasoningConfiguration
     let wireProtocol: MacModelWireProtocol
     @State private var budgetDraft = MacReasoningBudgetDraft()
+    private static let supportedEffortLevels = ["none", "minimal", "low", "medium", "high", "xhigh", "max"]
+
     private var thinkingControlOptions: [(MacReasoningConfiguration.Control, String)] {
         var result: [(MacReasoningConfiguration.Control, String)] = [
-            (.automatic, String(localized: "Provider default"))
+            (.automatic, String(localized: "Provider default")),
+            (.effort, String(localized: "Effort"))
         ]
-        if wireProtocol != .anthropic || configuration.control == .effort {
-            result.append((.effort, String(localized: "Effort")))
-        }
         if wireProtocol == .anthropic || configuration.control == .budget {
             result.append((.budget, String(localized: "Thinking budget (Anthropic)")))
         }
@@ -341,7 +379,7 @@ struct MacReasoningConfigurationEditor: View {
             if configuration.control == .effort {
                 Text(String(localized: "Supported reasoning levels")).font(.caption).foregroundStyle(.secondary)
                 LazyVGrid(columns: [GridItem(.adaptive(minimum: 90))], alignment: .leading) {
-                    ForEach(wireProtocol == .responses ? ["none", "minimal", "low", "medium", "high", "xhigh", "max"] : ["low", "medium", "high"], id: \.self) { value in
+                    ForEach(Self.supportedEffortLevels, id: \.self) { value in
                         Toggle(value, isOn: Binding(get: { configuration.efforts.contains(value) }, set: { enabled in
                             configuration.efforts.removeAll { $0 == value }
                             if enabled { configuration.efforts.append(value) }

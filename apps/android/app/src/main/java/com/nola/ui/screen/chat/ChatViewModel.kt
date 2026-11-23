@@ -748,7 +748,8 @@ class ChatViewModel @Inject constructor(
         session.observer.reset(); session.presentationJob?.cancel()
         session.hasCommittedTerminalSeal = false
         session.state.value = session.state.value.copy(currentResponse = "", journalResponse = null, activeResponseId = assistantId,
-            thinking = "", thinkingFinished = false, permissionRequest = null, agentPermissionRequest = null, agentPermissionAction = null,
+            thinking = "", thinkingFinished = false, permissionRequest = null, pendingPermissionRequests = emptyList(),
+            agentPermissionRequest = null, agentPermissionAction = null,
             processingState = ProcessingState.Streaming)
         runRegistry.enter(session) {
             session.configuration = configuration
@@ -2078,6 +2079,7 @@ class ChatViewModel @Inject constructor(
                         thinkingFinished = false,
                         toolEvents = (restoredToolEvents + stagedToolEvents).distinctBy { event -> event.id },
                         permissionRequest = null,
+                        pendingPermissionRequests = emptyList(),
                         processingState = if (restoredLiveMessage == null && (nativePending != null || privatePending.isFailure))
                             ProcessingState.AwaitingRecovery else liveProcessingState,
                         pendingExpertHostAdmission = nativePending,
@@ -2335,7 +2337,7 @@ class ChatViewModel @Inject constructor(
                             context.getString(R.string.chat_agent_error) else null)
                     // These are the original live nonce challenges, not trace
                     // text or a fabricated permission inferred from a Part.
-                    var permission: HostAgentPermissionRequest? = null
+                    state = state.copy(permissionRequest = null, pendingPermissionRequests = emptyList())
                     for (wire in observation.permissions) {
                         require(wire.getValue("canonical_run_id").jsonPrimitive.content == observation.key.runId)
                         val event = com.nola.data.remote.sse.decodeSsePayload(wire.toString(), null) as? SseEvent.PermissionRequest
@@ -2346,13 +2348,12 @@ class ChatViewModel @Inject constructor(
                         val next = acceptHostPermissionEvent(state, event, convId, configuration.expectedHostId,
                             permissionClient, System.currentTimeMillis() / 1_000L)
                             ?: error("Observation permission identity mismatch")
-                        state = next; permission = next.permissionRequest
+                        state = next
                     }
-                    if (permission == null) state = state.copy(permissionRequest = null)
-                    permissionSession.setHostRequest(permission)
+                    permissionSession.setHostRequests(if (terminal) emptyList() else state.hostPermissionQueue)
                     if (terminal) executionSession.markTerminalCommitted()
                     if (terminal) state = state.copy(activeResponseId = null, activeResponseStartedAt = null,
-                        permissionRequest = null, thinkingFinished = true)
+                        permissionRequest = null, pendingPermissionRequests = emptyList(), thinkingFinished = true)
                     _uiState.update { if (current()) state else it }
                     val resultKind = (observation.terminalSeal?.get("result") as? JsonObject)
                         ?.get("value")?.let { it as? JsonObject }?.get("kind")?.jsonPrimitive?.content
@@ -2393,7 +2394,8 @@ class ChatViewModel @Inject constructor(
                     _uiState.update { state -> state.copy(
                         hostGoalInProgress = observation.goalExecution != null && !observation.canSubmit,
                         processingState = if (observation.canSubmit) ProcessingState.Idle else ProcessingState.AwaitingRecovery,
-                        activeResponseId = null, activeResponseStartedAt = null, permissionRequest = null, error = null,
+                        activeResponseId = null, activeResponseStartedAt = null,
+                        permissionRequest = null, pendingPermissionRequests = emptyList(), error = null,
                     ) }
                 }
             })
@@ -2450,7 +2452,7 @@ class ChatViewModel @Inject constructor(
             com.nola.data.remote.api.RemoteSubmissionPhase.Rejected, com.nola.data.remote.api.RemoteSubmissionPhase.Cancelled -> {
                 remoteSubmissionAdmitted = false; permissionSession.clear()
                 _uiState.update { it.copy(processingState = ProcessingState.Idle, activeResponseId = null, currentResponse = "",
-                    permissionRequest = null, messages = it.messages.filterNot { message -> message.id in setOf(intent.identity.userMessageId, intent.identity.assistantMessageId) },
+                    permissionRequest = null, pendingPermissionRequests = emptyList(), messages = it.messages.filterNot { message -> message.id in setOf(intent.identity.userMessageId, intent.identity.assistantMessageId) },
                     error = if (mainExpertRequiresTools(receipt.rejectionCode)) context.getString(R.string.expert_main_requires_tools) else receipt.rejectionCode) }
             }
             else -> _uiState.update { it.copy(processingState = ProcessingState.BuildingContext) }
@@ -3178,7 +3180,14 @@ class ChatViewModel @Inject constructor(
             preference !in listOf("automatic") + reasoningEfforts(model) || !beginParameterEditing()) return
         _savingReasoningPreference.value = true
         viewModelScope.launch {
-            try { saveModelParameters(state.currentParameters.copy(reasoningPreference = preference, reasoningTier = null)) }
+            try {
+                val updated = if (preference in setOf("concise", "balanced", "detailed")) {
+                    state.currentParameters.copy(reasoningPreference = null, reasoningTier = preference)
+                } else {
+                    state.currentParameters.copy(reasoningPreference = preference, reasoningTier = null)
+                }
+                saveModelParameters(updated)
+            }
             catch (cancelled: kotlinx.coroutines.CancellationException) { throw cancelled }
             catch (error: Exception) {
                 if (_uiState.value.conversationId == state.conversationId && _uiState.value.currentModel == model)
@@ -5043,7 +5052,7 @@ class ChatViewModel @Inject constructor(
                     _uiState.update { it.copy(error = context.getString(R.string.chat_error_host_permission_identity_mismatch)) }
                     return
                 }
-                permissionSession.setHostRequest(next.permissionRequest)
+                permissionSession.setHostRequests(next.hostPermissionQueue)
                 _uiState.value = next
             }
 
@@ -5080,7 +5089,8 @@ class ChatViewModel @Inject constructor(
                     protocolVersion = event.protocolVersion,
                     deviceBridge = true
                 )
-                permissionSession.setHostRequest(request)
+                permissionSession.enqueueHostRequest(request)
+                val queued = permissionSession.hostRequests()
                 _uiState.update {
                     it.copy(
                         toolEvents = transitionHostToolPermission(
@@ -5088,7 +5098,8 @@ class ChatViewModel @Inject constructor(
                             request = request,
                             status = "permission_required",
                         ),
-                        permissionRequest = request,
+                        pendingPermissionRequests = queued,
+                        permissionRequest = queued.firstOrNull(),
                         processingState = ProcessingState.Streaming,
                         thinkingFinished = true
                     )
@@ -5105,8 +5116,8 @@ class ChatViewModel @Inject constructor(
             runRegistry.permissionOwner(requestId)?.let { runRegistry.enter(it) { provideHostPermissionInstruction(requestId, instruction) } }
             return
         }
-        val request = permissionSession.hostRequest() ?: return
-        if (request.id != requestId || request.deviceBridge || !permissionSession.beginInstruction(request.id)) return
+        val request = permissionSession.findHostRequest(requestId) ?: return
+        if (request.deviceBridge || !permissionSession.beginInstruction(request.id)) return
         val payload = runCatching { hostPermissionInstructionPayload(request, instruction) }.getOrElse {
             permissionSession.finishInstruction(request.id)
             _uiState.update { state -> state.copy(error = it.message) }; return
@@ -5115,13 +5126,14 @@ class ChatViewModel @Inject constructor(
         executionScope.launch {
             try {
                 webAgentProvider.submitHostPermissionDecision(payload, configuration)
-                if (permissionResponseStillCurrent(request.id, permissionSession.hostRequest()?.id)) {
-                    permissionSession.setHostRequest(null)
-                    _uiState.update { it.copy(permissionRequest = null) }
+                if (permissionSession.findHostRequest(request.id) != null) {
+                    permissionSession.removeHostRequest(request.id)
+                    val remaining = permissionSession.hostRequests()
+                    _uiState.update { it.copy(pendingPermissionRequests = remaining, permissionRequest = remaining.firstOrNull()) }
                 }
             } catch (error: Exception) {
                 if (error is kotlinx.coroutines.CancellationException) throw error
-                if (permissionResponseStillCurrent(request.id, permissionSession.hostRequest()?.id)) {
+                if (permissionSession.findHostRequest(request.id) != null) {
                     _uiState.update { it.copy(error = error.message) }
                 }
             } finally {
@@ -5150,16 +5162,17 @@ class ChatViewModel @Inject constructor(
             runRegistry.permissionOwner(requestId)?.let { runRegistry.enter(it) { resolvePermission(requestId, allow, rememberForConversation) } }
             return
         }
-        if (permissionSession.hostRequest()?.id != requestId) return
-        val request = permissionSession.takeHostRequest() ?: return
+        val request = permissionSession.takeHostRequest(requestId) ?: return
         val configuration = checkNotNull(remoteObservationConfiguration) { "Permission owner has no captured Host configuration" }
         val permissionTrace = traceCoordinator.permissionResolved(request.id, request.toolName, allow)
         if (permissionTrace != null) {
             executionScope.launch { applyTraceEvent(permissionTrace) }
         }
+        val remaining = permissionSession.hostRequests()
         _uiState.update {
             it.copy(
-                permissionRequest = null,
+                pendingPermissionRequests = remaining,
+                permissionRequest = remaining.firstOrNull(),
             )
         }
 
@@ -5238,9 +5251,11 @@ class ChatViewModel @Inject constructor(
             } catch (e: Exception) {
                 if (e is kotlinx.coroutines.CancellationException) throw e
                 if (_uiState.value.conversationId == request.sessionId) {
-                    if (permissionSession.hostRequest() == null) permissionSession.setHostRequest(request)
+                    permissionSession.prependHostRequest(request)
+                    val restored = permissionSession.hostRequests()
                     _uiState.update { it.copy(processingState = ProcessingState.Streaming,
-                        permissionRequest = permissionSession.hostRequest(),
+                        pendingPermissionRequests = restored,
+                        permissionRequest = restored.firstOrNull(),
                         error = e.message ?: context.getString(R.string.chat_agent_error)) }
                 }
             }
@@ -5338,7 +5353,7 @@ class ChatViewModel @Inject constructor(
         val localCoordinator = turnRuntime.deviceCoordinator()
         if (localCoordinator == null && !usedWebHost) turnRuntime.cancelGeneration()
         permissionSession.clear()
-        _uiState.update { it.copy(permissionRequest = null) }
+        _uiState.update { it.copy(permissionRequest = null, pendingPermissionRequests = emptyList()) }
         executionScope.launch {
             if (localCoordinator != null) {
                 localCoordinator.requestCancellation("user_requested")
@@ -5487,6 +5502,7 @@ class ChatViewModel @Inject constructor(
                 thinking = "",
                 thinkingFinished = true,
                 permissionRequest = null,
+                pendingPermissionRequests = emptyList(),
                 error = context.getString(R.string.chat_agent_permission_resume_failed)
             )
         }
@@ -5502,6 +5518,7 @@ class ChatViewModel @Inject constructor(
                 thinking = "",
                 thinkingFinished = true,
                 permissionRequest = null,
+                pendingPermissionRequests = emptyList(),
                 error = context.getString(R.string.chat_conversation_unavailable)
             )
         }
@@ -5952,8 +5969,14 @@ class ChatViewModel @Inject constructor(
         val request = permissionSession.takeDeviceToolRequest() ?: return
         val configuration = remoteObservationConfiguration?.copy()
         val stateSnapshot = _uiState.value
+        val remaining = permissionSession.hostRequests()
         _uiState.update {
-            it.copy(agentPermissionRequest = null, agentPermissionAction = null, permissionRequest = null)
+            it.copy(
+                agentPermissionRequest = null,
+                agentPermissionAction = null,
+                pendingPermissionRequests = remaining,
+                permissionRequest = remaining.firstOrNull(),
+            )
         }
         executionScope.launch {
             val result = executeBridgeDeviceCall(

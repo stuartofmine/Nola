@@ -12,6 +12,8 @@ const labels: Record<string, string> = {
     sealed: 'chatPage.stateSealed',
     completed: 'chatPage.toolCompleted',
     failed: 'chatPage.toolFailed',
+    cancelling: 'chatPage.stateCancelling',
+    stall_timeout: 'chatPage.stallTimeout',
     cancelled: 'chatPage.stateCancelled',
 };
 

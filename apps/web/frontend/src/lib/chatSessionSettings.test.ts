@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { localSessionProfile, parseSessionConfiguration, parseSessionLocalModels, parseSessionProfiles, permissionPatchConfirmed, sessionConfigurationPatch, sessionDraft, sessionDraftError, sessionModelKey, sessionModelSelectionConfirmed, sessionPatchHasChanges, sessionPermissionPatch, sessionReasoningOptions, selectableSessionProfile } from './chatSessionSettings.ts';
+import { defaultCloudSessionProfile, localSessionProfile, parseSessionConfiguration, parseSessionLocalModels, parseSessionProfiles, permissionPatchConfirmed, sessionConfigurationPatch, sessionDraft, sessionDraftError, sessionModelKey, sessionModelSelectionConfirmed, sessionPatchHasChanges, sessionPermissionPatch, sessionReasoningOptions, selectableSessionProfile } from './chatSessionSettings.ts';
 import { createServer } from 'vite';
 import type { ChatConversation } from './chatConversations.ts';
 import type { RemoteProfile } from './modelProfiles.ts';
@@ -205,4 +205,20 @@ test('five declared efforts remain independently selectable and do not collapse 
     const efforts = ['none', 'low', 'medium', 'high', 'xhigh'];
     const five = { ...profile, reasoning: { control: 'effort' as const, efforts, budgets: [] } };
     assert.deepEqual(sessionReasoningOptions(five), efforts);
+});
+
+test('siwc_responses profiles parse cleanly with reasoning and resolve auto-session default profile', () => {
+    const siwcProfile: RemoteProfile = {
+        ...profile,
+        id: 'siwc-p',
+        selected: true,
+        endpoint: { ...profile.endpoint, id: 'siwc-ep', wireProtocol: 'siwc_responses' },
+        reasoning: { control: 'effort', efforts: ['low', 'medium', 'high'], budgets: [] },
+    };
+    const parsed = parseSessionProfiles({ profiles: [profile, siwcProfile] });
+    assert.equal(parsed.length, 2);
+    assert.deepEqual(sessionReasoningOptions(parsed[1]), ['low', 'medium', 'high']);
+    const autoConversation: ChatConversation = { ...conversation, selectedModelSource: 'auto', selectedModelId: '' };
+    assert.equal(defaultCloudSessionProfile(autoConversation, parsed)?.id, 'siwc-p');
+    assert.equal(defaultCloudSessionProfile(conversation, parsed), null);
 });

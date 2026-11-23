@@ -627,7 +627,7 @@ struct MacConversationCanvas: View {
         guard expertMentionsVisible else { return false }
         if command == "dismiss" { dismissedExpertMention = model.selectedComposerState.draft; return true }
         let candidates = expertMentionCandidates
-        guard !candidates.isEmpty else { return command == "accept" }
+        guard !candidates.isEmpty else { return false }
         let index = candidates.firstIndex { $0.id == highlightedExpertID } ?? 0
         if command == "accept" { selectExpertMention(candidates[index].id) }
         else { highlightedExpertID = candidates[(index + (command == "up" ? -1 : 1) + candidates.count) % candidates.count].id }

@@ -86,4 +86,27 @@ class CanonicalMessagePartPresentationTest {
         assertEquals("", executionAnswer(listOf(hidden), "stale withheld text"))
         assertTrue(canonicalMessageBlocks(listOf(hidden)).isEmpty())
     }
+
+    @Test fun toolJsonPayloadsPrettyPrintAndErrorsSurfaceReadableMessage() {
+        val obj = kotlinx.serialization.json.Json.parseToJsonElement("""{"cmd":"ls -la","exit":0}""")
+        val formatted = formatToolJsonPayload(obj)
+        assertTrue(formatted.contains("\n"))
+        assertTrue(formatted.contains("\"cmd\": \"ls -la\""))
+        assertEquals("plain text", formatToolJsonPayload(kotlinx.serialization.json.JsonPrimitive("plain text")))
+        assertEquals("", formatToolJsonPayload(kotlinx.serialization.json.JsonNull))
+
+        assertEquals("Rate limit exceeded", formatCanonicalErrorMessage("rate_limit", "error.rate_limit_exceeded", "This step failed."))
+        assertEquals("Provider unavailable", formatCanonicalErrorMessage("provider_unavailable", "", "This step failed."))
+        assertEquals("This step failed.", formatCanonicalErrorMessage("", "", "This step failed."))
+
+        assertTrue(isImageArtifact(com.nola.domain.projection.PartArtifact("/tmp/screen.png", "screen.png", "image/png", null)))
+        assertTrue(isImageArtifact(com.nola.domain.projection.PartArtifact("https://host.local/a.webp", "a.webp", null, null)))
+        assertFalse(isImageArtifact(com.nola.domain.projection.PartArtifact("/tmp/report.pdf", "report.pdf", "application/pdf", null)))
+
+        val emptyFailed = com.nola.domain.model.ConversationMessage(
+            id = "m1", conversationId = "c1", role = com.nola.domain.model.ChatRole.assistant, text = "", createdAt = 1L,
+        )
+        assertFalse(failedMessageHasVisibleText(emptyFailed))
+        assertTrue(failedMessageHasVisibleText(emptyFailed.copy(text = "Partial answer")))
+    }
 }
