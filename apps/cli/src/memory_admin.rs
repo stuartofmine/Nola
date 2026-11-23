@@ -20,7 +20,7 @@ use nola_core::agent::{
 };
 
 use crate::application_port::CliApplicationPort;
-use crate::i18n::{parse_language_tag, set_language};
+use crate::i18n::{current_language, parse_language_tag, pick_language, set_language, Language};
 
 #[derive(Debug, Deserialize)]
 pub(crate) struct MemoryDraft {
@@ -158,7 +158,23 @@ fn execute_memory_args(
                     })
                 );
             } else if records.is_empty() {
-                println!("No memories stored.");
+                println!(
+                    "{}",
+                    pick_language(
+                        current_language(),
+                        [
+                            "尚未保存记忆。",
+                            "尚未儲存記憶。",
+                            "No memories stored.",
+                            "Keine Erinnerungen gespeichert.",
+                            "No hay recuerdos guardados.",
+                            "Aucun souvenir enregistré.",
+                            "保存されたメモリはありません。",
+                            "저장된 메모리가 없습니다.",
+                            "Сохранённых воспоминаний нет.",
+                        ]
+                    )
+                );
             } else {
                 for record in &records {
                     println!(
@@ -198,7 +214,18 @@ fn execute_memory_args(
             } else {
                 let id = created["record"]["id"].as_str().unwrap_or("");
                 let stored_scope = created["record"]["scope"].as_str().unwrap_or("global");
-                println!("Added memory {id} ({stored_scope}).");
+                let msg = match current_language() {
+                    Language::ZhHans => format!("已添加记忆 {id}（{stored_scope}）。"),
+                    Language::ZhHant => format!("已新增記憶 {id}（{stored_scope}）。"),
+                    Language::De => format!("Erinnerung {id} ({stored_scope}) hinzugefügt."),
+                    Language::Es => format!("Recuerdo {id} ({stored_scope}) añadido."),
+                    Language::Fr => format!("Souvenir {id} ({stored_scope}) ajouté."),
+                    Language::Ja => format!("メモリ {id}（{stored_scope}）を追加しました。"),
+                    Language::Ko => format!("메모리 {id} ({stored_scope}) 추가됨."),
+                    Language::Ru => format!("Воспоминание {id} ({stored_scope}) добавлено."),
+                    Language::En => format!("Added memory {id} ({stored_scope})."),
+                };
+                println!("{msg}");
             }
             Ok(())
         }
@@ -218,7 +245,18 @@ fn execute_memory_args(
                     })
                 );
             } else if matched.is_empty() {
-                println!("No memories matched \"{query}\".");
+                let msg = match current_language() {
+                    Language::ZhHans => format!("没有匹配 \"{query}\" 的记忆。"),
+                    Language::ZhHant => format!("沒有符合 \"{query}\" 的記憶。"),
+                    Language::De => format!("Keine Erinnerungen passend zu „{query}“."),
+                    Language::Es => format!("No hay recuerdos que coincidan con \"{query}\"."),
+                    Language::Fr => format!("Aucun souvenir ne correspond à « {query} »."),
+                    Language::Ja => format!("「{query}」に一致するメモリはありません。"),
+                    Language::Ko => format!("\"{query}\"와(과) 일치하는 메모리가 없습니다."),
+                    Language::Ru => format!("Нет воспоминаний, соответствующих «{query}»."),
+                    Language::En => format!("No memories matched \"{query}\"."),
+                };
+                println!("{msg}");
             } else {
                 for record in &matched {
                     println!(

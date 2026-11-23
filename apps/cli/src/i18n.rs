@@ -28,6 +28,336 @@ pub(crate) fn new_conversation_title(language: Language) -> &'static str {
     }
 }
 
+pub(crate) fn cli_view_state_save_failed(error: &str) -> String {
+    match current_language() {
+        Language::ZhHans => format!("无法保存 CLI 显示状态：{error}"),
+        Language::ZhHant => format!("無法儲存 CLI 顯示狀態：{error}"),
+        Language::De => format!("CLI-Anzeigestatus konnte nicht gespeichert werden: {error}"),
+        Language::Es => format!("No se pudo guardar el estado de vista de la CLI: {error}"),
+        Language::Fr => format!("Impossible d'enregistrer l'état d'affichage CLI : {error}"),
+        Language::Ja => format!("CLI 表示状態を保存できませんでした: {error}"),
+        Language::Ko => format!("CLI 표시 상태를 저장할 수 없습니다: {error}"),
+        Language::Ru => format!("Не удалось сохранить состояние отображения CLI: {error}"),
+        Language::En => format!("Unable to save CLI view state: {error}"),
+    }
+}
+
+pub(crate) fn cli_saved_viewport_unavailable() -> &'static str {
+    match current_language() {
+        Language::ZhHans => "原阅读内容已不可用；草稿已保留，当前显示最近记录。",
+        Language::ZhHant => "原閱讀內容已不可用；草稿已保留，目前顯示最近紀錄。",
+        Language::De => "Vorherige Leseposition nicht mehr verfügbar; Entwurf bleibt erhalten, zeige aktuellen Verlauf.",
+        Language::Es => "La vista de lectura anterior ya no está disponible; se conserva el borrador y se muestra el historial reciente.",
+        Language::Fr => "La position de lecture précédente n'est plus disponible ; le brouillon est conservé et l'historique récent est affiché.",
+        Language::Ja => "以前の閲覧位置は利用できません。下書きは保持され、最近の履歴を表示しています。",
+        Language::Ko => "이전 읽기 위치를 사용할 수 없습니다. 초안은 유지되며 최근 기록을 표시합니다.",
+        Language::Ru => "Предыдущая позиция чтения недоступна; черновик сохранён, показана последняя история.",
+        Language::En => "Previous reading position is no longer available; draft preserved, showing recent history.",
+    }
+}
+
+pub(crate) fn cli_recovery_incomplete_hint() -> &'static str {
+    match current_language() {
+        Language::ZhHans => "恢复尚未完成；可用 /resume 重试或切换会话，/exit 退出。原请求已保留。",
+        Language::ZhHant => "恢復尚未完成；可用 /resume 重試或切換工作階段，/exit 退出。原請求已保留。",
+        Language::De => "Wiederherstellung unvollständig; nutzen Sie /resume zum Wiederholen oder Wechseln, /exit zum Beenden. Ursprüngliche Anfrage bleibt erhalten.",
+        Language::Es => "Recuperación incompleta; usa /resume para reintentar o cambiar de sesión, o /exit para salir. La solicitud original se conserva.",
+        Language::Fr => "Reprise incomplète ; utilisez /resume pour réessayer ou changer de session, /exit pour quitter. La demande initiale est conservée.",
+        Language::Ja => "復元の途中です。/resume で再試行またはセッション切替、/exit で終了できます。元のリクエストは保持されています。",
+        Language::Ko => "복구가 완료되지 않았습니다. /resume 으로 재시도하거나 세션을 전환하고, /exit 으로 종료할 수 있습니다. 원래 요청은 유지됩니다.",
+        Language::Ru => "Восстановление не завершено; используйте /resume для повтора или смены сессии, /exit для выхода. Исходный запрос сохранён.",
+        Language::En => "Recovery is incomplete; use /resume to retry or switch sessions, or /exit to quit. Original request preserved.",
+    }
+}
+
+pub(crate) fn cli_stopping_to_exit() -> &'static str {
+    match current_language() {
+        Language::ZhHans => "正在停止当前执行并退出…",
+        Language::ZhHant => "正在停止目前執行並退出…",
+        Language::De => "Aktuelle Ausführung wird zum Beenden gestoppt…",
+        Language::Es => "Deteniendo la ejecución actual para salir…",
+        Language::Fr => "Arrêt de l’exécution en cours avant de quitter…",
+        Language::Ja => "現在の実行を停止して終了しています…",
+        Language::Ko => "현재 실행을 중지하고 종료하는 중…",
+        Language::Ru => "Остановка текущего выполнения перед выходом…",
+        Language::En => "Stopping current execution to exit…",
+    }
+}
+
+pub(crate) fn cli_stopping_to_resume() -> &'static str {
+    match current_language() {
+        Language::ZhHans => "正在停止当前执行以切换会话…",
+        Language::ZhHant => "正在停止目前執行以切換工作階段…",
+        Language::De => "Aktuelle Ausführung wird zum Fortsetzen gestoppt…",
+        Language::Es => "Deteniendo la ejecución actual para reanudar…",
+        Language::Fr => "Arrêt de l’exécution en cours pour reprendre…",
+        Language::Ja => "現在の実行を停止して再開しています…",
+        Language::Ko => "현재 실행을 중지하고 세션을 재개하는 중…",
+        Language::Ru => "Остановка текущего выполнения для возобновления…",
+        Language::En => "Stopping current execution to resume…",
+    }
+}
+
+pub(crate) fn cli_view_state_restore_failed(error: &str) -> String {
+    match current_language() {
+        Language::ZhHans => format!("无法恢复 CLI 显示状态：{error}"),
+        Language::ZhHant => format!("無法恢復 CLI 顯示狀態：{error}"),
+        Language::De => format!("CLI-Anzeigestatus konnte nicht wiederhergestellt werden: {error}"),
+        Language::Es => format!("No se pudo restaurar el estado de vista de la CLI: {error}"),
+        Language::Fr => format!("Impossible de restaurer l’état d’affichage CLI : {error}"),
+        Language::Ja => format!("CLI 表示状態を復元できませんでした: {error}"),
+        Language::Ko => format!("CLI 표시 상태를 복원할 수 없습니다: {error}"),
+        Language::Ru => format!("Не удалось восстановить состояние отображения CLI: {error}"),
+        Language::En => format!("Unable to restore CLI view state: {error}"),
+    }
+}
+
+pub(crate) fn cli_command_unavailable_in_context() -> &'static str {
+    match current_language() {
+        Language::ZhHans => "当前上下文中不可使用该命令。",
+        Language::ZhHant => "目前上下文中無法使用該指令。",
+        Language::De => "Dieser Befehl ist im aktuellen Kontext nicht verfügbar.",
+        Language::Es => "Este comando no está disponible en el contexto actual.",
+        Language::Fr => "Cette commande n’est pas disponible dans le contexte actuel.",
+        Language::Ja => "このコマンドは現在のコンテキストでは使用できません。",
+        Language::Ko => "현재 컨텍스트에서는 이 명령을 사용할 수 없습니다.",
+        Language::Ru => "Эта команда недоступна в текущем контексте.",
+        Language::En => "This command is not available in the current context.",
+    }
+}
+
+pub(crate) fn cli_pasted_content_badge(chars: usize) -> String {
+    match current_language() {
+        Language::ZhHans => format!("[已粘贴内容：{chars} 字符]"),
+        Language::ZhHant => format!("[已貼上內容：{chars} 字元]"),
+        Language::De => format!("[Eingefügter Inhalt: {chars} Zeichen]"),
+        Language::Es => format!("[Contenido pegado: {chars} caracteres]"),
+        Language::Fr => format!("[Contenu collé : {chars} caractères]"),
+        Language::Ja => format!("[貼り付け内容: {chars} 文字]"),
+        Language::Ko => format!("[붙여넣은 내용: {chars}자]"),
+        Language::Ru => format!("[Вставлено: {chars} симв.]"),
+        Language::En => format!("[Pasted content: {chars} chars]"),
+    }
+}
+
+pub(crate) fn cli_section_label(key: &'static str) -> &'static str {
+    let values = match key {
+        "last response" => [
+            "上次回复",
+            "上次回覆",
+            "last response",
+            "Letzte Antwort",
+            "Última respuesta",
+            "Dernière réponse",
+            "前回の応答",
+            "마지막 응답",
+            "Последний ответ",
+        ],
+        "continue" => [
+            "继续",
+            "繼續",
+            "continue",
+            "Fortsetzen",
+            "Continuar",
+            "Continuer",
+            "続行",
+            "계속",
+            "Продолжить",
+        ],
+        "state" => [
+            "状态",
+            "狀態",
+            "state",
+            "Status",
+            "Estado",
+            "État",
+            "状態",
+            "상태",
+            "Состояние",
+        ],
+        "init" => [
+            "初始化",
+            "初始化",
+            "init",
+            "Initialisierung",
+            "Inicialización",
+            "Initialisation",
+            "初期化",
+            "초기화",
+            "Инициализация",
+        ],
+        "wiki" => [
+            "知识库",
+            "知識庫",
+            "wiki",
+            "Wiki",
+            "Wiki",
+            "Wiki",
+            "Wiki",
+            "위키",
+            "Вики",
+        ],
+        "plan" => [
+            "计划",
+            "計畫",
+            "plan",
+            "Plan",
+            "Plan",
+            "Plan",
+            "計画",
+            "계획",
+            "План",
+        ],
+        "plan history" => [
+            "计划历史",
+            "計畫歷史",
+            "plan history",
+            "Planverlauf",
+            "Historial del plan",
+            "Historique du plan",
+            "計画履歴",
+            "계획 기록",
+            "История плана",
+        ],
+        "plan diff" => [
+            "计划差异",
+            "計畫差異",
+            "plan diff",
+            "Planänderungen",
+            "Diferencias del plan",
+            "Différences du plan",
+            "計画の差分",
+            "계획 변경 사항",
+            "Изменения плана",
+        ],
+        "skills" => [
+            "技能",
+            "技能",
+            "skills",
+            "Skills",
+            "Skills",
+            "Skills",
+            "スキル",
+            "스킬",
+            "Навыки",
+        ],
+        "mcp" => [
+            "MCP",
+            "MCP",
+            "mcp",
+            "MCP",
+            "MCP",
+            "MCP",
+            "MCP",
+            "MCP",
+            "MCP",
+        ],
+        "guide" => [
+            "指南",
+            "指南",
+            "guide",
+            "Leitfaden",
+            "Guía",
+            "Guide",
+            "ガイド",
+            "가이드",
+            "Руководство",
+        ],
+        _ => return key,
+    };
+    pick_language(current_language(), values)
+}
+
+pub(crate) fn cli_executor_status_label(status: &'static str) -> &'static str {
+    let values = match status {
+        "available" => [
+            "可用",
+            "可用",
+            "available",
+            "verfügbar",
+            "disponible",
+            "disponible",
+            "利用可能",
+            "사용 가능",
+            "доступно",
+        ],
+        "not installed" => [
+            "未安装",
+            "未安裝",
+            "not installed",
+            "nicht installiert",
+            "no instalado",
+            "non installé",
+            "未インストール",
+            "설치되지 않음",
+            "не установлено",
+        ],
+        "not authenticated" => [
+            "未认证",
+            "未驗證",
+            "not authenticated",
+            "nicht authentifiziert",
+            "no autenticado",
+            "non authentifié",
+            "未認証",
+            "인증되지 않음",
+            "не аутентифицировано",
+        ],
+        "incompatible" => [
+            "不兼容",
+            "不相容",
+            "incompatible",
+            "inkompatibel",
+            "incompatible",
+            "incompatible",
+            "非互換",
+            "호환되지 않음",
+            "несовместимо",
+        ],
+        "unreachable" => [
+            "不可达",
+            "無法連線",
+            "unreachable",
+            "nicht erreichbar",
+            "inalcanzable",
+            "injoignable",
+            "到達不能",
+            "연결할 수 없음",
+            "недоступно",
+        ],
+        _ => return status,
+    };
+    pick_language(current_language(), values)
+}
+
+pub(crate) fn cli_history_empty() -> &'static str {
+    match current_language() {
+        Language::ZhHans => "当前会话暂无历史记录。",
+        Language::ZhHant => "目前工作階段尚無歷史紀錄。",
+        Language::De => "Keine Verlaufsnachrichten in dieser Sitzung.",
+        Language::Es => "No hay historial en esta sesión.",
+        Language::Fr => "Aucun historique dans cette session.",
+        Language::Ja => "このセッションには履歴がありません。",
+        Language::Ko => "이 세션에는 기록이 없습니다.",
+        Language::Ru => "В этой сессии пока нет истории.",
+        Language::En => "No history in this session.",
+    }
+}
+
+pub(crate) fn pick_language(language: Language, values: [&'static str; 9]) -> &'static str {
+    match language {
+        Language::ZhHans => values[0],
+        Language::ZhHant => values[1],
+        Language::En => values[2],
+        Language::De => values[3],
+        Language::Es => values[4],
+        Language::Fr => values[5],
+        Language::Ja => values[6],
+        Language::Ko => values[7],
+        Language::Ru => values[8],
+    }
+}
+
 #[allow(dead_code)]
 #[derive(Debug, Clone, Copy)]
 pub enum Message {
@@ -1631,6 +1961,10 @@ pub fn help_text_for(language: Language) -> &'static str {
   --model, -m MODEL           发送给端点的模型名
   --project PATH              项目根目录，默认当前目录
   --allow-dir PATH            允许本地工具访问的目录；可重复
+  --skill-dir PATH            额外的 Skill 目录；可重复
+  --no-skills                 禁用文件系统 Skill 加载
+  --context-file PATH         附加到提示词的上下文文件；可重复
+  --expected-artifact REF     期望产物引用；可重复
   --bash-prefix PREFIX        允许执行的 Bash 命令前缀；可重复
   --json                      输出按行分隔的 JSON 事件
   --debug                     写入本地调试日志，并开启更详细终端交互（完整状态、工具调用与关键工具参数）
@@ -1715,6 +2049,10 @@ pub fn help_text_for(language: Language) -> &'static str {
   --model, -m MODEL           傳送給端點的模型名稱
   --project PATH              專案根目錄，預設為目前目錄
   --allow-dir PATH            允許本機工具存取的目錄；可重複指定
+  --skill-dir PATH            額外的 Skill 目錄；可重複指定
+  --no-skills                 停用檔案系統 Skill 載入
+  --context-file PATH         附加到提示詞的上下文檔案；可重複指定
+  --expected-artifact REF     期望產物參照；可重複指定
   --bash-prefix PREFIX        允許執行的 Bash 命令前綴；可重複指定
   --json                      輸出以換行分隔的 JSON 事件
   --debug                     寫入本機除錯日誌並開啟詳細終端互動
@@ -1799,6 +2137,10 @@ Options:
   --model, -m MODEL       Model name sent to the endpoint
   --project PATH          Project root, default current directory
   --allow-dir PATH        Local directory tools may access; repeatable
+  --skill-dir PATH        Additional skill directory to load; repeatable
+  --no-skills             Disable filesystem skill loading
+  --context-file PATH     Attach a context file to the prompt; repeatable
+  --expected-artifact REF Expected artifact reference; repeatable
   --bash-prefix PREFIX    Bash command prefix to allow; repeatable
   --json                  Emit newline-delimited JSON events
   --debug                 Write local debug logs and enable detailed terminal interaction (full status + tool details)
@@ -1883,6 +2225,10 @@ Optionen:
   --model, -m MODEL           Modellname für den Endpunkt
   --project PATH              Projektstamm, standardmäßig das aktuelle Verzeichnis
   --allow-dir PATH            Verzeichnis, auf das lokale Tools zugreifen dürfen; wiederholbar
+  --skill-dir PATH            Zusätzliches Skill-Verzeichnis; wiederholbar
+  --no-skills                 Laden von Dateisystem-Skills deaktivieren
+  --context-file PATH         Kontextdatei an den Prompt anhängen; wiederholbar
+  --expected-artifact REF     Erwartete Artefaktreferenz; wiederholbar
   --bash-prefix PREFIX        Erlaubter Bash-Befehlspräfix; wiederholbar
   --json                      Zeilengetrennte JSON-Ereignisse ausgeben
   --debug                     Lokale Debug-Protokolle und ausführliche Terminaldetails aktivieren
@@ -1966,6 +2312,10 @@ Opciones:
   --model, -m MODEL           Nombre del modelo enviado al endpoint
   --project PATH              Raíz del proyecto, por defecto el directorio actual
   --allow-dir PATH            Directorio accesible para herramientas locales; repetible
+  --skill-dir PATH            Directorio adicional de Skills; repetible
+  --no-skills                 Desactivar la carga de Skills del sistema de archivos
+  --context-file PATH         Adjuntar un archivo de contexto al prompt; repetible
+  --expected-artifact REF     Referencia de artefacto esperado; repetible
   --bash-prefix PREFIX        Prefijo de comando Bash permitido; repetible
   --json                      Emitir eventos JSON separados por líneas
   --debug                     Escribir registros locales y mostrar detalles completos en el terminal
@@ -2049,6 +2399,10 @@ Options :
   --model, -m MODEL           Nom du modèle envoyé au point de terminaison
   --project PATH              Racine du projet, répertoire actuel par défaut
   --allow-dir PATH            Répertoire accessible aux outils locaux ; répétable
+  --skill-dir PATH            Répertoire de Skills supplémentaire ; répétable
+  --no-skills                 Désactiver le chargement des Skills du système de fichiers
+  --context-file PATH         Joindre un fichier de contexte au prompt ; répétable
+  --expected-artifact REF     Référence d'artefact attendu ; répétable
   --bash-prefix PREFIX        Préfixe de commande Bash autorisé ; répétable
   --json                      Émettre des événements JSON séparés par lignes
   --debug                     Écrire les journaux locaux et afficher les détails complets du terminal
@@ -2132,6 +2486,10 @@ Fichiers de configuration :
   --model, -m MODEL           エンドポイントへ送るモデル名
   --project PATH              プロジェクトルート。既定は現在のディレクトリ
   --allow-dir PATH            ローカルツールがアクセスできるディレクトリ。複数指定可
+  --skill-dir PATH            追加の Skill ディレクトリ。複数指定可
+  --no-skills                 ファイルシステムからの Skill 読み込みを無効化
+  --context-file PATH         プロンプトに添付するコンテキストファイル。複数指定可
+  --expected-artifact REF     期待される成果物参照。複数指定可
   --bash-prefix PREFIX        許可する Bash コマンド接頭辞。複数指定可
   --json                      改行区切りの JSON イベントを出力
   --debug                     ローカルデバッグログと詳細なターミナル表示を有効化
@@ -2215,6 +2573,10 @@ Fichiers de configuration :
   --model, -m MODEL           엔드포인트에 전달할 모델 이름
   --project PATH              프로젝트 루트 (기본값: 현재 디렉터리)
   --allow-dir PATH            로컬 도구가 접근할 수 있는 디렉터리 (반복 가능)
+  --skill-dir PATH            추가 Skill 디렉터리 (반복 가능)
+  --no-skills                 파일 시스템 Skill 로드 비활성화
+  --context-file PATH         프롬프트에 첨부할 컨텍스트 파일 (반복 가능)
+  --expected-artifact REF     예상 산출물 참조 (반복 가능)
   --bash-prefix PREFIX        허용할 Bash 명령 접두사 (반복 가능)
   --json                      줄바꿈으로 구분된 JSON 이벤트 출력
   --debug                     로컬 디버그 로그 기록 및 상세 터미널 표시 활성화
@@ -2298,6 +2660,10 @@ Fichiers de configuration :
   --model, -m MODEL           Имя модели, отправляемое в endpoint
   --project PATH              Корень проекта, по умолчанию текущий каталог
   --allow-dir PATH            Каталог, доступный локальным инструментам; можно повторять
+  --skill-dir PATH            Дополнительный каталог Skill; можно повторять
+  --no-skills                 Отключить загрузку Skill из файловой системы
+  --context-file PATH         Прикрепить файл контекста к запросу; можно повторять
+  --expected-artifact REF     Ожидаемая ссылка на артефакт; можно повторять
   --bash-prefix PREFIX        Разрешенный префикс Bash-команды; можно повторять
   --json                      Выводить события JSON по одному на строку
   --debug                     Включить локальные журналы и подробный вывод терминала
@@ -4612,6 +4978,70 @@ fn normalized_locale_tag(tag: &str) -> String {
 fn is_explicit_english(tag: &str) -> bool {
     let normalized = normalized_locale_tag(tag);
     normalized == "en" || normalized.starts_with("en-")
+}
+
+#[cfg(test)]
+mod cli_i18n_helper_tests {
+    use super::*;
+
+    #[test]
+    fn shared_cli_i18n_helpers_cover_all_nine_locales() {
+        let _guard = crate::store::test_env_lock();
+        let previous = current_language();
+        let locales = [
+            Language::ZhHans,
+            Language::ZhHant,
+            Language::En,
+            Language::De,
+            Language::Es,
+            Language::Fr,
+            Language::Ja,
+            Language::Ko,
+            Language::Ru,
+        ];
+        for lang in locales {
+            set_language(lang);
+            assert!(!cli_stopping_to_exit().is_empty());
+            assert!(!cli_stopping_to_resume().is_empty());
+            assert!(cli_view_state_restore_failed("disk full").contains("disk full"));
+            assert!(!cli_command_unavailable_in_context().is_empty());
+            assert!(cli_pasted_content_badge(42).contains("42"));
+            assert!(!cli_history_empty().is_empty());
+            for key in [
+                "last response",
+                "continue",
+                "state",
+                "init",
+                "wiki",
+                "plan",
+                "plan history",
+                "plan diff",
+                "skills",
+                "mcp",
+                "guide",
+            ] {
+                assert!(!cli_section_label(key).is_empty());
+            }
+            assert_eq!(cli_section_label("custom_unknown"), "custom_unknown");
+            for status in [
+                "available",
+                "not installed",
+                "not authenticated",
+                "incompatible",
+                "unreachable",
+            ] {
+                assert!(!cli_executor_status_label(status).is_empty());
+            }
+            assert_eq!(cli_executor_status_label("custom_status"), "custom_status");
+        }
+        set_language(Language::ZhHans);
+        assert_eq!(cli_section_label("plan history"), "计划历史");
+        assert_eq!(cli_executor_status_label("not installed"), "未安装");
+        set_language(Language::En);
+        assert_eq!(cli_section_label("plan history"), "plan history");
+        assert_eq!(cli_executor_status_label("not installed"), "not installed");
+        set_language(previous);
+    }
 }
 
 include!("i18n_tool_errors.rs");

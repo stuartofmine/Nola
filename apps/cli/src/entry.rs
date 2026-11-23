@@ -33,13 +33,9 @@ pub fn run_cli() {
         // work even when model configuration is absent or invalid.
         if let Some(result) = crate::cli_admin::run_if_requested(&arguments) {
             if let Err(error) = result {
-                eprintln!("{error}");
-                std::process::exit(1);
+                eprintln!("{}", error.message());
+                std::process::exit(error.exit_code());
             }
-            return;
-        }
-        if let Some(result) = crate::harness_plugin::desktop_command(&arguments) {
-            if let Err(error) = result { eprintln!("{error}"); std::process::exit(1); }
             return;
         }
         if let Some(result) = crate::tailcat_web_client::run_if_requested(&arguments) {

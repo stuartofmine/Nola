@@ -189,6 +189,69 @@ struct InteractiveGoalSnapshot {
     target: String,
     constraints: String,
     status: String,
+    stop_reason: Option<String>,
+    attempt_count: u32,
+    completed_requirements: usize,
+    total_requirements: usize,
+    next_wake_at_epoch_ms: Option<i64>,
+}
+
+fn goal_stop_reason_label(reason: nola_core::agent::goal::GoalStopReason) -> &'static str {
+    use nola_core::agent::goal::GoalStopReason;
+    match (i18n::current_language(), reason) {
+        (i18n::Language::ZhHans, GoalStopReason::Completed) => "已完成",
+        (i18n::Language::ZhHans, GoalStopReason::Incomplete) => "未完成",
+        (i18n::Language::ZhHans, GoalStopReason::Suspended) => "已暂停",
+        (i18n::Language::ZhHans, GoalStopReason::Scheduled) => "已计划重试",
+        (i18n::Language::ZhHans, GoalStopReason::AwaitingUser) => "等待用户输入",
+        (i18n::Language::ZhHans, GoalStopReason::Failed) => "执行失败",
+        (i18n::Language::ZhHans, GoalStopReason::Cancelled) => "已取消",
+        (i18n::Language::ZhHant, GoalStopReason::Completed) => "已完成",
+        (i18n::Language::ZhHant, GoalStopReason::Incomplete) => "未完成",
+        (i18n::Language::ZhHant, GoalStopReason::Suspended) => "已暫停",
+        (i18n::Language::ZhHant, GoalStopReason::Scheduled) => "已排程重試",
+        (i18n::Language::ZhHant, GoalStopReason::AwaitingUser) => "等待使用者輸入",
+        (i18n::Language::ZhHant, GoalStopReason::Failed) => "執行失敗",
+        (i18n::Language::ZhHant, GoalStopReason::Cancelled) => "已取消",
+        (_, GoalStopReason::Completed) => "completed",
+        (_, GoalStopReason::Incomplete) => "incomplete",
+        (_, GoalStopReason::Suspended) => "suspended",
+        (_, GoalStopReason::Scheduled) => "scheduled",
+        (_, GoalStopReason::AwaitingUser) => "awaiting_user",
+        (_, GoalStopReason::Failed) => "failed",
+        (_, GoalStopReason::Cancelled) => "cancelled",
+    }
+}
+
+fn interactive_goal_snapshot_from_state(
+    goal: &nola_core::agent::goal::GoalState,
+) -> InteractiveGoalSnapshot {
+    let status = match goal.status {
+        GoalStatus::Running => "running",
+        GoalStatus::Paused => "paused",
+        GoalStatus::NeedsUser => "needs_user",
+        GoalStatus::Completed => "completed",
+        GoalStatus::Failed => "failed",
+        GoalStatus::Cancelled => "cancelled",
+    };
+    let completed_requirements = goal
+        .requirements
+        .values()
+        .filter(|req| req.status == nola_core::agent::GoalRecordStatus::Completed)
+        .count();
+    let total_requirements = goal.requirements.len();
+    InteractiveGoalSnapshot {
+        target: goal.objective.clone(),
+        constraints: goal.constraints.join("\n"),
+        status: status.to_string(),
+        stop_reason: goal
+            .stop_reason
+            .map(|r| goal_stop_reason_label(r).to_string()),
+        attempt_count: goal.attempt_count,
+        completed_requirements,
+        total_requirements,
+        next_wake_at_epoch_ms: goal.next_wake_at_epoch_ms,
+    }
 }
 
 fn interactive_goal_snapshot(
@@ -199,19 +262,7 @@ fn interactive_goal_snapshot(
     if let Some(session_id) = config.session_id.as_deref() {
         if let Some(projection) = session::load_session_goal_projection(session_id)? {
             if let Some(goal) = projection.active.filter(|goal| !goal.status.is_terminal()) {
-                let status = match goal.status {
-                    GoalStatus::Running => "running",
-                    GoalStatus::Paused => "paused",
-                    GoalStatus::NeedsUser => "needs_user",
-                    GoalStatus::Completed => "completed",
-                    GoalStatus::Failed => "failed",
-                    GoalStatus::Cancelled => "cancelled",
-                };
-                return Ok(Some(InteractiveGoalSnapshot {
-                    target: goal.objective,
-                    constraints: goal.constraints.join("\n"),
-                    status: status.to_string(),
-                }));
+                return Ok(Some(interactive_goal_snapshot_from_state(&goal)));
             }
             // Persisted completion/cancellation wins over a stale local draft.
             return Ok(None);
@@ -221,6 +272,11 @@ fn interactive_goal_snapshot(
         target: target.to_string(),
         constraints: goal_constraints.unwrap_or_default().to_string(),
         status: "running".to_string(),
+        stop_reason: None,
+        attempt_count: 0,
+        completed_requirements: 0,
+        total_requirements: 0,
+        next_wake_at_epoch_ms: None,
     }))
 }
 
@@ -231,19 +287,37 @@ fn interactive_goal_snapshot_from_projection(
         .active
         .as_ref()
         .filter(|goal| !goal.status.is_terminal())?;
-    let status = match goal.status {
-        GoalStatus::Running => "running",
-        GoalStatus::Paused => "paused",
-        GoalStatus::NeedsUser => "needs_user",
-        GoalStatus::Completed => "completed",
-        GoalStatus::Failed => "failed",
-        GoalStatus::Cancelled => "cancelled",
-    };
-    Some(InteractiveGoalSnapshot {
-        target: goal.objective.clone(),
-        constraints: goal.constraints.join("\n"),
-        status: status.to_string(),
-    })
+    Some(interactive_goal_snapshot_from_state(goal))
+}
+
+fn format_goal_wake_time(wake_at_epoch_ms: i64) -> String {
+    let now_ms = goal_now_epoch_ms();
+    let delta_secs = ((wake_at_epoch_ms - now_ms).max(0) + 500) / 1000;
+    if delta_secs == 0 {
+        return match i18n::current_language() {
+            i18n::Language::ZhHans => "即将恢复".to_string(),
+            i18n::Language::ZhHant => "即將恢復".to_string(),
+            i18n::Language::De => "sofort".to_string(),
+            i18n::Language::Es => "en breve".to_string(),
+            i18n::Language::Fr => "imminent".to_string(),
+            i18n::Language::Ja => "まもなく".to_string(),
+            i18n::Language::Ko => "곧".to_string(),
+            i18n::Language::Ru => "скоро".to_string(),
+            i18n::Language::En => "shortly".to_string(),
+        };
+    }
+    let formatted = format_elapsed_duration(Duration::from_secs(delta_secs as u64));
+    match i18n::current_language() {
+        i18n::Language::ZhHans => format!("{formatted} 后"),
+        i18n::Language::ZhHant => format!("{formatted} 後"),
+        i18n::Language::De => format!("in {formatted}"),
+        i18n::Language::Es => format!("en {formatted}"),
+        i18n::Language::Fr => format!("dans {formatted}"),
+        i18n::Language::Ja => format!("{formatted} 後"),
+        i18n::Language::Ko => format!("{formatted} 후"),
+        i18n::Language::Ru => format!("через {formatted}"),
+        i18n::Language::En => format!("in {formatted}"),
+    }
 }
 
 fn submit_interactive_goal_control(config: &Config, action: nola_application::goal_control_intent::GoalControlAction) -> Result<bool, String> {
@@ -1093,22 +1167,37 @@ fn clear_interactive_list_lines() {
 
 fn interactive_toggle_text(enabled: bool) -> &'static str {
     if enabled {
-        "on"
+        tr(Message::InteractiveStatusOn)
     } else {
-        "off"
+        tr(Message::InteractiveStatusOff)
     }
 }
 
 fn parse_interactive_toggle(value: &str) -> Option<bool> {
-    match value.to_ascii_lowercase().as_str() {
+    let lower = value.trim().to_lowercase();
+    match lower.as_str() {
         "on" | "true" | "yes" | "1" => Some(true),
         "off" | "false" | "no" | "0" => Some(false),
-        _ => None,
+        _ => {
+            let localized_on = tr(Message::InteractiveStatusOn).trim().to_lowercase();
+            let localized_off = tr(Message::InteractiveStatusOff).trim().to_lowercase();
+            if !localized_on.is_empty() && lower == localized_on {
+                Some(true)
+            } else if !localized_off.is_empty() && lower == localized_off {
+                Some(false)
+            } else {
+                None
+            }
+        }
     }
 }
 
 fn interactive_toggle_hint() -> String {
-    "on/off".to_string()
+    format!(
+        "{}/{}",
+        tr(Message::InteractiveStatusOn),
+        tr(Message::InteractiveStatusOff)
+    )
 }
 
 type PermissionLevel = crate::permissions::PermissionProfile;
@@ -1416,6 +1505,21 @@ fn interactive_help_rows() -> Vec<(String, String)> {
             "/sources".to_string(),
             ui_text(UiText::HelpSources).to_string(),
         ),
+        (
+            "/attach <path>".to_string(),
+            match current_language() {
+                Language::ZhHans => "附加图片、PDF 或文本文件到当前消息",
+                Language::ZhHant => "附加圖片、PDF 或文字檔案到目前訊息",
+                Language::De => "Bild, PDF oder Textdatei an die Nachricht anhängen",
+                Language::Es => "Adjuntar imagen, PDF o archivo de texto al mensaje",
+                Language::Fr => "Joindre une image, un PDF ou un fichier texte au message",
+                Language::Ja => "画像・PDF・テキストファイルをメッセージに添付",
+                Language::Ko => "이미지, PDF 또는 텍스트 파일을 메시지에 첨부",
+                Language::Ru => "Прикрепить изображение, PDF или текстовый файл к сообщению",
+                Language::En => "Attach an image, PDF, or text file to the message",
+            }
+            .to_string(),
+        ),
         ("/edit [message-id]".into(), ui_text(UiText::HelpEdit).into()),
         ("/cancel-edit".into(), ui_text(UiText::HelpCancelEdit).into()),
         (
@@ -1451,14 +1555,6 @@ fn interactive_help_rows() -> Vec<(String, String)> {
             tr(Message::InteractiveSlashPlanHint).to_string(),
         ),
         ("/agent".to_string(), ui_text(UiText::HelpAgent).to_string()),
-        (
-            "/experts".to_string(),
-            match current_language() {
-                Language::ZhHans => "查看可用专家与代理角色",
-                _ => "List available expert agents",
-            }
-            .to_string(),
-        ),
         ("/room".to_string(), ui_text(UiText::HelpRoom).to_string()),
         ("/work".to_string(), ui_text(UiText::HelpWork).to_string()),
         ("/recover".to_string(), crate::unknown_effect_recovery::usage().to_string()),
@@ -1534,10 +1630,6 @@ fn interactive_help_rows() -> Vec<(String, String)> {
         ),
         (
             "/exit".to_string(),
-            tr(Message::InteractiveSlashExitHint).to_string(),
-        ),
-        (
-            "/quit".to_string(),
             tr(Message::InteractiveSlashExitHint).to_string(),
         ),
     ]
@@ -1634,6 +1726,73 @@ mod interactive_terminal_ui_contract_tests {
             .map(|(command, _)| display_width(&pad_right_width(command, width)) + 2)
             .collect::<Vec<_>>();
         assert!(starts.windows(2).all(|pair| pair[0] == pair[1]));
+    }
+
+    #[test]
+    fn debug_toggle_accepts_canonical_and_localized_values() {
+        let _lock = crate::store::test_env_lock();
+        let previous = current_language();
+        struct RestoreLang(Language);
+        impl Drop for RestoreLang {
+            fn drop(&mut self) {
+                i18n::set_language(self.0);
+            }
+        }
+        let _restore = RestoreLang(previous);
+
+        i18n::set_language(Language::En);
+        assert_eq!(parse_interactive_toggle("on"), Some(true));
+        assert_eq!(parse_interactive_toggle("OFF"), Some(false));
+        assert_eq!(interactive_toggle_text(true), tr(Message::InteractiveStatusOn));
+        assert_eq!(interactive_toggle_text(false), tr(Message::InteractiveStatusOff));
+        assert_eq!(interactive_toggle_hint(), "on/off");
+
+        i18n::set_language(Language::ZhHans);
+        assert_eq!(parse_interactive_toggle("开启"), Some(true));
+        assert_eq!(parse_interactive_toggle("关闭"), Some(false));
+        assert_eq!(parse_interactive_toggle("on"), Some(true));
+        assert_eq!(parse_interactive_toggle("off"), Some(false));
+        assert_eq!(parse_interactive_toggle("invalid"), None);
+        assert_eq!(interactive_toggle_text(true), "开启");
+        assert_eq!(interactive_toggle_text(false), "关闭");
+        assert_eq!(interactive_toggle_hint(), "开启/关闭");
+    }
+
+    #[test]
+    fn footer_prints_external_executor_once() {
+        let _lock = crate::store::test_env_lock();
+        let mut config = Config::for_test().unwrap();
+        config.model = "gpt-5".into();
+        config.execution_backend = nola_domain::execution_backend::ExecutionBackendKind::Codex.id().to_string();
+        let footer = interactive_prompt_footer_line(&config, None, None).unwrap();
+        let label = format!("{}:", tr(Message::InteractiveExecutorLabel));
+        assert_eq!(footer.matches(&label).count(), 1, "footer should print Executor once: {footer}");
+    }
+
+    #[test]
+    fn canonical_slash_commands_and_help_exclude_duplicate_aliases_while_keeping_normalization() {
+        let forbidden = ["/permissions", "/resources", "/quit", "/experts"];
+        for alias in forbidden {
+            assert!(
+                !INTERACTIVE_SLASH_COMMANDS.iter().any(|cmd| cmd.name == alias),
+                "INTERACTIVE_SLASH_COMMANDS should not contain duplicate alias {alias}"
+            );
+            assert!(
+                !interactive_help_rows()
+                    .iter()
+                    .any(|(usage, _)| usage.split_whitespace().next() == Some(alias)),
+                "interactive_help_rows should not contain duplicate alias {alias}"
+            );
+            assert!(
+                normalize_interactive_command(alias).is_some(),
+                "hidden alias {alias} must still normalize when typed manually"
+            );
+        }
+        assert_eq!(normalize_interactive_command("/EDIT"), Some("/edit"));
+        assert_eq!(normalize_interactive_command("/Cancel-Edit"), Some("/cancel-edit"));
+        assert_eq!(normalize_interactive_command("/QUESTIONS"), Some("/questions"));
+        assert!(is_resume_command("/resume"));
+        assert!(is_resume_command("/resume ses-42"));
     }
 }
 
@@ -1902,6 +2061,15 @@ impl interaction::ClientCommandHandler for LiveCliCommands {
             }
             "/status" => print_interactive_prompt_card(&config, 0),
             "/history" => print_interactive_session_history(&config),
+            "/resume" => {
+                self.runtime.request();
+                crate::terminal_ui::mark_turn_cancelling(self.execution_id);
+                crate::terminal_ui::commit_history(match current_language() {
+                    Language::ZhHans => "  正在停止当前任务并切换会话…",
+                    _ => "  Stopping active run to switch session…",
+                });
+                Ok(())
+            }
             _ => {
                 crate::terminal_ui::commit_history(&format!("{} {}", input.trim(), match current_language() {
                     Language::ZhHans => "· 当前任务运行中，请先按 Esc 返回输入后执行此命令；命令未排队。",
@@ -2283,8 +2451,18 @@ fn run_single_prompt_with_cancellation(
     run_single_prompt(config, prompt)
 }
 
-struct CliGoalRoundDriver { config: Config }
+struct CliGoalRoundDriver {
+    config: Config,
+    stop_requested: std::sync::atomic::AtomicBool,
+}
 impl CliGoalRoundDriver {
+    fn new(config: Config) -> Self {
+        Self {
+            config,
+            stop_requested: std::sync::atomic::AtomicBool::new(false),
+        }
+    }
+
     fn round_config(&self, request: &crate::host_invocation_request::HostInvocationRequest) -> Config {
         let mut config = self.config.clone();
         config.session_id = request.session.session_id.clone();
@@ -2302,14 +2480,25 @@ impl CliGoalRoundDriver {
     }
 }
 impl crate::goal_runtime::GoalRoundDriver for CliGoalRoundDriver {
+    fn stop_requested(&self) -> bool {
+        self.stop_requested.load(std::sync::atomic::Ordering::SeqCst)
+    }
+
+    fn restores_exact_run_configuration(&self) -> bool {
+        true
+    }
+
     fn resume(&mut self, request: &crate::host_invocation_request::HostInvocationRequest, run_id: &str) -> Result<Option<PromptRunResult>, String> {
         let config = self.round_config(request);
         let cancellation = if config.json_output { interaction::ExecutionCancellation::default() }
             else { interaction::ExecutionCancellation::interactive() };
         let mut emitter = Emitter::new(config.json_output).with_quiet_status(true);
         let session = request.session.session_id.as_deref().ok_or("Goal recovery requires a session")?;
-        let run_outcome = with_cli_execution_control(&config, cancellation, &mut emitter, |control, emitter|
+        let run_outcome = with_cli_execution_control(&config, cancellation.clone(), &mut emitter, |control, emitter|
             crate::core_agent_runtime::resume_frozen_core_agent_run(session, run_id, emitter, control))?;
+        if cancellation.is_requested() {
+            self.stop_requested.store(true, std::sync::atomic::Ordering::SeqCst);
+        }
         emitter.wait_for_execution_input_release();
         Ok(run_outcome.map(|run_outcome| PromptRunResult {
             goal_signal: run_outcome.goal_signal.clone(), run_outcome,
@@ -2326,18 +2515,130 @@ fn submit_goal_command(config: &Config, operation_id: String, command: GoalRunti
 fn pause_goal(config: &Config, cause: GoalCyclePause) -> Result<GoalCycleOutcome, String> {
     crate::goal_runtime::pause_goal(&config.host_invocation_request()?, cause)
 }
+
+fn print_goal_cycle_outcome_banner(outcome: &GoalCycleOutcome) {
+    let lang = i18n::current_language();
+    match outcome {
+        GoalCycleOutcome::Completed(_) => {
+            let label = match lang {
+                i18n::Language::ZhHans => "目标已完成",
+                i18n::Language::ZhHant => "目標已完成",
+                i18n::Language::De => "Ziel abgeschlossen",
+                i18n::Language::Es => "Objetivo completado",
+                i18n::Language::Fr => "Objectif atteint",
+                i18n::Language::Ja => "目標を完了しました",
+                i18n::Language::Ko => "목표가 완료되었습니다",
+                i18n::Language::Ru => "Цель достигнута",
+                i18n::Language::En => "Goal completed",
+            };
+            if interactive_color_enabled() {
+                terminal_notice!("  \x1b[32m✓  {label}{INTERACTIVE_RESET}");
+            } else {
+                terminal_notice!("  ✓  {label}");
+            }
+        }
+        GoalCycleOutcome::Failed { reason, .. } => {
+            let label = match lang {
+                i18n::Language::ZhHans => "目标失败",
+                i18n::Language::ZhHant => "目標失敗",
+                i18n::Language::De => "Ziel fehlgeschlagen",
+                i18n::Language::Es => "Objetivo fallido",
+                i18n::Language::Fr => "Échec de l’objectif",
+                i18n::Language::Ja => "目標に失敗しました",
+                i18n::Language::Ko => "목표 실패",
+                i18n::Language::Ru => "Не удалось выполнить цель",
+                i18n::Language::En => "Goal failed",
+            };
+            let suffix = reason
+                .as_deref()
+                .map(str::trim)
+                .filter(|s| !s.is_empty())
+                .map(|r| format!(": {r}"))
+                .unwrap_or_default();
+            if interactive_color_enabled() {
+                terminal_notice!("  \x1b[31m!  {label}{suffix}{INTERACTIVE_RESET}");
+            } else {
+                terminal_notice!("  !  {label}{suffix}");
+            }
+        }
+        GoalCycleOutcome::Cancelled(_) => {
+            let label = match lang {
+                i18n::Language::ZhHans => "目标已取消",
+                i18n::Language::ZhHant => "目標已取消",
+                i18n::Language::De => "Ziel abgebrochen",
+                i18n::Language::Es => "Objetivo cancelado",
+                i18n::Language::Fr => "Objectif annulé",
+                i18n::Language::Ja => "目標をキャンセルしました",
+                i18n::Language::Ko => "목표가 취소되었습니다",
+                i18n::Language::Ru => "Цель отменена",
+                i18n::Language::En => "Goal cancelled",
+            };
+            terminal_notice!("  {label}");
+        }
+        GoalCycleOutcome::Paused(_) => {
+            terminal_notice!("  {}", ui_text(UiText::GoalPaused));
+        }
+        GoalCycleOutcome::NeedsUser { reason, .. } => {
+            let label = match lang {
+                i18n::Language::ZhHans => "目标需要你的输入",
+                i18n::Language::ZhHant => "目標需要您的輸入",
+                i18n::Language::De => "Ziel benötigt deine Eingabe",
+                i18n::Language::Es => "El objetivo necesita tu respuesta",
+                i18n::Language::Fr => "L’objectif attend votre réponse",
+                i18n::Language::Ja => "目標の続行には入力が必要です",
+                i18n::Language::Ko => "목표 진행을 위해 입력이 필요합니다",
+                i18n::Language::Ru => "Для продолжения цели нужен ваш ответ",
+                i18n::Language::En => "Goal needs your input",
+            };
+            let suffix = reason
+                .as_deref()
+                .map(str::trim)
+                .filter(|s| !s.is_empty())
+                .map(|r| format!(": {r}"))
+                .unwrap_or_default();
+            if interactive_color_enabled() {
+                terminal_notice!("  \x1b[33m◆  {label}{suffix}{INTERACTIVE_RESET}");
+            } else {
+                terminal_notice!("  ◆  {label}{suffix}");
+            }
+        }
+        GoalCycleOutcome::Waiting { wake_at_epoch_ms, .. } => {
+            let label = match lang {
+                i18n::Language::ZhHans => "目标等待中",
+                i18n::Language::ZhHant => "目標等待中",
+                i18n::Language::De => "Ziel wartet",
+                i18n::Language::Es => "Objetivo en espera",
+                i18n::Language::Fr => "Objectif en attente",
+                i18n::Language::Ja => "目標は待機中です",
+                i18n::Language::Ko => "목표 대기 중",
+                i18n::Language::Ru => "Цель в ожидании",
+                i18n::Language::En => "Goal waiting",
+            };
+            if let Some(wake) = wake_at_epoch_ms {
+                let schedule = format_goal_wake_time(*wake);
+                terminal_notice!("  {label} ({schedule})");
+            } else {
+                terminal_notice!("  {label}");
+            }
+        }
+        GoalCycleOutcome::Yielded(_) => {}
+    }
+}
+
 fn run_goal_prompt_cycle(config: &mut Config, user_prompt: &str, objective: &str, constraints: &str)
     -> Result<GoalCycleOutcome, String> {
     let selected = crate::conversation_invocation::prepare_submission(config)?;
     let mut request = selected.host_invocation_request()?;
-    let mut driver = CliGoalRoundDriver { config: selected };
+    let mut driver = CliGoalRoundDriver::new(selected);
     let result = crate::goal_runtime::run_goal_cycle(&mut request, user_prompt, objective, constraints, &mut driver);
     config.session_id = request.session.session_id;
     config.continue_last = false;
     config.save_session = request.session.save_session;
     config.resume_snapshot = request.session.resume_snapshot;
-    if matches!(&result, Ok(GoalCycleOutcome::Paused)) && !config.json_output {
-        terminal_notice!("  {}", ui_text(UiText::GoalPaused));
+    if let Ok(outcome) = &result {
+        if !config.json_output {
+            print_goal_cycle_outcome_banner(outcome);
+        }
     }
     result
 }

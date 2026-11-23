@@ -49,21 +49,119 @@ pub(crate) struct PromptRunResult {
     pub(crate) context_usage: Option<nola_core::agent::context_window::ContextUsageSnapshot>,
 }
 
-pub(crate) type GoalCycleOutcome = nola_application::goal_coordinator::GoalCycleOutcome<PromptHandoff>;
-#[derive(Debug, Default)]
-pub(crate) struct PromptHandoff {
+#[derive(Debug, Default, PartialEq)]
+pub(crate) struct InteractiveTurnHandoff {
     pub(crate) queued_user_inputs: Vec<String>,
     pub(crate) draft_user_input: Option<String>,
     pub(crate) context_usage: Option<nola_core::agent::context_window::ContextUsageSnapshot>,
 }
 
-impl PromptHandoff {
+#[allow(dead_code)]
+pub(crate) type PromptHandoff = InteractiveTurnHandoff;
+
+impl InteractiveTurnHandoff {
     fn from_run_result(result: &mut PromptRunResult) -> Self {
         Self {
             queued_user_inputs: std::mem::take(&mut result.queued_user_inputs),
             draft_user_input: result.draft_user_input.take(),
             context_usage: result.context_usage.take(),
         }
+    }
+}
+
+#[derive(Debug, PartialEq)]
+pub(crate) enum GoalCycleOutcome {
+    Completed(Option<InteractiveTurnHandoff>),
+    Failed {
+        reason: Option<String>,
+        handoff: Option<InteractiveTurnHandoff>,
+    },
+    Cancelled(Option<InteractiveTurnHandoff>),
+    Paused(Option<InteractiveTurnHandoff>),
+    NeedsUser {
+        reason: Option<String>,
+        handoff: Option<InteractiveTurnHandoff>,
+    },
+    Waiting {
+        wake_at_epoch_ms: Option<i64>,
+        handoff: Option<InteractiveTurnHandoff>,
+    },
+    Yielded(InteractiveTurnHandoff),
+}
+
+const MAX_INLINE_GOAL_WAIT_MS: i64 = 15_000;
+const GOAL_WAIT_SLICE_MS: u64 = 200;
+
+fn goal_reason_from_step(result: &serde_json::Value) -> Option<String> {
+    result["instruction"]["reason"]
+        .as_str()
+        .filter(|reason| !reason.trim().is_empty())
+        .map(str::to_string)
+        .or_else(|| {
+            result["goal"]["audit_reports"]
+                .as_array()
+                .and_then(|reports| reports.last())
+                .and_then(|report| report["summary"].as_str())
+                .filter(|summary| !summary.trim().is_empty())
+                .map(str::to_string)
+        })
+        .or_else(|| {
+            result["goal"]["stop_reason"]
+                .as_str()
+                .filter(|reason| !reason.trim().is_empty())
+                .map(str::to_string)
+        })
+}
+
+fn classify_terminal_outcome(
+    result: &serde_json::Value,
+    handoff: Option<InteractiveTurnHandoff>,
+) -> GoalCycleOutcome {
+    let outcome = result["instruction"]["outcome"]
+        .as_str()
+        .or_else(|| result["goal"]["status"].as_str());
+    match outcome {
+        Some("completed") => GoalCycleOutcome::Completed(handoff),
+        Some("failed") => GoalCycleOutcome::Failed {
+            reason: goal_reason_from_step(result),
+            handoff,
+        },
+        _ => GoalCycleOutcome::Cancelled(handoff),
+    }
+}
+
+fn classify_non_run_instruction(
+    result: &serde_json::Value,
+    handoff: Option<InteractiveTurnHandoff>,
+) -> Result<GoalCycleOutcome, String> {
+    match result["instruction"]["type"].as_str() {
+        Some("terminal") => Ok(classify_terminal_outcome(result, handoff)),
+        Some("paused") => Ok(GoalCycleOutcome::Paused(handoff)),
+        Some("needs_user") => {
+            if result["goal"]["status"].as_str() == Some("paused") {
+                Ok(GoalCycleOutcome::Paused(handoff))
+            } else {
+                Ok(GoalCycleOutcome::NeedsUser {
+                    reason: goal_reason_from_step(result),
+                    handoff,
+                })
+            }
+        }
+        Some("wait") => {
+            let wake_at_epoch_ms = result["instruction"]["wake_at_epoch_ms"].as_i64();
+            if wake_at_epoch_ms.is_none()
+                && (result["instruction"]["reason"].as_str() == Some("host_unavailable")
+                    || result["goal"]["status"].as_str() == Some("paused"))
+            {
+                Ok(GoalCycleOutcome::Paused(handoff))
+            } else {
+                Ok(GoalCycleOutcome::Waiting {
+                    wake_at_epoch_ms,
+                    handoff,
+                })
+            }
+        }
+        _ => Err("Invalid Core Goal instruction".into()),
     }
 }
 
@@ -116,13 +214,35 @@ fn run_goal_cycle_with_dispatch(request: &mut HostInvocationRequest, user_prompt
                 let outcome = driver.resume(request, run)?;
                 previous_run=Some(run.into());
                 if let Some(mut outcome) = outcome {
-                    handoff=Some(PromptHandoff::from_run_result(&mut outcome));
+                    handoff = Some(InteractiveTurnHandoff::from_run_result(&mut outcome));
                 }
                 // A competing Host may have sealed the instructed Run. Let
                 // the same Core step consume it instead of requiring a wake.
             }
-            Some("terminal") => return Ok(if result["instruction"]["outcome"]=="completed" {GoalCycleOutcome::Completed(handoff.take().unwrap_or_default())} else {GoalCycleOutcome::Paused}),
-            Some("wait" | "needs_user") => return Ok(handoff.take().map(GoalCycleOutcome::Yielded).unwrap_or(GoalCycleOutcome::Paused)),
+            Some("wait") => {
+                if let Some(wake_ms) = result["instruction"]["wake_at_epoch_ms"].as_i64() {
+                    let delay_ms = wake_ms.saturating_sub(goal_now_epoch_ms());
+                    if delay_ms <= MAX_INLINE_GOAL_WAIT_MS && !driver.stop_requested() {
+                        while goal_now_epoch_ms() < wake_ms {
+                            if driver.stop_requested() {
+                                return Ok(GoalCycleOutcome::Paused(handoff.take()));
+                            }
+                            let remaining_ms = wake_ms.saturating_sub(goal_now_epoch_ms()).max(0) as u64;
+                            std::thread::sleep(Duration::from_millis(
+                                remaining_ms.min(GOAL_WAIT_SLICE_MS),
+                            ));
+                        }
+                        if driver.stop_requested() {
+                            return Ok(GoalCycleOutcome::Paused(handoff.take()));
+                        }
+                        continue;
+                    }
+                }
+                return classify_non_run_instruction(&result, handoff.take());
+            }
+            Some("terminal" | "paused" | "needs_user") => {
+                return classify_non_run_instruction(&result, handoff.take());
+            }
             _ => return Err("Invalid Core Goal instruction".into()),
         }
     }
@@ -149,7 +269,7 @@ pub(crate) fn pause_goal(request: &HostInvocationRequest, cause: GoalCyclePause)
         start_configuration:None,selected_model:None,user_prompt:String::new(),host_available:Some(true),
         submitted_run_id:None,submitted_user_message_id:None,submitted_assistant_message_id:None,stop_after_sealed_round:false })?;
     if let Some(error)=result["error"].as_str(){return Err(error.into());}
-    Ok(GoalCycleOutcome::Paused)
+    Ok(GoalCycleOutcome::Paused(None))
 }
 #[cfg(test)]
 pub(crate) fn pending_goal_run(request: &HostInvocationRequest) -> Result<Option<(String,String)>,String> {
@@ -263,5 +383,86 @@ mod canonical_goal_result_tests {
             turn_status: AgentTurnStatus::AwaitingInput, run_result: None, goal_signal: None,
         };
         assert_eq!(canonical_goal_terminal_reason(&waiting).unwrap(), None);
+    }
+
+    #[test]
+    fn goal_instruction_classification_preserves_terminal_and_handoff_variants() {
+        let handoff = InteractiveTurnHandoff {
+            queued_user_inputs: vec!["follow-up".into()],
+            draft_user_input: Some("draft".into()),
+            context_usage: None,
+        };
+        assert_eq!(
+            classify_non_run_instruction(
+                &serde_json::json!({"instruction": {"type": "terminal", "outcome": "completed"}}),
+                Some(InteractiveTurnHandoff {
+                    queued_user_inputs: vec!["follow-up".into()],
+                    draft_user_input: Some("draft".into()),
+                    context_usage: None,
+                }),
+            )
+            .unwrap(),
+            GoalCycleOutcome::Completed(Some(handoff))
+        );
+        assert_eq!(
+            classify_non_run_instruction(
+                &serde_json::json!({
+                    "instruction": {"type": "terminal", "outcome": "failed"},
+                    "goal": {"status": "failed", "stop_reason": "failed"}
+                }),
+                None,
+            )
+            .unwrap(),
+            GoalCycleOutcome::Failed {
+                reason: Some("failed".into()),
+                handoff: None,
+            }
+        );
+        assert_eq!(
+            classify_non_run_instruction(
+                &serde_json::json!({"instruction": {"type": "terminal", "outcome": "cancelled"}}),
+                None,
+            )
+            .unwrap(),
+            GoalCycleOutcome::Cancelled(None)
+        );
+        assert_eq!(
+            classify_non_run_instruction(
+                &serde_json::json!({
+                    "instruction": {"type": "needs_user"},
+                    "goal": {"status": "paused"}
+                }),
+                Some(InteractiveTurnHandoff::default()),
+            )
+            .unwrap(),
+            GoalCycleOutcome::Paused(Some(InteractiveTurnHandoff::default()))
+        );
+        assert_eq!(
+            classify_non_run_instruction(
+                &serde_json::json!({
+                    "instruction": {"type": "needs_user"},
+                    "goal": {"status": "needs_user", "stop_reason": "awaiting_user"}
+                }),
+                Some(InteractiveTurnHandoff::default()),
+            )
+            .unwrap(),
+            GoalCycleOutcome::NeedsUser {
+                reason: Some("awaiting_user".into()),
+                handoff: Some(InteractiveTurnHandoff::default()),
+            }
+        );
+        assert_eq!(
+            classify_non_run_instruction(
+                &serde_json::json!({
+                    "instruction": {"type": "wait", "wake_at_epoch_ms": 9_999_999_999_999i64}
+                }),
+                Some(InteractiveTurnHandoff::default()),
+            )
+            .unwrap(),
+            GoalCycleOutcome::Waiting {
+                wake_at_epoch_ms: Some(9_999_999_999_999i64),
+                handoff: Some(InteractiveTurnHandoff::default()),
+            }
+        );
     }
 }

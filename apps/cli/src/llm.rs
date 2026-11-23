@@ -26,7 +26,9 @@ mod stream_state;
 mod streaming;
 #[path = "llm_parts/transport.rs"]
 mod transport;
-pub(crate) use transport::normalized_model_endpoint;
+pub(crate) use transport::{
+    apply_configured_ssl_cert_file_blocking, is_explicit_loopback_host, normalized_model_endpoint,
+};
 
 #[cfg(test)]
 #[path = "llm_parts/output_budget_contract_tests.rs"]

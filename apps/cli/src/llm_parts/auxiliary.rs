@@ -81,6 +81,24 @@ fn auxiliary_completion(response: &Value, protocol: ModelProtocol) -> (Option<St
     }
 }
 
+fn sanitize_auxiliary_error_snippet(raw: &str) -> String {
+    const MAX_SNIPPET_CHARS: usize = 240;
+    let collapsed: String = raw
+        .chars()
+        .map(|ch| if ch.is_control() { ' ' } else { ch })
+        .collect();
+    let trimmed = collapsed.split_whitespace().collect::<Vec<_>>().join(" ");
+    let mut out = String::new();
+    for (idx, ch) in trimmed.chars().enumerate() {
+        if idx >= MAX_SNIPPET_CHARS {
+            out.push_str("...");
+            break;
+        }
+        out.push(ch);
+    }
+    out
+}
+
 pub(crate) fn invoke_auxiliary_once(
     cfg: &LlmConfig,
     messages: &[Value],
@@ -100,11 +118,20 @@ pub(crate) fn invoke_auxiliary_once(
                 usage: auxiliary_usage(choice.provider_raw_usage.as_ref().unwrap_or(&Value::Null), protocol),
                 content: if choice.content.trim().is_empty() { Err("auxiliary provider returned no complete text result".into()) } else { Ok(choice.content) },
             }),
-            Err(super::contracts::ProviderAttemptError::Http { .. }) => Ok(AuxiliaryPhysicalOutcome::Complete {
-                finish_reason: None, has_tool_calls: None,
-                content: Err("auxiliary provider rejected request".into()),
-                usage: auxiliary_usage(&Value::Null, protocol),
-            }),
+            Err(super::contracts::ProviderAttemptError::Http { status, detail, .. }) => {
+                let snippet = sanitize_auxiliary_error_snippet(&detail);
+                let message = if snippet.is_empty() {
+                    format!("auxiliary provider rejected request (HTTP {status})")
+                } else {
+                    format!("auxiliary provider rejected request (HTTP {status}): {snippet}")
+                };
+                Ok(AuxiliaryPhysicalOutcome::Complete {
+                    finish_reason: None,
+                    has_tool_calls: None,
+                    content: Err(message),
+                    usage: auxiliary_usage(&Value::Null, protocol),
+                })
+            }
             Err(_) => Ok(AuxiliaryPhysicalOutcome::Unknown),
         };
     }
@@ -130,10 +157,15 @@ pub(crate) fn invoke_auxiliary_once(
         object.remove("stream_options");
     }
     let url = super::transport::normalized_model_endpoint(&cfg.endpoint, protocol)?;
-    let client = reqwest::blocking::Client::builder()
+    let mut client_builder = reqwest::blocking::Client::builder()
         .redirect(reqwest::redirect::Policy::none())
         .connect_timeout(Duration::from_secs(10))
-        .timeout(Duration::from_millis(duration_ms.clamp(1, 3_600_000)))
+        .timeout(Duration::from_millis(duration_ms.clamp(1, 3_600_000)));
+    if super::transport::is_explicit_loopback_host(url.host_str()) {
+        client_builder = client_builder.no_proxy();
+    }
+    let client = super::transport::apply_configured_ssl_cert_file_blocking(client_builder)
+        .map_err(|err| format!("auxiliary HTTP client unavailable: {err}"))?
         .build()
         .map_err(|_| "auxiliary HTTP client unavailable")?;
     if cfg.cancellation.is_requested() {
@@ -154,13 +186,20 @@ pub(crate) fn invoke_auxiliary_once(
         Ok(response) => response,
         Err(_) => return Ok(AuxiliaryPhysicalOutcome::Unknown),
     };
-    let success = response.status().is_success();
+    if cfg.cancellation.is_requested() {
+        return Ok(AuxiliaryPhysicalOutcome::Unknown);
+    }
+    let status = response.status();
+    let success = status.is_success();
     let mut bytes = Vec::new();
     if response
         .take(4 * 1024 * 1024 + 1)
         .read_to_end(&mut bytes)
         .is_err()
     {
+        return Ok(AuxiliaryPhysicalOutcome::Unknown);
+    }
+    if cfg.cancellation.is_requested() {
         return Ok(AuxiliaryPhysicalOutcome::Unknown);
     }
     if bytes.len() > 4 * 1024 * 1024 {
@@ -174,7 +213,13 @@ pub(crate) fn invoke_auxiliary_once(
     let usage = auxiliary_usage(&response["usage"], protocol);
     let (finish_reason, has_tool_calls) = auxiliary_completion(&response, protocol);
     let content = if !success {
-        Err("auxiliary provider rejected request".into())
+        let raw_snippet = String::from_utf8_lossy(&bytes);
+        let snippet = sanitize_auxiliary_error_snippet(&raw_snippet);
+        if snippet.is_empty() {
+            Err(format!("auxiliary provider rejected request (HTTP {})", status.as_u16()))
+        } else {
+            Err(format!("auxiliary provider rejected request (HTTP {}): {snippet}", status.as_u16()))
+        }
     } else {
         match protocol {
             ModelProtocol::ChatCompletions => response["choices"][0]["message"]["content"]

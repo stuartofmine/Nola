@@ -200,8 +200,11 @@ pub(crate) fn execute(mut request: HostInvocationRequest) -> Result<(), String> 
                     &mut output,
                     cancellation.clone(),
                 )?;
-                let cancelled = matches!(outcome, crate::goal_runtime::GoalCycleOutcome::Paused)
-                    && cancellation.is_requested();
+                let cancelled = matches!(
+                    outcome,
+                    crate::goal_runtime::GoalCycleOutcome::Paused(_)
+                        | crate::goal_runtime::GoalCycleOutcome::Cancelled(_)
+                ) && cancellation.is_requested();
                 Ok(crate::core_agent_runtime::CoreRunOutcome {
                     turn_status: if cancelled {
                         nola_core::agent::AgentTurnStatus::Cancelled

@@ -86,11 +86,88 @@ fn prompt_config_line(prompt: &str) -> Result<String, String> {
     }
 }
 
-struct ConfigSecretRawModeGuard;
+struct ConfigSecretRawModeGuard {
+    bracketed_paste: bool,
+}
 
 impl Drop for ConfigSecretRawModeGuard {
     fn drop(&mut self) {
+        if self.bracketed_paste && io::stdout().is_terminal() {
+            let _ = crossterm::execute!(io::stdout(), crossterm::event::DisableBracketedPaste);
+        }
         let _ = disable_raw_mode();
+    }
+}
+
+#[derive(Debug, PartialEq, Eq)]
+enum SecretKeyAction {
+    Continue,
+    Submit,
+    Cancel,
+}
+
+fn handle_secret_key_event<W: Write>(
+    key: crossterm::event::KeyEvent,
+    value: &mut String,
+    out: &mut W,
+) -> Result<SecretKeyAction, String> {
+    if key.kind != KeyEventKind::Press {
+        return Ok(SecretKeyAction::Continue);
+    }
+    match key.code {
+        KeyCode::Enter => {
+            write!(out, "\r\n").map_err(|err| format!("write prompt failed: {err}"))?;
+            out.flush()
+                .map_err(|err| format!("flush prompt failed: {err}"))?;
+            Ok(SecretKeyAction::Submit)
+        }
+        KeyCode::Backspace | KeyCode::Delete => {
+            if pop_secret_char(value) {
+                erase_secret_stars(out, 1)?;
+            }
+            Ok(SecretKeyAction::Continue)
+        }
+        KeyCode::Char(ch)
+            if key.modifiers.contains(KeyModifiers::CONTROL)
+                && matches!(ch, 'c' | 'C' | 'd' | 'D') =>
+        {
+            let _ = write!(out, "\r\n");
+            let _ = out.flush();
+            Ok(SecretKeyAction::Cancel)
+        }
+        KeyCode::Char(ch)
+            if key.modifiers.contains(KeyModifiers::CONTROL) && matches!(ch, 'u' | 'U') =>
+        {
+            let removed = clear_secret_line(value);
+            if removed > 0 {
+                erase_secret_stars(out, removed)?;
+            }
+            Ok(SecretKeyAction::Continue)
+        }
+        KeyCode::Char(ch)
+            if key.modifiers.contains(KeyModifiers::CONTROL) && matches!(ch, 'w' | 'W') =>
+        {
+            let removed = pop_secret_word(value);
+            if removed > 0 {
+                erase_secret_stars(out, removed)?;
+            }
+            Ok(SecretKeyAction::Continue)
+        }
+        KeyCode::Char(ch)
+            if !ch.is_control()
+                && !key.modifiers.intersects(
+                    KeyModifiers::CONTROL
+                        | KeyModifiers::ALT
+                        | KeyModifiers::SUPER
+                        | KeyModifiers::HYPER
+                        | KeyModifiers::META,
+                ) =>
+        {
+            value.push(ch);
+            write_secret_stars(out, 1)?;
+            Ok(SecretKeyAction::Continue)
+        }
+        _ => Ok(SecretKeyAction::Continue),
     }
 }
 
@@ -103,51 +180,19 @@ fn prompt_config_secret(prompt: &str) -> Result<String, String> {
         .flush()
         .map_err(|err| format!("flush prompt failed: {err}"))?;
     enable_raw_mode().map_err(|err| format!("enable secure input failed: {err}"))?;
-    let _raw_mode = ConfigSecretRawModeGuard;
+    let bracketed_paste = io::stdout().is_terminal()
+        && crossterm::execute!(io::stdout(), crossterm::event::EnableBracketedPaste).is_ok();
+    let _raw_mode = ConfigSecretRawModeGuard { bracketed_paste };
     let mut value = String::new();
     let mut out = io::stdout();
     loop {
         match read().map_err(|err| format!("read secure input failed: {err}"))? {
-            Event::Key(key) if key.kind == KeyEventKind::Press => match key.code {
-                KeyCode::Enter => {
-                    print!("\r\n");
-                    out.flush()
-                        .map_err(|err| format!("flush prompt failed: {err}"))?;
-                    return Ok(value);
-                }
-                KeyCode::Backspace | KeyCode::Delete => {
-                    if pop_secret_char(&mut value) {
-                        erase_secret_stars(&mut out, 1)?;
-                    }
-                }
-                KeyCode::Char(ch)
-                    if key.modifiers.contains(KeyModifiers::CONTROL) && matches!(ch, 'c' | 'C') =>
-                {
-                    print!("\r\n");
-                    let _ = out.flush();
+            Event::Key(key) => match handle_secret_key_event(key, &mut value, &mut out)? {
+                SecretKeyAction::Continue => {}
+                SecretKeyAction::Submit => return Ok(value),
+                SecretKeyAction::Cancel => {
                     return Err("configuration input cancelled".to_string());
                 }
-                KeyCode::Char(ch)
-                    if key.modifiers.contains(KeyModifiers::CONTROL) && matches!(ch, 'u' | 'U') =>
-                {
-                    let removed = clear_secret_line(&mut value);
-                    if removed > 0 {
-                        erase_secret_stars(&mut out, removed)?;
-                    }
-                }
-                KeyCode::Char(ch)
-                    if key.modifiers.contains(KeyModifiers::CONTROL) && matches!(ch, 'w' | 'W') =>
-                {
-                    let removed = pop_secret_word(&mut value);
-                    if removed > 0 {
-                        erase_secret_stars(&mut out, removed)?;
-                    }
-                }
-                KeyCode::Char(ch) if !ch.is_control() => {
-                    value.push(ch);
-                    write_secret_stars(&mut out, 1)?;
-                }
-                _ => {}
             },
             Event::Paste(text) => {
                 let added = append_secret_paste(&mut value, &text);
@@ -292,5 +337,64 @@ mod tests {
         append_secret_paste(&mut secret, "token");
         assert_eq!(clear_secret_line(&mut secret), 5);
         assert!(secret.is_empty());
+    }
+
+    #[test]
+    fn secret_prompt_ignores_modified_chars_and_cancels_on_ctrl_d() {
+        use crossterm::event::KeyEvent;
+
+        let mut secret = String::new();
+        let mut out = Vec::new();
+
+        assert_eq!(
+            handle_secret_key_event(
+                KeyEvent::new(KeyCode::Char('s'), KeyModifiers::NONE),
+                &mut secret,
+                &mut out,
+            )
+            .unwrap(),
+            SecretKeyAction::Continue
+        );
+        assert_eq!(
+            handle_secret_key_event(
+                KeyEvent::new(KeyCode::Char('K'), KeyModifiers::SHIFT),
+                &mut secret,
+                &mut out,
+            )
+            .unwrap(),
+            SecretKeyAction::Continue
+        );
+        for (ch, modifier) in [
+            ('a', KeyModifiers::CONTROL),
+            ('e', KeyModifiers::CONTROL),
+            ('k', KeyModifiers::CONTROL),
+            ('v', KeyModifiers::CONTROL),
+            ('x', KeyModifiers::ALT),
+            ('v', KeyModifiers::SUPER),
+            ('z', KeyModifiers::META),
+        ] {
+            assert_eq!(
+                handle_secret_key_event(
+                    KeyEvent::new(KeyCode::Char(ch), modifier),
+                    &mut secret,
+                    &mut out,
+                )
+                .unwrap(),
+                SecretKeyAction::Continue
+            );
+        }
+        assert_eq!(secret, "sK");
+        assert_eq!(String::from_utf8(out.clone()).unwrap(), "**");
+
+        assert_eq!(
+            handle_secret_key_event(
+                KeyEvent::new(KeyCode::Char('d'), KeyModifiers::CONTROL),
+                &mut secret,
+                &mut out,
+            )
+            .unwrap(),
+            SecretKeyAction::Cancel
+        );
+        assert_eq!(secret, "sK");
     }
 }

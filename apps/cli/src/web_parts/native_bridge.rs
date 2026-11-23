@@ -301,7 +301,7 @@ fn mobile_login_response(
     clear_mobile_login_failures(&login_key);
     let token = nola_core::mobile_crypto::generate_mobile_access_token();
     {
-        let mut tokens = mobile_tokens().lock().unwrap();
+        let mut tokens = mobile_tokens().lock().unwrap_or_else(|e| e.into_inner());
         insert_mobile_token_locked(
             &mut tokens,
             token.clone(),
@@ -1336,7 +1336,7 @@ fn mobile_bearer_token(request: &Request) -> Option<String> {
     if token.is_empty() {
         return None;
     }
-    let mut tokens = mobile_tokens().lock().unwrap();
+    let mut tokens = mobile_tokens().lock().unwrap_or_else(|e| e.into_inner());
     mobile_cleanup_locked(&mut tokens);
     if tokens.contains_key(&token) {
         tokens.insert(token.clone(), Instant::now());
@@ -1499,7 +1499,7 @@ fn native_status_response(kind: NativeBridgeKind) -> Response<Box<dyn Read + Sen
 }
 
 fn native_status_value(kind: NativeBridgeKind) -> Value {
-    let mut store = native_bridge_store().lock().unwrap();
+    let mut store = native_bridge_store().lock().unwrap_or_else(|e| e.into_inner());
     let queue = native_queue_mut(&mut store, kind);
     native_cleanup_locked(queue);
     let now = Instant::now();
@@ -1701,7 +1701,7 @@ fn native_host_result_response(
         Err(err) => return json_response(StatusCode(400), json!({"error": err})),
     };
     let result = native_object_field(&body, &["result"]);
-    let mut store = native_bridge_store().lock().unwrap();
+    let mut store = native_bridge_store().lock().unwrap_or_else(|e| e.into_inner());
     let queue = native_queue_mut(&mut store, kind);
     let Some(command) = queue.commands.get_mut(&command_id) else {
         return json_response(StatusCode(404), json!({"accepted": false}));
@@ -1748,7 +1748,7 @@ fn native_submit_command(command: NativeCommand, timeout_sec: f64) -> Value {
         let wait_deadline = Instant::now() + StdDuration::from_secs_f64(timeout.min(3.0));
         loop {
             let has_matching_host = {
-                let mut store = native_bridge_store().lock().unwrap();
+                let mut store = native_bridge_store().lock().unwrap_or_else(|e| e.into_inner());
                 let queue = native_queue_mut(&mut store, kind);
                 native_cleanup_locked(queue);
                 native_has_matching_host_locked(queue, &command)
@@ -1758,7 +1758,7 @@ fn native_submit_command(command: NativeCommand, timeout_sec: f64) -> Value {
             }
             thread::sleep(StdDuration::from_millis(50));
         }
-        let mut store = native_bridge_store().lock().unwrap();
+        let mut store = native_bridge_store().lock().unwrap_or_else(|e| e.into_inner());
         let queue = native_queue_mut(&mut store, kind);
         native_cleanup_locked(queue);
         if !native_has_matching_host_locked(queue, &command) {
@@ -1771,7 +1771,7 @@ fn native_submit_command(command: NativeCommand, timeout_sec: f64) -> Value {
     let deadline = Instant::now() + StdDuration::from_secs_f64(timeout);
     loop {
         {
-            let mut store = native_bridge_store().lock().unwrap();
+            let mut store = native_bridge_store().lock().unwrap_or_else(|e| e.into_inner());
             let queue = native_queue_mut(&mut store, kind);
             native_cleanup_locked(queue);
             if let Some(command) = queue.commands.get(&command_id) {
@@ -1789,7 +1789,7 @@ fn native_submit_command(command: NativeCommand, timeout_sec: f64) -> Value {
             }
         }
         if Instant::now() >= deadline {
-            let mut store = native_bridge_store().lock().unwrap();
+            let mut store = native_bridge_store().lock().unwrap_or_else(|e| e.into_inner());
             let queue = native_queue_mut(&mut store, kind);
             queue.commands.remove(&command_id);
             queue.pending.retain(|id| id != &command_id);
@@ -1804,7 +1804,7 @@ fn native_claim_command(
     host_id: &str,
     advertised_host: &NativeHost,
 ) -> Option<Value> {
-    let mut store = native_bridge_store().lock().unwrap();
+    let mut store = native_bridge_store().lock().unwrap_or_else(|e| e.into_inner());
     let queue = native_queue_mut(&mut store, kind);
     native_cleanup_locked(queue);
     let now = Instant::now();
@@ -2508,9 +2508,15 @@ fn chat_agent_task_message_result(body: &Value) -> (StatusCode, Value) {
         }
         return (StatusCode(200), task_guidance_receipt_payload(body, Some(record)));
     }
-    let conversation_id = body["conversationId"].as_str().unwrap();
-    let task_id = body["taskId"].as_str().unwrap();
-    let message_id = body["messageId"].as_str().unwrap();
+    let Some(conversation_id) = body.get("conversationId").and_then(Value::as_str) else {
+        return (StatusCode(422), json!({"error":"conversationId is required"}));
+    };
+    let Some(task_id) = body.get("taskId").and_then(Value::as_str) else {
+        return (StatusCode(422), json!({"error":"taskId is required"}));
+    };
+    let Some(message_id) = body.get("messageId").and_then(Value::as_str) else {
+        return (StatusCode(422), json!({"error":"messageId is required"}));
+    };
     let projection = match crate::session::load_session_task_projection(conversation_id) {
         Ok(Some(value)) => value, Ok(None) => return (StatusCode(404), json!({"error":"task projection not found"})),
         Err(error) => return (StatusCode(500), json!({"error":error})),

@@ -136,6 +136,8 @@ fn collect_incomplete_work_step_transactions(
             .get("capability_id")
             .and_then(serde_json::Value::as_str)
             .unwrap_or("tool");
+        let localized_capability = crate::i18n::localize_tool_display_name(request_capability);
+        let localized_effect = localize_effect_kind(&transaction.effect_kind);
         items.insert(
             transaction.id.clone(),
             WorkProjection {
@@ -143,7 +145,7 @@ fn collect_incomplete_work_step_transactions(
                 kind: WorkKind::Task,
                 state,
                 raw_state: format!("work_step_{:?}", transaction.phase).to_ascii_lowercase(),
-                title: format!("{request_capability} · {}", transaction.effect_kind),
+                title: format!("{localized_capability} · {localized_effect}"),
                 parent_id: Some(transaction.work_id),
                 session_id: session_id.map(str::to_string),
                 current_step: Some(format!("{} · {recovery}", transaction.step_id)),
@@ -240,6 +242,9 @@ pub fn render_list(config: &Config) -> Result<String, String> {
             .progress
             .map(|value| format!(" · {:.0}%", value.clamp(0.0, 1.0) * 100.0))
             .unwrap_or_default();
+        let updated = format_relative_time(item.updated_at_ms)
+            .map(|value| format!(" · {value}"))
+            .unwrap_or_default();
         let step = item
             .current_step
             .as_deref()
@@ -247,7 +252,7 @@ pub fn render_list(config: &Config) -> Result<String, String> {
             .map(|step| format!(" · {}", truncate(step, 72)))
             .unwrap_or_default();
         lines.push(format!(
-            "- {marker} `{}` · {} · {} · {}{progress}{step}",
+            "- {marker} `{}` · {} · {} · {}{progress}{updated}{step}",
             item.id,
             kind_label(item.kind),
             state_label(item.state),
@@ -275,6 +280,9 @@ pub fn render_detail(config: &Config, work_id: &str) -> Result<String, String> {
         ui_text(UiText::Status),
         state_label(item.state)
     ));
+    if let Some(updated) = format_relative_time(item.updated_at_ms) {
+        lines.push(format!("- {}: {updated}", localized_updated_label()));
+    }
     if let Some(parent_id) = item.parent_id.as_deref() {
         lines.push(format!("- {}: `{parent_id}`", ui_text(UiText::WorkParent)));
     }
@@ -346,7 +354,9 @@ pub fn render_detail(config: &Config, work_id: &str) -> Result<String, String> {
                     lines.push(format!(
                         "- {} · {}",
                         state_label(map_state(&event.status)),
-                        event.summary.unwrap_or(event.kind)
+                        event
+                            .summary
+                            .unwrap_or_else(|| localize_event_kind(&event.kind))
                     ));
                 }
             }
@@ -945,6 +955,140 @@ fn state_label(state: WorkState) -> &'static str {
         WorkState::Failed => ui_text(UiText::Failed),
         WorkState::Cancelled => ui_text(UiText::Cancelled),
     }
+}
+
+fn localize_effect_kind(kind: &str) -> String {
+    use crate::i18n::{current_language, Language};
+    let normalized = kind.trim().to_ascii_lowercase();
+    match (current_language(), normalized.as_str()) {
+        (Language::ZhHans, "read") => "读取".to_string(),
+        (Language::ZhHans, "write") => "写入".to_string(),
+        (Language::ZhHans, "mutate") => "变更".to_string(),
+        (Language::ZhHans, "execute" | "exec") => "执行".to_string(),
+        (Language::ZhHans, "network") => "网络".to_string(),
+        (Language::ZhHans, "external") => "外部调用".to_string(),
+        (Language::ZhHans, "delegate") => "委派".to_string(),
+        (Language::ZhHans, "side_effect") => "副作用".to_string(),
+        (Language::ZhHant, "read") => "讀取".to_string(),
+        (Language::ZhHant, "write") => "寫入".to_string(),
+        (Language::ZhHant, "mutate") => "變更".to_string(),
+        (Language::ZhHant, "execute" | "exec") => "執行".to_string(),
+        (Language::ZhHant, "network") => "網路".to_string(),
+        (Language::ZhHant, "external") => "外部呼叫".to_string(),
+        (Language::ZhHant, "delegate") => "委派".to_string(),
+        (Language::ZhHant, "side_effect") => "副作用".to_string(),
+        (Language::En, "read") => "Read".to_string(),
+        (Language::En, "write") => "Write".to_string(),
+        (Language::En, "mutate") => "Mutate".to_string(),
+        (Language::En, "execute" | "exec") => "Execute".to_string(),
+        (Language::En, "network") => "Network".to_string(),
+        (Language::En, "external") => "External".to_string(),
+        (Language::En, "delegate") => "Delegate".to_string(),
+        (Language::En, "side_effect") => "Side effect".to_string(),
+        _ => kind.to_string(),
+    }
+}
+
+fn localize_event_kind(kind: &str) -> String {
+    use crate::i18n::{current_language, Language};
+    let normalized = kind.trim().to_ascii_lowercase();
+    match (current_language(), normalized.as_str()) {
+        (Language::ZhHans, "created" | "queued") => "已创建".to_string(),
+        (Language::ZhHans, "started" | "running") => "已开始".to_string(),
+        (Language::ZhHans, "progress" | "heartbeat") => "进度更新".to_string(),
+        (Language::ZhHans, "permission_requested" | "waiting_permission") => "请求权限".to_string(),
+        (Language::ZhHans, "permission_resolved") => "权限已处理".to_string(),
+        (Language::ZhHans, "waiting_input" | "needs_user") => "等待用户输入".to_string(),
+        (Language::ZhHans, "completed") => "已完成".to_string(),
+        (Language::ZhHans, "sealed") => "执行已封存".to_string(),
+        (Language::ZhHans, "failed" | "error") => "失败".to_string(),
+        (Language::ZhHans, "cancelled" | "canceled") => "已取消".to_string(),
+        (Language::ZhHant, "created" | "queued") => "已建立".to_string(),
+        (Language::ZhHant, "started" | "running") => "已開始".to_string(),
+        (Language::ZhHant, "progress" | "heartbeat") => "進度更新".to_string(),
+        (Language::ZhHant, "permission_requested" | "waiting_permission") => "請求權限".to_string(),
+        (Language::ZhHant, "permission_resolved") => "權限已處理".to_string(),
+        (Language::ZhHant, "waiting_input" | "needs_user") => "等待使用者輸入".to_string(),
+        (Language::ZhHant, "completed") => "已完成".to_string(),
+        (Language::ZhHant, "sealed") => "執行已封存".to_string(),
+        (Language::ZhHant, "failed" | "error") => "失敗".to_string(),
+        (Language::ZhHant, "cancelled" | "canceled") => "已取消".to_string(),
+        (Language::En, "created" | "queued") => "Created".to_string(),
+        (Language::En, "started" | "running") => "Started".to_string(),
+        (Language::En, "progress" | "heartbeat") => "Progress update".to_string(),
+        (Language::En, "permission_requested" | "waiting_permission") => "Permission requested".to_string(),
+        (Language::En, "permission_resolved") => "Permission resolved".to_string(),
+        (Language::En, "waiting_input" | "needs_user") => "Waiting for user input".to_string(),
+        (Language::En, "completed") => "Completed".to_string(),
+        (Language::En, "sealed") => "Execution sealed".to_string(),
+        (Language::En, "failed" | "error") => "Failed".to_string(),
+        (Language::En, "cancelled" | "canceled") => "Cancelled".to_string(),
+        _ => kind.to_string(),
+    }
+}
+
+fn localized_updated_label() -> &'static str {
+    use crate::i18n::{current_language, Language};
+    match current_language() {
+        Language::ZhHans => "更新时间",
+        Language::ZhHant => "更新時間",
+        Language::De => "Aktualisiert",
+        Language::Es => "Actualizado",
+        Language::Fr => "Mis à jour",
+        Language::Ja => "更新時刻",
+        Language::Ko => "업데이트됨",
+        Language::Ru => "Обновлено",
+        Language::En => "Updated",
+    }
+}
+
+fn format_relative_time(updated_at_ms: i64) -> Option<String> {
+    if updated_at_ms <= 0 {
+        return None;
+    }
+    let now_ms = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_millis()
+        .min(i64::MAX as u128) as i64;
+    let delta_secs = ((now_ms - updated_at_ms) / 1000).max(0);
+    use crate::i18n::{current_language, Language};
+    let zh = matches!(current_language(), Language::ZhHans | Language::ZhHant);
+    let text = if delta_secs < 5 {
+        if zh {
+            "刚刚".to_string()
+        } else {
+            "just now".to_string()
+        }
+    } else if delta_secs < 60 {
+        if zh {
+            format!("{delta_secs}秒前")
+        } else {
+            format!("{delta_secs}s ago")
+        }
+    } else if delta_secs < 3600 {
+        let mins = delta_secs / 60;
+        if zh {
+            format!("{mins}分钟前")
+        } else {
+            format!("{mins}m ago")
+        }
+    } else if delta_secs < 86_400 {
+        let hours = delta_secs / 3600;
+        if zh {
+            format!("{hours}小时前")
+        } else {
+            format!("{hours}h ago")
+        }
+    } else {
+        let days = delta_secs / 86_400;
+        if zh {
+            format!("{days}天前")
+        } else {
+            format!("{days}d ago")
+        }
+    };
+    Some(text)
 }
 
 fn truncate(value: &str, limit: usize) -> String {

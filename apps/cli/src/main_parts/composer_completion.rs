@@ -40,6 +40,29 @@ impl SlashCompletion {
     }
 }
 
+fn canonical_slash_command_completions(raw_prefix: &str) -> Vec<SlashCompletion> {
+    let prefix = raw_prefix.to_ascii_lowercase();
+    let resolved = normalize_interactive_command(&prefix);
+    let mut entries = Vec::new();
+    // Keep an exact typed alias executable, while drawing only from the
+    // canonical command list so aliases never pollute completion menus.
+    let resolved_canonical = resolved
+        .filter(|name| INTERACTIVE_SLASH_COMMANDS.iter().any(|item| item.name == *name));
+    if let Some(name) = resolved_canonical {
+        entries.push(SlashCompletion::plain(name));
+    }
+    entries.extend(
+        INTERACTIVE_SLASH_COMMANDS
+            .iter()
+            .filter(|candidate| {
+                candidate.name.starts_with(&prefix)
+                    && resolved_canonical != Some(candidate.name)
+            })
+            .map(|candidate| SlashCompletion::plain(candidate.name)),
+    );
+    entries
+}
+
 fn matching_slash_commands_with_config(input: &str, config: &Config) -> Vec<SlashCompletion> {
     if COMPOSER_PURPOSE.with(Cell::get) != ComposerPurpose::Chat {
         return Vec::new();
@@ -56,14 +79,12 @@ fn matching_slash_commands_inner(input: &str, config: Option<&Config>) -> Vec<Sl
     let raw_command = segments.next().unwrap_or("");
     let rest = segments.next().unwrap_or("").trim();
     // A short alias remains executable with Enter. While typing it, also offer
-    // the commands sharing the prefix (e.g. /m → /model, /mcp, /memory).
+    // the canonical commands sharing the prefix (e.g. /m → /model, /mcp, /memory).
     if raw_command == trimmed && !INTERACTIVE_SLASH_COMMANDS.iter().any(|item| item.name == raw_command) {
-        let prefix = raw_command.to_ascii_lowercase();
-        let matches: Vec<_> = INTERACTIVE_SLASH_COMMANDS.iter()
-            .filter(|item| item.name.starts_with(&prefix))
-            .map(|item| SlashCompletion::plain(item.name))
-            .collect();
-        if !matches.is_empty() { return matches; }
+        let matches = canonical_slash_command_completions(raw_command);
+        if !matches.is_empty() {
+            return matches;
+        }
     }
     let command = normalize_interactive_command(raw_command).unwrap_or(raw_command);
 
@@ -95,6 +116,23 @@ fn matching_slash_commands_inner(input: &str, config: Option<&Config>) -> Vec<Sl
     }
     if command == "/goal" {
         return interactive_goal_subcommand_matches(rest);
+    }
+    if command == "/attach" {
+        let Some(cfg) = config else {
+            return Vec::new();
+        };
+        return workspace_file_completions(&cfg.project_root, rest)
+            .into_iter()
+            .filter(|entry| !entry.ends_with('/'))
+            .map(|file| {
+                let escaped = if file.contains(char::is_whitespace) {
+                    format!("\"{file}\"")
+                } else {
+                    file
+                };
+                SlashCompletion::plain(format!("/attach {escaped}"))
+            })
+            .collect();
     }
     if command == "/debug" {
         return interactive_toggle_matches(rest, true)
@@ -133,11 +171,7 @@ fn matching_slash_commands_inner(input: &str, config: Option<&Config>) -> Vec<Sl
         command
     };
 
-    INTERACTIVE_SLASH_COMMANDS
-        .iter()
-        .filter(|item| item.name.starts_with(command))
-        .map(|command| SlashCompletion::plain(command.name))
-        .collect()
+    canonical_slash_command_completions(command)
 }
 
 fn first_matching_slash_completion(input: &str, config: &Config) -> Option<SlashCompletion> {
@@ -170,18 +204,7 @@ impl SlashMenu {
             self.entries = matching_slash_commands_inner(query, Some(config));
             return;
         }
-        let prefix = query.to_ascii_lowercase();
-        let resolved = normalize_interactive_command(&prefix);
-        // Keep the exact typed alias executable, even when other names share its prefix.
-        if let Some(name) = resolved {
-            self.entries.push(SlashCompletion::plain(name));
-        }
-        self.entries.extend(INTERACTIVE_SLASH_COMMANDS.iter()
-            .filter(|candidate| candidate.name.starts_with(&prefix)
-                && resolved != Some(candidate.name)
-                && (normalize_interactive_command(candidate.name).unwrap_or(candidate.name) == candidate.name
-                    || candidate.name == prefix))
-            .map(|candidate| SlashCompletion::plain(candidate.name)));
+        self.entries = canonical_slash_command_completions(query);
         self.selected = (!self.entries.is_empty()).then_some(0);
     }
 

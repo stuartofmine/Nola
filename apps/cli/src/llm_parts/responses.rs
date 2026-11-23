@@ -442,7 +442,7 @@ where F: FnMut(LlmEvent) -> Result<(), String> {
         return Err("SIWC credential resource mismatch".into());
     }
     let (runtime, client) = if siwc {
-        build_async_native_stream_client()?
+        build_async_native_stream_client(url.host_str())?
     } else {
         build_async_stream_client(url.host_str(), None)?
     };

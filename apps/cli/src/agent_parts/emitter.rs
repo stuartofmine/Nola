@@ -785,6 +785,7 @@ pub struct Emitter {
     output_execution_context: Option<crate::execution_context::ExecutionContext>,
     journal_inbox: std::sync::Arc<std::sync::Mutex<crate::terminal_journal_presentation::JournalInbox>>,
     journal_presentation: crate::terminal_journal_presentation::TerminalJournalPresentation,
+    task_statuses: std::collections::HashMap<String, String>,
 }
 
 #[derive(Debug, Clone)]
@@ -812,6 +813,7 @@ struct DisplayedToolItem {
     args: Option<String>,
     detail: Option<String>,
     is_error: bool,
+    is_cancelled: bool,
     is_read_activity: bool,
 }
 
@@ -1133,6 +1135,7 @@ impl Emitter {
             output_execution_context: None,
             journal_inbox: Default::default(),
             journal_presentation: Default::default(),
+            task_statuses: std::collections::HashMap::new(),
         }
     }
 
@@ -1561,6 +1564,104 @@ impl Emitter {
         task: &TaskHandle,
     ) {
         if !self.json {
+            let title = task
+                .lineage
+                .title
+                .as_deref()
+                .map(str::trim)
+                .filter(|value| !value.is_empty())
+                .unwrap_or_else(|| match task.kind {
+                    nola_core::agent::task::TaskKind::Agent => "Subagent",
+                    nola_core::agent::task::TaskKind::Tool => "Tool task",
+                    nola_core::agent::task::TaskKind::Skill => "Skill task",
+                    nola_core::agent::task::TaskKind::DataRefresh => "Refresh task",
+                });
+            let step_trimmed = task
+                .current_step
+                .as_deref()
+                .map(str::trim)
+                .filter(|value| !value.is_empty());
+            let normalized_step = step_trimmed.map(|s| s.to_ascii_lowercase());
+            let status_key = match task.state {
+                nola_core::agent::task::TaskState::Queued => "queued",
+                nola_core::agent::task::TaskState::Running => "running",
+                nola_core::agent::task::TaskState::Waiting
+                | nola_core::agent::task::TaskState::Suspended => {
+                    if normalized_step
+                        .as_deref()
+                        .is_some_and(|s| s.contains("waiting_input") || s.contains("input"))
+                    {
+                        "waiting_input"
+                    } else {
+                        "waiting_permission"
+                    }
+                }
+                nola_core::agent::task::TaskState::RetryWaiting => "retry_waiting",
+                nola_core::agent::task::TaskState::Completed
+                | nola_core::agent::task::TaskState::Sealed => "completed",
+                nola_core::agent::task::TaskState::Failed => "failed",
+                nola_core::agent::task::TaskState::Cancelled => "cancelled",
+            };
+            let localized_status = localized_task_status(status_key);
+            let step_suffix = step_trimmed
+                .filter(|step| {
+                    !step.eq_ignore_ascii_case(status_key)
+                        && !step.eq_ignore_ascii_case(localized_status)
+                })
+                .or_else(|| {
+                    (status_key == "failed")
+                        .then(|| {
+                            task.durability
+                                .last_error
+                                .as_deref()
+                                .map(str::trim)
+                                .filter(|value| !value.is_empty())
+                        })
+                        .flatten()
+                });
+            let detail = match step_suffix {
+                Some(step) => format!("{title} · {localized_status} · {step}"),
+                None => format!("{title} · {localized_status}"),
+            };
+            let previous_status = self
+                .task_statuses
+                .insert(task.id.clone(), status_key.to_string());
+            let transitioned = previous_status.as_deref() != Some(status_key);
+            let is_terminal = matches!(status_key, "completed" | "failed" | "cancelled");
+            if transitioned
+                && matches!(
+                    status_key,
+                    "waiting_permission" | "waiting_input" | "completed" | "failed"
+                )
+            {
+                if is_terminal {
+                    self.stop_activity_spinner();
+                }
+                self.flush_pending_tool_block();
+                let notice_detail = match step_suffix {
+                    Some(step) => format!("{localized_status} · {step}"),
+                    None => localized_status.to_string(),
+                };
+                let kind = if status_key == "failed" {
+                    "error"
+                } else {
+                    "agent"
+                };
+                self.print_status_line(kind, title, Some(&notice_detail));
+            }
+            if !is_terminal {
+                let activity_key = format!("task|{}|{detail}", task.id);
+                if self.last_quiet_status.as_deref() != Some(&activity_key)
+                    || self.activity_spinner.is_none()
+                {
+                    self.last_quiet_status = Some(activity_key);
+                    if let Some(spinner) = self.activity_spinner.as_ref() {
+                        spinner.update_detail(&detail);
+                    } else {
+                        self.start_activity_spinner(&detail);
+                    }
+                }
+            }
             return;
         }
         self.json_line(json!({
@@ -1835,6 +1936,7 @@ impl Emitter {
             output_execution_context: None,
             journal_inbox: Default::default(),
             journal_presentation: Default::default(),
+            task_statuses: std::collections::HashMap::new(),
         }
     }
 
@@ -2015,8 +2117,8 @@ impl Emitter {
             );
         } else if self.quiet_status {
             if phase == "processing" || phase == "compacting" || phase == "reviewing" {
-                let detail = if phase == "compacting" || phase == "reviewing" {
-                    message
+                let detail = if !message.trim().is_empty() {
+                    message.trim()
                 } else {
                     agent_localized_text(Message::AgentStatusThinking)
                 };
@@ -2025,7 +2127,11 @@ impl Emitter {
                     || self.activity_spinner.is_none()
                 {
                     self.last_quiet_status = Some(quiet_key);
-                    self.start_activity_spinner(detail);
+                    if let Some(spinner) = self.activity_spinner.as_ref() {
+                        spinner.update_detail(detail);
+                    } else {
+                        self.start_activity_spinner(detail);
+                    }
                 }
                 return;
             }
@@ -2141,7 +2247,12 @@ impl Emitter {
             tool_argument_summary(request)
         };
         self.push_pending_tool_item(
-            request.name.clone(), args, Some(ui_text(UiText::Cancelled).to_string()), false, false,
+            request.name.clone(),
+            args,
+            Some(ui_text(UiText::Cancelled).to_string()),
+            false,
+            true,
+            false,
         );
     }
 
@@ -2236,13 +2347,20 @@ impl Emitter {
             } else {
                 tool_argument_summary(request)
             };
-            let detail = tool_done_detail(&tool_name).map(str::to_string);
+            let is_read = tool_request_is_read_activity(request);
+            let detail = if is_read {
+                tool_done_detail(&tool_name).map(str::to_string)
+            } else {
+                tool_result_summary(request, outcome, false)
+                    .or_else(|| tool_done_detail(&tool_name).map(str::to_string))
+            };
             self.push_pending_tool_item(
                 tool_name,
                 args,
                 detail,
                 false,
-                tool_request_is_read_activity(request),
+                false,
+                is_read,
             );
             // Keep the shared read/search activity row alive. The following
             // read reuses it; assistant text, an error, or a different tool
@@ -2266,7 +2384,7 @@ impl Emitter {
                 tool_argument_summary(request)
             };
             let detail = tool_result_summary(request, outcome, true);
-            self.push_pending_tool_item(tool_name, args, detail, true, false);
+            self.push_pending_tool_item(tool_name, args, detail, true, false, false);
             if permission_recovery_hint(outcome).is_some() {
                 self.flush_pending_tool_block();
                 emit_durable_terminal_line(permission_recovery_hint(outcome).unwrap());
@@ -2287,6 +2405,7 @@ impl Emitter {
                 args,
                 detail,
                 false,
+                false,
                 tool_request_is_read_activity(request),
             );
         }
@@ -2300,6 +2419,7 @@ impl Emitter {
         args: Option<String>,
         detail: Option<String>,
         is_error: bool,
+        is_cancelled: bool,
         is_read_activity: bool,
     ) {
         let interactive_turn = (!self.json && crate::terminal_ui::owns_terminal())
@@ -2310,7 +2430,7 @@ impl Emitter {
             })
             .flatten();
         let interactive = interactive_turn.is_some();
-        if interactive && (!is_read_activity || is_error) {
+        if interactive && (!is_read_activity || is_error || is_cancelled) {
             self.flush_pending_tool_block();
         }
         self.pending_tool_items.push(DisplayedToolItem {
@@ -2318,10 +2438,11 @@ impl Emitter {
             args,
             detail,
             is_error,
+            is_cancelled,
             is_read_activity,
         });
         if interactive {
-            if is_read_activity && !is_error {
+            if is_read_activity && !is_error && !is_cancelled {
                 // Completed reads form one semantic receipt, not one history
                 // record per call. Update it in the main transcript immediately;
                 // accepting the answer or changing action settles this same row.
@@ -2357,7 +2478,7 @@ impl Emitter {
                 .filter(|_| {
                     items
                         .iter()
-                        .all(|item| item.is_read_activity && !item.is_error)
+                        .all(|item| item.is_read_activity && !item.is_error && !item.is_cancelled)
                 });
             if let Some(turn_id) = read_receipt_owner {
                 crate::terminal_ui::update_tool_receipt(turn_id, block);
@@ -2398,7 +2519,7 @@ impl Emitter {
         while index < items.len() {
             let read_end = items[index..]
                 .iter()
-                .take_while(|item| !item.is_error && item.is_read_activity)
+                .take_while(|item| !item.is_error && !item.is_cancelled && item.is_read_activity)
                 .count()
                 + index;
             // A sequence of reads/searches is one user-level inspection step.
@@ -2452,10 +2573,22 @@ impl Emitter {
             // Otherwise the very reason for a failure disappears off-screen.
             let result = truncate_display_value(&result, width.saturating_sub(12));
             let action_width = width.saturating_sub(display_width(&result));
-            let line = format!("{}{result}", truncate_display_value(&format!("    • {action}"), action_width));
+            let glyph = if item.is_cancelled {
+                "⊘"
+            } else if item.is_error {
+                "✗"
+            } else {
+                "✓"
+            };
+            let line = format!(
+                "{}{result}",
+                truncate_display_value(&format!("    {glyph} {action}"), action_width)
+            );
             lines.push(if terminal_color_enabled() {
                 if item.is_error {
                     format!("\x1b[31m{line}{CODE_COLOR_RESET}")
+                } else if item.is_cancelled {
+                    format!("\x1b[33m{line}{CODE_COLOR_RESET}")
                 } else {
                     format!(
                         "{}{line}{}",
@@ -2569,6 +2702,15 @@ impl Emitter {
                 self.code_block_lang = None;
             }
             crate::terminal_ui::finish_assistant();
+            if is_user_cancelled_error(reason) || reason.eq_ignore_ascii_case("cancelled") {
+                crate::terminal_ui::commit_history(&human_status_line(
+                    "cancelled",
+                    crate::i18n::interaction_text().question_cancelled,
+                    None,
+                ));
+            }
+            self.sticky_footer_plan = None;
+            crate::terminal_ui::set_footer_plan(None);
             self.printed_text = false;
             self.clean_before_first_text = true;
             self.last_quiet_status = None;
@@ -2591,6 +2733,7 @@ impl Emitter {
                 self.sticky_footer_base = None;
                 self.sticky_footer_context = None;
                 self.sticky_footer_plan = None;
+                crate::terminal_ui::set_footer_plan(None);
             }
             let has_text = self.printed_text || !self.stream_text_buffer.is_empty();
             self.flush_stream_text(true);
@@ -2658,6 +2801,7 @@ impl Emitter {
             self.sticky_footer_base = None;
             self.sticky_footer_context = None;
             self.sticky_footer_plan = None;
+            crate::terminal_ui::set_footer_plan(None);
         }
         self.clear_transient_status_line();
         self.flush_stream_text(true);
@@ -2880,7 +3024,9 @@ impl Emitter {
             .as_ref()
             .is_some_and(|value| value.accepts_terminal_input());
         if self.json
-            || (self.sticky_footer_base.is_none() && !has_execution_composer)
+            || (self.sticky_footer_base.is_none()
+                && self.sticky_footer_plan.is_none()
+                && !has_execution_composer)
             || self.sticky_footer_suspended
             || !sticky_footer_terminal_enabled()
         {
@@ -2893,6 +3039,7 @@ impl Emitter {
             if let Some(usage) = self.sticky_footer_context.as_ref() {
                 crate::terminal_ui::update_footer_context(format_footer_context_usage(usage));
             }
+            crate::terminal_ui::set_footer_plan(self.sticky_footer_plan.clone());
             if let Some(cancellation) = self.execution_cancellation.as_ref() {
                 crate::terminal_ui::sync_composer(cancellation);
             }
@@ -3752,7 +3899,9 @@ fn tool_running_detail(name: &str) -> Option<&'static str> {
             Some(agent_localized_text(Message::AgentAccessingNetwork))
         }
         "tool_search" => Some(agent_localized_text(Message::AgentSearchingTools)),
-        "spawn_agent" => Some(agent_localized_text(Message::AgentStartingSubtask)),
+        "spawn_agent" | "delegate_expert" | "send_agent_message" | "stop_task" | "wait_task" => {
+            Some(agent_localized_text(Message::AgentStartingSubtask))
+        }
         _ => None,
     }
 }
@@ -3897,7 +4046,7 @@ mod tool_activity_line_width_tests {
     fn transcript_keeps_each_failure_and_preserves_reason_at_narrow_width() {
         let items = (0..4).map(|index| DisplayedToolItem {
             name: "bash".into(), args: Some("very-long-command-name-with-many-arguments".into()),
-            detail: Some(format!("failure-{index}")), is_error: true, is_read_activity: false,
+            detail: Some(format!("failure-{index}")), is_error: true, is_cancelled: false, is_read_activity: false,
         }).collect::<Vec<_>>();
         let lines = Emitter::tool_history_lines(&items, 42, 10);
         assert_eq!(lines.len(), 4, "viewport height must not erase history");
@@ -4034,6 +4183,7 @@ mod tool_activity_line_width_tests {
                 args: Some(format!("path=/tmp/source-{index}.rs")),
                 detail: None,
                 is_error: false,
+                is_cancelled: false,
                 is_read_activity: true,
             })
             .collect::<Vec<_>>();
@@ -4054,6 +4204,7 @@ mod tool_activity_line_width_tests {
                 )),
                 detail: None,
                 is_error: false,
+                is_cancelled: false,
                 is_read_activity: true,
             })
             .collect::<Vec<_>>();
@@ -4100,6 +4251,7 @@ mod tool_activity_line_width_tests {
                 args: Some(format!("cmd=git show --stat revision-{index}")),
                 detail: None,
                 is_error: false,
+                is_cancelled: false,
                 is_read_activity: true,
             })
             .collect::<Vec<_>>();
@@ -4145,6 +4297,119 @@ mod tool_activity_line_width_tests {
             &request("read_file", None),
             true
         ));
+    }
+
+    #[test]
+    fn processing_status_preserves_real_message_and_falls_back_when_empty() {
+        let mut emitter = Emitter::new(false);
+        emitter.status("processing", "Indexing workspace");
+        assert_eq!(
+            emitter.last_quiet_status.as_deref(),
+            Some("processing|Indexing workspace")
+        );
+        emitter.status("processing", "   ");
+        let expected_fallback = format!(
+            "processing|{}",
+            agent_localized_text(Message::AgentStatusThinking)
+        );
+        assert_eq!(
+            emitter.last_quiet_status.as_deref(),
+            Some(expected_fallback.as_str())
+        );
+    }
+
+    #[test]
+    fn tool_history_lines_use_distinct_status_glyphs() {
+        let items = vec![
+            DisplayedToolItem {
+                name: "edit_file".into(),
+                args: Some("src/main.rs".into()),
+                detail: Some("updated".into()),
+                is_error: false,
+                is_cancelled: false,
+                is_read_activity: false,
+            },
+            DisplayedToolItem {
+                name: "bash".into(),
+                args: Some("cargo test".into()),
+                detail: Some("exit code 1".into()),
+                is_error: true,
+                is_cancelled: false,
+                is_read_activity: false,
+            },
+            DisplayedToolItem {
+                name: "bash".into(),
+                args: Some("rm -rf /tmp/demo".into()),
+                detail: Some("Cancelled".into()),
+                is_error: false,
+                is_cancelled: true,
+                is_read_activity: false,
+            },
+        ];
+        let lines = Emitter::tool_history_lines(&items, 80, 24);
+        assert_eq!(lines.len(), 3);
+        assert!(strip_ansi_sequences(&lines[0]).contains("✓ "), "{:?}", lines[0]);
+        assert!(strip_ansi_sequences(&lines[1]).contains("✗ "), "{:?}", lines[1]);
+        assert!(strip_ansi_sequences(&lines[2]).contains("⊘ "), "{:?}", lines[2]);
+    }
+
+    #[test]
+    fn subagent_tool_summaries_show_target_and_brief_instead_of_action_request() {
+        let delegate = ToolRequest {
+            id: "call-1".into(),
+            name: "delegate_expert".into(),
+            args: Map::from_iter([
+                ("action".into(), Value::String("request".into())),
+                (
+                    "target_participant_id".into(),
+                    Value::String("security-auditor".into()),
+                ),
+                (
+                    "text".into(),
+                    Value::String("Audit login session handling".into()),
+                ),
+            ]),
+        };
+        let delegate_summary = tool_argument_summary(&delegate).expect("delegate summary");
+        assert!(delegate_summary.contains("expert=security-auditor"), "{delegate_summary}");
+        assert!(delegate_summary.contains("Audit login session handling"), "{delegate_summary}");
+        assert!(!delegate_summary.contains("action=request"), "{delegate_summary}");
+
+        let wait = ToolRequest {
+            id: "call-2".into(),
+            name: "wait_task".into(),
+            args: Map::from_iter([
+                ("task_id".into(), Value::String("task-42".into())),
+                ("timeout_sec".into(), Value::from(60)),
+            ]),
+        };
+        let wait_summary = tool_argument_summary(&wait).expect("wait summary");
+        assert!(wait_summary.contains("task=task-42"), "{wait_summary}");
+        assert!(wait_summary.contains("timeout=60s"), "{wait_summary}");
+
+        let send = ToolRequest {
+            id: "call-3".into(),
+            name: "send_agent_message".into(),
+            args: Map::from_iter([
+                ("task_id".into(), Value::String("task-42".into())),
+                ("message".into(), Value::String("Focus on unit tests".into())),
+            ]),
+        };
+        let send_summary = tool_argument_summary(&send).expect("send summary");
+        assert!(send_summary.contains("task=task-42"), "{send_summary}");
+        assert!(send_summary.contains("Focus on unit tests"), "{send_summary}");
+
+        let stop = ToolRequest {
+            id: "call-4".into(),
+            name: "stop_task".into(),
+            args: Map::from_iter([
+                ("task_id".into(), Value::String("task-42".into())),
+                ("reason".into(), Value::String("no longer needed".into())),
+            ]),
+        };
+        let stop_summary = tool_argument_summary(&stop).expect("stop summary");
+        assert!(stop_summary.contains("task=task-42"), "{stop_summary}");
+        assert!(stop_summary.contains("no longer needed"), "{stop_summary}");
     }
 }
 
@@ -4193,7 +4458,47 @@ fn tool_error_detail(name: &str) -> Option<&'static str> {
         "web_search" | "web_fetch" | "chrome_native_open_page" | "chrome_native_click" => {
             Some(agent_localized_text(Message::AgentNetworkRequestFailed))
         }
-        "spawn_agent" => Some(agent_localized_text(Message::AgentSubtaskFailed)),
+        "spawn_agent" | "delegate_expert" | "send_agent_message" | "stop_task" | "wait_task" => {
+            Some(agent_localized_text(Message::AgentSubtaskFailed))
+        }
         _ => Some(agent_localized_text(Message::AgentOperationFailed)),
+    }
+}
+
+fn localized_task_status(status_key: &str) -> &'static str {
+    match current_language() {
+        Language::ZhHans => match status_key {
+            "queued" => "排队中",
+            "running" => "运行中",
+            "waiting_permission" => "等待权限确认",
+            "waiting_input" => "等待用户输入",
+            "retry_waiting" => "等待重试",
+            "completed" => "已完成",
+            "failed" => "失败",
+            "cancelled" => "已取消",
+            _ => "进行中",
+        },
+        Language::ZhHant => match status_key {
+            "queued" => "排隊中",
+            "running" => "執行中",
+            "waiting_permission" => "等待權限確認",
+            "waiting_input" => "等待使用者輸入",
+            "retry_waiting" => "等待重試",
+            "completed" => "已完成",
+            "failed" => "失敗",
+            "cancelled" => "已取消",
+            _ => "進行中",
+        },
+        _ => match status_key {
+            "queued" => "queued",
+            "running" => "running",
+            "waiting_permission" => "waiting for permission",
+            "waiting_input" => "waiting for input",
+            "retry_waiting" => "retrying",
+            "completed" => "completed",
+            "failed" => "failed",
+            "cancelled" => "cancelled",
+            _ => "active",
+        },
     }
 }

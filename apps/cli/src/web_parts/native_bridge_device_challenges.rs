@@ -289,7 +289,7 @@ fn respond_web_response(
     }
 
     let status = response.status_code().0;
-    let reason = if status == 200 { "OK" } else { "Event Stream" };
+    let reason = StatusCode(status).default_reason_phrase();
     let headers = response.headers().to_vec();
     let mut reader = response.into_reader();
     let mut writer = request.into_writer();

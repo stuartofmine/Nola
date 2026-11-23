@@ -411,6 +411,31 @@ fn close_tailcat_lease(owner: &str, id: &str) -> Result<Value, TailcatLeaseError
     )
 }
 
+pub(crate) fn shutdown_all_tailcat_leases() {
+    let active: Vec<Arc<(Mutex<Option<bool>>, std::sync::Condvar)>> = {
+        let leases = lock_tailcat_leases();
+        leases
+            .values()
+            .map(|lease| {
+                let _ = lease.control.send(TailcatLeaseCommand::Stop);
+                lease.finished.clone()
+            })
+            .collect()
+    };
+    let deadline = Instant::now() + TAILCAT_SHUTDOWN_GRACE;
+    for finished in active {
+        let remaining = deadline.saturating_duration_since(Instant::now());
+        if remaining.is_zero() {
+            break;
+        }
+        let (state, wake) = &*finished;
+        let guard = state.lock().unwrap_or_else(|err| err.into_inner());
+        let _ = wake
+            .wait_timeout_while(guard, remaining, |value| value.is_none())
+            .unwrap_or_else(|err| err.into_inner());
+    }
+}
+
 #[cfg(test)]
 mod tailcat_lease_tests {
     use super::*;

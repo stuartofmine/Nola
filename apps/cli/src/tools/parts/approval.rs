@@ -360,7 +360,7 @@ fn execute_tool_inner(request: &ToolRequest, ctx: &ToolContext, enforce_availabi
         "terminal_input" => terminal_input(&request.args, ctx),
         "language_service_list" => language_service_tools::list(ctx),
         "language_service_query" => language_service_tools::query(&request.args, ctx),
-        "web_fetch" => web_fetch(&request.args),
+        "web_fetch" => web_fetch_with_cancellation(&request.args, &ctx.cancellation),
         "system_time" => system_time(&request.args),
         "web_search" => web_search_engine::execute(&request.args),
         "conversation_recall" => conversation_recall(&request.args, ctx),

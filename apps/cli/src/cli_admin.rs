@@ -3,10 +3,43 @@
 //! supporting leading `--lang` / `--json` options without requiring an LLM endpoint.
 
 use crate::application_port::CliApplicationPort;
-use crate::i18n::{parse_language_tag, set_language};
+use crate::i18n::{current_language, parse_language_tag, pick_language, set_language, Language};
 use chrono::Utc;
 use nola_application::{ApplicationCommand, McpCommand, McpServer, Skill, SkillCommand};
 use serde_json::{json, Value};
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) enum AdminError {
+    Usage(String),
+    Runtime(String),
+}
+
+impl AdminError {
+    pub(crate) fn exit_code(&self) -> i32 {
+        match self {
+            Self::Usage(_) => 2,
+            Self::Runtime(_) => 1,
+        }
+    }
+
+    pub(crate) fn message(&self) -> &str {
+        match self {
+            Self::Usage(msg) | Self::Runtime(msg) => msg,
+        }
+    }
+
+    fn from_subcommand_error(error: String) -> Self {
+        let trimmed = error.trim_start();
+        if trimmed.starts_with("Usage:")
+            || trimmed.starts_with("nola ")
+            || trimmed.starts_with("--")
+        {
+            Self::Usage(error)
+        } else {
+            Self::Runtime(error)
+        }
+    }
+}
 
 #[derive(Debug, PartialEq, Eq)]
 struct LeadingContext {
@@ -66,10 +99,10 @@ fn is_admin_dispatch_target(remaining: &[String]) -> bool {
     )
 }
 
-pub(crate) fn run_if_requested(args: &[String]) -> Option<Result<(), String>> {
+pub(crate) fn run_if_requested(args: &[String]) -> Option<Result<(), AdminError>> {
     let context = match parse_leading_context(args) {
         Ok(context) => context,
-        Err(error) => return Some(Err(error)),
+        Err(error) => return Some(Err(AdminError::Usage(error))),
     };
     let remaining = &context.remaining;
     let desktop_usage = match remaining.as_slice() {
@@ -87,38 +120,47 @@ pub(crate) fn run_if_requested(args: &[String]) -> Option<Result<(), String>> {
         set_language(language);
     }
     if let Some(usage) = desktop_usage {
-        return Some(strip_admin_flags(&remaining[2..], context.json_output).and_then(
-            |(args, _, help)| {
-                if help {
-                    println!("{usage}");
-                    return Ok(());
-                }
-                let mut command = remaining[..2].to_vec();
-                command.extend(args);
-                crate::harness_plugin::desktop_command(&command)
-                    .unwrap_or_else(|| Err(usage.to_owned()))
-            },
-        ));
+        return Some(
+            strip_admin_flags(&remaining[2..], context.json_output)
+                .map_err(AdminError::Usage)
+                .and_then(|(args, _, help)| {
+                    if help {
+                        println!("{usage}");
+                        return Ok(());
+                    }
+                    let mut command = remaining[..2].to_vec();
+                    command.extend(args);
+                    crate::harness_plugin::desktop_command(&command)
+                        .map(|res| res.map_err(AdminError::from_subcommand_error))
+                        .unwrap_or_else(|| Err(AdminError::Usage(usage.to_owned())))
+                }),
+        );
     }
     match remaining.first().map(String::as_str) {
         Some("version" | "--version" | "-V") => Some(
-            strip_admin_flags(&remaining[1..], context.json_output).and_then(|(args, json, help)| {
-                const USAGE: &str = "nola version | --version | -V [--json]";
-                if help {
-                    println!("{USAGE}");
-                    Ok(())
-                } else if args.is_empty() {
-                    run_version(json)
-                } else {
-                    Err(USAGE.into())
-                }
-            }),
+            strip_admin_flags(&remaining[1..], context.json_output)
+                .map_err(AdminError::Usage)
+                .and_then(|(args, json, help)| {
+                    const USAGE: &str = "nola version | --version | -V [--json]";
+                    if help {
+                        println!("{USAGE}");
+                        Ok(())
+                    } else if args.is_empty() {
+                        run_version(json).map_err(AdminError::Runtime)
+                    } else {
+                        Err(AdminError::Usage(USAGE.into()))
+                    }
+                }),
         ),
-        Some("update") => crate::software_update::run_if_requested(remaining),
-        Some("memory") => Some(crate::memory_admin::run_cli_args(
-            &context.remaining[1..],
+        Some("update") => crate::software_update::run_if_requested_with_json(
+            remaining,
             context.json_output,
-        )),
+        )
+        .map(|res| res.map_err(AdminError::from_subcommand_error)),
+        Some("memory") => Some(
+            crate::memory_admin::run_cli_args(&context.remaining[1..], context.json_output)
+                .map_err(AdminError::from_subcommand_error),
+        ),
         Some("skills") => Some(run_skills_command(
             &context.remaining[1..],
             context.json_output,
@@ -188,20 +230,125 @@ fn strip_admin_flags(
     Ok((positional, json_output, show_help))
 }
 
+fn admin_text(values: [&'static str; 9]) -> &'static str {
+    pick_language(current_language(), values)
+}
+
+fn enabled_state_label(enabled: bool) -> &'static str {
+    if enabled {
+        admin_text([
+            "已启用",
+            "已啟用",
+            "enabled",
+            "aktiviert",
+            "habilitado",
+            "activé",
+            "有効",
+            "활성화됨",
+            "включено",
+        ])
+    } else {
+        admin_text([
+            "已停用",
+            "已停用",
+            "disabled",
+            "deaktiviert",
+            "deshabilitado",
+            "désactivé",
+            "無効",
+            "비활성화됨",
+            "отключено",
+        ])
+    }
+}
+
+fn format_skill_enabled_notice(id: &str, enabled: bool, revision: i64) -> String {
+    let state = enabled_state_label(enabled);
+    match current_language() {
+        Language::ZhHans => format!("技能 '{id}' {state}（版本 {revision}）。"),
+        Language::ZhHant => format!("技能 '{id}' {state}（版本 {revision}）。"),
+        Language::De => format!("Skill '{id}' {state} (Revision {revision})."),
+        Language::Es => format!("Skill '{id}' {state} (revisión {revision})."),
+        Language::Fr => format!("Skill « {id} » {state} (révision {revision})."),
+        Language::Ja => format!("スキル '{id}' を{state}にしました（リビジョン {revision}）。"),
+        Language::Ko => format!("스킬 '{id}' {state} (리비전 {revision})."),
+        Language::Ru => format!("Навык «{id}»: {state} (ревизия {revision})."),
+        Language::En => format!("Skill '{id}' {state} (revision {revision})."),
+    }
+}
+
+fn format_skill_installed_notice(id: &str, source_url: &str) -> String {
+    match current_language() {
+        Language::ZhHans => format!("已启用 {id}（来源：{source_url}）"),
+        Language::ZhHant => format!("已啟用 {id}（來源：{source_url}）"),
+        Language::De => format!("{id} aus {source_url} aktiviert"),
+        Language::Es => format!("{id} habilitado desde {source_url}"),
+        Language::Fr => format!("{id} activé depuis {source_url}"),
+        Language::Ja => format!("{source_url} から {id} を有効にしました"),
+        Language::Ko => format!("{source_url}에서 {id} 활성화됨"),
+        Language::Ru => format!("Включён {id} из {source_url}"),
+        Language::En => format!("Enabled {id} from {source_url}"),
+    }
+}
+
+fn format_mcp_added_notice(id: &str, revision: i64) -> String {
+    match current_language() {
+        Language::ZhHans => format!("已添加 MCP 服务器 '{id}'（版本 {revision}）。"),
+        Language::ZhHant => format!("已新增 MCP 伺服器 '{id}'（版本 {revision}）。"),
+        Language::De => format!("MCP-Server '{id}' hinzugefügt (Revision {revision})."),
+        Language::Es => format!("Servidor MCP '{id}' añadido (revisión {revision})."),
+        Language::Fr => format!("Serveur MCP « {id} » ajouté (révision {revision})."),
+        Language::Ja => format!("MCP サーバー '{id}' を追加しました（リビジョン {revision}）。"),
+        Language::Ko => format!("MCP 서버 '{id}' 추가됨 (리비전 {revision})."),
+        Language::Ru => format!("MCP-сервер «{id}» добавлен (ревизия {revision})."),
+        Language::En => format!("Added MCP server '{id}' (revision {revision})."),
+    }
+}
+
+fn format_mcp_removed_notice(id: &str) -> String {
+    match current_language() {
+        Language::ZhHans => format!("已移除 MCP 服务器 '{id}'。"),
+        Language::ZhHant => format!("已移除 MCP 伺服器 '{id}'。"),
+        Language::De => format!("MCP-Server '{id}' entfernt."),
+        Language::Es => format!("Servidor MCP '{id}' eliminado."),
+        Language::Fr => format!("Serveur MCP « {id} » supprimé."),
+        Language::Ja => format!("MCP サーバー '{id}' を削除しました。"),
+        Language::Ko => format!("MCP 서버 '{id}' 제거됨."),
+        Language::Ru => format!("MCP-сервер «{id}» удалён."),
+        Language::En => format!("Removed MCP server '{id}'."),
+    }
+}
+
+fn format_mcp_enabled_notice(id: &str, enabled: bool, revision: i64) -> String {
+    let state = enabled_state_label(enabled);
+    match current_language() {
+        Language::ZhHans => format!("MCP 服务器 '{id}' {state}（版本 {revision}）。"),
+        Language::ZhHant => format!("MCP 伺服器 '{id}' {state}（版本 {revision}）。"),
+        Language::De => format!("MCP-Server '{id}' {state} (Revision {revision})."),
+        Language::Es => format!("Servidor MCP '{id}' {state} (revisión {revision})."),
+        Language::Fr => format!("Serveur MCP « {id} » {state} (révision {revision})."),
+        Language::Ja => format!("MCP サーバー '{id}' を{state}にしました（リビジョン {revision}）。"),
+        Language::Ko => format!("MCP 서버 '{id}' {state} (리비전 {revision})."),
+        Language::Ru => format!("MCP-сервер «{id}»: {state} (ревизия {revision})."),
+        Language::En => format!("MCP server '{id}' {state} (revision {revision})."),
+    }
+}
+
 fn skills_usage() -> &'static str {
     "Usage:\n  nola skills [list] [--json]\n  nola skills find <name-or-github-url> [--json]\n  nola skills install <github-url> [--json]\n  nola skills enable <id> [--json]\n  nola skills disable <id> [--json]"
 }
 
-fn run_skills_command(args: &[String], leading_json: bool) -> Result<(), String> {
-    let (positional, json_output, show_help) = strip_admin_flags(args, leading_json)?;
+fn run_skills_command(args: &[String], leading_json: bool) -> Result<(), AdminError> {
+    let (positional, json_output, show_help) =
+        strip_admin_flags(args, leading_json).map_err(AdminError::Usage)?;
     if show_help {
         println!("{}", skills_usage());
         return Ok(());
     }
     if let [action, value] = positional.as_slice() {
         let result = match action.as_str() {
-            "find" => Some(crate::github_skills::find(value)?),
-            "install" => Some(crate::github_skills::install(value)?),
+            "find" => Some(crate::github_skills::find(value).map_err(AdminError::Runtime)?),
+            "install" => Some(crate::github_skills::install(value).map_err(AdminError::Runtime)?),
             _ => None,
         };
         if let Some(value) = result {
@@ -213,18 +360,53 @@ fn run_skills_command(args: &[String], leading_json: bool) -> Result<(), String>
                              item["url"].as_str().unwrap_or_default());
                 }
                 if value["status"] == "selection_required" {
-                    println!("Select a Skill URL and run nola skills install <url>.");
+                    println!(
+                        "{}",
+                        admin_text([
+                            "请选择一个 Skill URL 并运行 nola skills install <url>。",
+                            "請選擇一個 Skill URL 並執行 nola skills install <url>。",
+                            "Select a Skill URL and run nola skills install <url>.",
+                            "Wählen Sie eine Skill-URL aus und führen Sie nola skills install <url> aus.",
+                            "Selecciona una URL de Skill y ejecuta nola skills install <url>.",
+                            "Sélectionnez une URL de Skill et exécutez nola skills install <url>.",
+                            "Skill の URL を選び、nola skills install <url> を実行してください。",
+                            "Skill URL을 선택한 뒤 nola skills install <url>을 실행하세요.",
+                            "Выберите URL навыка и выполните nola skills install <url>.",
+                        ])
+                    );
                 } else if items.is_empty() {
-                    println!("No matching Skills or repositories found.");
+                    println!(
+                        "{}",
+                        admin_text([
+                            "未找到匹配的 Skill 或仓库。",
+                            "找不到相符的 Skill 或儲存庫。",
+                            "No matching Skills or repositories found.",
+                            "Keine passenden Skills oder Repositories gefunden.",
+                            "No se encontraron Skills ni repositorios coincidentes.",
+                            "Aucun Skill ou dépôt correspondant trouvé.",
+                            "一致する Skill やリポジトリが見つかりませんでした。",
+                            "일치하는 Skill 또는 저장소를 찾지 못했습니다.",
+                            "Подходящие навыки или репозитории не найдены.",
+                        ])
+                    );
                 }
             } else {
-                println!("Enabled {} from {}", value["id"].as_str().unwrap_or_default(),
-                         value["source_url"].as_str().unwrap_or_default());
+                println!(
+                    "{}",
+                    format_skill_installed_notice(
+                        value["id"].as_str().unwrap_or_default(),
+                        value["source_url"].as_str().unwrap_or_default(),
+                    )
+                );
             }
             return Ok(());
         }
     }
-    let mut application = CliApplicationPort::persistent_default()?;
+    let refs = positional.iter().map(String::as_str).collect::<Vec<_>>();
+    if !matches!(refs.as_slice(), [] | ["list"] | ["enable" | "disable", _]) {
+        return Err(AdminError::Usage(skills_usage().to_string()));
+    }
+    let mut application = CliApplicationPort::persistent_default().map_err(AdminError::Runtime)?;
     execute_skills_command(&mut application, &positional, json_output)
 }
 
@@ -232,9 +414,11 @@ fn execute_skills_command(
     application: &mut CliApplicationPort,
     positional: &[String],
     json_output: bool,
-) -> Result<(), String> {
-    let builtins = crate::skill_catalog_port::load_web_builtin_skills_with(application)?;
-    let uploaded = crate::skill_catalog_port::load_web_uploaded_skills_with(application)?;
+) -> Result<(), AdminError> {
+    let builtins = crate::skill_catalog_port::load_web_builtin_skills_with(application)
+        .map_err(AdminError::Runtime)?;
+    let uploaded = crate::skill_catalog_port::load_web_uploaded_skills_with(application)
+        .map_err(AdminError::Runtime)?;
     let mut combined = Vec::with_capacity(builtins.len() + uploaded.len());
     combined.extend(builtins);
     combined.extend(uploaded);
@@ -245,13 +429,26 @@ fn execute_skills_command(
             if json_output {
                 println!("{}", json!({ "type": "skills", "skills": combined }));
             } else if combined.is_empty() {
-                println!("No skills found.");
+                println!(
+                    "{}",
+                    admin_text([
+                        "未找到技能。",
+                        "找不到技能。",
+                        "No skills found.",
+                        "Keine Skills gefunden.",
+                        "No se encontraron skills.",
+                        "Aucun skill trouvé.",
+                        "スキルが見つかりません。",
+                        "스킬을 찾을 수 없습니다.",
+                        "Навыки не найдены.",
+                    ])
+                );
             } else {
                 for item in &combined {
                     let id = item["id"].as_str().unwrap_or("");
                     let name = item["name"].as_str().unwrap_or(id);
                     let enabled = item["enabled"].as_bool().unwrap_or(true);
-                    let state = if enabled { "enabled" } else { "disabled" };
+                    let state = enabled_state_label(enabled);
                     println!("[{state}] {id} ({name})");
                 }
             }
@@ -260,8 +457,9 @@ fn execute_skills_command(
         [action @ ("enable" | "disable"), target_id] => {
             let enabled = *action == "enable";
             set_skill_enabled(application, target_id, enabled, json_output)
+                .map_err(AdminError::Runtime)
         }
-        _ => Err(skills_usage().to_string()),
+        _ => Err(AdminError::Usage(skills_usage().to_string())),
     }
 }
 
@@ -317,8 +515,7 @@ fn set_skill_enabled(
             })
         );
     } else {
-        let state = if enabled { "enabled" } else { "disabled" };
-        println!("Skill '{matched_id}' {state} (revision {new_revision}).");
+        println!("{}", format_skill_enabled_notice(&matched_id, enabled, new_revision));
     }
     Ok(())
 }
@@ -381,13 +578,21 @@ fn strip_mcp_admin_flags(
     Ok((positional, json_output, show_help))
 }
 
-fn run_mcp_command(args: &[String], leading_json: bool) -> Result<(), String> {
-    let (positional, json_output, show_help) = strip_mcp_admin_flags(args, leading_json)?;
+fn run_mcp_command(args: &[String], leading_json: bool) -> Result<(), AdminError> {
+    let (positional, json_output, show_help) =
+        strip_mcp_admin_flags(args, leading_json).map_err(AdminError::Usage)?;
     if show_help {
         println!("{}", mcp_usage());
         return Ok(());
     }
-    let mut application = CliApplicationPort::persistent_default()?;
+    let refs = positional.iter().map(String::as_str).collect::<Vec<_>>();
+    if !matches!(
+        refs.as_slice(),
+        [] | ["list"] | ["add", _, _, ..] | ["remove", _] | ["enable" | "disable", _]
+    ) {
+        return Err(AdminError::Usage(mcp_usage().to_string()));
+    }
+    let mut application = CliApplicationPort::persistent_default().map_err(AdminError::Runtime)?;
     execute_mcp_command(&mut application, &positional, json_output)
 }
 
@@ -395,19 +600,23 @@ fn execute_mcp_command(
     application: &mut CliApplicationPort,
     positional: &[String],
     json_output: bool,
-) -> Result<(), String> {
+) -> Result<(), AdminError> {
     let refs = positional.iter().map(String::as_str).collect::<Vec<_>>();
     match refs.as_slice() {
-        [] | ["list"] => list_mcp_servers(application, json_output),
+        [] | ["list"] => list_mcp_servers(application, json_output).map_err(AdminError::Runtime),
         ["add", name, target, extra @ ..] => {
             add_mcp_server(application, name, target, extra, json_output)
+                .map_err(AdminError::Runtime)
         }
-        ["remove", id_or_name] => remove_mcp_server(application, id_or_name, json_output),
+        ["remove", id_or_name] => {
+            remove_mcp_server(application, id_or_name, json_output).map_err(AdminError::Runtime)
+        }
         [action @ ("enable" | "disable"), id_or_name] => {
             let enabled = *action == "enable";
             set_mcp_enabled(application, id_or_name, enabled, json_output)
+                .map_err(AdminError::Runtime)
         }
-        _ => Err(mcp_usage().to_string()),
+        _ => Err(AdminError::Usage(mcp_usage().to_string())),
     }
 }
 
@@ -460,14 +669,23 @@ fn list_mcp_servers(
     if json_output {
         println!("{}", json!({ "type": "mcp_servers", "servers": items }));
     } else if items.is_empty() {
-        println!("No MCP servers configured.");
+        println!(
+            "{}",
+            admin_text([
+                "尚未配置 MCP 服务器。",
+                "尚未設定 MCP 伺服器。",
+                "No MCP servers configured.",
+                "Keine MCP-Server konfiguriert.",
+                "No hay servidores MCP configurados.",
+                "Aucun serveur MCP configuré.",
+                "MCP サーバーは設定されていません。",
+                "구성된 MCP 서버가 없습니다.",
+                "MCP-серверы не настроены.",
+            ])
+        );
     } else {
         for item in &items {
-            let state = if item["enabled"].as_bool().unwrap_or(true) {
-                "enabled"
-            } else {
-                "disabled"
-            };
+            let state = enabled_state_label(item["enabled"].as_bool().unwrap_or(true));
             let id = item["id"].as_str().unwrap_or("");
             let name = item["name"].as_str().unwrap_or(id);
             let target = item["target"].as_str().unwrap_or("");
@@ -533,10 +751,7 @@ fn add_mcp_server(
             })
         );
     } else {
-        println!(
-            "Added MCP server '{}' (revision {}).",
-            created.id, created.revision
-        );
+        println!("{}", format_mcp_added_notice(&created.id, created.revision));
     }
     Ok(())
 }
@@ -560,7 +775,7 @@ fn remove_mcp_server(
     if json_output {
         println!("{}", json!({ "type": "mcp_server_removed", "id": id }));
     } else {
-        println!("Removed MCP server '{id}'.");
+        println!("{}", format_mcp_removed_notice(&id));
     }
     Ok(())
 }
@@ -602,11 +817,7 @@ fn set_mcp_enabled(
             })
         );
     } else {
-        let state = if enabled { "enabled" } else { "disabled" };
-        println!(
-            "MCP server '{id}' {state} (revision {}).",
-            updated.revision
-        );
+        println!("{}", format_mcp_enabled_notice(&id, enabled, updated.revision));
     }
     Ok(())
 }
@@ -795,5 +1006,18 @@ mod tests {
         assert!(json_output);
         assert!(!show_help);
         assert_eq!(positional, vec!["add", "remote", "https://example.com/mcp"]);
+    }
+
+    #[test]
+    fn admin_usage_errors_report_exit_code_2() {
+        for args in [
+            vec!["version".into(), "unexpected".into()],
+            vec!["skills".into(), "bogus".into()],
+            vec!["mcp".into(), "add".into()],
+            vec!["--lang".into(), "not-a-lang".into(), "version".into()],
+        ] {
+            let err = run_if_requested(&args).unwrap().unwrap_err();
+            assert_eq!(err.exit_code(), 2, "expected exit code 2 for {args:?}");
+        }
     }
 }

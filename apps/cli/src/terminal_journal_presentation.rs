@@ -141,6 +141,31 @@ mod text_presentation_tests {
         presenter.present_journal_update(&mut emitter, retired);
         assert!(presenter.preview_text_part.is_none());
     }
+
+    #[test]
+    fn attachment_part_renders_compact_badge_once() {
+        use nola_domain::assistant_journal_operations::{
+            JournalAttachmentMetadata, JournalPartMetadata, JournalTextValue,
+        };
+        let mut emitter = Emitter::new(false);
+        let mut presenter = TerminalJournalPresentation::default();
+        let make = || {
+            let mut update = journal_text_update("att-part", "", true, None);
+            update.head.as_mut().unwrap().metadata =
+                JournalPartMetadata::Attachment(JournalAttachmentMetadata {
+                    attachment_id: "att-1".into(),
+                    name: JournalTextValue::Inline("report.pdf".into()),
+                    mime_type: None,
+                    uri: JournalTextValue::Inline("file:///tmp/report.pdf".into()),
+                    operation: None,
+                });
+            update
+        };
+        presenter.present_journal_update(&mut emitter, make());
+        assert_eq!(emitter.take_markdown_text(), "\n📎 report.pdf\n");
+        presenter.present_journal_update(&mut emitter, make());
+        assert!(emitter.take_markdown_text().is_empty());
+    }
 }
 use crate::tools::ToolRequest;
 use serde_json::Value;
@@ -176,6 +201,7 @@ pub(crate) struct TerminalJournalPresentation {
     preview_text_part: Option<String>,
     rendered_review_states: HashMap<String, nola_core::agent::parts::TextReviewState>,
     rendered_ui_surfaces: HashMap<String, (nola_domain::generative_ui::UiSurfaceRevisionRef, String)>,
+    rendered_attachments: HashMap<String, String>,
 }
 impl TerminalJournalPresentation {
     pub(crate) fn present_journal_update(
@@ -195,6 +221,7 @@ impl TerminalJournalPresentation {
             self.rendered_review_states.remove(&update.key);
             self.journal_activity_states.remove(&update.key);
             self.rendered_ui_surfaces.remove(&update.key);
+            self.rendered_attachments.remove(&update.key);
             return;
         };
         match &head.metadata {
@@ -355,11 +382,39 @@ impl TerminalJournalPresentation {
                     message
                 });
             }
-            // Provenance and attachments are typed journal records, not extra
+            Metadata::Attachment(att) => {
+                let name = update.text(&att.name);
+                let name = name.trim();
+                let label = if !name.is_empty() {
+                    name.to_string()
+                } else {
+                    let uri = update.text(&att.uri);
+                    let uri = uri.trim();
+                    if !uri.is_empty() {
+                        uri.to_string()
+                    } else {
+                        att.attachment_id.clone()
+                    }
+                };
+                if label.is_empty() {
+                    return;
+                }
+                if self
+                    .rendered_attachments
+                    .get(&update.key)
+                    .map(String::as_str)
+                    == Some(label.as_str())
+                {
+                    return;
+                }
+                self.rendered_attachments
+                    .insert(update.key.clone(), label.clone());
+                emitter.text(&format!("\n📎 {label}\n"));
+            }
+            // Provenance records are typed journal metadata, not extra
             // assistant prose. Their inline references remain in Markdown.
             Metadata::Source(_)
             | Metadata::Citation(_)
-            | Metadata::Attachment(_)
             | Metadata::Historical(_) => {}
         }
     }

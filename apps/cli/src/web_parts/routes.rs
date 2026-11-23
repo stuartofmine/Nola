@@ -490,7 +490,7 @@ pub fn run_web_server(config: &Config) -> Result<(), String> {
         .map_err(|err| format!("failed to resolve web bind address {address}: {err}"))?
         .next()
         .ok_or_else(|| format!("failed to resolve web bind address {address}"))?;
-    let server = Server::http(socket).map_err(|err| {
+    let server = Arc::new(Server::http(socket).map_err(|err| {
         let is_addr_in_use = err
             .downcast_ref::<std::io::Error>()
             .is_some_and(|io_err| io_err.kind() == std::io::ErrorKind::AddrInUse)
@@ -501,6 +501,23 @@ pub fn run_web_server(config: &Config) -> Result<(), String> {
             )
         } else {
             format!("failed to start web server on {address}: {err}")
+        }
+    })?);
+    let shutdown_requested = Arc::new(std::sync::atomic::AtomicBool::new(false));
+    let shutdown_flag = Arc::clone(&shutdown_requested);
+    let shutdown_server = Arc::clone(&server);
+    let _signals = crate::execution_signals::ExecutionSignals::install_callback(move || {
+        if !shutdown_flag.swap(true, std::sync::atomic::Ordering::SeqCst) {
+            let controls: Vec<RuntimeExecutionControl> = active_web_agent_runs()
+                .lock()
+                .unwrap_or_else(|err| err.into_inner())
+                .values()
+                .cloned()
+                .collect();
+            for control in controls {
+                control.request();
+            }
+            shutdown_server.unblock();
         }
     })?;
     let bound_socket = server.server_addr().to_ip().unwrap_or(socket);
@@ -574,6 +591,9 @@ pub fn run_web_server(config: &Config) -> Result<(), String> {
         eprintln!("Remote browsers sign in at /login with the Server token; Nola clients use the authenticated, encrypted /api/mobile surface");
     }
     for request in server.incoming_requests() {
+        if shutdown_requested.load(std::sync::atomic::Ordering::SeqCst) {
+            break;
+        }
         let Some(request_guard) = try_acquire_web_request() else {
             let _ = request.respond(json_response(
                 StatusCode(503),
@@ -584,17 +604,48 @@ pub fn run_web_server(config: &Config) -> Result<(), String> {
             ));
             continue;
         };
+        let request_slot = Arc::new(Mutex::new(Some(request)));
+        let worker_request = Arc::clone(&request_slot);
         let config = config.clone();
-        let _ = std::thread::Builder::new()
+        if let Err(err) = std::thread::Builder::new()
             .name("web-http".into())
             .stack_size(16 * 1024 * 1024)
             .spawn(move || {
                 let _request_guard = request_guard;
+                let Some(request) = worker_request
+                    .lock()
+                    .unwrap_or_else(|poisoned| poisoned.into_inner())
+                    .take()
+                else {
+                    return;
+                };
                 if let Err(err) = handle_request(request, &config) {
                     eprintln!("web request failed: {err}");
                 }
-            });
+            })
+        {
+            eprintln!("failed to spawn web request thread: {err}");
+            if let Some(request) = request_slot
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner())
+                .take()
+            {
+                let _ = request.respond(json_response(
+                    StatusCode(503),
+                    json!({
+                        "error": "server_busy",
+                        "message": "Server could not schedule request; retry shortly.",
+                    }),
+                ));
+            }
+        }
     }
+    drop(_automation_scheduler);
+    drop(_goal_worker);
+    drop(_messaging_channel_worker);
+    shutdown_all_tailcat_leases();
+    crate::tools::shutdown_managed_browser_bridge();
+    crate::local_models::shutdown();
     Ok(())
 }
 

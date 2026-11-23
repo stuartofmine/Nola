@@ -44,8 +44,8 @@ pub(crate) fn edit(text: &mut String, cursor: &mut usize, key: &KeyEvent) -> boo
         KeyCode::Delete if by_word => { text.drain(*cursor..word_right(text, *cursor)); }
         KeyCode::Left if by_word => *cursor = word_left(text, *cursor),
         KeyCode::Right if by_word => *cursor = word_right(text, *cursor),
-        KeyCode::Home if key.modifiers.contains(KeyModifiers::CONTROL) => *cursor = 0,
-        KeyCode::End if key.modifiers.contains(KeyModifiers::CONTROL) => *cursor = text.len(),
+        KeyCode::Home if by_word => *cursor = 0,
+        KeyCode::End if by_word => *cursor = text.len(),
         KeyCode::Backspace => { let start = previous(text, *cursor); text.drain(start..*cursor); *cursor = start; }
         KeyCode::Delete => { text.drain(*cursor..next(text, *cursor)); }
         KeyCode::Left => *cursor = previous(text, *cursor),
@@ -128,6 +128,10 @@ mod tests {
         edit(&mut text, &mut cursor, &KeyEvent::new(KeyCode::Char('k'), KeyModifiers::CONTROL));
         assert_eq!(text, "alpha\n下一行");
         edit(&mut text, &mut cursor, &KeyEvent::new(KeyCode::End, KeyModifiers::CONTROL));
+        assert_eq!(cursor, text.len());
+        edit(&mut text, &mut cursor, &KeyEvent::new(KeyCode::Home, KeyModifiers::ALT));
+        assert_eq!(cursor, 0);
+        edit(&mut text, &mut cursor, &KeyEvent::new(KeyCode::End, KeyModifiers::ALT));
         assert_eq!(cursor, text.len());
         let before = text.clone();
         assert!(!edit(&mut text, &mut cursor, &KeyEvent::new(KeyCode::Char('s'), KeyModifiers::SUPER)));

@@ -14,6 +14,9 @@ impl Drop for WebGoalWorkerGuard {
         self.0
             .stopped
             .store(true, std::sync::atomic::Ordering::SeqCst);
+        let mut signal = self.0.signal.lock().unwrap_or_else(|p| p.into_inner());
+        *signal = true;
+        drop(signal);
         self.0.wake.notify_all();
     }
 }
@@ -59,7 +62,9 @@ fn start_web_goal_worker(config: &Config) -> Result<WebGoalWorkerGuard, String> 
                 let signal = state.signal.lock().unwrap_or_else(|p| p.into_inner());
                 let (mut signal, _) = state
                     .wake
-                    .wait_timeout_while(signal, StdDuration::from_secs(2), |signal| !*signal)
+                    .wait_timeout_while(signal, StdDuration::from_secs(2), |signal| {
+                        !*signal && !state.stopped.load(std::sync::atomic::Ordering::SeqCst)
+                    })
                     .unwrap_or_else(|p| p.into_inner());
                 *signal = false;
             }
@@ -764,7 +769,10 @@ mod web_goal_worker_tests {
         let mut quiet = crate::native_runtime_output::NativeRuntimeOutput::with_event_sink(|_| {});
         let background = crate::goal_runtime::run_scheduled_host_goal(&mut restored,
             "Summarize a result", "", &mut quiet, RuntimeExecutionControl::default());
-        assert!(matches!(background.unwrap(), crate::goal_runtime::GoalCycleOutcome::Paused));
+        assert!(matches!(
+            background.unwrap(),
+            crate::goal_runtime::GoalCycleOutcome::Paused(_)
+        ));
         let after_background = crate::session::load_session_goal_projection(session).unwrap().unwrap();
         assert_eq!(after_background, before_background, "background restore cannot manufacture a user Resume");
         let paused = projection.active.unwrap();
@@ -986,5 +994,39 @@ mod web_goal_worker_tests {
             assert_eq!(observed["result"]["goal_execution"]["run_id"], "web-goal-sub-1");
             assert_eq!(observed["result"]["submission_receipt"]["phase"], "admitted");
         }).join().unwrap();
+    }
+
+    #[test]
+    fn web_goal_worker_guard_wakes_waiter_promptly_on_drop() {
+        let worker = Arc::new(WebGoalWorker {
+            wake: std::sync::Condvar::new(),
+            stopped: std::sync::atomic::AtomicBool::new(false),
+            signal: Mutex::new(false),
+        });
+        let guard = WebGoalWorkerGuard(worker.clone());
+        let state = worker.clone();
+        let (entered_tx, entered_rx) = std::sync::mpsc::channel();
+        let handle = std::thread::spawn(move || {
+            let signal = state.signal.lock().unwrap_or_else(|p| p.into_inner());
+            let _ = entered_tx.send(());
+            let (mut signal, _) = state
+                .wake
+                .wait_timeout_while(signal, StdDuration::from_secs(5), |signal| {
+                    !*signal && !state.stopped.load(std::sync::atomic::Ordering::SeqCst)
+                })
+                .unwrap_or_else(|p| p.into_inner());
+            *signal = false;
+            state.stopped.load(std::sync::atomic::Ordering::SeqCst)
+        });
+        entered_rx.recv_timeout(StdDuration::from_secs(1)).unwrap();
+        let started = Instant::now();
+        drop(guard);
+        let stopped = handle.join().unwrap();
+        assert!(stopped);
+        assert!(
+            started.elapsed() < StdDuration::from_millis(500),
+            "expected prompt wake on Drop, elapsed={:?}",
+            started.elapsed()
+        );
     }
 }

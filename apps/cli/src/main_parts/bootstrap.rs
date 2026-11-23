@@ -221,10 +221,6 @@ impl CliApplication {
             process::exit(exit_code);
         }
 
-        if let Some(exit_code) = memory_admin::run_if_requested() {
-            process::exit(exit_code);
-        }
-
         let terminal_setup = crate::cli_config_setup::TerminalConfigurationSetup;
         let no_setup = crate::configuration_setup::NoConfigurationSetup;
         let setup: &dyn crate::configuration_setup::ConfigurationSetup = match identity {
@@ -954,7 +950,7 @@ fn run_top_level_init_command(config: &Config) -> Result<(), String> {
     if config.json_output || !io::stdout().is_terminal() {
         return init::run_init(config);
     }
-    println!("{}", interactive_layer_rule(Some("init")));
+    println!("{}", interactive_layer_rule(Some(crate::i18n::cli_section_label("init"))));
     println!();
     let mut active_progress = None;
     let result = init::run_init_with_progress(config, |progress| {
@@ -970,7 +966,7 @@ fn run_top_level_wiki_command(config: &Config) -> Result<(), String> {
     if config.json_output || !io::stdout().is_terminal() {
         return init::run_wiki(config);
     }
-    println!("{}", interactive_layer_rule(Some("wiki")));
+    println!("{}", interactive_layer_rule(Some(crate::i18n::cli_section_label("wiki"))));
     println!();
     let mut active_progress = None;
     let result = init::run_wiki_with_progress(config, |progress| {
@@ -1193,7 +1189,7 @@ fn select_interactive_resume_session(config: &Config) -> Result<Option<String>, 
             text.resume_title, text.resume_json_unsupported
         ));
     }
-    if !io::stdin().is_terminal() {
+    if !io::stdin().is_terminal() || !io::stdout().is_terminal() {
         return Err(format!(
             "{}: {}",
             text.resume_title, text.resume_terminal_only
@@ -1263,7 +1259,12 @@ fn select_resume_session_with_arrow(
         return Ok(None);
     }
 
-    let Ok(_raw_mode) = InteractiveRawModeGuard::new() else {
+    let raw_mode = if io::stdin().is_terminal() && io::stdout().is_terminal() {
+        InteractiveRawModeGuard::new().ok()
+    } else {
+        None
+    };
+    let Some(_raw_mode) = raw_mode else {
         let mut choice = String::new();
         loop {
             println!("{} ({})", text.resume_title, text.session_list);
@@ -1281,9 +1282,13 @@ fn select_resume_session_with_arrow(
                 .flush()
                 .map_err(|err| io::Error::new(io::ErrorKind::Other, err))?;
             choice.clear();
-            io::stdin()
+            if io::stdin()
                 .read_line(&mut choice)
-                .map_err(|err| io::Error::new(io::ErrorKind::Other, err))?;
+                .map_err(|err| io::Error::new(io::ErrorKind::Other, err))?
+                == 0
+            {
+                return Ok(None);
+            }
             let trimmed = choice.trim();
             match trimmed {
                 "" => continue,
@@ -1328,52 +1333,56 @@ fn select_resume_session_with_arrow(
                 format!("{} {err}", tr(Message::FailedReadKeyEventPrefix)),
             )
         })?;
-        if let Event::Key(key) = event {
-            if key.kind != KeyEventKind::Press {
-                continue;
-            }
-            match key.code {
-                KeyCode::Up => {
-                    selected = selected.saturating_sub(1);
-                }
-                KeyCode::Down => {
-                    if selected + 1 < sessions.len() {
-                        selected += 1;
-                    }
-                }
-                KeyCode::PageUp => {
-                    if page_size > 0 {
-                        selected = selected.saturating_sub(page_size);
-                    }
-                }
-                KeyCode::PageDown => {
-                    if page_size > 0 {
-                        selected = (selected + page_size).min(sessions.len().saturating_sub(1));
-                    }
-                }
-                KeyCode::Home => {
-                    selected = 0;
-                }
-                KeyCode::End => {
-                    selected = sessions.len().saturating_sub(1);
-                }
-                KeyCode::Enter => {
-                    return Ok(Some(sessions[selected].id.clone()));
-                }
-                KeyCode::Esc => {
-                    return Ok(None);
-                }
-                KeyCode::Char('q') => {
-                    return Ok(None);
-                }
-                KeyCode::Char(ch) if key.modifiers.contains(KeyModifiers::CONTROL) => {
-                    if ch == 'c' || ch == 'C' {
-                        return Ok(None);
-                    }
+        match event {
+            Event::Resize(_, _) => continue,
+            Event::Key(key) => {
+                if key.kind != KeyEventKind::Press {
                     continue;
                 }
-                _ => {}
+                match key.code {
+                    KeyCode::Up => {
+                        selected = selected.saturating_sub(1);
+                    }
+                    KeyCode::Down => {
+                        if selected + 1 < sessions.len() {
+                            selected += 1;
+                        }
+                    }
+                    KeyCode::PageUp => {
+                        if page_size > 0 {
+                            selected = selected.saturating_sub(page_size);
+                        }
+                    }
+                    KeyCode::PageDown => {
+                        if page_size > 0 {
+                            selected = (selected + page_size).min(sessions.len().saturating_sub(1));
+                        }
+                    }
+                    KeyCode::Home => {
+                        selected = 0;
+                    }
+                    KeyCode::End => {
+                        selected = sessions.len().saturating_sub(1);
+                    }
+                    KeyCode::Enter => {
+                        return Ok(Some(sessions[selected].id.clone()));
+                    }
+                    KeyCode::Esc => {
+                        return Ok(None);
+                    }
+                    KeyCode::Char('q') => {
+                        return Ok(None);
+                    }
+                    KeyCode::Char(ch) if key.modifiers.contains(KeyModifiers::CONTROL) => {
+                        if ch == 'c' || ch == 'C' {
+                            return Ok(None);
+                        }
+                        continue;
+                    }
+                    _ => {}
+                }
             }
+            _ => {}
         }
     }
 }
@@ -1579,7 +1588,7 @@ fn print_interactive_session_plan(config: &Config) -> Result<(), String> {
     let revision = stored_plan.as_ref().map(|plan| plan.revision);
     let frozen_revision = stored_plan.as_ref().and_then(|plan| plan.frozen_revision);
 
-    emit_plan_or_history_notice(&interactive_layer_rule(Some("plan")));
+    emit_plan_or_history_notice(&interactive_layer_rule(Some(crate::i18n::cli_section_label("plan"))));
     if interactive_color_enabled() {
         emit_plan_or_history_notice(&format!(
             "  {INTERACTIVE_ACCENT}{}{INTERACTIVE_RESET}{INTERACTIVE_DIM}{} · {}/{} {}{INTERACTIVE_RESET}",
@@ -1754,7 +1763,7 @@ fn print_interactive_session_plan_history(config: &Config) -> Result<(), String>
         return Err("an active session is required".to_string());
     };
     let revisions = crate::store::NolaStore::open_default()?.session_plan_history(&saved.id)?;
-    emit_plan_or_history_notice(&interactive_layer_rule(Some("plan history")));
+    emit_plan_or_history_notice(&interactive_layer_rule(Some(crate::i18n::cli_section_label("plan history"))));
     for revision in revisions {
         let summary = if revision.change_summary.is_empty() {
             revision.change_kind.clone()
@@ -1787,7 +1796,7 @@ fn print_interactive_session_plan_diff(
         from_revision,
         to_revision,
     )?;
-    emit_plan_or_history_notice(&interactive_layer_rule(Some("plan diff")));
+    emit_plan_or_history_notice(&interactive_layer_rule(Some(crate::i18n::cli_section_label("plan diff"))));
     emit_plan_or_history_notice(&format!("  r{} → r{}", diff.from_revision, diff.to_revision));
     for step in diff.added {
         emit_plan_or_history_notice(&format!("  + #{} {}", step.id, step.content));
@@ -1817,13 +1826,16 @@ fn print_interactive_session_history(config: &Config) -> Result<(), String> {
             if let Some(progress) = active_progress.take() {
                 progress.clear();
             }
+            if !config.json_output {
+                emit_plan_or_history_notice(&format!("  {}", crate::i18n::cli_history_empty()));
+            }
             return Ok(());
         }
         Err(err) => {
             if let Some(progress) = active_progress.take() {
                 progress.clear();
             }
-            eprintln!("{err}");
+            emit_plan_or_history_notice(&format_error(&err));
             return Ok(());
         }
     };

@@ -143,6 +143,7 @@ enum UiEvent {
     ToolReceiptCommitted { turn_id: u64 },
     FooterChanged(Vec<String>),
     FooterContextChanged(String),
+    FooterPlanChanged(Option<String>),
     FooterCleared,
     MarkdownDelta(String),
     AssistantDelta(String),
@@ -272,12 +273,15 @@ pub(crate) fn set_restoring_view(restoring: bool) {
 struct UiState {
     restoring_view: bool,
     session_active: bool,
+    header_title: String,
+    header_detail: String,
     turn: TurnPhase,
     goal: GoalPhase,
     composer: Option<ComposerState>,
     activity: Option<ActivityState>,
     tool_receipt: String,
     footer: Vec<String>,
+    footer_plan: Option<String>,
     markdown_source: String,
     active_output: String,
     active_output_boundaries: StreamBoundaryTracker,
@@ -313,6 +317,7 @@ struct UiState {
     // visual-row prefix, including an unfinished Markdown cell, never a slice
     // or rewrite of the canonical source or a business completion signal.
     presented_document_rows: usize,
+    snap_to_bottom: bool,
 }
 
 impl Default for UiState {
@@ -320,12 +325,15 @@ impl Default for UiState {
         Self {
             restoring_view: false,
             session_active: false,
+            header_title: String::new(),
+            header_detail: String::new(),
             turn: TurnPhase::Idle,
             goal: GoalPhase::None,
             composer: None,
             activity: None,
             tool_receipt: String::new(),
             footer: Vec::new(),
+            footer_plan: None,
             markdown_source: String::new(),
             active_output: String::new(),
             active_output_boundaries: StreamBoundaryTracker::default(),
@@ -358,6 +366,7 @@ impl Default for UiState {
             frontier_width: None,
             committed_paint_frontier: 0,
             presented_document_rows: 0,
+            snap_to_bottom: false,
         }
     }
 }
@@ -499,7 +508,16 @@ impl UiState {
             }
             UiEvent::FooterChanged(lines) => self.footer = lines,
             UiEvent::FooterContextChanged(usage) => crate::agent::merge_footer_context_usage(&mut self.footer, usage),
-            UiEvent::FooterCleared => self.footer.clear(),
+            UiEvent::FooterPlanChanged(plan) => {
+                self.footer_plan = plan.and_then(|value| {
+                    let trimmed = value.trim();
+                    (!trimmed.is_empty()).then(|| trimmed.to_string())
+                });
+            }
+            UiEvent::FooterCleared => {
+                self.footer.clear();
+                self.footer_plan = None;
+            }
             UiEvent::MarkdownDelta(text) => {
                 let scan_boundary = text.contains('\n') || self.markdown_source.ends_with("\n\n");
                 self.markdown_source.push_str(&text);
@@ -715,6 +733,25 @@ pub(crate) fn take_exit_assistant_summary() -> Option<String> {
         .take()
 }
 
+const TERMINAL_RESTORE_SEQUENCE: &str =
+    "\x1b[?1000l\x1b[?1006l\x1b[?1007l\x1b[?2004l\x1b[<u\x1b[0m\x1b[?7h\x1b[?25h\x1b[?1049l";
+
+pub(crate) fn set_session_header(title: impl Into<String>, detail: impl Into<String>) {
+    let mut state = shared_state()
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
+    let title = title.into();
+    let detail = detail.into();
+    if state.header_title != title || state.header_detail != detail {
+        state.header_title = title;
+        state.header_detail = detail;
+        if state.session_active {
+            state.frame_pending = true;
+            crate::terminal_frames::request();
+        }
+    }
+}
+
 pub(crate) fn begin_interactive_session() {
     let mut state = shared_state()
         .lock()
@@ -728,7 +765,7 @@ pub(crate) fn begin_interactive_session() {
     if io::stdout().is_terminal() {
         let stdout = io::stdout();
         let mut stdout = io::BufWriter::new(stdout.lock());
-        let _ = write!(stdout, "\x1b[?1049h\x1b[?1007l\x1b[r\x1b[2J\x1b[H\x1b[?25h");
+        let _ = write!(stdout, "\x1b[?1049h\x1b[?1000h\x1b[?1006h\x1b[r\x1b[2J\x1b[H\x1b[?25h");
         let _ = stdout.flush();
     }
 }
@@ -756,20 +793,23 @@ pub(crate) fn end_interactive_session() {
     *LAST_EXIT_ASSISTANT_SUMMARY
         .lock()
         .unwrap_or_else(|e| e.into_inner()) = extract_last_assistant_summary(&state);
-    if state.owns_terminal(io::stdout().is_terminal()) {
-        if let Ok((columns, rows)) = crossterm::terminal::size() {
-            if columns > 0 && rows > 0 {
-                let mut stdout = io::stdout().lock();
-                let _ = write_pending_delivery_frames(&mut state, columns, rows, &mut stdout);
-                let mut output = Vec::new();
-                clear_transcript_tail(&mut state, &mut output);
-                clear_rows(&mut output, rows, state.rendered_rows);
-                let row = state.history_cursor_row.unwrap_or(rows).clamp(1, rows);
-                let _ = write!(output, "\x1b[?6l\x1b[r\x1b[0m\x1b[?7h\x1b[?1007l\x1b[{row};1H\x1b[?25h\x1b[?1049l");
-                let _ = stdout.write_all(&output);
-                let _ = stdout.flush();
+    if io::stdout().is_terminal() {
+        let mut stdout = io::stdout().lock();
+        if state.session_active {
+            if let Ok((columns, rows)) = crossterm::terminal::size() {
+                if columns > 0 && rows > 0 {
+                    let _ = write_pending_delivery_frames(&mut state, columns, rows, &mut stdout);
+                    let mut output = Vec::new();
+                    clear_transcript_tail(&mut state, &mut output);
+                    clear_rows(&mut output, rows, state.rendered_rows);
+                    let row = state.history_cursor_row.unwrap_or(rows).clamp(1, rows);
+                    let _ = write!(output, "\x1b[?6l\x1b[r\x1b[{row};1H");
+                    let _ = stdout.write_all(&output);
+                }
             }
         }
+        let _ = stdout.write_all(TERMINAL_RESTORE_SEQUENCE.as_bytes());
+        let _ = stdout.flush();
     }
     *state = UiState::default();
 }
@@ -840,6 +880,10 @@ pub(crate) fn clear_footer() {
 
 pub(crate) fn update_footer_context(usage: String) {
     dispatch(UiEvent::FooterContextChanged(usage));
+}
+
+pub(crate) fn set_footer_plan(plan: Option<String>) {
+    dispatch(UiEvent::FooterPlanChanged(plan));
 }
 
 pub(crate) fn append_assistant(text: &str) {
@@ -962,8 +1006,9 @@ fn present_history_in_viewport(state: &mut UiState, output: &mut impl Write,
     if columns == 0 || rows == 0 {
         return Ok(HistoryPresentation::Deferred);
     }
+    let header_rows = session_header_rows(state, rows);
     if state.history_reading || state.history_scroll > 0
-        || usize::from(rows) <= build_frame(state, columns, rows).lines.len()
+        || usize::from(rows) <= header_rows + build_frame(state, columns, rows).lines.len()
     {
         return Ok(HistoryPresentation::Deferred);
     }
@@ -1009,9 +1054,10 @@ pub(crate) fn clear_idle_frame() {
 
 // History and model status occupy physical rows even while a modal has focus.
 fn permission_viewport(state: &UiState, rows: u16, lines: usize) -> (usize, bool) {
+    let header = session_header_rows(state, rows) as u16;
     let footer = (state.footer.len() + usize::from(state.history_reading))
-        .min(MAX_FOOTER_LINES).min(usize::from(rows.saturating_sub(2)));
-    let capacity = usize::from(rows.saturating_sub(1)).saturating_sub(footer).max(1);
+        .min(MAX_FOOTER_LINES).min(usize::from(rows.saturating_sub(2 + header)));
+    let capacity = usize::from(rows.saturating_sub(1 + header)).saturating_sub(footer).max(1);
     let show_hint = lines > capacity && capacity > 1;
     (capacity - usize::from(show_hint), show_hint)
 }
@@ -1061,6 +1107,11 @@ pub(crate) fn clear_permission_frame() -> bool {
     if state.prompt_frame.take().is_none() {
         return false;
     }
+    if state.session_active {
+        state.frame_pending = true;
+        paint_pending(&mut state);
+        return true;
+    }
     state.frame_pending = false;
     clear_surface(&mut state);
     true
@@ -1086,7 +1137,9 @@ fn dispatch(event: UiEvent) {
     if !was_prompting && state.prompt_depth > 0 {
         state.deferred_history.extend(committed);
         paint_pending_with_mode(&mut state, true);
-        clear_surface(&mut state);
+        if !state.session_active {
+            clear_surface(&mut state);
+        }
         return;
     }
     if state.prompt_depth > 0 && state.prompt_frame.is_none() {
@@ -1240,11 +1293,108 @@ fn project_source_anchor(rows: &[&SourceAnchor], anchor: &SourceAnchor) -> Optio
     best.map(|(index,_)|index)
 }
 
+fn session_header_rows(state: &UiState, rows: u16) -> usize {
+    usize::from(rows >= 6 && !state.header_title.is_empty())
+}
+
+fn render_header_row(state: &UiState, columns: u16) -> String {
+    let usable = usize::from(columns.saturating_sub(1).max(1));
+    let badge = if state.history_scroll > 0 {
+        format!("↑ {}", state.history_scroll)
+    } else {
+        "LIVE".to_string()
+    };
+    let badge_width = UnicodeWidthStr::width(badge.as_str());
+    let title = strip_ansi(&safe_styled_line(&state.header_title));
+    let detail = strip_ansi(&safe_styled_line(&state.header_detail));
+    let color = crate::interactive_color_enabled();
+
+    let badge_styled = if color {
+        if state.history_scroll > 0 {
+            format!("\x1b[1;33m{badge}\x1b[0m")
+        } else {
+            format!("\x1b[2;32m{badge}\x1b[0m")
+        }
+    } else {
+        badge
+    };
+
+    if usable <= badge_width + 2 {
+        return truncate_styled_display(&badge_styled, usable);
+    }
+
+    let left_budget = usable.saturating_sub(badge_width + 2);
+    let left_plain = if detail.is_empty() {
+        format!(" {title}")
+    } else {
+        format!(" {title} · {detail}")
+    };
+    let left_truncated = truncate_display(&left_plain, left_budget);
+    let left_width = UnicodeWidthStr::width(left_truncated.as_str());
+    let gap = usable.saturating_sub(left_width + badge_width).max(1);
+    let left_styled = if color {
+        let title_prefix = format!(" {title}");
+        if !detail.is_empty() && left_truncated.starts_with(&title_prefix) {
+            let rest = &left_truncated[title_prefix.len()..];
+            format!("\x1b[1m{title_prefix}\x1b[0m\x1b[2m{rest}\x1b[0m")
+        } else {
+            format!("\x1b[1m{left_truncated}\x1b[0m")
+        }
+    } else {
+        left_truncated
+    };
+    format!("{left_styled}{}{badge_styled}", " ".repeat(gap))
+}
+
+fn format_transcript_row_with_scrollbar(line: &str, columns: u16, is_thumb: bool) -> String {
+    let usable = usize::from(columns.saturating_sub(1).max(1));
+    let content_max = usable.saturating_sub(2).max(1);
+    let clipped = truncate_styled_display(&safe_styled_line(line), content_max);
+    let visible_width = UnicodeWidthStr::width(strip_ansi(&clipped).as_str());
+    let padding = usable.saturating_sub(1).saturating_sub(visible_width);
+    let glyph = if is_thumb { "┃" } else { "│" };
+    if crate::interactive_color_enabled() {
+        format!("{clipped}\x1b[0m{}\x1b[2m{glyph}\x1b[0m", " ".repeat(padding))
+    } else {
+        format!("{clipped}{}{glyph}", " ".repeat(padding))
+    }
+}
+
+fn render_footer_plan_row(
+    state: &UiState,
+    columns: u16,
+    rows: u16,
+    used_rows: usize,
+) -> Option<String> {
+    let plan = state.footer_plan.as_deref()?.trim();
+    if plan.is_empty() || usize::from(rows) <= used_rows + 1 {
+        return None;
+    }
+    let content_width = usize::from(columns.saturating_sub(2).max(1)).min(MAX_CONTENT_WIDTH);
+    let text = truncate_styled_display(
+        &safe_styled_line(plan),
+        content_width.saturating_sub(2).max(1),
+    );
+    if crate::interactive_color_enabled() {
+        Some(format!(
+            "  {}{}{}",
+            crate::INTERACTIVE_DIM,
+            text,
+            crate::INTERACTIVE_RESET
+        ))
+    } else {
+        Some(format!("  {text}"))
+    }
+}
+
 // Interactive chrome never enters terminal scrollback. The document owns
 // history; the alternate screen is only a projection of its current viewport.
 fn render_session_viewport(state: &mut UiState, output: &mut impl Write, columns: u16, rows: u16) {
     let frame = build_frame(state, columns, rows);
-    let capacity = usize::from(rows).saturating_sub(frame.lines.len());
+    let header_rows = session_header_rows(state, rows);
+    let plan_row = render_footer_plan_row(state, columns, rows, header_rows + frame.lines.len());
+    let plan_rows = usize::from(plan_row.is_some());
+    let capacity = usize::from(rows).saturating_sub(header_rows + plan_rows + frame.lines.len());
     let width = transcript_width(usize::from(columns));
     let layout_changed = !state.history_layout.as_ref().is_some_and(|(w, revision, _)| *w == width && *revision == state.history_revision);
     let width_changed = state.frontier_width != Some(width);
@@ -1288,15 +1438,28 @@ fn render_session_viewport(state: &mut UiState, output: &mut impl Write, columns
     // Reading owns its anchor. Do not keep scheduling invisible progress or
     // spin when chrome occupies the entire terminal.
     let can_advance = !state.history_reading && state.history_scroll == 0 && capacity > 0;
-    let budget = if can_advance { MAX_VIEWPORT_ROWS_PER_FRAME.min(capacity) } else { 0 };
+    let snap = std::mem::take(&mut state.snap_to_bottom) && can_advance;
+    let budget = if snap {
+        source_length
+    } else if can_advance {
+        MAX_VIEWPORT_ROWS_PER_FRAME.min(capacity)
+    } else {
+        0
+    };
     let completed = state.committed_paint_frontier.saturating_sub(state.history_first_cell_id) as usize;
     let committed_rows = completed.checked_sub(1).and_then(|index|state.history_cell_ends.get(index)).copied().unwrap_or(0);
     let remapped_frontier = if layout_changed || width_changed { state.frontier_anchor.as_ref().and_then(|anchor|
         project_source_anchor(&anchors,&normalize_source_anchor(state,anchor)))
         .map(|row|row+usize::from(state.frontier_width==Some(width)))
         .unwrap_or(committed_rows).max(committed_rows) } else {state.presented_document_rows};
-    state.presented_document_rows = remapped_frontier.min(source_length)
-        .saturating_add(budget).min(source_length);
+    state.presented_document_rows = if snap {
+        source_length
+    } else {
+        remapped_frontier
+            .min(source_length)
+            .saturating_add(budget)
+            .min(source_length)
+    };
     let length = state.presented_document_rows;
     state.frame_pending = can_advance && length < source_length;
     state.history_reading |= state.history_scroll > 0;
@@ -1332,8 +1495,37 @@ fn render_session_viewport(state: &mut UiState, output: &mut impl Write, columns
         + state.history_cell_ends.iter().take_while(|end|**end<=length).count() as u64;
     let visible = history.iter().chain(tail_lines.iter()).skip(start).take(end - start).collect::<Vec<_>>();
     let _ = write!(output, "\x1b[?6l\x1b[r\x1b[?25l");
-    let screen = (0..capacity).map(|index| visible.get(index).map(|line| (*line).clone()).unwrap_or_default())
-        .chain(frame.lines.iter().cloned()).collect::<Vec<_>>();
+    let show_scrollbar = length > capacity && capacity > 0 && columns >= 20;
+    let (thumb_start, thumb_end) = if show_scrollbar {
+        let thumb_len = ((capacity * capacity) / length).clamp(1, capacity);
+        let max_scroll = length.saturating_sub(capacity);
+        let track_travel = capacity.saturating_sub(thumb_len);
+        let thumb_start = if max_scroll == 0 {
+            track_travel
+        } else {
+            (start * track_travel + max_scroll / 2) / max_scroll
+        };
+        (thumb_start, thumb_start + thumb_len)
+    } else {
+        (0, 0)
+    };
+    let mut screen = Vec::with_capacity(usize::from(rows));
+    if header_rows > 0 {
+        screen.push(render_header_row(state, columns));
+    }
+    for index in 0..capacity {
+        let line = visible.get(index).map(|line| (*line).as_str()).unwrap_or("");
+        if show_scrollbar {
+            let is_thumb = index >= thumb_start && index < thumb_end;
+            screen.push(format_transcript_row_with_scrollbar(line, columns, is_thumb));
+        } else {
+            screen.push(line.to_string());
+        }
+    }
+    if let Some(plan_line) = plan_row {
+        screen.push(plan_line);
+    }
+    screen.extend(frame.lines.iter().cloned());
     let previous = state.painted_viewport.as_ref().filter(|(w, h, _)| *w == columns && *h == rows);
     for (index, line) in screen.iter().enumerate() {
         if previous.and_then(|(_, _, lines)| lines.get(index)) != Some(line) {
@@ -1354,6 +1546,7 @@ fn navigate_history(state: &mut UiState, key: &crossterm::event::KeyEvent, page:
     let control = key.modifiers == KeyModifiers::CONTROL;
     let alt_or_ctrl = key.modifiers == KeyModifiers::ALT || key.modifiers == KeyModifiers::CONTROL;
     let step = page.min(3).max(1);
+    let was_reading = state.history_reading || state.history_scroll > 0;
     match key.code {
         KeyCode::PageUp if key.modifiers.is_empty() => state.history_scroll = state.history_scroll.saturating_add(page),
         KeyCode::PageDown if key.modifiers.is_empty() => state.history_scroll = state.history_scroll.saturating_sub(page),
@@ -1364,9 +1557,104 @@ fn navigate_history(state: &mut UiState, key: &crossterm::event::KeyEvent, page:
         _ => return false,
     }
     state.history_reading = state.history_scroll > 0;
+    if state.history_scroll == 0 && was_reading {
+        state.snap_to_bottom = true;
+    }
     state.reader_anchor = None;
     state.frame_pending = true;
     true
+}
+
+fn scroll_history_lines_in_state(state: &mut UiState, delta: isize) -> bool {
+    if !state.session_active || delta == 0 {
+        return false;
+    }
+    let max_scroll = state
+        .history_viewport_extent
+        .map(|(_, length, capacity)| length.saturating_sub(capacity))
+        .unwrap_or(state.presented_document_rows);
+    let previous = state.history_scroll;
+    let next = if delta > 0 {
+        previous.saturating_add(delta as usize).min(max_scroll)
+    } else {
+        previous.saturating_sub(delta.unsigned_abs())
+    };
+    let was_reading = state.history_reading;
+    state.history_scroll = next;
+    state.history_reading = next > 0;
+    if next == 0 && (was_reading || previous > 0) {
+        state.snap_to_bottom = true;
+    }
+    if next != previous || state.history_reading != was_reading {
+        state.reader_anchor = None;
+        state.frame_pending = true;
+        true
+    } else {
+        false
+    }
+}
+
+pub(crate) fn scroll_history_lines(delta: isize) -> bool {
+    let mut state = shared_state().lock().unwrap_or_else(|e| e.into_inner());
+    if !scroll_history_lines_in_state(&mut state, delta) {
+        return false;
+    }
+    crate::terminal_frames::request();
+    true
+}
+
+fn scroll_permission_frame_lines(state: &mut UiState, down: bool, lines: usize, rows: u16) -> bool {
+    let length = state.prompt_frame.as_ref().map_or(0, Vec::len);
+    let (visible, _) = permission_viewport(state, rows, length);
+    let max = length.saturating_sub(visible);
+    let previous = state.prompt_scroll;
+    state.prompt_scroll = if down {
+        state.prompt_scroll.saturating_add(lines).min(max)
+    } else {
+        state.prompt_scroll.saturating_sub(lines)
+    };
+    if state.prompt_scroll != previous {
+        state.frame_pending = true;
+        true
+    } else {
+        false
+    }
+}
+
+pub(crate) fn handle_mouse_scroll(kind: crossterm::event::MouseEventKind, row: u16) -> bool {
+    use crossterm::event::MouseEventKind;
+    let up = match kind {
+        MouseEventKind::ScrollUp => true,
+        MouseEventKind::ScrollDown => false,
+        _ => return false,
+    };
+    let mut state = shared_state().lock().unwrap_or_else(|e| e.into_inner());
+    if !state.session_active {
+        return false;
+    }
+    let rows = state
+        .painted_viewport
+        .as_ref()
+        .map(|(_, h, _)| *h)
+        .or_else(|| crossterm::terminal::size().ok().map(|(_, h)| h))
+        .unwrap_or(24);
+    let bottom_rows = state.rendered_rows.min(usize::from(rows)) as u16;
+    if state.prompt_depth > 0
+        && state.prompt_frame.is_some()
+        && row >= rows.saturating_sub(bottom_rows)
+        && row < rows
+    {
+        if scroll_permission_frame_lines(&mut state, !up, 3, rows) {
+            crate::terminal_frames::request();
+            return true;
+        }
+        return false;
+    }
+    if scroll_history_lines_in_state(&mut state, if up { 3 } else { -3 }) {
+        crate::terminal_frames::request();
+        return true;
+    }
+    false
 }
 
 pub(crate) fn scroll_history_key(key: &crossterm::event::KeyEvent) -> bool {
@@ -1955,83 +2243,97 @@ fn wrap_styled_line_with_offsets(line: &str, max_width: usize) -> Vec<(String,us
     let mut soft_break = None;
     let mut source_offset = 0;
     let mut current_offset = 0;
-    let mut chars = line.chars().peekable();
+    let bytes = line.as_bytes();
+    let mut pos = 0usize;
 
-    while let Some(ch) = chars.next() {
-        if ch == '\u{1b}' && chars.peek() == Some(&'[') {
-            let mut sequence = String::from("\u{1b}");
-            while let Some(control) = chars.next() {
-                sequence.push(control);
-                if control.is_ascii_alphabetic() {
+    while pos < bytes.len() {
+        if bytes[pos] == 0x1b && bytes.get(pos + 1) == Some(&b'[') {
+            let start = pos;
+            pos += 2;
+            while pos < bytes.len() {
+                let b = bytes[pos];
+                pos += 1;
+                if b.is_ascii_alphabetic() {
                     break;
                 }
             }
-            current.push_str(&sequence);
+            let sequence = &line[start..pos];
+            current.push_str(sequence);
             if sequence.ends_with('m') {
                 if sequence == "\x1b[0m" || sequence == "\x1b[m" {
                     active_sgr.clear();
                 } else {
-                    active_sgr.push_str(&sequence);
+                    active_sgr.push_str(sequence);
                 }
             }
             continue;
         }
 
-        let char_offset = source_offset;
-        source_offset += 1;
-        let char_width = UnicodeWidthChar::width(ch).unwrap_or(0);
-        if current_width > 0 && current_width.saturating_add(char_width) > max_width {
-            let wrapped_at_word = soft_break
-                .take()
-                .filter(|(byte, width, _)| {
-                    *byte < current.len()
-                        && *width > continuation_width
-                        && current_width.saturating_sub(*width) <= MAX_SOFT_WRAP_LOOKBACK
-                        && continuation_width + current_width.saturating_sub(*width) < max_width
-                })
-                .map(|(byte, width, offset)| {
-                    let remainder = current.split_off(byte);
-                    let remainder_width = current_width.saturating_sub(width);
-                    while current.ends_with(' ') || current.ends_with('\t') {
-                        current.pop();
-                    }
+        let next_esc = line[pos..]
+            .find("\x1b[")
+            .map(|rel| pos + rel)
+            .unwrap_or(line.len());
+        let run = &line[pos..next_esc];
+        pos = next_esc;
+
+        for grapheme in run.graphemes(true) {
+            let grapheme_offset = source_offset;
+            source_offset += 1;
+            let grapheme_width = UnicodeWidthStr::width(grapheme);
+            let is_whitespace = grapheme.chars().all(char::is_whitespace);
+            if current_width > 0 && current_width.saturating_add(grapheme_width) > max_width {
+                let wrapped_at_word = soft_break
+                    .take()
+                    .filter(|(byte, width, _)| {
+                        *byte < current.len()
+                            && *width > continuation_width
+                            && current_width.saturating_sub(*width) <= MAX_SOFT_WRAP_LOOKBACK
+                            && continuation_width + current_width.saturating_sub(*width) < max_width
+                    })
+                    .map(|(byte, width, offset)| {
+                        let remainder = current.split_off(byte);
+                        let remainder_width = current_width.saturating_sub(width);
+                        while current.ends_with(' ') || current.ends_with('\t') {
+                            current.pop();
+                        }
+                        if !active_sgr.is_empty() {
+                            current.push_str("\x1b[0m");
+                        }
+                        output.push((std::mem::take(&mut current), current_offset));
+                        current_offset = offset;
+                        current = continuation.clone();
+                        if !active_sgr.is_empty() {
+                            current.push_str(&active_sgr);
+                        }
+                        current.push_str(&remainder);
+                        current_width = continuation_width.saturating_add(remainder_width);
+                    })
+                    .is_some();
+
+                let mut preserve_overflow_whitespace = wrapped_at_word;
+                if !wrapped_at_word || current_width.saturating_add(grapheme_width) > max_width {
                     if !active_sgr.is_empty() {
                         current.push_str("\x1b[0m");
                     }
-                    output.push((std::mem::take(&mut current),current_offset));
-                    current_offset = offset;
+                    output.push((current, current_offset));
+                    current_offset = grapheme_offset;
                     current = continuation.clone();
+                    current_width = continuation_width;
                     if !active_sgr.is_empty() {
                         current.push_str(&active_sgr);
                     }
-                    current.push_str(&remainder);
-                    current_width = continuation_width.saturating_add(remainder_width);
-                })
-                .is_some();
-
-            let mut preserve_overflow_whitespace = wrapped_at_word;
-            if !wrapped_at_word || current_width.saturating_add(char_width) > max_width {
-                if !active_sgr.is_empty() {
-                    current.push_str("\x1b[0m");
+                    preserve_overflow_whitespace = false;
                 }
-                output.push((current,current_offset));
-                current_offset = char_offset;
-                current = continuation.clone();
-                current_width = continuation_width;
-                if !active_sgr.is_empty() {
-                    current.push_str(&active_sgr);
+                if is_whitespace && !preserve_overflow_whitespace {
+                    current_offset = source_offset;
+                    continue;
                 }
-                preserve_overflow_whitespace = false;
             }
-            if ch.is_whitespace() && !preserve_overflow_whitespace {
-                current_offset = source_offset;
-                continue;
+            current.push_str(grapheme);
+            current_width = current_width.saturating_add(grapheme_width);
+            if is_whitespace {
+                soft_break = Some((current.len(), current_width, source_offset));
             }
-        }
-        current.push(ch);
-        current_width = current_width.saturating_add(char_width);
-        if ch.is_whitespace() {
-            soft_break = Some((current.len(), current_width,source_offset));
         }
     }
 
@@ -2194,6 +2496,9 @@ fn truncate_display(value: &str, max_width: usize) -> String {
 }
 
 fn truncate_styled_display(value: &str, max_width: usize) -> String {
+    if max_width == 0 {
+        return String::new();
+    }
     let visible = strip_ansi(value);
     if UnicodeWidthStr::width(visible.as_str()) <= max_width {
         return value.to_string();
@@ -2203,31 +2508,45 @@ fn truncate_styled_display(value: &str, max_width: usize) -> String {
     }
 
     let mut output = String::with_capacity(value.len());
-    let mut chars = value.chars().peekable();
+    let bytes = value.as_bytes();
+    let mut pos = 0usize;
     let mut width = 0usize;
-    while let Some(ch) = chars.next() {
-        if ch == '\u{1b}' {
-            output.push(ch);
-            if let Some(next) = chars.next() {
-                output.push(next);
-                if next == '[' {
-                    for control in chars.by_ref() {
-                        output.push(control);
-                        if ('@'..='~').contains(&control) {
+    'outer: while pos < bytes.len() {
+        if bytes[pos] == 0x1b {
+            let start = pos;
+            pos += 1;
+            if pos < bytes.len() {
+                let next = bytes[pos];
+                pos += 1;
+                if next == b'[' {
+                    while pos < bytes.len() {
+                        let control = bytes[pos];
+                        pos += 1;
+                        if (b'@'..=b'~').contains(&control) {
                             break;
                         }
                     }
                 }
             }
+            output.push_str(&value[start..pos]);
             continue;
         }
 
-        let ch_width = UnicodeWidthChar::width(ch).unwrap_or(0);
-        if width + ch_width > max_width - 1 {
-            break;
+        let next_esc = value[pos..]
+            .find('\u{1b}')
+            .map(|rel| pos + rel)
+            .unwrap_or(value.len());
+        let run = &value[pos..next_esc];
+        pos = next_esc;
+
+        for grapheme in run.graphemes(true) {
+            let grapheme_width = UnicodeWidthStr::width(grapheme);
+            if width + grapheme_width > max_width - 1 {
+                break 'outer;
+            }
+            output.push_str(grapheme);
+            width += grapheme_width;
         }
-        output.push(ch);
-        width += ch_width;
     }
     output.push('…');
     output.push_str("\x1b[0m");
@@ -4118,5 +4437,171 @@ mod tests {
         let summary = extract_last_assistant_summary(&state).expect("summary");
         assert!(summary.contains("Latest answer line 1"));
         assert!(!summary.contains("First answer"));
+    }
+
+    #[test]
+    fn three_zone_viewport_renders_header_scrollbar_and_bottom_chrome() {
+        let mut state = UiState::default();
+        state.session_active = true;
+        state.header_title = "Nola".into();
+        state.header_detail = "gpt-5 · main".into();
+        state.idle_frame = Some(IdleFrameState {
+            lines: vec!["› prompt".into()],
+            cursor_row: 0,
+            cursor_column: 9,
+        });
+        state.footer = vec!["Context 12%".into()];
+        for index in 1..=30 {
+            state
+                .deferred_history
+                .push_back(TranscriptCell::Text(format!("transcript-row-{index:02}")));
+        }
+
+        let mut terminal = vt100::Parser::new(10, 50, 0);
+        terminal.process(&delivered_pending_frames(&mut state, 50, 10));
+        let screen = terminal.screen().contents();
+        let rows: Vec<&str> = screen.lines().collect();
+        assert!(rows[0].contains("Nola"), "top header row missing title: {screen}");
+        assert!(rows[0].contains("gpt-5 · main"), "top header row missing detail: {screen}");
+        assert!(rows[0].contains("LIVE"), "top header row missing LIVE badge: {screen}");
+        assert!(
+            screen.contains('┃') && screen.contains('│'),
+            "expected scrollbar thumb and track when transcript overflows: {screen}"
+        );
+        assert!(screen.contains("› prompt"), "missing bottom composer chrome: {screen}");
+        assert!(screen.contains("Context 12%"), "missing bottom footer chrome: {screen}");
+
+        // Scroll up and verify header badge switches to ↑ N
+        assert!(scroll_history_lines_in_state(&mut state, 5));
+        terminal.process(&pending_frame_bytes(&mut state, 50, 10, false));
+        let scrolled_screen = terminal.screen().contents();
+        let first_row = scrolled_screen.lines().next().unwrap_or_default();
+        assert!(
+            first_row.contains("↑ ") && !first_row.contains("LIVE"),
+            "expected scroll badge ↑ N in header: {first_row}"
+        );
+    }
+
+    #[test]
+    fn scroll_history_lines_supports_up_down_snap_to_bottom_and_prompt_depth() {
+        let mut state = frontier_fixture();
+        state.deferred_history.push_back(TranscriptCell::Text(
+            (1..=40)
+                .map(|index| format!("ROW-{index:02}\n"))
+                .collect(),
+        ));
+        let _ = delivered_pending_frames(&mut state, 80, 12);
+        let initial_rows = state.presented_document_rows;
+        assert_eq!(initial_rows, 40);
+
+        // Scroll up while a permission prompt is active (prompt_depth > 0)
+        state.prompt_depth = 1;
+        state.prompt_frame = Some(vec!["Allow tool?".into(), "› Allow once".into()]);
+        assert!(scroll_history_lines_in_state(&mut state, 6));
+        assert!(state.history_reading);
+        assert_eq!(state.history_scroll, 6);
+
+        // Append new lines while scrolled up; they should not advance while reading
+        state.deferred_history.push_back(TranscriptCell::Text(
+            (41..=60)
+                .map(|index| format!("ROW-{index:02}\n"))
+                .collect(),
+        ));
+        let _ = pending_frame_bytes(&mut state, 80, 12, false);
+        assert_eq!(state.presented_document_rows, initial_rows);
+
+        // Scroll back down to bottom -> must snap presented_document_rows immediately to 60
+        assert!(scroll_history_lines_in_state(&mut state, -10));
+        assert!(!state.history_reading);
+        assert_eq!(state.history_scroll, 0);
+        assert!(state.snap_to_bottom);
+        let _ = pending_frame_bytes(&mut state, 80, 12, false);
+        assert_eq!(state.presented_document_rows, 60);
+        assert!(!state.frame_pending);
+    }
+
+    #[test]
+    fn truncate_and_wrap_styled_display_preserve_cjk_and_zwj_emoji_graphemes() {
+        let family = "👨\u{200d}👩\u{200d}👧\u{200d}👦";
+        let styled = format!("\x1b[36m你好{family}世界\x1b[0m");
+        // Width 6 allows "你好" (width 4) + "…" (width 1) without splitting the ZWJ family emoji.
+        let truncated = truncate_styled_display(&styled, 6);
+        let plain = strip_ansi(&truncated);
+        assert!(truncated.starts_with("\x1b[36m"));
+        assert!(truncated.ends_with("\x1b[0m"));
+        assert_eq!(plain, "你好…");
+        assert!(!plain.contains('\u{200d}'), "must never leave a split ZWJ scalar");
+
+        // Combining accent stays attached to its base character.
+        let combining = "\x1b[32mcafe\u{0301}中文\x1b[0m";
+        let truncated_combining = truncate_styled_display(combining, 5);
+        assert_eq!(strip_ansi(&truncated_combining), "cafe\u{0301}…");
+
+        // Wrapping keeps ZWJ emoji intact on a single visual line.
+        let wrapped = wrap_styled_line(&styled, 10);
+        let joined = wrapped
+            .iter()
+            .map(|line| strip_ansi(line))
+            .collect::<String>();
+        assert_eq!(joined, format!("你好{family}世界"));
+        assert!(
+            wrapped.iter().any(|line| strip_ansi(line).contains(family)),
+            "ZWJ emoji grapheme must not be split across wrapped lines: {wrapped:?}"
+        );
+    }
+
+    #[test]
+    fn footer_plan_bar_renders_above_composer_and_clears() {
+        let mut state = UiState::default();
+        state.session_active = true;
+        state.header_title = "Nola".into();
+        state.idle_frame = Some(IdleFrameState {
+            lines: vec!["› prompt".into()],
+            cursor_row: 0,
+            cursor_column: 9,
+        });
+        state.footer = vec!["Context 10%".into()];
+        state.deferred_history.push_back(TranscriptCell::Text(
+            (1..=20)
+                .map(|index| format!("line-{index:02}\n"))
+                .collect(),
+        ));
+
+        let _ = state.reduce(UiEvent::FooterPlanChanged(Some(
+            "Plan 2/4 · Running tests".into(),
+        )));
+        let mut terminal = vt100::Parser::new(10, 60, 0);
+        terminal.process(&delivered_pending_frames(&mut state, 60, 10));
+        let screen = terminal.screen().contents();
+        let rows: Vec<&str> = screen.lines().collect();
+        assert!(
+            screen.contains("Plan 2/4 · Running tests"),
+            "expected footer plan bar in viewport: {screen}"
+        );
+        let plan_idx = rows
+            .iter()
+            .position(|row| row.contains("Plan 2/4 · Running tests"))
+            .expect("plan bar row");
+        let composer_idx = rows
+            .iter()
+            .position(|row| row.contains("› prompt"))
+            .expect("composer row");
+        assert_eq!(
+            plan_idx + 1,
+            composer_idx,
+            "plan bar should sit directly above bottom composer: {screen}"
+        );
+        // Header (1) + Plan (1) + Composer (1) + Footer (1) = 4 chrome rows -> 6 transcript rows.
+        assert_eq!(state.history_viewport_extent.map(|(_, _, cap)| cap), Some(6));
+
+        let _ = state.reduce(UiEvent::FooterPlanChanged(None));
+        state.frame_pending = true;
+        terminal.process(&pending_frame_bytes(&mut state, 60, 10, false));
+        let cleared_screen = terminal.screen().contents();
+        assert!(
+            !cleared_screen.contains("Plan 2/4 · Running tests"),
+            "plan bar should clear when set to None: {cleared_screen}"
+        );
+        assert_eq!(state.history_viewport_extent.map(|(_, _, cap)| cap), Some(7));
     }
 }

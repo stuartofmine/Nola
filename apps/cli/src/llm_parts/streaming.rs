@@ -3644,7 +3644,7 @@ where F: FnMut(LlmEvent) -> Result<(), String> {
 
     for (attempt_index, resolved_addr) in attempts.into_iter().enumerate() {
         let (runtime, client) = if cfg.native_model_route.is_some() {
-            build_async_native_stream_client()?
+            build_async_native_stream_client(parsed_endpoint.host_str())?
         } else {
             build_async_stream_client(parsed_endpoint.host_str(), resolved_addr)?
         };
@@ -3779,7 +3779,7 @@ where F: FnMut(LlmEvent) -> Result<(), String> {
                 .into());
             }
             let recv_timeout = active_idle_limit.saturating_sub(idle_elapsed);
-            let line = match response.next_data_line(
+            let line = match response.next_sse_data_frame(
                 recv_timeout,
                 &cfg.cancellation,
                 &read_failed_prefix,
@@ -3853,11 +3853,7 @@ where F: FnMut(LlmEvent) -> Result<(), String> {
                 }
                 StreamLineRecv::Cancelled => return Err(llm_cancelled_message().into()),
             };
-            let trimmed = line.trim();
-            if trimmed.is_empty() || trimmed.starts_with(':') {
-                continue;
-            }
-            let raw = trimmed.trim_start_matches("data:").trim();
+            let raw = line.trim();
             if raw.is_empty() {
                 continue;
             }
@@ -4365,7 +4361,7 @@ where
 
     for resolved_addr in attempts {
         let (runtime, client) = if cfg.native_model_route.is_some() {
-            build_async_native_stream_client()?
+            build_async_native_stream_client(parsed_endpoint.host_str())?
         } else {
             build_async_stream_client(parsed_endpoint.host_str(), resolved_addr)?
         };
@@ -4616,7 +4612,7 @@ where F: FnMut(LlmEvent) -> Result<(), String> {
 
     for (attempt_index, resolved_addr) in attempts.into_iter().enumerate() {
         let (runtime, client) = if cfg.native_model_route.is_some() {
-            build_async_native_stream_client()?
+            build_async_native_stream_client(parsed_endpoint.host_str())?
         } else {
             build_async_stream_client(parsed_endpoint.host_str(), resolved_addr)?
         };
@@ -4726,7 +4722,7 @@ where F: FnMut(LlmEvent) -> Result<(), String> {
                 .into());
             }
             let recv_timeout = active_idle_limit.saturating_sub(idle_elapsed);
-            let line = match response.next_data_line(
+            let line = match response.next_sse_data_frame(
                 recv_timeout,
                 &cfg.cancellation,
                 &read_failed_prefix,
@@ -4777,11 +4773,7 @@ where F: FnMut(LlmEvent) -> Result<(), String> {
                 }
                 StreamLineRecv::Cancelled => return Err(llm_cancelled_message().into()),
             };
-            let trimmed = line.trim();
-            if trimmed.is_empty() || trimmed.starts_with(':') {
-                continue;
-            }
-            let raw = trimmed.trim_start_matches("data:").trim();
+            let raw = line.trim();
             if raw.is_empty() {
                 continue;
             }

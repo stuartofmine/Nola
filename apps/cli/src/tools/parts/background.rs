@@ -2601,6 +2601,22 @@ fn shell_capture_keeps_text_around_binary_and_reports_missing_capture() {
     assert_eq!(failure.data.unwrap()["error"], "shell_capture_read_failed");
 }
 
+fn read_bounded_shell_capture_text(path: &Path) -> Result<String, std::io::Error> {
+    let file = File::open(path)?;
+    let mut bytes = Vec::new();
+    let mut limited = std::io::Read::take(file, (MAX_SHELL_CAPTURE_BYTES + 1) as u64);
+    std::io::Read::read_to_end(&mut limited, &mut bytes)?;
+    let truncated = bytes.len() > MAX_SHELL_CAPTURE_BYTES;
+    if truncated {
+        bytes.truncate(MAX_SHELL_CAPTURE_BYTES);
+    }
+    let mut text = String::from_utf8_lossy(&bytes).into_owned();
+    if truncated {
+        text.push_str("\n[output truncated at 8 MiB limit]");
+    }
+    Ok(text)
+}
+
 /// A stop request is not proof that every descendant stopped. Preserve the
 /// captures and report a snapshot, including read failures, without replay advice.
 fn interrupted_shell_output(
@@ -2620,8 +2636,8 @@ fn interrupted_shell_output(
         },
         Err(error) => (None, Some(error)),
     };
-    let stdout = fs::read_to_string(stdout_path);
-    let stderr = fs::read_to_string(stderr_path);
+    let stdout = read_bounded_shell_capture_text(stdout_path);
+    let stderr = read_bounded_shell_capture_text(stderr_path);
     let stdout_error = stdout.as_ref().err().map(ToString::to_string);
     let stderr_error = stderr.as_ref().err().map(ToString::to_string);
     let stdout = stdout.ok();
@@ -2673,6 +2689,39 @@ fn interrupted_shell_output_preserves_raw_capture_and_does_not_invent_stop_proof
     assert_eq!(data["output_compacted"], false);
     assert!(data.get("process_group_terminated").is_none());
     assert_eq!(fs::read_to_string(stdout_path).unwrap(), original);
+}
+
+#[test]
+fn interrupted_shell_output_bounds_large_captures_and_handles_non_utf8_lossily() {
+    let workspace = tempfile::tempdir().unwrap();
+    let stdout_path = workspace.path().join("stdout.bin");
+    let stderr_path = workspace.path().join("stderr.bin");
+    let mut oversized = vec![b'x'; MAX_SHELL_CAPTURE_BYTES + 1024];
+    oversized[0] = 0xff;
+    oversized[1] = 0xfe;
+    fs::write(&stdout_path, &oversized).unwrap();
+    fs::write(&stderr_path, b"err-\xff-tail").unwrap();
+
+    let outcome = interrupted_shell_output(
+        "fixture",
+        workspace.path(),
+        &stdout_path,
+        &stderr_path,
+        Err("stop unconfirmed".into()),
+        "timeout",
+        "timeout".into(),
+        "timeout".into(),
+    );
+    let data = outcome.data.unwrap();
+    let stdout = data["stdout"].as_str().expect("stdout should be read lossily");
+    assert!(stdout.contains('\u{FFFD}'));
+    assert!(stdout.ends_with("\n[output truncated at 8 MiB limit]"));
+    assert!(stdout.len() < MAX_SHELL_CAPTURE_BYTES + 256);
+    assert!(data["stdout_read_error"].is_null());
+
+    let stderr = data["stderr"].as_str().expect("stderr should be read lossily");
+    assert_eq!(stderr, "err-\u{FFFD}-tail");
+    assert!(data["stderr_read_error"].is_null());
 }
 
 #[cfg(unix)]
@@ -3391,8 +3440,8 @@ fn run_bash_execution(
             activation: None,
         };
         if let Ok(mut tasks) = state.lock() {
-            if let Some(task) = tasks.get_mut(&task_id) {
-                if let Some(settlement) = settle_background_output_contract(task, &status) {
+            if let Some(mut task) = tasks.remove(&task_id) {
+                if let Some(settlement) = settle_background_output_contract(&mut task, &status) {
                     outcome.artifacts = settlement.artifacts;
                     if settlement.error {
                         outcome.error = true;
@@ -3405,8 +3454,22 @@ fn run_bash_execution(
         }
         return outcome;
     }
+    struct TempFileGuard(Vec<PathBuf>);
+    impl Drop for TempFileGuard {
+        fn drop(&mut self) {
+            for path in &self.0 {
+                let _ = fs::remove_file(path);
+            }
+        }
+    }
     let evidence_path = PathBuf::from(format!("{}.exit-evidence", status_path.display()));
     let _ = fs::remove_file(&evidence_path);
+    let _temp_files_guard = TempFileGuard(vec![
+        stdout_path.clone(),
+        stderr_path.clone(),
+        status_path.clone(),
+        evidence_path.clone(),
+    ]);
     let stdout = match File::create(&stdout_path) {
         Ok(file) => file,
         Err(err) => return error(format!("temp stdout failed: {err}")),

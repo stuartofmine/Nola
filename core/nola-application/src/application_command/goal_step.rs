@@ -938,8 +938,13 @@ fn directive<R: AgentRuntimeCommandRepositories>(
     } else {
         match goal.as_ref() {
             None => json!({"type":"terminal"}),
-            Some(goal) if goal.status.is_terminal() => {
-                json!({"type":"terminal","outcome":if goal.status==GoalStatus::Completed{"completed"}else{"cancelled"}})
+            Some(goal) if goal.status.is_terminal() || goal.status == GoalStatus::Failed => {
+                let outcome = match goal.status {
+                    GoalStatus::Completed => "completed",
+                    GoalStatus::Failed => "failed",
+                    _ => "cancelled",
+                };
+                json!({"type":"terminal","outcome":outcome})
             }
             Some(goal) if goal.next_wake_at_epoch_ms.is_some() => {
                 json!({"type":"wait","wake_at_epoch_ms":goal.next_wake_at_epoch_ms})

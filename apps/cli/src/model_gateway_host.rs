@@ -328,11 +328,15 @@ pub fn gateway_response(
         },
     );
     body["model"] = json!(profile.model_name);
-    let client = match reqwest::blocking::Client::builder()
+    let mut client_builder = reqwest::blocking::Client::builder()
         .redirect(reqwest::redirect::Policy::none())
         .connect_timeout(std::time::Duration::from_secs(10))
-        .timeout(std::time::Duration::from_secs(300))
-        .build()
+        .timeout(std::time::Duration::from_secs(300));
+    if crate::llm::is_explicit_loopback_host(target.host_str()) {
+        client_builder = client_builder.no_proxy();
+    }
+    let client = match crate::llm::apply_configured_ssl_cert_file_blocking(client_builder)
+        .and_then(|builder| builder.build().map_err(|err| err.to_string()))
     {
         Ok(client) => client,
         Err(_) => return error(503, "gateway_transport_unavailable"),

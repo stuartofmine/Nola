@@ -459,6 +459,59 @@ fn tool_argument_summary(request: &ToolRequest) -> Option<String> {
                 first_tool_arg(&request.args, &["description", "prompt"]),
             );
         }
+        "delegate_expert" => {
+            push_tool_arg(
+                &mut parts,
+                "expert",
+                first_tool_arg(
+                    &request.args,
+                    &["target_participant_id", "expert_id", "expert", "name"],
+                ),
+            );
+            push_tool_arg(
+                &mut parts,
+                "task",
+                ["text", "brief", "description", "prompt"]
+                    .iter()
+                    .find_map(|key| request.args.get(*key).and_then(tool_arg_summary_value)),
+            );
+        }
+        "send_agent_message" => {
+            push_tool_arg(
+                &mut parts,
+                "task",
+                first_tool_arg(&request.args, &["task_id", "target_task_id", "id"]),
+            );
+            push_tool_arg(
+                &mut parts,
+                "message",
+                ["message", "text", "content"]
+                    .iter()
+                    .find_map(|key| request.args.get(*key).and_then(tool_arg_summary_value)),
+            );
+        }
+        "stop_task" => {
+            push_tool_arg(
+                &mut parts,
+                "task",
+                first_tool_arg(&request.args, &["task_id", "target_task_id", "id"]),
+            );
+            push_tool_arg(
+                &mut parts,
+                "reason",
+                first_tool_arg(&request.args, &["reason"]),
+            );
+        }
+        "wait_task" => {
+            push_tool_arg(
+                &mut parts,
+                "task",
+                first_tool_arg(&request.args, &["task_id", "target_task_id", "id"]),
+            );
+            if let Some(timeout) = request.args.get("timeout_sec").and_then(Value::as_u64) {
+                push_tool_arg(&mut parts, "timeout", Some(format!("{timeout}s")));
+            }
+        }
         _ => {
             for key in ["path", "root"] {
                 push_tool_arg(&mut parts, key, first_tool_path_arg(&request.args, &[key]));

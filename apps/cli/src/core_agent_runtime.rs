@@ -383,20 +383,28 @@ pub fn run_agent_core(
     prompt: &str,
     emitter: &mut dyn crate::runtime_output::RuntimeOutputPort,
 ) -> Result<CoreRunOutcome, String> {
-    let input_items =
-        if config.input.host_input_origin.is_automated() && config.input.host_turn_context.is_some() {
-            Vec::new()
-        } else {
-            host_user_input_items(config, prompt)
-        };
-    run_agent_core_turn(
-        config,
+    if config.input.host_input_origin.is_automated() && config.input.host_turn_context.is_some() {
+        return run_agent_core_turn(
+            config,
+            Vec::new(),
+            Vec::new(),
+            host_context_platform(),
+            Vec::new(),
+            emitter,
+        );
+    }
+    let (resolved, effective_prompt) = prepare_host_user_request(config, prompt)?;
+    let input_items = host_user_input_items(&resolved, &effective_prompt);
+    let outcome = run_agent_core_turn(
+        &resolved,
         Vec::new(),
         input_items,
         host_context_platform(),
         Vec::new(),
         emitter,
-    )
+    )?;
+    crate::composer_media::evict_attachments(prompt);
+    Ok(outcome)
 }
 
 pub fn run_agent_core_with_cancellation(
@@ -405,21 +413,61 @@ pub fn run_agent_core_with_cancellation(
     emitter: &mut dyn crate::runtime_output::RuntimeOutputPort,
     cancellation: RuntimeExecutionControl,
 ) -> Result<CoreRunOutcome, String> {
-    let input_items =
-        if config.input.host_input_origin.is_automated() && config.input.host_turn_context.is_some() {
-            Vec::new()
-        } else {
-            host_user_input_items(config, prompt)
-        };
-    run_agent_core_turn_with_execution(
-        config,
+    if config.input.host_input_origin.is_automated() && config.input.host_turn_context.is_some() {
+        return run_agent_core_turn_with_execution(
+            config,
+            Vec::new(),
+            Vec::new(),
+            host_context_platform(),
+            Vec::new(),
+            cancellation,
+            emitter,
+        );
+    }
+    let (resolved, effective_prompt) = prepare_host_user_request(config, prompt)?;
+    let input_items = host_user_input_items(&resolved, &effective_prompt);
+    let outcome = run_agent_core_turn_with_execution(
+        &resolved,
         Vec::new(),
         input_items,
         host_context_platform(),
         Vec::new(),
         cancellation,
         emitter,
-    )
+    )?;
+    crate::composer_media::evict_attachments(prompt);
+    Ok(outcome)
+}
+
+fn prepare_host_user_request(
+    config: &HostInvocationRequest,
+    prompt: &str,
+) -> Result<(HostInvocationRequest, String), String> {
+    let (context_attachments, inline_context) =
+        crate::composer_media::resolve_context_files(&config.input.context_files)?;
+    let composer_attachments = crate::composer_media::attachments(prompt);
+    let mut resolved = config.clone();
+    for attachment in context_attachments
+        .into_iter()
+        .chain(composer_attachments.into_iter())
+    {
+        if !resolved
+            .input
+            .host_attachments
+            .iter()
+            .any(|existing| existing.path == attachment.path)
+        {
+            resolved.input.host_attachments.push(attachment);
+        }
+    }
+    let effective_prompt = if inline_context.is_empty() {
+        prompt.to_string()
+    } else if prompt.trim().is_empty() {
+        inline_context
+    } else {
+        format!("{prompt}\n\n{inline_context}")
+    };
+    Ok((resolved, effective_prompt))
 }
 
 fn host_user_input_items(config: &HostInvocationRequest, prompt: &str) -> Vec<AgentItem> {
@@ -658,7 +706,7 @@ fn resume_agent_core_checked(
     host.execution_config.session.host_task_execution = execution_config.session.host_task_execution.clone();
     host.session_store
         .as_mut()
-        .expect("resumed canonical session store")
+        .ok_or_else(|| "resumed canonical session store is unavailable".to_string())?
         .set_task_execution_authority(execution_config.session.host_task_execution.clone());
     emitter.set_session_id(Some(host.session_id.clone()));
     let has_active_run = host
@@ -698,7 +746,7 @@ fn resume_agent_core_checked(
         } = &mut *host;
         let store = session_store
             .as_mut()
-            .expect("canonical active Run has a Session Store");
+            .ok_or_else(|| "canonical active Run is missing a Session Store".to_string())?;
         let mut presenter = CoreEventPresenter::new(emitter, tool_count)
             .with_assistant_journal_notifications(
                 store,
@@ -727,11 +775,15 @@ fn resume_agent_core_checked(
             let seal = host
                 .session_store
                 .as_mut()
-                .expect("resumed canonical Run owns a Session Store")
+                .ok_or_else(|| "resumed canonical Run is missing a Session Store".to_string())?
                 .load_assistant_run_terminal_seal(&terminal_run_id)?
                 .ok_or("Terminal resumed Core snapshot has no exact canonical Run seal")?;
             if host.runtime.execution.has_running_goal {
-                goal_signal=host.session_store.as_mut().expect("Goal owns Session Store").goal_claim_for_seal(&seal)?;
+                goal_signal = host
+                    .session_store
+                    .as_mut()
+                    .ok_or_else(|| "Goal is missing a Session Store".to_string())?
+                    .goal_claim_for_seal(&seal)?;
             }
             run_result=Some(seal.result.value.clone());
             emitter.committed_assistant_run_terminal(&seal);
@@ -1946,7 +1998,10 @@ fn recover_scheduled_run_deliveries(
 ) -> Result<(), String> {
     if matches!(work_reason, Some(nola_protocol::RuntimeEffectWorkReason::RecoverExpiredLease)) {
         let binding = host_invocation_binding(execution_config)?;
-        let changed = host.session_store.as_mut().expect("scheduled canonical session")
+        let changed = host
+            .session_store
+            .as_mut()
+            .ok_or_else(|| "scheduled canonical session is missing a Session Store".to_string())?
             .recover_expired_core_deliveries(&binding)?;
         if changed > 0 {
             // Core decides Retry / Resume / Unknown from the frozen delivery
@@ -2024,7 +2079,7 @@ pub(crate) fn drain_registered_core_agent_run(
         } = &mut *host;
         let store = session_store
             .as_mut()
-            .expect("registered Core Agent Host owns a Session Store");
+            .ok_or_else(|| "registered Core Agent Host is missing a Session Store".to_string())?;
         let mut presenter = CoreEventPresenter::new(&mut emitter, tool_count)
             .with_assistant_journal_notifications(
                 store,

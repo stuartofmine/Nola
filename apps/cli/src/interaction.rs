@@ -333,9 +333,9 @@ impl ExecutionCancellation {
                 if self.queue_runtime_input(RuntimeInput::ClientControl(command.clone())).is_ok() {
                     self.request();
                     crate::terminal_ui::commit_history(if crate::is_exit_command(&command) {
-                        "正在停止当前任务并退出；未确认的操作会保留恢复状态。"
+                        crate::i18n::cli_stopping_to_exit()
                     } else {
-                        "正在停止当前前台任务并打开会话选择；待发送输入仍归属原会话。"
+                        crate::i18n::cli_stopping_to_resume()
                     });
                 }
                 return;
@@ -343,7 +343,9 @@ impl ExecutionCancellation {
             if let Some(handler) = &self.client_commands {
                 handler.execute(&command);
             } else {
-                crate::terminal_ui::commit_history("Command unavailable in this execution context; return to the interactive prompt.");
+                crate::terminal_ui::commit_history(
+                    crate::i18n::cli_command_unavailable_in_context(),
+                );
             }
         }
     }
@@ -557,9 +559,14 @@ pub fn start_execution_cancel_listener(
                         crate::terminal_ui::sync_composer(&thread_cancellation);
                         false
                     }
+                    Ok(Event::Mouse(mouse)) => {
+                        if crate::terminal_ui::handle_mouse_scroll(mouse.kind, mouse.row) {
+                            view_changed = true;
+                        }
+                        false
+                    }
                     Ok(Event::Resize(_, _)) => {
                         view_changed = true;
-                        crate::terminal_ui::sync_composer(&thread_cancellation);
                         crate::terminal_ui::invalidate_presented_screen();
                         false
                     }
@@ -577,7 +584,7 @@ pub fn start_execution_cancel_listener(
                         edit: None, expert_mentions: store.mentions_for(&snapshot.draft), draft: snapshot.draft, cursor: snapshot.cursor,
                         viewport: crate::terminal_ui::capture_viewport_bookmark(),
                     }) {
-                        crate::terminal_ui::commit_history(&format!("无法保存 CLI 显示状态：{error}"));
+                        crate::terminal_ui::commit_history(&crate::i18n::cli_view_state_save_failed(&error));
                         view_store = None;
                     }
                 }
@@ -838,12 +845,12 @@ fn drain_pending_terminal_events() {
 }
 
 fn prompt_permission_keyboard(prompt: &PermissionPrompt) -> Option<PermissionChoice> {
-    if !stdin_confirmation_available() || !std::io::stdout().is_terminal() {
+    if !stdin_confirmation_available() {
         return Some(PermissionChoice::TransportInterrupted(
             nola_host_protocol::PermissionTransportInterruptionReason::Unavailable,
         ));
     }
-    if !std::io::stdin().is_terminal() {
+    if !std::io::stdin().is_terminal() || !std::io::stdout().is_terminal() {
         return None;
     }
     let _raw_mode = match PermissionRawModeGuard::new() {
@@ -875,6 +882,10 @@ fn prompt_permission_keyboard(prompt: &PermissionPrompt) -> Option<PermissionCho
                 ))
             }
         };
+        if let Event::Mouse(mouse) = event {
+            crate::terminal_ui::handle_mouse_scroll(mouse.kind, mouse.row);
+            continue;
+        }
         if matches!(event, Event::Resize(_, _)) {
             if draw_permission_prompt_after_resize(prompt, selected).is_err() {
                 return Some(PermissionChoice::TransportInterrupted(
@@ -1263,6 +1274,10 @@ fn prompt_user_question_keyboard(prompt: &UserQuestionPrompt) -> Option<UserQues
             Ok(event) => event,
             Err(_) => return Some(UserQuestionAnswer::Cancelled),
         };
+        if let Event::Mouse(mouse) = event {
+            crate::terminal_ui::handle_mouse_scroll(mouse.kind, mouse.row);
+            continue;
+        }
         if matches!(event, Event::Resize(_, _)) {
             if draw_user_question_frame(prompt, selected, rendered_lines).is_err() {
                 return Some(UserQuestionAnswer::Cancelled);

@@ -420,16 +420,23 @@ impl Config {
         let mut json_output = false;
         let mut auto_approve = false;
         let mut tools_enabled = true;
-        let mut force_tool_set = env::var("NOLA_CLI_FORCE_TOOL_SET")
-            .ok()
-            .and_then(|value| normalize_force_tool_set(&value).ok())
-            .unwrap_or_else(|| "auto".to_string());
-        let force_tool_set_from_env = env::var_os("NOLA_CLI_FORCE_TOOL_SET").is_some();
+        let (mut force_tool_set, force_tool_set_from_env) = match force_tool_set_from_environment(
+            env::var("NOLA_CLI_FORCE_TOOL_SET"),
+        )
+        .map_err(ConfigStartError::Runtime)?
+        {
+            Some(value) => (value, true),
+            None => ("auto".to_string(), false),
+        };
         let mut show_help = false;
-        let network_policy_env = first_env(&["NOLA_CLI_NETWORK_POLICY"]);
-        let mut network_policy =
-            normalize_network_policy(network_policy_env.trim()).unwrap_or("allow".to_string());
-        let network_policy_from_env = !network_policy_env.trim().is_empty();
+        let (mut network_policy, network_policy_from_env) = match network_policy_from_environment(
+            env::var("NOLA_CLI_NETWORK_POLICY"),
+        )
+        .map_err(ConfigStartError::Runtime)?
+        {
+            Some(value) => (value, true),
+            None => ("allow".to_string(), false),
+        };
         let mut session_id = None;
         let mut continue_last = false;
         let mut resume_session = false;
@@ -444,9 +451,8 @@ impl Config {
         if web_host.trim().is_empty() {
             web_host = "127.0.0.1".to_string();
         }
-        let mut web_port = first_env(&["NOLA_WEB_PORT", "PORT"])
-            .parse::<u16>()
-            .unwrap_or(5001);
+        let mut web_port = web_port_from_environment(env::var("NOLA_WEB_PORT"), env::var("PORT"))
+            .map_err(ConfigStartError::Runtime)?;
         let mut tailcat_ingress = false;
         let mut tailcat_program = None;
         let mut tailcat_digest = None;
@@ -481,7 +487,7 @@ impl Config {
                         command = Some(CommandMode::Run);
                         resume_session = true;
                     }
-                    "--continue" | "continue" => {
+                    "--continue" | "-c" | "continue" => {
                         command = Some(CommandMode::Run);
                         continue_last = true;
                     }
@@ -906,7 +912,7 @@ impl Config {
                 Some((id, revision))
             }
             (None, Some(_)) => {
-                return Err("--profile and --profile-revision must be specified together".into());
+                return Err("--profile-revision requires --profile".into());
             }
         };
         if !matches!(command, CommandMode::Run) && !message_parts.is_empty() {
@@ -930,7 +936,7 @@ impl Config {
         };
         if runtime.uses_file_catalog() && matches!(command, CommandMode::Run | CommandMode::Init | CommandMode::Wiki) {
             if !host_request_stdin && (endpoint_explicit || api_key_explicit || model_explicit) {
-                return Err("connection catalog selection cannot combine with endpoint/model/API key flags; use --profile and --profile-revision".into());
+                return Err("connection catalog selection cannot combine with endpoint/model/API key flags; use --profile (with optional --profile-revision)".into());
             }
         }
         if !max_iterations_explicit {
@@ -1286,6 +1292,65 @@ pub(crate) fn normalize_force_tool_set(raw: &str) -> Result<String, String> {
     }
 }
 
+fn force_tool_set_from_environment(
+    value: Result<String, env::VarError>,
+) -> Result<Option<String>, String> {
+    match value {
+        Err(env::VarError::NotPresent) => Ok(None),
+        Err(env::VarError::NotUnicode(_)) => {
+            Err("invalid NOLA_CLI_FORCE_TOOL_SET: value is not valid UTF-8".to_string())
+        }
+        Ok(raw) if raw.trim().is_empty() => Ok(None),
+        Ok(raw) => normalize_force_tool_set(&raw)
+            .map(Some)
+            .map_err(|err| format!("invalid NOLA_CLI_FORCE_TOOL_SET: {err}")),
+    }
+}
+
+fn network_policy_from_environment(
+    value: Result<String, env::VarError>,
+) -> Result<Option<String>, String> {
+    match value {
+        Err(env::VarError::NotPresent) => Ok(None),
+        Err(env::VarError::NotUnicode(_)) => {
+            Err("invalid NOLA_CLI_NETWORK_POLICY: value is not valid UTF-8".to_string())
+        }
+        Ok(raw) if raw.trim().is_empty() => Ok(None),
+        Ok(raw) => normalize_network_policy(raw.trim())
+            .map(Some)
+            .map_err(|err| format!("invalid NOLA_CLI_NETWORK_POLICY: {err}")),
+    }
+}
+
+fn web_port_from_environment(
+    nola_port: Result<String, env::VarError>,
+    port: Result<String, env::VarError>,
+) -> Result<u16, String> {
+    let selected = match nola_port {
+        Ok(raw) if !raw.trim().is_empty() => Some(("NOLA_WEB_PORT", raw)),
+        Err(env::VarError::NotUnicode(_)) => {
+            return Err("invalid NOLA_WEB_PORT: value is not valid UTF-8".to_string());
+        }
+        _ => match port {
+            Ok(raw) if !raw.trim().is_empty() => Some(("PORT", raw)),
+            Err(env::VarError::NotUnicode(_)) => {
+                return Err("invalid PORT: value is not valid UTF-8".to_string());
+            }
+            _ => None,
+        },
+    };
+    match selected {
+        None => Ok(5001),
+        Some((name, raw)) => raw.trim().parse::<u16>().map_err(|_| {
+            format!(
+                "invalid {name} '{}': {}",
+                raw.trim(),
+                tr(Message::InvalidPortValue)
+            )
+        }),
+    }
+}
+
 fn is_global_switch(arg: &str) -> bool {
     matches!(
         arg,
@@ -1297,8 +1362,6 @@ fn is_global_switch(arg: &str) -> bool {
             | "-y"
             | "--no-tools"
             | "--no-skills"
-            | "--continue"
-            | "-c"
             | "--swe-mode"
             | "--no-save"
             | "--force"
@@ -1325,6 +1388,8 @@ fn is_global_option_token(arg: &str) -> bool {
         "--output",
         "--context-file",
         "--expected-artifact",
+        "--tailcat-helper",
+        "--tailcat-helper-sha256",
         "--host",
         "--port",
         "--web-root",
@@ -3190,5 +3255,107 @@ mod tests {
             sign_out_no_rev.command,
             CommandMode::ModelChatgpt { revision: Some(r), .. } if r == acct_snap.revision
         ));
+    }
+
+    #[test]
+    fn continue_short_flag_treats_following_subcommand_word_as_prompt() {
+        let config = Config::from_args(
+            [
+                "-c",
+                "--endpoint",
+                "http://127.0.0.1:11434/v1",
+                "web",
+            ]
+            .into_iter()
+            .map(str::to_string),
+        )
+        .unwrap();
+        assert!(matches!(config.command, CommandMode::Run));
+        assert!(config.continue_last);
+        assert_eq!(config.message, "web");
+
+        let direct = Config::from_args(
+            ["-c", "web", "--endpoint", "http://127.0.0.1:11434/v1"]
+                .into_iter()
+                .map(str::to_string),
+        )
+        .unwrap();
+        assert!(matches!(direct.command, CommandMode::Run));
+        assert!(direct.continue_last);
+        assert_eq!(direct.message, "web");
+    }
+
+    #[test]
+    fn tailcat_helper_options_before_server_subcommand_parse_cleanly() {
+        use sha2::{Digest, Sha256};
+
+        let dir = tempfile::tempdir().unwrap();
+        let helper = dir.path().join("tailcat-helper");
+        std::fs::write(&helper, b"#!/bin/sh\nexit 0\n").unwrap();
+        let digest = format!("{:x}", Sha256::digest(b"#!/bin/sh\nexit 0\n"));
+
+        let config = Config::from_args(
+            [
+                "--tailcat-helper",
+                helper.to_str().unwrap(),
+                "--tailcat-helper-sha256",
+                &digest,
+                "--tailcat-ingress",
+                "server",
+                "--port",
+                "5055",
+            ]
+            .into_iter()
+            .map(str::to_string),
+        )
+        .unwrap();
+        assert!(matches!(config.command, CommandMode::Server));
+        assert!(config.tailcat_ingress);
+        let (program, actual_digest) = config.tailcat_helper.as_ref().unwrap();
+        assert_eq!(program, &helper);
+        assert_eq!(actual_digest, &digest);
+        assert_eq!(config.web_port, 5055);
+    }
+
+    #[test]
+    fn invalid_env_vars_fail_closed_with_runtime_error() {
+        use super::{
+            force_tool_set_from_environment, network_policy_from_environment,
+            web_port_from_environment,
+        };
+        use std::env::VarError;
+
+        assert_eq!(network_policy_from_environment(Err(VarError::NotPresent)).unwrap(), None);
+        assert_eq!(
+            network_policy_from_environment(Ok("deny".into())).unwrap().as_deref(),
+            Some("deny")
+        );
+        let err = network_policy_from_environment(Ok("bogus".into())).unwrap_err();
+        assert!(err.contains("NOLA_CLI_NETWORK_POLICY"));
+        assert!(network_policy_from_environment(Err(VarError::NotUnicode("bad".into()))).is_err());
+
+        assert_eq!(force_tool_set_from_environment(Err(VarError::NotPresent)).unwrap(), None);
+        assert_eq!(
+            force_tool_set_from_environment(Ok("write".into())).unwrap().as_deref(),
+            Some("write")
+        );
+        let err = force_tool_set_from_environment(Ok("bogus".into())).unwrap_err();
+        assert!(err.contains("NOLA_CLI_FORCE_TOOL_SET"));
+
+        assert_eq!(
+            web_port_from_environment(Err(VarError::NotPresent), Err(VarError::NotPresent))
+                .unwrap(),
+            5001
+        );
+        assert_eq!(
+            web_port_from_environment(Ok("8080".into()), Err(VarError::NotPresent)).unwrap(),
+            8080
+        );
+        let err = web_port_from_environment(Ok("not-a-port".into()), Err(VarError::NotPresent))
+            .unwrap_err();
+        assert!(err.contains("NOLA_WEB_PORT"));
+        let err = web_port_from_environment(Err(VarError::NotPresent), Ok("99999".into()))
+            .unwrap_err();
+        assert!(err.contains("PORT"));
     }
 }

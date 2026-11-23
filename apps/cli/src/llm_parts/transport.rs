@@ -49,6 +49,7 @@ pub(crate) fn normalized_model_endpoint(
     Ok(url)
 }
 
+#[derive(Debug)]
 pub(super) enum StreamLineRecv {
     Line(String),
     Error(String),
@@ -69,6 +70,8 @@ pub(super) enum AsyncSendResult {
     Error(String),
     Cancelled,
 }
+
+const MAX_SSE_LINE_BYTES: usize = 16 * 1024 * 1024;
 
 /// Async HTTP response driven synchronously on a per-request single-threaded
 /// Tokio runtime. Dropping this value or hitting cancellation immediately
@@ -121,8 +124,9 @@ impl CancellableHttpResponse {
         })
     }
 
-    fn take_buffered_line(&mut self) -> Option<Result<String, String>> {
-        let pos = self.buf.iter().position(|&b| b == b'\n')?;
+    fn take_buffered_line_from(&mut self, scan_from: usize) -> Option<Result<String, String>> {
+        let rel = self.buf.get(scan_from..)?.iter().position(|&b| b == b'\n')?;
+        let pos = scan_from + rel;
         let mut line: Vec<u8> = self.buf.drain(..=pos).collect();
         if line.ends_with(b"\n") {
             line.pop();
@@ -155,16 +159,18 @@ impl CancellableHttpResponse {
             None => detail,
         };
         let started = Instant::now();
+        let mut scan_from = 0usize;
         loop {
             if cancellation.is_requested() {
                 return StreamLineRecv::Cancelled;
             }
-            if let Some(line) = self.take_buffered_line() {
+            if let Some(line) = self.take_buffered_line_from(scan_from) {
                 return match line {
                     Ok(text) => StreamLineRecv::Line(text),
                     Err(err) => StreamLineRecv::Error(format_err(err)),
                 };
             }
+            scan_from = self.buf.len();
             if self.eof {
                 return match self.take_remaining_eof_line() {
                     Some(Ok(text)) => StreamLineRecv::Line(text),
@@ -203,9 +209,55 @@ impl CancellableHttpResponse {
                 }
                 Some(Ok(Ok(Some(bytes)))) => {
                     if !bytes.is_empty() {
+                        if self.buf.len().saturating_add(bytes.len()) > MAX_SSE_LINE_BYTES {
+                            return StreamLineRecv::Error(format_err(
+                                "SSE line exceeded maximum length".to_string(),
+                            ));
+                        }
                         self.buf.extend_from_slice(&bytes);
                     }
                 }
+            }
+        }
+    }
+
+    pub(super) fn next_sse_data_frame(
+        &mut self,
+        timeout: Duration,
+        cancellation: &ExecutionContext,
+        read_failed_prefix: &str,
+    ) -> StreamLineRecv {
+        let started = Instant::now();
+        let mut data_lines: Vec<String> = Vec::new();
+        loop {
+            let elapsed = started.elapsed();
+            if elapsed >= timeout {
+                return StreamLineRecv::Timeout;
+            }
+            let remaining = timeout.saturating_sub(elapsed);
+            match self.next_line(remaining, cancellation, Some(read_failed_prefix)) {
+                StreamLineRecv::Line(line) => {
+                    if line.is_empty() {
+                        if !data_lines.is_empty() {
+                            return StreamLineRecv::Line(data_lines.join("\n"));
+                        }
+                        continue;
+                    }
+                    if let Some(rest) = line.strip_prefix("data:") {
+                        let payload = rest.strip_prefix(' ').unwrap_or(rest);
+                        if data_lines.is_empty() && payload.trim() == "[DONE]" {
+                            return StreamLineRecv::Line("[DONE]".to_string());
+                        }
+                        data_lines.push(payload.to_string());
+                    }
+                }
+                StreamLineRecv::Disconnected => {
+                    if !data_lines.is_empty() {
+                        return StreamLineRecv::Line(data_lines.join("\n"));
+                    }
+                    return StreamLineRecv::Disconnected;
+                }
+                other => return other,
             }
         }
     }
@@ -261,12 +313,17 @@ pub(super) fn build_async_stream_client(
     Ok((runtime, client))
 }
 
-pub(super) fn build_async_native_stream_client() -> Result<(tokio::runtime::Runtime, reqwest::Client), String> {
+pub(super) fn build_async_native_stream_client(
+    endpoint_host: Option<&str>,
+) -> Result<(tokio::runtime::Runtime, reqwest::Client), String> {
     let runtime = tokio::runtime::Builder::new_current_thread()
         .enable_all()
         .build()
         .map_err(|error| format!("native model HTTP client unavailable: {error}"))?;
-    let builder = async_stream_client_builder()?.redirect(reqwest::redirect::Policy::none());
+    let mut builder = async_stream_client_builder()?.redirect(reqwest::redirect::Policy::none());
+    if is_explicit_loopback_host(endpoint_host) {
+        builder = builder.no_proxy();
+    }
     let client = runtime
         .block_on(async { builder.build() })
         .map_err(|error| format!("native model HTTP client unavailable: {error}"))?;
@@ -479,6 +536,114 @@ mod request_worker_tests {
             .expect("client socket should close promptly on drop after cancellation");
         server.join().unwrap();
     }
+
+    #[test]
+    fn next_line_rejects_oversized_sse_line_before_oom() {
+        use std::io::{Read, Write};
+        use std::net::TcpListener;
+
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let addr = listener.local_addr().unwrap();
+        let server = thread::spawn(move || {
+            let (mut stream, _) = listener.accept().unwrap();
+            stream.set_read_timeout(Some(Duration::from_secs(2))).unwrap();
+            let mut req_buf = [0u8; 1024];
+            let _ = stream.read(&mut req_buf);
+            let _ = write!(
+                stream,
+                "HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\nConnection: close\r\n\r\n"
+            );
+            let chunk = vec![b'a'; 256 * 1024];
+            let mut sent = 0usize;
+            while sent <= MAX_SSE_LINE_BYTES + 256 * 1024 {
+                if stream.write_all(&chunk).is_err() {
+                    break;
+                }
+                sent += chunk.len();
+            }
+        });
+
+        let cancellation = ExecutionContext::default();
+        let (runtime, client) = build_async_stream_client(Some("127.0.0.1"), None).unwrap();
+        let request = client.get(format!("http://{addr}/stream"));
+        let mut response = match send_async_request_with_cancellation(
+            runtime,
+            request,
+            Some(Duration::from_secs(5)),
+            Some(Duration::from_secs(5)),
+            &cancellation,
+        ) {
+            AsyncSendResult::Response(resp) => resp,
+            _ => panic!("expected response"),
+        };
+        let result = response.next_line(Duration::from_secs(5), &cancellation, None);
+        assert!(
+            matches!(result, StreamLineRecv::Error(ref msg) if msg == "SSE line exceeded maximum length"),
+            "expected max-size overflow error, got: {result:?}"
+        );
+        drop(response);
+        let _ = server.join();
+    }
+
+    #[test]
+    fn next_sse_data_frame_assembles_multiline_data_and_preserves_done() {
+        use std::io::{Read, Write};
+        use std::net::TcpListener;
+
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let addr = listener.local_addr().unwrap();
+        let server = thread::spawn(move || {
+            let (mut stream, _) = listener.accept().unwrap();
+            stream.set_read_timeout(Some(Duration::from_secs(2))).unwrap();
+            let mut req_buf = [0u8; 1024];
+            let _ = stream.read(&mut req_buf);
+            let body = concat!(
+                ": keepalive\n",
+                "event: message\n",
+                "data: {\n",
+                "data:  \"text\": \"hello\"\n",
+                "data:}\n",
+                "\n",
+                "data: [DONE]\n",
+                "\n",
+            );
+            write!(
+                stream,
+                "HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+                body.len(),
+                body
+            )
+            .unwrap();
+        });
+
+        let cancellation = ExecutionContext::default();
+        let (runtime, client) = build_async_stream_client(Some("127.0.0.1"), None).unwrap();
+        let request = client.get(format!("http://{addr}/stream"));
+        let mut response = match send_async_request_with_cancellation(
+            runtime,
+            request,
+            Some(Duration::from_secs(5)),
+            Some(Duration::from_secs(5)),
+            &cancellation,
+        ) {
+            AsyncSendResult::Response(resp) => resp,
+            _ => panic!("expected response"),
+        };
+
+        let first = response.next_sse_data_frame(Duration::from_secs(2), &cancellation, "err");
+        assert!(
+            matches!(first, StreamLineRecv::Line(ref payload) if payload == "{\n \"text\": \"hello\"\n}"),
+            "expected multi-line data frame preserving extra leading space"
+        );
+        let done = response.next_sse_data_frame(Duration::from_secs(2), &cancellation, "err");
+        assert!(
+            matches!(done, StreamLineRecv::Line(ref payload) if payload == "[DONE]"),
+            "expected [DONE] sentinel frame"
+        );
+        let eof = response.next_sse_data_frame(Duration::from_secs(2), &cancellation, "err");
+        assert!(matches!(eof, StreamLineRecv::Disconnected));
+        server.join().unwrap();
+    }
 }
 
 pub(super) fn response_retry_after_ms(response: &reqwest::blocking::Response) -> Option<u64> {
@@ -578,7 +743,7 @@ pub(super) fn classify_network_error_hint(error: &reqwest::Error) -> String {
     message
 }
 
-fn is_explicit_loopback_host(host: Option<&str>) -> bool {
+pub(crate) fn is_explicit_loopback_host(host: Option<&str>) -> bool {
     host.is_some_and(|host| host.eq_ignore_ascii_case("localhost")
         || host.trim_start_matches('[').trim_end_matches(']')
             .parse::<std::net::IpAddr>().is_ok_and(|address| address.is_loopback()))
@@ -663,8 +828,9 @@ mod native_redirect_tests {
     }
 }
 
-fn stream_client_builder() -> Result<ClientBuilder, String> {
-    let mut builder = stream_client_builder_with_timeout(llm_http_timeout());
+pub(crate) fn apply_configured_ssl_cert_file_blocking(
+    mut builder: ClientBuilder,
+) -> Result<ClientBuilder, String> {
     // Managed environments can supply a private proxy CA. Keep certificate
     // verification enabled and honor the explicitly configured trust bundle.
     if let Some(path) = env::var_os("SSL_CERT_FILE").filter(|path| !path.is_empty()) {
@@ -680,6 +846,11 @@ fn stream_client_builder() -> Result<ClientBuilder, String> {
         }
     }
     Ok(builder)
+}
+
+fn stream_client_builder() -> Result<ClientBuilder, String> {
+    let builder = stream_client_builder_with_timeout(llm_http_timeout());
+    apply_configured_ssl_cert_file_blocking(builder)
 }
 
 fn stream_client_builder_with_timeout(timeout: Option<Duration>) -> ClientBuilder {

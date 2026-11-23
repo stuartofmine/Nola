@@ -49,7 +49,7 @@ fn open_interactive_view_state(config: &Config) -> (
     match crate::cli_view_state::ViewStore::open(id) {
         Ok((store, view)) => (Some(store), Some(view)),
         Err(error) => {
-            terminal_notice!("无法恢复 CLI 显示状态（原文件保留）：{error}");
+            terminal_notice!("{}", crate::i18n::cli_view_state_restore_failed(&error));
             (None, None)
         }
     }
@@ -65,12 +65,33 @@ fn persist_interactive_view_state(store: &mut Option<crate::cli_view_state::View
         viewport: crate::terminal_ui::capture_viewport_bookmark(),
     };
     if let Err(error) = active.save(view) {
-        terminal_notice!("无法保存 CLI 显示状态：{error}");
+        terminal_notice!("{}", crate::i18n::cli_view_state_save_failed(&error));
         *store = None;
     }
 }
 
+fn update_interactive_session_header(config: &Config) {
+    if config.json_output {
+        return;
+    }
+    let model = config.model.trim();
+    let model = if model.is_empty() {
+        tr(Message::InteractiveDefaultModelLabel)
+    } else {
+        model
+    };
+    let workspace = config
+        .project_root
+        .file_name()
+        .and_then(|name| name.to_str())
+        .filter(|name| !name.is_empty())
+        .map(str::to_string)
+        .unwrap_or_else(|| compact_home_path(&config.project_root.to_string_lossy()));
+    crate::terminal_ui::set_session_header("Nola", format!("{model} · {workspace}"));
+}
+
 fn run_interactive_session(config: &Config, resume_pending: bool) -> Result<InteractiveSessionExit, String> {
+    crate::composer_media::prune_old_staged_files();
     let mut ui_guard = InteractiveSessionUiStateGuard::new(!config.json_output);
     llm::configure_local_debug_log(config.debug_mode, &config.project_root);
     if !config.json_output {
@@ -82,6 +103,7 @@ fn run_interactive_session(config: &Config, resume_pending: bool) -> Result<Inte
         crate::terminal_ui::begin_interactive_session();
     }
     let mut interactive_config = config.clone();
+    update_interactive_session_header(&interactive_config);
     if interactive_config.session_id.is_none() && interactive_config.continue_last {
         interactive_config.session_id = resolve_continue_session_id(&interactive_config)?;
         interactive_config.continue_last = false;
@@ -149,7 +171,7 @@ fn run_interactive_session(config: &Config, resume_pending: bool) -> Result<Inte
                 print_interactive_session_replay(&history);
             }
             if !crate::terminal_ui::restore_viewport_bookmark(&view.viewport) {
-                terminal_notice!("原阅读内容已不可用；草稿已保留，当前显示最近记录。");
+                terminal_notice!("{}", crate::i18n::cli_saved_viewport_unavailable());
             }
         }
     }
@@ -165,7 +187,7 @@ fn run_interactive_session(config: &Config, resume_pending: bool) -> Result<Inte
             }
         };
         if recovery_blocked {
-            terminal_notice!("恢复尚未完成；可用 /resume 重试或切换会话，/exit 退出。原请求已保留。");
+            terminal_notice!("{}", crate::i18n::cli_recovery_incomplete_hint());
         }
         // Recovery is a real execution phase: input typed while its effects
         // drain has the same composer handoff as an ordinary completed turn.
@@ -239,6 +261,7 @@ fn run_interactive_session(config: &Config, resume_pending: bool) -> Result<Inte
             crate::conversation_invocation::persist(&interactive_config)?;
         }
         crate::conversation_invocation::refresh_unmodified(&mut interactive_config)?;
+        update_interactive_session_header(&interactive_config);
         if offer_user_questions && !goal_entry && !interactive_config.json_output {
             offer_user_questions = false;
             let requested = std::mem::take(&mut questions_requested);
@@ -369,7 +392,12 @@ fn run_interactive_session(config: &Config, resume_pending: bool) -> Result<Inte
             crate::terminal_ui::set_footer(footer.as_deref().unwrap_or_default());
         }
         let chat_commands = !goal_entry && edit_target.is_none();
-        if !goal_entry && prompt == "/cancel-edit" {
+        let first_token = prompt.split_whitespace().next().unwrap_or("");
+        let normalized_command = normalize_interactive_command(first_token);
+        if !goal_entry
+            && normalized_command == Some("/cancel-edit")
+            && prompt.split_whitespace().nth(1).is_none()
+        {
             if edit_target.is_none() {
                 terminal_notice!("{}", ui_text(UiText::NoActiveEdit));
                 continue;
@@ -379,12 +407,15 @@ fn run_interactive_session(config: &Config, resume_pending: bool) -> Result<Inte
             persist_interactive_view_state(&mut view_store, String::new(), 0, vec![], None);
             continue;
         }
-        if chat_commands && (prompt == "/edit" || prompt.starts_with("/edit ")) {
+        if chat_commands && normalized_command == Some("/edit") {
             let Some(conversation) = interactive_config.session_id.as_deref() else {
                 terminal_notice!("{}", ui_text(UiText::NoMessageToEdit));
                 continue;
             };
-            let id = prompt.strip_prefix("/edit").unwrap().trim();
+            let id = prompt
+                .split_once(char::is_whitespace)
+                .map(|(_, rest)| rest.trim())
+                .unwrap_or("");
             match crate::cli_expert_mentions::EditTarget::load(
                 conversation,
                 (!id.is_empty()).then_some(id),
@@ -401,7 +432,10 @@ fn run_interactive_session(config: &Config, resume_pending: bool) -> Result<Inte
         if prompt.is_empty() {
             continue;
         }
-        if chat_commands && prompt == "/questions" {
+        if chat_commands
+            && normalized_command == Some("/questions")
+            && prompt.split_whitespace().nth(1).is_none()
+        {
             offer_user_questions = true;
             questions_requested = true;
             continue;
@@ -444,7 +478,7 @@ fn run_interactive_session(config: &Config, resume_pending: bool) -> Result<Inte
             }
         }
         if recovery_blocked && (!chat_commands || !prompt.starts_with('/')) {
-            terminal_notice!("恢复尚未完成，未发送此消息。请用 /resume 重试或选择其他会话。");
+            terminal_notice!("{}", ui_text(UiText::RecoveryBlockedUseResume));
             pending_draft = Some(prompt);
             continue;
         }
@@ -508,13 +542,17 @@ fn run_interactive_session(config: &Config, resume_pending: bool) -> Result<Inte
                     );
                     if let Ok(outcome) = &goal_result {
                         let handoff = match outcome {
-                            GoalCycleOutcome::Completed(handoff) => {
+                            GoalCycleOutcome::Completed(handoff)
+                            | GoalCycleOutcome::Failed { handoff, .. }
+                            | GoalCycleOutcome::Cancelled(handoff) => {
                                 goal_target = None;
                                 goal_constraints = None;
-                                Some(handoff)
+                                handoff.as_ref()
                             }
+                            GoalCycleOutcome::Paused(handoff)
+                            | GoalCycleOutcome::NeedsUser { handoff, .. }
+                            | GoalCycleOutcome::Waiting { handoff, .. } => handoff.as_ref(),
                             GoalCycleOutcome::Yielded(handoff) => Some(handoff),
-                            GoalCycleOutcome::Paused => None,
                         };
                         if let Some(handoff) = handoff {
                             queued_user_inputs.extend(handoff.queued_user_inputs.iter().cloned());
@@ -524,8 +562,8 @@ fn run_interactive_session(config: &Config, resume_pending: bool) -> Result<Inte
                             if let Some(context_usage) = handoff.context_usage {
                                 last_context_usage = Some(context_usage);
                             }
-                            reset_interactive_terminal_state();
                         }
+                        reset_interactive_terminal_state();
                     }
                     goal_result.map(|_| ())
                 } else {
@@ -613,6 +651,17 @@ fn run_interactive_session(config: &Config, resume_pending: bool) -> Result<Inte
                 if interactive_config.session_id.is_none() {
                     interactive_config.session_id = result.session_id.clone();
                     interactive_config.continue_last = false;
+                }
+                let turn_cancelled = result.run_outcome.turn_status
+                    == nola_core::agent::AgentTurnStatus::Cancelled
+                    || result.terminal_reason.as_deref() == Some("cancelled");
+                if turn_cancelled && !interactive_config.json_output {
+                    if let Ok(req) = interactive_config.host_invocation_request() {
+                        let running = task_runtime::running_task_count(&req);
+                        if running > 0 {
+                            print_still_running_subagents_notice(&interactive_config, running);
+                        }
+                    }
                 }
                 queued_user_inputs.extend(result.queued_user_inputs);
                 pending_draft = result.draft_user_input;
@@ -724,14 +773,14 @@ fn interactive_session_resume_command(config: &Config) -> Option<String> {
 fn print_interactive_session_exit_hint(config: &Config) {
     if let Some(summary) = crate::terminal_ui::take_exit_assistant_summary() {
         terminal_notice!();
-        terminal_notice!("{}", interactive_layer_rule(Some("last response")));
+        terminal_notice!("{}", interactive_layer_rule(Some(crate::i18n::cli_section_label("last response"))));
         for line in summary.lines() {
             terminal_notice!("  {line}");
         }
     }
     let Some(command) = interactive_session_resume_command(config) else { return; };
     terminal_notice!();
-    terminal_notice!("{}", interactive_layer_rule(Some("continue")));
+    terminal_notice!("{}", interactive_layer_rule(Some(crate::i18n::cli_section_label("continue"))));
     // A copyable command must never be truncated to the terminal width.
     terminal_notice!("  {}", match current_language() {
         Language::ZhHans => "继续此会话：",
@@ -751,7 +800,7 @@ fn print_resumed_execution_state(
     if plan.is_none() && background_tasks.is_empty() && running_process.is_none() {
         return;
     }
-    terminal_notice!("{}", interactive_layer_rule(Some("state")));
+    terminal_notice!("{}", interactive_layer_rule(Some(crate::i18n::cli_section_label("state"))));
     if let Some(pid) = running_process {
         if interactive_color_enabled() {
             terminal_notice!(
@@ -1177,14 +1226,16 @@ fn read_interactive_prompt_line(
                 format!("{} {err}", tr(Message::FailedReadKeyEventPrefix)),
             )
         })?;
+        if let Event::Mouse(mouse) = event {
+            crate::terminal_ui::handle_mouse_scroll(mouse.kind, mouse.row);
+            continue;
+        }
         if let Event::Resize(_, _) = event {
             // Keep the draft, cursor and footer in one projection when the
-            // terminal changes size. The prior frame is cleared using its
-            // recorded geometry before the new frame is laid out against the
-            // current terminal dimensions.
-            draw_interactive_prompt_area(&line, cursor, effective_footer.as_deref(), config)?;
-            // Equal composer text does not mean equal terminal geometry.
+            // terminal changes size. Invalidate the cached viewport before
+            // drawing so the resized terminal paints once cleanly.
             crate::terminal_ui::invalidate_presented_screen();
+            draw_interactive_prompt_area(&line, cursor, effective_footer.as_deref(), config)?;
             continue;
         }
         if let Event::Key(key) = event {
@@ -1481,7 +1532,7 @@ fn read_interactive_prompt_line(
                     continue;
                 }
                 Err(error) => {
-                    terminal_notice!("{}", crate::composer_media::paste_error(&error));
+                    terminal_notice!("{}", crate::composer_media::paste_path_error(&error));
                     redraw_interactive_prompt_line(&line, cursor, prompt_footer, config)?;
                     continue;
                 }
@@ -1491,11 +1542,16 @@ fn read_interactive_prompt_line(
             if !sanitized.is_empty() {
                 if should_collapse_pasted_content(&sanitized) {
                     let chars = sanitized.chars().count();
-                    let mut placeholder = format!("[Pasted Content {chars} chars]");
+                    let base_badge = crate::i18n::cli_pasted_content_badge(chars);
+                    let mut placeholder = base_badge.clone();
                     let mut number = 1;
                     while pasted_contents.iter().any(|block| block.placeholder == placeholder) {
                         number += 1;
-                        placeholder = format!("[Pasted Content {chars} chars #{number}]");
+                        placeholder = if let Some(prefix) = base_badge.strip_suffix(']') {
+                            format!("{prefix} #{number}]")
+                        } else {
+                            format!("{base_badge} #{number}")
+                        };
                     }
                     adjust_pasted_ranges(&mut pasted_contents, cursor, cursor, placeholder.len());
                     crate::cli_expert_mentions::replace(&mut mentions, cursor, cursor, placeholder.len());
@@ -1808,7 +1864,7 @@ fn print_runtime_task_notifications(
     for notification in notifications {
         let waiting_permission = matches!(notification.status.as_str(), "waiting_permission" | "waiting_input");
         let action = if notification.status == "waiting_input" { "/questions".to_owned() } else { format!("/tasks {}", notification.id) };
-        let success = notification.status == "completed";
+        let success = matches!(notification.status.as_str(), "completed" | "sealed");
         let marker = if waiting_permission {
             "◆"
         } else if success {
@@ -1819,7 +1875,16 @@ fn print_runtime_task_notifications(
         let label = runtime_task_notification_label(&notification.status);
         let elapsed =
             format_elapsed_duration(Duration::from_secs_f64(notification.elapsed_secs.max(0.0)));
-        let title = truncate_display_width(&notification.title, width);
+        let raw_title = match notification
+            .agent_type
+            .as_deref()
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+        {
+            Some(agent_type) => format!("[{agent_type}] {}", notification.title),
+            None => notification.title.clone(),
+        };
+        let title = truncate_display_width(&raw_title, width);
         let text = if interactive_color_enabled() {
             let color = if waiting_permission {
                 "\x1b[33m"
@@ -1881,48 +1946,109 @@ fn background_task_notification_label(language: i18n::Language, state: &str) -> 
 
 fn runtime_task_notification_label(status: &str) -> &'static str {
     match (i18n::current_language(), status) {
+        (i18n::Language::ZhHans, "completed") => "子代理已完成",
+        (i18n::Language::ZhHant, "completed") => "子代理已完成",
+        (i18n::Language::De, "completed") => "Agent-Aufgabe abgeschlossen",
+        (i18n::Language::Es, "completed") => "Tarea del agente completada",
+        (i18n::Language::Fr, "completed") => "Tâche de l’agent terminée",
+        (i18n::Language::Ja, "completed") => "エージェントタスクが完了しました",
+        (i18n::Language::Ko, "completed") => "에이전트 작업이 완료되었습니다",
+        (i18n::Language::Ru, "completed") => "Задача агента выполнена",
+        (i18n::Language::En, "completed") => "Agent task completed",
+
         (i18n::Language::ZhHans, "waiting_input") => "子代理等待回答",
+        (i18n::Language::ZhHant, "waiting_input") => "子代理等待回答",
         (i18n::Language::De, "waiting_input") => "Agent-Aufgabe wartet auf Antwort",
         (i18n::Language::Es, "waiting_input") => "La tarea del agente espera respuesta",
         (i18n::Language::Fr, "waiting_input") => "La tâche de l’agent attend une réponse",
         (i18n::Language::Ja, "waiting_input") => "エージェントタスクは回答を待っています",
+        (i18n::Language::Ko, "waiting_input") => "에이전트 작업이 응답을 기다리고 있습니다",
         (i18n::Language::Ru, "waiting_input") => "Задача агента ожидает ответа",
-        (_, "waiting_input") => "Agent task needs an answer",
+        (i18n::Language::En, "waiting_input") => "Agent task needs an answer",
+
         (i18n::Language::ZhHans, "waiting_permission") => "子代理等待授权",
-        (i18n::Language::ZhHans, "sealed") => "子代理执行已封存",
-        (i18n::Language::ZhHans, "failed") => "子代理失败",
-        (i18n::Language::ZhHans, "cancelled") => "子代理已取消",
+        (i18n::Language::ZhHant, "waiting_permission") => "子代理等待授權",
         (i18n::Language::De, "waiting_permission") => "Agent-Aufgabe wartet auf Berechtigung",
-        (i18n::Language::De, "sealed") => "Agent-Ausführung beendet",
-        (i18n::Language::De, "failed") => "Agent-Aufgabe fehlgeschlagen",
-        (i18n::Language::De, "cancelled") => "Agent-Aufgabe abgebrochen",
         (i18n::Language::Es, "waiting_permission") => "La tarea del agente espera permiso",
-        (i18n::Language::Es, "sealed") => "Ejecución del agente finalizada",
-        (i18n::Language::Es, "failed") => "La tarea del agente falló",
-        (i18n::Language::Es, "cancelled") => "Tarea del agente cancelada",
         (i18n::Language::Fr, "waiting_permission") => "La tâche de l’agent attend une autorisation",
-        (i18n::Language::Fr, "sealed") => "Exécution de l’agent terminée",
-        (i18n::Language::Fr, "failed") => "La tâche de l’agent a échoué",
-        (i18n::Language::Fr, "cancelled") => "Tâche de l’agent annulée",
         (i18n::Language::Ja, "waiting_permission") => "エージェントタスクは権限を待っています",
-        (i18n::Language::Ja, "sealed") => "エージェントの実行が終了しました",
-        (i18n::Language::Ja, "failed") => "エージェントタスクが失敗しました",
-        (i18n::Language::Ja, "cancelled") => "エージェントタスクがキャンセルされました",
+        (i18n::Language::Ko, "waiting_permission") => "에이전트 작업이 권한을 기다리고 있습니다",
         (i18n::Language::Ru, "waiting_permission") => "Задача агента ожидает разрешения",
+        (i18n::Language::En, "waiting_permission") => "Agent task needs permission",
+
+        (i18n::Language::ZhHans, "sealed") => "子代理执行已封存",
+        (i18n::Language::ZhHant, "sealed") => "子代理執行已封存",
+        (i18n::Language::De, "sealed") => "Agent-Ausführung beendet",
+        (i18n::Language::Es, "sealed") => "Ejecución del agente finalizada",
+        (i18n::Language::Fr, "sealed") => "Exécution de l’agent terminée",
+        (i18n::Language::Ja, "sealed") => "エージェントの実行が終了しました",
+        (i18n::Language::Ko, "sealed") => "에이전트 실행이 완료되었습니다",
         (i18n::Language::Ru, "sealed") => "Выполнение агента завершено",
+        (i18n::Language::En, "sealed") => "Agent execution sealed",
+
+        (i18n::Language::ZhHans, "failed") => "子代理失败",
+        (i18n::Language::ZhHant, "failed") => "子代理失敗",
+        (i18n::Language::De, "failed") => "Agent-Aufgabe fehlgeschlagen",
+        (i18n::Language::Es, "failed") => "La tarea del agente falló",
+        (i18n::Language::Fr, "failed") => "La tâche de l’agent a échoué",
+        (i18n::Language::Ja, "failed") => "エージェントタスクが失敗しました",
+        (i18n::Language::Ko, "failed") => "에이전트 작업이 실패했습니다",
         (i18n::Language::Ru, "failed") => "Задача агента завершилась с ошибкой",
+        (i18n::Language::En, "failed") => "Agent task failed",
+
+        (i18n::Language::ZhHans, "cancelled") => "子代理已取消",
+        (i18n::Language::ZhHant, "cancelled") => "子代理已取消",
+        (i18n::Language::De, "cancelled") => "Agent-Aufgabe abgebrochen",
+        (i18n::Language::Es, "cancelled") => "Tarea del agente cancelada",
+        (i18n::Language::Fr, "cancelled") => "Tâche de l’agent annulée",
+        (i18n::Language::Ja, "cancelled") => "エージェントタスクがキャンセルされました",
+        (i18n::Language::Ko, "cancelled") => "에이전트 작업이 취소되었습니다",
         (i18n::Language::Ru, "cancelled") => "Задача агента отменена",
-        (_, "waiting_permission") => "Agent task needs permission",
-        (_, "sealed") => "Agent execution sealed",
-        (_, "failed") => "Agent task failed",
-        (_, "cancelled") => "Agent task cancelled",
+        (i18n::Language::En, "cancelled") => "Agent task cancelled",
+
         (i18n::Language::ZhHans, _) => "子代理状态已更新",
+        (i18n::Language::ZhHant, _) => "子代理狀態已更新",
         (i18n::Language::De, _) => "Agent-Aufgabe aktualisiert",
         (i18n::Language::Es, _) => "Tarea del agente actualizada",
         (i18n::Language::Fr, _) => "Tâche de l’agent mise à jour",
         (i18n::Language::Ja, _) => "エージェントタスクが更新されました",
+        (i18n::Language::Ko, _) => "에이전트 작업 상태가 업데이트되었습니다",
         (i18n::Language::Ru, _) => "Задача агента обновлена",
-        (_, _) => "Agent task updated",
+        (i18n::Language::En, _) => "Agent task updated",
+    }
+}
+
+fn print_still_running_subagents_notice(config: &Config, fallback_count: usize) {
+    let root = config.project_root.to_string_lossy().to_string();
+    let active_ids: Vec<String> = crate::store::NolaStore::open_default()
+        .and_then(|store| store.list_runtime_tasks(&root))
+        .unwrap_or_default()
+        .into_iter()
+        .filter(|task| {
+            matches!(
+                task.status.as_str(),
+                "queued" | "running" | "waiting_input" | "waiting_permission"
+            ) && (config.session_id.is_none()
+                || task.owner_session_id.is_none()
+                || task.owner_session_id.as_deref() == config.session_id.as_deref())
+        })
+        .map(|task| task.id)
+        .collect();
+    let count = active_ids.len().max(fallback_count);
+    let header = match i18n::current_language() {
+        i18n::Language::ZhHans => format!("仍有 {count} 个后台子代理在运行；可用 /stop <task-id> 停止："),
+        i18n::Language::ZhHant => format!("仍有 {count} 個背景子代理正在執行；可用 /stop <task-id> 停止："),
+        i18n::Language::De => format!("{count} Hintergrund-Agent-Aufgabe(n) laufen noch; mit /stop <task-id> beenden:"),
+        i18n::Language::Es => format!("Aún hay {count} tarea(s) de subagente en ejecución; usa /stop <task-id> para detenerlas:"),
+        i18n::Language::Fr => format!("{count} sous-agent(s) toujours en cours ; utilisez /stop <task-id> pour arrêter :"),
+        i18n::Language::Ja => format!("バックグラウンドで {count} 件のサブエージェントが実行中です。/stop <task-id> で停止できます:"),
+        i18n::Language::Ko => format!("백그라운드에서 {count}개의 하위 에이전트가 계속 실행 중입니다. /stop <task-id>로 중지하세요:"),
+        i18n::Language::Ru => format!("В фоне всё ещё выполняется {count} подзадач(и); остановите командой /stop <task-id>:"),
+        i18n::Language::En => format!("{count} background subagent(s) still running; use /stop <task-id> to stop:"),
+    };
+    terminal_notice!("  {header}");
+    for id in active_ids.iter().take(6) {
+        terminal_notice!("    /stop {id}");
     }
 }
 
@@ -2360,6 +2486,9 @@ impl InteractiveRawModeGuard {
     }
 
     fn enable_bracketed_paste(&self) -> io::Result<()> {
+        if !io::stdout().is_terminal() {
+            return Ok(());
+        }
         execute!(io::stdout(), crossterm::event::EnableBracketedPaste)
     }
 }
@@ -2371,26 +2500,32 @@ fn restore_interactive_raw_mode() -> io::Result<()> {
             format!("{} {err}", tr(Message::InteractiveRawModeFailedPrefix)),
         )
     })?;
-    execute!(io::stdout(), crossterm::event::EnableBracketedPaste)?;
+    if io::stdout().is_terminal() {
+        execute!(io::stdout(), crossterm::event::EnableBracketedPaste)?;
+    }
     Ok(())
 }
 
 impl Drop for InteractiveRawModeGuard {
     fn drop(&mut self) {
-        if self.keyboard_enhanced {
-            let _ = execute!(io::stdout(), crossterm::event::PopKeyboardEnhancementFlags);
+        if io::stdout().is_terminal() {
+            if self.keyboard_enhanced {
+                let _ = execute!(io::stdout(), crossterm::event::PopKeyboardEnhancementFlags);
+            }
+            let _ = execute!(io::stdout(), crossterm::event::DisableBracketedPaste);
         }
-        let _ = execute!(io::stdout(), crossterm::event::DisableBracketedPaste);
         let _ = disable_raw_mode();
     }
 }
 
 fn reset_interactive_terminal_state() {
     let _ = disable_raw_mode();
-    let _ = print!(
-        "{INTERACTIVE_RESET}\x1b[?25h\x1b[?2004l\x1b[?1007l\x1b[?1000l\x1b[?1002l\x1b[?1003l\x1b[?1006l"
-    );
-    let _ = io::stdout().flush();
+    if io::stdout().is_terminal() {
+        let _ = print!(
+            "{INTERACTIVE_RESET}\x1b[<u\x1b[?25h\x1b[?2004l\x1b[?1007l\x1b[?1000l\x1b[?1002l\x1b[?1003l\x1b[?1006l"
+        );
+        let _ = io::stdout().flush();
+    }
 }
 
 struct InteractiveSessionUiStateGuard {
@@ -2467,9 +2602,29 @@ fn interactive_network_policy_text(policy: &str) -> &str {
 
 fn interactive_footer_with_background_status(
     footer: Option<&str>,
-    _config: &Config,
+    config: &Config,
 ) -> Option<String> {
-    footer.map(str::to_string)
+    let footer = footer?;
+    let bash_running = tools::background_bash_task_summaries(
+        &config.allowed_dirs,
+        config.session_id.as_deref(),
+    )
+    .unwrap_or_default()
+    .into_iter()
+    .filter(|task| {
+        matches!(
+            task.canonical_state.as_str(),
+            "queued" | "running" | "waiting_input" | "waiting_permission"
+        )
+    })
+    .count();
+    let runtime_running = config
+        .host_invocation_request()
+        .map(|req| task_runtime::running_task_count(&req))
+        .unwrap_or(0);
+    let running = bash_running.max(runtime_running);
+    let width = terminal_columns().saturating_sub(2).max(1);
+    Some(format_interactive_background_footer(footer, running, width))
 }
 
 fn format_interactive_background_footer(footer: &str, running: usize, width: usize) -> String {
@@ -2555,7 +2710,7 @@ fn interactive_prompt_footer_line(
     }
     // Keep model and permission on a stable row even after a terminal resize.
     // Context and optional generation diagnostics use their own row.
-    let mut primary = {
+    let primary = {
         let safety = format!("[{perm_label}]");
         let model_width = width.saturating_sub(display_width(&safety) + 3);
         let model_part = truncate_display_width(model, width.min(28));
@@ -2564,9 +2719,6 @@ fn interactive_prompt_footer_line(
         format!("{} · {safety}\n{}", truncate_display_width(model, model_width),
             truncate_display_width_middle(&details, width))
     };
-    if executor.trim() != "Nola" {
-        primary.push_str(&format!("\n{}: {executor}", tr(Message::InteractiveExecutorLabel)));
-    }
     let task_line = config
         .save_session
         .then(|| task_runtime::core_task_footer_summary(session_id))
@@ -2980,9 +3132,8 @@ const INTERACTIVE_SLASH_COMMANDS: &[SlashCommand] = &[
     SlashCommand { name: "/executor" },
     SlashCommand { name: "/debug" },
     SlashCommand { name: "/allow" },
-    SlashCommand { name: "/permissions" },
     SlashCommand { name: "/sources" },
-    SlashCommand { name: "/resources" },
+    SlashCommand { name: "/attach" },
     SlashCommand { name: "/edit" },
     SlashCommand {
         name: "/cancel-edit",
@@ -2995,7 +3146,6 @@ const INTERACTIVE_SLASH_COMMANDS: &[SlashCommand] = &[
     SlashCommand { name: "/clear" },
     SlashCommand { name: "/plan" },
     SlashCommand { name: "/agent" },
-    SlashCommand { name: "/experts" },
     SlashCommand { name: "/room" },
     SlashCommand { name: "/work" },
     SlashCommand { name: "/recover" },
@@ -3013,7 +3163,6 @@ const INTERACTIVE_SLASH_COMMANDS: &[SlashCommand] = &[
     SlashCommand { name: "/history" },
     SlashCommand { name: "/status" },
     SlashCommand { name: "/exit" },
-    SlashCommand { name: "/quit" },
 ];
 
 fn normalize_interactive_command(command: &str) -> Option<&'static str> {
@@ -3028,6 +3177,9 @@ fn normalize_interactive_command(command: &str) -> Option<&'static str> {
         "/debug" | "/d" => "/debug",
         "/allow" | "/permissions" | "/a" => "/allow",
         "/sources" | "/resources" | "/data" => "/sources",
+        "/attach" => "/attach",
+        "/edit" => "/edit",
+        "/cancel-edit" => "/cancel-edit",
         "/goal" | "/g" => "/goal",
         "/init" | "/i" => "/init",
         "/cd" => "/cd",
@@ -3073,7 +3225,7 @@ fn resume_command_target(prompt: &str) -> Option<Option<String>> {
 
 #[allow(dead_code)]
 fn is_resume_command(prompt: &str) -> bool {
-    matches!(resume_command_target(prompt), Some(None))
+    resume_command_target(prompt).is_some()
 }
 
 fn resume_interactive_session_by_id(config: &Config, session_id: &str) -> Result<Config, String> {
@@ -3113,7 +3265,7 @@ fn run_interactive_init_command(config: &Config, args: &[String]) -> Result<(), 
     apply_interactive_init_args(&mut init_config, args)?;
     reset_interactive_terminal_state();
     if !init_config.json_output {
-        terminal_notice!("{}", interactive_layer_rule(Some("init")));
+        terminal_notice!("{}", interactive_layer_rule(Some(crate::i18n::cli_section_label("init"))));
         terminal_notice!();
     } else {
         return init::run_init(&init_config);
@@ -3880,13 +4032,13 @@ fn handle_interactive_slash_command(
                     } else {
                         " "
                     };
-                    let status = match backend.availability {
+                    let status = crate::i18n::cli_executor_status_label(match backend.availability {
                         nola_domain::execution_backend::ExecutionBackendAvailability::Available => "available",
                         nola_domain::execution_backend::ExecutionBackendAvailability::NotInstalled => "not installed",
                         nola_domain::execution_backend::ExecutionBackendAvailability::Unauthenticated => "not authenticated",
                         nola_domain::execution_backend::ExecutionBackendAvailability::Incompatible => "incompatible",
                         nola_domain::execution_backend::ExecutionBackendAvailability::Unreachable => "unreachable",
-                    };
+                    });
                     terminal_notice!("  {selected} {} · {status}", backend.display_name);
                     if let Some(diagnostic) =
                         backend.diagnostic.filter(|value| !value.trim().is_empty())
@@ -3970,6 +4122,48 @@ fn handle_interactive_slash_command(
             handle_data_source_command(trimmed, config)?;
             return Ok(SlashCommandResult::Handled);
         }
+        "/attach" => {
+            let raw_path = trimmed
+                .split_once(char::is_whitespace)
+                .map(|(_, rest)| rest.trim())
+                .unwrap_or("");
+            if raw_path.is_empty() {
+                let usage = match i18n::current_language() {
+                    i18n::Language::ZhHans => "用法：/attach <文件路径> [文件路径 ...]",
+                    i18n::Language::ZhHant => "用法：/attach <檔案路徑> [檔案路徑 ...]",
+                    i18n::Language::De => "Verwendung: /attach <Dateipfad> [Dateipfad ...]",
+                    i18n::Language::Es => "Uso: /attach <ruta> [ruta ...]",
+                    i18n::Language::Fr => "Utilisation : /attach <chemin> [chemin ...]",
+                    i18n::Language::Ja => "使い方: /attach <ファイルパス> [ファイルパス ...]",
+                    i18n::Language::Ko => "사용법: /attach <파일 경로> [파일 경로 ...]",
+                    i18n::Language::Ru => "Использование: /attach <путь> [путь ...]",
+                    i18n::Language::En => "Usage: /attach <path> [path ...]",
+                };
+                terminal_notice!("  {usage}");
+                return Ok(SlashCommandResult::Handled);
+            }
+            match crate::composer_media::attach_path(raw_path, &config.project_root) {
+                Ok(tokens) => {
+                    let attached_label = match i18n::current_language() {
+                        i18n::Language::ZhHans => "已附加",
+                        i18n::Language::ZhHant => "已附加",
+                        i18n::Language::De => "Angehängt",
+                        i18n::Language::Es => "Adjuntado",
+                        i18n::Language::Fr => "Pièce jointe ajoutée",
+                        i18n::Language::Ja => "添付しました",
+                        i18n::Language::Ko => "첨부됨",
+                        i18n::Language::Ru => "Прикреплено",
+                        i18n::Language::En => "Attached",
+                    };
+                    terminal_notice!("  {attached_label}: {tokens}");
+                    return Ok(SlashCommandResult::Draft(format!("{tokens} ")));
+                }
+                Err(error) => {
+                    terminal_notice!("{}", crate::composer_media::paste_path_error(&error));
+                    return Ok(SlashCommandResult::Handled);
+                }
+            }
+        }
         "/goal" => {
             let target_raw = trimmed.split_once(char::is_whitespace).map(|(_, rest)| rest.trim()).unwrap_or("");
             let action = target_raw.to_ascii_lowercase();
@@ -3985,6 +4179,66 @@ fn handle_interactive_slash_command(
                         tr(Message::InteractiveGoalStatePrefix),
                         interactive_goal_state_text(&goal.status)
                     );
+                    if goal.total_requirements > 0 {
+                        let req_label = match i18n::current_language() {
+                            i18n::Language::ZhHans => "需求进度",
+                            i18n::Language::ZhHant => "需求進度",
+                            i18n::Language::De => "Anforderungen",
+                            i18n::Language::Es => "Requisitos",
+                            i18n::Language::Fr => "Exigences",
+                            i18n::Language::Ja => "要件進捗",
+                            i18n::Language::Ko => "요구 사항",
+                            i18n::Language::Ru => "Требования",
+                            i18n::Language::En => "Requirements",
+                        };
+                        terminal_notice!(
+                            "  {req_label}: {}/{}",
+                            goal.completed_requirements,
+                            goal.total_requirements
+                        );
+                    }
+                    if goal.attempt_count > 0 {
+                        let attempts_label = match i18n::current_language() {
+                            i18n::Language::ZhHans => "执行轮次",
+                            i18n::Language::ZhHant => "執行輪次",
+                            i18n::Language::De => "Versuche",
+                            i18n::Language::Es => "Intentos",
+                            i18n::Language::Fr => "Tentatives",
+                            i18n::Language::Ja => "試行回数",
+                            i18n::Language::Ko => "시도 횟수",
+                            i18n::Language::Ru => "Попытки",
+                            i18n::Language::En => "Attempts",
+                        };
+                        terminal_notice!("  {attempts_label}: {}", goal.attempt_count);
+                    }
+                    if let Some(reason) = goal.stop_reason.as_deref() {
+                        let reason_label = match i18n::current_language() {
+                            i18n::Language::ZhHans => "暂停/停止原因",
+                            i18n::Language::ZhHant => "暫停/停止原因",
+                            i18n::Language::De => "Grund",
+                            i18n::Language::Es => "Motivo",
+                            i18n::Language::Fr => "Raison",
+                            i18n::Language::Ja => "理由",
+                            i18n::Language::Ko => "사유",
+                            i18n::Language::Ru => "Причина",
+                            i18n::Language::En => "Reason",
+                        };
+                        terminal_notice!("  {reason_label}: {reason}");
+                    }
+                    if let Some(wake) = goal.next_wake_at_epoch_ms {
+                        let wake_label = match i18n::current_language() {
+                            i18n::Language::ZhHans => "计划恢复",
+                            i18n::Language::ZhHant => "排程恢復",
+                            i18n::Language::De => "Geplante Fortsetzung",
+                            i18n::Language::Es => "Reanudación programada",
+                            i18n::Language::Fr => "Reprise prévue",
+                            i18n::Language::Ja => "次回再開予定",
+                            i18n::Language::Ko => "예정된 재개",
+                            i18n::Language::Ru => "Запланированное возобновление",
+                            i18n::Language::En => "Next resume",
+                        };
+                        terminal_notice!("  {wake_label}: {}", format_goal_wake_time(wake));
+                    }
                 } else {
                     if target_raw.is_empty() {
                         return Ok(SlashCommandResult::GoalEntry);
@@ -4052,6 +4306,17 @@ fn handle_interactive_slash_command(
             }
 
             if matches!(action.as_str(), "pause" | "off" | "cancel") {
+                let no_active_goal = match i18n::current_language() {
+                    i18n::Language::ZhHans => "当前会话没有进行中的目标。",
+                    i18n::Language::ZhHant => "目前工作階段沒有進行中的目標。",
+                    i18n::Language::De => "In dieser Sitzung ist kein aktives Ziel vorhanden.",
+                    i18n::Language::Es => "No hay ningún objetivo activo en esta sesión.",
+                    i18n::Language::Fr => "Aucun objectif actif dans cette session.",
+                    i18n::Language::Ja => "このセッションに実行中の目標はありません。",
+                    i18n::Language::Ko => "이 세션에 활성 목표가 없습니다.",
+                    i18n::Language::Ru => "В этом сеансе нет активной цели.",
+                    i18n::Language::En => "No active goal in this session.",
+                };
                 if let Some(session_id) = config.session_id.as_deref() {
                     if session::load_session_goal_projection(session_id)?.and_then(|p| p.active)
                         .is_some_and(|goal| !goal.status.is_terminal()) {
@@ -4061,11 +4326,15 @@ fn handle_interactive_slash_command(
                             return Ok(SlashCommandResult::Handled);
                         }
                     } else {
-                        terminal_notice!("  {}", tr(Message::InteractiveGoalNoResumable));
+                        *goal_target = None;
+                        *goal_constraints = None;
+                        terminal_notice!("  {no_active_goal}");
                         return Ok(SlashCommandResult::Handled);
                     }
                 } else {
-                    terminal_notice!("  {}", tr(Message::InteractiveGoalNoResumable));
+                    *goal_target = None;
+                    *goal_constraints = None;
+                    terminal_notice!("  {no_active_goal}");
                     return Ok(SlashCommandResult::Handled);
                 }
 
@@ -4154,21 +4423,24 @@ fn handle_interactive_slash_command(
             let old_workspace = config.project_root.clone();
             std::env::set_current_dir(&target)
                 .map_err(|err| format!("change workspace to {} failed: {err}", target.display()))?;
-            if let (Some(session_id), Some(_)) =
-                (config.session_id.as_deref(), goal_target.as_deref())
-            {
-                submit_goal_command(
-                    config,
-                    format!(
-                        "goal:{session_id}:workspace-change:{}",
-                        uuid::Uuid::new_v4()
-                    ),
-                    GoalRuntimeCommand::Pause {
-                        status: GoalStatus::Paused,
-                        wake_at_epoch_ms: None,
-                        now_epoch_ms: goal_now_epoch_ms(),
-                    },
-                )?;
+            if let Some(session_id) = config.session_id.as_deref() {
+                if session::load_session_goal_projection(session_id)?
+                    .and_then(|projection| projection.active)
+                    .is_some_and(|goal| goal.status == GoalStatus::Running)
+                {
+                    submit_goal_command(
+                        config,
+                        format!(
+                            "goal:{session_id}:workspace-change:{}",
+                            uuid::Uuid::new_v4()
+                        ),
+                        GoalRuntimeCommand::Pause {
+                            status: GoalStatus::Paused,
+                            wake_at_epoch_ms: None,
+                            now_epoch_ms: goal_now_epoch_ms(),
+                        },
+                    )?;
+                }
             }
             let mut allowed_dirs = vec![target.clone()];
             allowed_dirs.extend(config.allowed_dirs.iter().cloned());
@@ -4300,18 +4572,21 @@ fn handle_interactive_slash_command(
                 crate::terminal_ui::clear_replayed_history();
                 crate::terminal_ui::invalidate_presented_screen();
             }
-            if let (Some(session_id), Some(_)) =
-                (config.session_id.as_deref(), goal_target.as_deref())
-            {
-                submit_goal_command(
-                    config,
-                    format!("goal:{session_id}:new-session:{}", uuid::Uuid::new_v4()),
-                    GoalRuntimeCommand::Pause {
-                        status: GoalStatus::Paused,
-                        wake_at_epoch_ms: None,
-                        now_epoch_ms: goal_now_epoch_ms(),
-                    },
-                )?;
+            if let Some(session_id) = config.session_id.as_deref() {
+                if session::load_session_goal_projection(session_id)?
+                    .and_then(|projection| projection.active)
+                    .is_some_and(|goal| goal.status == GoalStatus::Running)
+                {
+                    submit_goal_command(
+                        config,
+                        format!("goal:{session_id}:new-session:{}", uuid::Uuid::new_v4()),
+                        GoalRuntimeCommand::Pause {
+                            status: GoalStatus::Paused,
+                            wake_at_epoch_ms: None,
+                            now_epoch_ms: goal_now_epoch_ms(),
+                        },
+                    )?;
+                }
             }
             config.session_id = None;
             config.continue_last = false;
@@ -4378,7 +4653,8 @@ fn handle_interactive_slash_command(
                         }
                         terminal_notice!("  {label}\n  /tasks {task_id}");
                     } else {
-                        terminal_notice!("  {:?}", outcome.turn_status);
+                        let summary = format_non_delegated_agent_outcome(&outcome);
+                        terminal_notice!("  {summary}");
                     }
                 },
                 Err(error)=>terminal_notice!("{}",format_error(&error)),
@@ -4547,18 +4823,7 @@ fn handle_interactive_slash_command(
                     return Ok(SlashCommandResult::Handled);
                 }
             };
-            let outcome = tools::manage_background_bash_tasks(
-                action,
-                task_id,
-                &config.allowed_dirs,
-                config.session_id.as_deref(),
-                &crate::skill_runtime::SkillRuntimeContext::from_configured_dirs(config.skill_dirs.clone()),
-            );
-            let body = if outcome.error {
-                format_error(&outcome.display)
-            } else {
-                render_markdown_text(&outcome.text)
-            };
+            let body = render_interactive_jobs_view(config, action, task_id);
             crate::terminal_ui::commit_history(&format!(
                 "{}\n{}",
                 interactive_layer_rule(Some(tr(Message::InteractiveJobsTitle))),
@@ -4582,11 +4847,43 @@ fn handle_interactive_slash_command(
                         config.skill_dirs.clone(),
                     ),
                 );
-                if outcome.error {
-                    terminal_notice!("  {}", format_error(&outcome.display));
-                } else {
+                if !outcome.error {
                     terminal_notice!("  {}", outcome.display);
+                    return Ok(SlashCommandResult::Handled);
                 }
+                let runtime_outcome = task_runtime::manage_runtime_tasks(
+                    &config.host_invocation_request()?,
+                    "stop",
+                    Some(task_id),
+                );
+                if !runtime_outcome.error {
+                    terminal_notice!("  {}", runtime_outcome.display);
+                    return Ok(SlashCommandResult::Handled);
+                }
+                if let Some(session_id) = config.session_id.as_deref() {
+                    if let Some(goal) = session::load_session_goal_projection(session_id)?
+                        .and_then(|projection| projection.active)
+                        .filter(|goal| {
+                            !goal.status.is_terminal()
+                                && (goal.id == task_id || task_id.eq_ignore_ascii_case("goal"))
+                        })
+                    {
+                        if submit_interactive_goal_control(
+                            config,
+                            nola_application::goal_control_intent::GoalControlAction::Cancel,
+                        )? {
+                            *goal_target = None;
+                            *goal_constraints = None;
+                            terminal_notice!(
+                                "  {} · `{}`",
+                                ui_text(UiText::WorkStopped),
+                                goal.id
+                            );
+                        }
+                        return Ok(SlashCommandResult::Handled);
+                    }
+                }
+                terminal_notice!("  {}", format_error(&runtime_outcome.display));
             } else {
                 terminal_notice!(
                     "  {}",
@@ -4596,9 +4893,6 @@ fn handle_interactive_slash_command(
                     }
                 );
             }
-            Ok(SlashCommandResult::Handled)
-        }
-        "/questions" => {
             Ok(SlashCommandResult::Handled)
         }
         "/skills" => {
@@ -4618,7 +4912,7 @@ fn handle_interactive_slash_command(
             baseline.extend(uploaded);
 
             if action.eq_ignore_ascii_case("list") {
-                terminal_notice!("{}", interactive_layer_rule(Some("skills")));
+                terminal_notice!("{}", interactive_layer_rule(Some(crate::i18n::cli_section_label("skills"))));
                 if baseline.is_empty() {
                     terminal_notice!("  {}", ui_text(UiText::NoAvailableSkills));
                 } else {
@@ -4666,7 +4960,7 @@ fn handle_interactive_slash_command(
             let action = parts.next().unwrap_or("list");
             let baseline = crate::mcp_catalog_port::load_web_mcp_servers()?;
             if action.eq_ignore_ascii_case("list") {
-                terminal_notice!("{}", interactive_layer_rule(Some("mcp")));
+                terminal_notice!("{}", interactive_layer_rule(Some(crate::i18n::cli_section_label("mcp"))));
                 if baseline.is_empty() {
                     terminal_notice!("  {}", ui_text(UiText::NoConfiguredMcp));
                 } else {
@@ -4817,11 +5111,11 @@ fn handle_interactive_slash_command(
 }
 
 fn print_interactive_shortcuts_guide() {
-    terminal_notice!("{}", interactive_layer_rule(Some("guide")));
+    terminal_notice!("{}", interactive_layer_rule(Some(crate::i18n::cli_section_label("guide"))));
     match current_language() {
         Language::ZhHans => {
             terminal_notice!("  换行：Shift+Enter · Alt+Enter · Ctrl+J · 行尾 \\+Enter");
-            terminal_notice!("  跳转：Option/Alt+←/→ 或 Alt+B/F 按词跳转 · Ctrl+A/E 行首/行尾 · Ctrl+Home/End 全文首尾");
+            terminal_notice!("  跳转：Option/Alt+←/→ 或 Alt+B/F 按词跳转 · Ctrl+A/E 行首/行尾 · Alt+Home/End 全文首尾");
             terminal_notice!("  滚动：PgUp/PgDn · Alt+↑/↓ · Ctrl+↑/↓ · Ctrl+Home/End");
             terminal_notice!("  选专家：输入 @，上下键选择，回车插入名字。/edit 编辑已发送消息。");
             terminal_notice!("  补全：↑↓ 浏览 /命令，Tab 补全，Enter 执行，Esc 收起；在 @ 候选中 Enter 插入");
@@ -4830,7 +5124,7 @@ fn print_interactive_shortcuts_guide() {
         }
         _ => {
             terminal_notice!("  Newline: Shift+Enter · Alt+Enter · Ctrl+J · trailing \\+Enter");
-            terminal_notice!("  Word nav: Option/Alt+Left/Right or Alt+B/F · Ctrl+A/E line · Ctrl+Home/End buffer");
+            terminal_notice!("  Word nav: Option/Alt+Left/Right or Alt+B/F · Ctrl+A/E line · Alt+Home/End buffer");
             terminal_notice!("  Scroll: PgUp/PgDn · Alt+Up/Down · Ctrl+Up/Down · Ctrl+Home/End");
             terminal_notice!("  Experts: type @, choose with Up/Down, press Enter to insert. /edit reopens a sent message.");
             terminal_notice!("  Complete: Up/Down browses /commands, Tab completes, Enter runs, Esc closes. In @ suggestions, Enter inserts.");
@@ -4881,6 +5175,303 @@ fn resume_selected_session_before_composer(config: &Config, emitter: &mut Emitte
         }
         Some(_) => Ok(true),
     }
+}
+
+fn format_non_delegated_agent_outcome(
+    outcome: &crate::core_agent_runtime::CoreRunOutcome,
+) -> String {
+    use nola_core::agent::AgentTurnStatus;
+    use nola_domain::run_result::RunResultValue;
+    let lang = i18n::current_language();
+    match outcome.run_result.as_ref() {
+        Some(RunResultValue::Failed { error_ref, .. }) => {
+            let prefix = match lang {
+                i18n::Language::ZhHans => "子代理启动失败",
+                i18n::Language::ZhHant => "子代理啟動失敗",
+                i18n::Language::De => "Agent-Delegation fehlgeschlagen",
+                i18n::Language::Es => "Error al iniciar el subagente",
+                i18n::Language::Fr => "Échec du lancement du sous-agent",
+                i18n::Language::Ja => "サブエージェントの起動に失敗しました",
+                i18n::Language::Ko => "하위 에이전트 시작 실패",
+                i18n::Language::Ru => "Не удалось запустить подзадачу агента",
+                i18n::Language::En => "Agent delegation failed",
+            };
+            if error_ref.trim().is_empty() {
+                prefix.to_string()
+            } else {
+                format!("{prefix}: {error_ref}")
+            }
+        }
+        Some(RunResultValue::Blocked {
+            resolution_condition,
+            ..
+        }) => {
+            let prefix = match lang {
+                i18n::Language::ZhHans => "子代理被阻塞",
+                i18n::Language::ZhHant => "子代理被阻擋",
+                i18n::Language::De => "Agent-Delegation blockiert",
+                i18n::Language::Es => "Delegación del agente bloqueada",
+                i18n::Language::Fr => "Délégation bloquée",
+                i18n::Language::Ja => "サブエージェントがブロックされました",
+                i18n::Language::Ko => "하위 에이전트 위임이 차단되었습니다",
+                i18n::Language::Ru => "Делегирование заблокировано",
+                i18n::Language::En => "Agent delegation blocked",
+            };
+            if resolution_condition.trim().is_empty() {
+                prefix.to_string()
+            } else {
+                format!("{prefix}: {resolution_condition}")
+            }
+        }
+        Some(RunResultValue::Cancelled { .. }) => match lang {
+            i18n::Language::ZhHans => "子代理委派已取消。".to_string(),
+            i18n::Language::ZhHant => "子代理委派已取消。".to_string(),
+            i18n::Language::De => "Agent-Delegation abgebrochen.".to_string(),
+            i18n::Language::Es => "Delegación del agente cancelada.".to_string(),
+            i18n::Language::Fr => "Délégation de l’agent annulée.".to_string(),
+            i18n::Language::Ja => "サブエージェントの委任がキャンセルされました。".to_string(),
+            i18n::Language::Ko => "하위 에이전트 위임이 취소되었습니다.".to_string(),
+            i18n::Language::Ru => "Делегирование агента отменено.".to_string(),
+            i18n::Language::En => "Agent delegation cancelled.".to_string(),
+        },
+        Some(RunResultValue::Incomplete { .. }) => match lang {
+            i18n::Language::ZhHans => "子代理未完成委派。".to_string(),
+            i18n::Language::ZhHant => "子代理未完成委派。".to_string(),
+            i18n::Language::De => "Agent-Delegation unvollständig.".to_string(),
+            i18n::Language::Es => "Delegación del agente incompleta.".to_string(),
+            i18n::Language::Fr => "Délégation de l’agent incomplète.".to_string(),
+            i18n::Language::Ja => "サブエージェントの委任が完了しませんでした。".to_string(),
+            i18n::Language::Ko => "하위 에이전트 위임이 완료되지 않았습니다.".to_string(),
+            i18n::Language::Ru => "Делегирование агента не завершено.".to_string(),
+            i18n::Language::En => "Agent delegation did not complete.".to_string(),
+        },
+        Some(RunResultValue::Answered { .. } | RunResultValue::ActionCompleted { .. }) => {
+            match lang {
+                i18n::Language::ZhHans => "已完成。".to_string(),
+                i18n::Language::ZhHant => "已完成。".to_string(),
+                i18n::Language::De => "Abgeschlossen.".to_string(),
+                i18n::Language::Es => "Completado.".to_string(),
+                i18n::Language::Fr => "Terminé.".to_string(),
+                i18n::Language::Ja => "完了しました。".to_string(),
+                i18n::Language::Ko => "완료되었습니다.".to_string(),
+                i18n::Language::Ru => "Завершено.".to_string(),
+                i18n::Language::En => "Completed.".to_string(),
+            }
+        }
+        _ => match outcome.turn_status {
+            AgentTurnStatus::Cancelled => match lang {
+                i18n::Language::ZhHans => "子代理委派已取消。".to_string(),
+                i18n::Language::ZhHant => "子代理委派已取消。".to_string(),
+                i18n::Language::En => "Agent delegation cancelled.".to_string(),
+                _ => "Agent delegation cancelled.".to_string(),
+            },
+            AgentTurnStatus::Failed => match lang {
+                i18n::Language::ZhHans => "子代理委派失败。".to_string(),
+                i18n::Language::ZhHant => "子代理委派失敗。".to_string(),
+                i18n::Language::En => "Agent delegation failed.".to_string(),
+                _ => "Agent delegation failed.".to_string(),
+            },
+            AgentTurnStatus::AwaitingPermission => match lang {
+                i18n::Language::ZhHans => "子代理正在等待权限授权。".to_string(),
+                i18n::Language::ZhHant => "子代理正在等待權限授權。".to_string(),
+                i18n::Language::En => "Agent delegation is awaiting permission.".to_string(),
+                _ => "Agent delegation is awaiting permission.".to_string(),
+            },
+            AgentTurnStatus::AwaitingInput => match lang {
+                i18n::Language::ZhHans => "子代理正在等待你的回答（/questions）。".to_string(),
+                i18n::Language::ZhHant => "子代理正在等待您的回答（/questions）。".to_string(),
+                i18n::Language::En => "Agent delegation is awaiting input (/questions).".to_string(),
+                _ => "Agent delegation is awaiting input (/questions).".to_string(),
+            },
+            _ => match lang {
+                i18n::Language::ZhHans => "子代理委派未立即完成，请用 /tasks 查看状态。".to_string(),
+                i18n::Language::ZhHant => "子代理委派未立即完成，請用 /tasks 檢視狀態。".to_string(),
+                i18n::Language::En => "Agent delegation is pending; check /tasks for status.".to_string(),
+                _ => "Agent delegation is pending; check /tasks for status.".to_string(),
+            },
+        },
+    }
+}
+
+fn localized_job_state(state: &str) -> &'static str {
+    let lang = i18n::current_language();
+    match (lang, state) {
+        (i18n::Language::ZhHans, "running" | "queued") => "运行中",
+        (i18n::Language::ZhHans, "completed") => "已完成",
+        (i18n::Language::ZhHans, "failed") => "失败",
+        (i18n::Language::ZhHans, "cancelled") => "已取消",
+        (i18n::Language::ZhHant, "running" | "queued") => "執行中",
+        (i18n::Language::ZhHant, "completed") => "已完成",
+        (i18n::Language::ZhHant, "failed") => "失敗",
+        (i18n::Language::ZhHant, "cancelled") => "已取消",
+        (i18n::Language::De, "running" | "queued") => "läuft",
+        (i18n::Language::De, "completed") => "abgeschlossen",
+        (i18n::Language::De, "failed") => "fehlgeschlagen",
+        (i18n::Language::De, "cancelled") => "abgebrochen",
+        (i18n::Language::Es, "running" | "queued") => "en ejecución",
+        (i18n::Language::Es, "completed") => "completada",
+        (i18n::Language::Es, "failed") => "fallida",
+        (i18n::Language::Es, "cancelled") => "cancelada",
+        (i18n::Language::Fr, "running" | "queued") => "en cours",
+        (i18n::Language::Fr, "completed") => "terminée",
+        (i18n::Language::Fr, "failed") => "échec",
+        (i18n::Language::Fr, "cancelled") => "annulée",
+        (i18n::Language::Ja, "running" | "queued") => "実行中",
+        (i18n::Language::Ja, "completed") => "完了",
+        (i18n::Language::Ja, "failed") => "失敗",
+        (i18n::Language::Ja, "cancelled") => "キャンセル",
+        (i18n::Language::Ko, "running" | "queued") => "실행 중",
+        (i18n::Language::Ko, "completed") => "완료",
+        (i18n::Language::Ko, "failed") => "실패",
+        (i18n::Language::Ko, "cancelled") => "취소됨",
+        (i18n::Language::Ru, "running" | "queued") => "выполняется",
+        (i18n::Language::Ru, "completed") => "завершена",
+        (i18n::Language::Ru, "failed") => "ошибка",
+        (i18n::Language::Ru, "cancelled") => "отменена",
+        (_, "running" | "queued") => "running",
+        (_, "completed") => "completed",
+        (_, "failed") => "failed",
+        (_, "cancelled") => "cancelled",
+        _ => "unknown",
+    }
+}
+
+fn format_job_summary_line(task: &tools::BackgroundTaskSummary, width: usize) -> String {
+    let icon = match task.canonical_state.as_str() {
+        "running" | "queued" => "●",
+        "completed" => "✓",
+        _ => "!",
+    };
+    let state = localized_job_state(&task.canonical_state);
+    let elapsed = format_elapsed_duration(Duration::from_secs_f64(task.elapsed_secs.max(0.0)));
+    let single_line_cmd = task
+        .command
+        .split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ");
+    let cmd_budget = width.saturating_sub(36).max(20);
+    let cmd = truncate_display_width(&single_line_cmd, cmd_budget);
+    if interactive_color_enabled() {
+        let color = match task.canonical_state.as_str() {
+            "running" | "queued" => "\x1b[33m",
+            "completed" => "\x1b[32m",
+            _ => "\x1b[31m",
+        };
+        format!(
+            "  {color}{icon}  {state}{INTERACTIVE_RESET}  {INTERACTIVE_VALUE}{}{INTERACTIVE_RESET}  {INTERACTIVE_DIM}pid {} · {elapsed}{INTERACTIVE_RESET}  {cmd}",
+            task.id, task.pid
+        )
+    } else {
+        format!("  {icon}  {state}  {}  pid {} · {elapsed}  {cmd}", task.id, task.pid)
+    }
+}
+
+fn extract_clean_job_output_tails(raw: &str) -> Vec<String> {
+    let mut lines = Vec::new();
+    let mut in_output = false;
+    for line in raw.lines() {
+        let trimmed = line.trim();
+        if trimmed.starts_with("## stdout") || trimmed.starts_with("## stderr") || trimmed.starts_with("stdout:") || trimmed.starts_with("stderr:") {
+            in_output = true;
+            lines.push(format!("  {}", trimmed.trim_start_matches('#').trim()));
+            continue;
+        }
+        if trimmed.starts_with("```") {
+            continue;
+        }
+        if in_output {
+            lines.push(format!("    {line}"));
+        }
+    }
+    if lines.len() > 24 {
+        let tail_start = lines.len() - 24;
+        let mut trimmed = vec!["    ...".to_string()];
+        trimmed.extend(lines.into_iter().skip(tail_start));
+        return trimmed;
+    }
+    lines
+}
+
+fn render_interactive_jobs_view(
+    config: &Config,
+    action: &str,
+    task_id: Option<&str>,
+) -> String {
+    let width = terminal_columns().saturating_sub(4).max(40);
+    if action == "stop" {
+        let outcome = tools::manage_background_bash_tasks(
+            action,
+            task_id,
+            &config.allowed_dirs,
+            config.session_id.as_deref(),
+            &crate::skill_runtime::SkillRuntimeContext::from_configured_dirs(
+                config.skill_dirs.clone(),
+            ),
+        );
+        return if outcome.error {
+            format_error(&outcome.display)
+        } else {
+            format!("  {}", outcome.display)
+        };
+    }
+
+    let summaries = match tools::background_bash_task_summaries(
+        &config.allowed_dirs,
+        config.session_id.as_deref(),
+    ) {
+        Ok(list) => list,
+        Err(err) => return format_error(&err),
+    };
+
+    if action == "list" {
+        if summaries.is_empty() {
+            let empty = match i18n::current_language() {
+                i18n::Language::ZhHans => "当前没有后台命令任务。",
+                i18n::Language::ZhHant => "目前沒有背景命令任務。",
+                i18n::Language::De => "Keine Hintergrundaufgaben vorhanden.",
+                i18n::Language::Es => "No hay tareas en segundo plano.",
+                i18n::Language::Fr => "Aucune tâche en arrière-plan.",
+                i18n::Language::Ja => "バックグラウンドジョブはありません。",
+                i18n::Language::Ko => "백그라운드 작업이 없습니다.",
+                i18n::Language::Ru => "Нет фоновых задач.",
+                i18n::Language::En => "No background jobs.",
+            };
+            return format!("  {empty}");
+        }
+        return summaries
+            .iter()
+            .map(|task| format_job_summary_line(task, width))
+            .collect::<Vec<_>>()
+            .join("\n");
+    }
+
+    // status for a specific task_id
+    let Some(target_id) = task_id else {
+        return format!("  {}", tr(Message::InteractiveJobsUsage));
+    };
+    let mut lines = Vec::new();
+    if let Some(summary) = summaries.iter().find(|t| t.id == target_id) {
+        lines.push(format_job_summary_line(summary, width));
+    }
+    let outcome = tools::manage_background_bash_tasks(
+        "status",
+        Some(target_id),
+        &config.allowed_dirs,
+        config.session_id.as_deref(),
+        &crate::skill_runtime::SkillRuntimeContext::from_configured_dirs(
+            config.skill_dirs.clone(),
+        ),
+    );
+    if outcome.error {
+        return format_error(&outcome.display);
+    }
+    let tails = extract_clean_job_output_tails(&outcome.text);
+    if !tails.is_empty() {
+        lines.extend(tails);
+    } else if lines.is_empty() {
+        lines.push(format!("  {}", outcome.display));
+    }
+    lines.join("\n")
 }
 
 fn goal_work_control_command(control: &str, now_epoch_ms: i64) -> Option<GoalRuntimeCommand> {

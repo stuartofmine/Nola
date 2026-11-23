@@ -739,6 +739,14 @@ fn fetch_public_web_response(
 }
 
 fn web_fetch(args: &Map<String, Value>) -> ToolOutcome {
+    web_fetch_with_cancellation(args, &RuntimeExecutionControl::default())
+}
+
+fn web_fetch_with_cancellation(
+    args: &Map<String, Value>,
+    cancellation: &RuntimeExecutionControl,
+) -> ToolOutcome {
+    const WEB_FETCH_TOTAL_DEADLINE: Duration = Duration::from_secs(25);
     let url = tool_try!(required_string(args, "url"));
     if let Err(outcome) = validate_public_web_url(&url, "url") {
         return outcome;
@@ -751,7 +759,15 @@ fn web_fetch(args: &Map<String, Value>) -> ToolOutcome {
         MAX_WEB_RESPONSE_CHARS,
     )) as usize;
     let target = tool_try!(reqwest::Url::parse(&url).map_err(|e| error(e.to_string())));
+    let fetch_started = Instant::now();
     let mut response = tool_try!(fetch_public_web_response(target, |target| {
+        if cancellation.is_requested() {
+            return Err(error("Fetch cancelled by user".into()));
+        }
+        let remaining = WEB_FETCH_TOTAL_DEADLINE.saturating_sub(fetch_started.elapsed());
+        if remaining.is_zero() {
+            return Err(error("Fetch exceeded total deadline".into()));
+        }
         let host = target.host_str().unwrap_or_default().to_string();
         let addresses = match std::net::ToSocketAddrs::to_socket_addrs(&(host.trim_matches(['[', ']']), target.port_or_known_default().unwrap_or(443))) {
             Ok(values) => values.collect::<Vec<_>>(),
@@ -761,7 +777,8 @@ fn web_fetch(args: &Map<String, Value>) -> ToolOutcome {
         // Pin the validated answers so a second DNS lookup cannot rebind the connection.
         let client = match reqwest::blocking::Client::builder().no_proxy()
             .resolve_to_addrs(&host, &addresses)
-            .timeout(Duration::from_secs(20)).redirect(reqwest::redirect::Policy::none())
+            .connect_timeout(Duration::from_secs(10).min(remaining))
+            .timeout(Duration::from_secs(20).min(remaining)).redirect(reqwest::redirect::Policy::none())
             .user_agent("NolaCLI/1.0 (+https://nola.local)").build() {
             Ok(client) => client, Err(err) => return Err(error(format!("Fetch client failed: {err}"))),
         };
@@ -782,13 +799,26 @@ fn web_fetch(args: &Map<String, Value>) -> ToolOutcome {
         .unwrap_or("")
         .to_string();
     let mut bytes = Vec::new();
-    if let Err(err) = Read::by_ref(&mut response)
-        .take(MAX_WEB_DOWNLOAD_BYTES + 1)
-        .read_to_end(&mut bytes)
-    {
-        return error(format!("Fetch read failed: {err}"));
+    let mut chunk = [0u8; 8192];
+    loop {
+        if cancellation.is_requested() {
+            return error("Fetch cancelled by user".into());
+        }
+        if fetch_started.elapsed() >= WEB_FETCH_TOTAL_DEADLINE {
+            return error("Fetch exceeded total download deadline".into());
+        }
+        match response.read(&mut chunk) {
+            Ok(0) => break,
+            Ok(n) => {
+                bytes.extend_from_slice(&chunk[..n]);
+                if bytes.len() as u64 > MAX_WEB_DOWNLOAD_BYTES {
+                    return error("Fetch download exceeds size limit; response was not complete".into());
+                }
+            }
+            Err(err) if err.kind() == std::io::ErrorKind::Interrupted => continue,
+            Err(err) => return error(format!("Fetch read failed: {err}")),
+        }
     }
-    if bytes.len() as u64 > MAX_WEB_DOWNLOAD_BYTES { return error("Fetch download exceeds size limit; response was not complete".into()); }
     let raw_text = String::from_utf8_lossy(&bytes).to_string();
     let (title, body) = if content_type.to_ascii_lowercase().contains("html")
         || raw_text.trim_start().starts_with('<')
@@ -878,6 +908,13 @@ impl Drop for ManagedBrowserBridge {
 
 static MANAGED_BROWSER_BRIDGE: std::sync::OnceLock<std::sync::Mutex<Option<ManagedBrowserBridge>>> =
     std::sync::OnceLock::new();
+
+pub(crate) fn shutdown_managed_browser_bridge() {
+    if let Some(mutex) = MANAGED_BROWSER_BRIDGE.get() {
+        let mut slot = mutex.lock().unwrap_or_else(|e| e.into_inner());
+        let _ = slot.take();
+    }
+}
 
 fn browser_target(args: &Map<String, Value>) -> Result<&str, ToolOutcome> {
     let target = args.get("target").and_then(Value::as_str).unwrap_or("managed");
@@ -2074,6 +2111,9 @@ impl Drop for TemporaryPythonHelper {
     }
 }
 
+static PYTHON_HELPER_TEMP_SEQ: std::sync::atomic::AtomicU64 =
+    std::sync::atomic::AtomicU64::new(0);
+
 fn run_python_once(
     script: &str,
     payload: &Value,
@@ -2085,8 +2125,9 @@ fn run_python_once(
         .duration_since(UNIX_EPOCH)
         .unwrap_or_default()
         .as_nanos();
+    let script_seq = PYTHON_HELPER_TEMP_SEQ.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
     let script_path = std::env::temp_dir().join(format!(
-        "nola-cli-python-{}-{script_stamp}.py",
+        "nola-cli-python-{}-{script_stamp}-{script_seq}.py",
         std::process::id()
     ));
     fs::write(&script_path, script).map_err(|err| format!("helper script write failed: {err}"))?;
@@ -2098,14 +2139,17 @@ fn run_python_once(
                 .duration_since(UNIX_EPOCH)
                 .unwrap_or_default()
                 .as_nanos();
+            let seq = PYTHON_HELPER_TEMP_SEQ.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
             let stdout_path = std::env::temp_dir().join(format!(
-                "nola-cli-python-{}-{stamp}.out",
+                "nola-cli-python-{}-{stamp}-{seq}.out",
                 std::process::id()
             ));
             let stderr_path = std::env::temp_dir().join(format!(
-                "nola-cli-python-{}-{stamp}.err",
+                "nola-cli-python-{}-{stamp}-{seq}.err",
                 std::process::id()
             ));
+            let _stdout_guard = TemporaryPythonHelper(stdout_path.clone());
+            let _stderr_guard = TemporaryPythonHelper(stderr_path.clone());
             let stdout =
                 File::create(&stdout_path).map_err(|err| format!("helper stdout failed: {err}"))?;
             let stderr =
@@ -2124,16 +2168,12 @@ fn run_python_once(
                 Ok(child) => child,
                 Err(err) => {
                     last_error = format!("{python}: {err}");
-                    let _ = fs::remove_file(&stdout_path);
-                    let _ = fs::remove_file(&stderr_path);
                     break;
                 }
             };
             if let Some(stdin) = child.stdin.as_mut() {
                 if let Err(err) = stdin.write_all(request.as_bytes()) {
                     let _ = terminate_process_tree(&mut child, Duration::from_secs(2));
-                    let _ = fs::remove_file(&stdout_path);
-                    let _ = fs::remove_file(&stderr_path);
                     return Err(format!("helper write failed: {err}"));
                 }
             }
@@ -2143,8 +2183,6 @@ fn run_python_once(
             let status = loop {
                 if cancellation.is_requested() {
                     let _ = terminate_process_tree(&mut child, Duration::from_secs(2));
-                    let _ = fs::remove_file(&stdout_path);
-                    let _ = fs::remove_file(&stderr_path);
                     return Err("Computer helper cancelled by user".to_string());
                 }
                 match child.try_wait() {
@@ -2152,24 +2190,18 @@ fn run_python_once(
                     Ok(None) => {
                         if started.elapsed() > Duration::from_secs(timeout_sec) {
                             let _ = terminate_process_tree(&mut child, Duration::from_secs(2));
-                            let _ = fs::remove_file(&stdout_path);
-                            let _ = fs::remove_file(&stderr_path);
                             return Err(format!("helper timed out after {timeout_sec}s"));
                         }
                         std::thread::sleep(Duration::from_millis(50));
                     }
                     Err(err) => {
                         let _ = terminate_process_tree(&mut child, Duration::from_secs(2));
-                        let _ = fs::remove_file(&stdout_path);
-                        let _ = fs::remove_file(&stderr_path);
                         return Err(format!("helper wait failed: {err}"));
                     }
                 }
             };
             let stdout = fs::read_to_string(&stdout_path).unwrap_or_default();
             let stderr = fs::read_to_string(&stderr_path).unwrap_or_default();
-            let _ = fs::remove_file(&stdout_path);
-            let _ = fs::remove_file(&stderr_path);
             if !status.success() {
                 last_error = format!(
                     "{python} exited with code {}\n{}",

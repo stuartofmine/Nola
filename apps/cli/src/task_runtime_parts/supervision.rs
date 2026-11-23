@@ -1273,18 +1273,27 @@ fn render_task_list(config: &HostInvocationRequest) -> ToolOutcome {
             .progress
             .map(|value| format!(" · {:.0}%", value * 100.0))
             .unwrap_or_default();
-        let runner = tasks
-            .iter()
-            .find(|runtime_task| runtime_task.id == task.id)
+        let runtime_match = tasks.iter().find(|runtime_task| runtime_task.id == task.id);
+        let runner = runtime_match
             .and_then(|runtime_task| runtime_task.agent_type.as_deref())
             .map(str::to_string)
-            .unwrap_or_else(|| format!("{:?}", task.kind));
+            .unwrap_or_else(|| localized_task_kind(task.kind).to_string());
+        let elapsed = runtime_match
+            .and_then(format_runtime_task_elapsed)
+            .or_else(|| {
+                task.durability
+                    .last_heartbeat_epoch_ms
+                    .and_then(|ms| format_elapsed_duration(ms, None))
+            })
+            .map(|value| format!(" · {value}"))
+            .unwrap_or_default();
         lines.push(format!(
-            "- {marker} `{}` · {} · {}{}{}",
+            "- {marker} `{}` · {} · {}{}{}{}",
             task.id,
-            localized_status(&status, false),
+            localized_status(&status),
             runner,
             progress,
+            elapsed,
             if step.is_empty() {
                 String::new()
             } else {
@@ -1307,14 +1316,21 @@ fn render_task_list(config: &HostInvocationRequest) -> ToolOutcome {
         } else {
             "!"
         };
-        let runner = task.agent_type.as_deref().unwrap_or(&task.kind);
+        let runner = task
+            .agent_type
+            .as_deref()
+            .unwrap_or_else(|| localized_runtime_task_kind(&task.kind));
         let progress = task.progress_summary.as_deref().unwrap_or_default();
+        let elapsed = format_runtime_task_elapsed(task)
+            .map(|value| format!(" · {value}"))
+            .unwrap_or_default();
         lines.push(format!(
-            "- {marker} `{}` · {} · {} · {}{}",
+            "- {marker} `{}` · {} · {} · {}{}{}",
             task.id,
-            localized_status(&task.status, false),
+            localized_status(&task.status),
             runner,
             truncate_chars(&task.title, 72),
+            elapsed,
             if progress.is_empty() {
                 String::new()
             } else {
@@ -1468,9 +1484,20 @@ fn render_core_task_detail(task: &nola_core::agent::task::TaskHandle) -> ToolOut
     lines.push(format!(
         "- {}: {}",
         ui_text(UiText::Status),
-        localized_status(&status, false)
+        localized_status(&status)
     ));
-    lines.push(format!("- {}: `{:?}`", ui_text(UiText::Agent), task.kind));
+    lines.push(format!(
+        "- {}: {}",
+        ui_text(UiText::Agent),
+        localized_task_kind(task.kind)
+    ));
+    if let Some(elapsed) = task
+        .durability
+        .last_heartbeat_epoch_ms
+        .and_then(|ms| format_elapsed_duration(ms, None))
+    {
+        lines.push(format!("- {}: {elapsed}", localized_elapsed_label()));
+    }
     if let Some(progress) = task.progress {
         lines.push(format!(
             "- {}: {:.0}%",
@@ -1482,7 +1509,7 @@ fn render_core_task_detail(task: &nola_core::agent::task::TaskHandle) -> ToolOut
         lines.push(format!("\n## {}\n\n{}", ui_text(UiText::Result), result));
     }
     if task.cancel_requested && !task.state.is_terminal() {
-        lines.push("\n- Cancellation requested".to_string());
+        lines.push(format!("\n- {}", localized_cancellation_requested()));
     }
     task_ok(lines.join("\n"), format!("Task {} is {status}", task.id))
 }
@@ -1551,17 +1578,25 @@ fn render_task_detail(
     if !task_scope_matches(config, &task) {
         return task_error(format!("Unknown task: {task_id}"));
     }
-    let zh = current_language() == Language::ZhHans;
     let events = store.runtime_task_events(task_id, 8).unwrap_or_default();
     let mut lines = vec![format!("# {}", task.title)];
     lines.push(format!("- {}: `{}`", ui_text(UiText::Task), task.id));
     lines.push(format!(
         "- {}: {}",
         ui_text(UiText::Status),
-        localized_status(&task.status, zh)
+        localized_status(&task.status)
     ));
     if let Some(agent_type) = task.agent_type.as_deref() {
         lines.push(format!("- {}: `{agent_type}`", ui_text(UiText::Agent)));
+    } else {
+        lines.push(format!(
+            "- {}: {}",
+            ui_text(UiText::Agent),
+            localized_runtime_task_kind(&task.kind)
+        ));
+    }
+    if let Some(elapsed) = format_runtime_task_elapsed(&task) {
+        lines.push(format!("- {}: {elapsed}", localized_elapsed_label()));
     }
     if let Some(progress) = task.progress_summary.as_deref() {
         lines.push(format!("- {}: {}", ui_text(UiText::Progress), progress));
@@ -1572,12 +1607,15 @@ fn render_task_detail(
     if let Some(error) = task.error.as_deref() {
         lines.push(format!("\n## {}\n\n{}", ui_text(UiText::Error), error));
     }
+    if task.cancel_requested && is_live_status(&task.status) {
+        lines.push(format!("\n- {}", localized_cancellation_requested()));
+    }
     if !events.is_empty() {
         lines.push(format!("\n## {}", ui_text(UiText::RecentActivity)));
         for event in events.into_iter().rev() {
             lines.push(format!(
                 "- {} · {}",
-                localized_status(&event.status, zh),
+                localized_status(&event.status),
                 event.summary.unwrap_or(event.kind)
             ));
         }
@@ -1588,19 +1626,153 @@ fn render_task_detail(
     )
 }
 
-fn localized_status(status: &str, _zh: bool) -> &str {
+fn localized_status(status: &str) -> &str {
     match status {
         "queued" => ui_text(UiText::Queued),
         "running" => ui_text(UiText::Running),
         "waiting" => ui_text(UiText::WaitingPermission),
         "waiting_permission" => ui_text(UiText::WaitingPermission),
-        "waiting_input" => if _zh { "等待用户回答" } else { "Waiting for user input" },
-        "sealed" => if _zh { "执行已封存" } else { "Execution sealed" },
+        "waiting_input" => match current_language() {
+            Language::ZhHans => "等待用户回答",
+            Language::ZhHant => "等待使用者回答",
+            Language::De => "Wartet auf Benutzereingabe",
+            Language::Es => "Esperando respuesta del usuario",
+            Language::Fr => "En attente de réponse utilisateur",
+            Language::Ja => "ユーザー入力待ち",
+            Language::Ko => "사용자 입력 대기 중",
+            Language::Ru => "Ожидание ответа пользователя",
+            Language::En => "Waiting for user input",
+        },
+        "sealed" => match current_language() {
+            Language::ZhHans => "执行已封存",
+            Language::ZhHant => "執行已封存",
+            Language::De => "Ausführung versiegelt",
+            Language::Es => "Ejecución sellada",
+            Language::Fr => "Exécution scellée",
+            Language::Ja => "実行確定済み",
+            Language::Ko => "실행 봉인됨",
+            Language::Ru => "Выполнение запечатано",
+            Language::En => "Execution sealed",
+        },
         "completed" => ui_text(UiText::Completed),
         "failed" => ui_text(UiText::Failed),
         "cancelled" => ui_text(UiText::Cancelled),
         _ => status,
     }
+}
+
+fn localized_task_kind(kind: nola_core::agent::TaskKind) -> &'static str {
+    use nola_core::agent::TaskKind;
+    match (current_language(), kind) {
+        (Language::ZhHans, TaskKind::Agent) => "子代理",
+        (Language::ZhHans, TaskKind::Tool) => "工具",
+        (Language::ZhHans, TaskKind::Skill) => "技能",
+        (Language::ZhHans, TaskKind::DataRefresh) => "数据刷新",
+        (Language::ZhHant, TaskKind::Agent) => "子代理",
+        (Language::ZhHant, TaskKind::Tool) => "工具",
+        (Language::ZhHant, TaskKind::Skill) => "技能",
+        (Language::ZhHant, TaskKind::DataRefresh) => "資料重新整理",
+        (Language::De, TaskKind::Agent) => "Subagent",
+        (Language::De, TaskKind::Tool) => "Werkzeug",
+        (Language::De, TaskKind::Skill) => "Skill",
+        (Language::De, TaskKind::DataRefresh) => "Datenaktualisierung",
+        (Language::Es, TaskKind::Agent) => "Subagente",
+        (Language::Es, TaskKind::Tool) => "Herramienta",
+        (Language::Es, TaskKind::Skill) => "Skill",
+        (Language::Es, TaskKind::DataRefresh) => "Actualización de datos",
+        (Language::Fr, TaskKind::Agent) => "Sous-agent",
+        (Language::Fr, TaskKind::Tool) => "Outil",
+        (Language::Fr, TaskKind::Skill) => "Skill",
+        (Language::Fr, TaskKind::DataRefresh) => "Actualisation des données",
+        (Language::Ja, TaskKind::Agent) => "サブエージェント",
+        (Language::Ja, TaskKind::Tool) => "ツール",
+        (Language::Ja, TaskKind::Skill) => "スキル",
+        (Language::Ja, TaskKind::DataRefresh) => "データ更新",
+        (Language::Ko, TaskKind::Agent) => "서브에이전트",
+        (Language::Ko, TaskKind::Tool) => "도구",
+        (Language::Ko, TaskKind::Skill) => "스킬",
+        (Language::Ko, TaskKind::DataRefresh) => "데이터 새로고침",
+        (Language::Ru, TaskKind::Agent) => "Подагент",
+        (Language::Ru, TaskKind::Tool) => "Инструмент",
+        (Language::Ru, TaskKind::Skill) => "Навык",
+        (Language::Ru, TaskKind::DataRefresh) => "Обновление данных",
+        (Language::En, TaskKind::Agent) => "Subagent",
+        (Language::En, TaskKind::Tool) => "Tool",
+        (Language::En, TaskKind::Skill) => "Skill",
+        (Language::En, TaskKind::DataRefresh) => "Data refresh",
+    }
+}
+
+fn localized_runtime_task_kind(kind: &str) -> &str {
+    match kind {
+        "agent" => localized_task_kind(nola_core::agent::TaskKind::Agent),
+        "tool" => localized_task_kind(nola_core::agent::TaskKind::Tool),
+        "skill" => localized_task_kind(nola_core::agent::TaskKind::Skill),
+        "data_refresh" => localized_task_kind(nola_core::agent::TaskKind::DataRefresh),
+        "shell" | "shell_process" | "bash" => match current_language() {
+            Language::ZhHans => "后台命令",
+            Language::ZhHant => "背景指令",
+            Language::De => "Hintergrundbefehl",
+            Language::Es => "Comando en segundo plano",
+            Language::Fr => "Commande en arrière-plan",
+            Language::Ja => "バックグラウンドコマンド",
+            Language::Ko => "백그라운드 명령",
+            Language::Ru => "Фоновая команда",
+            Language::En => "Shell process",
+        },
+        _ => kind,
+    }
+}
+
+fn localized_cancellation_requested() -> &'static str {
+    match current_language() {
+        Language::ZhHans => "已请求取消",
+        Language::ZhHant => "已請求取消",
+        Language::De => "Abbruch angefordert",
+        Language::Es => "Cancelación solicitada",
+        Language::Fr => "Annulation demandée",
+        Language::Ja => "キャンセル要求済み",
+        Language::Ko => "취소 요청됨",
+        Language::Ru => "Запрошена отмена",
+        Language::En => "Cancellation requested",
+    }
+}
+
+fn localized_elapsed_label() -> &'static str {
+    match current_language() {
+        Language::ZhHans => "耗时",
+        Language::ZhHant => "耗時",
+        Language::De => "Dauer",
+        Language::Es => "Duración",
+        Language::Fr => "Durée",
+        Language::Ja => "経過時間",
+        Language::Ko => "경과 시간",
+        Language::Ru => "Длительность",
+        Language::En => "Elapsed",
+    }
+}
+
+fn format_elapsed_duration(start_ms: i64, end_ms: Option<i64>) -> Option<String> {
+    if start_ms <= 0 {
+        return None;
+    }
+    let end = end_ms.unwrap_or_else(unix_epoch_millis).max(start_ms);
+    let secs = (end - start_ms) / 1000;
+    if secs < 60 {
+        Some(format!("{secs}s"))
+    } else if secs < 3600 {
+        Some(format!("{}m {}s", secs / 60, secs % 60))
+    } else {
+        Some(format!("{}h {}m", secs / 3600, (secs % 3600) / 60))
+    }
+}
+
+fn format_runtime_task_elapsed(task: &DbRuntimeTask) -> Option<String> {
+    let start_ms = task.started_at_ms.unwrap_or(task.created_at_ms);
+    let end_ms = task
+        .ended_at_ms
+        .or_else(|| (!is_live_status(&task.status)).then_some(task.updated_at_ms));
+    format_elapsed_duration(start_ms, end_ms)
 }
 
 fn read_task(
@@ -1760,9 +1932,52 @@ fn wait_task_until_return(config: &HostInvocationRequest, args: &Map<String, Val
         if !task_scope_matches(config, &task) {
             return task_error(format!("Unknown task: {task_id}"));
         }
-        // Permission is presented independently by the Host/CLI notification
-        // channel. Do not turn an unresolved approval into an immediate model
-        // polling loop; keep observing this bounded wait until a wake/deadline.
+        if task.status == "waiting_permission" {
+            if !crate::interaction::stdin_confirmation_available() {
+                return task_ok(
+                    json!({
+                        "task": task_json(&task),
+                        "wait_timed_out": false,
+                        "action_required": "permission",
+                    })
+                    .to_string(),
+                    format!("Task {task_id} needs permission"),
+                );
+            }
+            let pending_permission = config
+                .session
+                .session_id
+                .as_deref()
+                .and_then(|owner_session_id| {
+                    let handle = core_task(config, task_id)?;
+                    permission_for_parent_task(
+                        owner_session_id,
+                        handle.owner_turn_id.as_str(),
+                        task_id,
+                    )
+                    .ok()
+                    .flatten()
+                });
+            if let Some(request) = pending_permission {
+                let choice = crate::interaction::prompt_permission(&request.prompt.prompt);
+                let interrupted = matches!(choice, PermissionChoice::TransportInterrupted(_));
+                match resolve_parent_task_permission(&request, choice) {
+                    Ok(()) => continue,
+                    Err(_) if interrupted => {
+                        return task_ok(
+                            json!({
+                                "task": task_json(&task),
+                                "wait_timed_out": false,
+                                "action_required": "permission",
+                            })
+                            .to_string(),
+                            format!("Task {task_id} needs permission"),
+                        );
+                    }
+                    Err(_) => continue,
+                }
+            }
+        }
         if task.status == "waiting_input" {
             let questions = match load_waiting_task_questions(
                 task.child_session_id.as_deref(), crate::user_input_wait::open,

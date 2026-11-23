@@ -401,7 +401,11 @@ pub(crate) fn initialize_or_restore(config: &mut Config) -> Result<(), String> {
     let store = NolaStore::open_default()?;
     let mut app = CliApplicationPort::persistent(store.path())?;
     if config.session_id.is_none() && config.continue_last {
-        config.session_id = crate::session::latest_session_id_for_project(&config.project_root.to_string_lossy())?;
+        let latest = crate::session::latest_session_id_for_project(&config.project_root.to_string_lossy())?;
+        let Some(latest) = latest else {
+            return Err(crate::i18n::tr(crate::i18n::Message::NoSavedSessions).to_string());
+        };
+        config.session_id = Some(latest);
         config.continue_last = false;
     }
     if let Some(id) = config.session_id.as_deref() {
