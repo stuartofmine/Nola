@@ -31,12 +31,12 @@ use nola_core::agent::{GoalRuntimeCommand, GoalStatus};
 use serde_json::{json, Value};
 use unicode_width::UnicodeWidthChar;
 
-// Respect the terminal's light/dark and high-contrast palette. Hierarchy is
-// carried by layout and labels, not fixed pale text on an unknown background.
-const INTERACTIVE_DIM: &str = "\x1b[22;39m";
-const INTERACTIVE_LABEL: &str = "\x1b[22;39m";
+// Calm Monochrome Obsidian palette: respect the terminal's light/dark theme
+// using true SGR dim (\x1b[2;39m) for secondary chrome and a muted cyan accent.
+const INTERACTIVE_DIM: &str = "\x1b[2;39m";
+const INTERACTIVE_LABEL: &str = "\x1b[2;39m";
 const INTERACTIVE_VALUE: &str = "\x1b[22;39m";
-const INTERACTIVE_ACCENT: &str = "\x1b[1;32m";
+const INTERACTIVE_ACCENT: &str = "\x1b[36m";
 const INTERACTIVE_COMPOSER_BG: &str = "\x1b[38;2;242;240;235;48;2;35;35;32m";
 const INTERACTIVE_COMPOSER_DIM_FG: &str = "\x1b[38;2;184;181;173;48;2;35;35;32m";
 const INTERACTIVE_COMPOSER_PREFIX_FG: &str = "\x1b[1;32;48;2;35;35;32m";
@@ -2238,13 +2238,32 @@ fn interactive_session_replay_user_line(line: &str) -> String {
 
 fn interactive_user_history_at_width(line: &str, columns: usize, color: bool) -> String {
     let line_width = crate::terminal_ui::transcript_width(columns);
-    let prefix = "    › ";
-    let (rows, _, _) = composer_input_multiline(line, line.len(),
-        line_width.saturating_sub(display_width(prefix)).max(1), prefix);
-    rows.iter().enumerate().map(|(index, (text, _))| {
-        interactive_input_bar_line_with_color(text, false, false,
-            if index == 0 { prefix } else { "      " }, line_width, color)
-    }).collect::<Vec<_>>().join("\n")
+    let prefix = "  ❯ ";
+    let continuation = "    ";
+    let (rows, _, _) = composer_input_multiline(
+        line,
+        line.len(),
+        line_width.saturating_sub(display_width(prefix)).max(1),
+        prefix,
+    );
+    rows.iter()
+        .enumerate()
+        .map(|(index, (text, _))| {
+            let row_prefix = if index == 0 { prefix } else { continuation };
+            if color {
+                if index == 0 {
+                    format!(
+                        "{INTERACTIVE_ACCENT}{row_prefix}{INTERACTIVE_RESET}\x1b[1;39m{text}{INTERACTIVE_RESET}"
+                    )
+                } else {
+                    format!("{row_prefix}\x1b[1;39m{text}{INTERACTIVE_RESET}")
+                }
+            } else {
+                format!("{row_prefix}{text}")
+            }
+        })
+        .collect::<Vec<_>>()
+        .join("\n")
 }
 
 fn interactive_layer_rule(label: Option<&str>) -> String {

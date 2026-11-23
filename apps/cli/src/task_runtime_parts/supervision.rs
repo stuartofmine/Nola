@@ -1846,8 +1846,35 @@ fn wait_task_until_return(config: &HostInvocationRequest, args: &Map<String, Val
     // If the parent immediately waits after spawn_agent, this is the first
     // safe boundary after TaskPromoted at which the queued worker may start.
     reconcile_supervised_tasks(config);
-    let Some(task_id) = string_arg(args, "task_id").map(str::trim) else {
-        return task_error("wait_task requires task_id");
+    let single_task_id = string_arg(args, "task_id")
+        .map(str::trim)
+        .filter(|id| !id.is_empty());
+    let multi_task_ids = match args.get("task_ids") {
+        None => None,
+        Some(Value::Array(items)) => {
+            let mut ids = Vec::new();
+            for item in items {
+                let Some(id) = item.as_str().map(str::trim).filter(|id| !id.is_empty()) else {
+                    return task_error("wait_task task_ids entries must be non-empty strings");
+                };
+                ids.push(id.to_string());
+            }
+            if ids.is_empty() {
+                None
+            } else {
+                Some(ids)
+            }
+        }
+        Some(_) => return task_error("wait_task task_ids must be an array of task IDs"),
+    };
+    if let Some(mut ids) = multi_task_ids {
+        if let Some(single) = single_task_id {
+            ids.insert(0, single.to_string());
+        }
+        return wait_multiple_tasks_until_return(config, &ids, args, context);
+    }
+    let Some(task_id) = single_task_id else {
+        return task_error("wait_task requires task_id or task_ids");
     };
     let timeout_seconds = args
         .get("timeout_sec")
@@ -2076,6 +2103,280 @@ fn wait_task_until_return(config: &HostInvocationRequest, args: &Map<String, Val
     }
 }
 
+fn wait_multiple_tasks_until_return(
+    config: &HostInvocationRequest,
+    raw_task_ids: &[String],
+    args: &Map<String, Value>,
+    context: &ToolContext,
+) -> ToolOutcome {
+    let mut watched_ids = Vec::new();
+    for id in raw_task_ids {
+        let trimmed = id.trim();
+        if !trimmed.is_empty() && !watched_ids.iter().any(|existing| existing == trimmed) {
+            watched_ids.push(trimmed.to_string());
+        }
+    }
+    if watched_ids.is_empty() {
+        return task_error("wait_task requires at least one task_id");
+    }
+    let wait_mode = match args.get("wait_mode") {
+        None => "any",
+        Some(Value::String(mode)) if mode == "any" => "any",
+        Some(Value::String(mode)) if mode == "all" => "all",
+        _ => return task_error("wait_task wait_mode must be 'any' or 'all'"),
+    };
+    let timeout_seconds = args
+        .get("timeout_sec")
+        .and_then(Value::as_u64)
+        .unwrap_or(DEFAULT_WAIT_SECONDS)
+        .clamp(1, MAX_WAIT_SECONDS);
+    let deadline = Instant::now() + Duration::from_secs(timeout_seconds);
+
+    // Classify each watched ID upfront and verify scope/existence.
+    #[derive(Clone, Copy, PartialEq, Eq)]
+    enum WatchedKind {
+        Runtime,
+        Shell,
+    }
+    let store = match NolaStore::open_default() {
+        Ok(store) => store,
+        Err(error) => return task_error(error),
+    };
+    let mut initial_bash_summaries: Option<Vec<tools::BackgroundTaskSummary>> = None;
+    let mut watched: Vec<(String, WatchedKind)> = Vec::with_capacity(watched_ids.len());
+    for task_id in &watched_ids {
+        let stored_task = match store.runtime_task(task_id) {
+            Ok(task) => task,
+            Err(error) => return task_error(error),
+        };
+        if stored_task
+            .as_ref()
+            .is_some_and(|task| !task_scope_matches(config, task))
+        {
+            return task_error(format!("Unknown task: {task_id}"));
+        }
+        if stored_task
+            .as_ref()
+            .is_none_or(|task| is_shell_runtime_task_kind(&task.kind))
+        {
+            let summaries = match initial_bash_summaries.as_ref() {
+                Some(summaries) => summaries,
+                None => match tools::background_bash_task_summaries(
+                    &config.tool_settings.allowed_dirs,
+                    config.session.session_id.as_deref(),
+                ) {
+                    Ok(summaries) => initial_bash_summaries.insert(summaries),
+                    Err(error) => return task_error(error),
+                },
+            };
+            if !summaries.iter().any(|summary| summary.id == *task_id) {
+                return task_error(format!("Unknown task: {task_id}"));
+            }
+            watched.push((task_id.clone(), WatchedKind::Shell));
+        } else {
+            watched.push((task_id.clone(), WatchedKind::Runtime));
+        }
+    }
+    let has_shell_tasks = watched.iter().any(|(_, kind)| *kind == WatchedKind::Shell);
+
+    loop {
+        let observed_generation = task_wake_generation();
+        let store = match NolaStore::open_default() {
+            Ok(store) => store,
+            Err(error) => return task_error(error),
+        };
+        let bash_summaries = if has_shell_tasks {
+            match tools::background_bash_task_summaries(
+                &config.tool_settings.allowed_dirs,
+                config.session.session_id.as_deref(),
+            ) {
+                Ok(summaries) => Some(summaries),
+                Err(error) => return task_error(error),
+            }
+        } else {
+            None
+        };
+
+        let mut completed_ids: Vec<String> = Vec::new();
+        let mut pending_ids: Vec<String> = Vec::new();
+        let mut tasks_json: Vec<Value> = Vec::with_capacity(watched.len());
+        let mut permission_task: Option<DbRuntimeTask> = None;
+
+        for (task_id, kind) in &watched {
+            match kind {
+                WatchedKind::Shell => {
+                    let Some(summary) = bash_summaries
+                        .as_ref()
+                        .and_then(|list| list.iter().find(|item| item.id == *task_id))
+                    else {
+                        return task_error(format!("Unknown task: {task_id}"));
+                    };
+                    let settled = !summary.status.to_ascii_lowercase().starts_with("running");
+                    if settled {
+                        completed_ids.push(task_id.clone());
+                    } else {
+                        pending_ids.push(task_id.clone());
+                    }
+                    tasks_json.push(json!({
+                        "task_id": summary.id,
+                        "kind": "shell",
+                        "status": summary.status,
+                        "title": summary.command,
+                    }));
+                }
+                WatchedKind::Runtime => {
+                    let Some(task) = (match store.runtime_task(task_id) {
+                        Ok(task) => task,
+                        Err(error) => return task_error(error),
+                    }) else {
+                        return task_error(format!("Unknown task: {task_id}"));
+                    };
+                    if !task_scope_matches(config, &task) {
+                        return task_error(format!("Unknown task: {task_id}"));
+                    }
+                    if task.status == "waiting_permission" && permission_task.is_none() {
+                        permission_task = Some(task.clone());
+                    }
+                    if !is_live_status(&task.status) {
+                        if !agent_terminal_state_is_reconciled(config, &task) {
+                            let _ = replay_terminal_agent_reconciliation(&task);
+                        }
+                        completed_ids.push(task_id.clone());
+                    } else if task.status == "waiting_input" {
+                        completed_ids.push(task_id.clone());
+                    } else {
+                        pending_ids.push(task_id.clone());
+                    }
+                    tasks_json.push(task_json(&task));
+                }
+            }
+        }
+
+        if let Some(task) = permission_task {
+            let perm_task_id = task.id.clone();
+            if !crate::interaction::stdin_confirmation_available() {
+                return task_ok(
+                    json!({
+                        "wait_mode": wait_mode,
+                        "action_required": "permission",
+                        "task_id": perm_task_id,
+                        "task": task_json(&task),
+                        "completed_ids": completed_ids,
+                        "pending_ids": pending_ids,
+                        "tasks": tasks_json,
+                        "wait_timed_out": false,
+                    })
+                    .to_string(),
+                    format!("Task {} needs permission", task.id),
+                );
+            }
+            let pending_permission = config
+                .session
+                .session_id
+                .as_deref()
+                .and_then(|owner_session_id| {
+                    let handle = core_task(config, &perm_task_id)?;
+                    permission_for_parent_task(
+                        owner_session_id,
+                        handle.owner_turn_id.as_str(),
+                        &perm_task_id,
+                    )
+                    .ok()
+                    .flatten()
+                });
+            if let Some(request) = pending_permission {
+                let choice = crate::interaction::prompt_permission(&request.prompt.prompt);
+                let interrupted = matches!(choice, PermissionChoice::TransportInterrupted(_));
+                match resolve_parent_task_permission(&request, choice) {
+                    Ok(()) => continue,
+                    Err(_) if interrupted => {
+                        return task_ok(
+                            json!({
+                                "wait_mode": wait_mode,
+                                "action_required": "permission",
+                                "task_id": perm_task_id,
+                                "task": task_json(&task),
+                                "completed_ids": completed_ids,
+                                "pending_ids": pending_ids,
+                                "tasks": tasks_json,
+                                "wait_timed_out": false,
+                            })
+                            .to_string(),
+                            format!("Task {} needs permission", task.id),
+                        );
+                    }
+                    Err(_) => continue,
+                }
+            }
+        }
+
+        if wait_mode == "any" && !completed_ids.is_empty() {
+            return task_ok(
+                json!({
+                    "wait_mode": "any",
+                    "completed_ids": completed_ids,
+                    "pending_ids": pending_ids,
+                    "tasks": tasks_json,
+                    "wait_timed_out": false,
+                })
+                .to_string(),
+                format!("{} of {} tasks settled", completed_ids.len(), watched.len()),
+            );
+        }
+        if wait_mode == "all" && pending_ids.is_empty() {
+            return task_ok(
+                json!({
+                    "wait_mode": "all",
+                    "completed_ids": completed_ids,
+                    "pending_ids": pending_ids,
+                    "tasks": tasks_json,
+                    "wait_timed_out": false,
+                })
+                .to_string(),
+                format!("All {} tasks settled", watched.len()),
+            );
+        }
+        if context.cancellation.is_requested() {
+            return task_ok(
+                json!({
+                    "wait_mode": wait_mode,
+                    "completed_ids": completed_ids,
+                    "pending_ids": pending_ids,
+                    "tasks": tasks_json,
+                    "wait_timed_out": false,
+                    "cancelled": true,
+                })
+                .to_string(),
+                format!(
+                    "Task wait cancelled ({} settled, {} pending)",
+                    completed_ids.len(),
+                    pending_ids.len()
+                ),
+            );
+        }
+        let now = Instant::now();
+        if now >= deadline {
+            return task_ok(
+                json!({
+                    "wait_mode": wait_mode,
+                    "completed_ids": completed_ids,
+                    "pending_ids": pending_ids,
+                    "tasks": tasks_json,
+                    "wait_timed_out": true,
+                })
+                .to_string(),
+                format!(
+                    "Timed out waiting for tasks ({} settled, {} pending)",
+                    completed_ids.len(),
+                    pending_ids.len()
+                ),
+            );
+        }
+        let remaining = deadline.saturating_duration_since(now);
+        wait_for_task_wake(observed_generation, remaining.min(Duration::from_millis(100)));
+    }
+}
+
 fn load_waiting_task_questions(
     child_session_id: Option<&str>,
     load: impl FnOnce(&str) -> Result<Vec<nola_store_port::user_input_wait::StoredUserInputWait>, String>,
@@ -2172,6 +2473,7 @@ fn stop_task(
         .lock()
         .ok()
         .and_then(|handles| handles.get(task_id).cloned());
+    cleanup_tracked_subagent_worktree(task_id, &task);
     let Some(handle) = handle else {
         if is_live_status(&task.status) && cancellation_requested {
             wake_task_waiters();
@@ -2842,6 +3144,8 @@ fn task_json(task: &DbRuntimeTask) -> Value {
         "parent_task_id": task.parent_task_id,
         "resumed_from_task_id": metadata.get("resumed_from_task_id"),
         "task_worktree_selection": metadata.pointer("/delegated_invocation/worktree/selection"),
+        "workspace_mode": metadata.get("workspace_mode"),
+        "worktree_path": metadata.get("worktree_path"),
         "child_session_id": task.child_session_id,
         "progress": task.progress_summary,
         "last_activity": task.last_activity,
@@ -3982,7 +4286,13 @@ fn spawn_recovered_agent_task(
         child_config.input.message.clear();
     } else {
     if child_config.tool_settings.task_worktree.is_none() {
-        child_config.tool_settings.project_root = std::path::PathBuf::from(&task.project_root);
+        child_config.tool_settings.project_root = metadata
+            .get("worktree_path")
+            .and_then(Value::as_str)
+            .map(str::trim)
+            .filter(|path| !path.is_empty())
+            .map(std::path::PathBuf::from)
+            .unwrap_or_else(|| std::path::PathBuf::from(&task.project_root));
         if !child_config
             .tool_settings
             .allowed_dirs
@@ -4553,3 +4863,209 @@ fn internal_task_context_source(title: &str) -> ContextComponentSource {
 
 #[cfg(test)]
 include!("supervision_state_tests.rs");
+
+#[cfg(test)]
+mod multi_wait_task_tests {
+    use super::*;
+
+    fn make_test_task(
+        id: &str,
+        status: &str,
+        root: &std::path::Path,
+        owner_session: &str,
+        now: i64,
+    ) -> DbRuntimeTask {
+        let mut task = DbRuntimeTask {
+            id: id.to_string(),
+            kind: "agent".to_string(),
+            status: status.to_string(),
+            title: format!("Task {id}"),
+            project_root: root.to_string_lossy().into_owned(),
+            owner_session_id: Some(owner_session.to_string()),
+            parent_task_id: None,
+            parent_tool_call_id: Some(format!("call-{id}")),
+            child_session_id: Some(format!("child-{id}")),
+            agent_type: Some("explore".to_string()),
+            prompt: Some("test prompt".to_string()),
+            progress_summary: Some(status.to_string()),
+            last_activity: None,
+            result_summary: (status == "completed" || status == "sealed")
+                .then(|| format!("result-{id}")),
+            error: None,
+            output_path: None,
+            unread: true,
+            cancel_requested: false,
+            cancel_requested_at_ms: None,
+            worker_id: None,
+            ownership_token: None,
+            lease_until_ms: None,
+            heartbeat_at_ms: None,
+            retry_count: 0,
+            retry_at_ms: None,
+            last_error: None,
+            input_watermark: Some(now),
+            completion_watermark: (status == "completed" || status == "sealed").then_some(now),
+            created_at_ms: now,
+            started_at_ms: None,
+            ended_at_ms: None,
+            updated_at_ms: now,
+            metadata_json: "{}".to_string(),
+        };
+        task.set_scheduling(nola_application::RuntimeTaskScheduling {
+            priority: nola_application::RuntimeTaskPriority::Normal,
+            queued_at_ms: now,
+            resource_budget: nola_application::RuntimeTaskResourceBudget::default(),
+            output_bytes: 0,
+            resource_usage: nola_application::RuntimeTaskResourceUsage::default(),
+            budget_exhaustion: None,
+        })
+        .expect("attach scheduling");
+        task
+    }
+
+    #[test]
+    fn wait_task_multi_any_and_all_modes() {
+        let _environment = crate::store::test_env_lock();
+        let root = std::env::temp_dir().join(format!(
+            "nola-multi-wait-task-test-{}",
+            uuid::Uuid::new_v4()
+        ));
+        std::fs::create_dir_all(&root).expect("create test root");
+        let database = root.join("nola.db");
+        std::env::set_var("NOLA_DB_PATH", &database);
+
+        let mut config =
+            crate::host_invocation_request::HostInvocationRequest::for_test().expect("test config");
+        config.tool_settings.project_root = root.clone();
+        config.tool_settings.allowed_dirs = vec![root.clone()];
+        config.session.session_id = Some("owner-multi".to_string());
+        config.session.save_session = true;
+
+        let now = unix_epoch_millis();
+        let store = NolaStore::open(&database).expect("open store");
+        let task_a = make_test_task("task-a", "queued", &root, "owner-multi", now);
+        let task_b = make_test_task("task-b", "queued", &root, "owner-multi", now);
+        let task_c = make_test_task("task-c", "queued", &root, "owner-multi", now);
+        store.create_runtime_task(&task_a).expect("create task-a");
+        store.create_runtime_task(&task_b).expect("create task-b");
+        store.create_runtime_task(&task_c).expect("create task-c");
+        drop(store);
+
+        let mut canonical = nola_store::NolaStore::open(&database).expect("open canonical store");
+        for (id, finish) in [("task-a", true), ("task-b", false), ("task-c", true)] {
+            source_admission_support::agent_task_admission::admit_existing(
+                &database,
+                id,
+                "owner-multi",
+                &format!("child-{id}"),
+                &format!("call-{id}"),
+                Some(now),
+            );
+            let attempt = canonical
+                .claim_runtime_task(
+                    id,
+                    "multi-wait-worker",
+                    "multi-wait-gen",
+                    &format!("token-{id}"),
+                    now + 1,
+                    now + 60_000,
+                )
+                .expect("claim task")
+                .expect("task claimable");
+            if finish {
+                assert!(canonical
+                    .finish_runtime_task_detailed_with_event(
+                        &nola_application::RuntimeTaskLeaseWitness::from(&attempt),
+                        "failed",
+                        Some(now),
+                        Some("done"),
+                        Some(&format!("result-{id}")),
+                        None,
+                        None,
+                        true,
+                        "finished",
+                        "failed",
+                        None,
+                        "{}",
+                        None,
+                        now + 2,
+                    )
+                    .expect("finish task"));
+            }
+        }
+        drop(canonical);
+
+        let context = ToolContext {
+            memory_binding: nola_domain::memory_owner::MemoryExecutionBinding::local_profile(),
+            language_services: Default::default(),
+            output_store: tools::ToolOutputStore::for_test(),
+            skills: crate::skill_runtime::SkillRuntimeContext::from_configured_dirs(None),
+            allowed_dirs: vec![root.clone()],
+            policy: tools::ToolExecutionPolicy::new(Vec::new(), false, "ask".into(), Vec::new()),
+            permission_scope: Default::default(),
+            cancellation: RuntimeExecutionControl::default(),
+            plan_state: Default::default(),
+            browser: tools::BrowserRuntime::new(root.join("browser")),
+        };
+
+        // 1. wait_mode = "any" returns immediately because task-a is already completed while task-b is running.
+        let mut args_any = Map::new();
+        args_any.insert("task_ids".into(), json!(["task-a", "task-b", "task-a"]));
+        args_any.insert("wait_mode".into(), json!("any"));
+        args_any.insert("timeout_sec".into(), json!(1));
+        let outcome_any = wait_task(&config, &args_any, &context);
+        assert!(!outcome_any.error, "unexpected error: {}", outcome_any.text);
+        let payload_any: Value = serde_json::from_str(&outcome_any.text).expect("parse any json");
+        assert_eq!(payload_any["wait_mode"], "any");
+        assert_eq!(payload_any["wait_timed_out"], false);
+        assert_eq!(payload_any["completed_ids"], json!(["task-a"]));
+        assert_eq!(payload_any["pending_ids"], json!(["task-b"]));
+        assert_eq!(payload_any["tasks"].as_array().map(Vec::len), Some(2));
+
+        // 2. wait_mode = "all" with all tasks completed returns immediately without timeout.
+        let mut args_all_done = Map::new();
+        args_all_done.insert("task_ids".into(), json!(["task-a", "task-c"]));
+        args_all_done.insert("wait_mode".into(), json!("all"));
+        args_all_done.insert("timeout_sec".into(), json!(1));
+        let outcome_all_done = wait_task(&config, &args_all_done, &context);
+        assert!(
+            !outcome_all_done.error,
+            "unexpected error: {}",
+            outcome_all_done.text
+        );
+        let payload_all_done: Value =
+            serde_json::from_str(&outcome_all_done.text).expect("parse all done json");
+        assert_eq!(payload_all_done["wait_mode"], "all");
+        assert_eq!(payload_all_done["wait_timed_out"], false);
+        assert_eq!(payload_all_done["completed_ids"], json!(["task-a", "task-c"]));
+        assert_eq!(payload_all_done["pending_ids"], json!([]));
+
+        // 3. wait_mode = "all" with a still-running task times out cleanly with both completed and pending lists.
+        let mut args_all_timeout = Map::new();
+        args_all_timeout.insert("task_ids".into(), json!(["task-a", "task-b"]));
+        args_all_timeout.insert("wait_mode".into(), json!("all"));
+        args_all_timeout.insert("timeout_sec".into(), json!(1));
+        let outcome_all_timeout = wait_task(&config, &args_all_timeout, &context);
+        assert!(
+            !outcome_all_timeout.error,
+            "unexpected error: {}",
+            outcome_all_timeout.text
+        );
+        let payload_all_timeout: Value =
+            serde_json::from_str(&outcome_all_timeout.text).expect("parse all timeout json");
+        assert_eq!(payload_all_timeout["wait_mode"], "all");
+        assert_eq!(payload_all_timeout["wait_timed_out"], true);
+        assert_eq!(payload_all_timeout["completed_ids"], json!(["task-a"]));
+        assert_eq!(payload_all_timeout["pending_ids"], json!(["task-b"]));
+
+        // 4. Cross-session task scope is enforced for task_ids.
+        let mut other_config = config.clone();
+        other_config.session.session_id = Some("other-session".to_string());
+        let outcome_other = wait_task(&other_config, &args_any, &context);
+        assert!(outcome_other.error, "cross-session wait should fail");
+        assert!(outcome_other.text.contains("Unknown task"));
+
+        std::env::remove_var("NOLA_DB_PATH");
+        let _ = std::fs::remove_dir_all(&root);
+    }
+}

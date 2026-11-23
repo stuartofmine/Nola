@@ -1770,22 +1770,22 @@ mod interactive_terminal_ui_contract_tests {
     }
 
     #[test]
-    fn canonical_slash_commands_and_help_exclude_duplicate_aliases_while_keeping_normalization() {
+    fn canonical_slash_commands_and_help_exclude_removed_aliases() {
         let forbidden = ["/permissions", "/resources", "/quit", "/experts"];
         for alias in forbidden {
             assert!(
                 !INTERACTIVE_SLASH_COMMANDS.iter().any(|cmd| cmd.name == alias),
-                "INTERACTIVE_SLASH_COMMANDS should not contain duplicate alias {alias}"
+                "INTERACTIVE_SLASH_COMMANDS should not contain removed alias {alias}"
             );
             assert!(
                 !interactive_help_rows()
                     .iter()
                     .any(|(usage, _)| usage.split_whitespace().next() == Some(alias)),
-                "interactive_help_rows should not contain duplicate alias {alias}"
+                "interactive_help_rows should not contain removed alias {alias}"
             );
             assert!(
-                normalize_interactive_command(alias).is_some(),
-                "hidden alias {alias} must still normalize when typed manually"
+                normalize_interactive_command(alias).is_none(),
+                "removed alias {alias} should not normalize"
             );
         }
         assert_eq!(normalize_interactive_command("/EDIT"), Some("/edit"));

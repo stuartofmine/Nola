@@ -1661,6 +1661,12 @@ fn specs_with_skills(skills: &SkillRuntimeContext) -> Vec<ToolSpec<'static>> {
                     "name": {"type": "string", "description": "Optional stable short name for the task."},
                     "task_id": {"type": "string", "description": "Optional terminal Agent task from this conversation/project to derive explicitly requested follow-up work. Creates a NEW task_id linked by resumed_from_task_id and reuses the child session; the original business Task and its sealed Run remain terminal."},
                     "worktree":task_worktree_selection_schema(false),
+                    "workspace": {
+                        "type": "string",
+                        "enum": ["inherit", "worktree"],
+                        "default": "inherit",
+                        "description": "Use 'worktree' to run this subagent in an isolated detached git worktree so parallel write subagents do not overwrite each other's files."
+                    },
                     "sandbox_requirement":{"type":"string","enum":["codex_workspace_write"],"description":"Require Codex's native workspace-write policy. Reject other executors or full-access policy; never fall back unrestricted. Not a general OS sandbox attestation."},
                     "permission_mode": {
                         "type": "string",
@@ -1706,15 +1712,26 @@ fn specs_with_skills(skills: &SkillRuntimeContext) -> Vec<ToolSpec<'static>> {
         },
         ToolSpec {
             name: "wait_task",
-            description: "Wait once for a task to finish or for a bounded timeout. This is event-driven inside the runtime; prefer it over repeated status polling when the result blocks progress. Returns the canonical task snapshot, including exact task_worktree_selection when bound. Recover a lost selection with read_task. Cancelling the wait does not stop the task.",
+            description: "Wait once for one task (task_id) or multiple tasks in parallel (task_ids) to finish or for a bounded timeout. This is event-driven inside the runtime; prefer it over repeated status polling when the result blocks progress. Returns the canonical task snapshot(s), including exact task_worktree_selection when bound. Recover a lost selection with read_task. Cancelling the wait does not stop the task.",
             read_only: true,
             parameters: json!({
                 "type": "object",
                 "properties": {
-                    "task_id": {"type": "string"},
+                    "task_id": {"type": "string", "description": "Single task ID to wait on. Provide either task_id or task_ids."},
+                    "task_ids": {
+                        "type": "array",
+                        "items": {"type": "string"},
+                        "description": "Wait on multiple task IDs in parallel instead of a single task_id."
+                    },
+                    "wait_mode": {
+                        "type": "string",
+                        "enum": ["any", "all"],
+                        "default": "any",
+                        "description": "When waiting on task_ids: 'any' returns as soon as any listed task settles or needs permission/input; 'all' waits until all listed tasks settle or timeout."
+                    },
                     "timeout_sec": {"type": "integer", "default": 30, "description": "Bounded wait from 1 to 300 seconds."}
                 },
-                "required": ["task_id"],
+                "required": [],
                 "additionalProperties": false
             }),
         },

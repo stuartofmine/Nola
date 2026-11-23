@@ -358,7 +358,7 @@ mod tests {
     #[test]
     fn interactive_session_user_replay_line_is_plain_when_color_is_disabled() {
         let line = interactive_session_replay_user_line("hello");
-        assert_eq!(line, "    › hello");
+        assert_eq!(line, "  ❯ hello");
         assert!(!line.contains('\r'));
         assert!(!line.contains("\x1b["));
     }
@@ -383,15 +383,11 @@ mod tests {
         let mut terminal = vt100::Parser::new(20, 24, 0);
         terminal.process(rendered.replace('\n', "\r\n").as_bytes());
         for row in 0..rendered.lines().count() as u16 {
-            assert_eq!(terminal.screen().cell(row, 0).unwrap().bgcolor(), vt100::Color::Rgb(35, 35, 32));
-            let last = terminal.screen().cell(row, 23).unwrap();
-            if !last.is_wide_continuation() {
-                assert_eq!(last.bgcolor(), vt100::Color::Rgb(35, 35, 32), "row={row} {rendered:?}");
-            }
+            assert_eq!(terminal.screen().cell(row, 0).unwrap().bgcolor(), vt100::Color::Default);
         }
         let plain = interactive_user_history_at_width(text, 26, false);
         let reconstructed = plain.lines().enumerate().map(|(index, row)| {
-            row.strip_prefix(if index == 0 { "    › " } else { "      " }).unwrap()
+            row.strip_prefix(if index == 0 { "  ❯ " } else { "    " }).unwrap()
         }).collect::<String>();
         assert_eq!(reconstructed, text.replace('\n', ""));
         terminal.process(b"\r\nassistant");
@@ -1228,10 +1224,10 @@ mod tests {
 
     #[test]
     fn interactive_exit_requires_a_slash_command() {
-        for command in ["/exit", "/quit", "/q", "/e", "/EXIT"] {
+        for command in ["/exit", "/q", "/e", "/EXIT"] {
             assert!(is_exit_command(command), "{command}");
         }
-        for message in ["q", "quit", "exit", ":q", "exit now", "/exit now"] {
+        for message in ["q", "quit", "exit", ":q", "exit now", "/exit now", "/quit"] {
             assert!(!is_exit_command(message), "{message}");
         }
     }
@@ -3016,9 +3012,10 @@ mod runtime_provider_environment_tests {
         for (raw, canonical) in [
             ("/clear", "/clear"),
             ("/models", "/model"),
-            ("/experts", "/experts"),
-            ("/permissions", "/allow"),
-            ("/resources", "/sources"),
+            ("/agent", "/agent"),
+            ("/allow", "/allow"),
+            ("/sources", "/sources"),
+            ("/attach", "/attach"),
             ("/stop", "/stop"),
             ("/skills", "/skills"),
             ("/mcp", "/mcp"),

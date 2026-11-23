@@ -1402,7 +1402,7 @@ fn adaptive_panel_inner_width(rows: &[String], columns: usize) -> usize {
 fn render_user_question_prompt(prompt: &UserQuestionPrompt, selected: Option<usize>) -> String {
     let localized = interaction_text();
     let color = permission_color_enabled();
-    let accent = "\x1b[1;34m";
+    let accent = "\x1b[1;36m";
     let mut rows = vec![
         format!("◆ {}", prompt.header),
         prompt.question.clone(),
@@ -1426,30 +1426,40 @@ fn render_user_question_prompt(prompt: &UserQuestionPrompt, selected: Option<usi
     let decline_index = prompt.options.len() + usize::from(prompt.allow_freeform);
     let decline_marker = if selected == Some(decline_index) { "›" } else { " " };
     rows.push(format!("{decline_marker} {}", ui_text(UiText::DeclineQuestion)));
+    let hint_start = rows.len();
     let hint = if selected.is_some() { UiText::QuestionKeyHint } else { UiText::QuestionLineHint };
     rows.push(ui_text(hint).to_string());
 
-    let inner = adaptive_panel_inner_width(&rows, terminal_columns());
+    let inner = adaptive_panel_inner_width(&rows, terminal_columns().saturating_sub(2));
     let mut out = String::new();
     out.push('\n');
-    push_permission_border(&mut out, "╭", "╮", inner, accent, color);
+    push_permission_border(&mut out, "╭", "╮", inner, color);
     for (row_index, row) in rows.iter().enumerate() {
+        if row_index == hint_start {
+            push_permission_border(&mut out, "├", "┤", inner, color);
+        }
         let selected_row = selected
             .map(|selected| row_index == option_start + selected)
             .unwrap_or(false);
-        let row_color = if row_index == 0 {
-            accent
+        let style = if row_index == 0 {
+            ModalRowStyle::Plain(accent)
         } else if selected_row {
-            ""
+            if row_index == option_start + decline_index {
+                ModalRowStyle::FocusedDeny
+            } else {
+                ModalRowStyle::Focused
+            }
+        } else if row_index >= hint_start {
+            ModalRowStyle::Plain("\x1b[2;39m")
         } else {
-            "\x1b[39m"
+            ModalRowStyle::Plain("\x1b[39m")
         };
         for rendered in wrap_display_width(row, inner) {
             let padded = pad_right_display_width(&rendered, inner);
-            push_permission_line(&mut out, &padded, row_color, color, selected_row);
+            push_permission_line(&mut out, &padded, style, color);
         }
     }
-    push_permission_border(&mut out, "╰", "╯", inner, accent, color);
+    push_permission_border(&mut out, "╰", "╯", inner, color);
     out
 }
 
@@ -1485,8 +1495,12 @@ fn render_permission_prompt_with_selection(
             } else {
                 None
             };
+            let padded_label = pad_right_display_width(
+                if index == 0 { label.as_str() } else { "" },
+                9,
+            );
             plain_rows.push((
-                format!("{:<9} {}", if index == 0 { label.as_str() } else { "" }, trimmed),
+                format!("{padded_label} {trimmed}"),
                 diff_color,
             ));
         }
@@ -1500,11 +1514,12 @@ fn render_permission_prompt_with_selection(
         let marker = if selected == Some(index) && (index != 1 || prompt.allow_conversation) { "›" } else { " " };
         plain_rows.push((format!("{marker} {option}"), None));
     }
+    let hint_start = plain_rows.len();
     plain_rows.push((choose.to_string(), Some("\x1b[2;39m")));
     if prompt.supports_instruction {
         plain_rows.push((
             ui_text(UiText::PermissionInstructionOption).to_string(),
-            None,
+            Some("\x1b[2;39m"),
         ));
         if selected.is_none() {
             plain_rows.push((
@@ -1515,33 +1530,40 @@ fn render_permission_prompt_with_selection(
     }
 
     let plain_texts: Vec<String> = plain_rows.iter().map(|(row, _)| row.clone()).collect();
-    let inner = adaptive_panel_inner_width(&plain_texts, terminal_columns());
+    let inner = adaptive_panel_inner_width(&plain_texts, terminal_columns().saturating_sub(2));
     let mut out = String::new();
     out.push('\n');
-    push_permission_border(&mut out, "╭", "╮", inner, accent, color);
+    push_permission_border(&mut out, "╭", "╮", inner, color);
     for (index, (row, diff_color)) in plain_rows.iter().enumerate() {
+        if index == hint_start {
+            push_permission_border(&mut out, "├", "┤", inner, color);
+        }
         let selected_row = selected
             .filter(|selected| *selected != 1 || prompt.allow_conversation)
             .map(|selected| index == option_start + selected)
             .unwrap_or(false);
         let option_index = index.checked_sub(option_start).filter(|item| *item < 4);
-        let row_color = if index == 0 {
-            accent
+        let style = if index == 0 {
+            ModalRowStyle::Plain(accent)
         } else if option_index == Some(1) && !prompt.allow_conversation {
-            "\x1b[2;39m"
+            ModalRowStyle::Plain("\x1b[2;39m")
         } else if selected_row {
-            ""
-        } else if let Some(option_index) = option_index {
-            permission_option_color(option_index)
+            if option_index == Some(3) {
+                ModalRowStyle::FocusedDeny
+            } else {
+                ModalRowStyle::Focused
+            }
+        } else if option_index.is_some() {
+            ModalRowStyle::Plain("\x1b[39m")
         } else {
-            diff_color.unwrap_or("\x1b[39m")
+            ModalRowStyle::Plain(diff_color.unwrap_or("\x1b[39m"))
         };
         for rendered in wrap_display_width(row, inner) {
             let padded = pad_right_display_width(&rendered, inner);
-            push_permission_line(&mut out, &padded, row_color, color, selected_row);
+            push_permission_line(&mut out, &padded, style, color);
         }
     }
-    push_permission_border(&mut out, "╰", "╯", inner, accent, color);
+    push_permission_border(&mut out, "╰", "╯", inner, color);
     out
 }
 
@@ -1637,21 +1659,19 @@ fn restore_terminal_newline_output_impl() {
 #[cfg(not(unix))]
 fn restore_terminal_newline_output_impl() {}
 
+#[derive(Clone, Copy)]
+enum ModalRowStyle {
+    Plain(&'static str),
+    Focused,
+    FocusedDeny,
+}
+
 fn permission_kind_style(kind: PermissionPromptKind) -> (&'static str, &'static str) {
     match kind {
         PermissionPromptKind::Command => ("\x1b[1;33m", "◆"),
-        PermissionPromptKind::Tool => ("\x1b[1;34m", "◆"),
-        PermissionPromptKind::Network => ("\x1b[1;34m", "◆"),
-        PermissionPromptKind::Agent => ("\x1b[1;34m", "◆"),
-    }
-}
-
-fn permission_option_color(index: usize) -> &'static str {
-    match index {
-        0 => "\x1b[32m",
-        1 => "\x1b[34m",
-        2 => "\x1b[33m",
-        _ => "\x1b[31m",
+        PermissionPromptKind::Tool => ("\x1b[1;36m", "◆"),
+        PermissionPromptKind::Network => ("\x1b[1;36m", "◆"),
+        PermissionPromptKind::Agent => ("\x1b[1;36m", "◆"),
     }
 }
 
@@ -1682,11 +1702,11 @@ fn push_permission_border(
     left: &str,
     right: &str,
     inner: usize,
-    accent: &str,
     color: bool,
 ) {
+    out.push_str("  ");
     if color {
-        out.push_str(accent);
+        out.push_str("\x1b[2;39m");
     }
     out.push_str(left);
     out.push_str(&"─".repeat(inner + 2));
@@ -1700,19 +1720,41 @@ fn push_permission_border(
 fn push_permission_line(
     out: &mut String,
     text: &str,
-    row_color: &str,
+    style: ModalRowStyle,
     color: bool,
-    selected: bool,
 ) {
+    out.push_str("  ");
     if color {
         out.push_str("\x1b[2;39m│\x1b[0m ");
-        if selected {
-            out.push_str("\x1b[7;1m");
-        } else {
-            out.push_str(row_color);
+        match style {
+            ModalRowStyle::Plain(row_color) => {
+                out.push_str(row_color);
+                out.push_str(text);
+                out.push_str("\x1b[0m");
+            }
+            ModalRowStyle::Focused => {
+                if let Some(rest) = text.strip_prefix('›') {
+                    out.push_str("\x1b[1;36m›\x1b[0m\x1b[1;39m");
+                    out.push_str(rest);
+                    out.push_str("\x1b[0m");
+                } else {
+                    out.push_str("\x1b[1;39m");
+                    out.push_str(text);
+                    out.push_str("\x1b[0m");
+                }
+            }
+            ModalRowStyle::FocusedDeny => {
+                if let Some(rest) = text.strip_prefix('›') {
+                    out.push_str("\x1b[1;31m›\x1b[0m\x1b[31m");
+                    out.push_str(rest);
+                    out.push_str("\x1b[0m");
+                } else {
+                    out.push_str("\x1b[31m");
+                    out.push_str(text);
+                    out.push_str("\x1b[0m");
+                }
+            }
         }
-        out.push_str(text);
-        out.push_str("\x1b[0m");
         out.push_str(" \x1b[2;39m│\x1b[0m\n");
     } else {
         out.push_str("│ ");
@@ -2242,6 +2284,8 @@ mod tests {
             allow_freeform: true,
         };
         let rendered = render_user_question_prompt(&prompt, Some(0));
+        assert!(rendered.contains("  ╭─"), "expected 2-space indented modal box: {rendered}");
+        assert!(rendered.contains("  ├─"), "expected inner divider before hint bar: {rendered}");
         assert!(rendered.contains(ui_text(UiText::QuestionKeyHint)));
         assert!(!rendered.contains(interaction_text().selection_hint));
         let line_mode = render_user_question_prompt(&prompt, None);

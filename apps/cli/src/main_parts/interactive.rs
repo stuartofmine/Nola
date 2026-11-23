@@ -70,16 +70,20 @@ fn persist_interactive_view_state(store: &mut Option<crate::cli_view_state::View
     }
 }
 
+fn interactive_git_branch(project_root: &Path) -> Option<String> {
+    let head = std::fs::read_to_string(project_root.join(".git").join("HEAD")).ok()?;
+    let trimmed = head.trim();
+    trimmed
+        .strip_prefix("ref: refs/heads/")
+        .map(str::trim)
+        .filter(|branch| !branch.is_empty())
+        .map(str::to_string)
+}
+
 fn update_interactive_session_header(config: &Config) {
     if config.json_output {
         return;
     }
-    let model = config.model.trim();
-    let model = if model.is_empty() {
-        tr(Message::InteractiveDefaultModelLabel)
-    } else {
-        model
-    };
     let workspace = config
         .project_root
         .file_name()
@@ -87,10 +91,15 @@ fn update_interactive_session_header(config: &Config) {
         .filter(|name| !name.is_empty())
         .map(str::to_string)
         .unwrap_or_else(|| compact_home_path(&config.project_root.to_string_lossy()));
-    crate::terminal_ui::set_session_header("Nola", format!("{model} · {workspace}"));
+    let detail = match interactive_git_branch(&config.project_root) {
+        Some(branch) => format!("{workspace} ({branch})"),
+        None => workspace,
+    };
+    crate::terminal_ui::set_session_header("Nola", detail);
 }
 
 fn run_interactive_session(config: &Config, resume_pending: bool) -> Result<InteractiveSessionExit, String> {
+    clear_pending_task_completions();
     crate::composer_media::prune_old_staged_files();
     let mut ui_guard = InteractiveSessionUiStateGuard::new(!config.json_output);
     llm::configure_local_debug_log(config.debug_mode, &config.project_root);
@@ -243,6 +252,9 @@ fn run_interactive_session(config: &Config, resume_pending: bool) -> Result<Inte
     let mut questions_requested = false;
     loop {
         if view_session != interactive_config.session_id {
+            if view_session.is_some() {
+                clear_pending_task_completions();
+            }
             rejected_mentions.clear();
             view_session = interactive_config.session_id.clone();
             interaction::select_interactive_composer(interactive_composer_key(&interactive_config)?);
@@ -585,6 +597,7 @@ fn run_interactive_session(config: &Config, resume_pending: bool) -> Result<Inte
             SlashCommandResult::Draft(draft) => { pending_draft = Some(draft); continue; }
             SlashCommandResult::Handled => continue,
             SlashCommandResult::WorkspaceChanged | SlashCommandResult::SessionReset => {
+                clear_pending_task_completions();
                 edit_target = None;
                 interaction::select_interactive_composer(interactive_composer_key(&interactive_config)?);
                 pending_draft = None;
@@ -625,10 +638,17 @@ fn run_interactive_session(config: &Config, resume_pending: bool) -> Result<Inte
             turn_config.host_submission_id = Some(id);
         }
         let editing = edit_target.is_some();
+        let pending_task_prefix = if editing {
+            None
+        } else {
+            drain_pending_task_completion_prefix()
+        };
+        let effective_prompt =
+            inject_completed_task_updates(prompt.as_str(), pending_task_prefix.as_deref());
         let mut replay_edited_history = false;
         let run_result = match run_single_prompt_with_cancellation(
             &turn_config,
-            prompt.as_str(),
+            effective_prompt.as_str(),
         ) {
             Ok(result) => {
                 replay_edited_history = editing;
@@ -932,23 +952,28 @@ fn format_elapsed_duration(duration: Duration) -> String {
 }
 
 fn print_interactive_welcome(config: &Config) -> Result<(), String> {
-    let width = terminal_columns().saturating_sub(4).clamp(30, 72);
+    let width = composer_content_rule_width(terminal_columns()).max(36);
     let use_color = interactive_color_enabled();
+    let bold = if use_color { "\x1b[1m" } else { "" };
+    let dim = if use_color { "\x1b[2;39m" } else { "" };
     let reset = if use_color { INTERACTIVE_RESET } else { "" };
-    let _ = config;
+
     let tagline = tr(Message::InteractiveWelcomeTagline);
-    let help = tr(Message::InteractiveWelcomeHint);
-    let rendered = if use_color {
-        format!(
-            "  {INTERACTIVE_ACCENT}Nola{reset}{INTERACTIVE_DIM}  {tagline}{reset}\n  {INTERACTIVE_DIM}{}{reset}\n\n",
-            truncate_display_width(help, width)
-        )
-    } else {
-        format!(
-            "  Nola  {tagline}\n  {}\n\n",
-            truncate_display_width(help, width)
-        )
-    };
+    let workspace = compact_home_path(&config.project_root.to_string_lossy());
+    let workspace_label = tr(Message::InteractiveWorkingDirLabel);
+
+    let rule = "─".repeat(width);
+    let ws_budget = width
+        .saturating_sub(display_width(workspace_label) + 2)
+        .max(16);
+    let ws_val = truncate_display_path(&workspace, ws_budget);
+    let quick_actions =
+        truncate_display_width("/help · /model · /resume · /attach · @file", width);
+
+    let rendered = format!(
+        "\n  {bold}Nola{reset}  {dim}{}{reset}\n  {dim}{rule}{reset}\n  {dim}{workspace_label}{reset}  {ws_val}\n  {dim}{quick_actions}{reset}\n\n",
+        truncate_display_width(tagline, width.saturating_sub(6)),
+    );
     crate::terminal_ui::commit_history(&rendered);
     Ok(())
 }
@@ -1078,6 +1103,11 @@ fn read_interactive_prompt_line(
     _raw_mode.enable_bracketed_paste()?;
     let mut background_notification_pending = true;
     let mut scheduler_event_cursor = 0_i64;
+    let mut last_rendered_background_jobs = if show_prompt {
+        interactive_running_background_jobs_count(config)
+    } else {
+        0
+    };
 
     loop {
         let effective_footer = interactive_effective_footer(prompt_footer, esc_pending_clear);
@@ -1123,6 +1153,7 @@ fn read_interactive_prompt_line(
             // Notification replay is durable-session behavior. An ephemeral
             // composer must become interactive immediately and must not probe
             // the Store merely because it has an in-memory runtime ID.
+            let mut redrew_prompt = false;
             if config.save_session {
                 if let Ok(notifications) = tools::take_background_task_notifications(
                     &config.allowed_dirs,
@@ -1144,6 +1175,7 @@ fn read_interactive_prompt_line(
                             );
                         }
                         draw_interactive_prompt_area(&line, cursor, effective_footer.as_deref(), config)?;
+                        redrew_prompt = true;
                     }
                 }
             }
@@ -1196,8 +1228,14 @@ fn read_interactive_prompt_line(
                         print_runtime_task_notifications(&passive_notifications)?;
                     }
                     draw_interactive_prompt_area(&line, cursor, effective_footer.as_deref(), config)?;
+                    redrew_prompt = true;
                 }
             }
+            let current_background_jobs = interactive_running_background_jobs_count(config);
+            if !redrew_prompt && current_background_jobs != last_rendered_background_jobs {
+                draw_interactive_prompt_area(&line, cursor, effective_footer.as_deref(), config)?;
+            }
+            last_rendered_background_jobs = current_background_jobs;
             scheduler_event_cursor = scheduler_event_cursor.max(observed_scheduler_cursor);
             background_notification_pending = false;
         }
@@ -1822,6 +1860,143 @@ fn wait_for_interactive_input_or_background(
     }
 }
 
+const MAX_PENDING_TASK_COMPLETIONS: usize = 12;
+const MAX_COMPLETED_TASK_SUMMARY_CHARS: usize = 320;
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct CompletedTaskDigest {
+    task_id: String,
+    agent_type: Option<String>,
+    status: String,
+    summary: String,
+}
+
+#[derive(Debug, Default)]
+struct PendingTaskCompletionInbox {
+    entries: Vec<CompletedTaskDigest>,
+}
+
+impl PendingTaskCompletionInbox {
+    fn push(&mut self, mut digest: CompletedTaskDigest) {
+        digest.summary =
+            compact_task_digest_summary(&digest.summary, MAX_COMPLETED_TASK_SUMMARY_CHARS);
+        if let Some(existing) = self
+            .entries
+            .iter()
+            .position(|entry| entry.task_id == digest.task_id)
+        {
+            self.entries.remove(existing);
+        }
+        self.entries.push(digest);
+        if self.entries.len() > MAX_PENDING_TASK_COMPLETIONS {
+            let overflow = self.entries.len() - MAX_PENDING_TASK_COMPLETIONS;
+            self.entries.drain(0..overflow);
+        }
+    }
+
+    fn clear(&mut self) {
+        self.entries.clear();
+    }
+
+    fn drain_prompt_prefix(&mut self) -> Option<String> {
+        if self.entries.is_empty() {
+            return None;
+        }
+        let drained = std::mem::take(&mut self.entries);
+        let mut lines = Vec::with_capacity(drained.len() + 2);
+        lines.push("[Background task updates]".to_string());
+        for entry in drained {
+            let agent = entry
+                .agent_type
+                .as_deref()
+                .map(str::trim)
+                .filter(|value| !value.is_empty());
+            let meta = match agent {
+                Some(agent_type) => format!("{agent_type}, {}", entry.status),
+                None => entry.status,
+            };
+            if entry.summary.is_empty() {
+                lines.push(format!("- {} ({meta})", entry.task_id));
+            } else {
+                lines.push(format!("- {} ({meta}): {}", entry.task_id, entry.summary));
+            }
+        }
+        lines.push("[/Background task updates]".to_string());
+        Some(lines.join("\n"))
+    }
+}
+
+thread_local! {
+    static PENDING_TASK_COMPLETIONS: std::cell::RefCell<PendingTaskCompletionInbox> =
+        std::cell::RefCell::new(PendingTaskCompletionInbox::default());
+}
+
+fn record_completed_task_digest(digest: CompletedTaskDigest) {
+    PENDING_TASK_COMPLETIONS.with(|inbox| inbox.borrow_mut().push(digest));
+}
+
+fn clear_pending_task_completions() {
+    PENDING_TASK_COMPLETIONS.with(|inbox| inbox.borrow_mut().clear());
+}
+
+fn drain_pending_task_completion_prefix() -> Option<String> {
+    PENDING_TASK_COMPLETIONS.with(|inbox| inbox.borrow_mut().drain_prompt_prefix())
+}
+
+fn compact_task_digest_summary(raw: &str, max_chars: usize) -> String {
+    let collapsed = raw.split_whitespace().collect::<Vec<_>>().join(" ");
+    if collapsed.chars().count() <= max_chars {
+        return collapsed;
+    }
+    let truncated: String = collapsed.chars().take(max_chars.saturating_sub(1)).collect();
+    format!("{truncated}…")
+}
+
+fn inject_completed_task_updates(prompt: &str, prefix: Option<&str>) -> String {
+    match prefix.filter(|value| !value.trim().is_empty()) {
+        Some(block) => format!("{block}\n\n{prompt}"),
+        None => prompt.to_string(),
+    }
+}
+
+fn is_terminal_runtime_task_status(status: &str) -> bool {
+    matches!(status, "completed" | "sealed" | "failed" | "cancelled")
+}
+
+fn runtime_task_queued_for_next_turn_hint() -> &'static str {
+    match i18n::current_language() {
+        i18n::Language::ZhHans => "已记录子代理结果，下一轮对话会自动带给主代理。",
+        i18n::Language::ZhHant => "已記錄子代理結果，下一輪對話會自動帶給主代理。",
+        i18n::Language::De => "Ergebnis des Unteragenten für den nächsten Zug vorgemerkt.",
+        i18n::Language::Es => "Resultado del subagente en cola para el siguiente turno.",
+        i18n::Language::Fr => "Résultat du sous-agent mis en file pour le tour suivant.",
+        i18n::Language::Ja => "サブエージェントの結果を次のターンに引き継ぐよう記録しました。",
+        i18n::Language::Ko => "하위 에이전트 결과를 다음 턴에 자동 전달하도록 기록했습니다.",
+        i18n::Language::Ru => "Результат субагента сохранён для следующего хода.",
+        i18n::Language::En => "Subagent result queued for the next turn.",
+    }
+}
+
+fn runtime_task_completion_summary(
+    notification: &task_runtime::RuntimeTaskNotification,
+) -> String {
+    let stored = crate::store::NolaStore::open_default()
+        .ok()
+        .and_then(|store| store.runtime_task(&notification.id).ok().flatten());
+    if let Some(task) = stored {
+        for candidate in [
+            task.result_summary.as_deref(),
+            task.error.as_deref(),
+            task.progress_summary.as_deref(),
+        ] {
+            if let Some(text) = candidate.map(str::trim).filter(|value| !value.is_empty()) {
+                return compact_task_digest_summary(text, MAX_COMPLETED_TASK_SUMMARY_CHARS);
+            }
+        }
+    }
+    compact_task_digest_summary(&notification.title, MAX_COMPLETED_TASK_SUMMARY_CHARS)
+}
+
 fn print_background_task_notifications(
     notifications: &[tools::BackgroundTaskNotification],
 ) -> io::Result<()> {
@@ -1853,6 +2028,17 @@ fn print_background_task_notifications(
             format!("  {marker}  {label}  {command}  {elapsed}")
         };
         tools::deliver_background_task_notification(notification, || crate::terminal_ui::deliver_history(&text)).map_err(io::Error::other)?;
+        if is_terminal_runtime_task_status(&notification.canonical_state) {
+            record_completed_task_digest(CompletedTaskDigest {
+                task_id: notification.id.clone(),
+                agent_type: Some("bash".to_string()),
+                status: notification.canonical_state.clone(),
+                summary: compact_task_digest_summary(
+                    &notification.command,
+                    MAX_COMPLETED_TASK_SUMMARY_CHARS,
+                ),
+            });
+        }
     }
     io::stdout().flush()
 }
@@ -1864,6 +2050,7 @@ fn print_runtime_task_notifications(
     for notification in notifications {
         let waiting_permission = matches!(notification.status.as_str(), "waiting_permission" | "waiting_input");
         let action = if notification.status == "waiting_input" { "/questions".to_owned() } else { format!("/tasks {}", notification.id) };
+        let terminal = is_terminal_runtime_task_status(&notification.status);
         let success = matches!(notification.status.as_str(), "completed" | "sealed");
         let marker = if waiting_permission {
             "◆"
@@ -1905,8 +2092,28 @@ fn print_runtime_task_notifications(
                 action
             )
         };
-        task_runtime::deliver_runtime_task_notification(notification, || crate::terminal_ui::deliver_history(&text))
-            .map_err(io::Error::other)?;
+        let delivered_text = if terminal {
+            let hint = runtime_task_queued_for_next_turn_hint();
+            if interactive_color_enabled() {
+                format!("{text}\n  {INTERACTIVE_DIM}{hint}{INTERACTIVE_RESET}")
+            } else {
+                format!("{text}\n  {hint}")
+            }
+        } else {
+            text
+        };
+        task_runtime::deliver_runtime_task_notification(notification, || {
+            crate::terminal_ui::deliver_history(&delivered_text)
+        })
+        .map_err(io::Error::other)?;
+        if terminal {
+            record_completed_task_digest(CompletedTaskDigest {
+                task_id: notification.id.clone(),
+                agent_type: notification.agent_type.clone(),
+                status: notification.status.clone(),
+                summary: runtime_task_completion_summary(notification),
+            });
+        }
     }
     io::stdout().flush()
 }
@@ -2092,6 +2299,84 @@ fn draw_interactive_prompt_area(
     )
 }
 
+const COMPOSER_TRUE_DIM: &str = "\x1b[2;39m";
+const COMPOSER_CHEVRON_ACCENT: &str = "\x1b[36m";
+const COMPOSER_CHEVRON_PREFIX: &str = "  ❯ ";
+
+fn composer_content_rule_width(columns: usize) -> usize {
+    columns.saturating_sub(2).max(1).min(120).saturating_sub(2).max(1)
+}
+
+fn composer_hairline(rule_width: usize, mode_pill: Option<&str>, color: bool) -> String {
+    let dim = if color { COMPOSER_TRUE_DIM } else { "" };
+    let accent = if color { COMPOSER_CHEVRON_ACCENT } else { "" };
+    let reset = if color { INTERACTIVE_RESET } else { "" };
+    if let Some(pill) = mode_pill {
+        let pill_w = display_width(pill);
+        if rule_width > pill_w + 4 {
+            let tail = "─".repeat(rule_width.saturating_sub(pill_w + 3));
+            return format!("  {dim}─ {reset}{accent}{pill}{reset}{dim} {tail}{reset}");
+        }
+    }
+    let rule = "─".repeat(rule_width);
+    format!("  {dim}{rule}{reset}")
+}
+
+fn framed_composer_input_line(
+    text: &str,
+    is_placeholder: bool,
+    is_first_line: bool,
+    prefix: &str,
+    columns: usize,
+    rule_width: usize,
+    color: bool,
+) -> String {
+    let line_width = columns.saturating_sub(1).max(1);
+    let prefix_width = display_width(prefix);
+    let visible_line = truncate_display_width_tail(text, line_width.saturating_sub(prefix_width));
+    let use_placeholder = is_placeholder && visible_line.is_empty();
+    let purpose = COMPOSER_PURPOSE.with(Cell::get);
+    let visible = if use_placeholder {
+        if purpose == ComposerPurpose::Goal {
+            ui_text(UiText::GoalPlaceholder)
+        } else {
+            tr(Message::InteractiveInputPlaceholder)
+        }
+    } else {
+        visible_line.as_str()
+    };
+
+    let dim = if color { COMPOSER_TRUE_DIM } else { "" };
+    let accent = if color { COMPOSER_CHEVRON_ACCENT } else { "" };
+    let reset = if color { INTERACTIVE_RESET } else { "" };
+
+    let styled_prefix = if is_first_line && prefix == COMPOSER_CHEVRON_PREFIX {
+        format!("  {accent}❯{reset} ")
+    } else {
+        prefix.to_string()
+    };
+
+    if use_placeholder {
+        let target_right = 2 + rule_width;
+        let left_width = prefix_width.saturating_add(display_width(visible));
+        let right_hint = if columns >= 50 && purpose == ComposerPurpose::Chat {
+            Some("/help · @file")
+        } else {
+            None
+        };
+        if let Some(hint) = right_hint {
+            let hint_width = display_width(hint);
+            if left_width + 2 + hint_width <= target_right {
+                let gap = " ".repeat(target_right - left_width - hint_width);
+                return format!("{styled_prefix}{dim}{visible}{gap}{hint}{reset}");
+            }
+        }
+        return format!("{styled_prefix}{dim}{visible}{reset}");
+    }
+
+    format!("{styled_prefix}{visible}")
+}
+
 fn draw_composer_frame(
     line: &str,
     cursor: usize,
@@ -2099,16 +2384,17 @@ fn draw_composer_frame(
     completion_line: Option<&str>,
 ) -> io::Result<()> {
     interaction::update_interactive_composer(line, cursor);
+    let (terminal_columns_u16, terminal_rows) = crossterm::terminal::size().unwrap_or((80, 24));
+    let columns = usize::from(terminal_columns_u16).max(1);
+    let rule_width = composer_content_rule_width(columns);
+    let color = interactive_color_enabled();
+
     let input_line = composer_input_line(line, cursor);
     let (cursor_row, cursor_col) = composer_cursor_position(line, cursor);
-    let mut frame_lines = input_line
-        .lines()
-        .map(|value| value.trim_end_matches('\r').to_string())
-        .collect::<Vec<_>>();
-    if frame_lines.is_empty() {
-        frame_lines.push(String::new());
-    }
-    crate::terminal_ui::set_footer(footer.unwrap_or_default());
+
+    let mut frame_lines: Vec<String> = Vec::new();
+    // Anchor SlashMenu / @ mention popups above the composer's top hairline so
+    // the input box never jumps vertically while filtering.
     if let Some(completion_line) = completion_line {
         frame_lines.extend(
             completion_line
@@ -2117,16 +2403,38 @@ fn draw_composer_frame(
         );
     }
 
-    let (terminal_columns, terminal_rows) = crossterm::terminal::size().unwrap_or((80, 24));
+    let mode_pill = match COMPOSER_PURPOSE.with(Cell::get) {
+        ComposerPurpose::Chat => None,
+        ComposerPurpose::Goal => Some("goal"),
+        ComposerPurpose::Edit => Some("edit"),
+    };
+    if completion_line.is_none() || mode_pill.is_some() {
+        frame_lines.push(composer_hairline(rule_width, mode_pill, color));
+    }
+    let input_start_row = frame_lines.len();
+
+    let mut input_rows = input_line
+        .lines()
+        .map(|value| value.trim_end_matches('\r').to_string())
+        .collect::<Vec<_>>();
+    if input_rows.is_empty() {
+        input_rows.push(String::new());
+    }
+    frame_lines.extend(input_rows);
+    frame_lines.push(composer_hairline(rule_width, None, color));
+
+    crate::terminal_ui::set_footer(footer.unwrap_or_default());
+
+    let adjusted_cursor_row = input_start_row.saturating_add(cursor_row);
     let frame_rows = frame_lines.len().min(usize::from(terminal_rows.max(1)));
     let absolute_cursor_column = (cursor_col.saturating_add(1) as u16)
-        .min(terminal_columns.max(1));
+        .min(terminal_columns_u16.max(1));
     crate::terminal_ui::present_idle_frame(
         frame_lines,
-        cursor_row,
+        adjusted_cursor_row,
         absolute_cursor_column,
     );
-    INTERACTIVE_COMPOSER_CURSOR_ROW.with(|row| row.set(cursor_row));
+    INTERACTIVE_COMPOSER_CURSOR_ROW.with(|row| row.set(adjusted_cursor_row));
     INTERACTIVE_COMPOSER_FRAME_ROWS.with(|rows| rows.set(frame_rows));
     Ok(())
 }
@@ -2164,28 +2472,37 @@ fn clear_interactive_prompt_area(_footer: Option<&str>) -> io::Result<()> {
 }
 
 fn composer_input_line(line: &str, cursor: usize) -> String {
-    let line_width = terminal_columns().saturating_sub(1).max(1);
-    let prefix = if line_width > display_width(INTERACTIVE_PROMPT_PREFIX) {
-        INTERACTIVE_PROMPT_PREFIX
+    let columns = terminal_columns();
+    let line_width = columns.saturating_sub(1).max(1);
+    let rule_width = composer_content_rule_width(columns);
+    let prefix = if line_width > display_width(COMPOSER_CHEVRON_PREFIX) {
+        COMPOSER_CHEVRON_PREFIX
     } else {
         ""
     };
     let input_width = line_width.saturating_sub(display_width(prefix));
     let (visible_lines, _cursor_row, _cursor_col) =
         composer_input_multiline(line, cursor, input_width, prefix);
-    // 用 \n 连接多行，每行用 interactive_input_bar 渲染
     let continuation_prefix = " ".repeat(display_width(prefix));
+    let color = interactive_color_enabled();
     visible_lines
         .iter()
         .enumerate()
         .map(|(i, (text, is_placeholder))| {
-            let clear = i == 0;
             let row_prefix = if i == 0 {
                 prefix
             } else {
                 continuation_prefix.as_str()
             };
-            interactive_input_bar_line(text, *is_placeholder, clear, row_prefix, line_width)
+            framed_composer_input_line(
+                text,
+                *is_placeholder,
+                i == 0,
+                row_prefix,
+                columns,
+                rule_width,
+                color,
+            )
         })
         .collect::<Vec<_>>()
         .join("\n\r")
@@ -2193,8 +2510,8 @@ fn composer_input_line(line: &str, cursor: usize) -> String {
 
 fn composer_cursor_position(line: &str, cursor: usize) -> (usize, usize) {
     let line_width = terminal_columns().saturating_sub(1).max(1);
-    let prefix = if line_width > display_width(INTERACTIVE_PROMPT_PREFIX) {
-        INTERACTIVE_PROMPT_PREFIX
+    let prefix = if line_width > display_width(COMPOSER_CHEVRON_PREFIX) {
+        COMPOSER_CHEVRON_PREFIX
     } else {
         ""
     };
@@ -2424,37 +2741,81 @@ fn composer_completion_line(line: &str, cursor: usize, config: &Config) -> Optio
     if trimmed.starts_with('/') || COMPOSER_PURPOSE.with(Cell::get) == ComposerPurpose::Goal {
         return slash;
     }
-    let mut parts = if let Some((_, _, prefix)) = active_at_file_token(line, cursor) {
+    let (prefix, selected, items) = if let Some((_, _, prefix)) = active_at_file_token(line, cursor) {
         let selected = mention_menu_focus(line, cursor)?;
-        let mut items = interactive_mention_candidates(config, prefix)
+        let items = interactive_mention_candidates(config, prefix)
             .into_iter()
             .map(|(_, label)| label)
             .collect::<Vec<_>>();
-        if selected < items.len() {
-            items[selected].insert_str(0, "› ");
-            items.drain(..selected.saturating_sub(2));
-        }
-        items
+        (prefix, selected, items)
     } else {
         return None;
     };
-    if parts.is_empty() {
+    if items.is_empty() {
         return None;
     }
-    let width = terminal_columns().saturating_sub(3).max(1);
-    if parts.len() > 4 {
-        parts.truncate(4);
+    let count = items.len().min(5);
+    let clamped_selected = selected.min(items.len().saturating_sub(1));
+    let start = clamped_selected
+        .saturating_sub(count / 2)
+        .min(items.len().saturating_sub(count));
+    let columns = terminal_columns();
+    let max_box_width = composer_content_rule_width(columns);
+    let color = interactive_color_enabled();
+    let dim = if color { COMPOSER_TRUE_DIM } else { "" };
+    let accent = if color { COMPOSER_CHEVRON_ACCENT } else { "" };
+    let bold = if color { "\x1b[1m" } else { "" };
+    let reset = if color { INTERACTIVE_RESET } else { "" };
+
+    if max_box_width < 12 {
+        let mut rows = Vec::new();
+        for (idx, label) in items.iter().enumerate().skip(start).take(count) {
+            let marker = if idx == clamped_selected { "›" } else { " " };
+            rows.push(truncate_display_width(
+                &format!("  {marker} {label}"),
+                columns.saturating_sub(1),
+            ));
+        }
+        return Some(rows.join("\n"));
     }
-    let hint = ui_text(UiText::MentionPickKeys);
-    let text = format!("{hint}  {}", parts.join("   "));
-    let text = truncate_display_width(&text, width);
-    if interactive_color_enabled() {
-        Some(format!(
-            "{INTERACTIVE_RESET}\x1b[2K  {INTERACTIVE_DIM}{text}{INTERACTIVE_RESET}"
-        ))
+
+    let inner_width = max_box_width.saturating_sub(4);
+    let mut rows = Vec::with_capacity(count + 2);
+
+    let title = if prefix.is_empty() {
+        "@".to_string()
     } else {
-        Some(format!("\x1b[2K  {text}"))
+        format!("@{prefix}")
+    };
+    let title = truncate_display_width(&title, inner_width.saturating_sub(2));
+    let title_w = display_width(&title);
+    let top_fill = "─".repeat((inner_width + 2).saturating_sub(title_w + 3));
+    rows.push(format!("  {dim}╭─ {title} {top_fill}╮{reset}"));
+
+    for (idx, label) in items.iter().enumerate().skip(start).take(count) {
+        let is_selected = idx == clamped_selected;
+        let visible = truncate_display_width(label, inner_width.saturating_sub(2));
+        let pad = " ".repeat(inner_width.saturating_sub(2 + display_width(&visible)));
+        let body = if is_selected {
+            format!("{accent}›{reset} {bold}{visible}{reset}{pad}")
+        } else {
+            format!("  {visible}{pad}")
+        };
+        rows.push(format!("  {dim}│{reset} {body} {dim}│{reset}"));
     }
+
+    let hint_full = ui_text(UiText::MentionPickKeys);
+    let hint_src = if display_width(hint_full) + 2 <= inner_width {
+        hint_full
+    } else {
+        "↑↓ · Tab · Enter · Esc"
+    };
+    let hint = truncate_display_width(hint_src, inner_width.saturating_sub(2));
+    let hint_w = display_width(&hint);
+    let bot_fill = "─".repeat((inner_width + 2).saturating_sub(hint_w + 3));
+    rows.push(format!("  {dim}╰─ {hint} {bot_fill}╯{reset}"));
+
+    Some(rows.join("\n"))
 }
 
 #[allow(dead_code)]
@@ -2600,11 +2961,7 @@ fn interactive_network_policy_text(policy: &str) -> &str {
     }
 }
 
-fn interactive_footer_with_background_status(
-    footer: Option<&str>,
-    config: &Config,
-) -> Option<String> {
-    let footer = footer?;
+fn interactive_running_background_jobs_count(config: &Config) -> usize {
     let bash_running = tools::background_bash_task_summaries(
         &config.allowed_dirs,
         config.session_id.as_deref(),
@@ -2622,7 +2979,15 @@ fn interactive_footer_with_background_status(
         .host_invocation_request()
         .map(|req| task_runtime::running_task_count(&req))
         .unwrap_or(0);
-    let running = bash_running.max(runtime_running);
+    bash_running.max(runtime_running)
+}
+
+fn interactive_footer_with_background_status(
+    footer: Option<&str>,
+    config: &Config,
+) -> Option<String> {
+    let footer = footer?;
+    let running = interactive_running_background_jobs_count(config);
     let width = terminal_columns().saturating_sub(2).max(1);
     Some(format_interactive_background_footer(footer, running, width))
 }
@@ -2652,7 +3017,8 @@ fn interactive_prompt_footer_line(
     session_id: Option<&str>,
     context_usage: Option<nola_core::agent::context_window::ContextUsageSnapshot>,
 ) -> Option<String> {
-    let width = terminal_columns().saturating_sub(2).max(1);
+    let columns = terminal_columns();
+    let width = composer_content_rule_width(columns);
     let model = config.model.trim();
     let model = if model.is_empty() {
         tr(Message::InteractiveDefaultModelLabel)
@@ -2685,50 +3051,83 @@ fn interactive_prompt_footer_line(
             (configured_window > 0)
                 .then(|| agent::format_context_usage_footer(0, configured_window))
         })
-        .unwrap_or_else(|| format!("{} 0% · 0/—", tr(Message::InteractiveContextLabel)));
+        .unwrap_or_else(|| format!("{} 0%", tr(Message::InteractiveContextLabel)));
     let perm = PermissionLevel::from_config(config);
     let perm_label = compact_permission_label(perm.display());
-    let mut primary_parts = Vec::new();
-    primary_parts.push(context_info);
     let executor =
         crate::external_executor::execution_backend_display_name(&config.execution_backend);
-    primary_parts.push(truncate_display_width(model, width.min(28)));
+    let task_line = config
+        .save_session
+        .then(|| task_runtime::core_task_footer_summary(session_id))
+        .flatten();
+
+    let mut left_parts = vec![
+        truncate_display_width(model, width.min(28)),
+        perm_label.to_string(),
+    ];
     if executor.trim() != "Nola" {
-        primary_parts.push(format!(
+        left_parts.push(format!(
             "{}: {executor}",
             tr(Message::InteractiveExecutorLabel)
         ));
     }
-    if !config.debug_mode {
-        primary_parts.push(truncate_display_width(&params, width.min(32)));
+    if let Some(task_summary) = task_line.as_deref() {
+        left_parts.push(truncate_display_width(task_summary, width.min(32)));
     }
-    primary_parts.push(format!("[{perm_label}]"));
+
+    let mut right_parts = Vec::new();
     if let Some(cache) = context_usage.and_then(|usage| usage.cache_usage) {
-        let rate = cache.hit_rate_bps.map(|bps| format!("{:.1}%", f64::from(bps) / 100.0)).unwrap_or_else(|| "—".into());
-        let scope = if i18n::current_language() == i18n::Language::ZhHans { "本次请求" } else { "Latest request" };
-        primary_parts.insert(1.min(primary_parts.len()), format!("{scope} {} {rate}", ui_text(UiText::CacheHitRate)));
+        let rate = cache
+            .hit_rate_bps
+            .map(|bps| format!("{:.1}%", f64::from(bps) / 100.0))
+            .unwrap_or_else(|| "—".into());
+        let scope = if i18n::current_language() == i18n::Language::ZhHans {
+            "本次请求"
+        } else {
+            "Latest request"
+        };
+        right_parts.push(format!("{scope} {} {rate}", ui_text(UiText::CacheHitRate)));
     }
-    // Keep model and permission on a stable row even after a terminal resize.
-    // Context and optional generation diagnostics use their own row.
-    let primary = {
-        let safety = format!("[{perm_label}]");
-        let model_width = width.saturating_sub(display_width(&safety) + 3);
-        let model_part = truncate_display_width(model, width.min(28));
-        let details = primary_parts.iter().filter(|part| **part != safety && **part != model_part)
-            .cloned().collect::<Vec<_>>().join(" · ");
-        format!("{} · {safety}\n{}", truncate_display_width(model, model_width),
-            truncate_display_width_middle(&details, width))
+    right_parts.push(context_info);
+
+    let left = left_parts.join(" · ");
+    let right = right_parts.join(" · ");
+    let left_w = display_width(&left);
+    let right_w = display_width(&right);
+    let primary_plain = if left_w + 2 + right_w <= width {
+        let gap = " ".repeat(width - left_w - right_w);
+        format!("{left}{gap}{right}")
+    } else {
+        let combined = format!("{left} · {right}");
+        if display_width(&combined) <= width {
+            combined
+        } else {
+            // Shrink model first so permission, executor, cache, and context remain readable.
+            let mut compact_left = left_parts.clone();
+            let non_model_w = left_w.saturating_sub(display_width(&compact_left[0]));
+            let model_budget = width
+                .saturating_sub(non_model_w + right_w + 3)
+                .clamp(8, 28);
+            compact_left[0] = truncate_display_width(model, model_budget);
+            let compact_left_str = compact_left.join(" · ");
+            let compact_w = display_width(&compact_left_str);
+            if compact_w + 2 + right_w <= width {
+                let gap = " ".repeat(width - compact_w - right_w);
+                format!("{compact_left_str}{gap}{right}")
+            } else {
+                truncate_display_width_middle(&format!("{compact_left_str} · {right}"), width)
+            }
+        }
     };
-    let task_line = config
-        .save_session
-        .then(|| task_runtime::core_task_footer_summary(session_id))
-        .flatten()
-        .map(|line| truncate_display_width(&line, width));
+
+    let use_color = interactive_color_enabled();
+    let primary = if use_color {
+        format!("{COMPOSER_TRUE_DIM}{primary_plain}{INTERACTIVE_RESET}")
+    } else {
+        primary_plain
+    };
     if !config.debug_mode {
-        return Some(match task_line {
-            Some(task_line) => format!("{primary}\n{task_line}"),
-            None => primary,
-        });
+        return Some(primary);
     }
 
     let provider = interactive_provider_label(config);
@@ -2742,7 +3141,7 @@ fn interactive_prompt_footer_line(
         .save_session
         .then(|| session_id.and_then(restored_agent_prompt_cache_diagnostic))
         .flatten();
-    let diagnostics = format_interactive_footer_diagnostics(
+    let diagnostics_plain = format_interactive_footer_diagnostics(
         provider_label,
         &provider,
         endpoint_label,
@@ -2753,10 +3152,12 @@ fn interactive_prompt_footer_line(
         prompt_cache_diagnostic.as_ref(),
         width,
     );
-    Some(match task_line {
-        Some(task_line) => format!("{primary}\n{task_line}\n{diagnostics}"),
-        None => format!("{primary}\n{diagnostics}"),
-    })
+    let diagnostics = if use_color {
+        format!("{COMPOSER_TRUE_DIM}{diagnostics_plain}{INTERACTIVE_RESET}")
+    } else {
+        diagnostics_plain
+    };
+    Some(format!("{primary}\n{diagnostics}"))
 }
 
 fn compact_permission_label(label: &str) -> &str {
@@ -3175,8 +3576,8 @@ fn normalize_interactive_command(command: &str) -> Option<&'static str> {
         "/model" | "/models" | "/m" => "/model",
         "/executor" | "/exec" => "/executor",
         "/debug" | "/d" => "/debug",
-        "/allow" | "/permissions" | "/a" => "/allow",
-        "/sources" | "/resources" | "/data" => "/sources",
+        "/allow" | "/a" => "/allow",
+        "/sources" | "/data" => "/sources",
         "/attach" => "/attach",
         "/edit" => "/edit",
         "/cancel-edit" => "/cancel-edit",
@@ -3188,7 +3589,6 @@ fn normalize_interactive_command(command: &str) -> Option<&'static str> {
         "/clear" | "/cls" => "/clear",
         "/plan" | "/p" => "/plan",
         "/agent" => "/agent",
-        "/experts" => "/experts",
         "/room" => "/room",
         "/work" | "/w" => "/work",
         "/recover" => "/recover",
@@ -3205,7 +3605,7 @@ fn normalize_interactive_command(command: &str) -> Option<&'static str> {
         "/continue" | "/c" => "/continue",
         "/history" | "/hist" => "/history",
         "/status" | "/s" | "/st" => "/status",
-        "/exit" | "/quit" | "/q" | "/e" => "/exit",
+        "/exit" | "/q" | "/e" => "/exit",
         _ => return None,
     })
 }
@@ -4606,16 +5006,6 @@ fn handle_interactive_slash_command(
             );
             Ok(SlashCommandResult::SessionReset)
         }
-        "/experts" => {
-            terminal_notice!("{}", interactive_layer_rule(Some(ui_text(UiText::Agents))));
-            for (name, description) in
-                task_runtime::available_agent_profiles(&config.host_invocation_request()?)
-            {
-                terminal_notice!("  {name:<12} {description}");
-            }
-            terminal_notice!("  {}", ui_text(UiText::AgentUsage));
-            Ok(SlashCommandResult::Handled)
-        }
         "/agent" => {
             let Some(agent_type) = parts.next() else {
                 terminal_notice!("{}", interactive_layer_rule(Some(ui_text(UiText::Agents))));
@@ -5512,5 +5902,76 @@ mod goal_work_control_tests {
             goal_work_control_command("cancel", 42),
             Some(GoalRuntimeCommand::Cancel { now_epoch_ms: 42 })
         ));
+    }
+}
+
+#[cfg(test)]
+mod completed_task_digest_tests {
+    use super::{
+        clear_pending_task_completions, drain_pending_task_completion_prefix,
+        inject_completed_task_updates, record_completed_task_digest, CompletedTaskDigest,
+        MAX_PENDING_TASK_COMPLETIONS,
+    };
+
+    #[test]
+    fn completed_task_digest_deduplicates_caps_formats_and_clears() {
+        clear_pending_task_completions();
+
+        for i in 1..=14 {
+            record_completed_task_digest(CompletedTaskDigest {
+                task_id: format!("task-{i}"),
+                agent_type: Some("research".to_string()),
+                status: "completed".to_string(),
+                summary: format!("Finished step {i}"),
+            });
+        }
+        // Updating an existing task_id should deduplicate instead of duplicating.
+        record_completed_task_digest(CompletedTaskDigest {
+            task_id: "task-14".to_string(),
+            agent_type: Some("research".to_string()),
+            status: "sealed".to_string(),
+            summary: "Final   updated\nresult 14".to_string(),
+        });
+
+        let prefix = drain_pending_task_completion_prefix().expect("expected queued updates");
+        assert!(prefix.starts_with("[Background task updates]\n"));
+        assert!(prefix.ends_with("\n[/Background task updates]"));
+        let item_lines: Vec<&str> = prefix
+            .lines()
+            .filter(|line| line.starts_with("- "))
+            .collect();
+        assert_eq!(item_lines.len(), MAX_PENDING_TASK_COMPLETIONS);
+        assert!(!prefix.contains("- task-1 "));
+        assert!(!prefix.contains("- task-2 "));
+        assert!(prefix.contains("- task-3 (research, completed): Finished step 3"));
+        assert_eq!(
+            item_lines
+                .iter()
+                .filter(|line| line.starts_with("- task-14 "))
+                .count(),
+            1
+        );
+        assert!(prefix.contains("- task-14 (research, sealed): Final updated result 14"));
+
+        let effective = inject_completed_task_updates("Continue with the summary", Some(&prefix));
+        assert!(effective.starts_with("[Background task updates]\n"));
+        assert!(effective.ends_with("\n\nContinue with the summary"));
+
+        // Draining empties the inbox.
+        assert!(drain_pending_task_completion_prefix().is_none());
+
+        // Session switch / reset clears queued digests without injecting them.
+        record_completed_task_digest(CompletedTaskDigest {
+            task_id: "task-stale".to_string(),
+            agent_type: None,
+            status: "failed".to_string(),
+            summary: "Old session failure".to_string(),
+        });
+        clear_pending_task_completions();
+        assert!(drain_pending_task_completion_prefix().is_none());
+        assert_eq!(
+            inject_completed_task_updates("Fresh prompt", None),
+            "Fresh prompt"
+        );
     }
 }

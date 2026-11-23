@@ -222,29 +222,103 @@ impl SlashMenu {
     }
 
     fn render(&self, width: usize, height: usize) -> Option<String> {
+        use unicode_width::UnicodeWidthStr;
+
         if !self.is_open() { return None; }
-        let count = self.entries.len().min(height.saturating_sub(5).clamp(1, 5));
+        let count = self.entries.len().min(height.saturating_sub(6).clamp(1, 5));
         let selected = self.selected.unwrap_or(0);
         let start = selected.saturating_sub(count / 2).min(self.entries.len() - count);
+        let visible_entries = &self.entries[start..start + count];
         let descriptions = interactive_help_rows();
-        let mut rows = Vec::new();
-        for (index, item) in self.entries.iter().enumerate().skip(start).take(count) {
-            let marker = if self.selected == Some(index) { "›" } else { " " };
-            let label = item.label.as_deref().unwrap_or(&item.name);
-            let mut row = format!("  {marker} {label}");
-            if let Some((_, detail)) = descriptions.iter().find(|(usage, _)| usage.split_whitespace().next() == Some(item.name.as_str())) {
-                if display_width(&row) + 6 < width {
-                    row.push_str("  ");
-                    row.push_str(detail);
-                }
+
+        let max_box_width = composer_content_rule_width(width);
+        let color = interactive_color_enabled();
+        let dim = if color { "\x1b[2;39m" } else { "" };
+        let accent = if color { "\x1b[36m" } else { "" };
+        let bold = if color { "\x1b[1m" } else { "" };
+        let reset = if color { INTERACTIVE_RESET } else { "" };
+
+        if max_box_width < 12 {
+            let mut rows = Vec::new();
+            for (offset, item) in visible_entries.iter().enumerate() {
+                let index = start + offset;
+                let marker = if self.selected == Some(index) { "›" } else { " " };
+                let label = item.label.as_deref().unwrap_or(&item.name);
+                rows.push(truncate_display_width(&format!("  {marker} {label}"), width));
             }
-            rows.push(truncate_display_width(&row, width));
+            return Some(rows.join("\n"));
         }
+
+        let inner_width = max_box_width.saturating_sub(4);
+        let max_cmd_width = visible_entries
+            .iter()
+            .map(|item| UnicodeWidthStr::width(item.label.as_deref().unwrap_or(&item.name)))
+            .max()
+            .unwrap_or(10);
+        let cmd_col_width = max_cmd_width
+            .clamp(10, 18)
+            .min(inner_width.saturating_sub(2));
+
+        let mut rows = Vec::with_capacity(count + 2);
+
+        let title_raw = self.query.as_deref().unwrap_or("/");
+        let title = truncate_display_width(title_raw, inner_width.saturating_sub(2));
+        let title_w = UnicodeWidthStr::width(title.as_str());
+        let top_fill = "─".repeat((inner_width + 2).saturating_sub(title_w + 3));
+        rows.push(format!("  {dim}╭─ {title} {top_fill}╮{reset}"));
+
+        for (offset, item) in visible_entries.iter().enumerate() {
+            let index = start + offset;
+            let is_selected = self.selected == Some(index);
+            let raw_label = item.label.as_deref().unwrap_or(&item.name);
+            let label = truncate_display_width(raw_label, cmd_col_width);
+            let label_w = UnicodeWidthStr::width(label.as_str());
+            let cmd_pad = " ".repeat(cmd_col_width.saturating_sub(label_w));
+            let cmd_cell = if is_selected {
+                format!("{accent}›{reset} {bold}{label}{reset}{cmd_pad}")
+            } else {
+                format!("  {label}{cmd_pad}")
+            };
+
+            let used = 2 + cmd_col_width;
+            let detail = descriptions
+                .iter()
+                .find(|(usage, _)| usage.split_whitespace().next() == Some(item.name.as_str()))
+                .map(|(_, detail)| detail.as_str());
+            let body = if let Some(detail) = detail {
+                let desc_avail = inner_width.saturating_sub(used + 2);
+                if desc_avail >= 4 {
+                    let desc = truncate_display_width(detail, desc_avail);
+                    let desc_w = UnicodeWidthStr::width(desc.as_str());
+                    let trail = " ".repeat(inner_width.saturating_sub(used + 2 + desc_w));
+                    format!("{cmd_cell}  {dim}{desc}{reset}{trail}")
+                } else {
+                    let trail = " ".repeat(inner_width.saturating_sub(used));
+                    format!("{cmd_cell}{trail}")
+                }
+            } else {
+                let trail = " ".repeat(inner_width.saturating_sub(used));
+                format!("{cmd_cell}{trail}")
+            };
+            rows.push(format!("  {dim}│{reset} {body} {dim}│{reset}"));
+        }
+
         if height > 6 {
-            let hint = format!("  {}", ui_text(UiText::SlashMenuKeys));
-            let hint = if display_width(&hint) <= width { &hint } else { "  ↑↓ · Tab · Enter · Esc" };
-            rows.push(truncate_display_width(hint, width));
+            let hint_full = ui_text(UiText::SlashMenuKeys);
+            let hint_src = if UnicodeWidthStr::width(hint_full) + 2 <= inner_width {
+                hint_full
+            } else {
+                "↑↓ · Tab · Enter · Esc"
+            };
+            let hint = truncate_display_width(hint_src, inner_width.saturating_sub(2));
+            let hint_w = UnicodeWidthStr::width(hint.as_str());
+            let bot_fill = "─".repeat((inner_width + 2).saturating_sub(hint_w + 3));
+            rows.push(format!("  {dim}╰─ {hint} {bot_fill}╯{reset}"));
+        } else {
+            let bot_fill = "─".repeat(inner_width + 2);
+            rows.push(format!("  {dim}╰{bot_fill}╯{reset}"));
         }
+
         Some(rows.join("\n"))
     }
 }

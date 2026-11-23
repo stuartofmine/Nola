@@ -60,10 +60,44 @@ impl ActivityState {
     fn render(&self, width: usize) -> String {
         // Status can include model/tool text. Keep it to one safe, bounded row
         // so updates cannot wrap into the transcript or disturb the composer.
-        let text = format!("  {} {}", self.glyph, self.detail);
-        let text: String = text.chars().map(|ch| if ch == '\n' || ch == '\r' || ch == '\t' { ' ' } else { ch }).collect();
-        let text = strip_ansi(&safe_styled_line(&text));
-        truncate_display(&text, width)
+        let sanitize = |raw: &str| -> String {
+            let flat: String = raw
+                .chars()
+                .map(|ch| if ch == '\n' || ch == '\r' || ch == '\t' { ' ' } else { ch })
+                .collect();
+            strip_ansi(&safe_styled_line(&flat))
+        };
+        let glyph = sanitize(&self.glyph);
+        let detail = sanitize(&self.detail);
+        if !crate::interactive_color_enabled() {
+            let plain = format!("    {glyph} {detail}");
+            return truncate_display(&plain, width);
+        }
+        let is_elapsed_segment = |segment: &str| -> bool {
+            let trimmed = segment.trim();
+            !trimmed.is_empty()
+                && trimmed.ends_with('s')
+                && trimmed.chars().any(|ch| ch.is_ascii_digit())
+                && trimmed
+                    .chars()
+                    .all(|ch| ch.is_ascii_digit() || matches!(ch, 's' | 'm' | 'h' | '.' | ' '))
+        };
+        let styled = if let Some((first, rest)) = detail.split_once(" · ") {
+            if is_elapsed_segment(first) {
+                format!("    \x1b[36m{glyph}\x1b[0m \x1b[2;39m{first} ·\x1b[0m \x1b[39m{rest}\x1b[0m")
+            } else if let Some((head, last)) = detail.rsplit_once(" · ") {
+                if is_elapsed_segment(last) {
+                    format!("    \x1b[36m{glyph}\x1b[0m \x1b[39m{head}\x1b[0m \x1b[2;39m· {last}\x1b[0m")
+                } else {
+                    format!("    \x1b[36m{glyph}\x1b[0m \x1b[39m{detail}\x1b[0m")
+                }
+            } else {
+                format!("    \x1b[36m{glyph}\x1b[0m \x1b[39m{detail}\x1b[0m")
+            }
+        } else {
+            format!("    \x1b[36m{glyph}\x1b[0m \x1b[39m{detail}\x1b[0m")
+        };
+        truncate_styled_display(&styled, width)
     }
 }
 
@@ -1302,7 +1336,7 @@ fn render_header_row(state: &UiState, columns: u16) -> String {
     let badge = if state.history_scroll > 0 {
         format!("↑ {}", state.history_scroll)
     } else {
-        "LIVE".to_string()
+        "● LIVE".to_string()
     };
     let badge_width = UnicodeWidthStr::width(badge.as_str());
     let title = strip_ansi(&safe_styled_line(&state.header_title));
@@ -1311,34 +1345,35 @@ fn render_header_row(state: &UiState, columns: u16) -> String {
 
     let badge_styled = if color {
         if state.history_scroll > 0 {
-            format!("\x1b[1;33m{badge}\x1b[0m")
+            format!("\x1b[33m{badge}\x1b[0m")
         } else {
-            format!("\x1b[2;32m{badge}\x1b[0m")
+            format!("\x1b[2;39m{badge}\x1b[0m")
         }
     } else {
         badge
     };
 
-    if usable <= badge_width + 2 {
+    let right_edge = usable.saturating_sub(1).max(badge_width + 2);
+    if right_edge <= badge_width + 2 {
         return truncate_styled_display(&badge_styled, usable);
     }
 
-    let left_budget = usable.saturating_sub(badge_width + 2);
+    let left_budget = right_edge.saturating_sub(badge_width + 2);
     let left_plain = if detail.is_empty() {
-        format!(" {title}")
+        format!("  {title}")
     } else {
-        format!(" {title} · {detail}")
+        format!("  {title} · {detail}")
     };
     let left_truncated = truncate_display(&left_plain, left_budget);
     let left_width = UnicodeWidthStr::width(left_truncated.as_str());
-    let gap = usable.saturating_sub(left_width + badge_width).max(1);
+    let gap = right_edge.saturating_sub(left_width + badge_width).max(1);
     let left_styled = if color {
-        let title_prefix = format!(" {title}");
+        let title_prefix = format!("  {title}");
         if !detail.is_empty() && left_truncated.starts_with(&title_prefix) {
             let rest = &left_truncated[title_prefix.len()..];
-            format!("\x1b[1m{title_prefix}\x1b[0m\x1b[2m{rest}\x1b[0m")
+            format!("\x1b[1;39m{title_prefix}\x1b[0m\x1b[2;39m{rest}\x1b[0m")
         } else {
-            format!("\x1b[1m{left_truncated}\x1b[0m")
+            format!("\x1b[1;39m{left_truncated}\x1b[0m")
         }
     } else {
         left_truncated
@@ -1352,12 +1387,29 @@ fn format_transcript_row_with_scrollbar(line: &str, columns: u16, is_thumb: bool
     let clipped = truncate_styled_display(&safe_styled_line(line), content_max);
     let visible_width = UnicodeWidthStr::width(strip_ansi(&clipped).as_str());
     let padding = usable.saturating_sub(1).saturating_sub(visible_width);
-    let glyph = if is_thumb { "┃" } else { "│" };
+    let (glyph, glyph_style) = if is_thumb {
+        ("┃", "\x1b[39m")
+    } else {
+        ("│", "\x1b[2;39m")
+    };
     if crate::interactive_color_enabled() {
-        format!("{clipped}\x1b[0m{}\x1b[2m{glyph}\x1b[0m", " ".repeat(padding))
+        format!("{clipped}\x1b[0m{}{glyph_style}{glyph}\x1b[0m", " ".repeat(padding))
     } else {
         format!("{clipped}{}{glyph}", " ".repeat(padding))
     }
+}
+
+fn style_plan_progress_bullets(text: &str) -> String {
+    let mut out = String::with_capacity(text.len() + 32);
+    for ch in text.chars() {
+        match ch {
+            '●' => out.push_str("\x1b[2;32m●\x1b[0m\x1b[2;39m"),
+            '◉' => out.push_str("\x1b[36m◉\x1b[0m\x1b[2;39m"),
+            '○' => out.push_str("\x1b[2;39m○\x1b[0m\x1b[2;39m"),
+            _ => out.push(ch),
+        }
+    }
+    out
 }
 
 fn render_footer_plan_row(
@@ -1376,10 +1428,11 @@ fn render_footer_plan_row(
         content_width.saturating_sub(2).max(1),
     );
     if crate::interactive_color_enabled() {
+        let styled = style_plan_progress_bullets(&text);
         Some(format!(
             "  {}{}{}",
             crate::INTERACTIVE_DIM,
-            text,
+            styled,
             crate::INTERACTIVE_RESET
         ))
     } else {
@@ -1779,25 +1832,46 @@ fn build_frame(state: &UiState, columns: u16, rows: u16) -> Frame {
             } else {
                 crate::i18n::tr(crate::i18n::Message::InteractiveExecutionInputHint).to_string()
             };
-            lines.push(format!(
-                "  {}",
-                truncate_display(&hint, content_width.saturating_sub(2))
-            ));
+            let hint_text = truncate_display(&hint, content_width.saturating_sub(2));
+            lines.push(if crate::interactive_color_enabled() {
+                format!("  {}{}{}", crate::INTERACTIVE_DIM, hint_text, crate::INTERACTIVE_RESET)
+            } else {
+                format!("  {hint_text}")
+            });
         }
+        let show_hairlines = usize::from(rows) >= footer.len() + 5;
+        let hairline = show_hairlines.then(|| {
+            let rule = "─".repeat(surface_width.saturating_sub(2).max(1));
+            if crate::interactive_color_enabled() {
+                format!("  {}{}{}", crate::INTERACTIVE_DIM, rule, crate::INTERACTIVE_RESET)
+            } else {
+                format!("  {rule}")
+            }
+        });
         let prefix = crate::INTERACTIVE_PROMPT_PREFIX;
         let prefix_width = UnicodeWidthStr::width(prefix);
         let (input, cursor_row, cursor_column) = crate::composer_input_multiline(
             &composer.draft, composer.cursor, surface_width.saturating_sub(prefix_width).max(1), prefix,
         );
-        let capacity = usize::from(rows.saturating_sub(2).max(1)).saturating_sub(footer.len()).max(1).min(6);
+        let capacity = usize::from(rows.saturating_sub(2 + u16::from(show_hairlines) * 2).max(1))
+            .saturating_sub(footer.len())
+            .max(1)
+            .min(6);
         let first = cursor_row.saturating_sub(capacity - 1);
         let count = input.len().saturating_sub(first).min(capacity);
         let continuation = " ".repeat(prefix_width);
+        if let Some(rule) = &hairline {
+            lines.push(rule.clone());
+        }
         for (index, (text, placeholder)) in input.iter().skip(first).take(count).enumerate() {
             lines.push(crate::interactive_input_bar_line(text, *placeholder, false,
                 if first + index == 0 { prefix } else { &continuation }, surface_width));
         }
-        let row = rows.saturating_sub(footer.len() as u16).saturating_sub(count as u16).saturating_add((cursor_row - first) as u16 + 1);
+        if let Some(rule) = hairline {
+            lines.push(rule);
+        }
+        let bottom_chrome = footer.len() + usize::from(show_hairlines);
+        let row = rows.saturating_sub(bottom_chrome as u16).saturating_sub(count as u16).saturating_add((cursor_row - first) as u16 + 1);
         cursor = Some((row.max(1), (cursor_column as u16 + 1).min(columns.max(1))));
     }
     lines.extend(footer);
@@ -3165,7 +3239,9 @@ mod tests {
         let screen = terminal.screen().contents();
         assert!(screen.lines().nth(1).unwrap().contains("Ran test-command"));
         assert_eq!(screen.matches("test-command").count(), 1);
-        assert!(screen.lines().last().unwrap().contains("draft"));
+        let lines: Vec<&str> = screen.lines().collect();
+        assert!(lines.iter().rev().nth(1).unwrap().contains("draft"));
+        assert!(lines.last().unwrap().contains('─'));
     }
 
     #[test]
@@ -3281,13 +3357,10 @@ mod tests {
         assert!(!terminal.screen().contents().contains("draft"));
         paint_event(&mut state, &mut terminal, UiEvent::PromptCompleted, 80, 24);
         assert_eq!(terminal.screen().contents().matches("Thinking").count(), 1);
-        assert!(terminal
-            .screen()
-            .contents()
-            .lines()
-            .last()
-            .unwrap()
-            .contains("draft"));
+        let restored = terminal.screen().contents();
+        let restored_lines: Vec<&str> = restored.lines().collect();
+        assert!(restored_lines.iter().rev().nth(1).unwrap().contains("draft"));
+        assert!(restored_lines.last().unwrap().contains('─'));
     }
 
     #[test]
@@ -4165,7 +4238,9 @@ mod tests {
         }));
         let active = build_frame(&state, 80, 24);
         assert_eq!(active.lines.last(), idle.lines.last());
-        assert_eq!(active.cursor.unwrap().0, 23);
+        // With top/bottom hairlines around the running composer, input sits
+        // directly above the bottom hairline (row 23) and footer (row 24).
+        assert_eq!(active.cursor.unwrap().0, 22);
         state.reduce(UiEvent::PromptStarted);
         state.prompt_frame = Some(vec!["Permission".into(), "Allow once".into()]);
         assert_eq!(build_frame(&state, 80, 24).lines.last(), idle.lines.last());
@@ -4382,9 +4457,13 @@ mod tests {
         let frame = build_frame(&state, 80, 24);
         assert!(frame
             .lines
+            .iter()
+            .any(|line| line.contains("  next")));
+        assert!(frame
+            .lines
             .last()
-            .is_some_and(|line| line.contains("  next")));
-        assert_eq!(frame.cursor.map(|cursor| cursor.0), Some(24));
+            .is_some_and(|line| line.contains('─')));
+        assert_eq!(frame.cursor.map(|cursor| cursor.0), Some(23));
     }
 
     #[test]

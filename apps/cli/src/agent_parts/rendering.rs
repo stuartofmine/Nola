@@ -503,11 +503,39 @@ fn tool_argument_summary(request: &ToolRequest) -> Option<String> {
             );
         }
         "wait_task" => {
-            push_tool_arg(
-                &mut parts,
-                "task",
-                first_tool_arg(&request.args, &["task_id", "target_task_id", "id"]),
-            );
+            if let Some(task_ids) = request
+                .args
+                .get("task_ids")
+                .and_then(Value::as_array)
+                .map(|items| {
+                    items
+                        .iter()
+                        .filter_map(Value::as_str)
+                        .map(str::trim)
+                        .filter(|id| !id.is_empty())
+                        .collect::<Vec<_>>()
+                })
+                .filter(|ids| !ids.is_empty())
+            {
+                let mode = request
+                    .args
+                    .get("wait_mode")
+                    .and_then(Value::as_str)
+                    .map(str::trim)
+                    .filter(|mode| !mode.is_empty())
+                    .unwrap_or("any");
+                push_tool_arg(
+                    &mut parts,
+                    "tasks",
+                    Some(format!("{} ({mode})", task_ids.join(","))),
+                );
+            } else {
+                push_tool_arg(
+                    &mut parts,
+                    "task",
+                    first_tool_arg(&request.args, &["task_id", "target_task_id", "id"]),
+                );
+            }
             if let Some(timeout) = request.args.get("timeout_sec").and_then(Value::as_u64) {
                 push_tool_arg(&mut parts, "timeout", Some(format!("{timeout}s")));
             }
@@ -897,13 +925,13 @@ const CODE_COLOR_TYPE: &str = "\x1b[36m";
 const CODE_COLOR_FENCE: &str = "\x1b[2;39m";
 const CODE_COLOR_RESET: &str = "\x1b[0m";
 const MD_COLOR_BODY: &str = "\x1b[39m";
-const MD_COLOR_LIST: &str = "\x1b[34m";
+const MD_COLOR_LIST: &str = "\x1b[2;39m";
 const MD_COLOR_QUOTE: &str = "\x1b[2;39m";
-const MD_COLOR_HEADING_1: &str = "\x1b[1;34m";
-const MD_COLOR_HEADING_2: &str = "\x1b[1;36m";
-const MD_COLOR_HEADING_3: &str = "\x1b[1;32m";
-const MD_COLOR_HEADING_4: &str = "\x1b[1;35m";
-const MD_COLOR_HEADING_5: &str = "\x1b[1;33m";
+const MD_COLOR_HEADING_1: &str = "\x1b[1;39m";
+const MD_COLOR_HEADING_2: &str = "\x1b[1;39m";
+const MD_COLOR_HEADING_3: &str = "\x1b[1;36m";
+const MD_COLOR_HEADING_4: &str = "\x1b[1;2;39m";
+const MD_COLOR_HEADING_5: &str = "\x1b[1;2;39m";
 const MD_COLOR_HEADING_6: &str = "\x1b[1;2;39m";
 const MD_COLOR_BOLD: &str = "\x1b[1m";
 const MD_COLOR_INLINE_CODE: &str = "\x1b[36m";
@@ -1245,7 +1273,9 @@ pub(crate) fn render_markdown_document_with_source(source: &str, width: usize) -
         fn drop(&mut self) { DOCUMENT_WIDTH.with(|slot| slot.set(self.0)); }
     }
     // Tables and rules are measured inside the assistant's four-column gutter.
-    let _guard = WidthGuard(DOCUMENT_WIDTH.with(|slot| slot.replace(Some(width.saturating_sub(4).max(1)))));
+    let content_width = width.saturating_sub(4).max(1);
+    let _guard = WidthGuard(DOCUMENT_WIDTH.with(|slot| slot.replace(Some(content_width))));
+    let color_enabled = terminal_color_enabled();
     let mut rendered = Vec::new();
     let mut prose = String::new();
     let mut source_offset = 0;
@@ -1262,11 +1292,21 @@ pub(crate) fn render_markdown_document_with_source(source: &str, width: usize) -
             let mut text = String::new();
             if marker == Some(open) && count >= length && trimmed[count..].trim().is_empty() {
                 fence = None;
-                text.push_str("╰─");
+                text.push_str(&format_code_fence_footer(content_width, color_enabled));
                 if line.ends_with('\n') { text.push('\n'); }
             } else {
                 // Code is literal, including Markdown delimiters and table pipes.
-                text.push_str(&code_highlight_line(line.trim_end_matches('\n'), &language));
+                if color_enabled {
+                    text.push_str(CODE_COLOR_FENCE);
+                    text.push_str("│ ");
+                    text.push_str(CODE_COLOR_RESET);
+                } else {
+                    text.push_str("│ ");
+                }
+                text.push_str(&code_highlight_line(
+                    line.trim_end_matches('\n').trim_end_matches('\r'),
+                    &language,
+                ));
                 if line.ends_with('\n') { text.push('\n'); }
             }
             rendered.push(MarkdownSourceBlock {text,source_start:start,source_end:source_offset});
@@ -1274,7 +1314,9 @@ pub(crate) fn render_markdown_document_with_source(source: &str, width: usize) -
             rendered.extend(render_markdown_text_with_source(&std::mem::take(&mut prose),prose_offset));
             fence = marker.map(|ch| (ch, count));
             language = normalize_code_lang(&trimmed[count..]);
-            rendered.push(MarkdownSourceBlock {text:format!("╭─ {language}\n"),source_start:start,source_end:source_offset});
+            let mut header = format_code_fence_header(&language, content_width, color_enabled);
+            if line.ends_with('\n') { header.push('\n'); }
+            rendered.push(MarkdownSourceBlock {text:header,source_start:start,source_end:source_offset});
         } else {
             if prose.is_empty() { prose_offset = start; }
             prose.push_str(line);
@@ -1376,6 +1418,57 @@ mod markdown_source_provenance_tests {
             assert_eq!(blocks.iter().map(|block|block.text.as_str()).collect::<String>(),render_markdown_document(source,width));
         }
     }
+
+    #[test]
+    fn calm_monochrome_headings_lists_and_blockquotes() {
+        assert_eq!(
+            render_markdown_line("# Title", true),
+            format!("{MD_COLOR_HEADING_1}Title{CODE_COLOR_RESET}")
+        );
+        assert_eq!(MD_COLOR_HEADING_1, "\x1b[1;39m");
+        assert_eq!(MD_COLOR_HEADING_2, "\x1b[1;39m");
+        assert_eq!(MD_COLOR_HEADING_3, "\x1b[1;36m");
+        assert_eq!(MD_COLOR_HEADING_4, "\x1b[1;2;39m");
+        assert_eq!(MD_COLOR_HEADING_5, "\x1b[1;2;39m");
+        assert_eq!(MD_COLOR_HEADING_6, "\x1b[1;2;39m");
+        assert_eq!(MD_COLOR_LIST, "\x1b[2;39m");
+
+        let list_item = render_markdown_line("- item", true);
+        assert!(list_item.contains("\x1b[2;39m• "), "{list_item:?}");
+
+        let quote = render_markdown_line("> quoted note", true);
+        assert!(quote.contains("\x1b[2;39m│ "), "{quote:?}");
+        assert!(quote.contains("\x1b[2;39mquoted note"), "{quote:?}");
+        assert!(!quote.contains("┃"), "{quote:?}");
+    }
+
+    #[test]
+    fn framed_code_blocks_render_borders_left_rail_and_preserve_source_spans() {
+        let with_lang = "```rust\nlet x = 1;\n```\n";
+        let blocks = render_markdown_document_with_source(with_lang, 40);
+        assert_eq!(blocks.len(), 3);
+        let plain: Vec<String> = blocks
+            .iter()
+            .map(|b| strip_ansi_sequences(&b.text))
+            .collect();
+        assert!(plain[0].starts_with("    ╭─ rust ─"), "{:?}", plain[0]);
+        assert!(display_width(plain[0].trim_end_matches('\n')) <= 40);
+        assert_eq!(plain[1], "    │ let x = 1;\n");
+        assert!(plain[2].starts_with("    ╰─"), "{:?}", plain[2]);
+        assert_eq!(
+            display_width(plain[0].trim_end_matches('\n')),
+            display_width(plain[2].trim_end_matches('\n'))
+        );
+        assert_eq!(blocks[0].source_start, 0);
+        assert_eq!(blocks[2].source_end, with_lang.len());
+
+        let no_lang = "```\nplain\n```\n";
+        let blocks_no_lang = render_markdown_document_with_source(no_lang, 40);
+        let header_no_lang = strip_ansi_sequences(&blocks_no_lang[0].text);
+        assert!(header_no_lang.starts_with("    ╭──"), "{header_no_lang:?}");
+        assert!(!header_no_lang.contains("╭─ "), "{header_no_lang:?}");
+        assert_eq!(strip_ansi_sequences(&blocks_no_lang[1].text), "    │ plain\n");
+    }
 }
 
 fn render_markdown_line(line: &str, color_enabled: bool) -> String {
@@ -1422,9 +1515,9 @@ fn render_markdown_line(line: &str, color_enabled: bool) -> String {
     }
     if let Some((start, end)) = markdown_blockquote_prefix(line) {
         let prefix = if color_enabled {
-            format!("{MD_COLOR_QUOTE}┃ {CODE_COLOR_RESET}")
+            format!("{MD_COLOR_QUOTE}│ {CODE_COLOR_RESET}")
         } else {
-            "┃ ".to_string()
+            "│ ".to_string()
         };
         return apply_markdown_base_color(
             format!(
@@ -1433,7 +1526,7 @@ fn render_markdown_line(line: &str, color_enabled: bool) -> String {
                 prefix,
                 apply_markdown_inline_styles(line[end..].trim_start(), color_enabled)
             ),
-            MD_COLOR_BODY,
+            MD_COLOR_QUOTE,
             color_enabled,
         );
     }
@@ -2418,19 +2511,44 @@ fn normalize_code_lang(raw: &str) -> String {
     }
 }
 
-fn print_code_fence_label(language: Option<&str>) {
-    if !terminal_color_enabled() {
-        if let Some(lang) = language {
-            println!("╭─ {lang}");
-        } else {
-            println!("╰─");
-        }
-        return;
-    }
-    if let Some(lang) = language {
-        println!("{CODE_COLOR_FENCE}╭─ {lang}{CODE_COLOR_RESET}");
+fn format_code_fence_header(language: &str, content_width: usize, color_enabled: bool) -> String {
+    let target_width = content_width.clamp(1, 72);
+    let raw = if language.is_empty() {
+        format!("╭{}", "─".repeat(target_width.saturating_sub(1)))
     } else {
-        println!("{CODE_COLOR_FENCE}╰─{CODE_COLOR_RESET}");
+        let prefix = format!("╭─ {language}");
+        let prefix_width = display_width(&prefix);
+        if prefix_width + 2 <= target_width {
+            let fill = target_width - prefix_width - 1;
+            format!("{prefix} {}", "─".repeat(fill))
+        } else {
+            truncate_display_value(&prefix, target_width)
+        }
+    };
+    if color_enabled {
+        format!("{CODE_COLOR_FENCE}{raw}{CODE_COLOR_RESET}")
+    } else {
+        raw
+    }
+}
+
+fn format_code_fence_footer(content_width: usize, color_enabled: bool) -> String {
+    let target_width = content_width.clamp(1, 72);
+    let raw = format!("╰{}", "─".repeat(target_width.saturating_sub(1)));
+    if color_enabled {
+        format!("{CODE_COLOR_FENCE}{raw}{CODE_COLOR_RESET}")
+    } else {
+        raw
+    }
+}
+
+fn print_code_fence_label(language: Option<&str>) {
+    let content_width = agent_terminal_columns().saturating_sub(4).max(1);
+    let color_enabled = terminal_color_enabled();
+    if let Some(lang) = language {
+        println!("{}", format_code_fence_header(lang, content_width, color_enabled));
+    } else {
+        println!("{}", format_code_fence_footer(content_width, color_enabled));
     }
 }
 
@@ -3343,5 +3461,21 @@ mod emitter_output_tests {
         assert!(detail.contains("/tmp/runtime.rs"));
         assert!(detail.contains("12-18"));
         assert!(!detail.contains("tool output"));
+    }
+
+    #[test]
+    fn subagent_tool_summaries_format_wait_task_ids() {
+        let request = crate::tools::ToolRequest {
+            id: "call-multi".into(),
+            name: "wait_task".into(),
+            args: Map::from_iter([
+                ("task_ids".into(), serde_json::json!(["a", "b"])),
+                ("wait_mode".into(), Value::String("any".into())),
+                ("timeout_sec".into(), Value::from(30)),
+            ]),
+        };
+        let summary = super::tool_argument_summary(&request).expect("multi wait summary");
+        assert!(summary.contains("tasks=a,b (any)"), "{summary}");
+        assert!(summary.contains("timeout=30s"), "{summary}");
     }
 }

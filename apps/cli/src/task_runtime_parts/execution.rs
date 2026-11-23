@@ -2874,6 +2874,130 @@ fn require_isolated_agent_model_channel(config: &HostInvocationRequest) -> Resul
     Ok(())
 }
 
+static SUBAGENT_WORKTREES: OnceLock<Mutex<HashMap<String, (std::path::PathBuf, std::path::PathBuf)>>> =
+    OnceLock::new();
+
+fn subagent_worktrees() -> &'static Mutex<HashMap<String, (std::path::PathBuf, std::path::PathBuf)>> {
+    SUBAGENT_WORKTREES.get_or_init(|| Mutex::new(HashMap::new()))
+}
+
+fn sanitize_worktree_task_id(task_id: &str) -> String {
+    let sanitized: String = task_id
+        .chars()
+        .map(|ch| {
+            if ch.is_ascii_alphanumeric() || ch == '-' || ch == '_' {
+                ch
+            } else {
+                '_'
+            }
+        })
+        .collect();
+    if sanitized.is_empty() {
+        "task".to_string()
+    } else {
+        sanitized
+    }
+}
+
+fn git_repo_toplevel(project_root: &Path) -> Result<std::path::PathBuf, String> {
+    let output = Command::new("git")
+        .arg("-C")
+        .arg(project_root)
+        .args(["rev-parse", "--show-toplevel"])
+        .output()
+        .map_err(|error| format!("failed to run git rev-parse: {error}"))?;
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
+        return Err(if stderr.is_empty() {
+            format!(
+                "workspace='worktree' requires a Git repository (project_root: {})",
+                project_root.display()
+            )
+        } else {
+            format!("workspace='worktree' requires a Git repository: {stderr}")
+        });
+    }
+    let toplevel = String::from_utf8_lossy(&output.stdout).trim().to_string();
+    if toplevel.is_empty() {
+        return Err(format!(
+            "workspace='worktree' could not resolve Git repository root for {}",
+            project_root.display()
+        ));
+    }
+    Ok(std::path::PathBuf::from(toplevel))
+}
+
+fn prepare_subagent_worktree(project_root: &Path, task_id: &str) -> Result<std::path::PathBuf, String> {
+    let toplevel = git_repo_toplevel(project_root)?;
+    let db_path = crate::store::default_db_path()?;
+    let db_dir = db_path
+        .parent()
+        .ok_or_else(|| format!("database path has no parent directory: {}", db_path.display()))?;
+    let worktrees_dir = db_dir.join("workspaces").join("worktrees");
+    std::fs::create_dir_all(&worktrees_dir).map_err(|error| {
+        format!(
+            "failed to create worktrees directory {}: {error}",
+            worktrees_dir.display()
+        )
+    })?;
+    let dest = worktrees_dir.join(sanitize_worktree_task_id(task_id));
+    let output = Command::new("git")
+        .arg("-C")
+        .arg(&toplevel)
+        .args(["worktree", "add", "--detach"])
+        .arg(&dest)
+        .arg("HEAD")
+        .output()
+        .map_err(|error| format!("failed to run git worktree add: {error}"))?;
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
+        return Err(if stderr.is_empty() {
+            format!("git worktree add failed for {}", dest.display())
+        } else {
+            format!("git worktree add failed: {stderr}")
+        });
+    }
+    Ok(dest.canonicalize().unwrap_or(dest))
+}
+
+fn cleanup_subagent_worktree(project_root: &Path, worktree_path: &Path) {
+    let toplevel = git_repo_toplevel(project_root).unwrap_or_else(|_| project_root.to_path_buf());
+    let _ = Command::new("git")
+        .arg("-C")
+        .arg(&toplevel)
+        .args(["worktree", "remove", "--force"])
+        .arg(worktree_path)
+        .output();
+    if worktree_path.exists() {
+        let _ = std::fs::remove_dir_all(worktree_path);
+        let _ = Command::new("git")
+            .arg("-C")
+            .arg(&toplevel)
+            .args(["worktree", "prune"])
+            .output();
+    }
+}
+
+fn cleanup_tracked_subagent_worktree(task_id: &str, task: &DbRuntimeTask) {
+    let tracked = subagent_worktrees()
+        .lock()
+        .ok()
+        .and_then(|mut map| map.remove(task_id));
+    if let Some((parent_root, worktree_path)) = tracked {
+        cleanup_subagent_worktree(&parent_root, &worktree_path);
+        return;
+    }
+    let metadata: Value = serde_json::from_str(&task.metadata_json).unwrap_or_else(|_| json!({}));
+    if let Some(worktree_path) = metadata
+        .get("worktree_path")
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|path| !path.is_empty())
+    {
+        cleanup_subagent_worktree(Path::new(&task.project_root), Path::new(worktree_path));
+    }
+}
+
 fn spawn_agent(
     config: &HostInvocationRequest,
     request: &HostRequestEnvelope,
@@ -2906,6 +3030,13 @@ fn spawn_agent(
         Some(Value::String(mode)) if mode == "read_only" => true,
         _ => return RuntimeToolResult::completed(task_error(
             "permission_mode must be read_only or ask; delegation arguments do not grant tool authority")),
+    };
+    let workspace_mode = match args.get("workspace") {
+        None => "inherit",
+        Some(Value::String(mode)) if mode == "inherit" => "inherit",
+        Some(Value::String(mode)) if mode == "worktree" => "worktree",
+        _ => return RuntimeToolResult::completed(task_error(
+            "workspace must be inherit or worktree")),
     };
     let can_mutate = registry.can_mutate_or_execute(agent_type) && !requested_read_only;
     let max_turns = args
@@ -2976,6 +3107,17 @@ fn spawn_agent(
     }
     let now = unix_epoch_millis();
     let task_id = format!("task-{}", &uuid::Uuid::new_v4().simple().to_string()[..12]);
+    let prepared_worktree_path = if workspace_mode == "worktree" {
+        match prepare_subagent_worktree(&config.tool_settings.project_root, &task_id) {
+            Ok(path) => Some(path),
+            Err(error) => return RuntimeToolResult::completed(task_error(error)),
+        }
+    } else {
+        None
+    };
+    let worktree_path_str = prepared_worktree_path
+        .as_ref()
+        .map(|path| path.to_string_lossy().into_owned());
     let resumed_from_task_id = resumed_task.as_ref().map(|(task, _)| task.id.clone());
     let parent_task_id = resumed_task.as_ref().and_then(|(task, _)| task.parent_task_id.clone());
     let child_session_id = resumed_task
@@ -3038,6 +3180,8 @@ fn spawn_agent(
             "model_notified": false,
             "can_mutate": can_mutate,
             "requested_read_only": requested_read_only,
+            "workspace_mode": workspace_mode,
+            "worktree_path": worktree_path_str.clone(),
             "execution_backend": config.execution.execution_backend,
             "execution_model": config.execution.external_execution_model,
             "execution_model_provider": config.execution.external_execution_model_provider,
@@ -3064,9 +3208,17 @@ fn spawn_agent(
             input: nola_application::delegation_preparation::PrepareDelegatedTask { request:request.clone(), input, now_ms:unix_epoch_millis(), observed_worktree },
         })) {
         Ok(value)=>value,
-        Err(error)=>return RuntimeToolResult::completed(task_error(error)),
+        Err(error)=>{
+            if let Some(worktree_path) = &prepared_worktree_path {
+                cleanup_subagent_worktree(&config.tool_settings.project_root, worktree_path);
+            }
+            return RuntimeToolResult::completed(task_error(error));
+        }
     };
     if prepared.replayed && prepared.source_admitted {
+        if let Some(worktree_path) = &prepared_worktree_path {
+            cleanup_subagent_worktree(&config.tool_settings.project_root, worktree_path);
+        }
         // The shared preparation returns the original task. Reconcile terminal
         // receipts through the existing path; never create a second worker.
         let existing=match store.runtime_task(&prepared.task.id) {Ok(Some(value))=>value,Ok(None)=>return RuntimeToolResult::completed(task_error("Prepared delegation disappeared")),Err(error)=>return RuntimeToolResult::completed(task_error(error))};
@@ -3079,6 +3231,14 @@ fn spawn_agent(
     }
 
     let task_id=prepared.task.id.clone();
+    if let Some(worktree_path) = &prepared_worktree_path {
+        if let Ok(mut map) = subagent_worktrees().lock() {
+            map.insert(
+                task_id.clone(),
+                (std::path::PathBuf::from(&project_root), worktree_path.clone()),
+            );
+        }
+    }
     let child_session_id=prepared.task.child_session_id.clone().expect("Core prepared agent child identity");
     let now=prepared.task.input_watermark.expect("Core prepared agent input watermark");
     // TaskPromoted is the transaction boundary that establishes the Core task
@@ -3098,6 +3258,8 @@ fn spawn_agent(
                 "delivery_review": prepared.snapshot.worktree.as_ref().map(|_| "Review all changed paths and verify the child delivery. Use git_worktree_integrate only after reviewing/committing it and confirming the source baseline; no automatic acceptance or merge."),
                 "execution_model": prepared.snapshot.external_execution_model,
                 "worktree": prepared.snapshot.worktree,
+                "workspace_mode": workspace_mode,
+                "worktree_path": worktree_path_str,
                 "sandbox_requirement": prepared.snapshot.sandbox_requirement,
                 "status": "queued",
                 "description": description,
@@ -4978,4 +5140,87 @@ fn append_bounded_output(
         }
     }
     cancellation.request();
+}
+
+#[cfg(test)]
+mod subagent_worktree_tests {
+    use super::{cleanup_subagent_worktree, prepare_subagent_worktree};
+    use std::process::Command;
+
+    #[test]
+    fn prepare_and_cleanup_subagent_worktree_in_real_git_repo() {
+        let _environment = crate::store::test_env_lock();
+        let root = std::env::temp_dir().join(format!(
+            "nola-subagent-worktree-test-{}",
+            uuid::Uuid::new_v4()
+        ));
+        let repo = root.join("repo");
+        let db_dir = root.join("state");
+        std::fs::create_dir_all(&repo).expect("create repo dir");
+        std::fs::create_dir_all(&db_dir).expect("create db dir");
+        let db_path = db_dir.join("nola.db");
+        std::env::set_var("NOLA_DB_PATH", &db_path);
+
+        let git = |args: &[&str]| {
+            let status = Command::new("git")
+                .arg("-C")
+                .arg(&repo)
+                .args(args)
+                .status()
+                .expect("run git");
+            assert!(status.success(), "git {args:?} failed");
+        };
+        git(&["init", "-q"]);
+        git(&["config", "user.email", "test@example.com"]);
+        git(&["config", "user.name", "Nola Test"]);
+        std::fs::write(repo.join("README.md"), "hello\n").expect("write readme");
+        git(&["add", "README.md"]);
+        git(&["commit", "-q", "-m", "init"]);
+
+        let worktree =
+            prepare_subagent_worktree(&repo, "task-wt-01").expect("prepare subagent worktree");
+        assert!(worktree.exists(), "worktree should exist at {}", worktree.display());
+        assert_eq!(
+            std::fs::read_to_string(worktree.join("README.md")).expect("read worktree readme"),
+            "hello\n"
+        );
+        // Edits inside the isolated worktree must not modify the main repo.
+        std::fs::write(worktree.join("README.md"), "modified-in-worktree\n")
+            .expect("edit worktree file");
+        assert_eq!(
+            std::fs::read_to_string(repo.join("README.md")).expect("read repo readme"),
+            "hello\n"
+        );
+
+        cleanup_subagent_worktree(&repo, &worktree);
+        assert!(
+            !worktree.exists(),
+            "worktree should be removed after cleanup: {}",
+            worktree.display()
+        );
+
+        std::env::remove_var("NOLA_DB_PATH");
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn prepare_subagent_worktree_rejects_non_git_directory() {
+        let _environment = crate::store::test_env_lock();
+        let root = std::env::temp_dir().join(format!(
+            "nola-subagent-worktree-nongit-{}",
+            uuid::Uuid::new_v4()
+        ));
+        std::fs::create_dir_all(&root).expect("create non-git dir");
+        std::env::set_var("NOLA_DB_PATH", root.join("nola.db"));
+
+        let err = prepare_subagent_worktree(&root, "task-nongit")
+            .expect_err("non-git directory should be rejected");
+        assert!(
+            err.contains("Git repository"),
+            "unexpected error message: {err}"
+        );
+
+        std::env::remove_var("NOLA_DB_PATH");
+        let _ = std::fs::remove_dir_all(&root);
+    }
 }

@@ -2548,31 +2548,34 @@ impl Emitter {
                 .filter(|value| !value.trim().is_empty())
                 .map(|detail| {
                     if item.is_error {
-                        format!(" · {} · {detail}", tr(Message::AgentErrorLabel))
+                        format!("  · {} · {detail}", tr(Message::AgentErrorLabel))
                     } else {
-                        format!(" · {detail}")
+                        format!("  · {detail}")
                     }
                 })
                 .unwrap_or_default();
             let localized_name = crate::i18n::localize_tool_display_name(tool_name);
-            let action = if is_bash_command_tool(tool_name) {
-                item.args
-                    .as_deref()
-                    .and_then(bash_command_display_text)
-                    .unwrap_or_else(|| localized_name.clone())
-            } else if let Some(args) = item
-                .args
-                .as_deref()
-                .filter(|value| !value.trim().is_empty())
-            {
-                format!("{localized_name}  {}", args.trim())
+            let (verb, args_part) = if is_bash_command_tool(tool_name) {
+                (
+                    item.args
+                        .as_deref()
+                        .and_then(bash_command_display_text)
+                        .unwrap_or_else(|| localized_name.clone()),
+                    None,
+                )
             } else {
-                localized_name
+                (
+                    localized_name,
+                    item.args
+                        .as_deref()
+                        .map(str::trim)
+                        .filter(|value| !value.is_empty()),
+                )
             };
             // Reserve space for the result before shortening a long command.
             // Otherwise the very reason for a failure disappears off-screen.
             let result = truncate_display_value(&result, width.saturating_sub(12));
-            let action_width = width.saturating_sub(display_width(&result));
+            let action_budget = width.saturating_sub(display_width(&result));
             let glyph = if item.is_cancelled {
                 "⊘"
             } else if item.is_error {
@@ -2580,24 +2583,40 @@ impl Emitter {
             } else {
                 "✓"
             };
-            let line = format!(
-                "{}{result}",
-                truncate_display_value(&format!("    {glyph} {action}"), action_width)
-            );
-            lines.push(if terminal_color_enabled() {
-                if item.is_error {
-                    format!("\x1b[31m{line}{CODE_COLOR_RESET}")
-                } else if item.is_cancelled {
-                    format!("\x1b[33m{line}{CODE_COLOR_RESET}")
+            let prefix_plain = format!("    {glyph} ");
+            let prefix_width = display_width(&prefix_plain);
+            let body_budget = action_budget.saturating_sub(prefix_width);
+            let verb_visible = truncate_display_value(&verb, body_budget);
+            let args_visible = if let Some(args) = args_part {
+                let remaining = body_budget.saturating_sub(display_width(&verb_visible));
+                if remaining > 2 {
+                    format!("  {}", truncate_display_value(args, remaining - 2))
                 } else {
-                    format!(
-                        "{}{line}{}",
-                        crate::INTERACTIVE_DIM,
-                        crate::INTERACTIVE_RESET
-                    )
+                    String::new()
                 }
             } else {
-                line
+                String::new()
+            };
+            lines.push(if terminal_color_enabled() {
+                let glyph_color = if item.is_cancelled {
+                    "\x1b[33m"
+                } else if item.is_error {
+                    "\x1b[31m"
+                } else {
+                    "\x1b[2;32m"
+                };
+                let mut styled = format!(
+                    "    {glyph_color}{glyph}{CODE_COLOR_RESET} \x1b[39m{verb_visible}{CODE_COLOR_RESET}"
+                );
+                if !args_visible.is_empty() || !result.is_empty() {
+                    styled.push_str("\x1b[2;39m");
+                    styled.push_str(&args_visible);
+                    styled.push_str(&result);
+                    styled.push_str(CODE_COLOR_RESET);
+                }
+                styled
+            } else {
+                format!("{prefix_plain}{verb_visible}{args_visible}{result}")
             });
             index += 1;
         }
@@ -3360,13 +3379,17 @@ impl Emitter {
 
     fn emit_code_fence_label(&mut self, lang: Option<&str>, opening: bool) {
         if crate::terminal_ui::owns_terminal() {
+            let content_width = crate::terminal_ui::transcript_width(agent_terminal_columns())
+                .saturating_sub(4)
+                .max(1);
+            let color_enabled = terminal_color_enabled();
             let label = if opening {
-                match lang {
-                    Some(lang) if !lang.is_empty() => format!("┌─ {lang}\n"),
-                    _ => "┌─ code\n".to_string(),
-                }
+                format!(
+                    "{}\n",
+                    format_code_fence_header(lang.unwrap_or(""), content_width, color_enabled)
+                )
             } else {
-                "└────────\n".to_string()
+                format!("{}\n", format_code_fence_footer(content_width, color_enabled))
             };
             let label = indent_assistant_output(&label, true);
             self.emit_rendered_chunk(&label);
@@ -4348,9 +4371,13 @@ mod tool_activity_line_width_tests {
         ];
         let lines = Emitter::tool_history_lines(&items, 80, 24);
         assert_eq!(lines.len(), 3);
-        assert!(strip_ansi_sequences(&lines[0]).contains("✓ "), "{:?}", lines[0]);
-        assert!(strip_ansi_sequences(&lines[1]).contains("✗ "), "{:?}", lines[1]);
-        assert!(strip_ansi_sequences(&lines[2]).contains("⊘ "), "{:?}", lines[2]);
+        let plain0 = strip_ansi_sequences(&lines[0]);
+        let plain1 = strip_ansi_sequences(&lines[1]);
+        let plain2 = strip_ansi_sequences(&lines[2]);
+        assert!(plain0.starts_with("    ✓ "), "{plain0:?}");
+        assert!(plain1.starts_with("    ✗ "), "{plain1:?}");
+        assert!(plain2.starts_with("    ⊘ "), "{plain2:?}");
+        assert!(plain0.contains("src/main.rs  · updated"), "{plain0:?}");
     }
 
     #[test]
