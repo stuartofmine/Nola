@@ -13,6 +13,7 @@ pub(crate) use workspace_review::{
 };
 mod shell_read_plan;
 mod process_execution;
+mod pty;
 mod language_service_wire;
 mod language_service_protocol;
 mod language_service_document;

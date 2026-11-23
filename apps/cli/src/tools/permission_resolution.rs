@@ -388,13 +388,31 @@ pub(crate) fn builtin_permission_contract(name: &str, read_only: bool) -> Permis
             ResourceRequirement { requirement_id:"move-import-updates".into(), locator_kind:ResourceLocatorKind::DerivedFileCollection,
                 access:"derive_move_imports".into(), selector:ResourceSelector::FirstAvailable {
                     pointers:vec!["/root".into()], default_locator:Some(".".into()) } }]),
-        "bash" | "bash_background_start" | "bash_command_review" => PermissionOperationContract {
+        "bash" | "bash_background_start" | "bash_command_review" | "pty_exec" => PermissionOperationContract {
             risk: PermissionOperationRisk::Unknown,
             preview_when_true: None,
             risk_when_nonempty: Default::default(),
             resource_plan: Some(PermissionResourcePlan { capability:name.into(), operation:"process".into(),
                 requirements:vec![ResourceRequirement { requirement_id:"command".into(), locator_kind:ResourceLocatorKind::ProcessCommand,
                     access:"execute".into(), selector:ResourceSelector::One { pointer:"/command".into() } }] }),
+        },
+        "pty_write" => PermissionOperationContract {
+            risk: PermissionOperationRisk::Unknown,
+            resource_plan: Some(PermissionResourcePlan {
+                capability: name.into(),
+                operation: "pty.write".into(),
+                requirements: vec![ResourceRequirement {
+                    requirement_id: "pty-session".into(),
+                    locator_kind: ResourceLocatorKind::ProcessHandle,
+                    access: "input".into(),
+                    selector: ResourceSelector::One { pointer: "/session_id".into() },
+                }],
+            }),
+            ..Default::default()
+        },
+        "pty_screenshot" | "pty_close" => PermissionOperationContract {
+            risk: PermissionOperationRisk::OrdinaryRead,
+            ..Default::default()
         },
         "language_service_query" => PermissionOperationContract {
             risk: PermissionOperationRisk::Unknown,
@@ -826,10 +844,28 @@ pub(crate) fn resolve_permission_resources(context: &ToolContext, request: &Perm
                     PermissionOperationRisk::OrdinaryRead,evidence)
             }
             ResourceLocatorKind::ProcessCommand => {
-                let (observation, evidence) = inspect_read_only_shell(context, input)?;
+                let (observation, evidence) = if request.capability == "pty_exec" {
+                    (PermissionOperationRisk::Unknown, input.clone())
+                } else {
+                    inspect_read_only_shell(context, input)?
+                };
                 let cwd = process_working_directory(context,input)?;
                 (PermissionResource::ProcessInvocation {invocation_digest:request.invocation_digest,
                     command:demand.locator.clone(),cwd:cwd.to_string_lossy().into_owned()}, observation, evidence)
+            }
+            ResourceLocatorKind::ProcessHandle if request.capability == "pty_write"
+                && request.operation == "pty.write" && demand.requirement_id == "pty-session"
+                && demand.access == "input" => {
+                let cwd = super::pty::session_cwd(&demand.locator).unwrap_or_default();
+                (
+                    PermissionResource::ProcessInvocation {
+                        invocation_digest: request.invocation_digest,
+                        command: demand.locator.clone(),
+                        cwd,
+                    },
+                    PermissionOperationRisk::Unknown,
+                    json!({"session_id": demand.locator, "operation": "pty.write"}),
+                )
             }
             ResourceLocatorKind::ProcessHandle if request.capability == "language_service_query"
                 && request.operation == "language_service.query" && demand.requirement_id == "language-service"

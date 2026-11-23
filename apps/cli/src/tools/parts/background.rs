@@ -1977,8 +1977,8 @@ fn bash_auto_background_after() -> Duration {
         env::var("NOLA_CLI_BASH_AUTO_BACKGROUND_AFTER_MS")
             .ok()
             .and_then(|value| value.trim().parse::<u64>().ok())
-            .unwrap_or(2_000)
-            .clamp(100, 30_000),
+            .unwrap_or(15_000)
+            .clamp(100, 60_000),
     )
 }
 
@@ -2013,6 +2013,19 @@ mod background_detection_tests {
             bash_execution_mode(&args).unwrap(),
             BashExecutionMode::Foreground
         );
+    }
+
+    #[test]
+    fn default_bash_auto_background_and_tool_result_limits_avoid_premature_splits() {
+        let _lock = crate::store::test_env_lock();
+        let prev = std::env::var_os("NOLA_CLI_BASH_AUTO_BACKGROUND_AFTER_MS");
+        unsafe { std::env::remove_var("NOLA_CLI_BASH_AUTO_BACKGROUND_AFTER_MS"); }
+        let default_grace = super::bash_auto_background_after();
+        if let Some(value) = prev {
+            unsafe { std::env::set_var("NOLA_CLI_BASH_AUTO_BACKGROUND_AFTER_MS", value); }
+        }
+        assert!(default_grace >= std::time::Duration::from_secs(10));
+        assert!(super::MAX_TOOL_RESULT_CHARS >= 20_000);
     }
 }
 
@@ -3377,6 +3390,13 @@ fn run_bash_execution(
             }
             std::thread::sleep(Duration::from_millis(50));
         };
+
+        // A foreground command whose terminal result is returned synchronously
+        // to the current turn must not resurface later as an unacknowledged
+        // "background task completed" notice (including across `--resume`).
+        if let Ok(delivery) = crate::runtime_task_port::terminal_notification_delivery(&terminal_task) {
+            let _ = crate::runtime_task_port::acknowledge_notification_delivery(&delivery);
+        }
 
         let stdout_full = tool_try!(read_shell_capture(&stdout_path));
         let stderr_full = tool_try!(read_shell_capture(&stderr_path));

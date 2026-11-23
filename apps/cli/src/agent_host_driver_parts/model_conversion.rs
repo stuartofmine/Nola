@@ -11,6 +11,9 @@ const INITIAL_MODEL_TOOL_IDS: &[&str] = &[
     // Foundational local operations must not depend on successful discovery.
     // Visibility does not grant permission; Core still evaluates each call.
     "read_file",
+    "list_dir",
+    "grep",
+    "glob",
     "environment_probe",
     // Exposing a broad shell while deferring ordinary file mutations invites
     // substitution instead of using the narrower, permission-checked contract.
@@ -20,6 +23,10 @@ const INITIAL_MODEL_TOOL_IDS: &[&str] = &[
     "workspace_status",
     "workspace_access",
     "bash",
+    "pty_exec",
+    "pty_write",
+    "pty_screenshot",
+    "pty_close",
     "git_commit",
     // Keep the Code Memory discovery surface directly available. The former
     // `codebase_*` identifiers no longer exist in the Host catalog, so they

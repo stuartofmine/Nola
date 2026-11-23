@@ -2132,6 +2132,67 @@ fn specs_with_skills(skills: &SkillRuntimeContext) -> Vec<ToolSpec<'static>> {
             }),
         },
         ToolSpec {
+            name: "pty_exec",
+            description: "Run an interactive command inside a real pseudo-terminal (PTY) with built-in VT100 terminal emulation. Returns session_id, running state, exit_code, raw output delta, and the rendered VT100 screen. Use pty_write to send keystrokes or resize, pty_screenshot to render the terminal screen to a PNG without OS screen recording permission, and pty_close to terminate and clean up the session.",
+            read_only: false,
+            parameters: json!({
+                "type": "object",
+                "properties": {
+                    "command": {"type": "string", "minLength": 1, "description": "Shell command to execute inside the PTY via /bin/sh -c."},
+                    "cwd": {"type": "string", "description": "Optional working directory; defaults to the workspace root."},
+                    "cols": {"type": "integer", "minimum": 20, "maximum": 300, "default": 120, "description": "Terminal width in columns (default 120)."},
+                    "rows": {"type": "integer", "minimum": 5, "maximum": 120, "default": 36, "description": "Terminal height in rows (default 36)."},
+                    "yield_time_ms": {"type": "integer", "minimum": 50, "maximum": 30000, "default": 1000, "description": "Milliseconds to wait for initial output or process exit (50-30000, default 1000)."}
+                },
+                "required": ["command"],
+                "additionalProperties": false
+            }),
+        },
+        ToolSpec {
+            name: "pty_write",
+            description: "Send keystrokes or raw ANSI escape sequences (such as \\r, \\n, \\u0003 for Ctrl-C, or arrow keys) to a running PTY session, and/or resize its terminal dimensions. Waits up to yield_time_ms and returns the new output delta and updated VT100 screen.",
+            read_only: false,
+            parameters: json!({
+                "type": "object",
+                "properties": {
+                    "session_id": {"type": "string", "minLength": 1, "description": "Session ID returned by pty_exec."},
+                    "chars": {"type": "string", "description": "Characters or escape sequences to write to the PTY stdin; omit or pass empty string to poll for new output."},
+                    "yield_time_ms": {"type": "integer", "minimum": 50, "maximum": 30000, "default": 500, "description": "Milliseconds to wait for output or process exit (50-30000, default 500)."},
+                    "cols": {"type": "integer", "minimum": 20, "maximum": 300, "description": "Optional new terminal width in columns."},
+                    "rows": {"type": "integer", "minimum": 5, "maximum": 120, "description": "Optional new terminal height in rows."}
+                },
+                "required": ["session_id"],
+                "additionalProperties": false
+            }),
+        },
+        ToolSpec {
+            name: "pty_screenshot",
+            description: "Render the current VT100 terminal screen of a PTY session directly to a PNG image file using a pure-Rust renderer (no macOS screen recording permission required). Returns the saved PNG path, dimensions, and plain-text screen so the image can be inspected with read_file.",
+            read_only: true,
+            parameters: json!({
+                "type": "object",
+                "properties": {
+                    "session_id": {"type": "string", "minLength": 1, "description": "Session ID returned by pty_exec."},
+                    "output_path": {"type": "string", "description": "Optional destination .png path; defaults to a temporary .png path."}
+                },
+                "required": ["session_id"],
+                "additionalProperties": false
+            }),
+        },
+        ToolSpec {
+            name: "pty_close",
+            description: "Terminate a PTY session (SIGHUP then SIGKILL if needed), reap its child process, close the master PTY descriptor, and free the session slot.",
+            read_only: false,
+            parameters: json!({
+                "type": "object",
+                "properties": {
+                    "session_id": {"type": "string", "minLength": 1, "description": "Session ID returned by pty_exec."}
+                },
+                "required": ["session_id"],
+                "additionalProperties": false
+            }),
+        },
+        ToolSpec {
             name: "language_service_list",
             description: "List language services configured for this invocation, their project scope, languages and configuration fingerprints. Does not launch processes, install servers or grant permission. An empty list means no configured semantic backend; source scans are not a substitute for semantic results.",
             read_only: true,

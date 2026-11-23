@@ -132,6 +132,7 @@ fn explicit_capability(name: &str) -> Option<&'static str> {
         "query_health" | "health_summary" => Some("health"),
         "pick_photo" | "search_photos" => Some("photos"),
         "system_time" => Some("none"),
+        "pty_exec" | "pty_write" | "pty_screenshot" | "pty_close" => Some("process"),
         _ => None,
     }
 }
@@ -233,7 +234,7 @@ pub fn default_route(platform: ToolPlatform, tool_id: &str) -> ToolRoute {
 }
 
 fn requires_agent_host_route(id: &str) -> bool {
-    matches!(id, "github_skill_find" | "github_skill_install" | "terminal_input" | "language_service_list" | "language_service_query" | "git_worktree_list" | "git_worktree_create" | "git_worktree_integrate")
+    matches!(id, "github_skill_find" | "github_skill_install" | "terminal_input" | "language_service_list" | "language_service_query" | "git_worktree_list" | "git_worktree_create" | "git_worktree_integrate" | "pty_exec" | "pty_write" | "pty_screenshot" | "pty_close")
         || code_intelligence_capability(id).is_some()
 }
 

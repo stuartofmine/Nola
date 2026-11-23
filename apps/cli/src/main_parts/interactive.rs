@@ -2000,7 +2000,8 @@ fn runtime_task_completion_summary(
 fn print_background_task_notifications(
     notifications: &[tools::BackgroundTaskNotification],
 ) -> io::Result<()> {
-    let width = terminal_columns().saturating_sub(8).max(24);
+    use unicode_width::UnicodeWidthStr;
+    let total_cols = terminal_columns();
     for notification in notifications {
         let success = notification.canonical_state == "completed";
         let marker = if success { "✓" } else { "!" };
@@ -2014,7 +2015,10 @@ fn print_background_task_notifications(
         } else {
             format!("{:.1}s", notification.elapsed_secs)
         };
-        let command = truncate_display_width(&notification.command, width);
+        let chrome_width = 2 + UnicodeWidthStr::width(marker) + 2 + UnicodeWidthStr::width(label) + 2 + 2 + UnicodeWidthStr::width(elapsed.as_str()) + 1;
+        let cmd_width = total_cols.saturating_sub(chrome_width).max(16);
+        let single_line_cmd = notification.command.split_whitespace().collect::<Vec<_>>().join(" ");
+        let command = truncate_display_width(&single_line_cmd, cmd_width);
         let text = if interactive_color_enabled() {
             let color = if success {
                 "\x1b[32m"
@@ -3061,10 +3065,11 @@ fn interactive_prompt_footer_line(
         .then(|| task_runtime::core_task_footer_summary(session_id))
         .flatten();
 
-    let mut left_parts = vec![
-        truncate_display_width(model, width.min(28)),
-        perm_label.to_string(),
-    ];
+    let mut left_parts = vec![truncate_display_width(model, width.min(28))];
+    if let Some(effort) = config.runtime.reasoning_effort_display() {
+        left_parts.push(effort);
+    }
+    left_parts.push(perm_label.to_string());
     if executor.trim() != "Nola" {
         left_parts.push(format!(
             "{}: {executor}",
@@ -3314,6 +3319,11 @@ fn print_interactive_prompt_card(config: &Config, turn: usize) -> Result<(), Str
     };
     let provider = interactive_provider_label(config);
     let params = interactive_param_line(config);
+    let reasoning_label = interactive_reasoning_label();
+    let reasoning_value = config
+        .runtime
+        .reasoning_effort_display()
+        .unwrap_or_else(|| "default".to_string());
     let cwd = truncate_display_path(&working_dir, max_value_width);
     let workspace = truncate_display_path(&workspace_root, max_value_width);
     let mode = tr(Message::InteractiveAutoValue);
@@ -3323,6 +3333,10 @@ fn print_interactive_prompt_card(config: &Config, turn: usize) -> Result<(), Str
     rows.push((
         tr(Message::InteractiveModelLabel).to_string(),
         truncate_display_width(model, max_value_width),
+    ));
+    rows.push((
+        reasoning_label.to_string(),
+        truncate_display_width(&reasoning_value, max_value_width),
     ));
     rows.push((
         tr(Message::InteractiveParamsLabel).to_string(),
@@ -3362,6 +3376,7 @@ fn print_interactive_prompt_card(config: &Config, turn: usize) -> Result<(), Str
         let compact = interactive_prompt_compact_line(
             turn,
             model,
+            &reasoning_value,
             &params,
             &cwd,
             &workspace,
@@ -3373,6 +3388,7 @@ fn print_interactive_prompt_card(config: &Config, turn: usize) -> Result<(), Str
             let base = format!("nola[{turn}]");
             let parts = vec![
                 truncate_display_width(model, 24),
+                format!("{reasoning_label}: {reasoning_value}"),
                 truncate_display_width(&params, 24),
                 truncate_display_width(&cwd, 40),
             ];
@@ -3462,9 +3478,18 @@ fn print_interactive_prompt_card(config: &Config, turn: usize) -> Result<(), Str
     Ok(())
 }
 
+fn interactive_reasoning_label() -> &'static str {
+    if current_language() == Language::ZhHans {
+        "推理"
+    } else {
+        "Reasoning"
+    }
+}
+
 fn interactive_prompt_compact_line(
     turn: usize,
     model: &str,
+    reasoning: &str,
     params: &str,
     cwd: &str,
     workspace: &str,
@@ -3478,6 +3503,7 @@ fn interactive_prompt_compact_line(
             tr(Message::InteractiveModelLabel),
             truncate_display_width(model, 28)
         ),
+        format!("{}: {}", interactive_reasoning_label(), reasoning),
         format!(
             "{} {}",
             tr(Message::InteractiveParamsLabel),
@@ -3530,6 +3556,7 @@ struct SlashCommand {
 const INTERACTIVE_SLASH_COMMANDS: &[SlashCommand] = &[
     SlashCommand { name: "/help" },
     SlashCommand { name: "/model" },
+    SlashCommand { name: "/thinking" },
     SlashCommand { name: "/executor" },
     SlashCommand { name: "/debug" },
     SlashCommand { name: "/allow" },
@@ -3574,6 +3601,7 @@ fn normalize_interactive_command(command: &str) -> Option<&'static str> {
     Some(match lower.as_str() {
         "/help" | "/h" => "/help",
         "/model" | "/models" | "/m" => "/model",
+        "/thinking" => "/thinking",
         "/executor" | "/exec" => "/executor",
         "/debug" | "/d" => "/debug",
         "/allow" | "/a" => "/allow",
@@ -4420,6 +4448,18 @@ fn handle_interactive_slash_command(
                 return Ok(SlashCommandResult::Handled);
             }
             select_interactive_model(config, model)?;
+            Ok(SlashCommandResult::Handled)
+        }
+        "/thinking" => {
+            let level = parts.next();
+            if parts.next().is_some() {
+                terminal_notice!("  Usage: /thinking <off|low|medium|high|xhigh|max|default>");
+                return Ok(SlashCommandResult::Handled);
+            }
+            let summary = handle_interactive_thinking_command(config, level)?;
+            for line in summary.lines() {
+                terminal_notice!("{line}");
+            }
             Ok(SlashCommandResult::Handled)
         }
         "/executor" => {
@@ -5510,7 +5550,7 @@ fn print_interactive_shortcuts_guide() {
             terminal_notice!("  选专家：输入 @，上下键选择，回车插入名字。/edit 编辑已发送消息。");
             terminal_notice!("  补全：↑↓ 浏览 /命令，Tab 补全，Enter 执行，Esc 收起；在 @ 候选中 Enter 插入");
             terminal_notice!("  草稿：连按两次 Esc 清空输入 · /stop 停止当前运行 · /resume <id> 直接切换会话");
-            terminal_notice!("  扩展：/model · /experts · /skills · /mcp · /memory · /questions · /plan");
+            terminal_notice!("  扩展：/model · /thinking · /experts · /skills · /mcp · /memory · /questions · /plan");
         }
         _ => {
             terminal_notice!("  Newline: Shift+Enter · Alt+Enter · Ctrl+J · trailing \\+Enter");
@@ -5519,7 +5559,7 @@ fn print_interactive_shortcuts_guide() {
             terminal_notice!("  Experts: type @, choose with Up/Down, press Enter to insert. /edit reopens a sent message.");
             terminal_notice!("  Complete: Up/Down browses /commands, Tab completes, Enter runs, Esc closes. In @ suggestions, Enter inserts.");
             terminal_notice!("  Control: Esc x2 clears draft · /stop cancels active run · /resume <id> switches session");
-            terminal_notice!("  Catalog: /model · /experts · /skills · /mcp · /memory · /questions · /plan");
+            terminal_notice!("  Catalog: /model · /thinking · /experts · /skills · /mcp · /memory · /questions · /plan");
         }
     }
 }
@@ -5864,6 +5904,109 @@ fn render_interactive_jobs_view(
     lines.join("\n")
 }
 
+fn reasoning_tier_display_name(tier: nola_domain::reasoning_tiers::ReasoningTier) -> &'static str {
+    match tier {
+        nola_domain::reasoning_tiers::ReasoningTier::Concise => "concise",
+        nola_domain::reasoning_tiers::ReasoningTier::Balanced => "balanced",
+        nola_domain::reasoning_tiers::ReasoningTier::Detailed => "detailed",
+    }
+}
+
+fn active_model_reasoning_levels(config: &Config) -> Vec<String> {
+    if let Some(nola_domain::reasoning_tiers::ReasoningCapabilityDeclaration::Effort { values }) =
+        config.runtime.model_capabilities.reasoning_declaration.as_ref()
+    {
+        if !values.is_empty() {
+            return values.clone();
+        }
+    }
+    let active_model = config.model.trim();
+    if active_model.is_empty() {
+        return Vec::new();
+    }
+    let Ok(mut app) = crate::application_port::CliApplicationPort::persistent_default() else {
+        return Vec::new();
+    };
+    let Ok(connections) = app.execute::<serde_json::Value>(nola_application::ApplicationCommand::Model {
+        command: nola_application::ModelCommand::ListConnections,
+    }) else {
+        return Vec::new();
+    };
+    let Some(items) = connections.as_array() else {
+        return Vec::new();
+    };
+    for item in items {
+        let Some(models) = item
+            .pointer("/connection/document/catalog/models")
+            .or_else(|| item.pointer("/document/catalog/models"))
+            .and_then(serde_json::Value::as_array)
+        else {
+            continue;
+        };
+        for model in models {
+            let matches_id = model
+                .get("id")
+                .and_then(serde_json::Value::as_str)
+                .is_some_and(|id| id == active_model)
+                || model
+                    .get("model_id")
+                    .and_then(serde_json::Value::as_str)
+                    .is_some_and(|id| id == active_model);
+            if !matches_id {
+                continue;
+            }
+            if let Some(levels) = model
+                .get("reasoning_levels")
+                .and_then(serde_json::Value::as_array)
+            {
+                let parsed: Vec<String> = levels
+                    .iter()
+                    .filter_map(serde_json::Value::as_str)
+                    .map(str::trim)
+                    .filter(|value| !value.is_empty())
+                    .map(ToOwned::to_owned)
+                    .collect();
+                if !parsed.is_empty() {
+                    return parsed;
+                }
+            }
+        }
+    }
+    Vec::new()
+}
+
+fn handle_interactive_thinking_command(
+    config: &mut Config,
+    arg: Option<&str>,
+) -> Result<String, String> {
+    let Some(raw) = arg.map(str::trim).filter(|value| !value.is_empty()) else {
+        let current = config
+            .runtime
+            .reasoning_effort_display()
+            .unwrap_or_else(|| "default".to_string());
+        let tier = reasoning_tier_display_name(config.runtime.reasoning_tier);
+        let model_levels = active_model_reasoning_levels(config);
+        let mut lines = vec![format!(
+            "  {}: {current} (tier: {tier})",
+            interactive_reasoning_label()
+        )];
+        if !model_levels.is_empty() {
+            lines.push(format!("  Model levels: {}", model_levels.join(", ")));
+        }
+        lines.push("  Available: off, low, medium, high, xhigh, max, default".to_string());
+        lines.push("  Usage: /thinking <off|low|medium|high|xhigh|max|default>".to_string());
+        return Ok(lines.join("\n"));
+    };
+
+    let selection = crate::runtime_config::parse_reasoning_effort_selection(raw)?;
+    config.runtime.reasoning_selection = selection;
+    let confirmation = match config.runtime.reasoning_effort_display() {
+        Some(level) => format!("  Reasoning effort set to {level}."),
+        None => "  Reasoning effort reset to default.".to_string(),
+    };
+    Ok(confirmation)
+}
+
 fn goal_work_control_command(control: &str, now_epoch_ms: i64) -> Option<GoalRuntimeCommand> {
     match control {
         "pause" => Some(GoalRuntimeCommand::Pause {
@@ -5973,5 +6116,93 @@ mod completed_task_digest_tests {
             inject_completed_task_updates("Fresh prompt", None),
             "Fresh prompt"
         );
+    }
+}
+
+#[cfg(test)]
+mod thinking_command_tests {
+    use super::{
+        handle_interactive_thinking_command, interactive_prompt_compact_line,
+        interactive_prompt_footer_line, normalize_interactive_command, Config,
+        INTERACTIVE_SLASH_COMMANDS,
+    };
+    use nola_core::agent::reasoning::ReasoningSelection;
+    use nola_domain::reasoning_tiers::ReasoningCapabilityDeclaration;
+
+    #[test]
+    fn thinking_slash_command_is_registered_and_updates_live_state() {
+        let _lock = crate::store::test_env_lock();
+        assert!(INTERACTIVE_SLASH_COMMANDS
+            .iter()
+            .any(|cmd| cmd.name == "/thinking"));
+        assert_eq!(normalize_interactive_command("/thinking"), Some("/thinking"));
+        assert_eq!(normalize_interactive_command("/THINKING"), Some("/thinking"));
+
+        let mut config = Config::for_test().unwrap();
+        config.model = "gpt-5".to_string();
+        config.runtime.model_capabilities.reasoning_declaration =
+            Some(ReasoningCapabilityDeclaration::Effort {
+                values: vec!["low".into(), "medium".into(), "high".into()],
+            });
+
+        let initial = handle_interactive_thinking_command(&mut config, None).unwrap();
+        assert!(initial.contains("default"), "{initial}");
+        assert!(initial.contains("tier: balanced"), "{initial}");
+        assert!(initial.contains("low, medium, high"), "{initial}");
+        assert!(
+            initial.contains("/thinking <off|low|medium|high|xhigh|max|default>"),
+            "{initial}"
+        );
+
+        let set_high = handle_interactive_thinking_command(&mut config, Some("high")).unwrap();
+        assert!(set_high.contains("high"), "{set_high}");
+        assert_eq!(
+            config.runtime.reasoning_selection,
+            Some(ReasoningSelection::Effort {
+                value: "high".to_string()
+            })
+        );
+        assert_eq!(
+            config.runtime.reasoning_effort_display().as_deref(),
+            Some("high")
+        );
+
+        let footer_high = interactive_prompt_footer_line(&config, None, None).unwrap();
+        assert!(
+            footer_high.contains("gpt-5 · high"),
+            "footer should show active effort next to model: {footer_high}"
+        );
+
+        let compact_status = interactive_prompt_compact_line(
+            1,
+            "gpt-5",
+            "high",
+            "auto",
+            "~/repo",
+            "~/repo",
+            "openai",
+            false,
+            120,
+        )
+        .unwrap();
+        assert!(compact_status.contains("high"), "{compact_status}");
+
+        let set_off = handle_interactive_thinking_command(&mut config, Some("off")).unwrap();
+        assert!(set_off.contains("off"), "{set_off}");
+        assert_eq!(
+            config.runtime.reasoning_effort_display().as_deref(),
+            Some("off")
+        );
+
+        let reset = handle_interactive_thinking_command(&mut config, Some("default")).unwrap();
+        assert!(reset.contains("default"), "{reset}");
+        assert_eq!(config.runtime.reasoning_selection, None);
+        let footer_default = interactive_prompt_footer_line(&config, None, None).unwrap();
+        assert!(
+            !footer_default.contains("gpt-5 · high") && !footer_default.contains("gpt-5 · off"),
+            "default effort should not clutter footer: {footer_default}"
+        );
+
+        assert!(handle_interactive_thinking_command(&mut config, Some("invalid")).is_err());
     }
 }

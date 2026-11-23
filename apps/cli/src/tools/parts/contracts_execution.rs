@@ -47,7 +47,7 @@ const MAX_EDITED_FILE_BYTES: usize = 16 * 1024 * 1024;
 const MAX_PATCH_BYTES: usize = 1_000_000;
 const MAX_DIFF_CHARS: usize = 40_000;
 const MAX_BACKGROUND_OUTPUT_BYTES: i64 = 100_000;
-const MAX_TOOL_RESULT_CHARS: usize = 4_000;
+const MAX_TOOL_RESULT_CHARS: usize = 24_000;
 const MAX_WEB_SEARCH_RESULT_CHARS: usize = 8_000;
 const MAX_TOOL_OUTPUT_LIST: i64 = 100;
 const MAX_TOOL_OUTPUT_READ_REQUEST_BYTES: i64 = 200_000;
@@ -56,13 +56,13 @@ const MAX_TOOL_OUTPUT_MATCHES: i64 = 200;
 // Keep read-back slices below MAX_TOOL_RESULT_CHARS. Otherwise the generic
 // result clamp persists the slice as a new output and invites the model to
 // recursively read the newly-created file instead of advancing the offset.
-const MAX_TOOL_OUTPUT_SLICE_BYTES: i64 = 2_500;
+const MAX_TOOL_OUTPUT_SLICE_BYTES: i64 = 12_000;
 const MAX_MULTI_EDITS: usize = 50;
 const MAX_TOOL_SEARCH_RESULTS: i64 = 20;
 const MAX_READ_MANY_FILES: usize = 20;
 const MAX_READ_MANY_BYTES: i64 = 400_000;
-const LARGE_FILE_PREVIEW_THRESHOLD_BYTES: u64 = 50_000;
-const LARGE_FILE_AUTO_PREVIEW_BYTES: i64 = 16_000;
+const LARGE_FILE_PREVIEW_THRESHOLD_BYTES: u64 = 64_000;
+const LARGE_FILE_AUTO_PREVIEW_BYTES: i64 = 32_000;
 const MAX_NOTEBOOK_CELLS: i64 = 500;
 const MAX_NOTEBOOK_SOURCE_CHARS: usize = 200_000;
 const MAX_NOTEBOOK_OUTPUT_CHARS: i64 = 40_000;

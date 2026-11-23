@@ -884,6 +884,29 @@ mod tests {
         assert_eq!(normalize_interactive_command("/m"), Some("/model"));
     }
 
+    #[test]
+    fn bare_model_command_opens_picker_instead_of_inline_dropdown() {
+        let bare: Vec<_> = matching_slash_commands_inner("/model", None)
+            .into_iter()
+            .map(|item| item.name)
+            .collect();
+        assert_eq!(bare, ["/model"]);
+        assert!(matching_slash_commands_inner("/model ", None).is_empty());
+        let mut config = Config::for_test().unwrap();
+        config.model = "gpt-5.4".to_string();
+        let bare_with_cfg: Vec<_> = matching_slash_commands_with_config("/model", &config)
+            .into_iter()
+            .map(|item| item.name)
+            .collect();
+        assert_eq!(bare_with_cfg, ["/model"]);
+        assert!(matching_slash_commands_with_config("/model ", &config).is_empty());
+        let filtered: Vec<_> = matching_slash_commands_with_config("/model gpt", &config)
+            .into_iter()
+            .map(|item| item.name)
+            .collect();
+        assert!(filtered.iter().any(|name| name == "/model gpt-5.4"));
+    }
+
     #[cfg(unix)]
     #[test]
     fn file_suggestions_do_not_descend_through_directory_links() {

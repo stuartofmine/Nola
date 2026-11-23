@@ -4,7 +4,7 @@ use std::io::{Read, Write};
 use std::os::unix::process::CommandExt;
 use std::path::Path;
 use std::process::{Command, Stdio};
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicI64, AtomicU64, Ordering};
 use std::sync::{Arc, Condvar, Mutex, OnceLock};
 use std::time::{Duration, Instant};
 
@@ -35,6 +35,8 @@ const MAX_WAIT_SECONDS: u64 = 300;
 const RESULT_SUMMARY_LIMIT: usize = 24_000;
 const DEFAULT_TASK_WALL_TIME_MS: u64 = 2 * 60 * 60 * 1_000;
 const DEFAULT_TASK_OUTPUT_BYTES: u64 = 2 * 1024 * 1024;
+const DEFAULT_AGENT_STALL_WARN_SEC: u64 = 120;
+const DEFAULT_AGENT_STALL_TIMEOUT_SEC: u64 = 300;
 
 /// Configurations bound by active Core Hosts. Tool execution may happen on a
 /// worker thread rather than the thread that pumps the Host, so this registry
@@ -301,8 +303,141 @@ pub(crate) enum BackgroundPermissionWait {
 }
 
 static AGENT_TASK_HANDLES: OnceLock<Mutex<HashMap<String, AgentTaskHandle>>> = OnceLock::new();
+static AGENT_ACTIVITY_WATCHDOGS: OnceLock<Mutex<HashMap<String, AgentActivityWatchdog>>> =
+    OnceLock::new();
 static TASK_WAKE: OnceLock<(Mutex<u64>, Condvar)> = OnceLock::new();
 static TASK_OPERATION_SEQUENCE: AtomicU64 = AtomicU64::new(1);
+
+#[derive(Clone)]
+struct AgentActivityWatchdog {
+    last_activity_at_ms: Arc<AtomicI64>,
+    paused_for_permission: Arc<AtomicBool>,
+    stall_warned: Arc<AtomicBool>,
+    stall_reason: Arc<Mutex<Option<String>>>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum StallWatchdogAction {
+    None,
+    Warn { elapsed_secs: u64, message: String },
+    Timeout { elapsed_secs: u64, reason: String },
+}
+
+impl AgentActivityWatchdog {
+    fn new(now_ms: i64) -> Self {
+        Self {
+            last_activity_at_ms: Arc::new(AtomicI64::new(now_ms)),
+            paused_for_permission: Arc::new(AtomicBool::new(false)),
+            stall_warned: Arc::new(AtomicBool::new(false)),
+            stall_reason: Arc::new(Mutex::new(None)),
+        }
+    }
+
+    fn touch(&self, now_ms: i64) {
+        self.last_activity_at_ms.store(now_ms, Ordering::Relaxed);
+        self.stall_warned.store(false, Ordering::Relaxed);
+    }
+
+    fn set_permission_wait(&self, waiting: bool, now_ms: i64) {
+        self.paused_for_permission.store(waiting, Ordering::Relaxed);
+        if !waiting {
+            self.touch(now_ms);
+        }
+    }
+
+    fn stall_reason(&self) -> Option<String> {
+        self.stall_reason
+            .lock()
+            .ok()
+            .and_then(|guard| guard.clone())
+    }
+
+    fn evaluate(&self, now_ms: i64, warn_ms: i64, timeout_ms: i64) -> StallWatchdogAction {
+        if self.paused_for_permission.load(Ordering::Relaxed) {
+            return StallWatchdogAction::None;
+        }
+        let last = self.last_activity_at_ms.load(Ordering::Relaxed);
+        let elapsed_ms = now_ms.saturating_sub(last).max(0);
+        let elapsed_secs = (elapsed_ms / 1_000) as u64;
+        if timeout_ms > 0 && elapsed_ms >= timeout_ms {
+            let reason = format!("subagent stalled: no activity for {elapsed_secs}s");
+            if let Ok(mut guard) = self.stall_reason.lock() {
+                if guard.is_none() {
+                    *guard = Some(reason.clone());
+                }
+            }
+            return StallWatchdogAction::Timeout {
+                elapsed_secs,
+                reason,
+            };
+        }
+        if warn_ms > 0
+            && elapsed_ms >= warn_ms
+            && !self.stall_warned.swap(true, Ordering::Relaxed)
+        {
+            let message = format!("subagent stalled warning: no activity for {elapsed_secs}s");
+            return StallWatchdogAction::Warn {
+                elapsed_secs,
+                message,
+            };
+        }
+        StallWatchdogAction::None
+    }
+}
+
+fn activity_watchdogs() -> &'static Mutex<HashMap<String, AgentActivityWatchdog>> {
+    AGENT_ACTIVITY_WATCHDOGS.get_or_init(|| Mutex::new(HashMap::new()))
+}
+
+fn register_agent_activity_watchdog(task_id: &str, watchdog: &AgentActivityWatchdog) {
+    if let Ok(mut map) = activity_watchdogs().lock() {
+        map.insert(task_id.to_string(), watchdog.clone());
+    }
+}
+
+fn unregister_agent_activity_watchdog(task_id: &str, watchdog: &AgentActivityWatchdog) {
+    if let Ok(mut map) = activity_watchdogs().lock() {
+        if map.get(task_id).is_some_and(|current| {
+            Arc::ptr_eq(&current.last_activity_at_ms, &watchdog.last_activity_at_ms)
+        }) {
+            map.remove(task_id);
+        }
+    }
+}
+
+pub(crate) fn touch_agent_task_activity(task_id: &str) {
+    if let Ok(map) = activity_watchdogs().lock() {
+        if let Some(watchdog) = map.get(task_id) {
+            watchdog.touch(unix_epoch_millis());
+        }
+    }
+}
+
+pub(crate) fn set_agent_task_permission_wait(task_id: &str, waiting: bool) {
+    if let Ok(map) = activity_watchdogs().lock() {
+        if let Some(watchdog) = map.get(task_id) {
+            watchdog.set_permission_wait(waiting, unix_epoch_millis());
+        }
+    }
+}
+
+fn agent_stall_thresholds_ms() -> (i64, i64) {
+    let parse_sec = |name: &str, default_sec: u64| -> i64 {
+        std::env::var(name)
+            .ok()
+            .and_then(|value| value.trim().parse::<u64>().ok())
+            .unwrap_or(default_sec)
+            .saturating_mul(1_000)
+            .min(i64::MAX as u64) as i64
+    };
+    (
+        parse_sec("NOLA_AGENT_STALL_WARN_SEC", DEFAULT_AGENT_STALL_WARN_SEC),
+        parse_sec(
+            "NOLA_AGENT_STALL_TIMEOUT_SEC",
+            DEFAULT_AGENT_STALL_TIMEOUT_SEC,
+        ),
+    )
+}
 
 const AGENT_TASK_WORKER_ARG: &str = "--nola-internal-agent-task-worker";
 const SHELL_TASK_WORKER_ARG: &str = "--nola-internal-shell-task-worker";
@@ -4145,6 +4280,8 @@ mod bound_worker_authority_tests {
 }
 
 struct AgentTaskLeaseHeartbeat {
+    task_id: String,
+    watchdog: AgentActivityWatchdog,
     stop: std::sync::mpsc::Sender<()>,
     handle: Option<std::thread::JoinHandle<()>>,
 }
@@ -4161,24 +4298,52 @@ fn with_agent_task_observation_lease(
 impl AgentTaskLeaseHeartbeat {
     fn start(
         task_id: &str,
+        owner: &str,
+        execution: &crate::runtime_task_port::RuntimeTaskExecutionAuthority,
+        duration_ms: i64,
+        cancellation: &RuntimeExecutionControl,
+    ) -> Result<Self, String> {
+        let interval =
+            Duration::from_millis(u64::try_from((duration_ms / 3).clamp(1, 5_000)).unwrap());
+        let (warn_ms, timeout_ms) = agent_stall_thresholds_ms();
+        Self::start_with_stall_config(
+            task_id,
+            owner,
+            execution,
+            duration_ms,
+            cancellation,
+            interval,
+            warn_ms,
+            timeout_ms,
+        )
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn start_with_stall_config(
+        task_id: &str,
         _owner: &str,
         execution: &crate::runtime_task_port::RuntimeTaskExecutionAuthority,
         duration_ms: i64,
         cancellation: &RuntimeExecutionControl,
+        interval: Duration,
+        warn_ms: i64,
+        timeout_ms: i64,
     ) -> Result<Self, String> {
         execution
             .with_renewal(|lease| {
                 crate::runtime_task_port::refresh_lease_before_execution(lease, duration_ms)
             })?
             .ok_or("task grant is not held during parent confirmation")?;
+        let watchdog = AgentActivityWatchdog::new(unix_epoch_millis());
+        register_agent_activity_watchdog(task_id, &watchdog);
         let (stop, receiver) = std::sync::mpsc::channel();
-        let task_id = task_id.to_string();
+        let task_id_owned = task_id.to_string();
+        let thread_task_id = task_id_owned.clone();
         let execution = execution.clone();
         let cancellation = cancellation.clone();
-        let interval =
-            Duration::from_millis(u64::try_from((duration_ms / 3).clamp(1, 10_000)).unwrap());
-        let handle = std::thread::Builder::new()
-            .name(format!("nola-heartbeat-{task_id}"))
+        let watchdog_thread = watchdog.clone();
+        let handle = match std::thread::Builder::new()
+            .name(format!("nola-heartbeat-{task_id_owned}"))
             .spawn(move || loop {
                 match receiver.recv_timeout(interval) {
                     Ok(()) | Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => break,
@@ -4189,7 +4354,60 @@ impl AgentTaskLeaseHeartbeat {
                 match execution.with_renewal(|lease| {
                     crate::runtime_task_port::refresh_lease_before_execution(lease, duration_ms)
                 }) {
-                    Ok(Some(())) => {}
+                    Ok(Some(())) => {
+                        let now_ms = unix_epoch_millis();
+                        match watchdog_thread.evaluate(now_ms, warn_ms, timeout_ms) {
+                            StallWatchdogAction::None => {}
+                            StallWatchdogAction::Warn {
+                                elapsed_secs,
+                                message,
+                            } => {
+                                let _ = execution.with_active(|lease| {
+                                    crate::runtime_task_port::report_progress(
+                                        lease,
+                                        Some(message.clone()),
+                                        Some("stall_warning".to_string()),
+                                        None,
+                                        None,
+                                        BTreeMap::new(),
+                                        now_ms,
+                                    )
+                                    .map(|_| ())
+                                });
+                                let _ = append_task_event(
+                                    &thread_task_id,
+                                    "stall_warning",
+                                    "running",
+                                    Some(&message),
+                                    json!({
+                                        "elapsed_secs": elapsed_secs,
+                                        "warn_ms": warn_ms,
+                                    }),
+                                );
+                                wake_task_waiters();
+                                tools::wake_background_task_notification();
+                            }
+                            StallWatchdogAction::Timeout {
+                                elapsed_secs,
+                                reason,
+                            } => {
+                                let _ = append_task_event(
+                                    &thread_task_id,
+                                    "stall_timeout",
+                                    "cancelling",
+                                    Some(&reason),
+                                    json!({
+                                        "elapsed_secs": elapsed_secs,
+                                        "timeout_ms": timeout_ms,
+                                    }),
+                                );
+                                cancellation.request();
+                                wake_task_waiters();
+                                tools::wake_background_task_notification();
+                                break;
+                            }
+                        }
+                    }
                     Ok(None) => continue,
                     Err(_) => {
                         // Commit can retire the Task just before its local
@@ -4197,18 +4415,29 @@ impl AgentTaskLeaseHeartbeat {
                         // retirement is not cancellation of unrelated effects.
                         let retired = renewed_attempt.is_some_and(|id|
                             NolaStore::open_default().ok().and_then(|store|
-                                store.runtime_task_attempt_retired_for_user_input(&task_id,&id).ok()).unwrap_or(false));
+                                store.runtime_task_attempt_retired_for_user_input(&thread_task_id,&id).ok()).unwrap_or(false));
                         if retired { execution.revoke(); break; }
                         cancellation.request();
                         break;
                     }
                 }
-            })
-            .map_err(|e| e.to_string())?;
+            }) {
+            Ok(handle) => handle,
+            Err(error) => {
+                unregister_agent_activity_watchdog(&task_id_owned, &watchdog);
+                return Err(error.to_string());
+            }
+        };
         Ok(Self {
+            task_id: task_id_owned,
+            watchdog,
             stop,
             handle: Some(handle),
         })
+    }
+
+    fn stall_reason(&self) -> Option<String> {
+        self.watchdog.stall_reason()
     }
 }
 
@@ -4218,6 +4447,7 @@ impl Drop for AgentTaskLeaseHeartbeat {
         if let Some(handle) = self.handle.take() {
             let _ = handle.join();
         }
+        unregister_agent_activity_watchdog(&self.task_id, &self.watchdog);
     }
 }
 
@@ -4576,6 +4806,7 @@ fn run_agent_task(
     let progress_execution = execution.clone();
     let mut source_journal = None;
     let mut emitter = crate::native_runtime_output::NativeRuntimeOutput::with_event_sink(move |event| {
+        touch_agent_task_activity(&progress_task_id);
         // Journal reads can span multiple Service requests. Freeze only the
         // exact observation lease; never hold the authority mutex across that
         // read and starve the independent heartbeat. Store still fences every
@@ -4613,6 +4844,7 @@ fn run_agent_task(
             .get("run_id").and_then(Value::as_str).filter(|id| !id.is_empty())
             .map(str::to_owned).ok_or_else(|| "permission continuation has no exact Run".to_string())
     }).transpose();
+    touch_agent_task_activity(task_id);
     let mut outcome = expected_permission_run.and_then(|expected_run| {
         nola_runtime_driver::task_worker::execute_task_child(
             &child_identity, &execution, expected_run.as_deref(),
@@ -4641,6 +4873,7 @@ fn run_agent_task(
             outcome = Err(error);
         }
     }
+    let stall_failure = heartbeat.stall_reason();
     drop(heartbeat);
     // Persist observed worker usage before a canonical terminal reconciliation
     // retires its lease. Recovery never invents these process observations.
@@ -4825,6 +5058,9 @@ fn run_agent_task(
     if let Some(error) = resource_failure {
         terminal_status = "failed";
         terminal_error = Some(error);
+    } else if let Some(error) = stall_failure {
+        terminal_status = "cancelled";
+        terminal_error = Some(error);
     } else if cancellation.is_requested() {
         terminal_status = "cancelled";
         terminal_error = None;
@@ -4961,6 +5197,7 @@ fn observe_agent_event(
     cancellation: &RuntimeExecutionControl,
     source_journal: &mut Option<crate::source_journal::SourceRunJournal>,
 ) {
+    touch_agent_task_activity(task_id);
     let event_type = event
         .get("type")
         .and_then(Value::as_str)
@@ -5220,6 +5457,304 @@ mod subagent_worktree_tests {
             "unexpected error message: {err}"
         );
 
+        std::env::remove_var("NOLA_DB_PATH");
+        let _ = std::fs::remove_dir_all(&root);
+    }
+}
+
+#[cfg(test)]
+mod agent_stall_watchdog_tests {
+    use super::{
+        set_agent_task_permission_wait, touch_agent_task_activity, unix_epoch_millis,
+        AgentActivityWatchdog, AgentTaskLeaseHeartbeat, StallWatchdogAction,
+    };
+    use crate::runtime_control::RuntimeExecutionControl;
+    use crate::store::{DbBackgroundTask, NolaStore};
+    use std::time::{Duration, Instant};
+
+    fn create_claimed_test_task(
+        root: &std::path::Path,
+        task_id: &str,
+        lease_ms: i64,
+    ) -> (
+        NolaStore,
+        crate::runtime_task_port::RuntimeTaskExecutionAuthority,
+    ) {
+        let store = NolaStore::open_default().expect("open watchdog test store");
+        let now = unix_epoch_millis();
+        let task = DbBackgroundTask {
+            local_execution: None,
+            process_sandbox: None,
+            id: task_id.to_string(),
+            terminal: None,
+            project_root: root.to_string_lossy().into_owned(),
+            command: "subagent watchdog fixture".to_string(),
+            cwd: root.to_string_lossy().into_owned(),
+            pid: 0,
+            stdout_path: root.join(format!("{task_id}.stdout")).to_string_lossy().into_owned(),
+            stderr_path: root.join(format!("{task_id}.stderr")).to_string_lossy().into_owned(),
+            status_path: root.join(format!("{task_id}.status")).to_string_lossy().into_owned(),
+            started_at_ms: now,
+            owner_session_id: Some("watchdog-owner".to_string()),
+            output_contract_json: None,
+            sop_invocation: None,
+        };
+        store
+            .save_background_task(&task)
+            .expect("save watchdog test task");
+        let attempt = store
+            .claim_runtime_task_fair(
+                &task.id,
+                "watchdog-worker",
+                crate::runtime_task_port::worker_generation(),
+                &format!("token-{task_id}"),
+                now,
+                now + lease_ms,
+                4,
+                4,
+            )
+            .expect("claim watchdog test task")
+            .expect("watchdog attempt");
+        let lease = crate::runtime_task_port::register_runtime_task_attempt(attempt);
+        let execution = crate::runtime_task_port::RuntimeTaskExecutionAuthority::new(lease);
+        (store, execution)
+    }
+
+    #[test]
+    fn watchdog_state_machine_warns_once_resets_on_activity_and_respects_disable() {
+        let watchdog = AgentActivityWatchdog::new(1_000);
+        assert_eq!(
+            watchdog.evaluate(100_000, 120_000, 300_000),
+            StallWatchdogAction::None
+        );
+        assert_eq!(
+            watchdog.evaluate(121_000, 120_000, 300_000),
+            StallWatchdogAction::Warn {
+                elapsed_secs: 120,
+                message: "subagent stalled warning: no activity for 120s".to_string(),
+            }
+        );
+        // Same stall episode must not emit duplicate warnings.
+        assert_eq!(
+            watchdog.evaluate(150_000, 120_000, 300_000),
+            StallWatchdogAction::None
+        );
+        // Activity resumes -> resets stall warning state.
+        watchdog.touch(150_000);
+        assert_eq!(
+            watchdog.evaluate(269_999, 120_000, 300_000),
+            StallWatchdogAction::None
+        );
+        assert_eq!(
+            watchdog.evaluate(270_000, 120_000, 300_000),
+            StallWatchdogAction::Warn {
+                elapsed_secs: 120,
+                message: "subagent stalled warning: no activity for 120s".to_string(),
+            }
+        );
+        // Timeout fires with clear reason.
+        assert_eq!(
+            watchdog.evaluate(450_000, 120_000, 300_000),
+            StallWatchdogAction::Timeout {
+                elapsed_secs: 300,
+                reason: "subagent stalled: no activity for 300s".to_string(),
+            }
+        );
+        assert_eq!(
+            watchdog.stall_reason().as_deref(),
+            Some("subagent stalled: no activity for 300s")
+        );
+
+        // Zero thresholds disable warning and timeout.
+        let disabled = AgentActivityWatchdog::new(0);
+        assert_eq!(disabled.evaluate(999_999, 0, 0), StallWatchdogAction::None);
+    }
+
+    #[test]
+    fn regular_activity_touches_prevent_stall_warning_and_cancellation() {
+        let _environment = crate::store::test_env_lock();
+        let root = std::env::temp_dir().join(format!(
+            "nola-watchdog-active-{}",
+            uuid::Uuid::new_v4()
+        ));
+        std::fs::create_dir_all(&root).expect("create watchdog active test root");
+        std::env::set_var("NOLA_DB_PATH", root.join("nola.db"));
+
+        let task_id = "watchdog-active-task";
+        let (store, execution) = create_claimed_test_task(&root, task_id, 5_000);
+        let cancellation = RuntimeExecutionControl::default();
+        let heartbeat = AgentTaskLeaseHeartbeat::start_with_stall_config(
+            task_id,
+            "watchdog-owner",
+            &execution,
+            5_000,
+            &cancellation,
+            Duration::from_millis(20),
+            90,
+            180,
+        )
+        .expect("start watchdog heartbeat");
+
+        for _ in 0..10 {
+            std::thread::sleep(Duration::from_millis(25));
+            touch_agent_task_activity(task_id);
+        }
+
+        assert!(
+            !cancellation.is_requested(),
+            "active task must not be cancelled"
+        );
+        assert!(
+            heartbeat.stall_reason().is_none(),
+            "active task must not record a stall reason"
+        );
+        let events = store
+            .runtime_task_events(task_id, 50)
+            .expect("load active task events");
+        assert!(
+            !events
+                .iter()
+                .any(|event| matches!(event.kind.as_str(), "stall_warning" | "stall_timeout")),
+            "active task must not emit stall events: {:?}",
+            events.iter().map(|e| &e.kind).collect::<Vec<_>>()
+        );
+
+        drop(heartbeat);
+        std::env::remove_var("NOLA_DB_PATH");
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn permission_wait_prevents_stall_warning_and_cancellation() {
+        let _environment = crate::store::test_env_lock();
+        let root = std::env::temp_dir().join(format!(
+            "nola-watchdog-perm-{}",
+            uuid::Uuid::new_v4()
+        ));
+        std::fs::create_dir_all(&root).expect("create watchdog perm test root");
+        std::env::set_var("NOLA_DB_PATH", root.join("nola.db"));
+
+        let task_id = "watchdog-perm-task";
+        let (store, execution) = create_claimed_test_task(&root, task_id, 5_000);
+        let cancellation = RuntimeExecutionControl::default();
+        let heartbeat = AgentTaskLeaseHeartbeat::start_with_stall_config(
+            task_id,
+            "watchdog-owner",
+            &execution,
+            5_000,
+            &cancellation,
+            Duration::from_millis(20),
+            50,
+            110,
+        )
+        .expect("start watchdog heartbeat");
+
+        set_agent_task_permission_wait(task_id, true);
+        std::thread::sleep(Duration::from_millis(220));
+
+        assert!(
+            !cancellation.is_requested(),
+            "permission wait must never trigger stall cancellation"
+        );
+        assert!(heartbeat.stall_reason().is_none());
+        let events = store
+            .runtime_task_events(task_id, 50)
+            .expect("load perm task events");
+        assert!(
+            !events
+                .iter()
+                .any(|event| matches!(event.kind.as_str(), "stall_warning" | "stall_timeout")),
+            "permission wait must never emit stall events: {:?}",
+            events.iter().map(|e| &e.kind).collect::<Vec<_>>()
+        );
+
+        // Resuming from permission wait refreshes last_activity_at_ms so the
+        // task is not immediately cancelled on the next tick.
+        set_agent_task_permission_wait(task_id, false);
+        std::thread::sleep(Duration::from_millis(30));
+        assert!(
+            !cancellation.is_requested(),
+            "unpausing permission wait must reset the stall timer"
+        );
+
+        drop(heartbeat);
+        std::env::remove_var("NOLA_DB_PATH");
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn silent_stall_warns_first_then_auto_cancels_with_clear_reason() {
+        let _environment = crate::store::test_env_lock();
+        let root = std::env::temp_dir().join(format!(
+            "nola-watchdog-stall-{}",
+            uuid::Uuid::new_v4()
+        ));
+        std::fs::create_dir_all(&root).expect("create watchdog stall test root");
+        std::env::set_var("NOLA_DB_PATH", root.join("nola.db"));
+
+        let task_id = "watchdog-stall-task";
+        let (store, execution) = create_claimed_test_task(&root, task_id, 5_000);
+        let cancellation = RuntimeExecutionControl::default();
+        let heartbeat = AgentTaskLeaseHeartbeat::start_with_stall_config(
+            task_id,
+            "watchdog-owner",
+            &execution,
+            5_000,
+            &cancellation,
+            Duration::from_millis(20),
+            60,
+            160,
+        )
+        .expect("start watchdog heartbeat");
+
+        let deadline = Instant::now() + Duration::from_secs(2);
+        while !cancellation.is_requested() && Instant::now() < deadline {
+            std::thread::sleep(Duration::from_millis(15));
+        }
+
+        assert!(
+            cancellation.is_requested(),
+            "silent stall must trigger cancellation"
+        );
+        let reason = heartbeat
+            .stall_reason()
+            .expect("stall timeout must record a clear reason");
+        assert!(
+            reason.starts_with("subagent stalled: no activity for "),
+            "unexpected stall reason: {reason}"
+        );
+
+        let events = store
+            .runtime_task_events(task_id, 50)
+            .expect("load stalled task events");
+        let warn_events: Vec<_> = events
+            .iter()
+            .filter(|event| event.kind == "stall_warning")
+            .collect();
+        let timeout_events: Vec<_> = events
+            .iter()
+            .filter(|event| event.kind == "stall_timeout")
+            .collect();
+        assert_eq!(
+            warn_events.len(),
+            1,
+            "stall warning should fire exactly once before timeout: {:?}",
+            events.iter().map(|e| &e.kind).collect::<Vec<_>>()
+        );
+        assert_eq!(
+            timeout_events.len(),
+            1,
+            "stall timeout should fire once: {:?}",
+            events.iter().map(|e| &e.kind).collect::<Vec<_>>()
+        );
+        assert!(
+            warn_events[0].id < timeout_events[0].id,
+            "stall warning (id={}) must precede stall timeout (id={})",
+            warn_events[0].id,
+            timeout_events[0].id
+        );
+
+        drop(heartbeat);
         std::env::remove_var("NOLA_DB_PATH");
         let _ = std::fs::remove_dir_all(&root);
     }

@@ -386,7 +386,7 @@ nonisolated enum MacCoreToolPolicy {
         "impact_analysis", "implementation_search", "instruction_context",
         "language_service_list", "language_service_query", "terminal_input",
         "list_dir", "list_tasks", "memory_save", "memory_search", "move_file", "multi_edit_file", "nola_orchestrate", "notebook_edit",
-        "notebook_read", "project_overview", "propose_agent_plan", "read_file", "read_many_files",
+        "notebook_read", "project_overview", "propose_agent_plan", "pty_close", "pty_exec", "pty_screenshot", "pty_write", "read_file", "read_many_files",
         "read_symbol", "read_task", "related_files", "rename_symbol", "replace_in_files", "replace_symbol_body",
         "repo_map", "request_user_input", "send_agent_message", "set_thinking_mode", "Skill", "skill_skip",
         "SOP", "sop_run_update", "spawn_agent", "delegate_expert", "stop_task", "symbol_search", "system_time",

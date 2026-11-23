@@ -1,3 +1,23 @@
+#[cfg(any(feature = "terminal-ui", test))]
+fn interactive_stdin_confirmation_available() -> bool {
+    crate::interaction::stdin_confirmation_available()
+}
+
+#[cfg(not(any(feature = "terminal-ui", test)))]
+fn interactive_stdin_confirmation_available() -> bool {
+    false
+}
+
+#[cfg(any(feature = "terminal-ui", test))]
+fn interactive_prompt_permission(prompt: &PermissionPrompt) -> PermissionChoice {
+    crate::interaction::prompt_permission(prompt)
+}
+
+#[cfg(not(any(feature = "terminal-ui", test)))]
+fn interactive_prompt_permission(_prompt: &PermissionPrompt) -> PermissionChoice {
+    PermissionChoice::Deny
+}
+
 fn current_process_tree_usage() -> Result<ProcessGroupUsage, String> {
     process_tree_usage(std::process::id(), None)
 }
@@ -1960,7 +1980,7 @@ fn wait_task_until_return(config: &HostInvocationRequest, args: &Map<String, Val
             return task_error(format!("Unknown task: {task_id}"));
         }
         if task.status == "waiting_permission" {
-            if !crate::interaction::stdin_confirmation_available() {
+            if !interactive_stdin_confirmation_available() {
                 return task_ok(
                     json!({
                         "task": task_json(&task),
@@ -1986,7 +2006,7 @@ fn wait_task_until_return(config: &HostInvocationRequest, args: &Map<String, Val
                     .flatten()
                 });
             if let Some(request) = pending_permission {
-                let choice = crate::interaction::prompt_permission(&request.prompt.prompt);
+                let choice = interactive_prompt_permission(&request.prompt.prompt);
                 let interrupted = matches!(choice, PermissionChoice::TransportInterrupted(_));
                 match resolve_parent_task_permission(&request, choice) {
                     Ok(()) => continue,
@@ -2254,7 +2274,7 @@ fn wait_multiple_tasks_until_return(
 
         if let Some(task) = permission_task {
             let perm_task_id = task.id.clone();
-            if !crate::interaction::stdin_confirmation_available() {
+            if !interactive_stdin_confirmation_available() {
                 return task_ok(
                     json!({
                         "wait_mode": wait_mode,
@@ -2285,7 +2305,7 @@ fn wait_multiple_tasks_until_return(
                     .flatten()
                 });
             if let Some(request) = pending_permission {
-                let choice = crate::interaction::prompt_permission(&request.prompt.prompt);
+                let choice = interactive_prompt_permission(&request.prompt.prompt);
                 let interrupted = matches!(choice, PermissionChoice::TransportInterrupted(_));
                 match resolve_parent_task_permission(&request, choice) {
                     Ok(()) => continue,
@@ -2517,6 +2537,18 @@ pub(crate) fn wait_for_background_agent_permission(
         })
     else {
         return Ok(None);
+    };
+    struct PermissionWaitGuard {
+        task_id: String,
+    }
+    impl Drop for PermissionWaitGuard {
+        fn drop(&mut self) {
+            set_agent_task_permission_wait(&self.task_id, false);
+        }
+    }
+    set_agent_task_permission_wait(&task_id, true);
+    let _permission_wait_guard = PermissionWaitGuard {
+        task_id: task_id.clone(),
     };
     if let Some(resume) = cold_resume {
         let continuation: Value = serde_json::from_str(&resume.suspension.continuation_json)

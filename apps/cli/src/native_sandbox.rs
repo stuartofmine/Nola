@@ -175,6 +175,8 @@ impl NativeOsSandboxPolicy {
         let mut allowed_write_roots = Vec::new();
         push_unique_canonical(&mut allowed_write_roots, &workspace, true);
         push_unique_canonical(&mut allowed_write_roots, &std::env::temp_dir(), true);
+        #[cfg(unix)]
+        push_unique_canonical(&mut allowed_write_roots, Path::new("/tmp"), true);
         if let Some(tmpdir) = std::env::var_os("TMPDIR").filter(|value| !value.is_empty()) {
             push_unique_canonical(&mut allowed_write_roots, Path::new(&tmpdir), true);
         }
@@ -503,5 +505,25 @@ mod tests {
             "writing into .git/hooks/pre-commit must be denied by seatbelt"
         );
         assert!(!hook_file.exists());
+
+        // 5. Default workspace policy permits writing into /tmp inside Seatbelt (consistent with write_file).
+        let workspace_policy = NativeOsSandboxPolicy::for_workspace(&workspace, &[]);
+        let tmp_probe = PathBuf::from(format!("/tmp/nola-seatbelt-probe-{}", std::process::id()));
+        let mut cmd_tmp = Command::new("/bin/sh");
+        cmd_tmp
+            .arg("-c")
+            .arg(format!("printf 'ok' > '{}'", tmp_probe.display()))
+            .current_dir(&workspace);
+        let out_tmp = wrap_command_in_native_sandbox(&workspace_policy, &cmd_tmp)
+            .unwrap()
+            .output()
+            .unwrap();
+        assert!(
+            out_tmp.status.success(),
+            "writing into /tmp must be permitted by seatbelt: {}",
+            String::from_utf8_lossy(&out_tmp.stderr)
+        );
+        assert_eq!(std::fs::read_to_string(&tmp_probe).unwrap(), "ok");
+        let _ = std::fs::remove_file(&tmp_probe);
     }
 }

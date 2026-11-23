@@ -3464,6 +3464,13 @@ mod model_text_presentation_gate_tests {
         assert!(!INITIAL_MODEL_TOOL_IDS.contains(&"chrome_native_type"));
         assert!(!INITIAL_MODEL_TOOL_IDS.contains(&"chrome_native_open_page"));
         assert!(INITIAL_MODEL_TOOL_IDS.contains(&"bash"));
+        assert!(INITIAL_MODEL_TOOL_IDS.contains(&"pty_exec"));
+        assert!(INITIAL_MODEL_TOOL_IDS.contains(&"pty_write"));
+        assert!(INITIAL_MODEL_TOOL_IDS.contains(&"pty_screenshot"));
+        assert!(INITIAL_MODEL_TOOL_IDS.contains(&"pty_close"));
+        assert!(INITIAL_MODEL_TOOL_IDS.contains(&"grep"));
+        assert!(INITIAL_MODEL_TOOL_IDS.contains(&"glob"));
+        assert!(INITIAL_MODEL_TOOL_IDS.contains(&"list_dir"));
         assert!(!INITIAL_MODEL_TOOL_IDS.contains(&"spawn_agent"));
         assert!(!INITIAL_MODEL_TOOL_IDS.contains(&"goal_complete"));
         assert!(INITIAL_MODEL_TOOL_IDS.contains(&"repo_map"));

@@ -16,7 +16,7 @@ path = "src/lib.rs"
 
 [features]
 default = ["terminal-ui"]
-terminal-ui = ["dep:crossterm", "dep:unicode-width", "dep:unicode-segmentation", "dep:arboard", "dep:image"]
+terminal-ui = ["dep:crossterm", "dep:unicode-width", "dep:unicode-segmentation", "dep:arboard"]
 native-host = []
 
 [[bin]]
@@ -51,7 +51,7 @@ nola_service = { path = "../../core/nola-service" }
 nola-code-memory = { path = "../../core/nola-code-memory" }
 base64 = "0.21"
 arboard = { version = "3.6", optional = true }
-image = { version = "0.25", default-features = false, features = ["png", "jpeg", "gif", "webp"], optional = true }
+image = { version = "0.25", default-features = false, features = ["png", "jpeg", "gif", "webp"] }
 calamine = "0.36"
 chrono = "0.4"
 # Use the Unix level-triggered TTY source: the default Mio source can strand
@@ -83,6 +83,7 @@ uuid = { version = "1.8", features = ["v4"] }
 url = "2.5"
 tempfile = "3"
 shlex = "2"
+vt100 = "0.15"
 nola_store_port = { path = "../../core/nola-store-port" }
 
 [dev-dependencies]
@@ -96,7 +97,6 @@ unicode-width = "0.1"
 unicode-segmentation = "1.12"
 rusqlite = { version = "0.31", features = ["bundled"] }
 nola_store = { path = "../../core/nola-store" }
-vt100 = "0.15"
 
 [target.'cfg(windows)'.dependencies]
 windows-sys = { version = "0.61", features = [

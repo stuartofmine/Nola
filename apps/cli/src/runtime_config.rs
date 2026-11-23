@@ -17,7 +17,43 @@ pub(crate) fn reasoning_enabled(
         declared.unwrap_or_else(|| nola_core::agent::resolve_model_capability_profile(provider, model).reasoning))
 }
 
+pub(crate) fn parse_reasoning_effort_selection(
+    raw: &str,
+) -> Result<Option<nola_core::agent::reasoning::ReasoningSelection>, String> {
+    let normalized = raw.trim().to_ascii_lowercase();
+    match normalized.as_str() {
+        "default" | "auto" => Ok(None),
+        "off" | "none" => Ok(Some(
+            nola_core::agent::reasoning::ReasoningSelection::Effort {
+                value: "none".to_string(),
+            },
+        )),
+        "minimal" | "low" | "medium" | "high" | "xhigh" | "max" => Ok(Some(
+            nola_core::agent::reasoning::ReasoningSelection::Effort { value: normalized },
+        )),
+        _ => Err(format!(
+            "invalid reasoning effort '{}': expected off, none, minimal, low, medium, high, xhigh, max, or default",
+            raw.trim()
+        )),
+    }
+}
+
 impl RuntimeConfig {
+    pub(crate) fn reasoning_effort_display(&self) -> Option<String> {
+        match self.reasoning_selection.as_ref()? {
+            nola_core::agent::reasoning::ReasoningSelection::Effort { value } => {
+                if value.eq_ignore_ascii_case("none") {
+                    Some("off".to_string())
+                } else {
+                    Some(value.clone())
+                }
+            }
+            nola_core::agent::reasoning::ReasoningSelection::Budget { tokens } => {
+                Some(format!("{tokens} tokens"))
+            }
+        }
+    }
+
     pub(crate) fn host_runtime_options(&self) -> crate::host_invocation_request::HostRuntimeOptions {
         crate::host_invocation_request::HostRuntimeOptions {
                 edited_resend_model_capability: None,
@@ -341,6 +377,27 @@ impl RuntimeConfig {
         if let Some(tier) = obj.get("reasoning_tier").or_else(|| llm.and_then(|value| value.get("reasoning_tier"))) {
             self.reasoning_tier = serde_json::from_value(tier.clone())
                 .map_err(|error| format!("{}: invalid reasoning_tier: {error}", source.display()))?;
+        }
+        if let Some(effort_value) = obj
+            .get("reasoning_effort")
+            .or_else(|| obj.get("model_reasoning_effort"))
+            .or_else(|| {
+                llm.and_then(|value| {
+                    value
+                        .get("reasoning_effort")
+                        .or_else(|| value.get("model_reasoning_effort"))
+                })
+            })
+        {
+            if effort_value.is_null() {
+                self.reasoning_selection = None;
+            } else {
+                let raw = effort_value.as_str().ok_or_else(|| {
+                    format!("{}: reasoning_effort must be a string", source.display())
+                })?;
+                self.reasoning_selection = parse_reasoning_effort_selection(raw)
+                    .map_err(|error| format!("{}: {error}", source.display()))?;
+            }
         }
         self.endpoint = string_from(obj, "endpoint")
             .or_else(|| llm.and_then(|m| string_from_map(m, "endpoint")))
@@ -1313,5 +1370,102 @@ mod tests {
         );
 
         let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn parses_reasoning_effort_from_config_and_formats_display() {
+        use nola_core::agent::reasoning::ReasoningSelection;
+
+        assert_eq!(parse_reasoning_effort_selection("default").unwrap(), None);
+        assert_eq!(parse_reasoning_effort_selection("AUTO").unwrap(), None);
+        assert_eq!(
+            parse_reasoning_effort_selection("off").unwrap(),
+            Some(ReasoningSelection::Effort {
+                value: "none".to_string()
+            })
+        );
+        assert_eq!(
+            parse_reasoning_effort_selection("none").unwrap(),
+            Some(ReasoningSelection::Effort {
+                value: "none".to_string()
+            })
+        );
+        for level in ["minimal", "low", "medium", "high", "xhigh", "max"] {
+            assert_eq!(
+                parse_reasoning_effort_selection(level).unwrap(),
+                Some(ReasoningSelection::Effort {
+                    value: level.to_string()
+                })
+            );
+        }
+        assert!(parse_reasoning_effort_selection("ultra").is_err());
+        assert!(parse_reasoning_effort_selection("").is_err());
+
+        let mut runtime = RuntimeConfig::default();
+        assert_eq!(runtime.reasoning_effort_display(), None);
+
+        runtime
+            .merge_value(
+                serde_json::json!({"reasoning_effort": "high"}),
+                Path::new("config.json"),
+            )
+            .unwrap();
+        assert_eq!(
+            runtime.reasoning_selection,
+            Some(ReasoningSelection::Effort {
+                value: "high".to_string()
+            })
+        );
+        assert_eq!(runtime.reasoning_effort_display().as_deref(), Some("high"));
+
+        runtime
+            .merge_value(
+                serde_json::json!({"llm": {"reasoning_effort": "off"}}),
+                Path::new("config.json"),
+            )
+            .unwrap();
+        assert_eq!(
+            runtime.reasoning_selection,
+            Some(ReasoningSelection::Effort {
+                value: "none".to_string()
+            })
+        );
+        assert_eq!(runtime.reasoning_effort_display().as_deref(), Some("off"));
+
+        runtime
+            .merge_value(
+                serde_json::json!({"model_reasoning_effort": "xhigh"}),
+                Path::new("config.json"),
+            )
+            .unwrap();
+        assert_eq!(runtime.reasoning_effort_display().as_deref(), Some("xhigh"));
+
+        runtime
+            .merge_value(
+                serde_json::json!({"reasoning_effort": "default"}),
+                Path::new("config.json"),
+            )
+            .unwrap();
+        assert_eq!(runtime.reasoning_selection, None);
+        assert_eq!(runtime.reasoning_effort_display(), None);
+
+        runtime.reasoning_selection = Some(ReasoningSelection::Budget { tokens: 4096 });
+        assert_eq!(
+            runtime.reasoning_effort_display().as_deref(),
+            Some("4096 tokens")
+        );
+
+        assert!(runtime
+            .merge_value(
+                serde_json::json!({"reasoning_effort": 42}),
+                Path::new("config.json"),
+            )
+            .is_err());
+        assert!(runtime
+            .merge_value(
+                serde_json::json!({"reasoning_effort": "bogus"}),
+                Path::new("config.json"),
+            )
+            .is_err());
     }
 }

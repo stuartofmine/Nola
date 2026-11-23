@@ -467,6 +467,7 @@ impl Config {
         let mut force_tool_set_explicit = false;
         let mut network_policy_explicit = false;
         let mut language_explicit = false;
+        let mut reasoning_effort_override: Option<Option<nola_core::agent::reasoning::ReasoningSelection>> = None;
 
         while let Some(arg) = args.next() {
             if arg == "--" {
@@ -861,6 +862,9 @@ impl Config {
             } else if let Some(value) = option_value(&arg, "--network-policy", &mut args)? {
                 network_policy_explicit = true;
                 network_policy = normalize_network_policy(&value)?;
+            } else if let Some(value) = option_value(&arg, "--reasoning-effort", &mut args)? {
+                let parsed = crate::runtime_config::parse_reasoning_effort_selection(&value)?;
+                reasoning_effort_override = Some(parsed);
             } else if arg.starts_with('-') {
                 return Err(format!("{} {arg}", tr(Message::UnknownOptionPrefix)).into());
             } else if let Some(CommandMode::ModelApplyConfig { path: slot @ None }) = command.as_mut() {
@@ -1005,6 +1009,9 @@ impl Config {
         }
         if let Some(value) = openai_prompt_cache_retention.take() {
             runtime.openai_prompt_cache_retention = Some(value);
+        }
+        if let Some(selection) = reasoning_effort_override.take() {
+            runtime.reasoning_selection = selection;
         }
 
         // Saved conversations own their model configuration. Argument parsing
@@ -1398,6 +1405,7 @@ fn is_global_option_token(arg: &str) -> bool {
         "--agent-mode",
         "--lang",
         "--network-policy",
+        "--reasoning-effort",
     ]
     .iter()
     .any(|name| arg == *name || arg.starts_with(&format!("{name}=")))
@@ -3357,5 +3365,49 @@ mod tests {
         let err = web_port_from_environment(Err(VarError::NotPresent), Ok("99999".into()))
             .unwrap_err();
         assert!(err.contains("PORT"));
+    }
+
+    #[test]
+    fn reasoning_effort_cli_flag_parses_overrides_and_rejects_invalid_values() {
+        use super::{ConfigStartError, NoConfigurationSetup, RuntimeConfig};
+        use nola_core::agent::reasoning::ReasoningSelection;
+
+        let parse_with = |extra: &[&str], runtime: RuntimeConfig| {
+            let mut argv = vec![
+                "--endpoint".to_string(),
+                "http://127.0.0.1:11434/v1".to_string(),
+                "--model".to_string(),
+                "gpt-5".to_string(),
+            ];
+            argv.extend(extra.iter().map(|s| (*s).to_string()));
+            Config::from_args_with_runtime(argv, &NoConfigurationSetup, Some(runtime))
+                .map_err(ConfigStartError::into_message)
+        };
+
+        let high = parse_with(&["--reasoning-effort", "high"], RuntimeConfig::default()).unwrap();
+        assert_eq!(
+            high.runtime.reasoning_selection,
+            Some(ReasoningSelection::Effort {
+                value: "high".to_string()
+            })
+        );
+
+        let off = parse_with(&["--reasoning-effort=off"], RuntimeConfig::default()).unwrap();
+        assert_eq!(
+            off.runtime.reasoning_selection,
+            Some(ReasoningSelection::Effort {
+                value: "none".to_string()
+            })
+        );
+
+        let mut base = RuntimeConfig::default();
+        base.reasoning_selection = Some(ReasoningSelection::Effort {
+            value: "high".to_string(),
+        });
+        let reset = parse_with(&["--reasoning-effort", "default"], base).unwrap();
+        assert_eq!(reset.runtime.reasoning_selection, None);
+
+        let err = parse_with(&["--reasoning-effort", "bogus"], RuntimeConfig::default()).unwrap_err();
+        assert!(err.contains("invalid reasoning effort"), "{err}");
     }
 }

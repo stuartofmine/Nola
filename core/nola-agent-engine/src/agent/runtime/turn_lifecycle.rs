@@ -1079,6 +1079,11 @@ impl AgentRuntime {
             })
             .collect::<Vec<_>>();
         let owner_turn_id = active_turn.turn_id.clone();
+        let cancellation_instruction = if reason == "returned_to_composer" {
+            "This call was paused at a permission prompt and returned to the composer, not denied. Preserve earlier completed results; cancellation does not revoke existing grants. If the user resumes or asks to continue in the next turn, carry through and complete the entire interrupted user request end-to-end rather than stopping after only retrying this tool."
+        } else {
+            "This call was interrupted, not denied. Preserve earlier completed results; cancellation does not revoke existing grants."
+        };
         let cancelled_results = cancellable_tools
             .iter()
             .map(|(call_id, name)| AgentItem::ToolResult {
@@ -1091,7 +1096,7 @@ impl AgentRuntime {
                     "status": "cancelled",
                     "reason": reason,
                     "permission_decision": null,
-                    "instruction": "This call was interrupted, not denied. Preserve earlier completed results; cancellation does not revoke existing grants."
+                    "instruction": cancellation_instruction
                 }),
                 is_error: true,
                 full_output_ref: None,

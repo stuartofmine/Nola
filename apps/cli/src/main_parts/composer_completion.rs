@@ -92,7 +92,7 @@ fn matching_slash_commands_inner(input: &str, config: Option<&Config>) -> Vec<Sl
         return interactive_room_completions(rest);
     }
 
-    if command == "/model" {
+    if command == "/model" && !rest.is_empty() {
         let (prefix, query) = interactive_model_completion_parts(rest);
         return interactive_model_candidates(config, query)
             .into_iter()
@@ -100,7 +100,7 @@ fn matching_slash_commands_inner(input: &str, config: Option<&Config>) -> Vec<Sl
                 name: format!("{prefix}{}", item.name),
                 label: item.label.map(|label| format!("{prefix}{label}")),
             })
-            .take(4)
+            .take(6)
             .collect();
     }
     if command == "/executor" {
