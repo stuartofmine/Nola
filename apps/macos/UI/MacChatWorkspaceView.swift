@@ -747,6 +747,10 @@ struct MacChatWorkspaceView: View {
         .onReceive(NotificationCenter.default.publisher(for: .nolaMacLocalModelRuntimeDidChange)) { _ in
             Task { await refreshRemoteHostConnection() }
         }
+        .onReceive(NotificationCenter.default.publisher(for: .nolaMacWorkspaceDirectoryDidSwitch)) { notification in
+            guard let url = notification.userInfo?["url"] as? URL else { return }
+            model.switchWorkspace(to: url)
+        }
         .onChange(of: selectedSection) { _, section in
             if section != .chat { activeOverlay = nil }
             if section == .memory { dataNavigation.section = .memory }

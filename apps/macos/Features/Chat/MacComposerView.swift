@@ -778,7 +778,7 @@ struct MacComposerView: View {
 
     private var bottomToolbar: some View {
         HStack(alignment: .center, spacing: 6) {
-            // Left: Attach button
+            // Left: Attach button + Plan/Build mode toggle
             Button {
                 fileImportFailure = nil
                 fileImporterConversationID = state.conversationID
@@ -793,6 +793,8 @@ struct MacComposerView: View {
             ))
             .help("Attach Files")
             .accessibilityLabel(String(localized: "Attach Files"))
+
+            planModeToggle
 
             Spacer(minLength: 6)
 
@@ -878,6 +880,35 @@ struct MacComposerView: View {
         )
     }
 
+    private var planModeToggle: some View {
+        Button {
+            actions.perform(.setPlanMode(conversationID: state.conversationID, !state.isPlanMode))
+        } label: {
+            HStack(spacing: 5) {
+                Image(systemName: state.isPlanMode ? "map.fill" : "hammer")
+                    .font(.system(size: 11, weight: .semibold))
+                Text(verbatim: state.isPlanMode ? "PLAN" : "Build")
+                    .font(.system(size: 11, weight: state.isPlanMode ? .bold : .medium, design: state.isPlanMode ? .rounded : .default))
+                    .tracking(state.isPlanMode ? 0.4 : 0)
+            }
+            .foregroundStyle(state.isPlanMode ? MacDesignColor.brand : Color.secondary)
+            .padding(.horizontal, 9)
+            .frame(height: 28)
+            .macComposerPill(isActive: state.isPlanMode, tint: MacDesignColor.brand)
+        }
+        .buttonStyle(.plain)
+        .fixedSize(horizontal: true, vertical: false)
+        .disabled(state.isRunning || state.isSubmissionBlocked)
+        .help(
+            state.isPlanMode
+                ? "Plan mode (read-only): inspects files and designs a plan without modifying your workspace. Click to switch to Build mode."
+                : "Build mode: full editing and execution tools enabled with automatic turn checkpoints. Click to switch to read-only Plan mode."
+        )
+        .accessibilityLabel(state.isPlanMode ? "Plan Mode (Read-Only)" : "Build Mode")
+        .accessibilityValue(state.isPlanMode ? "Plan" : "Build")
+        .accessibilityIdentifier("mac-composer-plan-mode")
+    }
+
     private var permissionModeMenu: some View {
         Menu {
             ForEach(MacPermissionMode.allCases) { mode in
@@ -950,6 +981,7 @@ struct MacComposerView: View {
 
     private var composerStrokeColor: Color {
         if dropTargeted { return MacDesignColor.brand }
+        if state.isPlanMode { return MacDesignColor.brand.opacity(colorScheme == .dark ? 0.55 : 0.45) }
         if colorScheme == .dark {
             if contrast == .increased { return Color.white.opacity(composerFocused.wrappedValue ? 0.50 : 0.28) }
             if composerFocused.wrappedValue { return Color.white.opacity(0.22) }

@@ -1018,10 +1018,10 @@ fn model_input_schema_with_execution_context(
     }
     let lineage = serde_json::json!({
         "type": "object",
-        "description": "Optional durable SOP execution lineage. Supply only when an active SOP context explicitly provides the exact runId and stepId for this concrete call. Never use a Skill id, Skill run alias, skill_update run_id, or guessed workflow name here; Skill execution is tracked separately. Omit this field when no active SOP supplies both identifiers.",
+        "description": "Optional active SOP lineage. Never use a Skill id. Omit this field unless an active SOP supplies both IDs.",
         "properties": {
-            "sopRunId": {"type": "string", "minLength": 1, "description": "Exact durable SOP runId from the active SOP context; never a Skill id or Skill run alias."},
-            "sopStepId": {"type": "string", "minLength": 1, "description": "Exact active SOP stepId paired with sopRunId; never infer it from Skill progress steps."}
+            "sopRunId": {"type": "string", "minLength": 1},
+            "sopStepId": {"type": "string", "minLength": 1}
         },
         "required": ["sopRunId", "sopStepId"],
         "additionalProperties": false

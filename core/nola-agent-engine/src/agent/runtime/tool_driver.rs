@@ -1871,7 +1871,8 @@ impl AgentRuntime {
         external_full_output_ref: Option<&str>,
     ) -> Value {
         let evidence = nola_domain::tool_evidence::ModelToolEvidence::from_host_output(output);
-        let output = evidence.as_value();
+        let stripped = strip_internal_model_telemetry(evidence.as_value());
+        let output = &stripped;
         if matches!(capability_id, "Skill" | "skill_invoke") {
             if let Some(skill) = invoked_skill_from_output(output) {
                 return compact_skill_activation_output(output, &skill.skill_id);
@@ -1952,6 +1953,61 @@ impl AgentRuntime {
             _ => None,
         }
     }
+}
+
+/// Removes Host-internal telemetry and empty boilerplate keys from the model-facing
+/// tool projection while leaving canonical transcript/receipt storage untouched.
+fn strip_internal_model_telemetry(output: &Value) -> Value {
+    let Value::Object(map) = output else {
+        return output.clone();
+    };
+    let mut cleaned = map.clone();
+    // Core already reconciled `_nola_execution` receipts and UI uses `_nola_display`
+    // from the canonical transcript item; sending UUIDs/local_stop metadata to the
+    // LLM only bloats context and dilutes attention.
+    cleaned.remove("_nola_execution");
+    cleaned.remove("_nola_display");
+    if cleaned.contains_key("exit_code") {
+        cleaned.remove("exit_evidence");
+    }
+    if cleaned.get("output_compacted").and_then(Value::as_bool) == Some(false) {
+        cleaned.remove("output_compacted");
+    }
+    if cleaned.get("signal").is_some_and(Value::is_null) {
+        cleaned.remove("signal");
+    }
+    if cleaned.get("full_output_ref").is_some_and(Value::is_null) {
+        cleaned.remove("full_output_ref");
+    }
+    if cleaned
+        .get("semantic_note")
+        .and_then(Value::as_str)
+        .is_some_and(|s| s.is_empty())
+    {
+        cleaned.remove("semantic_note");
+    }
+    let is_shell = cleaned.get("type").and_then(Value::as_str) == Some("shell_execution");
+    if is_shell {
+        // The exact shell command is already present in the immediately preceding
+        // assistant tool_call; echoing it back inside the tool result doubles
+        // long heredocs in context and amplifies repetition loops.
+        cleaned.remove("command");
+        cleaned.remove("type");
+        if cleaned.get("state").and_then(Value::as_str) == Some("completed") {
+            cleaned.remove("state");
+        }
+        if cleaned.get("exit_code").and_then(Value::as_i64) == Some(0) {
+            cleaned.remove("cwd");
+            if cleaned
+                .get("stderr")
+                .and_then(Value::as_str)
+                .is_some_and(|s| s.is_empty())
+            {
+                cleaned.remove("stderr");
+            }
+        }
+    }
+    Value::Object(cleaned)
 }
 
 fn bounded_model_tool_output(
@@ -2183,6 +2239,52 @@ mod memory_usage_visibility_contract_tests {
         assert_eq!(projected["exit_code"], 0);
         assert_eq!(projected["full_output_ref"], "/output/full");
         assert!(projected.to_string().chars().count() <= 8_000);
+    }
+
+    #[test]
+    fn model_projection_strips_internal_execution_telemetry_without_losing_diagnostics() {
+        let runtime = AgentRuntime::try_new(AgentCoreConfig {
+            session_id: Some(SessionId::from_string("telemetry-strip-test".into())),
+            turn_identity: crate::agent::model_capability::test_host_identity(),
+            ..Default::default()
+        })
+        .unwrap();
+        let output = json!({
+            "_nola_display": "$ pytest (exit=0)",
+            "_nola_execution": {
+                "state": "completed",
+                "local_stop": { "identity": { "delivery_attempt_id": "abc-123" } },
+                "checks": [],
+                "effects": []
+            },
+            "type": "shell_execution",
+            "command": "pytest -q",
+            "cwd": "/app",
+            "state": "completed",
+            "exit_code": 0,
+            "exit_evidence": { "exit_code": 0, "pipeline_exit_codes": [0] },
+            "output_compacted": false,
+            "signal": null,
+            "full_output_ref": null,
+            "semantic_note": "",
+            "stdout": "2 passed\n",
+            "stderr": ""
+        });
+        let projected = runtime.tool_output_for_context_with_ref("bash", &output, None);
+        assert!(projected.get("_nola_execution").is_none());
+        assert!(projected.get("_nola_display").is_none());
+        assert!(projected.get("command").is_none());
+        assert!(projected.get("cwd").is_none());
+        assert!(projected.get("type").is_none());
+        assert!(projected.get("state").is_none());
+        assert!(projected.get("exit_evidence").is_none());
+        assert!(projected.get("output_compacted").is_none());
+        assert!(projected.get("signal").is_none());
+        assert!(projected.get("full_output_ref").is_none());
+        assert!(projected.get("semantic_note").is_none());
+        assert!(projected.get("stderr").is_none());
+        assert_eq!(projected["exit_code"], 0);
+        assert_eq!(projected["stdout"], "2 passed\n");
     }
 
     fn usage(memory_id: &str) -> ToolMemoryUsage {

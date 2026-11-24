@@ -31,7 +31,11 @@ struct MacWorkspaceReviewRoute: Codable, Hashable {
 struct MacWorkspaceReviewView: View {
     let route: MacWorkspaceReviewRoute
 
+    @State private var activePath: String
     @State private var snapshot: MacGitWorkspaceSnapshot?
+    @State private var worktrees: [MacGitWorktree] = []
+    @State private var undoCount = 0
+    @State private var redoCount = 0
     @State private var selectedChangeID: String?
     @State private var diff = ""
     @State private var isLoadingDiff = false
@@ -45,22 +49,41 @@ struct MacWorkspaceReviewView: View {
     @State private var feedback: MacGitOperationReceipt?
     @State private var showsCommitConfirmation = false
     @State private var showsPushConfirmation = false
+    @State private var showsNewWorktreeSheet = false
+    @State private var newWorktreeBranch = ""
+    @State private var worktreeCreationError: String?
 
-    private enum GitOperation: Equatable { case commit, push }
+    private enum GitOperation: Equatable { case commit, push, undo, redo, createWorktree }
+
+    init(route: MacWorkspaceReviewRoute) {
+        self.route = route
+        _activePath = State(initialValue: route.path)
+    }
+
+    private var activeWorkspaceURL: URL {
+        URL(fileURLWithPath: activePath, isDirectory: true)
+    }
 
     var body: some View {
         HSplitView {
             VStack(spacing: 0) {
                 if let snapshot {
-                    HStack(spacing: 7) {
-                        Image(systemName: "arrow.triangle.branch")
-                        Text(snapshot.branch)
-                            .fontWeight(.medium)
-                            .lineLimit(1)
-                        Spacer()
-                        Label(publishStatus(snapshot), systemImage: publishStatusSymbol(snapshot))
-                            .foregroundStyle(publishStatusColor(snapshot))
-                            .lineLimit(1)
+                    VStack(spacing: 8) {
+                        HStack(spacing: 7) {
+                            worktreeMenu(snapshot)
+                            Spacer(minLength: 4)
+                            checkpointControls
+                        }
+                        HStack(spacing: 7) {
+                            Text(snapshot.repositoryURL.lastPathComponent)
+                                .foregroundStyle(.secondary)
+                                .lineLimit(1)
+                                .truncationMode(.middle)
+                            Spacer(minLength: 6)
+                            Label(publishStatus(snapshot), systemImage: publishStatusSymbol(snapshot))
+                                .foregroundStyle(publishStatusColor(snapshot))
+                                .lineLimit(1)
+                        }
                     }
                     .font(.system(size: 11))
                     .padding(12)
@@ -161,9 +184,15 @@ struct MacWorkspaceReviewView: View {
                 .accessibilityLabel(macWorkspaceReviewText("mac.workspace.refresh", "Refresh Changes"))
             }
         }
-        .task { await loadSnapshot() }
+        .task(id: activePath) { await loadSnapshot() }
         .onChange(of: selectedChangeID) { _, _ in
             Task { await loadDiff() }
+        }
+        .onReceive(NotificationCenter.default.publisher(for: .nolaMacTurnCheckpointsDidChange)) { _ in
+            Task { await refreshCheckpointCounts() }
+        }
+        .sheet(isPresented: $showsNewWorktreeSheet) {
+            newWorktreeSheet
         }
         .confirmationDialog(
             macWorkspaceReviewText("mac.workspace.commit.confirm_title", "Commit all workspace changes?"),
@@ -200,11 +229,14 @@ struct MacWorkspaceReviewView: View {
         isLoading = true
         errorMessage = nil
         defer { isLoading = false }
+        let targetURL = activeWorkspaceURL
         do {
-            let value = try await MacWorkspaceGitService.shared.snapshot(
-                at: URL(fileURLWithPath: route.path, isDirectory: true)
-            )
+            let value = try await MacWorkspaceGitService.shared.snapshot(at: targetURL)
             snapshot = value
+            worktrees = (try? await MacWorkspaceGitService.shared.listWorktrees(at: value.repositoryURL)) ?? []
+            let counts = await MacWorkspaceGitService.shared.checkpointCounts(at: value.repositoryURL)
+            undoCount = counts.undo
+            redoCount = counts.redo
             let suggestion = await MacWorkspaceGitService.shared.suggestedCommitMessage(for: value)
             if commitMessage.isEmpty || commitMessage == lastSuggestedCommitMessage {
                 commitMessage = suggestion
@@ -218,9 +250,277 @@ struct MacWorkspaceReviewView: View {
             }
         } catch {
             snapshot = nil
+            worktrees = []
+            undoCount = 0
+            redoCount = 0
             diff = ""
             errorMessage = error.localizedDescription
         }
+    }
+
+    private func refreshCheckpointCounts() async {
+        let targetURL = snapshot?.repositoryURL ?? activeWorkspaceURL
+        let counts = await MacWorkspaceGitService.shared.checkpointCounts(at: targetURL)
+        undoCount = counts.undo
+        redoCount = counts.redo
+    }
+
+    @ViewBuilder
+    private var checkpointControls: some View {
+        HStack(spacing: 4) {
+            Button {
+                Task { await undoCheckpoint() }
+            } label: {
+                HStack(spacing: 3) {
+                    if operation == .undo {
+                        ProgressView().controlSize(.mini)
+                    } else {
+                        Image(systemName: "arrow.uturn.backward")
+                            .font(.system(size: 10.5, weight: .semibold))
+                    }
+                    if undoCount > 0 {
+                        Text(verbatim: "\(undoCount)")
+                            .font(.system(size: 10, weight: .semibold, design: .monospaced))
+                            .monospacedDigit()
+                    }
+                }
+                .padding(.horizontal, 6)
+                .frame(height: 22)
+                .background(
+                    Color.primary.opacity(undoCount > 0 ? 0.08 : 0.03),
+                    in: Capsule(style: .continuous)
+                )
+            }
+            .buttonStyle(.plain)
+            .disabled(operation != nil || undoCount == 0)
+            .help(undoCount > 0 ? "Undo last turn checkpoint (\(undoCount) available)" : "No turn checkpoints to undo")
+            .accessibilityLabel("Undo Turn Checkpoint")
+            .accessibilityIdentifier("mac-git-checkpoint-undo")
+
+            Button {
+                Task { await redoCheckpoint() }
+            } label: {
+                HStack(spacing: 3) {
+                    if operation == .redo {
+                        ProgressView().controlSize(.mini)
+                    } else {
+                        Image(systemName: "arrow.uturn.forward")
+                            .font(.system(size: 10.5, weight: .semibold))
+                    }
+                    if redoCount > 0 {
+                        Text(verbatim: "\(redoCount)")
+                            .font(.system(size: 10, weight: .semibold, design: .monospaced))
+                            .monospacedDigit()
+                    }
+                }
+                .padding(.horizontal, 6)
+                .frame(height: 22)
+                .background(
+                    Color.primary.opacity(redoCount > 0 ? 0.08 : 0.03),
+                    in: Capsule(style: .continuous)
+                )
+            }
+            .buttonStyle(.plain)
+            .disabled(operation != nil || redoCount == 0)
+            .help(redoCount > 0 ? "Redo turn checkpoint (\(redoCount) available)" : "No turn checkpoints to redo")
+            .accessibilityLabel("Redo Turn Checkpoint")
+            .accessibilityIdentifier("mac-git-checkpoint-redo")
+        }
+    }
+
+    @ViewBuilder
+    private func worktreeMenu(_ snapshot: MacGitWorkspaceSnapshot) -> some View {
+        Menu {
+            if !worktrees.isEmpty {
+                Section("Worktrees") {
+                    ForEach(worktrees) { worktree in
+                        Button {
+                            switchToWorktree(worktree)
+                        } label: {
+                            let suffix = worktree.isMain ? " · Main" : ""
+                            let folder = worktree.path.lastPathComponent
+                            Label(
+                                "\(worktree.displayBranch) (\(folder))\(suffix)",
+                                systemImage: worktree.isCurrent ? "checkmark" : "arrow.triangle.branch"
+                            )
+                        }
+                        .disabled(operation != nil)
+                    }
+                }
+                Divider()
+            }
+            Button {
+                newWorktreeBranch = ""
+                worktreeCreationError = nil
+                showsNewWorktreeSheet = true
+            } label: {
+                Label("New Worktree…", systemImage: "plus.rectangle.on.folder")
+            }
+            .disabled(operation != nil || !snapshot.hasCommits)
+        } label: {
+            HStack(spacing: 5) {
+                Image(systemName: "arrow.triangle.branch")
+                    .font(.system(size: 10.5, weight: .semibold))
+                Text(snapshot.branch)
+                    .fontWeight(.medium)
+                    .lineLimit(1)
+                if worktrees.count > 1 {
+                    Text(verbatim: "· \(worktrees.count)")
+                        .font(.system(size: 10, weight: .medium))
+                        .foregroundStyle(.secondary)
+                }
+                Image(systemName: "chevron.down")
+                    .font(.system(size: 8, weight: .semibold))
+                    .foregroundStyle(.secondary)
+            }
+            .padding(.horizontal, 7)
+            .frame(height: 22)
+            .background(Color.primary.opacity(0.06), in: Capsule(style: .continuous))
+        }
+        .menuStyle(.borderlessButton)
+        .menuIndicator(.hidden)
+        .fixedSize(horizontal: true, vertical: false)
+        .help("Switch Git worktree or create a new isolated worktree")
+        .accessibilityLabel("Git Worktrees")
+        .accessibilityIdentifier("mac-git-worktrees-menu")
+    }
+
+    private var newWorktreeSheet: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            HStack(spacing: 8) {
+                Image(systemName: "arrow.triangle.branch")
+                    .foregroundStyle(MacDesignColor.brand)
+                Text("New Git Worktree")
+                    .font(.headline)
+            }
+            Text("Create an isolated sibling worktree on a new branch and switch the active workspace to it.")
+                .font(.callout)
+                .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+            TextField("Branch name (e.g. feat/refactor-auth)", text: $newWorktreeBranch)
+                .textFieldStyle(.roundedBorder)
+                .accessibilityIdentifier("mac-git-new-worktree-branch")
+                .onSubmit {
+                    if canCreateWorktree { Task { await createWorktree() } }
+                }
+            if let worktreeCreationError {
+                Text(worktreeCreationError)
+                    .font(.caption)
+                    .foregroundStyle(MacDesignColor.danger)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            HStack {
+                Spacer()
+                Button(macWorkspaceReviewText("mac.workspace.cancel", "Cancel"), role: .cancel) {
+                    showsNewWorktreeSheet = false
+                }
+                .disabled(operation == .createWorktree)
+                Button {
+                    Task { await createWorktree() }
+                } label: {
+                    if operation == .createWorktree {
+                        ProgressView().controlSize(.small)
+                    } else {
+                        Text("Create & Switch")
+                    }
+                }
+                .buttonStyle(.nolaProminent)
+                .disabled(!canCreateWorktree)
+                .accessibilityIdentifier("mac-git-new-worktree-confirm")
+            }
+        }
+        .padding(20)
+        .frame(width: 380)
+    }
+
+    private var canCreateWorktree: Bool {
+        operation == nil && !newWorktreeBranch.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+    }
+
+    private func switchToWorktree(_ worktree: MacGitWorktree) {
+        let targetPath = worktree.path.standardizedFileURL.path
+        activePath = targetPath
+        NotificationCenter.default.post(
+            name: .nolaMacWorkspaceDirectoryDidSwitch,
+            object: nil,
+            userInfo: ["url": worktree.path]
+        )
+        feedback = MacGitOperationReceipt(
+            title: "Switched worktree",
+            detail: "\(worktree.displayBranch) · \(worktree.path.lastPathComponent)"
+        )
+    }
+
+    private func createWorktree() async {
+        let baseURL = snapshot?.repositoryURL ?? activeWorkspaceURL
+        operation = .createWorktree
+        worktreeCreationError = nil
+        defer { operation = nil }
+        do {
+            let created = try await MacWorkspaceGitService.shared.createWorktree(
+                at: baseURL,
+                branchName: newWorktreeBranch
+            )
+            showsNewWorktreeSheet = false
+            newWorktreeBranch = ""
+            switchToWorktree(created)
+        } catch {
+            worktreeCreationError = error.localizedDescription
+        }
+    }
+
+    private func undoCheckpoint() async {
+        let targetURL = snapshot?.repositoryURL ?? activeWorkspaceURL
+        operation = .undo
+        defer { operation = nil }
+        do {
+            let summary = try await MacWorkspaceGitService.shared.undoTurnCheckpoint(at: targetURL)
+            feedback = MacGitOperationReceipt(
+                title: "Checkpoint restored",
+                detail: checkpointSummaryDetail(summary)
+            )
+            await loadSnapshot()
+        } catch {
+            feedback = MacGitOperationReceipt(
+                title: "Undo failed",
+                detail: error.localizedDescription,
+                isError: true
+            )
+        }
+    }
+
+    private func redoCheckpoint() async {
+        let targetURL = snapshot?.repositoryURL ?? activeWorkspaceURL
+        operation = .redo
+        defer { operation = nil }
+        do {
+            let summary = try await MacWorkspaceGitService.shared.redoTurnCheckpoint(at: targetURL)
+            feedback = MacGitOperationReceipt(
+                title: "Checkpoint reapplied",
+                detail: checkpointSummaryDetail(summary)
+            )
+            await loadSnapshot()
+        } catch {
+            feedback = MacGitOperationReceipt(
+                title: "Redo failed",
+                detail: error.localizedDescription,
+                isError: true
+            )
+        }
+    }
+
+    private func checkpointSummaryDetail(_ summary: MacTurnRestoreSummary) -> String {
+        var parts: [String] = []
+        if !summary.restoredFiles.isEmpty {
+            parts.append("\(summary.restoredFiles.count) restored")
+        }
+        if !summary.removedFiles.isEmpty {
+            parts.append("\(summary.removedFiles.count) removed")
+        }
+        if parts.isEmpty {
+            return "\(summary.checkpoint.label) · Working tree unchanged"
+        }
+        return "\(summary.checkpoint.label) · \(parts.joined(separator: ", "))"
     }
 
     @ViewBuilder

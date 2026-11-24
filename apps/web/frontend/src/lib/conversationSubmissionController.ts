@@ -49,7 +49,7 @@ export function observedGoalResumeRoute(owner: GoalExecutionOwner | null, contro
     return 'refresh';
 }
 
-export interface SubmissionInput { text: string; attachments: ChatTextAttachment[]; language: string; submissionId?: string; selectedExperts?:MainExpertSelection[]; expertSourceEpoch?:string; expertMentions?:ExpertMentionSegments }
+export interface SubmissionInput { text: string; attachments: ChatTextAttachment[]; language: string; submissionId?: string; planMode?: boolean; selectedExperts?:MainExpertSelection[]; expertSourceEpoch?:string; expertMentions?:ExpertMentionSegments }
 export interface ConversationSubmissionSnapshot {
     timeline: ChatTimeline | null; turn: ChatTurn | null; challenge: unknown; reviewText: string;
     pendingSubmission: PendingSourceSubmission | null; observedCanSubmit: boolean; observedRecovery: string;
@@ -788,6 +788,7 @@ export function createConversationSubmissionController(options: {
             execution_backend: active.executionBackend,
             expected_configuration_revision: (edited ?? inPlace)?.target.configuration_revision ?? active.configurationRevision,
             expected_parent_message_id: edited ? null : state.timeline.submissionParentMessageId,
+            ...(input.planMode !== undefined ? { plan_mode: input.planMode } : {}),
             ...(resourceIds.length ? { resourceIds } : {}),
             ...(edited ? {edited_resend_operation_id:edited.prepared.input.operation_id} : {}),
             ...(inPlace ? {in_place_resend_operation_id:inPlace.prepared.input.operation_id} : {}),

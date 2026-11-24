@@ -102,6 +102,8 @@ struct MacConversationCanvas: View {
                 return model.selectComposerReasoningPreference(preference, conversationID: conversationID)
             case .selectPermissionMode(let conversationID, let mode):
                 return model.selectComposerPermissionMode(mode, conversationID: conversationID)
+            case .setPlanMode(let conversationID, let enabled):
+                return model.selectComposerPlanMode(enabled, conversationID: conversationID)
             case .reloadPermissionConfiguration(let conversationID):
                 return model.reloadComposerPermissionConfiguration(conversationID: conversationID)
             }

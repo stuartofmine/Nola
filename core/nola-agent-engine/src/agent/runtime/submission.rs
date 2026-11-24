@@ -2033,9 +2033,15 @@ impl AgentRuntime {
                                 .into_iter()
                                 .collect::<Vec<_>>()
                                 .join(", ");
-                            let failure = format!(
-                                "The identical typed tool batch ({capabilities}) was requested {repeated_count} consecutive times without progress."
-                            );
+                            let failure = if repeated_count >= 2 {
+                                format!(
+                                    "The identical typed tool batch ({capabilities}) was requested {repeated_count} consecutive times without progress."
+                                )
+                            } else {
+                                format!(
+                                    "This exact tool call ({capabilities}) was already rejected earlier without state changes; change arguments or use a different tool (such as edit_file or write_file) instead of retrying it."
+                                )
+                            };
                             for call in &tool_calls {
                                 let output = json!({
                                     "error": "repeated_tool_batch",

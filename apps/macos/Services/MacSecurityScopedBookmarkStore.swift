@@ -201,6 +201,25 @@ final class MacSecurityScopedBookmarkStore {
         return retain(selected, conversationID: conversationID, makePrimary: true)
     }
 
+    /// Switches the active conversation workspace to an already-known local
+    /// directory (for example, a sibling Git worktree). Uses an OS security
+    /// bookmark when available, otherwise records explicit app-level folder
+    /// confirmation so subsequent runs authorize the target directory cleanly.
+    func selectWorkspace(_ url: URL, conversationID: String? = nil) -> URL? {
+        guard url.isFileURL, url.path.hasPrefix("/") else { return nil }
+        let normalized = url.resolvingSymlinksInPath().standardizedFileURL
+        if let retained = retain(normalized, conversationID: conversationID, makePrimary: true) {
+            return retained
+        }
+        guard let conversationID else { return normalized }
+        do {
+            try confirmFolderAccess(normalized, conversationID: conversationID)
+            return normalized
+        } catch {
+            return nil
+        }
+    }
+
     func authorizeFolder(suggestedURL: URL, conversationID: String? = nil) async -> URL? {
         guard let selected = await io.chooseFolder(suggested: suggestedURL),
               selected.resolvingSymlinksInPath().standardizedFileURL

@@ -1533,14 +1533,25 @@ pub(super) fn apply_thinking_policy(cfg: &LlmConfig, body: &mut Value) {
             OpenAiFlavor::DashScope | OpenAiFlavor::LlamaCpp | OpenAiFlavor::Vllm
         )
     ) {
-        obj.insert(
-            "enable_thinking".to_string(),
-            Value::Bool(cfg.thinking_enabled),
-        );
-        obj.insert(
-            "chat_template_kwargs".to_string(),
-            json!({"enable_thinking": cfg.thinking_enabled}),
-        );
+        // Match DeepSeek / OpenRouter semantics: an automatic (unset) selection
+        // must leave vendor thinking controls absent so the provider/model's
+        // native server default applies instead of silently disabling thinking.
+        if explicitly_disabled {
+            obj.insert("enable_thinking".to_string(), Value::Bool(false));
+            obj.insert(
+                "chat_template_kwargs".to_string(),
+                json!({"enable_thinking": false}),
+            );
+        } else if cfg.reasoning_selection.is_some() || cfg.thinking_enabled {
+            obj.insert(
+                "enable_thinking".to_string(),
+                Value::Bool(cfg.thinking_enabled),
+            );
+            obj.insert(
+                "chat_template_kwargs".to_string(),
+                json!({"enable_thinking": cfg.thinking_enabled}),
+            );
+        }
     }
 }
 

@@ -1554,6 +1554,46 @@ fn interactive_help_rows() -> Vec<(String, String)> {
             "/plan".to_string(),
             tr(Message::InteractiveSlashPlanHint).to_string(),
         ),
+        (
+            "/mode [plan|build]".to_string(),
+            match current_language() {
+                Language::ZhHans => "切换只读 Plan 模式与可写 Build 模式（物理只读隔离）",
+                _ => "Toggle read-only Plan mode and writable Build mode (physically enforced)",
+            }
+            .to_string(),
+        ),
+        (
+            "/diff [--stat|PATH]".to_string(),
+            match current_language() {
+                Language::ZhHans => "查看当前工作区未提交的 Git 变更与 Diff",
+                _ => "Inspect uncommitted Git status and colorized workspace diff",
+            }
+            .to_string(),
+        ),
+        (
+            "/undo".to_string(),
+            match current_language() {
+                Language::ZhHans => "回滚工作区文件到上一轮对话前的快照（可用 /redo 恢复）",
+                _ => "Restore workspace files to the pre-turn checkpoint (reversible with /redo)",
+            }
+            .to_string(),
+        ),
+        (
+            "/redo".to_string(),
+            match current_language() {
+                Language::ZhHans => "恢复最近一次 /undo 撤销的工作区文件变更",
+                _ => "Re-apply the most recently undone workspace checkpoint",
+            }
+            .to_string(),
+        ),
+        (
+            "/checkpoints".to_string(),
+            match current_language() {
+                Language::ZhHans => "列出当前会话已记录的轮次文件快照",
+                _ => "List captured per-turn workspace file checkpoints",
+            }
+            .to_string(),
+        ),
         ("/agent".to_string(), ui_text(UiText::HelpAgent).to_string()),
         ("/room".to_string(), ui_text(UiText::HelpRoom).to_string()),
         ("/work".to_string(), ui_text(UiText::HelpWork).to_string()),

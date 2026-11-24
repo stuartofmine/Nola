@@ -660,15 +660,24 @@ impl AgentRuntime {
             });
         }
         if has_executed_tools && !final_synthesis && turn_configuration.max_model_iterations > 0 {
-            model_items.push(AgentItem::Message {
-                id: ItemId::from_string(format!("{}:remaining-execution-budget", turn_id.as_str())),
-                role: AgentRole::System,
-                content: "Runtime facts report the execution decision and remaining model decisions for tool work; final presentation is reserved separately. This is a ceiling, not a requirement to use more tools. Allocate evidence across every area the user explicitly requested before spending the slice on deeper optional investigation in one area. Prefer targeted source reads to paging an entire large diff. Stop once the requested claims are supported; preserve exact coverage gaps if a constraint prevents completion.".into(),
-            });
+            let remaining = turn_configuration
+                .max_model_iterations
+                .saturating_sub(model_request_count);
+            // Avoid injecting a mid-conversation `system` message on every turn
+            // when plenty of budget remains (breaks Qwen/Llama chat templates and
+            // buries the preceding tool output). Emit prose guidance only when
+            // approaching the budget ceiling.
+            if remaining <= 8 || remaining.saturating_mul(5) <= turn_configuration.max_model_iterations {
+                model_items.push(AgentItem::Message {
+                    id: ItemId::from_string(format!("{}:remaining-execution-budget", turn_id.as_str())),
+                    role: AgentRole::System,
+                    content: "Approaching execution decision ceiling; converge on remaining deliverables and narrowest relevant validation, or report exact coverage gaps.".into(),
+                });
+            }
             model_items.push(runtime_fact_item(turn_id, "execution-budget", json!({
                 "decision": model_request_count,
                 "maximum": turn_configuration.max_model_iterations,
-                "remaining_after_request": turn_configuration.max_model_iterations.saturating_sub(model_request_count),
+                "remaining_after_request": remaining,
             })));
         }
         if iteration_budget_execution_reserve && !iteration_budget_convergence && !protocol_recovery_required {

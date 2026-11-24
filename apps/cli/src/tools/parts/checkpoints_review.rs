@@ -1,3 +1,214 @@
+/// Deterministic fallback matcher for `edit_file` / `multi_edit_file` when exact
+/// matching finds 0 occurrences. Never guesses on ambiguous matches (requires
+/// uniquely 1 matching contiguous block).
+///
+/// Pass 1: Line-trailing-whitespace-trimmed unique match.
+/// Pass 2: Block-indentation-normalized unique match (re-indents `new_text` to
+///         the target file's actual base indentation).
+fn find_unique_tolerant_edit_span(
+    source: &str,
+    old_text: &str,
+    new_text: &str,
+) -> Option<(usize, usize, String)> {
+    struct LineSpan<'a> {
+        start: usize,
+        end_without_nl: usize,
+        end_with_nl: usize,
+        content: &'a str,
+    }
+    fn split_spans(text: &str) -> Vec<LineSpan<'_>> {
+        let mut spans = Vec::new();
+        let mut start = 0usize;
+        for (idx, ch) in text.char_indices() {
+            if ch == '\n' {
+                let end_with_nl = idx + 1;
+                let end_without_nl = if idx > start && text.as_bytes()[idx - 1] == b'\r' {
+                    idx - 1
+                } else {
+                    idx
+                };
+                spans.push(LineSpan {
+                    start,
+                    end_without_nl,
+                    end_with_nl,
+                    content: &text[start..end_without_nl],
+                });
+                start = end_with_nl;
+            }
+        }
+        if start < text.len() {
+            let end_without_nl = if text.ends_with('\r') {
+                text.len() - 1
+            } else {
+                text.len()
+            };
+            spans.push(LineSpan {
+                start,
+                end_without_nl,
+                end_with_nl: text.len(),
+                content: &text[start..end_without_nl],
+            });
+        }
+        spans
+    }
+    fn leading_indent(line: &str) -> &str {
+        let len = line
+            .bytes()
+            .take_while(|b| *b == b' ' || *b == b'\t')
+            .count();
+        &line[..len]
+    }
+    fn common_indent<'a>(lines: &[&'a str]) -> Option<&'a str> {
+        let mut common: Option<&str> = None;
+        for line in lines {
+            if line.trim().is_empty() {
+                continue;
+            }
+            let indent = leading_indent(line);
+            common = Some(match common {
+                None => indent,
+                Some(prev) => {
+                    let shared = prev
+                        .bytes()
+                        .zip(indent.bytes())
+                        .take_while(|(a, b)| a == b)
+                        .count();
+                    &prev[..shared]
+                }
+            });
+        }
+        common
+    }
+    fn reindent_replacement(new_text: &str, old_base: &str, target_base: &str) -> String {
+        if old_base == target_base {
+            return new_text.to_string();
+        }
+        let mut out = String::with_capacity(new_text.len() + 32);
+        let mut start = 0usize;
+        for (idx, ch) in new_text.char_indices() {
+            if ch == '\n' {
+                let line_with_nl = &new_text[start..idx + 1];
+                let (body, nl) = if let Some(stripped) = line_with_nl.strip_suffix("\r\n") {
+                    (stripped, "\r\n")
+                } else {
+                    (&line_with_nl[..line_with_nl.len() - 1], "\n")
+                };
+                if body.trim().is_empty() {
+                    out.push_str(body);
+                } else if let Some(rest) = body.strip_prefix(old_base) {
+                    out.push_str(target_base);
+                    out.push_str(rest);
+                } else {
+                    out.push_str(target_base);
+                    out.push_str(body.trim_start_matches([' ', '\t']));
+                }
+                out.push_str(nl);
+                start = idx + 1;
+            }
+        }
+        if start < new_text.len() {
+            let body = &new_text[start..];
+            if body.trim().is_empty() {
+                out.push_str(body);
+            } else if let Some(rest) = body.strip_prefix(old_base) {
+                out.push_str(target_base);
+                out.push_str(rest);
+            } else {
+                out.push_str(target_base);
+                out.push_str(body.trim_start_matches([' ', '\t']));
+            }
+        }
+        out
+    }
+
+    let old_has_trailing_nl = old_text.ends_with('\n');
+    let old_spans = split_spans(old_text);
+    let src_spans = split_spans(source);
+    let win = old_spans.len();
+    if win == 0 || win > src_spans.len() {
+        return None;
+    }
+
+    let span_end = |idx: usize| {
+        if old_has_trailing_nl {
+            src_spans[idx + win - 1].end_with_nl
+        } else {
+            src_spans[idx + win - 1].end_without_nl
+        }
+    };
+
+    // Pass 1: exact line match ignoring trailing horizontal whitespace.
+    let mut pass1_matches = Vec::new();
+    for i in 0..=(src_spans.len() - win) {
+        let matched = (0..win).all(|j| {
+            src_spans[i + j].content.trim_end_matches([' ', '\t'])
+                == old_spans[j].content.trim_end_matches([' ', '\t'])
+        });
+        if matched {
+            pass1_matches.push(i);
+            if pass1_matches.len() > 1 {
+                break;
+            }
+        }
+    }
+    if pass1_matches.len() == 1 {
+        let i = pass1_matches[0];
+        let start = src_spans[i].start;
+        let end = span_end(i);
+        return Some((start, end, new_text.to_string()));
+    }
+
+    // Pass 2: block-indentation-normalized match (strip common base indent of old_text
+    // and each candidate window; uniquely match and re-indent new_text).
+    let old_lines: Vec<&str> = old_spans.iter().map(|s| s.content).collect();
+    let old_base = common_indent(&old_lines)?;
+    let old_norm: Vec<&str> = old_lines
+        .iter()
+        .map(|l| {
+            if l.trim().is_empty() {
+                ""
+            } else {
+                l.strip_prefix(old_base)
+                    .unwrap_or(l)
+                    .trim_end_matches([' ', '\t'])
+            }
+        })
+        .collect();
+
+    let mut pass2_matches: Vec<(usize, &str)> = Vec::new();
+    for i in 0..=(src_spans.len() - win) {
+        let cand_lines: Vec<&str> = src_spans[i..i + win].iter().map(|s| s.content).collect();
+        let Some(cand_base) = common_indent(&cand_lines) else {
+            continue;
+        };
+        let matched = (0..win).all(|j| {
+            let norm = if cand_lines[j].trim().is_empty() {
+                ""
+            } else {
+                cand_lines[j]
+                    .strip_prefix(cand_base)
+                    .unwrap_or(cand_lines[j])
+                    .trim_end_matches([' ', '\t'])
+            };
+            norm == old_norm[j]
+        });
+        if matched {
+            pass2_matches.push((i, cand_base));
+            if pass2_matches.len() > 1 {
+                break;
+            }
+        }
+    }
+    if pass2_matches.len() == 1 {
+        let (i, target_base) = pass2_matches[0];
+        let start = src_spans[i].start;
+        let end = span_end(i);
+        let replacement = reindent_replacement(new_text, old_base, target_base);
+        return Some((start, end, replacement));
+    }
+    None
+}
+
 fn apply_exact_edit_with_diagnostics(
     target: &Path,
     source: &str,
@@ -8,6 +219,15 @@ fn apply_exact_edit_with_diagnostics(
     let old_text = convert_line_endings_like(source, old_text);
     let new_text = convert_line_endings_like(source, new_text);
     let offsets = exact_match_offsets(source, &old_text);
+    if offsets.is_empty() && !replace_all {
+        if let Some((start, end, replacement)) =
+            find_unique_tolerant_edit_span(source, &old_text, &new_text)
+        {
+            let mut updated = source.to_string();
+            updated.replace_range(start..end, &replacement);
+            return Ok((updated, 1));
+        }
+    }
     if offsets.is_empty() || (!replace_all && offsets.len() != 1) {
         return Err(exact_edit_preflight_failure(
             target,
@@ -65,6 +285,20 @@ fn apply_snapshot_multi_edits(
             .and_then(Value::as_bool)
             .unwrap_or(false);
         let offsets = exact_match_offsets(source, &old_text);
+        if offsets.is_empty() && !replace_all {
+            if let Some((start, end, replacement)) =
+                find_unique_tolerant_edit_span(source, &old_text, &new_text)
+            {
+                counts.push(1);
+                replacements.push(SnapshotReplacement {
+                    start,
+                    end,
+                    replacement,
+                    edit_index: index + 1,
+                });
+                continue;
+            }
+        }
         if offsets.is_empty() || (!replace_all && offsets.len() != 1) {
             let mut outcome = exact_edit_preflight_failure(target, source, &old_text, replace_all);
             outcome.text = format!("edit {} failed:\n{}", index + 1, outcome.text);
@@ -552,6 +786,9 @@ fn write_file(args: &Map<String, Value>, ctx: &ToolContext) -> ToolOutcome {
                     return partial_file_mutation_failure(outcome,"Written resource could not be observed after formatting; its final version is unknown or absent, do not replay the replacement");
                 }
                 outcome.text.push_str(&format_sections.join(""));
+                if let Some(diag) = post_edit_diagnostics::diagnostics_section_for_file(&target) {
+                    outcome.text.push_str(&diag);
+                }
                 outcome
             }
             Err(err) => partial_file_mutation_failure(outcome,&format!("Write failed: {err}")),
@@ -1182,12 +1419,14 @@ fn edit_file(args: &Map<String, Value>, ctx: &ToolContext) -> ToolOutcome {
             Err(outcome) => return outcome,
         };
         let diff = format_unified_diff(&target, &source, &committed, MAX_DIFF_CHARS);
+        let diag = post_edit_diagnostics::diagnostics_section_for_file(&target).unwrap_or_default();
         ok(
             format!(
-                "Edited {} ({count} replacement{})\n\n## Diff\n{diff}{}",
+                "Edited {} ({count} replacement{})\n\n## Diff\n{diff}{}{}",
                 target.display(),
                 if count == 1 { "" } else { "s" },
-                format_sections.join("")
+                format_sections.join(""),
+                diag
             ),
             format!("{} {}", tr(Message::DisplayEditedPrefix), target.display()),
         )
@@ -1407,13 +1646,15 @@ fn multi_edit_file(args: &Map<String, Value>, ctx: &ToolContext) -> ToolOutcome 
             Err(outcome) => return outcome,
         };
         let diff = format_unified_diff(&target, &source, &committed, MAX_DIFF_CHARS);
+        let diag = post_edit_diagnostics::diagnostics_section_for_file(&target).unwrap_or_default();
         ok(
             format!(
-                "Edited {} ({} edits, {total} total replacement{})\nedit_mode: snapshot_atomic\n\n## Diff\n{diff}{}",
+                "Edited {} ({} edits, {total} total replacement{})\nedit_mode: snapshot_atomic\n\n## Diff\n{diff}{}{}",
                 target.display(),
                 counts.len(),
                 if total == 1 { "" } else { "s" },
-                format_sections.join("")
+                format_sections.join(""),
+                diag
             ),
             format!("{} {}", tr(Message::DisplayEditedPrefix), target.display()),
         )
@@ -1424,6 +1665,56 @@ fn multi_edit_file(args: &Map<String, Value>, ctx: &ToolContext) -> ToolOutcome 
 #[cfg(test)]
 mod snapshot_multi_edit_tests {
     use super::*;
+
+    #[test]
+    fn tolerant_edit_matches_unique_reindented_block_and_preserves_target_indent() {
+        let source = "def outer():\n    if flag:\n        x = 1\n        return x\n    return 0\n";
+        let old_text = "if flag:\n    x = 1\n    return x";
+        let new_text = "if flag:\n    x = 2\n    return x * 10";
+        let (updated, count) = apply_exact_edit_with_diagnostics(
+            Path::new("/tmp/reindent.py"),
+            source,
+            old_text,
+            new_text,
+            false,
+        )
+        .expect("unique reindented block should succeed");
+        assert_eq!(count, 1);
+        assert_eq!(
+            updated,
+            "def outer():\n    if flag:\n        x = 2\n        return x * 10\n    return 0\n"
+        );
+    }
+
+    #[test]
+    fn tolerant_edit_matches_unique_trailing_whitespace_difference() {
+        let source = "alpha = 1   \nbeta = 2\n";
+        let (updated, count) = apply_exact_edit_with_diagnostics(
+            Path::new("/tmp/trailing.py"),
+            source,
+            "alpha = 1\nbeta = 2",
+            "alpha = 10\nbeta = 20",
+            false,
+        )
+        .expect("unique trailing-space match should succeed");
+        assert_eq!(count, 1);
+        assert_eq!(updated, "alpha = 10\nbeta = 20\n");
+    }
+
+    #[test]
+    fn tolerant_edit_rejects_ambiguous_reindented_blocks() {
+        let source = "def a():\n    x = 1\n    return x\ndef b():\n        x = 1\n        return x\n";
+        let err = apply_exact_edit_with_diagnostics(
+            Path::new("/tmp/ambiguous.py"),
+            source,
+            "x = 1\nreturn x",
+            "x = 2\nreturn x",
+            false,
+        )
+        .unwrap_err();
+        assert!(err.error);
+        assert!(err.text.contains("old_text_not_found"));
+    }
 
     #[test]
     fn snapshot_multi_edit_applies_non_overlapping_changes_atomically() {
@@ -1949,6 +2240,18 @@ fn observe_patch_effects(mut outcome: ToolOutcome, paths: &[PathBuf], before: &[
     if failed || unknown {
         outcome.error = true;
         outcome.text.push_str("\nDo not replay this mutation automatically; inspect recorded effects and current resources before recovery.");
+    } else {
+        let mut diag_sections = Vec::new();
+        for path in paths {
+            if path.is_file() {
+                if let Some(diag) = post_edit_diagnostics::diagnostics_section_for_file(path) {
+                    diag_sections.push(diag);
+                }
+            }
+        }
+        if !diag_sections.is_empty() {
+            outcome.text.push_str(&diag_sections.join(""));
+        }
     }
     outcome
 }

@@ -146,6 +146,10 @@ pub struct Config {
     pub json_output: bool,
     pub debug_mode: bool,
     pub auto_approve: bool,
+    /// First-class read-only Plan mode toggled by `/mode plan` or `Shift+Tab`.
+    /// Enforced physically in Core's PermissionRuleSet by denying mutating capabilities.
+    #[serde(default)]
+    pub plan_mode: bool,
     /// Explicit product permission profile for this request/Turn. `None`
     /// preserves the surface default and is resolved to Recommended by every
     /// product entrypoint. Keeping this on Config avoids process-global
@@ -229,6 +233,7 @@ impl Config {
                 skill_dirs: self.skill_dirs.clone(),
                 bash_prefixes: self.bash_prefixes.clone(),
                 auto_approve: self.auto_approve.clone(),
+                plan_mode: self.plan_mode,
                 permission_profile: Some(profile),
                 tools_enabled: self.tools_enabled.clone(),
                 force_tool_set: self.force_tool_set.clone(),
@@ -1155,6 +1160,7 @@ impl Config {
             json_output,
             debug_mode,
             auto_approve,
+            plan_mode: false,
             permission_profile,
             tools_enabled,
             force_tool_set,
@@ -1626,6 +1632,7 @@ impl Config {
             json_output,
             debug_mode: false,
             auto_approve: false,
+            plan_mode: false,
             permission_profile: None,
             tools_enabled: true,
             force_tool_set: "auto".to_string(),

@@ -120,7 +120,7 @@ impl Launch {
                 process_sandbox: runtime.process_sandbox.clone(),
                 bounded_file_writes: false, task_worktree: None, task_sandbox_requirement: None,
                 project_root, allowed_dirs, skill_dirs, bash_prefixes: runtime.bash_prefixes.clone(),
-                auto_approve: false, permission_profile: Some(crate::permissions::PermissionProfile::Cautious),
+                auto_approve: false, plan_mode: false, permission_profile: Some(crate::permissions::PermissionProfile::Cautious),
                 tools_enabled: true, force_tool_set,
                 tool_allowlist: None, tool_allowlist_is_authorization_only: false,
                 remote_tool_plan: None,

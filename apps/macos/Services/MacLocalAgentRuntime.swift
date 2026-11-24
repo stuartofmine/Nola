@@ -7,6 +7,69 @@ import Darwin
 import CryptoKit
 import UniformTypeIdentifiers
 
+/// Enforces read-only execution rules for macOS Plan mode turns without
+/// rewriting user prompts or mutating global/conversation permission grants.
+nonisolated enum MacPlanModePolicy {
+    static let contextComponentID = "nola-mac-plan-mode"
+
+    static let deniedCapabilities: [String] = [
+        "edit",
+        "delete_file",
+        "notebook_edit",
+        "workspace_checkpoint",
+        "git_commit",
+        "git_worktree_create",
+        "git_worktree_integrate",
+        "bash",
+        "background",
+        "computer",
+        "clipboard",
+        "browser",
+        "memory_save",
+        "memory_update",
+        "memory_delete",
+        "github_skill_install",
+        "device_github_skill_install",
+        "create_calendar_event",
+        "create_reminder",
+        "update_reminder",
+        "schedule_notification",
+    ]
+
+    static let readOnlyPermissionRules: [MacCanonicalPermissionRule] = deniedCapabilities.map { capability in
+        MacCanonicalPermissionRule(
+            capabilityPattern: capability,
+            resourcePattern: "*",
+            decision: "deny",
+            source: "host"
+        )
+    }
+
+    static let contextDescription =
+        "Plan mode (read-only) is active for this turn. Inspect the repository, analyze architecture, and propose an actionable implementation plan without modifying files, running mutating shell commands, or committing changes."
+
+    static var coreContextComponent: MacCoreContextComponent {
+        MacCoreContextComponent(
+            kind: "platform_data",
+            id: contextComponentID,
+            content: contextDescription,
+            source: .init(platform: "macos", title: "Plan Mode")
+        )
+    }
+
+    static var contextComponentPayload: [String: Any] {
+        [
+            "kind": "platform_data",
+            "id": contextComponentID,
+            "content": contextDescription,
+            "source": [
+                "platform": "macos",
+                "title": "Plan Mode",
+            ],
+        ]
+    }
+}
+
 nonisolated struct MacLocalAgentRunRequest: Sendable {
     let conversationID: String
     var editedResendOperationID: String? = nil
@@ -55,6 +118,7 @@ nonisolated struct MacLocalAgentRunRequest: Sendable {
     let inputOrigin: String
     let memoryEnabled: Bool
     let permissionMode: MacPermissionMode
+    let isPlanMode: Bool
     let databaseURLOverride: URL?
     let appEnvironment: MacAppEnvironment
     let applicationPort: MacApplicationPort?
@@ -108,6 +172,7 @@ nonisolated struct MacLocalAgentRunRequest: Sendable {
         inputOrigin: String = "interactive_user",
         memoryEnabled: Bool = false,
         permissionMode: MacPermissionMode = .cautious,
+        isPlanMode: Bool = false,
         databaseURLOverride: URL? = nil,
         appEnvironment: MacAppEnvironment = .shared,
         applicationPort: MacApplicationPort? = .shared,
@@ -178,6 +243,7 @@ nonisolated struct MacLocalAgentRunRequest: Sendable {
         self.inputOrigin = inputOrigin
         self.memoryEnabled = memoryEnabled
         self.permissionMode = permissionMode
+        self.isPlanMode = isPlanMode
         self.databaseURLOverride = databaseURLOverride
         self.appEnvironment = appEnvironment
         self.applicationPort = applicationPort
@@ -1617,7 +1683,7 @@ actor MacAgentHostRuntime: MacLocalAgentRuntime {
 
         var environment = resumeSnapshot?.environment ?? runtimeEnvironment(
             projectURL: request.projectURL,
-            permissionMode: request.permissionMode,
+            permissionMode: request.isPlanMode ? .cautious : request.permissionMode,
             appEnvironment: request.appEnvironment
         )
         if let chromeConfiguration {
@@ -2331,9 +2397,16 @@ actor MacAgentHostRuntime: MacLocalAgentRuntime {
                 "title": "Active workspace",
             ],
         ]) }
+        if request.isPlanMode && request.automationAdmission == nil && request.editedResendOperationID == nil {
+            let alreadyPresent = contextComponents.contains { ($0["id"] as? String) == MacPlanModePolicy.contextComponentID }
+            if !alreadyPresent {
+                contextComponents.append(MacPlanModePolicy.contextComponentPayload)
+            }
+        }
+        let effectivePermissionMode: MacPermissionMode = request.isPlanMode ? .cautious : request.permissionMode
         var payload: [String: Any] = [
             "prompt": turnInput.input,
-            "permission_profile": request.permissionMode.permissionProfile,
+            "permission_profile": effectivePermissionMode.permissionProfile,
             "submission_id": request.submissionID,
             "user_message_id": request.userMessageID,
             "assistant_message_id": request.assistantMessageID,
@@ -2476,7 +2549,10 @@ actor MacAgentHostRuntime: MacLocalAgentRuntime {
             conversationID: request.conversationID,
             hostID: "mac-local"
         )
-        let rulesData = try JSONEncoder().encode(rules.rules)
+        let effectiveRules = request.isPlanMode
+            ? rules.rules + MacPlanModePolicy.readOnlyPermissionRules
+            : rules.rules
+        let rulesData = try JSONEncoder().encode(effectiveRules)
         payload["permission_rules"] = try JSONSerialization.jsonObject(with: rulesData)
         if let operation = request.editedResendOperationID, let frozen = request.editedResendModel {
             guard request.submissionID == operation, request.contextComponents.allSatisfy({ $0.kind == "main_expert_selection" }),
@@ -2536,7 +2612,7 @@ actor MacAgentHostRuntime: MacLocalAgentRuntime {
             descriptor["model_profile_id"] = profileID.map { $0 as Any } ?? NSNull()
             descriptor["model_profile_revision"] = (request.modelProfileRevision ?? request.siwcProfile?.revision).map { $0 as Any } ?? NSNull()
             descriptor["fallback_profile_ids"] = fallbackProfileIDs
-            descriptor["permission_mode"] = request.permissionMode.rawValue
+            descriptor["permission_mode"] = effectivePermissionMode.rawValue
             descriptor["memory_enabled"] = request.memoryEnabled
             descriptor["context_window_tokens"] = payload["context_window_tokens"] ?? NSNull()
             descriptor["max_iterations"] = request.maxModelIterations

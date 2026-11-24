@@ -3128,6 +3128,17 @@ fn chat_agent_stream_response_body_with_room_retry(
     {
         agent_config.allowed_dirs.insert(0, conversation_workspace);
     }
+    let plan_mode = body
+        .get("plan_mode")
+        .or_else(|| body.get("planMode"))
+        .and_then(Value::as_bool)
+        .unwrap_or(false);
+    agent_config.plan_mode = plan_mode;
+    let turn_checkpoint_root = if !plan_mode && !model_test_mode {
+        resolve_workflow_git_root_for_turn(&agent_config.project_root, &config.project_root)
+    } else {
+        None
+    };
     agent_config.permission_profile = Some(permission_profile);
     agent_config.auto_approve = permission_profile.auto_approve();
     agent_config.network_policy = permission_profile.network_policy().to_string();
@@ -3402,6 +3413,9 @@ fn chat_agent_stream_response_body_with_room_retry(
             "run_id": dispatch.identity.submission_id,
         }));
         let dispatch_started = std::time::Instant::now();
+        if let Some(ref checkpoint_root) = turn_checkpoint_root {
+            let _ = capture_workspace_turn_checkpoint(checkpoint_root, &external_prompt);
+        }
         let mut wake_goal_worker_after_stream = false;
         let run_result = agent_config.host_invocation_request().and_then(|mut request| {
             request.runtime.expert_template_authority=Some(expert_host_authority());

@@ -606,6 +606,7 @@ fn run_interactive_session(config: &Config, resume_pending: bool) -> Result<Inte
             SlashCommandResult::Handled => continue,
             SlashCommandResult::WorkspaceChanged | SlashCommandResult::SessionReset => {
                 clear_pending_task_completions();
+                TURN_CHECKPOINTS.with(|store| store.borrow_mut().clear());
                 edit_target = None;
                 interaction::select_interactive_composer(interactive_composer_key(&interactive_config)?);
                 pending_draft = None;
@@ -653,6 +654,13 @@ fn run_interactive_session(config: &Config, resume_pending: bool) -> Result<Inte
         };
         let effective_prompt =
             inject_completed_task_updates(prompt.as_str(), pending_task_prefix.as_deref());
+        // Capture a zero-pollution shadow-index Git snapshot before the turn runs so
+        // `/undo` and `/redo` can cleanly revert or re-apply file changes.
+        TURN_CHECKPOINTS.with(|store| {
+            store
+                .borrow_mut()
+                .capture(&turn_config.project_root, turn, prompt.as_str());
+        });
         let mut replay_edited_history = false;
         let run_result = match run_single_prompt_with_cancellation(
             &turn_config,
@@ -1498,6 +1506,13 @@ fn read_interactive_prompt_line(
                 }
                 KeyCode::Tab | KeyCode::BackTab => {
                     if !goal_entry
+                        && key.code == KeyCode::BackTab
+                        && line.is_empty()
+                        && completion_cycle.is_none()
+                    {
+                        return Ok(Some(InteractivePromptInput::Submitted("/mode".to_string())));
+                    }
+                    if !goal_entry
                         && apply_composer_completion_cycle(
                             &mut line,
                             &mut cursor,
@@ -1937,6 +1952,8 @@ impl PendingTaskCompletionInbox {
 thread_local! {
     static PENDING_TASK_COMPLETIONS: std::cell::RefCell<PendingTaskCompletionInbox> =
         std::cell::RefCell::new(PendingTaskCompletionInbox::default());
+    static TURN_CHECKPOINTS: std::cell::RefCell<crate::turn_checkpoints::TurnCheckpointStore> =
+        std::cell::RefCell::new(crate::turn_checkpoints::TurnCheckpointStore::default());
 }
 
 fn record_completed_task_digest(digest: CompletedTaskDigest) {
@@ -3074,6 +3091,9 @@ fn interactive_prompt_footer_line(
         .flatten();
 
     let mut left_parts = vec![truncate_display_width(model, width.min(28))];
+    if config.plan_mode {
+        left_parts.push("PLAN".to_string());
+    }
     if let Some(effort) = config.runtime.reasoning_effort_display() {
         left_parts.push(effort);
     }
@@ -3581,6 +3601,11 @@ const INTERACTIVE_SLASH_COMMANDS: &[SlashCommand] = &[
     SlashCommand { name: "/new" },
     SlashCommand { name: "/clear" },
     SlashCommand { name: "/plan" },
+    SlashCommand { name: "/mode" },
+    SlashCommand { name: "/diff" },
+    SlashCommand { name: "/undo" },
+    SlashCommand { name: "/redo" },
+    SlashCommand { name: "/checkpoints" },
     SlashCommand { name: "/agent" },
     SlashCommand { name: "/room" },
     SlashCommand { name: "/work" },
@@ -3624,6 +3649,11 @@ fn normalize_interactive_command(command: &str) -> Option<&'static str> {
         "/new" | "/n" => "/new",
         "/clear" | "/cls" => "/clear",
         "/plan" | "/p" => "/plan",
+        "/mode" => "/mode",
+        "/diff" => "/diff",
+        "/undo" => "/undo",
+        "/redo" => "/redo",
+        "/checkpoints" | "/cp" => "/checkpoints",
         "/agent" => "/agent",
         "/room" => "/room",
         "/work" | "/w" => "/work",
@@ -4831,6 +4861,147 @@ fn handle_interactive_slash_command(
             }
             Ok(SlashCommandResult::Handled)
         }
+        "/diff" => {
+            let diff_arg = trimmed
+                .split_once(char::is_whitespace)
+                .map(|(_, rest)| rest.trim())
+                .unwrap_or("");
+            match crate::turn_checkpoints::format_workspace_diff(&config.project_root, diff_arg) {
+                Ok(output) => terminal_notice!("{output}"),
+                Err(err) => terminal_notice!("{}", format_error(&err)),
+            }
+            Ok(SlashCommandResult::Handled)
+        }
+        "/mode" => {
+            let arg = parts.next().unwrap_or("").trim().to_ascii_lowercase();
+            let next = match arg.as_str() {
+                "" => !config.plan_mode,
+                "plan" | "readonly" | "read-only" => true,
+                "build" | "write" | "edit" => false,
+                _ => {
+                    terminal_notice!("  usage: /mode [plan|build]");
+                    return Ok(SlashCommandResult::Handled);
+                }
+            };
+            config.plan_mode = next;
+            match (current_language(), next) {
+                (Language::ZhHans, true) => {
+                    terminal_notice!("  已切换至 PLAN 模式（物理只读：禁用文件写入、编辑与 Shell 变更）");
+                }
+                (Language::ZhHans, false) => {
+                    terminal_notice!("  已切换至 BUILD 模式（恢复完整开发与写入权限）");
+                }
+                (_, true) => {
+                    terminal_notice!("  Switched to PLAN mode (read-only: file mutations and shell execution denied)");
+                }
+                (_, false) => {
+                    terminal_notice!("  Switched to BUILD mode (full editing and execution restored)");
+                }
+            }
+            Ok(SlashCommandResult::Handled)
+        }
+        "/undo" => {
+            let result = TURN_CHECKPOINTS
+                .with(|store| store.borrow_mut().undo(&config.project_root));
+            match result {
+                Ok(summary) => {
+                    let restored_count = summary.restored_files.len();
+                    let removed_count = summary.removed_files.len();
+                    match current_language() {
+                        Language::ZhHans => {
+                            terminal_notice!(
+                                "  已回滚至第 {} 轮前快照（{}）：恢复 {} 个文件，移除 {} 个新建文件（剩余可撤销 {}，可用 /redo 恢复）",
+                                summary.checkpoint_turn,
+                                summary.checkpoint_label,
+                                restored_count,
+                                removed_count,
+                                summary.remaining_undo
+                            );
+                        }
+                        _ => {
+                            terminal_notice!(
+                                "  Reverted to pre-turn {} checkpoint ({}): {} restored, {} removed ({} undo left; use /redo to re-apply)",
+                                summary.checkpoint_turn,
+                                summary.checkpoint_label,
+                                restored_count,
+                                removed_count,
+                                summary.remaining_undo
+                            );
+                        }
+                    }
+                    for path in summary.restored_files.iter().take(12) {
+                        terminal_notice!("    ↺ {path}");
+                    }
+                    for path in summary.removed_files.iter().take(12) {
+                        terminal_notice!("    - {path}");
+                    }
+                }
+                Err(err) => terminal_notice!("{}", format_error(&err)),
+            }
+            Ok(SlashCommandResult::Handled)
+        }
+        "/redo" => {
+            let result = TURN_CHECKPOINTS
+                .with(|store| store.borrow_mut().redo(&config.project_root));
+            match result {
+                Ok(summary) => {
+                    let restored_count = summary.restored_files.len();
+                    let removed_count = summary.removed_files.len();
+                    match current_language() {
+                        Language::ZhHans => {
+                            terminal_notice!(
+                                "  已重做第 {} 轮变更（{}）：恢复 {} 个文件，移除 {} 个文件（剩余可重做 {}）",
+                                summary.checkpoint_turn,
+                                summary.checkpoint_label,
+                                restored_count,
+                                removed_count,
+                                summary.remaining_redo
+                            );
+                        }
+                        _ => {
+                            terminal_notice!(
+                                "  Re-applied turn {} changes ({}): {} restored, {} removed ({} redo left)",
+                                summary.checkpoint_turn,
+                                summary.checkpoint_label,
+                                restored_count,
+                                removed_count,
+                                summary.remaining_redo
+                            );
+                        }
+                    }
+                    for path in summary.restored_files.iter().take(12) {
+                        terminal_notice!("    ↻ {path}");
+                    }
+                    for path in summary.removed_files.iter().take(12) {
+                        terminal_notice!("    - {path}");
+                    }
+                }
+                Err(err) => terminal_notice!("{}", format_error(&err)),
+            }
+            Ok(SlashCommandResult::Handled)
+        }
+        "/checkpoints" => {
+            TURN_CHECKPOINTS.with(|store| {
+                let store = store.borrow();
+                let list = store.checkpoints();
+                if list.is_empty() {
+                    match current_language() {
+                        Language::ZhHans => {
+                            terminal_notice!("  当前会话暂无轮次快照（在 Git 仓库中发起对话后自动记录）");
+                        }
+                        _ => {
+                            terminal_notice!("  No turn checkpoints recorded yet (captured automatically before each turn in Git repos).");
+                        }
+                    }
+                } else {
+                    for cp in list.iter().rev().take(15) {
+                        let short_sha = &cp.tree_sha[..cp.tree_sha.len().min(8)];
+                        terminal_notice!("  [turn {:02}] {}  {}", cp.turn, short_sha, cp.label);
+                    }
+                }
+            });
+            Ok(SlashCommandResult::Handled)
+        }
         "/config" => {
             if trimmed.split_whitespace().count() > 1 {
                 terminal_notice!("{}", crate::config_files::usage());
@@ -5558,7 +5729,7 @@ fn print_interactive_shortcuts_guide() {
             terminal_notice!("  选专家：输入 @，上下键选择，回车插入名字。/edit 编辑已发送消息。");
             terminal_notice!("  补全：↑↓ 浏览 /命令，Tab 补全，Enter 执行，Esc 收起；在 @ 候选中 Enter 插入");
             terminal_notice!("  草稿：连按两次 Esc 清空输入 · /stop 停止当前运行 · /resume <id> 直接切换会话");
-            terminal_notice!("  扩展：/model · /thinking · /experts · /skills · /mcp · /memory · /questions · /plan");
+            terminal_notice!("  扩展：/model · /thinking · /diff · /undo · /redo · /checkpoints · /plan · /skills · /mcp");
         }
         _ => {
             terminal_notice!("  Newline: Shift+Enter · Alt+Enter · Ctrl+J · trailing \\+Enter");
@@ -5567,7 +5738,7 @@ fn print_interactive_shortcuts_guide() {
             terminal_notice!("  Experts: type @, choose with Up/Down, press Enter to insert. /edit reopens a sent message.");
             terminal_notice!("  Complete: Up/Down browses /commands, Tab completes, Enter runs, Esc closes. In @ suggestions, Enter inserts.");
             terminal_notice!("  Control: Esc x2 clears draft · /stop cancels active run · /resume <id> switches session");
-            terminal_notice!("  Catalog: /model · /thinking · /experts · /skills · /mcp · /memory · /questions · /plan");
+            terminal_notice!("  Catalog: /model · /thinking · /diff · /undo · /redo · /checkpoints · /plan · /skills · /mcp");
         }
     }
 }
@@ -6212,5 +6383,25 @@ mod thinking_command_tests {
         );
 
         assert!(handle_interactive_thinking_command(&mut config, Some("invalid")).is_err());
+    }
+
+    #[test]
+    fn plan_mode_footer_badge_and_workflow_slash_commands() {
+        assert_eq!(normalize_interactive_command("/mode"), Some("/mode"));
+        assert_eq!(normalize_interactive_command("/diff"), Some("/diff"));
+        assert_eq!(normalize_interactive_command("/undo"), Some("/undo"));
+        assert_eq!(normalize_interactive_command("/redo"), Some("/redo"));
+        assert_eq!(normalize_interactive_command("/checkpoints"), Some("/checkpoints"));
+        assert_eq!(normalize_interactive_command("/cp"), Some("/checkpoints"));
+
+        let mut config = Config::for_test().unwrap();
+        config.model = "gpt-5".to_string();
+        config.plan_mode = false;
+        let build_footer = interactive_prompt_footer_line(&config, None, None).unwrap();
+        assert!(!build_footer.contains("PLAN"), "{build_footer}");
+
+        config.plan_mode = true;
+        let plan_footer = interactive_prompt_footer_line(&config, None, None).unwrap();
+        assert!(plan_footer.contains("gpt-5 · PLAN"), "{plan_footer}");
     }
 }

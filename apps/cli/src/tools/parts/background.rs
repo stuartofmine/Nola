@@ -990,7 +990,7 @@ fn plan_file_slug(args: &Map<String, Value>) -> Result<String, ToolOutcome> {
 }
 
 // JSON Schema maxLength counts Unicode scalar values, not UTF-8 bytes.
-const BASH_COMMAND_MAX_CHARS: usize = 4000;
+const BASH_COMMAND_MAX_CHARS: usize = 32_768;
 
 fn bash_command_too_long(command: &str) -> bool {
     command.chars().count() > BASH_COMMAND_MAX_CHARS

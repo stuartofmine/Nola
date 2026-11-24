@@ -30,6 +30,7 @@ struct MacComposerDisplayState: Equatable {
     var reasoningOptions: [String] = []
     var reasoningPreference: String = "automatic"
     var permissionMode: MacPermissionMode = .cautious
+    var isPlanMode: Bool = false
     var permissionConfigurationState: MacPermissionConfigurationState = .draft
     var activePermissionMode: MacPermissionMode? = nil
     var isSubmissionBlocked: Bool = false
@@ -68,6 +69,7 @@ enum MacComposerAction {
     case dismissAttachmentImportNotice(conversationID: String)
     case selectReasoningPreference(conversationID: String, String)
     case selectPermissionMode(conversationID: String, MacPermissionMode)
+    case setPlanMode(conversationID: String, Bool)
     case reloadPermissionConfiguration(conversationID: String)
 }
 

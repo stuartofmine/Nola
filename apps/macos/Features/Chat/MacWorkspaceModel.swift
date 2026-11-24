@@ -2392,6 +2392,18 @@ final class MacWorkspaceModel {
 
     private var committedPermissionModes: [String: MacPermissionMode] = [:]
     private var permissionModeDrafts: [String: MacPermissionMode] = [:]
+    private var planModeByConversation: [String: Bool] = [:]
+
+    var isPlanMode: Bool {
+        get {
+            guard let owner = selectedConversationID else { return false }
+            return planModeByConversation[owner] ?? false
+        }
+        set {
+            guard let owner = selectedConversationID else { return }
+            planModeByConversation[owner] = newValue
+        }
+    }
     private var permissionCommitRevisions: [String: Int64] = [:]
     private var permissionCommitRunIDs: [String: String] = [:]
     private var remotePermissionConfigurations: [String: MacRemotePermissionConfiguration] = [:]
@@ -2891,6 +2903,7 @@ final class MacWorkspaceModel {
             reasoningOptions: availableReasoningOptions,
             reasoningPreference: effectiveReasoningPreference,
             permissionMode: permissionMode,
+            isPlanMode: isPlanMode,
             permissionConfigurationState: selectedPermissionConfigurationState,
             activePermissionMode: selectedPermissionActiveMode, isSubmissionBlocked: blocked,
             submissionBlockReason: selectedModelConfigurationPending || selectedPermissionHasUncommittedChanges
@@ -2924,6 +2937,13 @@ final class MacWorkspaceModel {
     func selectComposerPermissionMode(_ mode: MacPermissionMode, conversationID: String) -> Bool {
         guard !conversationID.isEmpty, selectedConversationID == conversationID else { return false }
         permissionMode = mode
+        return true
+    }
+
+    @discardableResult
+    func selectComposerPlanMode(_ enabled: Bool, conversationID: String) -> Bool {
+        guard !conversationID.isEmpty, selectedConversationID == conversationID else { return false }
+        planModeByConversation[conversationID] = enabled
         return true
     }
 
@@ -4287,9 +4307,11 @@ final class MacWorkspaceModel {
         let runSamplingOverride = declaredSampling
             || conversationModelOverride.temperature != nil || conversationModelOverride.topP != nil
             || runModelParameters.temperature != 0.7 || runModelParameters.topP != 0.9
+        let runIsPlanMode = isPlanMode
         let runPermissionMode: MacPermissionMode
         do {
-            runPermissionMode = try MacPermissionMode.configured(selectedConversation?.permissionModeRawValue)
+            let configuredMode = try MacPermissionMode.configured(selectedConversation?.permissionModeRawValue)
+            runPermissionMode = runIsPlanMode ? .cautious : configuredMode
         } catch {
             activityConversationID = selectedConversationID
             updateActivity(title: String(localized: "Permissions"), detail: error.localizedDescription, state: .failed)
@@ -4600,6 +4622,9 @@ final class MacWorkspaceModel {
                     )
                 )
             }
+            if runIsPlanMode {
+                capturedComponents.append(MacPlanModePolicy.coreContextComponent)
+            }
         let snapshot = MacRunSubmissionSnapshot(
             conversation: conversations.first(where: { $0.id == selectedConversationID })!,
             submissionID: submissionID, canonicalAssistantMessageID: canonicalAssistantMessageID,
@@ -4647,6 +4672,7 @@ final class MacWorkspaceModel {
                     wireProtocol: runWireProtocol,
                     samplingOverride: runSamplingOverride,
                     permissionMode: runPermissionMode,
+                    isPlanMode: runIsPlanMode,
                     conversationID: selectedConversationID,
                     submissionID: submissionID,
                     userMessageID: userMessageID,
@@ -5036,6 +5062,27 @@ final class MacWorkspaceModel {
               !(isRunning && activeConversationID == selectedConversationID) else { return nil }
         workspaceURL = selected
         return selected
+    }
+
+    @discardableResult
+    func switchWorkspace(to url: URL) -> URL? {
+        guard executionHost == .local,
+              let selectedConversationID,
+              !(isRunning && activeConversationID == selectedConversationID),
+              let selected = bookmarkStore.selectWorkspace(url, conversationID: selectedConversationID) else {
+            return nil
+        }
+        workspaceURL = selected
+        return selected
+    }
+
+    private static func turnCheckpointLabel(from prompt: String) -> String {
+        let collapsed = prompt
+            .components(separatedBy: .whitespacesAndNewlines)
+            .filter { !$0.isEmpty }
+            .joined(separator: " ")
+        guard !collapsed.isEmpty else { return "Turn" }
+        return collapsed.count > 60 ? String(collapsed.prefix(57)) + "…" : collapsed
     }
 
     func workspaceForReview() async -> URL? {
@@ -5902,6 +5949,7 @@ final class MacWorkspaceModel {
         wireProtocol: MacModelWireProtocol,
         samplingOverride: Bool,
         permissionMode: MacPermissionMode,
+        isPlanMode: Bool = false,
         conversationID: String,
         submissionID: String,
         userMessageID: UUID,
@@ -5988,6 +6036,13 @@ final class MacWorkspaceModel {
                     guard MacEditedResendModelResolver.matchesHTTP(editedResend.model.frozen.primary, credential: credential) else { throw MacEditedResendError.modelUnavailable }
                 }
             }
+            if !isPlanMode, let selectedWorkspaceURL = snapshot.workspaceSelection.selectedURL {
+                let label = Self.turnCheckpointLabel(from: prompt)
+                _ = try? await MacWorkspaceGitService.shared.captureTurnCheckpoint(
+                    at: selectedWorkspaceURL,
+                    label: label
+                )
+            }
             var request = try MacLocalAgentRunRequest(
                     conversationID: conversationID,
                     submissionID: submissionID,
@@ -6022,6 +6077,7 @@ final class MacWorkspaceModel {
                     externalSessionID: snapshot.externalSessionID,
                     memoryEnabled: editedResend == nil ? memoryEnabled : false,
                     permissionMode: permissionMode,
+                    isPlanMode: isPlanMode,
                     databaseURLOverride: canonicalRepository?.databaseURL
                         ?? MacApplicationPort.defaultDatabaseURL,
                     applicationPort: modelApplication,

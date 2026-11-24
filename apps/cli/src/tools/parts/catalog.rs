@@ -4116,7 +4116,7 @@ fn shell_command_length_matches_unicode_schema_boundary() {
         let outcome = bash_command_length_error(&oversized);
         assert!(outcome.error);
         assert_eq!(outcome.data.as_ref().unwrap()["actual_characters"], 4001);
-        assert_eq!(outcome.data.as_ref().unwrap()["max_characters"], 4000);
+        assert_eq!(outcome.data.as_ref().unwrap()["max_characters"], BASH_COMMAND_MAX_CHARS);
         assert_eq!(outcome.data.as_ref().unwrap()["tool_execution_skipped"], true);
         assert!(outcome.text.contains("then >>"));
         assert!(!outcome.text.contains(&oversized));

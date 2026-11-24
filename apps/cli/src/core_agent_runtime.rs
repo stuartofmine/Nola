@@ -2923,10 +2923,21 @@ fn host_policy_context_components_with_skills(
                 .validate()
                 .map_err(|error| format!("invalid Host SOP: {error}"))?;
         }
-        let serialized = serde_json::to_string(&host_sops)
+        let compact_sops: Vec<Value> = host_sops
+            .iter()
+            .map(|def| {
+                json!({
+                    "id": def.id,
+                    "version": def.version,
+                    "title": def.title,
+                    "steps": def.steps.iter().map(|s| s.id.as_str()).collect::<Vec<_>>(),
+                })
+            })
+            .collect();
+        let serialized = serde_json::to_string(&compact_sops)
             .map_err(|error| format!("failed to serialize Host SOPs: {error}"))?;
         Some(format!(
-            "Versioned SOP contracts available as optional reusable workflows. Their availability or semantic similarity does not require activation, even for multi-step work. Compose ordinary tools directly when that serves the user's request. Adopt a SOP when the user requests it or its durable workflow materially helps; inspect its contract before adopting it, then preserve its run identity and actual state. SOPs never grant permission and must never be selected from keyword matching.\n{serialized}"
+            "Optional reusable SOP workflows (their availability does not require activation; inspect via SOP before adopting; never grant permission).\n{serialized}"
         ))
     };
     let repository_root = crate::config_paths::project_ancestor_directories(&config.tool_settings.project_root)
@@ -4218,6 +4229,29 @@ fn core_permission_rules_with_skills(
             .into_iter()
             .filter(|rule| rule.decision == CoreRuleDecision::Deny),
     );
+    // First-class Plan mode enforces physical read-only isolation in Core by
+    // appending hard Deny rules for mutating file/shell/git/PTY capabilities.
+    if config.tool_settings.plan_mode {
+        for capability in [
+            "edit",
+            "write",
+            "bash",
+            "pty",
+            "git_commit",
+            "delete_file",
+            "write_file",
+            "edit_file",
+            "multi_edit_file",
+            "apply_patch",
+        ] {
+            rules.push(CorePermissionRule {
+                capability_pattern: capability.to_string(),
+                resource_pattern: "*".to_string(),
+                decision: CoreRuleDecision::Deny,
+                source: PermissionRuleSource::UserGlobal,
+            });
+        }
+    }
     PermissionRuleSet { rules }.with_profile(permission_profile)
 }
 

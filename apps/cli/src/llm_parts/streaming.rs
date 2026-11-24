@@ -1114,11 +1114,19 @@ where
                     emitted_tool_transport_event,
                     !tools.is_empty(),
                 );
-                let Some(delay) =
-                    (retryable_round && retry_index < max_retries && failure.same_target_retryable)
-                        .then(|| llm_retry_delay(&failure, retry_index + 1, cfg))
-                        .flatten()
-                else {
+                let repetitive_reasoning_resample = failure.code
+                    == super::stream_state::REPETITIVE_REASONING
+                    && retryable_round
+                    && !tools.is_empty()
+                    && retry_index == 0
+                    && max_retries > 0;
+                let Some(delay) = (if repetitive_reasoning_resample {
+                    Some(Duration::from_millis(500))
+                } else if retryable_round && retry_index < max_retries && failure.same_target_retryable {
+                    llm_retry_delay(&failure, retry_index + 1, cfg)
+                } else {
+                    None
+                }) else {
                     return Err(failure);
                 };
                 let delay_ms = delay.as_millis().min(u64::MAX as u128) as u64;

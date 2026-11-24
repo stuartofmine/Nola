@@ -99,6 +99,8 @@ pub struct HostToolRequest {
     pub skill_dirs: Option<Vec<PathBuf>>,
     pub bash_prefixes: Vec<String>,
     pub auto_approve: bool,
+    #[serde(default)]
+    pub plan_mode: bool,
     pub permission_profile: Option<crate::permissions::PermissionProfile>,
     pub tools_enabled: bool,
     pub force_tool_set: String,

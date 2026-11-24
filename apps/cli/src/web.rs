@@ -42,3 +42,4 @@ include!("web_parts/goal_worker.rs");
 include!("web_parts/tailcat_sessions.rs");
 
 include!("web_parts/software_update.rs");
+include!("web_parts/workspace_workflow.rs");

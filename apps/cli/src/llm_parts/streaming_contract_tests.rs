@@ -685,12 +685,33 @@ fn thinking_policy_uses_enable_thinking_for_qwen_style_providers() {
         };
         let mut body = json!({"messages": [], "stream": true});
 
+        // Automatic (unset) selection leaves vendor thinking controls absent so
+        // the server/model default applies instead of forcing thinking off.
         apply_thinking_policy(&cfg, &mut body);
-
-        assert_eq!(body["enable_thinking"], false);
-        assert_eq!(body["chat_template_kwargs"]["enable_thinking"], false);
+        assert!(body.get("enable_thinking").is_none());
+        assert!(body.get("chat_template_kwargs").is_none());
         assert!(body.get("thinking").is_none());
         assert!(body.get("reasoning_effort").is_none());
+
+        // Explicit disable ("none") sends enable_thinking=false.
+        let mut disabled_cfg = cfg.clone();
+        disabled_cfg.reasoning_selection = Some(
+            nola_core::agent::reasoning::ReasoningSelection::Effort {
+                value: "none".to_string(),
+            },
+        );
+        let mut disabled_body = json!({"messages": [], "stream": true});
+        apply_thinking_policy(&disabled_cfg, &mut disabled_body);
+        assert_eq!(disabled_body["enable_thinking"], false);
+        assert_eq!(disabled_body["chat_template_kwargs"]["enable_thinking"], false);
+
+        // Explicit enable sends enable_thinking=true.
+        let mut enabled_cfg = cfg;
+        enabled_cfg.thinking_enabled = true;
+        let mut enabled_body = json!({"messages": [], "stream": true});
+        apply_thinking_policy(&enabled_cfg, &mut enabled_body);
+        assert_eq!(enabled_body["enable_thinking"], true);
+        assert_eq!(enabled_body["chat_template_kwargs"]["enable_thinking"], true);
     });
 }
 

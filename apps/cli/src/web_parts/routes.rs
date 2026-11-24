@@ -1227,6 +1227,25 @@ fn route_request(
         (&Method::Get, "/api/workspace/today") | (&Method::Head, "/api/workspace/today") => {
             return workspace_today_response(url);
         }
+        (&Method::Get, "/api/workspace/diff") | (&Method::Head, "/api/workspace/diff") => {
+            return workspace_diff_response(url, config);
+        }
+        (&Method::Get, "/api/workspace/checkpoints")
+        | (&Method::Head, "/api/workspace/checkpoints") => {
+            return workspace_checkpoints_response(url, config);
+        }
+        (&Method::Post, "/api/workspace/undo") => {
+            return workspace_undo_redo_response(request, url, config, false);
+        }
+        (&Method::Post, "/api/workspace/redo") => {
+            return workspace_undo_redo_response(request, url, config, true);
+        }
+        (&Method::Get, "/api/workspace/worktrees") | (&Method::Head, "/api/workspace/worktrees") => {
+            return workspace_worktrees_list_response(url, config);
+        }
+        (&Method::Post, "/api/workspace/worktrees") => {
+            return workspace_worktrees_create_response(request, url, config);
+        }
         (&Method::Get, "/api/home") | (&Method::Head, "/api/home") => {
             return home_response();
         }

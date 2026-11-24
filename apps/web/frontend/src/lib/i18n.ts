@@ -35,6 +35,7 @@ import { executionScopeMessages } from './locales/executionScope.ts';
 import { recoveryMessages } from './locales/recovery.ts';
 import { chatKnowledgeMessages } from './locales/chatKnowledge.ts';
 import { memoryCenterMessages } from './locales/memoryCenter.ts';
+import { workspaceWorkflowMessages } from './locales/workspaceWorkflow.ts';
 
 export type Locale = 'zh-Hans' | 'en' | 'de' | 'es' | 'fr' | 'ja' | 'ru';
 export const supportedLocales: readonly Locale[] = ['zh-Hans', 'en', 'de', 'es', 'fr', 'ja', 'ru'];
@@ -68,7 +69,7 @@ export const messageCatalogs: readonly Record<string, Record<string, string>>[] 
     chatBrowserMessages,
     modelTestMessages,
     localModelCenterMessages,
-    recoveryMessages, executionScopeMessages,
+    recoveryMessages, executionScopeMessages, workspaceWorkflowMessages,
 ];
 const messages = Object.fromEntries(supportedLocales.map(language => [language,
     Object.assign({}, ...messageCatalogs.map(catalog => catalog[language] ?? {})) as Record<string, string>,

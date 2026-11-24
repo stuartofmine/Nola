@@ -199,6 +199,8 @@
     import ChatPermissionPanel from '../components/ChatPermissionPanel.svelte';
     import Markdown from '../components/Markdown.svelte';
     import WorkspaceReview from './WorkspaceReview.svelte';
+    import WorkspaceDiffPanel from '../components/WorkspaceDiffPanel.svelte';
+    import { fetchWorkspaceDiff } from '../lib/workspaceWorkflow';
     import ToolbarPopover from '../components/ToolbarPopover.svelte';
     import ChatArtifacts from '../components/ChatArtifacts.svelte';
     import { prepareInPlaceResend, type InPlaceResendCompletion } from '../lib/inPlaceResend';
@@ -282,6 +284,47 @@
     let pendingAttachmentNames = $state<string[]>([]);
     let attachments = $state<ChatTextAttachment[]>([]);
     let attachmentsReading = $state(false);
+    let planMode = $state(false);
+    let workspaceDrawerOpen = $state(false);
+    let workspaceChangedCount = $state(0);
+    let workspaceBranch = $state('');
+    let workspaceSummaryController: AbortController | null = null;
+    let wasBusyForWorkspace = false;
+    async function refreshWorkspaceSummary(conversationId: string | undefined) {
+        if (typeof window === 'undefined' || !conversationId) return;
+        workspaceSummaryController?.abort();
+        const controller = new AbortController();
+        workspaceSummaryController = controller;
+        try {
+            const diff = await fetchWorkspaceDiff({ conversationId, signal: controller.signal });
+            if (controller.signal.aborted) return;
+            workspaceChangedCount = diff.is_git_repo ? diff.files.length : 0;
+            workspaceBranch = diff.is_git_repo ? diff.branch : '';
+        } catch {
+            // Optional developer workflow summary badge.
+        }
+    }
+    $effect(() => {
+        const convId = active?.conversationId;
+        if (!convId) {
+            workspaceChangedCount = 0;
+            workspaceBranch = '';
+            return;
+        }
+        void refreshWorkspaceSummary(convId);
+        return () => {
+            workspaceSummaryController?.abort();
+            workspaceSummaryController = null;
+        };
+    });
+    $effect(() => {
+        const currentlyBusy = busy;
+        const convId = active?.conversationId;
+        if (wasBusyForWorkspace && !currentlyBusy && convId) {
+            void refreshWorkspaceSummary(convId);
+        }
+        wasBusyForWorkspace = currentlyBusy;
+    });
     let showLatest = $state(false);
     let inspectorVisited = $state({progress: false, resources: false, review: false});
     let mountedInspectorSections = $state<string[]>([]);
@@ -998,7 +1041,7 @@
         }
         const submissionId = randomId();
         const text = draft;
-        void submissionController?.submit({text: draft, attachments, language: $locale, submissionId, selectedExperts:selectedReferences,expertSourceEpoch:selectedExpertEpoch()??undefined,expertMentions:inline});
+        void submissionController?.submit({text: draft, attachments, language: $locale, submissionId, planMode, selectedExperts:selectedReferences,expertSourceEpoch:selectedExpertEpoch()??undefined,expertMentions:inline});
     }
     // Historical expert-only intents are reconciled unchanged; new inputs use Main.
     async function sendExpertOnly(conversationId: string, text: string, participantIds: string[]) {
@@ -1328,11 +1371,40 @@
 <svelte:head>{#if !managementContentSelected}<title>{t($locale, 'chatPage.title')} — Nola</title>{/if}</svelte:head>
 <svelte:window onkeydown={windowKeydown} onpointerup={transcriptPointerEnded} onpointercancel={transcriptPointerEnded} bind:innerWidth={viewportWidth} />
 <ConfirmationDialog bind:this={messageConfirmation} />
+<WorkspaceDiffPanel
+    open={workspaceDrawerOpen}
+    conversationId={active?.conversationId}
+    onclose={() => (workspaceDrawerOpen = false)}
+    onsummary={summary => {
+        workspaceChangedCount = summary.isGitRepo ? summary.changedCount : 0;
+        workspaceBranch = summary.isGitRepo ? summary.branch : '';
+    }}
+/>
 {#if managingExperts}
     {#key hostId}<ExpertManager {hostId} onclose={() => {managingExperts = false; void openExperts(true);}} />{/key}
 {/if}
 {#snippet inspectorControls()}
 <div class="inspector-controls">
+            <button
+                type="button"
+                class="panel-toggle workspace-diff-toggle"
+                class:has-changes={workspaceChangedCount > 0}
+                title={workspaceBranch ? `${t($locale, 'workspaceWorkflow.buttonLabel')} (${workspaceBranch})` : t($locale, 'workspaceWorkflow.buttonLabel')}
+                aria-label={t($locale, 'workspaceWorkflow.buttonLabel')}
+                aria-expanded={workspaceDrawerOpen}
+                aria-pressed={workspaceDrawerOpen}
+                onclick={() => (workspaceDrawerOpen = !workspaceDrawerOpen)}
+            >
+                <svg aria-hidden="true" viewBox="0 0 24 24">
+                    <circle cx="6" cy="6" r="2.5" />
+                    <circle cx="18" cy="6" r="2.5" />
+                    <circle cx="6" cy="18" r="2.5" />
+                    <path d="M6 8.5v7M18 8.5c0 4-4 5-12 5" />
+                </svg>
+                {#if workspaceChangedCount > 0}
+                    <span class="workspace-diff-badge">{workspaceChangedCount}</span>
+                {/if}
+            </button>
             <button class="panel-toggle" title={t($locale, 'chatPage.find')} aria-label={t($locale, 'chatPage.find')} aria-pressed={searchVisible} onclick={openSearch}><svg aria-hidden="true" viewBox="0 0 24 24"><circle cx="10.5" cy="10.5" r="7" /><path d="m16 16 5 5" /></svg></button>
             {#each inspectorGroups as group}
                 {@const selected = inspectorTab !== null && group.tabs.includes(inspectorTab)}
@@ -1385,6 +1457,7 @@
         {#if active}{@render inspectorControls()}{/if}
         {#if active}<ToolbarPopover label={t($locale, 'chatInspector.more')}>
             <details class="attachment-help"><summary>{t($locale, 'chatTextAttachment.helpTitle')}</summary><p>{t($locale, 'chatTextAttachment.help')}</p><p>{t($locale, 'chatTextAttachment.dropPaste')}</p></details>
+            <button type="button" onclick={() => (workspaceDrawerOpen = true)}>{t($locale, 'workspaceWorkflow.buttonLabel')}{workspaceChangedCount > 0 ? ` · ${workspaceChangedCount}` : ''}</button>
             <button type="button" onclick={openSearch}>{t($locale, 'chatPage.find')}</button>
             <button type="button" onclick={() => loadHistory('replace')} disabled={historyLoading || (busy && turn?.phase !== 'recovering' && turn?.phase !== 'cancel_requested')}>{t($locale, 'chatPage.refresh')}</button>
             {#if viewportWidth <= 760}
@@ -1561,7 +1634,7 @@
                 {/key}
             {/each}
             {#if active && canInteract}
-<form class="composer" onsubmit={event => { event.preventDefault(); send(); }}
+<form class="composer" class:plan-mode={planMode} onsubmit={event => { event.preventDefault(); send(); }}
                 ondragover={event => { if (event.dataTransfer?.types.includes('Files')) { event.preventDefault(); event.dataTransfer.dropEffect = busy || attachmentsReading ? 'none' : 'copy'; } }}
                 ondrop={event => { if (event.dataTransfer?.types.includes('Files')) { event.preventDefault(); void textAttachments?.addFiles([...event.dataTransfer.files]); } }}
                 onpaste={event => { if (event.clipboardData?.files.length) { event.preventDefault(); void textAttachments?.addFiles([...event.clipboardData.files]); } }}>
@@ -1587,6 +1660,18 @@
                 <div class="composer-footer">
                 {#if active}<div class="composer-attachments"><ChatTextAttachments showHelp={false} bind:this={textAttachments} draftStore={workspaceHost?.attachments} conversationId={active.conversationId} {generation} busy={busy || composerUnavailable} onattachments={(files, reading) => { attachments = [...files]; attachmentsReading = reading; }} /></div>{/if}
                 <div class="composer-execution">
+                    <button
+                        type="button"
+                        class="plan-mode-pill"
+                        class:active={planMode}
+                        aria-pressed={planMode}
+                        disabled={busy || composerUnavailable}
+                        title={t($locale, planMode ? 'workspaceWorkflow.planModeHint' : 'workspaceWorkflow.buildModeHint')}
+                        onclick={() => (planMode = !planMode)}
+                    >
+                        <span class="mode-dot" aria-hidden="true"></span>
+                        <span>{t($locale, planMode ? 'workspaceWorkflow.planMode' : 'workspaceWorkflow.buildMode')}</span>
+                    </button>
                     <ChatModelMenu selection={modelState} onopen={() => sessionSettings?.refreshModelCatalog()} onselect={choice => sessionSettings?.selectModel(choice)} onsettings={() => { inspectorTab = 'settings'; }} onreload={() => sessionSettings?.reloadSettings()} />
                     <ChatReasoningMenu state={reasoningState} {busy} onselect={value => sessionSettings?.selectReasoningPreference(value)} />
                     <div class="composer-actions">
@@ -1803,6 +1888,16 @@
     @media (prefers-reduced-motion: reduce) { .run-status.live { background: none; color: var(--muted); animation: none; } }
     @media (forced-colors: active) { .run-status.live { background: none; color: inherit; animation: none; } }
     .composer { position: relative; flex-shrink: 0; width: calc(100% - 64px); max-width: 720px; align-self: center; margin: 10px 12px 16px; padding: 12px 16px; border: 1px solid var(--composer-border); border-radius: 16px; background: var(--composer-bg); box-shadow: var(--composer-shadow); transition: border-color var(--motion-fast) ease, box-shadow var(--motion-fast) ease, background-color var(--motion-base) var(--motion-disclosure); }
+    .composer.plan-mode { border-color: color-mix(in srgb, var(--info) 55%, var(--composer-border)); background: color-mix(in srgb, var(--info) 4%, var(--composer-bg)); }
+    .plan-mode-pill { display: inline-flex; align-items: center; gap: 6px; min-height: 30px; min-width: auto; padding: 3px 10px; border-radius: 999px; border: 1px solid var(--border); background: var(--panel); color: var(--muted); font-size: 12px; font-weight: 550; line-height: 1.2; white-space: nowrap; flex: none; }
+    .plan-mode-pill:not(:disabled):hover { background: var(--composer-pill-hover-bg); color: var(--content); border-color: var(--outline); }
+    .plan-mode-pill.active { background: color-mix(in srgb, var(--info) 16%, transparent); border-color: color-mix(in srgb, var(--info) 52%, transparent); color: var(--info); font-weight: 650; }
+    .plan-mode-pill.active:not(:disabled):hover { background: color-mix(in srgb, var(--info) 24%, transparent); border-color: var(--info); color: var(--info); }
+    .plan-mode-pill .mode-dot { width: 7px; height: 7px; border-radius: 50%; background: var(--success); flex: none; }
+    .plan-mode-pill.active .mode-dot { background: var(--info); }
+    .workspace-diff-toggle { position: relative; }
+    .workspace-diff-toggle.has-changes { color: var(--content); }
+    .workspace-diff-badge { position: absolute; top: 2px; right: 2px; min-width: 15px; height: 15px; padding: 0 4px; border-radius: 999px; background: var(--info); color: #ffffff; font-size: 10px; font-weight: 700; line-height: 15px; text-align: center; pointer-events: none; }
     .composer:focus-within { outline: none; border-color: var(--accent); box-shadow: var(--composer-focus-shadow); }
     @media (prefers-color-scheme: dark) { :global(:root:not([data-appearance="light"])) .composer:focus-within { border-color: var(--composer-focus-border); box-shadow: var(--composer-focus-shadow); } }
     :global(:root[data-appearance="dark"]) .composer:focus-within { border-color: var(--composer-focus-border); box-shadow: var(--composer-focus-shadow); }
