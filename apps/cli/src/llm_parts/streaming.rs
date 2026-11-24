@@ -1030,6 +1030,7 @@ where
         let mut admission_error = None;
         let attempt_started_at = Instant::now();
         let mut emitted_provider_event = false;
+        let mut emitted_text_delta = false;
         let mut emitted_nontransactional_event = false;
         let mut emitted_tool_transport_event = false;
         let mut reasoning_guard = super::stream_state::ReasoningProgressGuard::default();
@@ -1061,6 +1062,9 @@ where
                     }
                 }
                 emitted_provider_event = true;
+                if matches!(event, LlmEvent::TextDelta(_)) {
+                    emitted_text_delta = true;
+                }
                 if matches!(event, LlmEvent::TextDelta(_) | LlmEvent::ReasoningDelta(_)) {
                     emitted_nontransactional_event = true;
                 }
@@ -1114,9 +1118,14 @@ where
                     emitted_tool_transport_event,
                     !tools.is_empty(),
                 );
+                // ReasoningProgressGuard fires only after ReasoningDelta has
+                // streamed, which sets `emitted_nontransactional_event`. As
+                // long as no visible answer TextDelta has been emitted yet and
+                // tools are active, resampling once is clean and transactional
+                // (LlmEvent::Retrying resets the reasoning buffer).
                 let repetitive_reasoning_resample = failure.code
                     == super::stream_state::REPETITIVE_REASONING
-                    && retryable_round
+                    && !emitted_text_delta
                     && !tools.is_empty()
                     && retry_index == 0
                     && max_retries > 0;

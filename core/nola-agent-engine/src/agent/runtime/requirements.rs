@@ -26,6 +26,7 @@ const MODEL_SOURCE_ITEM_CHARS: usize = 512;
 const MODEL_SOURCE_TOTAL_CHARS: usize = 4096;
 const MODEL_RECENT_UNRECEIPTED_SUCCESSES: usize = 32;
 const MODEL_RECENT_CHECKLESS_RECEIPT_SUCCESSES: usize = 12;
+const MODEL_RECENT_PROCESS_EXIT_SUCCESSES: usize = 6;
 
 #[cfg(test)]
 #[path = "requirement_source_tests.rs"]
@@ -959,12 +960,19 @@ impl ObservedEvidenceReference {
         }
         let checks: Vec<_> = receipt.checks.iter().filter(|check| !check.passed)
             .chain(receipt.checks.iter().filter(|check| check.passed)).take(4)
-            .map(|check| json!({"kind":check.kind, "passed":check.passed,
-                "resource_uri":check.resource_uri.chars().take(256).collect::<String>(),
-                "version":check.version.chars().take(128).collect::<String>(),
-                "predicate":check.predicate.chars().take(256).collect::<String>(),
-                "fields_truncated":check.resource_uri.chars().count()>256
-                    || check.version.chars().count()>128 || check.predicate.chars().count()>256}))
+            .map(|check| {
+                let truncated = check.resource_uri.chars().count() > 256
+                    || check.version.chars().count() > 128
+                    || check.predicate.chars().count() > 256;
+                let mut entry = json!({"kind":check.kind, "passed":check.passed,
+                    "resource_uri":check.resource_uri.chars().take(256).collect::<String>(),
+                    "version":check.version.chars().take(128).collect::<String>(),
+                    "predicate":check.predicate.chars().take(256).collect::<String>()});
+                if truncated {
+                    entry["fields_truncated"] = json!(true);
+                }
+                entry
+            })
             .collect();
         json!({"receipt_available":true, "execution_state":receipt.state,
             "task_acceptance":"not_established", "historical":true,
@@ -975,9 +983,9 @@ impl ObservedEvidenceReference {
 }
 
 impl RequirementExecutionState {
-    /// Omit only old, unassessed successful observations without checks
-    /// from the next request. Canonical evidence is untouched. Failures, typed
-    /// verification checks and assessment dependencies stay visible.
+    /// Omit only old, unassessed successful observations without postcondition
+    /// checks from the next request. Canonical evidence is untouched. Failures,
+    /// postcondition/regression checks and assessment dependencies stay visible.
     fn model_evidence_references(&self) -> BTreeMap<String, String> {
         let assessed: std::collections::BTreeSet<&str> = self.assessments.values()
             .flat_map(|assessment| assessment.evidence_refs.iter().map(String::as_str))
@@ -998,6 +1006,16 @@ impl RequirementExecutionState {
                 && observation.outcome == nola_domain::host_effect::HostToolOutcome::Succeeded
                 && !assessed.contains(id)
         };
+        let process_exit_only_ordinary = |id: &str, observation: &ObservedEvidenceReference| {
+            observation.receipt.as_ref().is_some_and(|r| {
+                !r.checks.is_empty()
+                    && r.checks.iter().all(|c| {
+                        c.passed
+                            && c.kind == nola_domain::execution_evidence::ExecutionCheckKind::ProcessExit
+                    })
+            }) && observation.outcome == nola_domain::host_effect::HostToolOutcome::Succeeded
+                && !assessed.contains(id)
+        };
         let mut unreceipted: Vec<_> = self.observations.iter()
             .filter(|(id, observation)| unreceipted_ordinary(id, observation)).collect();
         unreceipted.sort_by_key(|(id, observation)| (observation.recorded_core_revision, id.as_str()));
@@ -1008,12 +1026,19 @@ impl RequirementExecutionState {
         checkless.sort_by_key(|(id, observation)| (observation.recorded_core_revision, id.as_str()));
         let recent_checkless: std::collections::BTreeSet<&str> = checkless.into_iter().rev()
             .take(MODEL_RECENT_CHECKLESS_RECEIPT_SUCCESSES).map(|(id, _)| id.as_str()).collect();
+        let mut process_exit: Vec<_> = self.observations.iter()
+            .filter(|(id, observation)| process_exit_only_ordinary(id, observation)).collect();
+        process_exit.sort_by_key(|(id, observation)| (observation.recorded_core_revision, id.as_str()));
+        let recent_process_exit: std::collections::BTreeSet<&str> = process_exit.into_iter().rev()
+            .take(MODEL_RECENT_PROCESS_EXIT_SUCCESSES).map(|(id, _)| id.as_str()).collect();
         self.observations.iter().enumerate()
             .filter(|(_, (id, observation))| {
                 if unreceipted_ordinary(id, observation) {
                     recent_unreceipted.contains(id.as_str())
                 } else if checkless_receipt_ordinary(id, observation) {
                     recent_checkless.contains(id.as_str())
+                } else if process_exit_only_ordinary(id, observation) {
+                    recent_process_exit.contains(id.as_str())
                 } else {
                     true
                 }

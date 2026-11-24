@@ -20,7 +20,7 @@ use super::session::{AgentInvokedSkill, AgentSessionConfiguration};
 use super::tool_lifecycle::ToolCallState;
 
 const DEFAULT_CORRECTION_LIMIT_WITHOUT_PROGRESS: u32 = 8;
-const DEFAULT_INVESTIGATION_CHECKPOINT: u32 = 12;
+const DEFAULT_INVESTIGATION_CHECKPOINT: u32 = 28;
 
 /// Core recovery control, never a user-input wait or an authorization fact.
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -1294,7 +1294,7 @@ impl AgentEngineeringLoopState {
             && self.investigation_count_since_mutation >= DEFAULT_INVESTIGATION_CHECKPOINT
         {
             return Some(
-                "Evidence checkpoint: runtime facts report retained investigation results. Before requesting another tool, identify the one unresolved evidence gap that changes the answer. If no such gap remains, synthesize the answer now. Do not run builds, tests, installers, or other validation merely to prolong an inspection-only task; validation follows a real mutation or an explicit validation objective. Distinct evidence remains available until the configured outer iteration budget enters its completion reserve.".into()
+                "Extended read-only phase: if the request requires creating or modifying deliverables, proceed to implementation with retained evidence; otherwise focus on the one unresolved evidence gap or answer when evidence suffices. Distinct evidence remains available within the outer iteration budget.".into()
             );
         }
         if self.phase == AgentEngineeringPhase::AwaitingAssessment {
@@ -1588,13 +1588,14 @@ mod evidence_checkpoint_tests {
     fn distinct_investigations_request_convergence_without_blocking_execution() {
         let state = AgentEngineeringLoopState {
             phase: AgentEngineeringPhase::Diagnosing,
-            investigation_count_since_mutation: 12,
+            investigation_count_since_mutation: super::DEFAULT_INVESTIGATION_CHECKPOINT,
             ..AgentEngineeringLoopState::default()
         };
 
         let instruction = state.model_instruction().expect("checkpoint instruction");
         assert!(instruction.contains("one unresolved evidence gap"));
         assert!(instruction.contains("outer iteration budget"));
+        assert!(!instruction.contains("synthesize the answer now"));
         assert!(!state.investigation_stage_exit_required);
     }
 }

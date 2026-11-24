@@ -359,6 +359,77 @@ fn guard_existing_files_by_path(
     Ok(())
 }
 
+fn parse_unified_hunk_old_range(line: &str) -> Option<(usize, usize)> {
+    let rest = line.strip_prefix("@@ -")?;
+    let old_spec = rest.split_whitespace().next()?;
+    let (start_str, count_str) = match old_spec.split_once(',') {
+        Some((s, c)) => (s, Some(c)),
+        None => (old_spec, None),
+    };
+    let start: usize = start_str.parse().ok()?;
+    let count: usize = match count_str {
+        Some(c) => c.parse().ok()?,
+        None => 1,
+    };
+    if start == 0 {
+        return None;
+    }
+    let end = if count == 0 {
+        start
+    } else {
+        start.saturating_add(count).saturating_sub(1)
+    };
+    Some((start, end))
+}
+
+fn patch_hunk_ranges_by_path(patch: &str) -> HashMap<String, Vec<(usize, usize)>> {
+    let mut ranges: HashMap<String, Vec<(usize, usize)>> = HashMap::new();
+    let mut current_path: Option<String> = None;
+    for line in patch.lines() {
+        if let Some(raw_path) = line.strip_prefix("--- ") {
+            if let Ok(Some(path)) = normalize_patch_path(raw_path) {
+                current_path = Some(path);
+            } else {
+                current_path = None;
+            }
+        } else if let Some(raw_path) = line.strip_prefix("+++ ") {
+            if current_path.is_none() {
+                if let Ok(Some(path)) = normalize_patch_path(raw_path) {
+                    current_path = Some(path);
+                }
+            }
+        } else if line.starts_with("@@ -") {
+            if let (Some(path), Some(range)) = (current_path.as_ref(), parse_unified_hunk_old_range(line)) {
+                ranges.entry(path.clone()).or_default().push(range);
+            }
+        }
+    }
+    ranges
+}
+
+fn guard_patch_files_by_path(
+    root: &Path,
+    rel_paths: &[String],
+    touched_paths: &[PathBuf],
+    patch: &str,
+    args: &Map<String, Value>,
+) -> Result<(), ToolOutcome> {
+    let hunk_ranges = patch_hunk_ranges_by_path(patch);
+    for (rel, path) in rel_paths.iter().zip(touched_paths.iter()) {
+        if path.is_file() {
+            check_expected_sha256_by_path(root, path, args)?;
+            if let Some(ranges) = hunk_ranges.get(rel).filter(|list| !list.is_empty()) {
+                for &range in ranges {
+                    guard_existing_file_write(path, &Map::new(), false, Some(range))?;
+                }
+            } else {
+                guard_existing_file_write(path, &Map::new(), true, None)?;
+            }
+        }
+    }
+    Ok(())
+}
+
 fn with_file_write_lock<F>(path: &Path, action: F) -> ToolOutcome
 where
     F: FnOnce() -> ToolOutcome,
@@ -762,10 +833,11 @@ fn write_file(args: &Map<String, Value>, ctx: &ToolContext) -> ToolOutcome {
         match atomic_write_text_file_mode(&target, &content, current.is_some()) {
             Ok(()) => {
                 refresh_file_access_state(&target);
-                outcome.text = format!("Wrote {} bytes to {}",content.len(),target.display());
+                let written_sha = sha256_hex(content.as_bytes());
+                outcome.text = format!("Wrote {} bytes to {} (sha256: {written_sha})",content.len(),target.display());
                 outcome.display = format!("{} {}",tr(Message::DisplayWrotePrefix),target.display());
                 outcome = with_mutation_artifact(outcome,&target,"write",before_version,
-                    format!("sha256:{}",sha256_hex(content.as_bytes())));
+                    format!("sha256:{written_sha}"));
                 let mut format_sections = Vec::new();
                 if let Some(format_root) = format_root_for_path(&target, &ctx.allowed_dirs) {
                     match formatting_sections(
@@ -785,6 +857,9 @@ fn write_file(args: &Map<String, Value>, ctx: &ToolContext) -> ToolOutcome {
                 if !refresh_mutation_effect_versions(&mut outcome) {
                     return partial_file_mutation_failure(outcome,"Written resource could not be observed after formatting; its final version is unknown or absent, do not replay the replacement");
                 }
+                // Preserve read continuity when the file on disk exactly matches
+                // the full text the model just authored (no external rewrite).
+                record_authored_file_full_access(&target, &content);
                 outcome.text.push_str(&format_sections.join(""));
                 if let Some(diag) = post_edit_diagnostics::diagnostics_section_for_file(&target) {
                     outcome.text.push_str(&diag);
@@ -2090,7 +2165,7 @@ fn apply_patch_file(args: &Map<String, Value>, ctx: &ToolContext) -> ToolOutcome
     let touched_paths = paths.iter().map(|path| root.join(path)).collect::<Vec<_>>();
     let before = tool_try!(observe_patch_targets(&touched_paths));
     if !dry_run {
-        tool_try!(guard_existing_files_by_path(&root, &touched_paths, args));
+        tool_try!(guard_patch_files_by_path(&root, &paths, &touched_paths, &patch, args));
     }
     let file_lines = paths.iter().zip(&before).map(|(path, snapshot)| {
         let digest = snapshot.as_ref().map(|snapshot| snapshot.version.sha256.as_str()).unwrap_or("(new file)");
@@ -2127,7 +2202,7 @@ fn apply_patch_file(args: &Map<String, Value>, ctx: &ToolContext) -> ToolOutcome
     let mut lock_paths = touched_paths.clone();
     lock_paths.extend(missing_parents.iter().cloned());
     with_file_write_locks(&lock_paths, || {
-        tool_try!(guard_existing_files_by_path(&root, &touched_paths, args));
+        tool_try!(guard_patch_files_by_path(&root, &paths, &touched_paths, &patch, args));
         let current = tool_try!(observe_patch_targets(&touched_paths));
         if before.iter().zip(&current).any(|(before, current)| {
             before.as_ref().map(|value| &value.version) != current.as_ref().map(|value| &value.version)

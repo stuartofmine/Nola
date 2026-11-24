@@ -421,6 +421,52 @@ fn file_evidence_long_unicode_line_resumes_exactly_and_validation_reads_whole_fi
 }
 
 #[test]
+fn authored_write_file_and_partial_range_read_allow_targeted_apply_patch() {
+    let fixture = tempfile::tempdir().unwrap();
+    let path = fixture.path().join("demo.py");
+    let ctx = file_evidence_context(fixture.path());
+    let _scope = ctx.permission_scope.enter();
+
+    let source = "line1\nline2\nline3\nline4\nline5\n";
+    let wrote = write_file(&object_args(json!({"path": path, "content": source})), &ctx);
+    assert!(!wrote.error, "{}", wrote.text);
+    assert!(wrote.text.contains(&format!("(sha256: {})", sha256_hex(source.as_bytes()))), "{}", wrote.text);
+
+    // Editing a file just authored by write_file in this run succeeds immediately.
+    let patch_after_write = "--- a/demo.py\n+++ b/demo.py\n@@ -2,3 +2,3 @@\n line2\n-line3\n+line3_v2\n line4\n";
+    let patched = apply_patch_file(&object_args(json!({
+        "root": fixture.path(),
+        "patch": patch_after_write,
+        "dry_run": false
+    })), &ctx);
+    assert!(!patched.error, "{}", patched.text);
+    assert_eq!(fs::read_to_string(&path).unwrap(), "line1\nline2\nline3_v2\nline4\nline5\n");
+
+    // After external write, reading ONLY lines 3..=4 allows patching lines 3..=4,
+    // while patching unread line 1 is still rejected.
+    fs::write(&path, "a1\na2\na3\na4\na5\n").unwrap();
+    let partial = read_file(&object_args(json!({"path": path, "start_line": 3, "line_count": 2})), &ctx);
+    assert!(!partial.error, "{}", partial.text);
+
+    let unread_patch = "--- a/demo.py\n+++ b/demo.py\n@@ -1,2 +1,2 @@\n-a1\n+b1\n a2\n";
+    let rejected = apply_patch_file(&object_args(json!({
+        "root": fixture.path(),
+        "patch": unread_patch,
+        "dry_run": false
+    })), &ctx);
+    assert!(rejected.error, "patching unread lines must still fail");
+
+    let covered_patch = "--- a/demo.py\n+++ b/demo.py\n@@ -3,2 +3,2 @@\n-a3\n+b3\n a4\n";
+    let ok_patch = apply_patch_file(&object_args(json!({
+        "root": fixture.path(),
+        "patch": covered_patch,
+        "dry_run": false
+    })), &ctx);
+    assert!(!ok_patch.error, "{}", ok_patch.text);
+    assert_eq!(fs::read_to_string(&path).unwrap(), "a1\na2\nb3\na4\na5\n");
+}
+
+#[test]
 fn declared_json_write_checks_the_entire_value_before_any_mutation() {
     let fixture = tempfile::tempdir().unwrap();
     let path = fixture.path().join("output/records.json");

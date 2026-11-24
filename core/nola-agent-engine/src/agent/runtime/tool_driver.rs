@@ -1944,6 +1944,7 @@ impl AgentRuntime {
             }
             Value::Object(object) => object
                 .get("text")
+                .or_else(|| object.get("content"))
                 .or_else(|| object.get("output_preview"))
                 .and_then(Value::as_str)
                 .filter(|value| !value.trim().is_empty())
@@ -2082,11 +2083,17 @@ fn bounded_model_tool_output(
             if matches!(key.as_str(), "output_preview" | "truncated" | "full_output_ref") {
                 continue;
             }
+            // A truncated projection of a file read must never claim `complete: true`.
+            let value = if key == "complete" && value == &Value::Bool(true) {
+                Value::Bool(false)
+            } else {
+                value.clone()
+            };
             let scalar = value.is_boolean() || value.is_number() || value.is_null()
                 || value.as_str().is_some_and(|text| text.chars().count() <= 256);
             let cost = key.len().saturating_add(value.to_string().len());
             if scalar && cost <= fact_budget {
-                bounded[key] = value.clone();
+                bounded[key] = value;
                 fact_budget -= cost;
             }
         }

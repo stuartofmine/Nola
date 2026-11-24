@@ -841,19 +841,22 @@ impl AgentRuntime {
             });
         } else if let Some(instruction) = engineering_instruction {
             let engineering = &self.session.execution.active_turn.as_ref().expect("active turn").engineering;
-            let advisory_awaiting_assessment = engineering.phase == crate::agent::turn::AgentEngineeringPhase::AwaitingAssessment
-                && !no_progress_recovery_required
+            let non_blocking_advisory = matches!(
+                engineering.phase,
+                crate::agent::turn::AgentEngineeringPhase::AwaitingAssessment
+                    | crate::agent::turn::AgentEngineeringPhase::Diagnosing
+            ) && !no_progress_recovery_required
                 && !protocol_recovery_required
                 && !engineering_validation_required
                 && !artifact_completion_pending
                 && engineering.mutation_streak < 6
                 && engineering.similar_mutation_streak < 3
                 && !engineering.investigation_stage_exit_required;
-            if advisory_awaiting_assessment {
+            if non_blocking_advisory {
                 // Avoid injecting a mid-conversation `role: "system"` message
                 // and full activity log on ordinary healthy tool turns.
                 model_items.push(runtime_fact_item(turn_id, "engineering-state", json!({
-                    "phase": "awaiting_assessment",
+                    "phase": engineering.phase.as_str(),
                     "note": instruction,
                 })));
             } else {

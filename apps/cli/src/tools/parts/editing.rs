@@ -3569,6 +3569,33 @@ fn refresh_file_access_state(path: &Path) {
     forget_file_access_state(path);
 }
 
+/// Records a Run-local full-read observation for a file whose exact on-disk
+/// bytes match the complete text the model just authored via `write_file`.
+/// If an external formatter or concurrent edit changed the bytes, leaves the
+/// file unrecorded so the model must inspect the formatted file before editing.
+fn record_authored_file_full_access(path: &Path, authored_content: &str) {
+    let Some(scope) = current_file_read_scope_key() else { return; };
+    let expected_sha = sha256_hex(authored_content.as_bytes());
+    let Ok(actual_sha) = file_sha256_hex(path) else { return; };
+    if actual_sha != expected_sha {
+        return;
+    }
+    let Ok(modified) = fs::metadata(path).and_then(|metadata| metadata.modified()) else {
+        return;
+    };
+    let total_lines = authored_content.lines().count().max(1);
+    record_file_read_observation(FileReadObservation {
+        path: file_state_key(path),
+        scope: Some(scope),
+        version: FileReadVersion {
+            sha256: actual_sha,
+            modified,
+            total_lines,
+        },
+        coverage: FileReadCoverage::Full,
+    });
+}
+
 fn forget_file_access_state(path: &Path) {
     let Some(scope) = current_file_read_scope_key() else { return; };
     let key = (scope, file_state_key(path));

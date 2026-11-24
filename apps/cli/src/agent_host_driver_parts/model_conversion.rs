@@ -288,7 +288,11 @@ pub fn build_cli_host_catalog_with_skills(
                 input_schema,
                 input_normalization,
                 output_policy: HostOutputPolicy {
-                    preview_char_limit: 8_000,
+                    preview_char_limit: match name {
+                        "read_file" | "read_many_files" => 24_000,
+                        "bash" | "grep" | "git_diff" | "git_history" => 16_000,
+                        _ => 8_000,
+                    },
                     persist_full_output: true,
                     allow_artifacts: true,
                 },
