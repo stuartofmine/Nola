@@ -1298,7 +1298,7 @@ impl AgentEngineeringLoopState {
             );
         }
         if self.phase == AgentEngineeringPhase::AwaitingAssessment {
-            return Some("Tool observations are available, not a task-completion verdict. A successful command exit establishes only execution success; checks establish only their explicit predicates on the observed resource versions. Compare the actual deliverable and observed behavior with the user's requested postconditions. Do not substitute syntax checks, printing output, or a self-test of an internal helper for the requested end-to-end behavior. Reuse sufficient existing evidence rather than adding redundant checks; report remaining or unverified work honestly.".into());
+            return Some("Tool observations are available, not a task-completion verdict: compare deliverables and observed behavior against the user's postconditions; report unverified work honestly.".into());
         }
         None
     }

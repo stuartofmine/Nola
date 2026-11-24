@@ -425,10 +425,17 @@ impl CoreAgentHost {
         let expert_leaf=crate::task_runtime::is_expert_context(&session_id);
         let main_expert_dispatch_available=tools.iter().any(|schema|
             nola_domain::expert_task_target::schema_tool_name(schema)==Some("delegate_expert"));
+        let graphical_ui_surface = matches!(
+            host_context_platform(),
+            ContextPlatform::Web
+                | ContextPlatform::Macos
+                | ContextPlatform::Ios
+                | ContextPlatform::Android
+        );
         let driver = CliAgentHostDriver::new("nola-cli-host", llm, tool_context)
             .with_expert_leaf(expert_leaf)
             .with_main_expert_dispatch(main_expert_dispatch_available)
-            .with_ui_publisher(ui_publisher)
+            .with_ui_publisher_exposure(ui_publisher, graphical_ui_surface)
             .with_code_memory_workspace(config.tool_settings.project_root.clone())
             .with_code_mode_limits(config.runtime.code_mode_limits.clone())?
             .with_boundary_session_id(session_id.clone())

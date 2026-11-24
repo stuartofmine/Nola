@@ -13,6 +13,29 @@ pub(super) const REQUEST_COMPLETION_REVIEW_TOOL: &str = "request_completion_revi
 /// This projection is created from Core state, never by recognizing text in
 /// user input. JSON keeps embedded diagnostics/resource names as data. Only
 /// the stable policy and concrete Core admission rules confer authority.
+fn model_permission_rules_summary(rules: &crate::agent::permissions::PermissionRuleSet) -> Value {
+    use crate::agent::permissions::{PermissionPolicyDecision, PermissionRuleSource};
+    let mut explicit_rules = Vec::new();
+    let mut product_default_allow_count = 0usize;
+    for rule in &rules.rules {
+        if rule.source == PermissionRuleSource::ProductDefault
+            && rule.decision == PermissionPolicyDecision::Allow
+            && rule.resource_pattern == "*"
+        {
+            product_default_allow_count += 1;
+        } else {
+            explicit_rules.push(rule);
+        }
+    }
+    if product_default_allow_count == 0 {
+        return serde_json::to_value(rules).expect("permission rules serialize");
+    }
+    json!({
+        "rules": explicit_rules,
+        "product_default_allow_rules_omitted": product_default_allow_count,
+    })
+}
+
 fn runtime_fact_item(turn_id: &TurnId, kind: &str, facts: Value) -> AgentItem {
     AgentItem::Message {
         id: ItemId::from_string(format!("{}:{kind}", turn_id.as_str())),
@@ -622,7 +645,7 @@ impl AgentRuntime {
         model_items.push(runtime_fact_item(turn_id, "current-permission-state", json!({
             "long_term_memory_enabled": turn_configuration.memory_policy.long_term_enabled,
             "memory_unavailable_reason": if turn_configuration.memory_policy.long_term_enabled { Value::Null } else { json!("disabled_by_configuration") },
-            "permission_rules": self.session.execution.permission_rules,
+            "permission_rules": model_permission_rules_summary(&self.session.execution.permission_rules),
             "recent_permission_receipts": permission_receipts,
         })));
         if let Some(goal_context) =
@@ -817,23 +840,40 @@ impl AgentRuntime {
                 content,
             });
         } else if let Some(instruction) = engineering_instruction {
-            if no_progress_recovery_required {
-                let used = self.session.execution.active_turn.as_ref()
-                    .map_or(0, |turn| turn.engineering.strategy_recovery.model_requests.len());
-                model_items.push(runtime_fact_item(turn_id, "strategy-recovery-budget", json!({
-                    "remaining_after_request": (turn_configuration.max_strategy_recovery_attempts as usize).saturating_sub(used.saturating_add(1)),
+            let engineering = &self.session.execution.active_turn.as_ref().expect("active turn").engineering;
+            let advisory_awaiting_assessment = engineering.phase == crate::agent::turn::AgentEngineeringPhase::AwaitingAssessment
+                && !no_progress_recovery_required
+                && !protocol_recovery_required
+                && !engineering_validation_required
+                && !artifact_completion_pending
+                && engineering.mutation_streak < 6
+                && engineering.similar_mutation_streak < 3
+                && !engineering.investigation_stage_exit_required;
+            if advisory_awaiting_assessment {
+                // Avoid injecting a mid-conversation `role: "system"` message
+                // and full activity log on ordinary healthy tool turns.
+                model_items.push(runtime_fact_item(turn_id, "engineering-state", json!({
+                    "phase": "awaiting_assessment",
+                    "note": instruction,
                 })));
+            } else {
+                if no_progress_recovery_required {
+                    let used = engineering.strategy_recovery.model_requests.len();
+                    model_items.push(runtime_fact_item(turn_id, "strategy-recovery-budget", json!({
+                        "remaining_after_request": (turn_configuration.max_strategy_recovery_attempts as usize).saturating_sub(used.saturating_add(1)),
+                    })));
+                }
+                model_items.push(AgentItem::Message {
+                    id: ItemId::from_string(format!(
+                        "{}:engineering-loop-instruction",
+                        turn_id.as_str()
+                    )),
+                    role: AgentRole::System,
+                    content: instruction,
+                });
+                let facts = engineering.model_facts();
+                model_items.push(runtime_fact_item(turn_id, "engineering-state", facts));
             }
-            model_items.push(AgentItem::Message {
-                id: ItemId::from_string(format!(
-                    "{}:engineering-loop-instruction",
-                    turn_id.as_str()
-                )),
-                role: AgentRole::System,
-                content: instruction,
-            });
-            let facts = self.session.execution.active_turn.as_ref().expect("active turn").engineering.model_facts();
-            model_items.push(runtime_fact_item(turn_id, "engineering-state", facts));
         }
         // Activated capabilities are disclosed by this Step's compiled schemas,
         // not by rewriting a previously sent ToolResult. Historical results

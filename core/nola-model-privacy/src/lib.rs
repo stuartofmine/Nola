@@ -39,7 +39,7 @@ static PHONE: LazyLock<Regex> = LazyLock::new(|| {
 });
 static LABELED_SECRET: LazyLock<Regex> = LazyLock::new(|| {
     Regex::new(
-    r#"(?i)((?-u:\b)(?:[a-z][a-z0-9]*[_-])*(?:api[_-]?key|secret[_-]?access[_-]?key|access[_-]?token|refresh[_-]?token|client[_-]?secret|password|passwd|token)["']?\s*[:=]\s*)(?:\[(?:CREDENTIAL|REDACTED|redacted)\]|"(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*'|[^\s,;&"'<>}\]]+)"#
+    r#"(?i)((?-u:\b)(?:[a-z][a-z0-9]*[_-])*(?:api[_-]?key|secret[_-]?access[_-]?key|access[_-]?token|refresh[_-]?token|client[_-]?secret|password|passwd|token)["']?[ \t]*[:=][ \t]*)(?:\[(?:CREDENTIAL|REDACTED|redacted)\]|"(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*'|[^\s,;&"'<>}\]]+)"#
 ).expect("valid labeledSecret pattern")
 });
 
@@ -55,9 +55,16 @@ impl Default for RedactionOptions {
 }
 
 pub fn is_loopback_endpoint(endpoint: &str) -> bool {
+    let Some(host) = extract_endpoint_host(endpoint) else {
+        return false;
+    };
+    host.eq_ignore_ascii_case("localhost") || matches!(host, "127.0.0.1" | "::1" | "0.0.0.0")
+}
+
+fn extract_endpoint_host(endpoint: &str) -> Option<&str> {
     let trimmed = endpoint.trim();
     if trimmed.is_empty() {
-        return false;
+        return None;
     }
     let after_scheme = match trimmed.find("://") {
         Some(idx) => &trimmed[idx + 3..],
@@ -74,10 +81,10 @@ pub fn is_loopback_endpoint(endpoint: &str) -> bool {
     let host = if let Some(rest) = host_port.strip_prefix('[') {
         match rest.split_once(']') {
             Some((inside, _)) => inside,
-            None => return false,
+            None => return None,
         }
-    } else if host_port == "::1" {
-        "::1"
+    } else if host_port == "::1" || host_port.matches(':').count() > 1 {
+        host_port
     } else {
         match host_port.rsplit_once(':') {
             Some((h, port)) if !port.is_empty() && port.bytes().all(|b| b.is_ascii_digit()) => h,
@@ -85,7 +92,48 @@ pub fn is_loopback_endpoint(endpoint: &str) -> bool {
         }
     };
     let host = host.trim_end_matches('.');
-    host.eq_ignore_ascii_case("localhost") || matches!(host, "127.0.0.1" | "::1" | "0.0.0.0")
+    (!host.is_empty()).then_some(host)
+}
+
+/// Returns true for loopback, RFC1918/RFC6598/link-local LAN hosts, ULA IPv6,
+/// mDNS `.local`, and container host bridges — endpoints controlled locally
+/// rather than third-party cloud providers.
+pub fn is_private_or_local_endpoint(endpoint: &str) -> bool {
+    if is_loopback_endpoint(endpoint) {
+        return true;
+    }
+    let Some(host) = extract_endpoint_host(endpoint) else {
+        return false;
+    };
+    let lower = host.to_ascii_lowercase();
+    if lower.ends_with(".local")
+        || matches!(
+            lower.as_str(),
+            "host.docker.internal" | "gateway.docker.internal" | "host.containers.internal"
+        )
+    {
+        return true;
+    }
+    if let Ok(ip) = host.parse::<std::net::IpAddr>() {
+        return match ip {
+            std::net::IpAddr::V4(v4) => {
+                let [a, b, ..] = v4.octets();
+                v4.is_loopback()
+                    || v4.is_private()
+                    || v4.is_link_local()
+                    || v4.is_unspecified()
+                    || (a == 100 && (64..=127).contains(&b))
+            }
+            std::net::IpAddr::V6(v6) => {
+                let seg0 = v6.segments()[0];
+                v6.is_loopback()
+                    || v6.is_unspecified()
+                    || (seg0 & 0xfe00) == 0xfc00
+                    || (seg0 & 0xffc0) == 0xfe80
+            }
+        };
+    }
+    false
 }
 
 pub fn should_redact_pii(endpoint: &str) -> bool {
@@ -98,14 +146,123 @@ pub fn should_redact_pii(endpoint: &str) -> bool {
             return true;
         }
     }
-    !is_loopback_endpoint(endpoint)
+    !is_private_or_local_endpoint(endpoint)
 }
 
 fn is_bind_placeholder(value: &str) -> bool {
-    matches!(value.as_bytes().first(), Some(b'$' | b'?'))
-        && value[1..]
+    if value.is_empty() {
+        return false;
+    }
+    if matches!(value.as_bytes().first(), Some(b'$' | b'?')) {
+        if value[1..]
             .bytes()
             .all(|byte| byte.is_ascii_alphanumeric() || byte == b'_')
+        {
+            return value.len() > 1;
+        }
+        // Shell brace/command variable expansions such as ${VAR}, ${#VAR}, ${VAR:-fallback}.
+        if value.starts_with("${") && value.ends_with('}') && value.len() >= 4 {
+            return true;
+        }
+    }
+    // Template placeholders such as {{VAR}} or %VAR%.
+    if value.starts_with("{{") && value.ends_with("}}") && value.len() >= 5 {
+        return true;
+    }
+    false
+}
+
+/// Distinguishes ordinary schema/config/code values (e.g. `card_token: sha256`,
+/// `session_token: mask_secret`, `TOKEN=$API_TOKEN`, `token: os.environ["X"]`)
+/// from literal secrets so wire privacy redaction does not corrupt source files
+/// or YAML policies.
+fn is_non_secret_labeled_value(inner: &str, quoted: bool) -> bool {
+    if inner.is_empty() || inner == "[CREDENTIAL]" || is_bind_placeholder(inner) {
+        return true;
+    }
+    if quoted {
+        return false;
+    }
+    let lower = inner.to_ascii_lowercase();
+    if matches!(
+        lower.as_str(),
+        "null"
+            | "none"
+            | "nil"
+            | "true"
+            | "false"
+            | "string"
+            | "str"
+            | "int"
+            | "integer"
+            | "number"
+            | "float"
+            | "boolean"
+            | "bool"
+            | "object"
+            | "array"
+            | "bytes"
+            | "text"
+            | "uuid"
+            | "hex"
+            | "base64"
+            | "sha256"
+            | "sha384"
+            | "sha512"
+            | "sha1"
+            | "md5"
+            | "blake2b"
+            | "hmac"
+            | "required"
+            | "optional"
+            | "default"
+            | "auto"
+            | "unset"
+            | "empty"
+            | "redact"
+            | "redacted"
+            | "mask"
+            | "masked"
+            | "hash"
+            | "fake"
+            | "omit"
+            | "omitted"
+            | "unknown"
+            | "invalid"
+            | "valid"
+            | "ok"
+            | "error"
+            | "failed"
+            | "passed"
+            | "env"
+    ) {
+        return true;
+    }
+    // Unquoted lowercase snake_case config/schema identifiers (e.g. `mask_secret`,
+    // `redact_text`, `from_env`). Real prefixed credentials (`ghp_...`,
+    // `github_pat_...`, `sk-...`, `AKIA...`) are already redacted by ACCESS_KEY
+    // before LABELED_SECRET runs.
+    if inner.contains('_')
+        && !inner.starts_with('_')
+        && !inner.ends_with('_')
+        && inner
+            .bytes()
+            .all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'_')
+        && inner.bytes().any(|b| b.is_ascii_lowercase())
+        && inner.split('_').all(|seg| !seg.is_empty() && seg.len() <= 16)
+    {
+        return true;
+    }
+    // Unquoted code expressions referencing environment or variables (e.g.
+    // `os.environ.get(...)`, `process.env.TOKEN`, `std::env::var`).
+    if inner.starts_with("os.environ")
+        || inner.starts_with("process.env")
+        || inner.starts_with("std::env")
+        || inner.starts_with("env::")
+    {
+        return true;
+    }
+    false
 }
 
 pub fn redact_secrets_text(input: &str, placeholder: &str) -> (String, u32) {
@@ -163,8 +320,7 @@ pub fn redact_secrets_text(input: &str, placeholder: &str) -> (String, u32) {
                 value
             };
             if inner == placeholder
-                || inner == "[CREDENTIAL]"
-                || (quote.is_empty() && is_bind_placeholder(inner))
+                || is_non_secret_labeled_value(inner, !quote.is_empty())
             {
                 return c[0].to_string();
             }
@@ -213,6 +369,14 @@ fn redact(text: &mut String, credential: &str, options: RedactionOptions) {
             Some(b'\'') => "'",
             _ => "",
         };
+        let inner = if !quote.is_empty() && value.len() >= 2 && value.ends_with(quote) {
+            &value[1..value.len() - 1]
+        } else {
+            value
+        };
+        if is_non_secret_labeled_value(inner, !quote.is_empty()) {
+            return c[0].to_string();
+        }
         format!("{}{quote}[CREDENTIAL]{quote}", &c[1])
     }) {
         *text = result;
@@ -647,5 +811,64 @@ mod tests {
         let (second, second_count) = redact_secrets_text(&first, "[REDACTED]");
         assert_eq!(second_count, 0);
         assert_eq!(second, first);
+    }
+
+    #[test]
+    fn preserves_yaml_schema_identifiers_and_shell_variables_while_redacting_real_secrets() {
+        let yaml_and_shell = concat!(
+            "card_token: sha256\n",
+            "session_token: mask_secret\n",
+            "password: None\n",
+            "api_key: os.environ[\"API_KEY\"]\n",
+            "echo \"TOKEN=$DISPATCH_EVENT_API_TOKEN\"\n",
+            "echo \"LEN=${#DISPATCH_EVENT_API_TOKEN}\"\n",
+            "TOKEN=\n/usr/bin/python3\n",
+            "real_token=abc123456789\n",
+            "client_secret='my live secret'\n",
+        );
+        let mut body = json!({
+            "messages": [{"role": "tool", "content": yaml_and_shell}]
+        });
+        redact_model_request_with_options(
+            &mut body,
+            "",
+            RedactionOptions { redact_pii: false },
+        );
+        let content = body["messages"][0]["content"].as_str().unwrap();
+        assert!(content.contains("card_token: sha256"), "{content}");
+        assert!(content.contains("session_token: mask_secret"), "{content}");
+        assert!(content.contains("password: None"), "{content}");
+        assert!(content.contains("api_key: os.environ[\"API_KEY\"]"), "{content}");
+        assert!(content.contains("TOKEN=$DISPATCH_EVENT_API_TOKEN"), "{content}");
+        assert!(content.contains("LEN=${#DISPATCH_EVENT_API_TOKEN}"), "{content}");
+        assert!(content.contains("TOKEN=\n/usr/bin/python3\n"), "{content}");
+        assert!(content.contains("real_token=[CREDENTIAL]"), "{content}");
+        assert!(content.contains("client_secret='[CREDENTIAL]'"), "{content}");
+        assert!(!content.contains("abc123456789"));
+        assert!(!content.contains("my live secret"));
+    }
+
+    #[test]
+    fn private_lan_endpoints_are_treated_as_local_for_pii_redaction() {
+        for local in [
+            "http://192.168.5.2:18081/v1",
+            "http://192.168.31.18:8081/v1",
+            "http://10.0.0.5:8000/v1",
+            "http://172.16.1.10:11434/v1",
+            "http://100.64.0.1:8080/v1",
+            "http://mac-studio.local:8080/v1",
+            "http://host.docker.internal:8080/v1",
+            "http://[fd00::1]:8080/v1",
+        ] {
+            assert!(is_private_or_local_endpoint(local), "expected local/private: {local}");
+        }
+        for remote in [
+            "https://api.openai.com/v1",
+            "https://api.anthropic.com/v1",
+            "http://8.8.8.8:8080/v1",
+            "http://172.32.0.1:8080/v1",
+        ] {
+            assert!(!is_private_or_local_endpoint(remote), "expected public: {remote}");
+        }
     }
 }

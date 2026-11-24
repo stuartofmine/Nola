@@ -146,6 +146,13 @@ fn discovery_preserves_frozen_instructions_instead_of_ui_title() {
 fn apply_initial_tool_tier(catalog: &mut HostCapabilityCatalog,
     tier: nola_domain::reasoning_tiers::ReasoningTier) {
     for capability in catalog.capabilities.values_mut() {
+        if capability.id == nola_domain::generative_ui_tool::UI_TOOL_ID
+            && capability.exposure == HostCapabilityExposure::Deferred
+        {
+            // Non-graphical hosts explicitly defer render_ui so it remains
+            // discoverable via tool_search without spending ~6 KB on Turn 1.
+            continue;
+        }
         if capability.input_normalization.origin.kind
             == nola_core::agent::host::HostCapabilityOriginKind::Builtin
             && capability.route == HostCapabilityRoute::Tool

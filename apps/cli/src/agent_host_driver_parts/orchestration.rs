@@ -376,8 +376,17 @@ impl ModelTextPresentationGate {
             self.pending = candidate;
             return Vec::new();
         }
-        if !self.pending.is_empty() && accumulated_reasoning.starts_with(&self.pending) {
-            self.pending.clear();
+        if !self.pending.is_empty() {
+            if self.pending == accumulated_reasoning {
+                // Provider mirrored the full accumulated reasoning before the
+                // visible answer; drop only the mirrored reasoning prefix.
+                self.pending.clear();
+                return self.push_text(delta);
+            }
+            // Partial overlap (e.g. both reasoning and answer start with "The")
+            // is real visible text, not mirrored reasoning — preserve it.
+            let combined = format!("{}{}", std::mem::take(&mut self.pending), delta);
+            return self.push_text(combined);
         }
         self.push_text(delta)
     }
@@ -632,6 +641,21 @@ fn final_answer_diverging_from_reasoning_still_streams_without_the_mirrored_pref
     let mut visible = gate.push_text_against_reasoning(answer.to_string(), reasoning);
     visible.extend(gate.finish_answer());
     assert_eq!(visible.concat(), answer);
+}
+
+#[test]
+fn answer_sharing_opening_word_with_reasoning_preserves_opening_word() {
+    let mut gate = ModelTextPresentationGate::for_request(false, true);
+    let reasoning = "The token is empty in my environment, so I will build the CLI now.";
+    let mut visible = Vec::new();
+    for chunk in ["The", " event feed requires", " a runtime token."] {
+        visible.extend(gate.push_text_against_reasoning(chunk.to_string(), reasoning));
+    }
+    visible.extend(gate.finish_answer());
+    assert_eq!(
+        visible.concat(),
+        "The event feed requires a runtime token."
+    );
 }
 
 #[test]

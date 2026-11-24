@@ -150,9 +150,24 @@ impl HostCodeCell {
 }
 
 impl CliAgentHostDriver {
-    pub fn with_ui_publisher(mut self, publisher: std::sync::Arc<dyn Fn(nola_application::generative_ui::ExecuteUiTool) -> Result<serde_json::Value, nola_service_client::ApplicationServiceCommandError> + Send + Sync>) -> Self {
+    pub fn with_ui_publisher(self, publisher: std::sync::Arc<dyn Fn(nola_application::generative_ui::ExecuteUiTool) -> Result<serde_json::Value, nola_service_client::ApplicationServiceCommandError> + Send + Sync>) -> Self {
+        self.with_ui_publisher_exposure(publisher, true)
+    }
+
+    /// Registers the bound UI publisher. Graphical hosts keep `render_ui`
+    /// visible on Turn 1; terminal/headless surfaces keep it `Deferred`
+    /// (discoverable via `tool_search`, still bound and executable) to avoid
+    /// spending ~6 KB of Turn 1 schema budget on an unrendered A2UI surface.
+    pub fn with_ui_publisher_exposure(
+        mut self,
+        publisher: std::sync::Arc<dyn Fn(nola_application::generative_ui::ExecuteUiTool) -> Result<serde_json::Value, nola_service_client::ApplicationServiceCommandError> + Send + Sync>,
+        visible_initially: bool,
+    ) -> Self {
         self.ui_publisher = Some(publisher);
-        let descriptor = nola_core::agent::generative_ui::capability_descriptor();
+        let mut descriptor = nola_core::agent::generative_ui::capability_descriptor();
+        if !visible_initially {
+            descriptor.exposure = HostCapabilityExposure::Deferred;
+        }
         self.catalog.capabilities.insert(descriptor.id.clone(), descriptor);
         self.capability_catalog.builtin_tools = build_cli_capability_catalog(&self.catalog).builtin_tools;
         self

@@ -11,6 +11,45 @@ use crate::agent::memory_runtime::{
 };
 use crate::agent::AgentInvokedSkill;
 
+/// Strips verbose prose descriptions from an `expected_schema` error projection
+/// while retaining all structural constraints (`type`, `required`, `enum`,
+/// `properties`, `items`, `oneOf`/`anyOf`/`allOf`, `additionalProperties`).
+fn compact_expected_schema(schema: &Value) -> Value {
+    match schema {
+        Value::Object(map) => {
+            let mut out = serde_json::Map::new();
+            for (k, v) in map {
+                if k == "description" {
+                    continue;
+                }
+                let next = match k.as_str() {
+                    "properties" => match v {
+                        Value::Object(props) => Value::Object(
+                            props
+                                .iter()
+                                .map(|(pk, pv)| (pk.clone(), compact_expected_schema(pv)))
+                                .collect(),
+                        ),
+                        other => other.clone(),
+                    },
+                    "items" | "additionalProperties" => compact_expected_schema(v),
+                    "oneOf" | "anyOf" | "allOf" => match v {
+                        Value::Array(arr) => {
+                            Value::Array(arr.iter().map(compact_expected_schema).collect())
+                        }
+                        other => other.clone(),
+                    },
+                    _ => v.clone(),
+                };
+                out.insert(k.clone(), next);
+            }
+            Value::Object(out)
+        }
+        Value::Array(arr) => Value::Array(arr.iter().map(compact_expected_schema).collect()),
+        other => other.clone(),
+    }
+}
+
 fn invoked_skill_from_output(output: &Value) -> Option<AgentInvokedSkill> {
     (output.get("type").and_then(Value::as_str) == Some("invoked_skill"))
         .then(|| AgentInvokedSkill {
@@ -469,7 +508,7 @@ impl AgentRuntime {
                     let output = json!({
                         "error": error_code,
                         "message": message,
-                        "expected_schema": capability.input_schema.clone(),
+                        "expected_schema": compact_expected_schema(&capability.input_schema),
                         "tool_execution_skipped": true,
                         "next_action": next_action,
                     });

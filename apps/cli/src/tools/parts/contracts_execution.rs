@@ -397,8 +397,8 @@ fn default_cli_skill_context_index() -> Result<Vec<Value>, String> {
 include!("contracts_execution_tests.rs");
 
 pub(crate) fn skill_catalog_prompt_from_items(items: &[Value]) -> String {
-    const DESCRIPTION_LIMIT: usize = 250;
-    const CATALOG_LIMIT: usize = 8_000;
+    const DESCRIPTION_LIMIT: usize = 96;
+    const CATALOG_LIMIT: usize = 3_200;
     let mut lines = vec![
         "NOLA_SKILL_CATALOG_V1".to_string(),
         "Each entry is `- <canonical skill_id>: <description>`. Pass the exact canonical skill_id to Skill.skill; display names and titles are not valid ids.".to_string(),
@@ -409,13 +409,22 @@ pub(crate) fn skill_catalog_prompt_from_items(items: &[Value]) -> String {
         if id.is_empty() {
             continue;
         }
-        let description = item
+        let raw_description = item
             .get("description")
             .and_then(Value::as_str)
             .unwrap_or_default()
-            .chars()
-            .take(DESCRIPTION_LIMIT)
-            .collect::<String>();
+            .trim();
+        let description = if raw_description.chars().count() <= DESCRIPTION_LIMIT {
+            raw_description.to_string()
+        } else {
+            let truncated: String = raw_description.chars().take(DESCRIPTION_LIMIT).collect();
+            let trimmed = truncated
+                .rfind(|c: char| c.is_whitespace() || matches!(c, '.' | ';' | '。' | '；'))
+                .filter(|&idx| idx > DESCRIPTION_LIMIT / 2)
+                .map(|idx| truncated[..idx].trim_end())
+                .unwrap_or(truncated.trim_end());
+            format!("{trimmed}…")
+        };
         let line = format!("- {id}: {description}");
         if used.saturating_add(line.len()) > CATALOG_LIMIT {
             break;
