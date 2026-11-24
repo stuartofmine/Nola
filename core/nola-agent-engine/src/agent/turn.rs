@@ -316,6 +316,13 @@ pub struct AgentEngineeringLoopState {
     pub mutated_expected_artifact_resources: BTreeSet<String>,
     #[serde(default)]
     pub validated_expected_artifact_resources: BTreeSet<String>,
+    /// Canonical `(resource, version, passed)` fingerprint of the latest
+    /// validation receipt, used to catch loops that keep re-running validation
+    /// against unchanged targets (e.g. only changing a `/tmp` filename).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    last_validation_fingerprint: Option<String>,
+    #[serde(default)]
+    repeated_unchanged_validation_count: u8,
 }
 
 impl AgentEngineeringLoopState {
@@ -1042,14 +1049,53 @@ impl AgentEngineeringLoopState {
                 version.is_some() && !self.pending_validation_versions.contains_key(resource));
         if changed_version || discharged_check {
             self.correction_count_since_progress = 0;
+            // Host-observed version change or discharged versioned check proves
+            // real progress, so clear the active no-progress recovery gate while
+            // keeping cumulative strategy_recovery.model_requests accounting intact.
+            if self.no_progress_recovery.reason().is_some() {
+                self.no_progress_recovery = NoProgressRecoveryState::Inactive;
+                self.investigation_stage_exit_required = false;
+            }
         }
         if changed_version {
+            self.last_validation_fingerprint = None;
+            self.repeated_unchanged_validation_count = 0;
             for effect in &receipt.expect("changed version has receipt").effects {
                 if matches!((&effect.before_version, &effect.after_version),
                     (Some(before), Some(after)) if before != after) {
                     let generation = self.strategy_recovery.resource_generations
                         .entry(resource_identity(&effect.resource_uri)).or_default();
                     *generation = generation.saturating_add(1);
+                }
+            }
+        }
+        if validation && succeeded {
+            if let Some(checks) = receipt.map(|r| &r.checks).filter(|c| !c.is_empty()) {
+                let mut entries = checks
+                    .iter()
+                    .map(|check| {
+                        format!(
+                            "{}={}#{}",
+                            resource_identity(&check.resource_uri),
+                            check.version,
+                            check.passed
+                        )
+                    })
+                    .collect::<Vec<_>>();
+                entries.sort();
+                let fingerprint = entries.join("|");
+                if discharged_check || self.last_validation_fingerprint.as_deref() != Some(fingerprint.as_str()) {
+                    self.last_validation_fingerprint = Some(fingerprint);
+                    self.repeated_unchanged_validation_count = 1;
+                } else {
+                    self.repeated_unchanged_validation_count =
+                        self.repeated_unchanged_validation_count.saturating_add(1);
+                    if self.repeated_unchanged_validation_count >= 4 {
+                        self.require_no_progress_recovery(format!(
+                            "validation was repeated {} consecutive times on the same unchanged resource versions without any intervening edit; inspect the failure and edit the target, or report the current result",
+                            self.repeated_unchanged_validation_count
+                        ));
+                    }
                 }
             }
         }
@@ -2178,6 +2224,114 @@ mod engineering_loop_tests {
         let mut different = call;
         different.arguments["path"] = serde_json::json!("/workspace/b");
         assert!(!restored.rejects_strategy_call(&different));
+    }
+
+    #[test]
+    fn changed_version_mutation_clears_pending_no_progress_recovery_without_resetting_budget() {
+        use nola_host_protocol::tool_result::{
+            ExecutionReceipt, ExecutionState, ResourceEffect,
+        };
+        let mut state = AgentEngineeringLoopState::default();
+        state.strategy_recovery.model_requests.insert(5);
+        state.require_no_progress_recovery("repeated_tool_batch".into());
+        assert!(state.no_progress_recovery.reason().is_some());
+
+        let before = state.clone();
+        let receipt = ExecutionReceipt {
+            local_stop: None,
+            state: ExecutionState::Completed,
+            effects: vec![ResourceEffect {
+                resource_uri: "file:///app/anon.py".into(),
+                operation: "edit".into(),
+                before_version: Some("sha256:aaa".into()),
+                after_version: Some("sha256:bbb".into()),
+            }],
+            checks: Vec::new(),
+        };
+        state.reconcile_execution_receipt(
+            &before,
+            Some(&receipt),
+            HostCapabilityEffect::Mutate,
+            true,
+            true,
+            &Default::default(),
+        );
+        assert!(state.no_progress_recovery.reason().is_none());
+        assert!(!state.investigation_stage_exit_required);
+        assert_eq!(state.strategy_recovery.model_requests.len(), 1);
+    }
+
+    #[test]
+    fn repeated_validation_on_unchanged_resource_versions_triggers_no_progress_recovery() {
+        use nola_host_protocol::tool_result::{
+            ExecutionCheckKind, ExecutionReceipt, ExecutionState, PostconditionCheck,
+            ResourceEffect,
+        };
+        let mut state = AgentEngineeringLoopState::default();
+        let validation_receipt = ExecutionReceipt {
+            local_stop: None,
+            state: ExecutionState::Completed,
+            effects: Vec::new(),
+            checks: vec![PostconditionCheck {
+                kind: ExecutionCheckKind::ProcessExit,
+                resource_uri: "file:///app/filter.py".into(),
+                version: "sha256:deadbeef".into(),
+                predicate: "process_exit_zero_with_stable_resource".into(),
+                passed: true,
+            }],
+        };
+        for round in 1..=3 {
+            let before = state.clone();
+            state.reconcile_execution_receipt(
+                &before,
+                Some(&validation_receipt),
+                HostCapabilityEffect::Validate,
+                false,
+                true,
+                &Default::default(),
+            );
+            assert!(
+                state.no_progress_recovery.reason().is_none(),
+                "round {round} should still be allowed"
+            );
+        }
+        let before = state.clone();
+        state.reconcile_execution_receipt(
+            &before,
+            Some(&validation_receipt),
+            HostCapabilityEffect::Validate,
+            false,
+            true,
+            &Default::default(),
+        );
+        assert!(state
+            .no_progress_recovery
+            .reason()
+            .is_some_and(|r| r.contains("unchanged resource versions")));
+
+        // Editing the target clears the loop and resets the unchanged validation counter.
+        let before = state.clone();
+        let edit_receipt = ExecutionReceipt {
+            local_stop: None,
+            state: ExecutionState::Completed,
+            effects: vec![ResourceEffect {
+                resource_uri: "file:///app/filter.py".into(),
+                operation: "edit".into(),
+                before_version: Some("sha256:deadbeef".into()),
+                after_version: Some("sha256:cafebabe".into()),
+            }],
+            checks: Vec::new(),
+        };
+        state.reconcile_execution_receipt(
+            &before,
+            Some(&edit_receipt),
+            HostCapabilityEffect::Mutate,
+            true,
+            true,
+            &Default::default(),
+        );
+        assert!(state.no_progress_recovery.reason().is_none());
+        assert_eq!(state.repeated_unchanged_validation_count, 0);
     }
 
     #[test]

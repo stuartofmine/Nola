@@ -232,7 +232,7 @@ fn attach_validation_evidence(
     };
     if before != after {
         return validation_evidence_unavailable(outcome, "scope_changed_during_validation",
-            "Validation scope changed during the command. No stable-version verification receipt was issued. Inspect the resulting state, then validate without modifying the target; do not repeat the mutation merely to obtain evidence.".into());
+            "Validation scope changed during the command. No stable-version verification receipt was issued. Put only the unchanged deliverable being verified in validation_targets (not temporary fixture files created or modified by the command), then validate without modifying the target; do not repeat the mutation merely to obtain evidence.".into());
     }
     outcome.execution = Some(ExecutionReceipt {
         local_stop: outcome.execution.as_ref().and_then(|receipt| receipt.local_stop.clone()),
