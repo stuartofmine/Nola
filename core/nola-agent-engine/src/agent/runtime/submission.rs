@@ -1325,15 +1325,27 @@ impl AgentRuntime {
                         events.push(RuntimeEvent::ItemCompleted { turn_id: turn_id.clone(), item: item.clone() });
                         self.session.record_item(item);
                     }
-                    let consecutive_rejected_controls = if result.is_err() {
+                    let current_error_code = result
+                        .as_ref()
+                        .err()
+                        .map(|err| err.split(':').next().unwrap_or(err.as_str()).trim());
+                    let consecutive_same_control_error = if let Some(target_code) = current_error_code {
                         let mut count = 0usize;
                         for item in self.session.conversation.transcript.iter().rev() {
                             match item {
                                 AgentItem::ToolCall { .. } | AgentItem::Reasoning { .. } => continue,
-                                AgentItem::ToolResult { name, is_error: true, .. }
+                                AgentItem::ToolResult { name, is_error: true, output, .. }
                                     if name == super::requirements::TOOL || name == super::task_scope::TOOL =>
                                 {
-                                    count += 1;
+                                    let code = output
+                                        .get("error")
+                                        .and_then(Value::as_str)
+                                        .map(|err| err.split(':').next().unwrap_or(err).trim());
+                                    if code == Some(target_code) {
+                                        count += 1;
+                                    } else {
+                                        break;
+                                    }
                                 }
                                 _ => break,
                             }
@@ -1343,9 +1355,10 @@ impl AgentRuntime {
                         0
                     };
                     let effective_stop_reason = loop_interruption_reason.or_else(|| {
-                        (consecutive_rejected_controls >= 3).then(|| {
+                        (consecutive_same_control_error >= 6).then(|| {
+                            let code = current_error_code.unwrap_or("unknown");
                             format!(
-                                "requirement control ({control}) was rejected {consecutive_rejected_controls} consecutive times without progress"
+                                "requirement control ({control}) repeated the same error ({code}) {consecutive_same_control_error} consecutive times without progress"
                             )
                         })
                     });
