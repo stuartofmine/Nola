@@ -13,6 +13,45 @@ use serde_json::{json, Value};
 
 use crate::ModulesSuite;
 
+/// Background memory distillation worker saving concise turn summaries into FTS5.
+pub struct MemoryWorker;
+
+impl MemoryWorker {
+    pub fn distill_turn(
+        suite: &ModulesSuite,
+        namespace: &str,
+        user_prompt: &str,
+        assistant_answer: &str,
+    ) -> Result<Option<MemoryItem>, nola_store::StoreError> {
+        let answer = assistant_answer.trim();
+        if answer.chars().count() < 80 {
+            return Ok(None);
+        }
+        let clean_prompt = nola_llm::PrivacyRedactor::redact_text(user_prompt);
+        let clean_answer = nola_llm::PrivacyRedactor::redact_text(answer);
+        let title: String = clean_prompt
+            .lines()
+            .next()
+            .unwrap_or("Session insight")
+            .chars()
+            .take(80)
+            .collect();
+        let content: String = clean_answer.chars().take(600).collect();
+        let ts = now_ms();
+        let item = MemoryItem {
+            id: new_id(),
+            namespace: namespace.to_string(),
+            title,
+            content,
+            tags: vec!["auto_distilled".into()],
+            created_at_ms: ts,
+            updated_at_ms: ts,
+        };
+        suite.store.upsert_memory(&item)?;
+        Ok(Some(item))
+    }
+}
+
 pub fn register_tools(suite: &Arc<ModulesSuite>, registry: &mut ToolRegistry) {
     registry.register(Arc::new(MemorySaveTool {
         suite: Arc::clone(suite),
@@ -157,7 +196,7 @@ impl ToolHandler for CodeMemorySummaryTool {
             },
             tier: ToolTier::Deferred,
             domain: CapabilityDomain::Memory,
-            read_only: true,
+            read_only: false,
         }
     }
 
@@ -188,7 +227,9 @@ impl ToolHandler for CodeMemorySummaryTool {
             created_at_ms: ts,
             updated_at_ms: ts,
         };
-        let _ = self.suite.store.upsert_memory(&item);
+        if let Err(e) = self.suite.store.upsert_memory(&item) {
+            return ToolExecutionResult::err_structured("memory_error", e.to_string(), None);
+        }
         ToolExecutionResult::ok_structured(
             json!({"head": head, "recent_commits": log}),
             format!("Indexed Code-Memory snapshot @ {head}"),

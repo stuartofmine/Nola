@@ -149,11 +149,50 @@ pub fn compact_history(
 
 fn deterministic_ledger_summary(slice: &[HistoryMessage]) -> String {
     let mut lines = vec![format!("Compacted {} earlier messages:", slice.len())];
-    for msg in slice {
+    for (idx, msg) in slice.iter().enumerate() {
         match msg {
             HistoryMessage::User { content, .. } => {
-                let first: String = content.lines().next().unwrap_or("").chars().take(160).collect();
-                lines.push(format!("- User: {first}"));
+                // Unwrap prior compacted summary bodies instead of collapsing them to its XML tag!
+                if let Some(inner) = content
+                    .trim()
+                    .strip_prefix("<compacted_history_summary>")
+                    .and_then(|s| s.strip_suffix("</compacted_history_summary>"))
+                {
+                    let preserved: Vec<&str> = inner
+                        .lines()
+                        .map(str::trim)
+                        .filter(|l| !l.is_empty())
+                        .take(12)
+                        .collect();
+                    lines.push("Prior summary highlights:".into());
+                    for l in preserved {
+                        let clipped: String = l.chars().take(180).collect();
+                        lines.push(format!("  {clipped}"));
+                    }
+                } else if idx == 0 {
+                    // Preserve more of the original user goal across compactions.
+                    let goal: String = content
+                        .lines()
+                        .map(str::trim)
+                        .filter(|l| !l.is_empty())
+                        .collect::<Vec<_>>()
+                        .join(" ")
+                        .chars()
+                        .take(500)
+                        .collect();
+                    lines.push(format!("- Initial User Goal: {goal}"));
+                } else {
+                    let snippet: String = content
+                        .lines()
+                        .map(str::trim)
+                        .filter(|l| !l.is_empty())
+                        .collect::<Vec<_>>()
+                        .join(" ")
+                        .chars()
+                        .take(200)
+                        .collect();
+                    lines.push(format!("- User: {snippet}"));
+                }
             }
             HistoryMessage::Assistant {
                 content,

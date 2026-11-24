@@ -2,11 +2,15 @@
 //! Bounded QuickJS (`rquickjs`) sandboxed JavaScript evaluator for fast deterministic
 //! data transforms and computation (`code_exec`).
 
+use std::time::{Duration, Instant};
+
 use nola_types::{CapabilityDomain, ToolExecutionResult, ToolSchema, ToolSpec, ToolTier};
 use rquickjs::{Context, Runtime};
 use serde_json::{json, Value};
 
 use crate::{ToolContext, ToolHandler};
+
+const JS_CPU_TIMEOUT_SECS: u64 = 5;
 
 pub struct CodeExecTool;
 
@@ -15,7 +19,7 @@ impl ToolHandler for CodeExecTool {
         ToolSpec {
             schema: ToolSchema {
                 name: "code_exec".into(),
-                description: "Evaluate a bounded JavaScript expression/program in an isolated QuickJS sandbox (no filesystem or network access).".into(),
+                description: "Evaluate a bounded JavaScript expression/program in an isolated QuickJS sandbox (5s CPU limit, 16 MiB memory limit, no filesystem/network).".into(),
                 parameters: json!({
                     "type": "object",
                     "properties": {
@@ -40,17 +44,30 @@ impl ToolHandler for CodeExecTool {
         };
         rt.set_memory_limit(16 * 1024 * 1024);
         rt.set_max_stack_size(512 * 1024);
+        let started = Instant::now();
+        rt.set_interrupt_handler(Some(Box::new(move || {
+            started.elapsed() > Duration::from_secs(JS_CPU_TIMEOUT_SECS)
+        })));
         let context = match Context::full(&rt) {
             Ok(c) => c,
             Err(e) => return ToolExecutionResult::err_structured("js_ctx_error", e.to_string(), None),
         };
 
-        let wrapped = format!(
-            "JSON.stringify((function(){{ {code} }})())"
-        );
+        // Put newline before `})()` so trailing `//` comments never break wrapping.
+        let wrapped = format!("JSON.stringify((function(){{\n{code}\n}})())");
         let eval_result: Result<Option<String>, String> = context.with(|ctx| {
-            ctx.eval::<Option<String>, _>(wrapped.as_bytes())
-                .map_err(|e| format!("{e}"))
+            match ctx.eval::<Option<String>, _>(wrapped.as_bytes()) {
+                Ok(v) => Ok(v),
+                Err(rquickjs::Error::Exception) => {
+                    let exc = ctx.catch();
+                    let msg = exc
+                        .as_exception()
+                        .and_then(|e| e.message())
+                        .unwrap_or_else(|| format!("{exc:?}"));
+                    Err(msg)
+                }
+                Err(e) => Err(format!("{e}")),
+            }
         });
 
         match eval_result {

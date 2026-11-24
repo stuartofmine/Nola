@@ -12,12 +12,14 @@ pub mod hooks;
 pub mod loop_guard;
 pub mod loop_runner;
 pub mod middleware;
+pub mod planning;
 pub mod policy;
+pub mod subagents;
 
 #[cfg(test)]
 mod tests;
 
-pub use catalog::ToolCatalog;
+pub use catalog::{ForceToolSet, ToolCatalog};
 pub use compaction::{compact_history, CompactionReport};
 pub use hooks::HookRunner;
 pub use loop_guard::{semantic_observation_arguments, LoopGuard};
@@ -26,4 +28,6 @@ pub use loop_runner::{
     ModelCaller,
 };
 pub use middleware::{ApprovalCallback, MiddlewareOutcome, ToolExecutionMiddleware};
+pub use planning::{register_planning_tools, PlanningState, TodoItem, UserInputCallback};
 pub use policy::EffectivePolicy;
+pub use subagents::{register_subagent_tools, SubagentManager, SubagentTaskSnapshot, TaskStatus};

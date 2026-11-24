@@ -129,6 +129,93 @@ fn gate2_all_core_file_search_shell_and_code_tools_project_full_payload_and_rece
         d.effects[0].transition,
         VersionTransition::Deleted { .. }
     ));
+
+    // 13. PTY interactive VT100 session (exec -> write -> screenshot -> close)
+    #[cfg(unix)]
+    {
+        let pty = reg.execute(
+            "pty_exec",
+            &ctx,
+            json!({"action": "exec", "command": "cat", "yield_ms": 100}),
+        );
+        assert!(!pty.is_error, "pty_exec failed: {:?}", pty.payload);
+        let sid = pty.payload.to_model_value()["session_id"]
+            .as_str()
+            .unwrap()
+            .to_string();
+        let wr = reg.execute(
+            "pty_exec",
+            &ctx,
+            json!({"action": "write", "session_id": sid, "input": "hello_pty\n", "yield_ms": 150}),
+        );
+        assert!(!wr.is_error);
+        assert!(wr.payload.to_model_value()["screen"]
+            .as_str()
+            .unwrap()
+            .contains("hello_pty"));
+        let cl = reg.execute(
+            "pty_exec",
+            &ctx,
+            json!({"action": "close", "session_id": sid}),
+        );
+        assert!(!cl.is_error);
+    }
+
+    // 14. OutputStore spill + tool_output read/search
+    let big = ToolModelPayload::text((1..=500).map(|i| format!("line_{i} payload_data_marker\n")).collect::<String>());
+    let (spilled, meta) = ctx
+        .output_store
+        .maybe_spill_payload("bash", &big, 1024)
+        .expect("should spill");
+    assert_eq!(spilled.to_model_value()["spilled"], true);
+    let tr = reg.execute(
+        "tool_output",
+        &ctx,
+        json!({"action": "search", "output_id": meta.output_id, "pattern": "line_42"}),
+    );
+    assert!(!tr.is_error);
+    assert!(tr.payload.to_model_value()["count"].as_u64().unwrap() >= 1);
+
+    // 15. multi_edit_file, move_file, repo_map, workspace_checkpoint, notebook
+    let cp = reg.execute(
+        "workspace_checkpoint",
+        &ctx,
+        json!({"action": "create", "label": "before"}),
+    );
+    let cp_id = cp.payload.to_model_value()["checkpoint_id"]
+        .as_str()
+        .unwrap()
+        .to_string();
+    let me = reg.execute(
+        "multi_edit_file",
+        &ctx,
+        json!({
+            "path": "hello.py",
+            "edits": [{"old_text": "patched v2", "new_text": "multi_edited"}]
+        }),
+    );
+    assert!(!me.is_error && me.has_changed_version());
+    let rm = reg.execute("repo_map", &ctx, json!({"query": "greet"}));
+    assert_eq!(rm.payload.to_model_value()["count"], 1);
+    let rest = reg.execute(
+        "workspace_checkpoint",
+        &ctx,
+        json!({"action": "restore", "checkpoint_id": cp_id}),
+    );
+    assert!(!rest.is_error);
+    assert!(std::fs::read_to_string(dir.path().join("hello.py"))
+        .unwrap()
+        .contains("patched v2"));
+
+    // 16. browser status & duckduckgo parser
+    let bs = reg.execute("browser", &ctx, json!({"action": "status"}));
+    assert!(!bs.is_error);
+    let ddg = crate::web_search::parse_duckduckgo_html(
+        r#"<div class="result"><a class="result__a" href="https://rust-lang.org">Rust</a><div class="result__snippet">Fast</div></div>"#,
+        5,
+    );
+    assert_eq!(ddg.len(), 1);
+    assert_eq!(ddg[0]["title"], "Rust");
 }
 
 #[test]

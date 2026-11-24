@@ -22,11 +22,34 @@ use nola_types::{
 };
 use serde_json::{json, Value};
 
-use crate::file_pipeline::resolve_path;
+use crate::file_pipeline::{path_within_workspace, resolve_path};
 use crate::sandbox::build_shell_command;
 use crate::{ToolContext, ToolHandler};
 
 const MAX_CAPTURED_BYTES: usize = 256 * 1024;
+
+fn kill_process_group(child: &mut Child) {
+    #[cfg(unix)]
+    {
+        let pgid = child.id() as libc::pid_t;
+        if pgid > 0 {
+            unsafe {
+                libc::kill(-pgid, libc::SIGTERM);
+                libc::kill(-pgid, libc::SIGKILL);
+            }
+        }
+    }
+    let _ = child.kill();
+    let _ = child.wait();
+}
+
+fn configure_process_group(cmd: &mut std::process::Command) {
+    #[cfg(unix)]
+    {
+        use std::os::unix::process::CommandExt;
+        cmd.process_group(0);
+    }
+}
 
 struct BackgroundJob {
     command: String,
@@ -38,11 +61,24 @@ struct BackgroundJob {
     exit_code: Mutex<Option<i32>>,
 }
 
-/// Manages foreground and background shell processes cleanly.
+/// Manages foreground and background shell processes cleanly (kills process groups on Drop).
 #[derive(Default)]
 pub struct ShellExecutionPipeline {
     jobs: Mutex<BTreeMap<String, Arc<BackgroundJob>>>,
     next_id: Mutex<u64>,
+}
+
+impl Drop for ShellExecutionPipeline {
+    fn drop(&mut self) {
+        if let Ok(jobs) = self.jobs.lock() {
+            for job in jobs.values() {
+                if job.exit_code.lock().unwrap().is_none() {
+                    let mut ch = job.child.lock().unwrap();
+                    kill_process_group(&mut ch);
+                }
+            }
+        }
+    }
 }
 
 impl ShellExecutionPipeline {
@@ -65,6 +101,7 @@ impl ShellExecutionPipeline {
     }
 
     fn spawn_background(&self, mut cmd: std::process::Command, raw_command: &str) -> Result<String, String> {
+        configure_process_group(&mut cmd);
         cmd.stdout(Stdio::piped()).stderr(Stdio::piped());
         let mut child = cmd
             .spawn()
@@ -110,10 +147,8 @@ impl ShellExecutionPipeline {
 
         if stop {
             let mut ch = job.child.lock().unwrap();
-            let _ = ch.kill();
-            if let Ok(st) = ch.wait() {
-                *job.exit_code.lock().unwrap() = Some(st.code().unwrap_or(-1));
-            }
+            kill_process_group(&mut ch);
+            *job.exit_code.lock().unwrap() = Some(-1);
         } else {
             let deadline = Instant::now() + Duration::from_millis(wait_ms);
             loop {
@@ -248,6 +283,15 @@ impl ToolHandler for BashTool {
             .and_then(|v| v.as_str())
             .map(|p| resolve_path(&ctx.workspace_root, p))
             .unwrap_or_else(|| ctx.workspace_root.clone());
+        if ctx.permission_profile != nola_types::PermissionProfile::AllowAll
+            && !path_within_workspace(&ctx.workspace_root, &cwd)
+        {
+            return ToolExecutionResult::err_structured(
+                "workspace_escape",
+                format!("shell cwd '{}' escapes workspace boundary", cwd.display()),
+                None,
+            );
+        }
         let timeout_secs = args
             .get("timeout_secs")
             .and_then(|v| v.as_u64())
@@ -281,6 +325,7 @@ impl ToolHandler for BashTool {
 
         let mut cmd = match build_shell_command(
             command,
+            &ctx.workspace_root,
             &cwd,
             ctx.sandbox_mode,
             ctx.permission_profile,
@@ -300,6 +345,7 @@ impl ToolHandler for BashTool {
             };
         }
 
+        configure_process_group(&mut cmd);
         cmd.stdout(Stdio::piped()).stderr(Stdio::piped());
         let mut child = match cmd.spawn() {
             Ok(c) => c,
@@ -331,8 +377,7 @@ impl ToolHandler for BashTool {
                 Ok(None) => {
                     if Instant::now() >= deadline {
                         timed_out = true;
-                        let _ = child.kill();
-                        let _ = child.wait();
+                        kill_process_group(&mut child);
                         break 124;
                     }
                     thread::sleep(Duration::from_millis(20));

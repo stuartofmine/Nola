@@ -238,10 +238,14 @@ func (c *Client) Connect(address, relay string) error {
 	return nil
 }
 func (c *Client) dial(ctx context.Context) (net.Conn, error) {
-	if c.tunnel == nil {
+	c.mu.Lock()
+	tunnel := c.tunnel
+	closed := c.closed
+	c.mu.Unlock()
+	if closed || tunnel == nil {
 		return nil, errors.New("client has no explicit server")
 	}
-	return c.tunnel.DialTCPPort(ctx, ServicePort)
+	return tunnel.DialTCPPort(ctx, ServicePort)
 }
 
 // Classify only standard error types; raw URLs, peer addresses and provider
@@ -268,7 +272,10 @@ func inspectionFailureCode(err error) string {
 // VerifyHost completes the encrypted path and checks the application identity
 // before a caller exposes a local endpoint as connected. It sends no credential.
 func (c *Client) VerifyHost(ctx context.Context, expected string) error {
-	if c.tunnel == nil || expected == "" {
+	c.mu.Lock()
+	ready := !c.closed && c.tunnel != nil
+	c.mu.Unlock()
+	if !ready || expected == "" {
 		return errors.New("explicit expected Host identity required")
 	}
 	request, _ := http.NewRequestWithContext(ctx, "GET", "http://nola-transport.invalid/api/web/session", nil)
@@ -328,19 +335,26 @@ func (c *Client) Close() error {
 
 type idleTimeoutConn struct {
 	net.Conn
+	start        time.Time
 	lastActivity *atomic.Int64
+	stop         func()
 }
 
 // newBidirectionalIdlePair wraps both halves of a proxied connection pair so traffic
 // in EITHER direction (e.g., server->client SSE heartbeats/deltas while client is silent)
-// refreshes the shared idle clock. Only genuinely idle pairs are closed after timeout.
+// refreshes the shared monotonic idle clock. Only genuinely idle pairs are closed after timeout.
 func newBidirectionalIdlePair(a, b net.Conn, timeout time.Duration) (net.Conn, net.Conn, func()) {
 	if a == nil || b == nil || timeout <= 0 {
 		return a, b, func() {}
 	}
+	start := time.Now()
 	var last atomic.Int64
-	last.Store(time.Now().UnixNano())
+	last.Store(0)
 	done := make(chan struct{})
+	var once sync.Once
+	stop := func() {
+		once.Do(func() { close(done) })
+	}
 	checkEvery := timeout / 4
 	if checkEvery < 10*time.Millisecond {
 		checkEvery = 10 * time.Millisecond
@@ -355,8 +369,9 @@ func newBidirectionalIdlePair(a, b net.Conn, timeout time.Duration) (net.Conn, n
 			select {
 			case <-done:
 				return
-			case now := <-ticker.C:
-				if now.UnixNano()-last.Load() >= int64(timeout) {
+			case <-ticker.C:
+				elapsed := int64(time.Since(start))
+				if elapsed-last.Load() >= int64(timeout) {
 					_ = a.Close()
 					_ = b.Close()
 					return
@@ -364,22 +379,15 @@ func newBidirectionalIdlePair(a, b net.Conn, timeout time.Duration) (net.Conn, n
 			}
 		}
 	}()
-	stop := func() {
-		select {
-		case <-done:
-		default:
-			close(done)
-		}
-	}
-	return &idleTimeoutConn{Conn: a, lastActivity: &last},
-		&idleTimeoutConn{Conn: b, lastActivity: &last},
+	return &idleTimeoutConn{Conn: a, start: start, lastActivity: &last, stop: stop},
+		&idleTimeoutConn{Conn: b, start: start, lastActivity: &last, stop: stop},
 		stop
 }
 
 func (c *idleTimeoutConn) Read(p []byte) (int, error) {
 	n, err := c.Conn.Read(p)
 	if n > 0 {
-		c.lastActivity.Store(time.Now().UnixNano())
+		c.lastActivity.Store(int64(time.Since(c.start)))
 	}
 	return n, err
 }
@@ -387,9 +395,14 @@ func (c *idleTimeoutConn) Read(p []byte) (int, error) {
 func (c *idleTimeoutConn) Write(p []byte) (int, error) {
 	n, err := c.Conn.Write(p)
 	if n > 0 {
-		c.lastActivity.Store(time.Now().UnixNano())
+		c.lastActivity.Store(int64(time.Since(c.start)))
 	}
 	return n, err
+}
+
+func (c *idleTimeoutConn) Close() error {
+	c.stop()
+	return c.Conn.Close()
 }
 
 // Tracks only this component's sockets. Closing transport does not cancel a Run.

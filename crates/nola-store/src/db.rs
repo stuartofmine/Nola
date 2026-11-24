@@ -69,9 +69,9 @@ impl Store {
 
     fn init(conn: Connection) -> Result<Self, StoreError> {
         conn.execute_batch(
-            "PRAGMA journal_mode = WAL;
+            "PRAGMA busy_timeout = 5000;
+             PRAGMA journal_mode = WAL;
              PRAGMA synchronous = NORMAL;
-             PRAGMA busy_timeout = 5000;
              PRAGMA foreign_keys = ON;
 
              CREATE TABLE IF NOT EXISTS sessions (
@@ -228,7 +228,7 @@ impl Store {
 
     pub fn delete_session(&self, id: &str) -> Result<(), StoreError> {
         self.with_conn(|conn| {
-            let tx = conn.transaction()?;
+            let tx = conn.transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)?;
             tx.execute("DELETE FROM sessions WHERE id = ?1", params![id])?;
             tx.execute("DELETE FROM events WHERE scope = ?1", params![id])?;
             tx.execute("DELETE FROM event_watermarks WHERE scope = ?1", params![id])?;
@@ -250,7 +250,7 @@ impl Store {
         let payload_json = serde_json::to_string(&payload)?;
         let ts = now_ms();
         self.with_conn(|conn| {
-            let tx = conn.transaction()?;
+            let tx = conn.transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)?;
             let current_max: i64 = tx
                 .query_row(
                     "SELECT max_seq FROM event_watermarks WHERE scope = ?1",
@@ -300,7 +300,8 @@ impl Store {
         limit: usize,
     ) -> Result<EventPage, StoreError> {
         self.with_conn(|conn| {
-            let watermark: Option<(i64, i64)> = conn
+            let tx = conn.transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)?;
+            let watermark: Option<(i64, i64)> = tx
                 .query_row(
                     "SELECT min_retained_seq, max_seq FROM event_watermarks WHERE scope = ?1",
                     params![scope],
@@ -310,13 +311,13 @@ impl Store {
             let Some((min_retained, max_seq)) = watermark else {
                 return Ok(EventPage::Events(Vec::new()));
             };
-            if after_seq > 0 && after_seq + 1 < min_retained {
+            if after_seq > 0 && after_seq.saturating_add(1) < min_retained {
                 return Ok(EventPage::ResyncRequired {
                     earliest_retained_seq: min_retained,
                     latest_seq: max_seq,
                 });
             }
-            let mut stmt = conn.prepare(
+            let mut stmt = tx.prepare(
                 "SELECT scope, seq, kind, payload_json, created_at_ms
                  FROM events
                  WHERE scope = ?1 AND seq > ?2
@@ -355,7 +356,7 @@ impl Store {
         let tags_json = serde_json::to_string(&item.tags)?;
         let tags_text = item.tags.join(" ");
         self.with_conn(|conn| {
-            let tx = conn.transaction()?;
+            let tx = conn.transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)?;
             tx.execute(
                 "INSERT INTO memory_items (id, namespace, title, content, tags_json, created_at_ms, updated_at_ms)
                  VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)
@@ -392,17 +393,23 @@ impl Store {
         namespace: Option<&str>,
         limit: usize,
     ) -> Result<Vec<MemoryItem>, StoreError> {
-        let trimmed = query.trim();
+        let sanitized: String = query.chars().filter(|&c| c != '\0').collect();
+        let trimmed = sanitized.trim();
         self.with_conn(|conn| {
             if trimmed.is_empty() {
                 return Self::list_memory_inner(conn, namespace, limit);
             }
-            // Quote terms safely for FTS5 so punctuation never triggers syntax errors.
-            let fts_query = trimmed
+            // Bound tokens to 24 to prevent SQLite FTS5 expression-depth errors on long prompts.
+            let tokens: Vec<String> = trimmed
                 .split_whitespace()
+                .filter(|t| !t.is_empty())
+                .take(24)
                 .map(|tok| format!("\"{}\"", tok.replace('"', "\"\"")))
-                .collect::<Vec<_>>()
-                .join(" OR ");
+                .collect();
+            if tokens.is_empty() {
+                return Self::list_memory_inner(conn, namespace, limit);
+            }
+            let fts_query = tokens.join(" OR ");
             let mut stmt = conn.prepare(
                 "SELECT m.id, m.namespace, m.title, m.content, m.tags_json, m.created_at_ms, m.updated_at_ms
                  FROM memory_fts f
@@ -435,6 +442,41 @@ impl Store {
                     created_at_ms: c,
                     updated_at_ms: u,
                 });
+            }
+            // CJK / non-space-delimited substring fallback when unicode61 FTS5 finds 0 hits
+            if out.is_empty() && trimmed.chars().any(|c| !c.is_ascii()) {
+                let like_pat = format!("%{}%", trimmed.replace('%', "\\%").replace('_', "\\_"));
+                let mut stmt = conn.prepare(
+                    "SELECT id, namespace, title, content, tags_json, created_at_ms, updated_at_ms
+                     FROM memory_items
+                     WHERE (?1 IS NULL OR namespace = ?1)
+                       AND (title LIKE ?2 ESCAPE '\\' OR content LIKE ?2 ESCAPE '\\' OR tags_json LIKE ?2 ESCAPE '\\')
+                     ORDER BY updated_at_ms DESC
+                     LIMIT ?3",
+                )?;
+                let rows = stmt.query_map(params![namespace, like_pat, limit.max(1) as i64], |r| {
+                    Ok((
+                        r.get::<_, String>(0)?,
+                        r.get::<_, String>(1)?,
+                        r.get::<_, String>(2)?,
+                        r.get::<_, String>(3)?,
+                        r.get::<_, String>(4)?,
+                        r.get::<_, i64>(5)?,
+                        r.get::<_, i64>(6)?,
+                    ))
+                })?;
+                for row in rows {
+                    let (id, ns, title, content, tags_raw, c, u) = row?;
+                    out.push(MemoryItem {
+                        id,
+                        namespace: ns,
+                        title,
+                        content,
+                        tags: serde_json::from_str(&tags_raw).unwrap_or_default(),
+                        created_at_ms: c,
+                        updated_at_ms: u,
+                    });
+                }
             }
             Ok(out)
         })
@@ -481,7 +523,7 @@ impl Store {
 
     pub fn delete_memory(&self, id: &str) -> Result<bool, StoreError> {
         self.with_conn(|conn| {
-            let tx = conn.transaction()?;
+            let tx = conn.transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)?;
             let n = tx.execute("DELETE FROM memory_items WHERE id = ?1", params![id])?;
             tx.execute("DELETE FROM memory_fts WHERE id = ?1", params![id])?;
             tx.commit()?;
@@ -618,23 +660,35 @@ impl Store {
 
     // --- Atomic WAL-Safe Backup ---
 
-    /// Atomically snapshot the live database (including active WAL frames) using `VACUUM INTO`.
+    /// Atomically snapshot the live database (including active WAL frames) using `VACUUM INTO`
+    /// into a sibling temp file, then atomically rename over `destination` on success.
     pub fn backup_to(&self, destination: &Path) -> Result<(), StoreError> {
-        if destination.exists() {
-            std::fs::remove_file(destination)?;
-        }
         if let Some(parent) = destination.parent() {
             if !parent.as_os_str().is_empty() {
                 std::fs::create_dir_all(parent)?;
             }
         }
-        let dest_str = destination
+        let mut nonce = [0u8; 8];
+        getrandom::getrandom(&mut nonce)
+            .map_err(|e| StoreError::Other(format!("csprng failed: {e}")))?;
+        let hex: String = nonce.iter().map(|b| format!("{b:02x}")).collect();
+        let tmp_dest = std::path::PathBuf::from(format!("{}.tmp.{hex}", destination.display()));
+        let tmp_str = tmp_dest
             .to_str()
             .ok_or_else(|| StoreError::Other("non-UTF8 backup destination path".into()))?;
-        self.with_conn(|conn| {
-            conn.execute("VACUUM INTO ?1", params![dest_str])?;
+        let res = self.with_conn(|conn| {
+            conn.execute("VACUUM INTO ?1", params![tmp_str])?;
             Ok(())
-        })
+        });
+        if let Err(e) = res {
+            let _ = std::fs::remove_file(&tmp_dest);
+            return Err(e);
+        }
+        if let Err(e) = std::fs::rename(&tmp_dest, destination) {
+            let _ = std::fs::remove_file(&tmp_dest);
+            return Err(StoreError::Io(e));
+        }
+        Ok(())
     }
 }
 

@@ -116,7 +116,16 @@ impl McpOAuthManager {
             return Ok(Some(latest.access_token));
         }
 
-        let Some(refresh_token) = latest.refresh_token.as_deref() else {
+        let Some(refresh_token) = latest.refresh_token.as_deref().filter(|s| !s.is_empty()) else {
+            let already_expired = latest
+                .expires_at_ms
+                .map(|exp| now_ms() >= exp)
+                .unwrap_or(false);
+            if already_expired {
+                return Err(McpError::OAuth(
+                    "access token expired and no refresh_token available".into(),
+                ));
+            }
             return Ok(Some(latest.access_token));
         };
         let refreshed = self.refresh_access_token(&latest, refresh_token)?;
@@ -129,6 +138,7 @@ impl McpOAuthManager {
         existing: &OAuthTokenSet,
         refresh_token: &str,
     ) -> Result<OAuthTokenSet, McpError> {
+        let request_started_ms = now_ms();
         let client = Client::builder()
             .timeout(Duration::from_secs(15))
             .build()
@@ -143,9 +153,11 @@ impl McpOAuthManager {
             .send()
             .map_err(|e| McpError::OAuth(format!("token refresh request failed: {e}")))?;
         if !resp.status().is_success() {
+            let status = resp.status();
+            let err_body = resp.text().unwrap_or_default();
             return Err(McpError::OAuth(format!(
-                "token refresh returned HTTP {}",
-                resp.status()
+                "token refresh returned HTTP {status}: {}",
+                err_body.chars().take(240).collect::<String>()
             )));
         }
         let body: serde_json::Value = resp
@@ -154,17 +166,22 @@ impl McpOAuthManager {
         let access_token = body
             .get("access_token")
             .and_then(|v| v.as_str())
-            .ok_or_else(|| McpError::OAuth("refresh response missing access_token".into()))?
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+            .ok_or_else(|| McpError::OAuth("refresh response missing non-empty access_token".into()))?
             .to_string();
         let new_refresh = body
             .get("refresh_token")
             .and_then(|v| v.as_str())
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
             .map(ToString::to_string)
             .or_else(|| existing.refresh_token.clone());
         let expires_at_ms = body
             .get("expires_in")
-            .and_then(|v| v.as_i64())
-            .map(|secs| now_ms().saturating_add(secs.saturating_mul(1000)));
+            .and_then(|v| v.as_i64().or_else(|| v.as_f64().map(|f| f as i64)))
+            .filter(|&secs| secs > 0)
+            .map(|secs| request_started_ms.saturating_add(secs.saturating_mul(1000)));
         Ok(OAuthTokenSet {
             access_token,
             refresh_token: new_refresh,

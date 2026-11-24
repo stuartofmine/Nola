@@ -3,13 +3,17 @@
 //! Guarantees clean child process termination on timeout (no detached Mutex deadlock!).
 
 use std::fs;
-use std::io::Write;
+use std::io::{Read, Write};
+use std::os::unix::process::CommandExt;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
+use std::thread;
 use std::time::{Duration, Instant};
 
 use nola_types::{CommandHookConfig, HookDecision, HookEvent};
 use serde_json::{json, Value};
+
+const MAX_HOOK_PIPE_BYTES: u64 = 256 * 1024;
 
 #[derive(Debug, Default, Clone)]
 pub struct HookRunner {
@@ -48,6 +52,7 @@ impl HookRunner {
         payload: &Value,
     ) -> Vec<HookDecision> {
         let mut decisions = Vec::new();
+        let mut current_payload = payload.clone();
         for hook in &self.hooks {
             if hook.event != event || !matcher_matches(&hook.matcher, tool_name) {
                 continue;
@@ -56,9 +61,12 @@ impl HookRunner {
                 "event": event,
                 "tool_name": tool_name,
                 "workspace_root": self.workspace_root.display().to_string(),
-                "payload": payload
+                "payload": current_payload
             });
             let decision = execute_single_hook(hook, &self.workspace_root, &input_json);
+            if let HookDecision::ModifyInput { ref input } = decision {
+                current_payload = input.clone();
+            }
             let is_block = matches!(decision, HookDecision::Block { .. });
             decisions.push(decision);
             if is_block {
@@ -87,6 +95,19 @@ fn matcher_matches(matcher: &str, tool_name: &str) -> bool {
         .any(|part| part == "*" || part == tool_name)
 }
 
+fn read_capped(mut reader: impl Read) -> Vec<u8> {
+    let mut buf = Vec::new();
+    let _ = reader.by_ref().take(MAX_HOOK_PIPE_BYTES).read_to_end(&mut buf);
+    // Drain any excess bytes so child never stalls on SIGPIPE / full pipe while exiting.
+    let mut discard = [0u8; 4096];
+    while let Ok(n) = reader.read(&mut discard) {
+        if n == 0 {
+            break;
+        }
+    }
+    buf
+}
+
 fn execute_single_hook(
     hook: &CommandHookConfig,
     workspace_root: &Path,
@@ -98,7 +119,8 @@ fn execute_single_hook(
         .current_dir(workspace_root)
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
-        .stderr(Stdio::piped());
+        .stderr(Stdio::piped())
+        .process_group(0);
 
     let mut child = match cmd.spawn() {
         Ok(c) => c,
@@ -112,21 +134,39 @@ fn execute_single_hook(
             };
         }
     };
+    let pgid = child.id() as libc::pid_t;
 
-    if let Some(mut stdin) = child.stdin.take() {
+    // Write stdin and drain stdout/stderr concurrently to avoid pipe deadlocks on large I/O!
+    let stdin_handle = child.stdin.take().map(|mut stdin| {
         let bytes = serde_json::to_vec(input_json).unwrap_or_default();
-        let _ = stdin.write_all(&bytes);
-    }
+        thread::spawn(move || {
+            let _ = stdin.write_all(&bytes);
+        })
+    });
+    let stdout_handle = child.stdout.take().map(|out| thread::spawn(move || read_capped(out)));
+    let stderr_handle = child.stderr.take().map(|err| thread::spawn(move || read_capped(err)));
 
     let timeout = Duration::from_millis(hook.timeout_ms.clamp(100, 60_000));
     let deadline = Instant::now() + timeout;
-    loop {
+    let status = loop {
         match child.try_wait() {
-            Ok(Some(_)) => break,
+            Ok(Some(st)) => break Some(st),
             Ok(None) => {
                 if Instant::now() >= deadline {
+                    unsafe {
+                        let _ = libc::kill(-pgid, libc::SIGKILL);
+                    }
                     let _ = child.kill();
                     let _ = child.wait();
+                    if let Some(h) = stdin_handle {
+                        let _ = h.join();
+                    }
+                    if let Some(h) = stdout_handle {
+                        let _ = h.join();
+                    }
+                    if let Some(h) = stderr_handle {
+                        let _ = h.join();
+                    }
                     return if hook.fail_closed {
                         HookDecision::Block {
                             reason: format!("hook timed out after {}ms (fail_closed)", hook.timeout_ms),
@@ -135,31 +175,38 @@ fn execute_single_hook(
                         HookDecision::Allow
                     };
                 }
-                std::thread::sleep(Duration::from_millis(15));
+                thread::sleep(Duration::from_millis(15));
             }
-            Err(_) => break,
-        }
-    }
-
-    let output = match child.wait_with_output() {
-        Ok(o) => o,
-        Err(e) => {
-            return if hook.fail_closed {
-                HookDecision::Block {
-                    reason: format!("hook wait failed (fail_closed): {e}"),
-                }
-            } else {
-                HookDecision::Allow
-            };
+            Err(_) => break None,
         }
     };
 
-    if !output.status.success() {
-        let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
-        if hook.fail_closed || output.status.code() == Some(2) {
+    if let Some(h) = stdin_handle {
+        let _ = h.join();
+    }
+    let stdout_bytes = stdout_handle
+        .and_then(|h| h.join().ok())
+        .unwrap_or_default();
+    let stderr_bytes = stderr_handle
+        .and_then(|h| h.join().ok())
+        .unwrap_or_default();
+
+    let Some(status) = status else {
+        return if hook.fail_closed {
+            HookDecision::Block {
+                reason: "hook wait failed (fail_closed)".into(),
+            }
+        } else {
+            HookDecision::Allow
+        };
+    };
+
+    if !status.success() {
+        let stderr = String::from_utf8_lossy(&stderr_bytes).trim().to_string();
+        if hook.fail_closed || status.code() == Some(2) {
             return HookDecision::Block {
                 reason: if stderr.is_empty() {
-                    format!("hook exited with status {:?}", output.status.code())
+                    format!("hook exited with status {:?}", status.code())
                 } else {
                     stderr
                 },
@@ -168,10 +215,21 @@ fn execute_single_hook(
         return HookDecision::Allow;
     }
 
-    let stdout = String::from_utf8_lossy(&output.stdout);
+    let stdout = String::from_utf8_lossy(&stdout_bytes);
     let trimmed = stdout.trim();
     if trimmed.is_empty() {
         return HookDecision::Allow;
     }
-    serde_json::from_str::<HookDecision>(trimmed).unwrap_or(HookDecision::Allow)
+    match serde_json::from_str::<HookDecision>(trimmed) {
+        Ok(decision) => decision,
+        Err(e) => {
+            if hook.fail_closed {
+                HookDecision::Block {
+                    reason: format!("hook emitted invalid JSON (fail_closed): {e}"),
+                }
+            } else {
+                HookDecision::Allow
+            }
+        }
+    }
 }

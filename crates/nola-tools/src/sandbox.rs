@@ -63,10 +63,12 @@ pub fn probe_bwrap_available() -> bool {
     })
 }
 
-/// Build a shell `Command` wrapped in `bwrap` when appropriate, preserving `/dev/shm`
-/// and `/dev/pts` and NOT locking `.git` under `PermissionProfile::AllowAll`.
+/// Build a shell `Command` wrapped in `bwrap` when appropriate, binding ONLY
+/// `workspace_root` (never arbitrary `cwd`), isolating `/tmp` via `--tmpfs`, and
+/// protecting `.git/hooks` + `.git/config` under non-AllowAll profiles.
 pub fn build_shell_command(
     shell_cmd: &str,
+    workspace_root: &Path,
     cwd: &Path,
     mode: SandboxMode,
     profile: PermissionProfile,
@@ -99,24 +101,27 @@ pub fn build_shell_command(
 
     let mut cmd = Command::new("bwrap");
     cmd.args(["--die-with-parent", "--unshare-user", "--ro-bind", "/", "/"]);
-    cmd.args(["--dev", "/dev", "--proc", "/proc"]);
+    cmd.args(["--dev", "/dev", "--proc", "/proc", "--tmpfs", "/tmp"]);
     if Path::new("/dev/shm").exists() {
         cmd.args(["--bind", "/dev/shm", "/dev/shm"]);
     }
     if Path::new("/dev/pts").exists() {
         cmd.args(["--dev-bind", "/dev/pts", "/dev/pts"]);
     }
-    if Path::new("/tmp").exists() {
-        cmd.args(["--bind", "/tmp", "/tmp"]);
-    }
+    let ws_str = workspace_root.to_string_lossy().into_owned();
     let cwd_str = cwd.to_string_lossy().into_owned();
-    cmd.args(["--bind", &cwd_str, &cwd_str]);
-    // Under cautious profiles, protect `.git/hooks` from silent modification;
-    // under AllowAll (benchmarks/containers), never lock `.git`!
-    let git_hooks = cwd.join(".git/hooks");
-    if profile != PermissionProfile::AllowAll && git_hooks.exists() {
-        let hooks_str = git_hooks.to_string_lossy().into_owned();
-        cmd.args(["--ro-bind", &hooks_str, &hooks_str]);
+    cmd.args(["--bind", &ws_str, &ws_str]);
+    if profile != PermissionProfile::AllowAll {
+        let git_hooks = workspace_root.join(".git/hooks");
+        if git_hooks.exists() {
+            let s = git_hooks.to_string_lossy().into_owned();
+            cmd.args(["--ro-bind", &s, &s]);
+        }
+        let git_config = workspace_root.join(".git/config");
+        if git_config.exists() {
+            let s = git_config.to_string_lossy().into_owned();
+            cmd.args(["--ro-bind", &s, &s]);
+        }
     }
     if !network_allowed {
         cmd.arg("--unshare-net");

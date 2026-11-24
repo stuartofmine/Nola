@@ -211,10 +211,26 @@ impl ToolHandler for MessagingManageTool {
                 let Ok(Some(ch)) = self.suite.get_record::<MessagingChannel>(KIND_MESSAGING, id) else {
                     return ToolExecutionResult::err_structured("not_found", format!("channel '{id}' not found"), None);
                 };
+                if !ch.enabled {
+                    return ToolExecutionResult::err_structured(
+                        "channel_disabled",
+                        format!("messaging channel '{}' is disabled", ch.name),
+                        None,
+                    );
+                }
+                let (parsed, host, addrs) =
+                    match nola_tools::web::resolve_and_validate_public_url(&ch.endpoint) {
+                        Ok(v) => v,
+                        Err(e) => {
+                            return ToolExecutionResult::err_structured("ssrf_blocked", e, None);
+                        }
+                    };
                 let client = reqwest::blocking::Client::builder()
                     .timeout(Duration::from_secs(10))
+                    .redirect(reqwest::redirect::Policy::none())
+                    .resolve_to_addrs(&host, &addrs)
                     .build();
-                match client.and_then(|c| c.post(&ch.endpoint).json(&json!({"text": text})).send()) {
+                match client.and_then(|c| c.post(parsed).json(&json!({"text": text})).send()) {
                     Ok(resp) if resp.status().is_success() => ToolExecutionResult::ok_structured(
                         json!({"channel": ch.name, "status": resp.status().as_u16()}),
                         format!("Delivered message to '{}'", ch.name),

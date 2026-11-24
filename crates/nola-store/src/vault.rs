@@ -1,10 +1,13 @@
 // SPDX-License-Identifier: Apache-2.0
-//! CSPRNG + AES-256-GCM secret vault with atomic 0600 file writes and AAD key-binding.
+//! CSPRNG + AES-256-GCM secret vault with atomic 0600 file writes, AAD key-binding,
+//! in-process + cross-process `flock` serialization, TOCTOU-free master key creation,
+//! and master-key zeroization on Drop.
 
 use std::collections::BTreeMap;
-use std::fs::{self, OpenOptions};
+use std::fs::{self, File, OpenOptions};
 use std::io::Write;
 use std::path::{Path, PathBuf};
+use std::sync::Mutex;
 
 use aes_gcm::aead::{Aead, KeyInit, Payload};
 use aes_gcm::{Aes256Gcm, Key, Nonce};
@@ -29,7 +32,17 @@ struct EncryptedEntry {
 /// Encrypted local secret store for API keys and OAuth tokens.
 pub struct Vault {
     vault_path: PathBuf,
+    lock_path: PathBuf,
     master_key: [u8; 32],
+    mu: Mutex<()>,
+}
+
+impl Drop for Vault {
+    fn drop(&mut self) {
+        for b in &mut self.master_key {
+            unsafe { std::ptr::write_volatile(b, 0) };
+        }
+    }
 }
 
 impl Vault {
@@ -40,36 +53,72 @@ impl Vault {
                 fs::create_dir_all(parent)?;
             }
         }
+        let lock_path = PathBuf::from(format!("{}.lock", vault_path.display()));
+        let _flock = acquire_blocking_flock(&lock_path)?;
+
         let key_path = PathBuf::from(format!("{}.key", vault_path.display()));
-        let master_key = if key_path.exists() {
-            let bytes = fs::read(&key_path)?;
-            if bytes.len() != 32 {
-                return Err(StoreError::Crypto("invalid master key length".into()));
+        let master_key = match fs::read(&key_path) {
+            Ok(bytes) => {
+                if bytes.len() != 32 {
+                    return Err(StoreError::Crypto("invalid master key length".into()));
+                }
+                let mut key = [0u8; 32];
+                key.copy_from_slice(&bytes);
+                key
             }
-            let mut key = [0u8; 32];
-            key.copy_from_slice(&bytes);
-            key
-        } else {
-            let mut key = [0u8; 32];
-            getrandom::getrandom(&mut key)
-                .map_err(|e| StoreError::Crypto(format!("csprng failed: {e}")))?;
-            atomic_write_restricted(&key_path, &key)?;
-            key
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+                let mut key = [0u8; 32];
+                getrandom::getrandom(&mut key)
+                    .map_err(|e| StoreError::Crypto(format!("csprng failed: {e}")))?;
+                let mut opts = OpenOptions::new();
+                opts.write(true).create_new(true);
+                #[cfg(unix)]
+                {
+                    use std::os::unix::fs::OpenOptionsExt;
+                    opts.mode(0o600);
+                }
+                match opts.open(&key_path) {
+                    Ok(mut f) => {
+                        f.write_all(&key)?;
+                        f.sync_all()?;
+                        key
+                    }
+                    Err(err) if err.kind() == std::io::ErrorKind::AlreadyExists => {
+                        let bytes = fs::read(&key_path)?;
+                        if bytes.len() != 32 {
+                            return Err(StoreError::Crypto("invalid master key length".into()));
+                        }
+                        let mut existing = [0u8; 32];
+                        existing.copy_from_slice(&bytes);
+                        existing
+                    }
+                    Err(err) => return Err(StoreError::Io(err)),
+                }
+            }
+            Err(e) => return Err(StoreError::Io(e)),
         };
+
         Ok(Self {
             vault_path,
+            lock_path,
             master_key,
+            mu: Mutex::new(()),
         })
     }
 
     pub fn set_secret(&self, name: &str, plaintext: &str) -> Result<(), StoreError> {
+        let _inproc = self
+            .mu
+            .lock()
+            .map_err(|_| StoreError::Other("vault mutex poisoned".into()))?;
+        let _flock = acquire_blocking_flock(&self.lock_path)?;
+
         let mut file = self.load_file()?;
         let cipher = Aes256Gcm::new(Key::<Aes256Gcm>::from_slice(&self.master_key));
         let mut nonce_bytes = [0u8; 12];
         getrandom::getrandom(&mut nonce_bytes)
             .map_err(|e| StoreError::Crypto(format!("nonce csprng failed: {e}")))?;
         let nonce = Nonce::from_slice(&nonce_bytes);
-        // Bind AAD to secret name so ciphertexts cannot be swapped across keys.
         let ct = cipher
             .encrypt(
                 nonce,
@@ -93,6 +142,10 @@ impl Vault {
     }
 
     pub fn get_secret(&self, name: &str) -> Result<Option<String>, StoreError> {
+        let _inproc = self
+            .mu
+            .lock()
+            .map_err(|_| StoreError::Other("vault mutex poisoned".into()))?;
         let file = self.load_file()?;
         let Some(entry) = file.entries.get(name) else {
             return Ok(None);
@@ -122,6 +175,12 @@ impl Vault {
     }
 
     pub fn delete_secret(&self, name: &str) -> Result<bool, StoreError> {
+        let _inproc = self
+            .mu
+            .lock()
+            .map_err(|_| StoreError::Other("vault mutex poisoned".into()))?;
+        let _flock = acquire_blocking_flock(&self.lock_path)?;
+
         let mut file = self.load_file()?;
         let removed = file.entries.remove(name).is_some();
         if removed {
@@ -132,23 +191,51 @@ impl Vault {
     }
 
     pub fn list_keys(&self) -> Result<Vec<String>, StoreError> {
+        let _inproc = self
+            .mu
+            .lock()
+            .map_err(|_| StoreError::Other("vault mutex poisoned".into()))?;
         let file = self.load_file()?;
         Ok(file.entries.keys().cloned().collect())
     }
 
     fn load_file(&self) -> Result<VaultFile, StoreError> {
-        if !self.vault_path.exists() {
-            return Ok(VaultFile {
+        match fs::read(&self.vault_path) {
+            Ok(raw) => Ok(serde_json::from_slice(&raw)?),
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(VaultFile {
                 version: 2,
                 entries: BTreeMap::new(),
-            });
+            }),
+            Err(e) => Err(StoreError::Io(e)),
         }
-        let raw = fs::read(&self.vault_path)?;
-        Ok(serde_json::from_slice(&raw)?)
     }
 }
 
-/// Write `bytes` to a unique temp file with owner-only `0600` permissions BEFORE atomic rename.
+fn acquire_blocking_flock(lock_path: &Path) -> Result<File, StoreError> {
+    let f = OpenOptions::new()
+        .create(true)
+        .read(true)
+        .write(true)
+        .open(lock_path)?;
+    #[cfg(unix)]
+    {
+        use std::os::unix::io::AsRawFd;
+        loop {
+            let rc = unsafe { libc::flock(f.as_raw_fd(), libc::LOCK_EX) };
+            if rc == 0 {
+                break;
+            }
+            let err = std::io::Error::last_os_error();
+            if err.kind() != std::io::ErrorKind::Interrupted {
+                return Err(StoreError::Io(err));
+            }
+        }
+    }
+    Ok(f)
+}
+
+/// Write `bytes` to a unique temp file with owner-only `0600` permissions BEFORE atomic rename,
+/// cleaning up the temp file on any error.
 pub fn atomic_write_restricted(path: &Path, bytes: &[u8]) -> Result<(), StoreError> {
     let mut suffix = [0u8; 8];
     getrandom::getrandom(&mut suffix)
@@ -164,10 +251,16 @@ pub fn atomic_write_restricted(path: &Path, bytes: &[u8]) -> Result<(), StoreErr
         opts.mode(0o600);
     }
     let mut f = opts.open(&tmp_path)?;
-    f.write_all(bytes)?;
-    f.sync_all()?;
+    let write_res = f.write_all(bytes).and_then(|_| f.sync_all());
     drop(f);
-    fs::rename(&tmp_path, path)?;
+    if let Err(e) = write_res {
+        let _ = fs::remove_file(&tmp_path);
+        return Err(StoreError::Io(e));
+    }
+    if let Err(e) = fs::rename(&tmp_path, path) {
+        let _ = fs::remove_file(&tmp_path);
+        return Err(StoreError::Io(e));
+    }
     Ok(())
 }
 
@@ -187,15 +280,15 @@ mod tests {
         );
         assert_eq!(vault.list_keys().unwrap(), vec!["openai_key"]);
 
-        // Re-open with same key
         let vault2 = Vault::open(path.clone()).unwrap();
         assert_eq!(
             vault2.get_secret("openai_key").unwrap().as_deref(),
             Some("sk-secret-123")
         );
 
-        // Tampering by renaming key inside JSON must fail AES-GCM AAD check
-        let raw = fs::read_to_string(&path).unwrap().replace("openai_key", "other_key");
+        let raw = fs::read_to_string(&path)
+            .unwrap()
+            .replace("openai_key", "other_key");
         fs::write(&path, raw).unwrap();
         assert!(vault2.get_secret("other_key").is_err());
 

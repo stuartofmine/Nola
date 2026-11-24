@@ -9,10 +9,10 @@
 //! - Fully serializable so `--resume` preserves exact permission profile & rules.
 
 use std::fs;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use globset::Glob;
-use nola_tools::path_within_workspace;
+use nola_tools::{canonicalize_nearest_ancestor, path_within_workspace};
 use nola_types::{
     CapabilityDomain, PermissionAction, PermissionDecision, PermissionProfile, PermissionRule,
     RuleScope, ToolSpec,
@@ -135,20 +135,23 @@ impl EffectivePolicy {
             };
         }
 
-        let resource = extract_primary_resource(tool_name, args, workspace_root);
+        let resources = extract_resources(tool_name, args, workspace_root);
+        let write_paths = if domain == CapabilityDomain::FilesWrite {
+            extract_write_target_paths(tool_name, args, workspace_root)
+        } else {
+            Vec::new()
+        };
 
         // Explicit rules: highest scope wins; within same scope Deny > Ask > Allow!
+        // Evaluate against EVERY extracted resource so multi-target tools (move_file, apply_patch,
+        // read_many_files) cannot slip a denied path past a secondary argument.
         let mut matched: Option<&PermissionRule> = None;
         for rule in &self.rules {
             if !tool_matches(&rule.tool_pattern, tool_name, domain) {
                 continue;
             }
             if let Some(rp) = &rule.resource_pattern {
-                if !resource
-                    .as_deref()
-                    .map(|res| glob_matches(rp, res))
-                    .unwrap_or(false)
-                {
+                if !resources.iter().any(|res| glob_matches(rp, res)) {
                     continue;
                 }
             }
@@ -167,6 +170,41 @@ impl EffectivePolicy {
             };
         }
 
+        // Security invariant: for FilesWrite tools, enforce workspace boundary BEFORE
+        // Project/ProjectLocal Allow rules! Only AllowAll profile or an explicit User/CliOverride
+        // Allow rule can permit writing outside the workspace.
+        if domain == CapabilityDomain::FilesWrite {
+            if write_paths.is_empty() && tool_name != "workspace_checkpoint" {
+                return PermissionDecision {
+                    action: PermissionAction::Deny,
+                    reason: format!("unable to determine target path(s) for write tool '{tool_name}'"),
+                    domain,
+                };
+            }
+            for target in &write_paths {
+                if !path_within_workspace(workspace_root, target) {
+                    let explicit_user_override = matched.is_some_and(|r| {
+                        r.action == PermissionAction::Allow
+                            && matches!(r.scope, RuleScope::User | RuleScope::CliOverride)
+                    });
+                    let explicit_deny = matched.is_some_and(|r| r.action == PermissionAction::Deny);
+                    if explicit_deny {
+                        break;
+                    }
+                    if !explicit_user_override && self.profile != PermissionProfile::AllowAll {
+                        return PermissionDecision {
+                            action: PermissionAction::Deny,
+                            reason: format!(
+                                "write target '{}' escapes workspace boundary",
+                                target.display()
+                            ),
+                            domain,
+                        };
+                    }
+                }
+            }
+        }
+
         if let Some(rule) = matched {
             return PermissionDecision {
                 action: rule.action,
@@ -175,39 +213,18 @@ impl EffectivePolicy {
             };
         }
 
-        // Check symlink-safe workspace boundary for file writes
-        if domain == CapabilityDomain::FilesWrite {
-            if let Some(raw_path) = args.get("path").and_then(|v| v.as_str()) {
-                let target = if Path::new(raw_path).is_absolute() {
-                    Path::new(raw_path).to_path_buf()
-                } else {
-                    workspace_root.join(raw_path)
-                };
-                if !path_within_workspace(workspace_root, &target) {
-                    return match self.profile {
-                        PermissionProfile::AllowAll => PermissionDecision {
-                            action: PermissionAction::Allow,
-                            reason: "allow_all profile permits external write".into(),
-                            domain,
-                        },
-                        _ => PermissionDecision {
-                            action: PermissionAction::Deny,
-                            reason: format!(
-                                "write target '{}' escapes workspace boundary",
-                                target.display()
-                            ),
-                            domain,
-                        },
-                    };
-                }
-            }
-        }
-
         // Default profile behavior
-        if spec.read_only {
+        if spec.read_only
+            || matches!(tool_name, "update_agent_todos" | "propose_agent_plan")
+            || (tool_name == "task_control"
+                && matches!(
+                    args.get("action").and_then(|v| v.as_str()).unwrap_or("list"),
+                    "list" | "read" | "wait"
+                ))
+        {
             return PermissionDecision {
                 action: PermissionAction::Allow,
-                reason: "read-only tool allowed".into(),
+                reason: "read-only or internal coordination tool allowed".into(),
                 domain,
             };
         }
@@ -277,20 +294,101 @@ fn glob_matches(pattern: &str, candidate: &str) -> bool {
         .unwrap_or_else(|_| pattern == candidate)
 }
 
-fn extract_primary_resource(tool_name: &str, args: &Value, workspace_root: &Path) -> Option<String> {
+fn resolve_canonical_path(workspace_root: &Path, raw: &str) -> PathBuf {
+    let p = Path::new(raw);
+    let joined = if p.is_absolute() {
+        p.to_path_buf()
+    } else {
+        workspace_root.join(p)
+    };
+    canonicalize_nearest_ancestor(&joined)
+}
+
+fn extract_patch_target_paths(patch: &str, workspace_root: &Path) -> Vec<PathBuf> {
+    let mut paths = Vec::new();
+    for line in patch.lines() {
+        let rest = if let Some(r) = line.strip_prefix("+++ ") {
+            r
+        } else if let Some(r) = line.strip_prefix("--- ") {
+            r
+        } else {
+            continue;
+        };
+        let raw = rest.split('\t').next().unwrap_or(rest).trim();
+        if raw.is_empty() || raw == "/dev/null" {
+            continue;
+        }
+        let cleaned = raw
+            .strip_prefix("a/")
+            .or_else(|| raw.strip_prefix("b/"))
+            .unwrap_or(raw);
+        if !cleaned.is_empty() {
+            paths.push(resolve_canonical_path(workspace_root, cleaned));
+        }
+    }
+    paths
+}
+
+fn extract_write_target_paths(tool_name: &str, args: &Value, workspace_root: &Path) -> Vec<PathBuf> {
+    let mut out = Vec::new();
+    if tool_name == "apply_patch" {
+        if let Some(patch) = args.get("patch").and_then(|v| v.as_str()) {
+            out.extend(extract_patch_target_paths(patch, workspace_root));
+        }
+        return out;
+    }
+    for key in ["path", "source", "destination", "target"] {
+        if let Some(p) = args.get(key).and_then(|v| v.as_str()) {
+            if !p.trim().is_empty() {
+                out.push(resolve_canonical_path(workspace_root, p));
+            }
+        }
+    }
+    if let Some(arr) = args.get("paths").and_then(|v| v.as_array()) {
+        for item in arr {
+            if let Some(p) = item.as_str() {
+                if !p.trim().is_empty() {
+                    out.push(resolve_canonical_path(workspace_root, p));
+                }
+            }
+        }
+    }
+    out
+}
+
+fn extract_resources(tool_name: &str, args: &Value, workspace_root: &Path) -> Vec<String> {
+    let mut out = Vec::new();
     if let Some(cmd) = args.get("command").and_then(|v| v.as_str()) {
-        return Some(cmd.trim().to_string());
+        out.push(cmd.trim().to_string());
     }
     if let Some(url) = args.get("url").and_then(|v| v.as_str()) {
-        return Some(url.trim().to_string());
+        out.push(url.trim().to_string());
     }
-    if let Some(p) = args.get("path").and_then(|v| v.as_str()) {
-        let full = if Path::new(p).is_absolute() {
-            Path::new(p).to_path_buf()
-        } else {
-            workspace_root.join(p)
-        };
-        return Some(full.display().to_string());
+    if tool_name == "apply_patch" {
+        if let Some(patch) = args.get("patch").and_then(|v| v.as_str()) {
+            for p in extract_patch_target_paths(patch, workspace_root) {
+                out.push(p.display().to_string());
+            }
+        }
     }
-    Some(tool_name.to_string())
+    for key in ["path", "source", "destination", "target", "cwd", "worktree_path"] {
+        if let Some(p) = args.get(key).and_then(|v| v.as_str()) {
+            if !p.trim().is_empty() {
+                out.push(resolve_canonical_path(workspace_root, p).display().to_string());
+            }
+        }
+    }
+    if let Some(arr) = args.get("paths").and_then(|v| v.as_array()) {
+        for item in arr {
+            if let Some(p) = item.as_str() {
+                if !p.trim().is_empty() {
+                    out.push(resolve_canonical_path(workspace_root, p).display().to_string());
+                }
+            }
+        }
+    }
+    if out.is_empty() {
+        out.push(tool_name.to_string());
+    }
+    out
 }

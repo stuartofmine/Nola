@@ -22,16 +22,31 @@ pub struct ServiceDiscovery {
     pub protocol_version: u32,
 }
 
+fn normalize_lexically(path: &Path) -> PathBuf {
+    let mut out = PathBuf::new();
+    for comp in path.components() {
+        match comp {
+            std::path::Component::CurDir => {}
+            std::path::Component::ParentDir => {
+                out.pop();
+            }
+            other => out.push(other.as_os_str()),
+        }
+    }
+    out
+}
+
 /// Canonical database path resolving nearest existing ancestor via `canonicalize`,
-/// matching `MacApplicationServiceClient.databaseIdentityPath(for:)`.
+/// lexically normalized first to match `MacApplicationServiceClient.databaseIdentityPath(for:)`.
 pub fn database_identity_path(db_path: &Path) -> String {
-    let abs = if db_path.is_absolute() {
+    let raw_abs = if db_path.is_absolute() {
         db_path.to_path_buf()
     } else {
         std::env::current_dir()
             .unwrap_or_else(|_| PathBuf::from("/"))
             .join(db_path)
     };
+    let abs = normalize_lexically(&raw_abs);
     let mut ancestor = abs.as_path();
     let mut tail: Vec<String> = Vec::new();
     loop {
@@ -74,14 +89,28 @@ pub fn discovery_path(db_path: &Path) -> PathBuf {
     PathBuf::from(format!("{}.service.json", db_path.display()))
 }
 
-/// Read and parse `<db_path>.service.json` if present.
+/// Read and validate `<db_path>.service.json` (protocol version, EUID, live PID).
 pub fn read_discovery(db_path: &Path) -> Result<Option<ServiceDiscovery>, StoreError> {
     let path = discovery_path(db_path);
-    if !path.exists() {
+    let raw = match fs::read(&path) {
+        Ok(b) => b,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+        Err(e) => return Err(StoreError::Io(e)),
+    };
+    let disc: ServiceDiscovery = serde_json::from_slice(&raw)?;
+    if disc.protocol_version != PROTOCOL_VERSION || disc.socket_path.is_empty() {
         return Ok(None);
     }
-    let raw = fs::read(&path)?;
-    Ok(Some(serde_json::from_slice(&raw)?))
+    #[cfg(unix)]
+    {
+        if disc.euid != unsafe { libc::geteuid() } {
+            return Ok(None);
+        }
+        if disc.pid == 0 || unsafe { libc::kill(disc.pid as libc::pid_t, 0) } != 0 {
+            return Ok(None);
+        }
+    }
+    Ok(Some(disc))
 }
 
 /// Exclusive lock guard held for the lifetime of a single-writer Nola daemon.
@@ -109,12 +138,23 @@ impl ServiceLock {
         #[cfg(unix)]
         {
             use std::os::unix::io::AsRawFd;
-            let rc = unsafe { libc::flock(lock_file.as_raw_fd(), libc::LOCK_EX | libc::LOCK_NB) };
-            if rc != 0 {
-                return Err(StoreError::LockBusy(format!(
-                    "another Nola single-writer holds {}",
-                    lock_path.display()
-                )));
+            loop {
+                let rc =
+                    unsafe { libc::flock(lock_file.as_raw_fd(), libc::LOCK_EX | libc::LOCK_NB) };
+                if rc == 0 {
+                    break;
+                }
+                let err = std::io::Error::last_os_error();
+                if err.kind() == std::io::ErrorKind::Interrupted {
+                    continue;
+                }
+                if err.kind() == std::io::ErrorKind::WouldBlock {
+                    return Err(StoreError::LockBusy(format!(
+                        "another Nola single-writer holds {}",
+                        lock_path.display()
+                    )));
+                }
+                return Err(StoreError::Io(err));
             }
         }
 

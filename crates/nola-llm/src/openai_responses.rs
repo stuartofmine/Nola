@@ -90,8 +90,29 @@ pub(crate) fn build_responses_body(
                 continuation,
                 ..
             } => {
-                if let Some(cont) = continuation.as_ref().filter(|c| c.protocol == protocol && !c.items.is_empty()) {
-                    input.extend(cont.items.iter().cloned());
+                if let Some(cont) = continuation
+                    .as_ref()
+                    .filter(|c| c.protocol == protocol && !c.items.is_empty())
+                {
+                    for item in &cont.items {
+                        if force_store_false {
+                            let item_type = item.get("type").and_then(|v| v.as_str()).unwrap_or("");
+                            // Under store:false, drop reasoning items lacking encrypted_content and strip unstored server IDs
+                            if item_type == "reasoning" && item.get("encrypted_content").is_none() {
+                                continue;
+                            }
+                            let mut cleaned = item.clone();
+                            if let Some(obj) = cleaned.as_object_mut() {
+                                if item_type == "message" || item_type == "function_call" {
+                                    obj.remove("id");
+                                    obj.remove("status");
+                                }
+                            }
+                            input.push(cleaned);
+                        } else {
+                            input.push(item.clone());
+                        }
+                    }
                 } else {
                     if !content.is_empty() {
                         input.push(json!({
@@ -151,6 +172,12 @@ pub(crate) fn build_responses_body(
     body.insert("stream".into(), Value::Bool(stream));
     if force_store_false {
         body.insert("store".into(), Value::Bool(false));
+        if route.capabilities.reasoning {
+            body.insert(
+                "include".into(),
+                json!(["reasoning.encrypted_content"]),
+            );
+        }
     }
     if route.capabilities.sampling_parameters {
         if let Some(t) = route.temperature {
@@ -212,6 +239,13 @@ pub(crate) fn decode_responses_body(
         .map(ToString::to_string);
 
     let status = body.get("status").and_then(|v| v.as_str()).unwrap_or("completed");
+    if status == "failed" || status == "cancelled" {
+        let err = body
+            .get("error")
+            .map(ToString::to_string)
+            .unwrap_or_else(|| status.to_string());
+        return Err(LlmError::Wire(format!("responses API {status}: {err}")));
+    }
     let incomplete_reason = body
         .get("incomplete_details")
         .and_then(|d| d.get("reason"))
@@ -328,10 +362,16 @@ pub(crate) fn parse_responses_sse(
     let mut stop_reason = ModelStopReason::Stop;
     let mut usage = TokenUsage::default();
     let mut calls: BTreeMap<String, (String, String)> = BTreeMap::new();
+    let mut item_id_to_call_id: BTreeMap<String, String> = BTreeMap::new();
+    let mut saw_terminal = false;
 
     while let Some(ev) = sse.next_event()? {
         let trimmed = ev.data.trim();
-        if trimmed.is_empty() || trimmed == "[DONE]" {
+        if trimmed.is_empty() {
+            continue;
+        }
+        if trimmed == "[DONE]" {
+            saw_terminal = true;
             continue;
         }
         let payload: Value = serde_json::from_str(trimmed)?;
@@ -341,6 +381,9 @@ pub(crate) fn parse_responses_sse(
             .or(ev.event.as_deref())
             .unwrap_or("");
         match kind {
+            "error" | "response.failed" => {
+                return Err(LlmError::Wire(format!("responses SSE error ({kind}): {payload}")));
+            }
             "response.output_text.delta" => {
                 if let Some(d) = payload.get("delta").and_then(|v| v.as_str()) {
                     content.push_str(d);
@@ -362,6 +405,9 @@ pub(crate) fn parse_responses_sse(
                             .and_then(|v| v.as_str())
                             .unwrap_or("call_0")
                             .to_string();
+                        if let Some(item_id) = item.get("id").and_then(|v| v.as_str()) {
+                            item_id_to_call_id.insert(item_id.to_string(), cid.clone());
+                        }
                         let name = item
                             .get("name")
                             .and_then(|v| v.as_str())
@@ -373,12 +419,15 @@ pub(crate) fn parse_responses_sse(
                 }
             }
             "response.function_call_arguments.delta" => {
-                let cid = payload
+                let raw_id = payload
                     .get("call_id")
                     .or_else(|| payload.get("item_id"))
                     .and_then(|v| v.as_str())
-                    .unwrap_or("call_0")
-                    .to_string();
+                    .unwrap_or("call_0");
+                let cid = item_id_to_call_id
+                    .get(raw_id)
+                    .cloned()
+                    .unwrap_or_else(|| raw_id.to_string());
                 if let Some(d) = payload.get("delta").and_then(|v| v.as_str()) {
                     calls
                         .entry(cid.clone())
@@ -392,6 +441,7 @@ pub(crate) fn parse_responses_sse(
                 }
             }
             "response.completed" | "response.incomplete" => {
+                saw_terminal = true;
                 if kind == "response.incomplete" {
                     stop_reason = ModelStopReason::OutputLimit;
                 }
@@ -406,6 +456,11 @@ pub(crate) fn parse_responses_sse(
 
     if let Some(resp) = final_response_obj {
         return decode_responses_body(protocol, route, &resp);
+    }
+    if !saw_terminal {
+        return Err(LlmError::Wire(
+            "responses SSE stream ended prematurely without completion event".into(),
+        ));
     }
 
     let mut tool_calls = Vec::new();

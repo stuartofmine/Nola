@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 //! Local Models / Acquisition catalog & Harness Plugins module.
 
+use std::io::Read;
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -10,8 +11,11 @@ use nola_types::{
     ToolSchema, ToolSpec, ToolTier,
 };
 use serde_json::{json, Value};
+use url::{Host, Url};
 
 use crate::ModulesSuite;
+
+const MAX_PROBE_BODY_BYTES: u64 = 256 * 1024;
 
 pub const KIND_LOCAL_MODEL: &str = "local_model";
 pub const KIND_PLUGIN: &str = "plugin";
@@ -53,7 +57,7 @@ impl ToolHandler for LocalModelManageTool {
         }
     }
 
-    fn execute(&self, _ctx: &ToolContext, args: Value) -> ToolExecutionResult {
+    fn execute(&self, ctx: &ToolContext, args: Value) -> ToolExecutionResult {
         match args.get("action").and_then(|v| v.as_str()).unwrap_or("") {
             "register" => {
                 let rec = LocalModelRecord {
@@ -104,14 +108,45 @@ impl ToolHandler for LocalModelManageTool {
                     .get("endpoint")
                     .and_then(|v| v.as_str())
                     .unwrap_or("http://127.0.0.1:8081");
-                let url = format!("{}/v1/models", endpoint.trim_end_matches('/'));
+                let raw_url = format!("{}/v1/models", endpoint.trim_end_matches('/'));
+                let parsed = match Url::parse(&raw_url) {
+                    Ok(u) if matches!(u.scheme(), "http" | "https") => u,
+                    _ => {
+                        return ToolExecutionResult::err_structured(
+                            "invalid_endpoint",
+                            "endpoint must be a valid http(s) URL",
+                            None,
+                        );
+                    }
+                };
+                let is_loopback = match parsed.host() {
+                    Some(Host::Domain(d)) => d.eq_ignore_ascii_case("localhost"),
+                    Some(Host::Ipv4(v4)) => v4.is_loopback(),
+                    Some(Host::Ipv6(v6)) => v6.is_loopback(),
+                    None => false,
+                };
+                if !is_loopback {
+                    if !ctx.network_allowed {
+                        return ToolExecutionResult::err_structured(
+                            "network_denied",
+                            "non-loopback endpoint probe blocked by network policy",
+                            None,
+                        );
+                    }
+                    if let Err(e) = nola_tools::web::resolve_and_validate_public_url(&raw_url) {
+                        return ToolExecutionResult::err_structured("ssrf_blocked", e, None);
+                    }
+                }
                 let res = reqwest::blocking::Client::builder()
                     .timeout(Duration::from_secs(5))
+                    .redirect(reqwest::redirect::Policy::none())
                     .build()
-                    .and_then(|c| c.get(&url).send());
+                    .and_then(|c| c.get(parsed).send());
                 match res {
                     Ok(resp) if resp.status().is_success() => {
-                        let body: Value = resp.json().unwrap_or(json!({}));
+                        let mut buf = Vec::new();
+                        let _ = resp.take(MAX_PROBE_BODY_BYTES).read_to_end(&mut buf);
+                        let body: Value = serde_json::from_slice(&buf).unwrap_or(json!({}));
                         ToolExecutionResult::ok_structured(
                             json!({"endpoint": endpoint, "reachable": true, "models": body}),
                             format!("Probed local endpoint {endpoint}"),
@@ -119,7 +154,7 @@ impl ToolHandler for LocalModelManageTool {
                     }
                     Ok(resp) => ToolExecutionResult::err_structured(
                         "probe_failed",
-                        format!("{url} returned HTTP {}", resp.status()),
+                        format!("{raw_url} returned HTTP {}", resp.status()),
                         None,
                     ),
                     Err(e) => ToolExecutionResult::err_structured("probe_error", e.to_string(), None),

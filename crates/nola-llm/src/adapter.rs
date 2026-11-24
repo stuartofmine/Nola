@@ -178,22 +178,28 @@ pub fn collect_request_media(req: &StructuredModelRequest) -> Vec<&MediaAttachme
     out
 }
 
-/// Parse tool-call JSON arguments safely without crashing on empty strings.
+/// Parse tool-call JSON arguments safely without crashing on empty strings,
+/// always normalizing to a JSON object so Anthropic/OpenAI tool schemas stay valid.
 pub fn parse_tool_arguments(raw: &str) -> Result<Value, LlmError> {
     let trimmed = raw.trim();
     if trimmed.is_empty() {
         return Ok(Value::Object(serde_json::Map::new()));
     }
-    serde_json::from_str(trimmed)
-        .map_err(|e| LlmError::Wire(format!("malformed tool call JSON arguments: {e}")))
+    let val: Value = serde_json::from_str(trimmed)
+        .map_err(|e| LlmError::Wire(format!("malformed tool call JSON arguments: {e}")))?;
+    match val {
+        Value::Object(_) => Ok(val),
+        Value::Null => Ok(Value::Object(serde_json::Map::new())),
+        other => Ok(serde_json::json!({ "input": other })),
+    }
 }
 
 /// Canonical response finalizer shared across ALL 4 wire protocols!
 ///
 /// Architectural invariant:
-/// Whenever `stop_reason == ModelStopReason::OutputLimit`, any partially generated
+/// Whenever `stop_reason == OutputLimit` or `ContentFilter`, any partially generated
 /// `tool_calls` are ATOMICALLY DISCARDED so truncated JSON arguments can never
-/// corrupt files or trigger phantom syntax errors.
+/// corrupt files or clobber a safety refusal.
 pub fn finalize_response(
     response_id: Option<String>,
     response_model: Option<String>,
@@ -204,7 +210,10 @@ pub fn finalize_response(
     usage: TokenUsage,
     continuation: Option<ProviderContinuation>,
 ) -> NormalizedModelResponse {
-    if stop_reason == ModelStopReason::OutputLimit {
+    if matches!(
+        stop_reason,
+        ModelStopReason::OutputLimit | ModelStopReason::ContentFilter
+    ) {
         tool_calls.clear();
     } else if !tool_calls.is_empty() {
         stop_reason = ModelStopReason::ToolCalls;

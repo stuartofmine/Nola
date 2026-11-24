@@ -6,29 +6,32 @@
 //! - Automatic `nola-store` session + event + `--resume` policy persistence
 //! - Clean `OutputLimit` continuation + cancellation + `--json-schema` validation.
 
+use std::collections::BTreeSet;
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 
 use nola_llm::{LlmClient, LlmError};
 use nola_store::{EventPage, Store, StoreError, DEFAULT_MAX_EVENTS_PER_SCOPE};
 use nola_tools::{ToolContext, ToolRegistry};
 use nola_types::{
     estimate_request_tokens, new_id, now_ms, ContextBudget, FrozenSystemBlock, HistoryMessage,
-    HostCapabilities, ModelRouteConfig, ModelStopReason, ModelStreamDelta, NormalizedModelResponse,
-    ResourceEffect, RuntimeReminder, Session, StructuredModelRequest, TokenUsage,
+    HookDecision, HookEvent, HostCapabilities, ModelRouteConfig, ModelStopReason, ModelStreamDelta,
+    NormalizedModelResponse, ResourceEffect, RuleScope, RuntimeReminder, Session,
+    StructuredModelRequest, TokenUsage, ToolExecutionResult,
 };
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use thiserror::Error;
 
-use crate::catalog::ToolCatalog;
+use crate::catalog::{ForceToolSet, ToolCatalog};
 use crate::compaction::compact_history;
 use crate::hooks::HookRunner;
 use crate::loop_guard::LoopGuard;
-use crate::middleware::{ApprovalCallback, ToolExecutionMiddleware};
+use crate::middleware::{ApprovalCallback, MiddlewareOutcome, ToolExecutionMiddleware};
 use crate::policy::EffectivePolicy;
 
 const MAX_PARALLEL_READ_TOOLS: usize = 12;
+const MAX_CONSECUTIVE_OUTPUT_LIMITS: usize = 5;
 
 #[derive(Debug, Error)]
 pub enum AgentError {
@@ -103,6 +106,8 @@ pub enum AgentEvent {
         is_error: bool,
         summary: String,
         effects: Vec<ResourceEffect>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        full_output_ref: Option<String>,
     },
     Compacted {
         tokens_before: usize,
@@ -130,10 +135,12 @@ pub struct AgentRunConfig {
     pub approval: Option<ApprovalCallback>,
     /// 0 means unlimited iterations (supports Harbor/Terminal-Bench unlimited-step runs!).
     pub max_steps: usize,
-    pub force_all_tools: bool,
+    pub force_tool_set: ForceToolSet,
     pub stream: bool,
     pub json_schema: Option<Value>,
     pub cancel: Arc<AtomicBool>,
+    pub auto_recall_memory: bool,
+    pub inbox: Option<Arc<Mutex<Vec<String>>>>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -187,17 +194,28 @@ impl AgentEngine {
         let now = now_ms();
 
         // Restore history + EffectivePolicy + activated tools when resuming a session!
+        // Preserve stricter User/CliOverride rules and network restrictions from the new invocation.
         let state_key = format!("session_state:{session_id}");
         let mut active_policy = cfg.policy.clone();
         let mut catalog = ToolCatalog::build_initial(
             &self.registry,
             cfg.host_capabilities,
-            cfg.force_all_tools,
+            cfg.force_tool_set,
         );
         let mut history: Vec<HistoryMessage> = if cfg.resume {
             if let Some(val) = self.store.get_kv(&state_key)? {
                 if let Ok(saved) = serde_json::from_value::<PersistedSessionState>(val) {
-                    active_policy = saved.policy;
+                    let mut merged_policy = saved.policy;
+                    merged_policy.network_allowed =
+                        merged_policy.network_allowed && cfg.policy.network_allowed;
+                    for r in &cfg.policy.rules {
+                        if matches!(r.scope, RuleScope::User | RuleScope::CliOverride)
+                            && !merged_policy.rules.contains(r)
+                        {
+                            merged_policy.rules.push(r.clone());
+                        }
+                    }
+                    active_policy = merged_policy;
                     catalog.restore_activated(&saved.activated_tools, &self.registry);
                     saved.history
                 } else {
@@ -260,16 +278,74 @@ impl AgentEngine {
 
         let mut loop_guard = LoopGuard::default();
         let mut pending_reminders: Vec<RuntimeReminder> = Vec::new();
+        // Run SessionStart lifecycle hooks
+        let start_payload = json!({
+            "session_id": session_id,
+            "model": cfg.route.model,
+            "resume": cfg.resume,
+        });
+        for dec in middleware
+            .hooks
+            .run_event(HookEvent::SessionStart, "session", &start_payload)
+        {
+            match dec {
+                HookDecision::InjectContext { text } => {
+                    pending_reminders.push(RuntimeReminder {
+                        tag: "session_start_hook".into(),
+                        text,
+                    });
+                }
+                HookDecision::Block { reason } => {
+                    return Err(AgentError::SchemaValidation(format!(
+                        "SessionStart hook blocked run: {reason}"
+                    )));
+                }
+                HookDecision::Allow | HookDecision::ModifyInput { .. } => {}
+            }
+        }
+        // Automatic FTS5 memory recall injected ONLY as an ephemeral tail reminder (0 KV prefix drift!)
+        if cfg.auto_recall_memory {
+            let recall_query = extract_recall_keywords(user_prompt);
+            if !recall_query.is_empty() {
+                if let Ok(recalled) = self.store.search_memory(&recall_query, None, 5) {
+                    if !recalled.is_empty() {
+                        let body = recalled
+                            .iter()
+                            .map(|m| format!("- [{}] {}: {}", m.namespace, m.title, m.content))
+                            .collect::<Vec<_>>()
+                            .join("\n");
+                        pending_reminders.push(RuntimeReminder {
+                            tag: "recalled_memory".into(),
+                            text: format!("Relevant persisted memories:\n{body}"),
+                        });
+                    }
+                }
+            }
+        }
         let mut total_usage = TokenUsage::default();
         let mut all_effects: Vec<ResourceEffect> = Vec::new();
         let mut final_text = String::new();
         let mut steps = 0usize;
+        let mut consecutive_output_limits = 0usize;
         let mut cancelled = false;
 
         loop {
             if cfg.cancel.load(Ordering::Relaxed) {
                 cancelled = true;
                 break;
+            }
+            // Drain any asynchronous messages delivered to this agent's inbox (e.g. from parent task_control).
+            if let Some(inbox) = &cfg.inbox {
+                if let Ok(mut q) = inbox.lock() {
+                    for msg in q.drain(..) {
+                        if !msg.trim().is_empty() {
+                            history.push(HistoryMessage::User {
+                                content: msg,
+                                media: Vec::new(),
+                            });
+                        }
+                    }
+                }
             }
             if cfg.max_steps > 0 && steps >= cfg.max_steps {
                 break;
@@ -342,6 +418,17 @@ impl AgentEngine {
 
             // Handle OutputLimit cleanly (truncated tool calls were already atomically discarded!)
             if resp.stop_reason == ModelStopReason::OutputLimit {
+                consecutive_output_limits += 1;
+                if consecutive_output_limits >= MAX_CONSECUTIVE_OUTPUT_LIMITS {
+                    final_text = resp.content;
+                    self.persist_state(
+                        &state_key,
+                        &history,
+                        &active_policy,
+                        catalog.active_names(),
+                    )?;
+                    break;
+                }
                 pending_reminders.push(RuntimeReminder {
                     tag: "output_limit".into(),
                     text: "Your previous response reached max_output_tokens and was truncated. Any partial tool call was safely discarded. Continue cleanly using smaller, focused edits.".into(),
@@ -349,6 +436,7 @@ impl AgentEngine {
                 self.persist_state(&state_key, &history, &active_policy, catalog.active_names())?;
                 continue;
             }
+            consecutive_output_limits = 0;
 
             // Final assistant response (no tool calls)
             if resp.tool_calls.is_empty() {
@@ -381,9 +469,23 @@ impl AgentEngine {
                 );
             }
 
-            let outcomes: Vec<crate::middleware::MiddlewareOutcome> = if all_read_only {
+            let outcomes: Vec<MiddlewareOutcome> = if all_read_only {
                 let mut collected = Vec::with_capacity(resp.tool_calls.len());
                 for chunk in resp.tool_calls.chunks(MAX_PARALLEL_READ_TOOLS) {
+                    if cfg.cancel.load(Ordering::Relaxed) {
+                        cancelled = true;
+                        for _ in chunk {
+                            collected.push(MiddlewareOutcome {
+                                result: ToolExecutionResult::err_structured(
+                                    "cancelled",
+                                    "execution cancelled",
+                                    None,
+                                ),
+                                reminders: Vec::new(),
+                            });
+                        }
+                        continue;
+                    }
                     let mw = &middleware;
                     let chunk_out: Vec<_> = std::thread::scope(|s| {
                         let handles: Vec<_> = chunk
@@ -391,26 +493,49 @@ impl AgentEngine {
                             .map(|tc| {
                                 let name = tc.name.as_str();
                                 let args = tc.arguments.clone();
-                                s.spawn(move || {
-                                    mw.execute(&self.registry, ctx, name, args)
-                                })
+                                s.spawn(move || mw.execute(&self.registry, ctx, name, args))
                             })
                             .collect();
                         handles
                             .into_iter()
-                            .map(|h| h.join().unwrap())
+                            .map(|h| {
+                                h.join().unwrap_or_else(|_| MiddlewareOutcome {
+                                    result: ToolExecutionResult::err_structured(
+                                        "tool_panic",
+                                        "parallel read-only tool thread panicked",
+                                        None,
+                                    ),
+                                    reminders: Vec::new(),
+                                })
+                            })
                             .collect()
                     });
                     collected.extend(chunk_out);
                 }
                 collected
             } else {
-                resp.tool_calls
-                    .iter()
-                    .map(|tc| {
-                        middleware.execute(&self.registry, ctx, &tc.name, tc.arguments.clone())
-                    })
-                    .collect()
+                let mut collected = Vec::with_capacity(resp.tool_calls.len());
+                for tc in &resp.tool_calls {
+                    if cfg.cancel.load(Ordering::Relaxed) {
+                        cancelled = true;
+                        collected.push(MiddlewareOutcome {
+                            result: ToolExecutionResult::err_structured(
+                                "cancelled",
+                                "execution cancelled",
+                                None,
+                            ),
+                            reminders: Vec::new(),
+                        });
+                        continue;
+                    }
+                    collected.push(middleware.execute(
+                        &self.registry,
+                        ctx,
+                        &tc.name,
+                        tc.arguments.clone(),
+                    ));
+                }
+                collected
             };
 
             let mut guard_batch = Vec::with_capacity(resp.tool_calls.len());
@@ -445,21 +570,41 @@ impl AgentEngine {
 
                 pending_reminders.extend(out.reminders);
                 all_effects.extend(out.result.effects.clone());
+                // Auto-spill oversized tool payloads (>24 KiB) to disk OutputStore
+                // so huge logs/diffs never blow up the LLM context window, and auto-activate
+                // `tool_output` at the catalog tail so the model can immediately inspect slices!
+                let mut full_output_ref: Option<String> = None;
+                let effective_payload = if tc.name != "tool_output" {
+                    if let Some((compact, meta)) = ctx.output_store.maybe_spill_payload(
+                        &tc.name,
+                        &out.result.payload,
+                        nola_tools::DEFAULT_SPILL_THRESHOLD_BYTES,
+                    ) {
+                        full_output_ref = Some(meta.path.display().to_string());
+                        catalog.activate_tail(&["tool_output".to_string()], &self.registry);
+                        compact
+                    } else {
+                        out.result.payload.clone()
+                    }
+                } else {
+                    out.result.payload.clone()
+                };
                 self.emit_and_persist(
                     &session_id,
                     AgentEvent::ToolFinished {
                         call_id: tc.call_id.clone(),
                         name: tc.name.clone(),
                         is_error: out.result.is_error,
-                        summary: out.result.payload.ui_summary().to_string(),
+                        summary: effective_payload.ui_summary().to_string(),
                         effects: out.result.effects.clone(),
+                        full_output_ref,
                     },
                     &mut on_event,
                 );
                 history.push(HistoryMessage::Tool {
                     call_id: tc.call_id.clone(),
                     tool_name: tc.name.clone(),
-                    payload: out.result.payload.clone(),
+                    payload: effective_payload,
                     is_error: out.result.is_error,
                     media: out.result.media.clone(),
                 });
@@ -472,6 +617,16 @@ impl AgentEngine {
 
             self.persist_state(&state_key, &history, &active_policy, catalog.active_names())?;
         }
+
+        let stop_payload = json!({
+            "session_id": session_id,
+            "steps": steps,
+            "cancelled": cancelled,
+            "final_text_len": final_text.len(),
+        });
+        let _ = middleware
+            .hooks
+            .run_event(HookEvent::Stop, "session", &stop_payload);
 
         self.emit_and_persist(
             &session_id,
@@ -532,6 +687,29 @@ impl AgentEngine {
         }
         on_event(event);
     }
+}
+
+fn extract_recall_keywords(prompt: &str) -> String {
+    const STOP_WORDS: &[&str] = &[
+        "the", "and", "for", "with", "that", "this", "from", "into", "your", "have", "will",
+        "what", "when", "where", "which", "about", "please", "could", "would", "should", "there",
+        "their", "they", "them", "then", "than", "make", "just", "some", "more", "also", "been",
+    ];
+    let mut seen = BTreeSet::new();
+    let mut out = Vec::new();
+    for raw in prompt.split(|c: char| !c.is_alphanumeric() && c != '_' && c != '-') {
+        let tok = raw.trim().to_ascii_lowercase();
+        if tok.chars().count() < 3 || STOP_WORDS.contains(&tok.as_str()) {
+            continue;
+        }
+        if seen.insert(tok.clone()) {
+            out.push(tok);
+            if out.len() >= 20 {
+                break;
+            }
+        }
+    }
+    out.join(" ")
 }
 
 fn validate_json_output(raw: &str, schema: &Value) -> Result<(), AgentError> {

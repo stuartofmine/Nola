@@ -13,11 +13,14 @@ use crate::{ToolModelPayload, ToolSchema};
 
 /// Supported LLM wire protocols (exhaustive across the entire workspace).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
 pub enum ModelProtocol {
+    #[serde(rename = "chat_completions", alias = "openai_chat", alias = "open_ai_chat", alias = "openai-compatible", alias = "openai")]
     OpenAiChat,
+    #[serde(rename = "responses", alias = "openai_responses", alias = "open_ai_responses")]
     OpenAiResponses,
+    #[serde(rename = "anthropic", alias = "anthropic_messages")]
     AnthropicMessages,
+    #[serde(rename = "siwc_responses", alias = "siwc", alias = "chatgpt")]
     SiwcResponses,
 }
 
@@ -33,10 +36,10 @@ impl ModelProtocol {
 
     pub fn parse(raw: &str) -> Option<Self> {
         match raw.trim().to_ascii_lowercase().as_str() {
-            "chat_completions" | "openai_chat" | "openai-compatible" | "openai" => {
+            "chat_completions" | "openai_chat" | "open_ai_chat" | "openai-compatible" | "openai" => {
                 Some(Self::OpenAiChat)
             }
-            "responses" | "openai_responses" => Some(Self::OpenAiResponses),
+            "responses" | "openai_responses" | "open_ai_responses" => Some(Self::OpenAiResponses),
             "anthropic" | "anthropic_messages" => Some(Self::AnthropicMessages),
             "siwc_responses" | "siwc" | "chatgpt" => Some(Self::SiwcResponses),
             _ => None,
@@ -44,19 +47,19 @@ impl ModelProtocol {
     }
 }
 
-/// Capabilities declared for a concrete model route.
+/// Capabilities declared for a concrete model route (accepts both camelCase and snake_case).
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ModelCapabilities {
-    #[serde(default = "default_true")]
+    #[serde(default = "default_true", alias = "tool_calls")]
     pub tool_calls: bool,
-    #[serde(default)]
+    #[serde(default, alias = "image_input")]
     pub image_input: bool,
-    #[serde(default)]
+    #[serde(default, alias = "native_pdf_input")]
     pub native_pdf_input: bool,
     #[serde(default)]
     pub reasoning: bool,
-    #[serde(default = "default_true")]
+    #[serde(default = "default_true", alias = "sampling_parameters")]
     pub sampling_parameters: bool,
 }
 
@@ -76,21 +79,38 @@ impl Default for ModelCapabilities {
     }
 }
 
-/// Concrete model connection & route configuration.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+/// Concrete model connection & route configuration (`Debug` redacts `api_key`).
+#[derive(Clone, PartialEq, Serialize, Deserialize)]
 pub struct ModelRouteConfig {
     pub connection_id: String,
     pub endpoint: String,
     pub protocol: ModelProtocol,
     pub model: String,
+    #[serde(default)]
     pub api_key: String,
     pub context_window: usize,
     pub max_output_tokens: Option<usize>,
     pub temperature: Option<f64>,
     pub top_p: Option<f64>,
+    #[serde(default)]
     pub capabilities: ModelCapabilities,
     pub reasoning_effort: Option<String>,
     pub prompt_cache_key: Option<String>,
+}
+
+impl std::fmt::Debug for ModelRouteConfig {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("ModelRouteConfig")
+            .field("connection_id", &self.connection_id)
+            .field("endpoint", &self.endpoint)
+            .field("protocol", &self.protocol)
+            .field("model", &self.model)
+            .field("api_key", &if self.api_key.is_empty() { "" } else { "[REDACTED]" })
+            .field("context_window", &self.context_window)
+            .field("max_output_tokens", &self.max_output_tokens)
+            .field("capabilities", &self.capabilities)
+            .finish()
+    }
 }
 
 /// Immutable leading system prompt block (never mutated mid-turn).
@@ -219,7 +239,7 @@ pub struct NormalizedModelResponse {
 
 /// Incremental streaming event emitted while decoding a model response.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-#[serde(tag = "type", rename_all = "snake_case")]
+#[serde(tag = "type", content = "payload", rename_all = "snake_case")]
 pub enum ModelStreamDelta {
     Text(String),
     Reasoning(String),

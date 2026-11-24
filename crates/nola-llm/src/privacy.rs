@@ -69,18 +69,82 @@ impl PrivacyRedactor {
         out
     }
 
+    /// Recursively redact every string leaf inside a JSON `Value` without ever breaking JSON structure.
+    pub fn redact_json_value(val: &mut serde_json::Value) -> bool {
+        match val {
+            serde_json::Value::String(s) => {
+                let red = Self::redact_text(s);
+                if red != *s {
+                    *s = red;
+                    true
+                } else {
+                    false
+                }
+            }
+            serde_json::Value::Array(arr) => {
+                let mut changed = false;
+                for item in arr {
+                    if Self::redact_json_value(item) {
+                        changed = true;
+                    }
+                }
+                changed
+            }
+            serde_json::Value::Object(map) => {
+                let mut changed = false;
+                for (_, v) in map.iter_mut() {
+                    if Self::redact_json_value(v) {
+                        changed = true;
+                    }
+                }
+                changed
+            }
+            _ => false,
+        }
+    }
+
     pub fn sanitize_request(endpoint: &str, req: &StructuredModelRequest) -> StructuredModelRequest {
         if is_local_or_lan_endpoint(endpoint) {
             return req.clone();
         }
         let mut out = req.clone();
+        for block in &mut out.frozen_system_prefix {
+            block.text = Self::redact_text(&block.text);
+        }
+        for rem in &mut out.ephemeral_tail_reminders {
+            rem.text = Self::redact_text(&rem.text);
+        }
         for msg in &mut out.history {
             match msg {
                 HistoryMessage::User { content, .. } => {
                     *content = Self::redact_text(content);
                 }
-                HistoryMessage::Assistant { content, .. } => {
+                HistoryMessage::Assistant {
+                    content,
+                    reasoning,
+                    tool_calls,
+                    continuation,
+                } => {
                     *content = Self::redact_text(content);
+                    if let Some(r) = reasoning {
+                        *r = Self::redact_text(r);
+                    }
+                    for tc in tool_calls {
+                        Self::redact_json_value(&mut tc.arguments);
+                    }
+                    if let Some(cont) = continuation {
+                        let mut mutated = false;
+                        for item in &mut cont.items {
+                            if Self::redact_json_value(item) {
+                                mutated = true;
+                            }
+                        }
+                        // If a signed Anthropic thinking block was modified by redaction, drop
+                        // continuation so Anthropic does not reject an invalidated signature.
+                        if mutated && cont.protocol == nola_types::ModelProtocol::AnthropicMessages {
+                            *continuation = None;
+                        }
+                    }
                 }
                 HistoryMessage::Tool { payload, .. } => match payload {
                     ToolModelPayload::Text(t) => *t = Self::redact_text(t),
@@ -89,14 +153,7 @@ impl PrivacyRedactor {
                         ui_summary,
                     } => {
                         *ui_summary = Self::redact_text(ui_summary);
-                        if let Ok(s) = serde_json::to_string(model_data) {
-                            let redacted = Self::redact_text(&s);
-                            if redacted != s {
-                                if let Ok(v) = serde_json::from_str(&redacted) {
-                                    *model_data = v;
-                                }
-                            }
-                        }
+                        Self::redact_json_value(model_data);
                     }
                 },
             }

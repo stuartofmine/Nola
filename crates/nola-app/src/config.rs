@@ -95,11 +95,130 @@ pub fn default_vault_path(db_path: &Path) -> PathBuf {
         .join("vault.json")
 }
 
-/// Apply a config file into `store` (and persist a copy in `$HOME/.nola/config.json`).
+/// Strip JSONC `//` line comments, `/* ... */` block comments, and trailing commas
+/// outside of string literals so standard `serde_json` parses both JSON and JSONC cleanly.
+pub fn strip_jsonc(input: &str) -> String {
+    let bytes = input.as_bytes();
+    let mut no_comments = String::with_capacity(input.len());
+    let mut i = 0;
+    let mut in_str = false;
+    let mut escaped = false;
+    while i < bytes.len() {
+        let ch = bytes[i];
+        if in_str {
+            no_comments.push(ch as char);
+            if escaped {
+                escaped = false;
+            } else if ch == b'\\' {
+                escaped = true;
+            } else if ch == b'"' {
+                in_str = false;
+            }
+            i += 1;
+            continue;
+        }
+        if ch == b'"' {
+            in_str = true;
+            no_comments.push('"');
+            i += 1;
+            continue;
+        }
+        if ch == b'/' && i + 1 < bytes.len() && bytes[i + 1] == b'/' {
+            i += 2;
+            while i < bytes.len() && bytes[i] != b'\n' {
+                i += 1;
+            }
+            continue;
+        }
+        if ch == b'/' && i + 1 < bytes.len() && bytes[i + 1] == b'*' {
+            i += 2;
+            while i + 1 < bytes.len() && !(bytes[i] == b'*' && bytes[i + 1] == b'/') {
+                if bytes[i] == b'\n' {
+                    no_comments.push('\n');
+                }
+                i += 1;
+            }
+            i = (i + 2).min(bytes.len());
+            continue;
+        }
+        // Preserve multi-byte UTF-8 characters intact!
+        if ch < 0x80 {
+            no_comments.push(ch as char);
+            i += 1;
+        } else {
+            let rest = &input[i..];
+            if let Some(c) = rest.chars().next() {
+                no_comments.push(c);
+                i += c.len_utf8();
+            } else {
+                break;
+            }
+        }
+    }
+
+    // Remove trailing commas before `}` or `]` outside strings
+    let nb = no_comments.as_bytes();
+    let mut out = String::with_capacity(no_comments.len());
+    let mut j = 0;
+    in_str = false;
+    escaped = false;
+    while j < nb.len() {
+        let ch = nb[j];
+        if in_str {
+            if ch < 0x80 {
+                out.push(ch as char);
+                if escaped {
+                    escaped = false;
+                } else if ch == b'\\' {
+                    escaped = true;
+                } else if ch == b'"' {
+                    in_str = false;
+                }
+                j += 1;
+            } else if let Some(c) = no_comments[j..].chars().next() {
+                out.push(c);
+                escaped = false;
+                j += c.len_utf8();
+            } else {
+                break;
+            }
+            continue;
+        }
+        if ch == b'"' {
+            in_str = true;
+            out.push('"');
+            j += 1;
+            continue;
+        }
+        if ch == b',' {
+            let mut k = j + 1;
+            while k < nb.len() && matches!(nb[k], b' ' | b'\t' | b'\r' | b'\n') {
+                k += 1;
+            }
+            if k < nb.len() && matches!(nb[k], b'}' | b']') {
+                j += 1;
+                continue;
+            }
+        }
+        if ch < 0x80 {
+            out.push(ch as char);
+            j += 1;
+        } else if let Some(c) = no_comments[j..].chars().next() {
+            out.push(c);
+            j += c.len_utf8();
+        } else {
+            break;
+        }
+    }
+    out
+}
+
+/// Apply a config file into `store` (supports JSON and JSONC).
 pub fn apply_config_file(store: &Store, path: &Path) -> Result<AppliedConfig, String> {
     let raw = fs::read_to_string(path)
         .map_err(|e| format!("failed to read config {}: {e}", path.display()))?;
-    let cfg: AppliedConfig = serde_json::from_str(&raw)
+    let clean = strip_jsonc(&raw);
+    let cfg: AppliedConfig = serde_json::from_str(&clean)
         .map_err(|e| format!("failed to parse config JSON {}: {e}", path.display()))?;
     let val = serde_json::to_value(&cfg).map_err(|e| e.to_string())?;
     store
@@ -117,7 +236,8 @@ pub fn load_active_config(store: &Store) -> AppliedConfig {
     }
     let home_cfg = default_home_dir().join(".nola/config.json");
     if let Ok(raw) = fs::read_to_string(&home_cfg) {
-        if let Ok(cfg) = serde_json::from_str::<AppliedConfig>(&raw) {
+        let clean = strip_jsonc(&raw);
+        if let Ok(cfg) = serde_json::from_str::<AppliedConfig>(&clean) {
             return cfg;
         }
     }
@@ -196,9 +316,8 @@ fn resolve_api_key(conn: &ConnectionConfig) -> String {
     }
     if let Some(raw) = &conn.api_key {
         if let Some(env_name) = raw.strip_prefix("env:") {
-            if let Ok(val) = std::env::var(env_name.trim()) {
-                return val;
-            }
+            // NEVER return literal `"env:VAR_NAME"` as a bearer token when unset!
+            return std::env::var(env_name.trim()).unwrap_or_default();
         }
         if !raw.trim().is_empty() {
             return raw.clone();

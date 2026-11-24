@@ -13,10 +13,12 @@ pub fn semantic_observation_arguments(tool_name: &str, args: &Value) -> String {
             "path": args.get("path").and_then(|v| v.as_str()).unwrap_or("").trim(),
             "start_line": args.get("start_line").and_then(|v| v.as_u64()).unwrap_or(1),
             "end_line": args.get("end_line").and_then(|v| v.as_u64()).unwrap_or(0),
+            "page": args.get("page").and_then(|v| v.as_u64()).unwrap_or(0),
         }),
         "grep" => json!({
             "pattern": args.get("pattern").and_then(|v| v.as_str()).unwrap_or("").trim(),
             "path": args.get("path").and_then(|v| v.as_str()).unwrap_or("").trim(),
+            "case_insensitive": args.get("case_insensitive").and_then(|v| v.as_bool()).unwrap_or(false),
         }),
         "bash" => json!({
             "command": args.get("command").and_then(|v| v.as_str()).unwrap_or("").split_whitespace().collect::<Vec<_>>().join(" "),
@@ -52,27 +54,32 @@ impl LoopGuard {
             return None;
         }
 
-        if all_ok {
-            self.error_streak = 0;
-            self.clean_batches += 1;
-            if self.clean_batches >= 3 {
-                self.identical_streak = 0;
-            }
-        } else {
-            self.error_streak += 1;
-            self.clean_batches = 0;
-        }
-
         let sig = batch
             .iter()
             .map(|(n, a, _)| semantic_observation_arguments(n, a))
             .collect::<Vec<_>>()
             .join("|");
-        if self.last_signature.as_deref() == Some(sig.as_str()) {
+        let is_repeat = self.last_signature.as_deref() == Some(sig.as_str());
+
+        if is_repeat {
             self.identical_streak += 1;
+            self.clean_batches = 0;
         } else {
             self.last_signature = Some(sig);
             self.identical_streak = 1;
+        }
+
+        if all_ok {
+            self.error_streak = 0;
+            if !is_repeat {
+                self.clean_batches += 1;
+                if self.clean_batches >= 3 {
+                    self.identical_streak = 1;
+                }
+            }
+        } else {
+            self.error_streak += 1;
+            self.clean_batches = 0;
         }
 
         if self.identical_streak >= 3 {

@@ -23,6 +23,7 @@ nola-tools = { workspace = true }
 nola-mcp = { workspace = true }
 nola-engine = { workspace = true }
 nola-modules = { workspace = true }
+chrono = { workspace = true }
 crossterm = { workspace = true }
 libc = { workspace = true }
 serde = { workspace = true }

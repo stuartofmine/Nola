@@ -69,36 +69,56 @@ impl ToolExecutionMiddleware {
             };
         }
 
-        // Stage 3: Trusted PreToolUse hooks (with mandatory policy RE-CHECK on ModifyInput!)
-        let pre_decisions = self.hooks.run_event(HookEvent::PreToolUse, tool_name, &args);
-        for dec in pre_decisions {
-            match dec {
-                HookDecision::Allow => {}
-                HookDecision::Block { reason } => {
-                    return MiddlewareOutcome {
-                        result: ToolExecutionResult::err_structured(
-                            "hook_blocked",
-                            format!("PreToolUse hook blocked '{tool_name}': {reason}"),
-                            None,
-                        ),
-                        reminders,
-                    };
-                }
-                HookDecision::ModifyInput { input } => {
-                    args = input;
-                    // Security invariant: a hook-modified input MUST pass EffectivePolicy again!
-                    if let Some(blocked) = self.enforce_policy(&spec, &args, &ctx.workspace_root) {
+        // Stage 3: Trusted PreToolUse hooks (with mandatory policy + hook RE-CHECK on ModifyInput!)
+        // Bounded to 3 rounds so mutually-modifying hooks cannot loop indefinitely.
+        for round in 0..3 {
+            let mut modified_this_round = false;
+            let pre_decisions = self.hooks.run_event(HookEvent::PreToolUse, tool_name, &args);
+            for dec in pre_decisions {
+                match dec {
+                    HookDecision::Allow => {}
+                    HookDecision::Block { reason } => {
                         return MiddlewareOutcome {
-                            result: blocked,
+                            result: ToolExecutionResult::err_structured(
+                                "hook_blocked",
+                                format!("PreToolUse hook blocked '{tool_name}': {reason}"),
+                                None,
+                            ),
                             reminders,
                         };
                     }
+                    HookDecision::ModifyInput { input } => {
+                        if input != args {
+                            args = input;
+                            modified_this_round = true;
+                        }
+                        // Security invariant: a hook-modified input MUST pass EffectivePolicy again!
+                        if let Some(blocked) = self.enforce_policy(&spec, &args, &ctx.workspace_root)
+                        {
+                            return MiddlewareOutcome {
+                                result: blocked,
+                                reminders,
+                            };
+                        }
+                    }
+                    HookDecision::InjectContext { text } => {
+                        reminders.push(RuntimeReminder {
+                            tag: "pre_hook".into(),
+                            text,
+                        });
+                    }
                 }
-                HookDecision::InjectContext { text } => {
-                    reminders.push(RuntimeReminder {
-                        tag: "pre_hook".into(),
-                        text,
-                    });
+            }
+            if !modified_this_round {
+                break;
+            }
+            if round == 2 {
+                // Final policy guard after maximum modification rounds
+                if let Some(blocked) = self.enforce_policy(&spec, &args, &ctx.workspace_root) {
+                    return MiddlewareOutcome {
+                        result: blocked,
+                        reminders,
+                    };
                 }
             }
         }

@@ -92,11 +92,21 @@ impl LlmClient {
                             .map_err(|e| LlmError::Http(format!("response json decode failed: {e}")))?;
                         return adapter.decode_response(route, &body);
                     }
+                    let retry_after_secs = resp
+                        .headers()
+                        .get("retry-after")
+                        .and_then(|v| v.to_str().ok())
+                        .and_then(|s| s.trim().parse::<u64>().ok())
+                        .map(|s| s.min(30));
                     let body = resp.text().unwrap_or_default();
-                    let retryable = matches!(status, 408 | 429 | 500 | 502 | 503 | 504);
+                    let retryable = matches!(status, 408 | 429 | 500 | 502 | 503 | 504 | 529);
                     last_err = Some(LlmError::Status { status, body });
                     if !retryable || attempt == self.max_retries {
                         break;
+                    }
+                    if let Some(secs) = retry_after_secs {
+                        std::thread::sleep(Duration::from_secs(secs));
+                        continue;
                     }
                 }
                 Err(err) => {

@@ -1,19 +1,31 @@
 // SPDX-License-Identifier: Apache-2.0
 //! Unified Nola v2 Tool Runtime:
-//! - Single `FileMutationPipeline` guaranteeing `VersionTransition` on all file mutations.
-//! - Single `ShellExecutionPipeline` with capability-probed `bwrap` sandbox and `output_artifacts`.
-//! - Full binary document intelligence (spreadsheets, PDFs, audio FFT, images).
-//! - DNS-pinned SSRF-safe `web_fetch`, bounded `rquickjs` code-mode, and pooled LSP diagnostics.
+//! - Single `FileMutationPipeline` guaranteeing `VersionTransition` on all file mutations
+//! - Single `ShellExecutionPipeline` with capability-probed `bwrap` sandbox & `output_artifacts`
+//! - Interactive VT100 `PtyManager` (`pty_exec`)
+//! - Content-addressed `OutputStore` (`tool_output`) preventing huge outputs from blowing context
+//! - Real JSON-RPC 2.0 `LspPool` (`lsp`) + multi-language `repo_map` + `workspace_checkpoint`
+//! - Full binary document readers (spreadsheets, PDFs, audio FFT, images)
+//! - DNS-pinned SSRF-safe `web_fetch` + keyless/API `web_search`
+//! - Managed Chromium CDP `BrowserManager` (`browser`) + `NativeBrowserBridge`
+//! - Native Desktop Automation (`computer` + `computer_helper.py`)
+//! - Bounded QuickJS sandbox (`code_exec`)
 
 pub mod binary_docs;
+pub mod browser;
 pub mod code_mode;
+pub mod code_tools;
+pub mod computer;
 pub mod file_pipeline;
 pub mod git;
 pub mod lsp;
+pub mod output_store;
+pub mod pty;
 pub mod sandbox;
 pub mod search;
 pub mod shell_pipeline;
 pub mod web;
+pub mod web_search;
 
 #[cfg(test)]
 mod tests;
@@ -27,8 +39,14 @@ use nola_types::{
 };
 use serde_json::{json, Value};
 
-pub use file_pipeline::{path_within_workspace, FileAccessState, FileMutationPipeline};
+pub use browser::{BrowserManager, NativeBrowserBridge};
+pub use code_tools::CheckpointManager;
+pub use file_pipeline::{
+    canonicalize_nearest_ancestor, path_within_workspace, FileAccessState, FileMutationPipeline,
+};
 pub use lsp::LspPool;
+pub use output_store::{OutputStore, DEFAULT_SPILL_THRESHOLD_BYTES};
+pub use pty::PtyManager;
 pub use sandbox::{probe_bwrap_available, SandboxMode};
 pub use shell_pipeline::{validation_snapshot, ShellExecutionPipeline};
 
@@ -38,6 +56,10 @@ pub struct ToolContext {
     pub workspace_root: PathBuf,
     pub file_state: Arc<FileAccessState>,
     pub shell: Arc<ShellExecutionPipeline>,
+    pub pty: Arc<PtyManager>,
+    pub output_store: Arc<OutputStore>,
+    pub checkpoints: Arc<CheckpointManager>,
+    pub browser: Arc<BrowserManager>,
     pub lsp: Arc<LspPool>,
     pub network_allowed: bool,
     pub permission_profile: PermissionProfile,
@@ -52,6 +74,10 @@ impl ToolContext {
             workspace_root: root,
             file_state: Arc::new(FileAccessState::default()),
             shell: Arc::new(ShellExecutionPipeline::default()),
+            pty: Arc::new(PtyManager::default()),
+            output_store: Arc::new(OutputStore::default()),
+            checkpoints: Arc::new(CheckpointManager::default()),
+            browser: Arc::new(BrowserManager::default()),
             lsp: Arc::new(LspPool::default()),
             network_allowed: true,
             permission_profile: PermissionProfile::Cautious,
@@ -77,7 +103,7 @@ pub struct ToolRegistry {
 impl ToolRegistry {
     pub fn with_builtin_tools() -> Self {
         let mut reg = Self::default();
-        // Turn-0 Core orthogonal primitives (~12 tools)
+        // --- Turn-0 Core orthogonal primitives (12 tools) ---
         reg.register(Arc::new(file_pipeline::ReadFileTool));
         reg.register(Arc::new(file_pipeline::WriteFileTool));
         reg.register(Arc::new(file_pipeline::EditFileTool));
@@ -90,11 +116,23 @@ impl ToolRegistry {
         reg.register(Arc::new(shell_pipeline::BashControlTool));
         reg.register(Arc::new(git::GitTool));
         reg.register(Arc::new(ToolSearchTool));
-        // Deferred tools (activated on demand via `tool_search`, appended at tail)
+
+        // --- Deferred full-capability tools (tail-activated on demand via `tool_search`) ---
+        reg.register(Arc::new(pty::PtyExecTool));
+        reg.register(Arc::new(output_store::ToolOutputTool));
+        reg.register(Arc::new(code_tools::MultiEditFileTool));
+        reg.register(Arc::new(code_tools::MoveFileTool));
+        reg.register(Arc::new(code_tools::ReadManyFilesTool));
+        reg.register(Arc::new(code_tools::NotebookTool));
+        reg.register(Arc::new(code_tools::RepoMapTool));
+        reg.register(Arc::new(code_tools::WorkspaceCheckpointTool));
         reg.register(Arc::new(search::WorkspaceStatusTool));
-        reg.register(Arc::new(web::WebFetchTool));
-        reg.register(Arc::new(code_mode::CodeExecTool));
         reg.register(Arc::new(lsp::LspDiagnosticsTool));
+        reg.register(Arc::new(web::WebFetchTool));
+        reg.register(Arc::new(web_search::WebSearchTool));
+        reg.register(Arc::new(browser::BrowserTool));
+        reg.register(Arc::new(computer::ComputerTool));
+        reg.register(Arc::new(code_mode::CodeExecTool));
         reg
     }
 
@@ -194,7 +232,6 @@ impl ToolHandler for ToolSearchTool {
     }
 
     fn execute(&self, _ctx: &ToolContext, args: Value) -> ToolExecutionResult {
-        // Intercepted by `ToolRegistry::execute`; fallback for direct unit calls.
         let query = args.get("query").and_then(|v| v.as_str()).unwrap_or("");
         ToolExecutionResult::ok_structured(
             json!({ "query": query, "count": 0, "tools": [] }),

@@ -46,6 +46,7 @@ pub fn connection_digest(cfg: &McpServerConfig) -> String {
         "url": cfg.url,
         "headers": cfg.headers,
         "oauth_client_id": cfg.oauth_client_id,
+        "oauth_scopes": cfg.oauth_scopes,
     }))
     .unwrap_or_default();
     sha256_hex(&serialized)
@@ -64,6 +65,7 @@ pub struct McpToolInfo {
 /// Manages active pooled MCP connections and OAuth token refreshes.
 pub struct McpManager {
     connections: Mutex<BTreeMap<String, (String, Arc<McpConnection>)>>,
+    connect_locks: Mutex<BTreeMap<String, Arc<Mutex<()>>>>,
     oauth: Option<Arc<McpOAuthManager>>,
 }
 
@@ -71,6 +73,7 @@ impl McpManager {
     pub fn new(vault: Option<Arc<Vault>>) -> Self {
         Self {
             connections: Mutex::new(BTreeMap::new()),
+            connect_locks: Mutex::new(BTreeMap::new()),
             oauth: vault.map(|v| Arc::new(McpOAuthManager::new(v))),
         }
     }
@@ -79,24 +82,33 @@ impl McpManager {
         self.oauth.clone()
     }
 
+    pub fn evict(&self, server_id: &str) {
+        self.connections.lock().unwrap().remove(server_id);
+    }
+
     /// Connect (or reuse healthy pooled connection matching `connection_digest`) to an MCP server.
     pub fn connect(&self, cfg: &McpServerConfig) -> Result<Arc<McpConnection>, McpError> {
+        let srv_lock = {
+            let mut locks = self.connect_locks.lock().unwrap();
+            Arc::clone(
+                locks
+                    .entry(cfg.id.clone())
+                    .or_insert_with(|| Arc::new(Mutex::new(()))),
+            )
+        };
+        let _guard = srv_lock.lock().unwrap();
+
         let digest = connection_digest(cfg);
         {
             let guard = self.connections.lock().unwrap();
             if let Some((existing_digest, conn)) = guard.get(&cfg.id) {
-                if existing_digest == &digest {
+                if existing_digest == &digest && conn.is_healthy() {
                     return Ok(Arc::clone(conn));
                 }
             }
         }
 
-        let bearer = if let Some(oauth) = &self.oauth {
-            oauth.valid_access_token(&cfg.id).ok().flatten()
-        } else {
-            None
-        };
-        let conn = Arc::new(McpConnection::open(cfg, bearer.as_deref())?);
+        let conn = Arc::new(McpConnection::open(cfg, self.oauth.clone())?);
         conn.initialize()?;
         self.connections
             .lock()
@@ -197,7 +209,12 @@ impl ToolHandler for McpToolAdapter {
                     )
                 }
             }
-            Err(e) => ToolExecutionResult::err_structured("mcp_call_error", e.to_string(), None),
+            Err(e) => {
+                if matches!(e, McpError::Transport(_)) {
+                    self.manager.evict(&self.config.id);
+                }
+                ToolExecutionResult::err_structured("mcp_call_error", e.to_string(), None)
+            }
         }
     }
 }

@@ -37,7 +37,7 @@ pub fn estimate_history_message_tokens(msg: &HistoryMessage) -> usize {
             content,
             reasoning,
             tool_calls,
-            ..
+            continuation,
         } => {
             let calls: usize = tool_calls
                 .iter()
@@ -47,15 +47,24 @@ pub fn estimate_history_message_tokens(msg: &HistoryMessage) -> usize {
                         .saturating_add(8)
                 })
                 .sum();
+            let cont: usize = continuation
+                .as_ref()
+                .map(|c| c.items.iter().map(estimate_json_tokens).sum())
+                .unwrap_or(0);
             estimate_text_tokens(content)
                 .saturating_add(reasoning.as_deref().map(estimate_text_tokens).unwrap_or(0))
                 .saturating_add(calls)
+                .saturating_add(cont)
                 .saturating_add(6)
         }
         HistoryMessage::Tool {
-            tool_name, payload, ..
+            tool_name,
+            payload,
+            media,
+            ..
         } => estimate_text_tokens(tool_name)
             .saturating_add(estimate_json_tokens(&payload.to_model_value()))
+            .saturating_add(media.len().saturating_mul(1_024))
             .saturating_add(6),
     }
 }
@@ -124,7 +133,14 @@ impl ContextBudget {
 
     pub fn with_explicit_output_limit(mut self, max_output_tokens: Option<usize>) -> Self {
         if let Some(limit) = max_output_tokens.filter(|&v| v > 0) {
-            self.reserved_output_tokens = limit.clamp(256, self.context_window_tokens.saturating_sub(512));
+            let max_reserved = self
+                .context_window_tokens
+                .saturating_sub(self.safety_margin())
+                .saturating_sub(1_024)
+                .max(256)
+                .min(self.context_window_tokens.saturating_sub(256).max(1));
+            let min_reserved = 256.min(max_reserved);
+            self.reserved_output_tokens = limit.clamp(min_reserved, max_reserved);
         }
         self
     }
@@ -136,10 +152,14 @@ impl ContextBudget {
 
     /// Maximum input prompt tokens available before hitting the provider window.
     pub fn prompt_token_limit(&self) -> usize {
+        let hard_cap = self
+            .context_window_tokens
+            .saturating_sub(self.reserved_output_tokens)
+            .max(1);
         self.context_window_tokens
             .saturating_sub(self.reserved_output_tokens)
             .saturating_sub(self.safety_margin())
-            .max(1_024)
+            .max(1_024.min(hard_cap))
     }
 
     /// Auto-compaction threshold scaling cleanly with window size (no arbitrary 96K cap).
@@ -150,9 +170,10 @@ impl ContextBudget {
 
     /// Post-compaction target tokens.
     pub fn compact_target_tokens(&self) -> usize {
+        let clamped_auto = self.auto_compact_percent.clamp(50, 92);
         let pct = self
             .compact_target_percent
-            .clamp(20, self.auto_compact_percent.saturating_sub(5).max(20)) as usize;
+            .clamp(20, clamped_auto.saturating_sub(5).max(20)) as usize;
         (self.prompt_token_limit().saturating_mul(pct) / 100)
             .min(self.auto_compact_threshold().saturating_sub(1).max(1))
     }
@@ -187,5 +208,30 @@ mod tests {
         assert_eq!(estimate_text_tokens("abcdefgh"), 2);
         // 6 CJK chars should estimate >= 6 tokens (not 2 like chars/4!)
         assert_eq!(estimate_text_tokens("你好世界测试"), 6);
+    }
+
+    #[test]
+    fn serde_roundtrip_all_payload_stream_and_protocol_variants() {
+        let t = crate::ToolModelPayload::text("plain text");
+        let t2: crate::ToolModelPayload =
+            serde_json::from_str(&serde_json::to_string(&t).unwrap()).unwrap();
+        assert_eq!(t, t2);
+
+        let d = crate::ModelStreamDelta::Text("hi".into());
+        let d2: crate::ModelStreamDelta =
+            serde_json::from_str(&serde_json::to_string(&d).unwrap()).unwrap();
+        assert_eq!(d, d2);
+
+        for p in [
+            crate::ModelProtocol::OpenAiChat,
+            crate::ModelProtocol::OpenAiResponses,
+            crate::ModelProtocol::AnthropicMessages,
+            crate::ModelProtocol::SiwcResponses,
+        ] {
+            let s = serde_json::to_string(&p).unwrap();
+            let back: crate::ModelProtocol = serde_json::from_str(&s).unwrap();
+            assert_eq!(back, p);
+            assert_eq!(crate::ModelProtocol::parse(p.as_str()), Some(p));
+        }
     }
 }

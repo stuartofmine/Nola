@@ -98,7 +98,15 @@ impl ProviderWireAdapter for OpenAiChatAdapter {
             .iter()
             .rposition(|m| matches!(m, HistoryMessage::User { .. }));
 
+        let mut buffered_tool_media: Vec<MediaAttachment> = Vec::new();
         for (idx, msg) in req.history.iter().enumerate() {
+            if !matches!(msg, HistoryMessage::Tool { .. }) && !buffered_tool_media.is_empty() {
+                messages.push(json!({
+                    "role": "user",
+                    "content": user_content_value("Attached media from tool outputs:", &buffered_tool_media),
+                }));
+                buffered_tool_media.clear();
+            }
             match msg {
                 HistoryMessage::User { content, media } => {
                     messages.push(json!({
@@ -152,14 +160,15 @@ impl ProviderWireAdapter for OpenAiChatAdapter {
                         "name": tool_name,
                         "content": payload.to_model_string(),
                     }));
-                    if !media.is_empty() {
-                        messages.push(json!({
-                            "role": "user",
-                            "content": user_content_value("Attached media from tool output:", media),
-                        }));
-                    }
+                    buffered_tool_media.extend(media.iter().cloned());
                 }
             }
+        }
+        if !buffered_tool_media.is_empty() {
+            messages.push(json!({
+                "role": "user",
+                "content": user_content_value("Attached media from tool outputs:", &buffered_tool_media),
+            }));
         }
 
         if let Some(tail) = format_tail_reminders(&req.ephemeral_tail_reminders) {
@@ -330,13 +339,21 @@ impl ProviderWireAdapter for OpenAiChatAdapter {
         let mut stop_reason = ModelStopReason::Stop;
         let mut usage = TokenUsage::default();
         let mut partial_calls: BTreeMap<usize, (String, String, String)> = BTreeMap::new();
+        let mut saw_terminal = false;
 
         while let Some(ev) = sse.next_event()? {
             let trimmed = ev.data.trim();
-            if trimmed.is_empty() || trimmed == "[DONE]" {
+            if trimmed.is_empty() {
+                continue;
+            }
+            if trimmed == "[DONE]" {
+                saw_terminal = true;
                 continue;
             }
             let chunk: Value = serde_json::from_str(trimmed)?;
+            if let Some(err) = chunk.get("error").filter(|v| !v.is_null()) {
+                return Err(LlmError::Wire(format!("chat SSE error frame: {err}")));
+            }
             if response_id.is_none() {
                 response_id = chunk
                     .get("id")
@@ -349,8 +366,8 @@ impl ProviderWireAdapter for OpenAiChatAdapter {
                     .and_then(|v| v.as_str())
                     .map(ToString::to_string);
             }
-            if chunk.get("usage").is_some() {
-                usage = parse_openai_usage(chunk.get("usage"));
+            if let Some(u) = chunk.get("usage").filter(|v| v.is_object()) {
+                usage = parse_openai_usage(Some(u));
             }
             let Some(choice) = chunk
                 .get("choices")
@@ -361,6 +378,7 @@ impl ProviderWireAdapter for OpenAiChatAdapter {
             };
             if let Some(fr) = choice.get("finish_reason").and_then(|v| v.as_str()) {
                 stop_reason = map_finish_reason(fr);
+                saw_terminal = true;
             }
             let Some(delta) = choice.get("delta") else {
                 continue;
@@ -421,6 +439,12 @@ impl ProviderWireAdapter for OpenAiChatAdapter {
                     }
                 }
             }
+        }
+
+        if !saw_terminal {
+            return Err(LlmError::Wire(
+                "chat SSE stream ended prematurely without finish_reason or [DONE]".into(),
+            ));
         }
 
         let mut tool_calls = Vec::new();

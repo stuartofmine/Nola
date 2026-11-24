@@ -12,7 +12,11 @@
 use std::collections::BTreeMap;
 use std::fs;
 use std::path::{Component, Path, PathBuf};
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Mutex;
+
+static TMP_SEQ: AtomicU64 = AtomicU64::new(1);
+const MAX_READ_TEXT_BYTES: u64 = 16 * 1024 * 1024;
 
 use nola_types::{
     sha256_hex, CapabilityDomain, ContentVersion, ResourceEffect, ResourceOperation,
@@ -67,9 +71,10 @@ fn normalize_lexically(path: &Path) -> PathBuf {
 }
 
 /// Canonicalize the nearest existing ancestor + remaining tail so symlink escape checks
-/// work even for not-yet-created files!
+/// work even for not-yet-created files OR paths containing `..` after a symlink!
 pub fn canonicalize_nearest_ancestor(path: &Path) -> PathBuf {
-    let mut ancestor = path;
+    let normalized = normalize_lexically(path);
+    let mut ancestor = normalized.as_path();
     let mut tail: Vec<std::ffi::OsString> = Vec::new();
     loop {
         if let Ok(real) = fs::canonicalize(ancestor) {
@@ -77,14 +82,14 @@ pub fn canonicalize_nearest_ancestor(path: &Path) -> PathBuf {
             for seg in tail.into_iter().rev() {
                 full.push(seg);
             }
-            return full;
+            return normalize_lexically(&full);
         }
         let Some(name) = ancestor.file_name() else {
-            return normalize_lexically(path);
+            return normalized;
         };
         tail.push(name.to_os_string());
         let Some(parent) = ancestor.parent() else {
-            return normalize_lexically(path);
+            return normalized;
         };
         ancestor = parent;
     }
@@ -108,19 +113,32 @@ impl FileMutationPipeline {
         new_bytes: &[u8],
         op_hint: ResourceOperation,
     ) -> Result<ResourceEffect, String> {
+        if ctx.permission_profile != nola_types::PermissionProfile::AllowAll
+            && !path_within_workspace(&ctx.workspace_root, path)
+        {
+            return Err(format!(
+                "write target '{}' escapes workspace boundary",
+                path.display()
+            ));
+        }
+        let existing_perms = fs::metadata(path).ok().map(|m| m.permissions());
         let before = fs::read(path)
             .ok()
             .map(|b| ContentVersion::Sha256(sha256_hex(&b)));
         if let Some(parent) = path.parent() {
             fs::create_dir_all(parent).map_err(|e| format!("failed to create parent dir: {e}"))?;
         }
-        // Atomic write via sibling temp file
+        // Thread-safe unique sibling temp file preserving executable bits!
+        let seq = TMP_SEQ.fetch_add(1, Ordering::Relaxed);
         let tmp = PathBuf::from(format!(
-            "{}.nola.tmp.{}",
+            "{}.nola.tmp.{}.{seq}",
             path.display(),
             std::process::id()
         ));
         fs::write(&tmp, new_bytes).map_err(|e| format!("failed to write temp file: {e}"))?;
+        if let Some(perms) = existing_perms {
+            let _ = fs::set_permissions(&tmp, perms);
+        }
         fs::rename(&tmp, path).map_err(|e| {
             let _ = fs::remove_file(&tmp);
             format!("failed to commit file {}: {e}", path.display())
@@ -149,6 +167,14 @@ impl FileMutationPipeline {
     }
 
     pub fn delete_file(ctx: &ToolContext, path: &Path) -> Result<ResourceEffect, String> {
+        if ctx.permission_profile != nola_types::PermissionProfile::AllowAll
+            && !path_within_workspace(&ctx.workspace_root, path)
+        {
+            return Err(format!(
+                "delete target '{}' escapes workspace boundary",
+                path.display()
+            ));
+        }
         let before_bytes = fs::read(path).map_err(|e| format!("cannot read file before delete: {e}"))?;
         let before = ContentVersion::Sha256(sha256_hex(&before_bytes));
         fs::remove_file(path).map_err(|e| format!("failed to delete file: {e}"))?;
@@ -211,6 +237,20 @@ impl ToolHandler for ReadFileTool {
         if let Some(binary_res) = try_read_binary_document(&path, page, 200) {
             return binary_res;
         }
+        if let Ok(meta) = fs::metadata(&path) {
+            if meta.len() > MAX_READ_TEXT_BYTES {
+                return ToolExecutionResult::err_structured(
+                    "file_too_large",
+                    format!(
+                        "file '{}' is {} bytes (exceeds {} byte text limit)",
+                        path.display(),
+                        meta.len(),
+                        MAX_READ_TEXT_BYTES
+                    ),
+                    None,
+                );
+            }
+        }
         let bytes = match fs::read(&path) {
             Ok(b) => b,
             Err(e) => {
@@ -232,21 +272,26 @@ impl ToolHandler for ReadFileTool {
             .and_then(|v| v.as_u64())
             .map(|n| (n as usize).max(1))
             .unwrap_or(1);
+        let clamped_start = if total_lines == 0 {
+            1
+        } else {
+            start.min(total_lines)
+        };
         let end = args
             .get("end_line")
             .and_then(|v| v.as_u64())
-            .map(|n| (n as usize).max(start))
-            .unwrap_or_else(|| start.saturating_add(399))
+            .map(|n| (n as usize).max(clamped_start))
+            .unwrap_or_else(|| clamped_start.saturating_add(399))
             .min(total_lines.max(1));
 
-        let numbered = if total_lines == 0 {
+        let numbered = if total_lines == 0 || start > total_lines {
             String::new()
         } else {
             lines
                 .iter()
                 .enumerate()
-                .skip(start.saturating_sub(1))
-                .take(end.saturating_sub(start).saturating_add(1))
+                .skip(clamped_start.saturating_sub(1))
+                .take(end.saturating_sub(clamped_start).saturating_add(1))
                 .map(|(idx, line)| format!("{}: {}", idx + 1, line))
                 .collect::<Vec<_>>()
                 .join("\n")
@@ -415,12 +460,20 @@ impl ToolHandler for EditFileTool {
                 1
             };
             (out, count, "exact")
-        } else if let Some(out) = tolerant_trimmed_replace(&original, old_text, new_text) {
-            (out, 1, "trimmed_lines")
+        } else if expected.is_none_or(|e| e == 1) {
+            if let Some(out) = tolerant_trimmed_replace(&original, old_text, new_text) {
+                (out, 1, "trimmed_lines")
+            } else {
+                return ToolExecutionResult::err_structured(
+                    "not_found",
+                    "old_text not found in file (checked exact and whitespace-trimmed line match)",
+                    None,
+                );
+            }
         } else {
             return ToolExecutionResult::err_structured(
                 "not_found",
-                "old_text not found in file (checked exact and whitespace-trimmed line match)",
+                "old_text not found in file",
                 None,
             );
         };
@@ -523,6 +576,15 @@ impl ToolHandler for ApplyPatchTool {
             let is_delete = fp.new_path == "/dev/null";
             let rel = if is_delete { &fp.old_path } else { &fp.new_path };
             let target = resolve_path(&ctx.workspace_root, rel);
+            if ctx.permission_profile != nola_types::PermissionProfile::AllowAll
+                && !path_within_workspace(&ctx.workspace_root, &target)
+            {
+                return ToolExecutionResult::err_structured(
+                    "workspace_escape",
+                    format!("patch target '{}' escapes workspace boundary", target.display()),
+                    None,
+                );
+            }
             if is_delete {
                 if !target.exists() {
                     return ToolExecutionResult::err_structured(
@@ -602,6 +664,7 @@ struct FilePatch {
 struct Hunk {
     old_start: usize,
     lines: Vec<(char, String)>,
+    new_no_trailing_newline: bool,
 }
 
 fn strip_diff_prefix(raw: &str) -> String {
@@ -627,32 +690,63 @@ fn parse_unified_diff(patch: &str) -> Result<Vec<FilePatch>, String> {
             let new_path = strip_diff_prefix(&lines[i + 1][4..]);
             i += 2;
             let mut hunks = Vec::new();
-            while i < lines.len() && !lines[i].starts_with("--- ") && !lines[i].starts_with("diff --git ") {
+            while i < lines.len()
+                && !lines[i].starts_with("--- ")
+                && !lines[i].starts_with("diff --git ")
+            {
                 if lines[i].starts_with("@@ ") {
-                    let old_start = parse_hunk_old_start(lines[i])?;
+                    let (old_start, mut old_rem, mut new_rem) = parse_hunk_header(lines[i])?;
                     i += 1;
                     let mut hlines = Vec::new();
-                    while i < lines.len()
-                        && !lines[i].starts_with("@@ ")
-                        && !lines[i].starts_with("--- ")
-                        && !lines[i].starts_with("diff --git ")
-                    {
+                    let mut new_no_trailing_newline = false;
+                    let mut last_tag = ' ';
+                    while i < lines.len() && (old_rem > 0 || new_rem > 0) {
                         let l = lines[i];
                         if l.starts_with("\\ No newline") {
+                            if last_tag == '+' || last_tag == ' ' {
+                                new_no_trailing_newline = true;
+                            }
                             i += 1;
                             continue;
                         }
                         let mut chars = l.chars();
-                        if let Some(prefix @ (' ' | '+' | '-')) = chars.next() {
-                            hlines.push((prefix, chars.as_str().to_string()));
-                        } else if l.is_empty() {
-                            hlines.push((' ', String::new()));
+                        match chars.next() {
+                            Some(' ') => {
+                                hlines.push((' ', chars.as_str().to_string()));
+                                old_rem = old_rem.saturating_sub(1);
+                                new_rem = new_rem.saturating_sub(1);
+                                last_tag = ' ';
+                            }
+                            Some('-') => {
+                                hlines.push(('-', chars.as_str().to_string()));
+                                old_rem = old_rem.saturating_sub(1);
+                                last_tag = '-';
+                            }
+                            Some('+') => {
+                                hlines.push(('+', chars.as_str().to_string()));
+                                new_rem = new_rem.saturating_sub(1);
+                                last_tag = '+';
+                            }
+                            None => {
+                                hlines.push((' ', String::new()));
+                                old_rem = old_rem.saturating_sub(1);
+                                new_rem = new_rem.saturating_sub(1);
+                                last_tag = ' ';
+                            }
+                            _ => break,
+                        }
+                        i += 1;
+                    }
+                    if i < lines.len() && lines[i].starts_with("\\ No newline") {
+                        if last_tag == '+' || last_tag == ' ' {
+                            new_no_trailing_newline = true;
                         }
                         i += 1;
                     }
                     hunks.push(Hunk {
                         old_start,
                         lines: hlines,
+                        new_no_trailing_newline,
                     });
                 } else {
                     i += 1;
@@ -670,21 +764,29 @@ fn parse_unified_diff(patch: &str) -> Result<Vec<FilePatch>, String> {
     Ok(out)
 }
 
-fn parse_hunk_old_start(header: &str) -> Result<usize, String> {
-    // @@ -old_start,old_count +new_start,new_count @@
-    let minus_part = header
-        .split_whitespace()
-        .nth(1)
-        .ok_or_else(|| format!("malformed hunk header: {header}"))?;
-    let digits = minus_part
-        .strip_prefix('-')
-        .unwrap_or(minus_part)
-        .split(',')
+fn parse_hunk_header(header: &str) -> Result<(usize, usize, usize), String> {
+    let mut parts = header.split_whitespace();
+    let _at = parts.next();
+    let old_part = parts
         .next()
-        .unwrap_or("1");
-    digits
-        .parse::<usize>()
-        .map_err(|_| format!("invalid hunk start line in {header}"))
+        .ok_or_else(|| format!("malformed hunk header: {header}"))?;
+    let new_part = parts
+        .next()
+        .ok_or_else(|| format!("malformed hunk header: {header}"))?;
+    let (old_start, old_count) = parse_range(old_part.strip_prefix('-').unwrap_or(old_part), header)?;
+    let (_new_start, new_count) = parse_range(new_part.strip_prefix('+').unwrap_or(new_part), header)?;
+    Ok((old_start, old_count, new_count))
+}
+
+fn parse_range(spec: &str, header: &str) -> Result<(usize, usize), String> {
+    if let Some((a, b)) = spec.split_once(',') {
+        let start = a.parse::<usize>().map_err(|_| format!("invalid hunk start in {header}"))?;
+        let count = b.parse::<usize>().map_err(|_| format!("invalid hunk count in {header}"))?;
+        Ok((start, count))
+    } else {
+        let start = spec.parse::<usize>().map_err(|_| format!("invalid hunk start in {header}"))?;
+        Ok((start, 1))
+    }
 }
 
 fn apply_hunks(original: &str, hunks: &[Hunk]) -> Result<String, String> {
@@ -694,8 +796,13 @@ fn apply_hunks(original: &str, hunks: &[Hunk]) -> Result<String, String> {
         original.lines().map(ToString::to_string).collect()
     };
     let mut offset: isize = 0;
+    let mut min_next_idx: usize = 0;
+    let mut no_trailing_newline = !original.is_empty() && !original.ends_with('\n');
 
     for hunk in hunks {
+        if hunk.new_no_trailing_newline {
+            no_trailing_newline = true;
+        }
         let expected_old: Vec<&str> = hunk
             .lines
             .iter()
@@ -711,51 +818,56 @@ fn apply_hunks(original: &str, hunks: &[Hunk]) -> Result<String, String> {
 
         if expected_old.is_empty() {
             let insert_at = (hunk.old_start as isize + offset)
-                .clamp(0, lines.len() as isize) as usize;
-            lines.splice(insert_at..insert_at, replacement.clone());
-            offset += replacement.len() as isize;
+                .clamp(min_next_idx as isize, lines.len() as isize)
+                as usize;
+            let inserted = replacement.len();
+            lines.splice(insert_at..insert_at, replacement);
+            offset += inserted as isize;
+            min_next_idx = insert_at + inserted;
             continue;
         }
 
         let target_idx = ((hunk.old_start.saturating_sub(1)) as isize + offset)
-            .clamp(0, lines.len() as isize) as usize;
-        let found = find_hunk_position(&lines, &expected_old, target_idx)
+            .clamp(min_next_idx as isize, lines.len() as isize) as usize;
+        let found = find_hunk_position(&lines, &expected_old, target_idx, min_next_idx)
             .ok_or_else(|| format!("hunk at line {} failed to match file context", hunk.old_start))?;
         let old_len = expected_old.len();
         let new_len = replacement.len();
         lines.splice(found..(found + old_len), replacement);
-        offset += new_len as isize - old_len as isize;
+        offset += (found as isize - target_idx as isize) + (new_len as isize - old_len as isize);
+        min_next_idx = found + new_len;
     }
 
     let mut out = lines.join("\n");
-    if !out.is_empty() {
+    if !out.is_empty() && !no_trailing_newline {
         out.push('\n');
     }
     Ok(out)
 }
 
-fn find_hunk_position(lines: &[String], expected: &[&str], hint: usize) -> Option<usize> {
+fn find_hunk_position(lines: &[String], expected: &[&str], hint: usize, min_idx: usize) -> Option<usize> {
     if expected.len() > lines.len() {
         return None;
     }
     let matches_at = |idx: usize| -> bool {
-        lines[idx..idx + expected.len()]
-            .iter()
-            .zip(expected.iter())
-            .all(|(a, b)| a == b)
+        idx >= min_idx
+            && idx + expected.len() <= lines.len()
+            && lines[idx..idx + expected.len()]
+                .iter()
+                .zip(expected.iter())
+                .all(|(a, b)| a == b)
     };
-    if hint + expected.len() <= lines.len() && matches_at(hint) {
+    if matches_at(hint) {
         return Some(hint);
     }
-    // Search nearest offset within +/- 50 lines
     for delta in 1..=50 {
         if let Some(lo) = hint.checked_sub(delta) {
-            if lo + expected.len() <= lines.len() && matches_at(lo) {
+            if matches_at(lo) {
                 return Some(lo);
             }
         }
         let hi = hint + delta;
-        if hi + expected.len() <= lines.len() && matches_at(hi) {
+        if matches_at(hi) {
             return Some(hi);
         }
     }

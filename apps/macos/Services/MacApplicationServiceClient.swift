@@ -180,7 +180,7 @@ nonisolated final class MacApplicationServiceClient: @unchecked Sendable {
     let databaseURL: URL
     let socketURL: URL
     let clientID: String
-    private let ownsSupervisorReference: Bool
+    private var ownsSupervisorReference: Bool = false
     private let expertHostJournal: ApplePendingCommandJournal
 
     init(databaseURL: URL) throws {
@@ -190,7 +190,6 @@ nonisolated final class MacApplicationServiceClient: @unchecked Sendable {
         let hash = Self.databaseIdentityHash(for: databaseURL)
         socketURL = Self.serviceSocketURL(for: databaseURL)
         clientID = Self.serviceClientID(hash: hash)
-        ownsSupervisorReference = true
         try FileManager.default.createDirectory(
             at: databaseURL.deletingLastPathComponent(),
             withIntermediateDirectories: true
@@ -200,6 +199,7 @@ nonisolated final class MacApplicationServiceClient: @unchecked Sendable {
             socketURL: socketURL
         )
         MacApplicationServiceSupervisor.shared.retainClient(socketURL: socketURL)
+        ownsSupervisorReference = true
     }
 
     deinit {
@@ -754,23 +754,49 @@ nonisolated final class MacApplicationServiceClient: @unchecked Sendable {
     }
 
     /// Reads `<db>.service.json` written atomically by `nola-store::ServiceLock`,
-    /// validating protocol version and owner EUID before trusting the socket path.
+    /// validating symlink safety (`O_NOFOLLOW`), owner EUID, permissions, live PID,
+    /// and target socket ownership (`S_ISSOCK` + same EUID) before trusting the socket path.
     private static func readDiscoveredSocketURL(for databaseURL: URL) -> URL? {
-        let discoveryURL = URL(fileURLWithPath: "\(databaseURL.path).service.json", isDirectory: false)
-        guard let data = try? Data(contentsOf: discoveryURL),
-              let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+        let discoveryPath = "\(databaseURL.path).service.json"
+        let fd = Darwin.open(discoveryPath, O_RDONLY | O_NOFOLLOW)
+        guard fd >= 0 else { return nil }
+        defer { Darwin.close(fd) }
+
+        var st = stat()
+        guard Darwin.fstat(fd, &st) == 0,
+              (st.st_mode & S_IFMT) == S_IFREG,
+              st.st_uid == Darwin.geteuid(),
+              (st.st_mode & 0o077) == 0,
+              st.st_size > 0,
+              st.st_size <= 16_384 else {
+            return nil
+        }
+
+        var bytes = [UInt8](repeating: 0, count: Int(st.st_size))
+        let readCount = bytes.withUnsafeMutableBytes { buf in
+            Darwin.read(fd, buf.baseAddress, buf.count)
+        }
+        guard readCount > 0 else { return nil }
+        let data = Data(bytes[0..<readCount])
+
+        guard let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
               let proto = obj["protocol_version"] as? Int,
               proto == protocolVersion,
               let euid = (obj["euid"] as? NSNumber)?.uint32Value,
               euid == Darwin.geteuid(),
+              let pid = (obj["pid"] as? NSNumber)?.int32Value,
+              pid > 0,
+              Darwin.kill(pid, 0) == 0,
               let socketPath = obj["socket_path"] as? String,
               !socketPath.isEmpty else {
             return nil
         }
-        if let pid = (obj["pid"] as? NSNumber)?.int32Value, pid > 0 {
-            if Darwin.kill(pid, 0) != 0 && errno == ESRCH {
-                return nil
-            }
+
+        var sockStat = stat()
+        guard Darwin.lstat(socketPath, &sockStat) == 0,
+              (sockStat.st_mode & S_IFMT) == S_IFSOCK,
+              sockStat.st_uid == Darwin.geteuid() else {
+            return nil
         }
         return URL(fileURLWithPath: socketPath, isDirectory: false)
     }

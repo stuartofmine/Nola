@@ -127,7 +127,7 @@ fn read_pdf(path: &Path, page: Option<usize>) -> ToolExecutionResult {
 fn try_render_pdf_page_png(path: &Path, page: usize) -> Option<MediaAttachment> {
     let tmp = std::env::temp_dir().join(format!(
         "nola-pdf-{}-p{page}",
-        std::process::id()
+        nola_types::new_id()
     ));
     let prefix = tmp.to_string_lossy().into_owned();
     let ok = Command::new("pdftoppm")
@@ -225,9 +225,9 @@ fn read_audio(path: &Path) -> ToolExecutionResult {
             let frames = decoded.frames() as u64;
             total_frames += frames;
             if mono.len() < max_samples {
+                let ch = decoded.spec().channels.count().max(1);
                 let mut sbuf = SampleBuffer::<f32>::new(decoded.capacity() as u64, *decoded.spec());
                 sbuf.copy_interleaved_ref(decoded);
-                let ch = channels.max(1);
                 for frame in sbuf.samples().chunks(ch) {
                     if mono.len() >= max_samples {
                         break;
@@ -295,6 +295,15 @@ fn read_audio(path: &Path) -> ToolExecutionResult {
 }
 
 fn read_image(path: &Path, ext: &str) -> ToolExecutionResult {
+    if let Ok(meta) = fs::metadata(path) {
+        if meta.len() > 20 * 1024 * 1024 {
+            return ToolExecutionResult::err_structured(
+                "image_too_large",
+                format!("image exceeds 20 MiB limit ({} bytes)", meta.len()),
+                None,
+            );
+        }
+    }
     let bytes = match fs::read(path) {
         Ok(b) => b,
         Err(e) => {

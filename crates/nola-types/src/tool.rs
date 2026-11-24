@@ -12,7 +12,7 @@ use crate::MediaAttachment;
 /// Explicit sum type for what the LLM receives from a tool call.
 /// Eliminates the v1 bug where `ok(text).with_data(meta)` silently dropped `text`.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-#[serde(tag = "kind", rename_all = "snake_case")]
+#[serde(tag = "kind", content = "value", rename_all = "snake_case")]
 pub enum ToolModelPayload {
     /// Plain text sent verbatim to the model.
     Text(String),
@@ -163,9 +163,18 @@ impl ToolExecutionResult {
         let mut obj = serde_json::Map::new();
         obj.insert("error".into(), Value::String(code.into()));
         obj.insert("message".into(), Value::String(msg.clone()));
-        if let Some(Value::Object(map)) = extra {
-            for (k, v) in map {
-                obj.insert(k, v);
+        if let Some(extra_val) = extra {
+            match extra_val {
+                Value::Object(map) => {
+                    for (k, v) in map {
+                        if k != "error" && k != "message" {
+                            obj.insert(k, v);
+                        }
+                    }
+                }
+                other => {
+                    obj.insert("details".into(), other);
+                }
             }
         }
         Self {

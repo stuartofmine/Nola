@@ -14,11 +14,20 @@
 
 pub mod automations_messaging;
 pub mod data_sources;
+pub mod goal_worker;
 pub mod goals_sops;
 pub mod local_models_plugins;
 pub mod memory;
 pub mod rooms_peers;
+pub mod scheduler;
 pub mod skills;
+pub mod updater;
+
+pub use goal_worker::GoalWorker;
+pub use memory::MemoryWorker;
+pub use rooms_peers::{parse_expert_mentions, RoomRuntime};
+pub use scheduler::{cron_matches, AutomationScheduler};
+pub use updater::{check_for_update, is_newer_version, verify_artifact_sha256, UpdateCheckResult, UpdateManifest};
 
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -183,5 +192,40 @@ mod tests {
             json!({"action": "register", "name": "git-helper", "version": "1.0.0", "entry_path": "./plugin.js"}),
         );
         assert!(!pl.is_error);
+
+        // 8. Cron matcher, expert mention parser, MemoryWorker distillation, updater semver/sha256
+        let dt = chrono::DateTime::parse_from_rfc3339("2026-11-25T04:15:00Z")
+            .unwrap()
+            .with_timezone(&chrono::Utc);
+        assert!(cron_matches("*/15 4 * * *", dt));
+        assert!(!cron_matches("0 5 * * *", dt));
+        // Sunday = 7 alias & range-step check (2026-11-29 is Sunday)
+        let sunday = chrono::DateTime::parse_from_rfc3339("2026-11-29T04:15:00Z")
+            .unwrap()
+            .with_timezone(&chrono::Utc);
+        assert!(cron_matches("15 4 * * 7", sunday));
+        assert!(cron_matches("15 4 * * 5-7", sunday));
+        assert!(cron_matches("1-20/2 4 * * *", sunday));
+        assert_eq!(
+            parse_expert_mentions("Please ask @Rust_Auditor and @SecOps to check this"),
+            vec!["Rust_Auditor", "SecOps"]
+        );
+        let distilled = MemoryWorker::distill_turn(
+            &suite,
+            "proj",
+            "How should we deploy with key sk-proj-supersecretvalue1234567890?",
+            "Always run cargo test --offline --workspace and verify all 5 architectural gates before tagging (never leak sk-proj-supersecretvalue1234567890).",
+        )
+        .unwrap()
+        .unwrap();
+        assert!(!distilled.content.contains("sk-proj-supersecretvalue1234567890"));
+        assert!(!distilled.title.contains("sk-proj-supersecretvalue1234567890"));
+        assert!(is_newer_version("2.0.0", "2.1.0"));
+        assert!(is_newer_version("2.0.0-alpha.1", "2.1.0+build.4"));
+        assert!(!is_newer_version("2.1.0", "2.0.9"));
+        assert!(verify_artifact_sha256(
+            b"nola",
+            &nola_types::sha256_hex(b"nola")
+        ));
     }
 }

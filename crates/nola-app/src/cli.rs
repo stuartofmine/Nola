@@ -1,23 +1,29 @@
 // SPDX-License-Identifier: Apache-2.0
 //! Unified CLI command router supporting headless JSON/text runs, Harbor evals,
-//! model config, MCP management, sessions, modules, TUI, WebHost, and UDS daemon.
+//! model config, MCP management, sessions, modules, GoalWorker, RoomRuntime,
+//! AutomationScheduler, Software Updater, TUI, WebHost, and UDS daemon.
 
-use std::io::{self, IsTerminal, Read};
+use std::io::{self, IsTerminal, Read, Write};
 use std::path::PathBuf;
 use std::sync::atomic::AtomicBool;
 use std::sync::Arc;
 
-use nola_engine::{AgentEngine, AgentEvent, AgentRunConfig, EffectivePolicy, HookRunner, HttpModelCaller};
+use chrono::Utc;
+use nola_engine::{
+    register_planning_tools, register_subagent_tools, AgentEngine, AgentEvent, AgentRunConfig,
+    EffectivePolicy, ForceToolSet, HookRunner, HttpModelCaller, ModelCaller, PlanningState,
+    SubagentManager,
+};
 use nola_mcp::McpManager;
-use nola_modules::ModulesSuite;
+use nola_modules::{check_for_update, AutomationScheduler, GoalWorker, ModulesSuite, RoomRuntime};
 use nola_store::{Store, Vault};
-use nola_tools::{SandboxMode, ToolContext, ToolRegistry};
+use nola_tools::{OutputStore, SandboxMode, ToolContext, ToolRegistry};
 use nola_types::{HostCapabilities, PermissionProfile};
 use serde_json::{json, Value};
 
 use crate::config::{
     apply_config_file, build_frozen_system_blocks, default_db_path, default_home_dir,
-    default_vault_path, load_active_config, resolve_model_route,
+    default_vault_path, load_active_config, resolve_model_route, AppliedConfig,
 };
 
 #[derive(Debug, Default)]
@@ -29,7 +35,7 @@ struct CliOptions {
     yes: bool,
     permission_profile: Option<PermissionProfile>,
     network_policy: Option<String>,
-    force_tool_set: String,
+    force_tool_set: ForceToolSet,
     session_id: Option<String>,
     resume: bool,
     max_steps: Option<usize>,
@@ -53,7 +59,6 @@ pub fn run_with_args(args: &[String]) -> Result<u8, String> {
     let home = Some(default_home_dir());
     let suite = Arc::new(ModulesSuite::new(store.clone(), workspace.clone(), home.clone()));
 
-    // Dispatch explicit subcommands first
     if let Some(cmd) = opts.positional.first().map(String::as_str) {
         match cmd {
             "help" | "--help" | "-h" => {
@@ -68,6 +73,10 @@ pub fn run_with_args(args: &[String]) -> Result<u8, String> {
             "mcp" => return handle_mcp_cmd(&store, &db_path, &opts.positional[1..]),
             "sessions" => return handle_sessions_cmd(&store, &opts.positional[1..]),
             "modules" => return handle_modules_cmd(&suite, &opts.positional[1..]),
+            "goal" => return handle_goal_cmd(&store, &suite, &opts, &opts.positional[1..]),
+            "room" => return handle_room_cmd(&store, &suite, &opts, &opts.positional[1..]),
+            "scheduler" => return handle_scheduler_cmd(&store, &suite, &opts, &opts.positional[1..]),
+            "update" => return handle_update_cmd(&opts.positional[1..]),
             "web" => return crate::web_server::run_web_server(store, suite, &opts.positional[1..]),
             "server" => return crate::daemon::run_daemon(store, suite, &db_path, &opts.positional[1..]),
             "tui" => return crate::tui::run_tui(store, suite, &workspace),
@@ -75,7 +84,6 @@ pub fn run_with_args(args: &[String]) -> Result<u8, String> {
         }
     }
 
-    // Default: run prompt (stdin or --prompt or positional) or launch interactive TUI
     let prompt_text = resolve_prompt(&opts)?;
     let Some(prompt) = prompt_text else {
         if io::stdin().is_terminal() && !opts.json_mode {
@@ -87,16 +95,7 @@ pub fn run_with_args(args: &[String]) -> Result<u8, String> {
     let cfg = load_active_config(&store);
     let route = resolve_model_route(&cfg)?;
 
-    let profile = opts
-        .permission_profile
-        .or_else(|| {
-            std::env::var("NOLA_PERMISSION_PROFILE")
-                .ok()
-                .and_then(|s| PermissionProfile::parse(&s))
-        })
-        .or_else(|| opts.yes.then_some(PermissionProfile::AllowAll))
-        .unwrap_or(PermissionProfile::Cautious);
-
+    let profile = resolve_profile(&opts);
     let net_policy = opts
         .network_policy
         .as_deref()
@@ -104,10 +103,32 @@ pub fn run_with_args(args: &[String]) -> Result<u8, String> {
         .unwrap_or("allow");
     let network_allowed = !net_policy.eq_ignore_ascii_case("deny");
 
+    let caller: Arc<dyn ModelCaller> =
+        Arc::new(HttpModelCaller::new(300).map_err(|e| e.to_string())?);
+    let workspace_trusted = profile == PermissionProfile::AllowAll;
+    let policy = EffectivePolicy::load(
+        &workspace,
+        home.as_deref(),
+        workspace_trusted,
+        Some(profile),
+        network_allowed,
+    );
+
     let mut registry = ToolRegistry::with_builtin_tools();
     suite.register_tools(&mut registry);
 
-    // Attach enabled MCP servers (best-effort, non-fatal if offline)
+    let cancel = Arc::new(AtomicBool::new(false));
+    let _ = signal_hook::flag::register(signal_hook::consts::SIGINT, Arc::clone(&cancel));
+    let hooks = HookRunner::load(&workspace, home.as_deref(), workspace_trusted);
+
+    let subagents = Arc::new(SubagentManager::new(store.clone(), Arc::clone(&caller)));
+    subagents.configure_parent(route.clone(), policy.clone());
+    subagents.configure_runtime(hooks.clone(), Some(Arc::clone(&cancel)));
+    register_subagent_tools(&subagents, &mut registry);
+
+    let planning = Arc::new(PlanningState::default());
+    register_planning_tools(store.clone(), &planning, &mut registry);
+
     if let Ok(servers) = store.list_mcp_servers() {
         let vault = Vault::open(default_vault_path(&db_path)).ok().map(Arc::new);
         let mcp = Arc::new(McpManager::new(vault));
@@ -121,25 +142,15 @@ pub fn run_with_args(args: &[String]) -> Result<u8, String> {
     }
 
     let mut ctx = ToolContext::new(&workspace);
+    ctx.output_store = Arc::new(OutputStore::new(PathBuf::from(format!(
+        "{}.outputs",
+        db_path.display()
+    ))));
     ctx.network_allowed = network_allowed;
     ctx.permission_profile = profile;
     ctx.sandbox_mode = SandboxMode::from_env();
 
-    let caller = Arc::new(HttpModelCaller::new(300).map_err(|e| e.to_string())?);
     let engine = AgentEngine::new(store.clone(), Arc::new(registry), caller);
-
-    let cancel = Arc::new(AtomicBool::new(false));
-    let _ = signal_hook::flag::register(signal_hook::consts::SIGINT, Arc::clone(&cancel));
-
-    let workspace_trusted = profile == PermissionProfile::AllowAll;
-    let policy = EffectivePolicy::load(
-        &workspace,
-        home.as_deref(),
-        workspace_trusted,
-        Some(profile),
-        network_allowed,
-    );
-    let hooks = HookRunner::load(&workspace, home.as_deref(), workspace_trusted);
 
     let json_schema: Option<Value> = match &opts.json_schema {
         Some(raw) => {
@@ -153,11 +164,8 @@ pub fn run_with_args(args: &[String]) -> Result<u8, String> {
         None => None,
     };
 
-    let max_steps = opts
-        .max_steps
-        .or(cfg.max_iterations)
-        .unwrap_or(0); // 0 = unlimited
-
+    let max_steps = opts.max_steps.or(cfg.max_iterations).unwrap_or(0);
+    let is_eval = std::env::var("NOLA_BENCHMARK_TOKEN").is_ok();
     let json_mode = opts.json_mode;
     let run_cfg = AgentRunConfig {
         session_id: opts.session_id.clone(),
@@ -172,10 +180,12 @@ pub fn run_with_args(args: &[String]) -> Result<u8, String> {
         hooks,
         approval: None,
         max_steps,
-        force_all_tools: opts.force_tool_set == "all",
+        force_tool_set: opts.force_tool_set,
         stream: true,
         json_schema,
         cancel,
+        auto_recall_memory: !is_eval,
+        inbox: None,
     };
 
     let res = engine
@@ -186,21 +196,40 @@ pub fn run_with_args(args: &[String]) -> Result<u8, String> {
                 }
             } else if let AgentEvent::TextDelta { delta } = ev {
                 print!("{delta}");
+                let _ = io::stdout().flush();
             }
         })
         .map_err(|e| e.to_string())?;
 
+    ctx.pty.close_all();
     if !json_mode && !res.final_text.ends_with('\n') {
         println!();
     }
     Ok(0)
 }
 
+fn resolve_profile(opts: &CliOptions) -> PermissionProfile {
+    opts.permission_profile
+        .or_else(|| {
+            std::env::var("NOLA_PERMISSION_PROFILE")
+                .ok()
+                .and_then(|s| PermissionProfile::parse(&s))
+        })
+        .or_else(|| opts.yes.then_some(PermissionProfile::AllowAll))
+        .unwrap_or(PermissionProfile::Cautious)
+}
+
+fn resolve_network_allowed(opts: &CliOptions, cfg: &AppliedConfig) -> bool {
+    let net_policy = opts
+        .network_policy
+        .as_deref()
+        .or(cfg.network_policy.as_deref())
+        .unwrap_or("allow");
+    !net_policy.eq_ignore_ascii_case("deny")
+}
+
 fn parse_args(args: &[String]) -> Result<CliOptions, String> {
-    let mut opts = CliOptions {
-        force_tool_set: "auto".into(),
-        ..Default::default()
-    };
+    let mut opts = CliOptions::default();
     let mut i = 0;
     while i < args.len() {
         let a = args[i].as_str();
@@ -230,7 +259,7 @@ fn parse_args(args: &[String]) -> Result<CliOptions, String> {
                 );
             }
             "--lang" => {
-                i += 1; // accepted for CLI compatibility
+                i += 1;
             }
             "--yes" | "-y" => opts.yes = true,
             "--permission-profile" => {
@@ -251,10 +280,20 @@ fn parse_args(args: &[String]) -> Result<CliOptions, String> {
             }
             "--force-tool-set" => {
                 i += 1;
-                opts.force_tool_set = args
+                let raw = args
                     .get(i)
                     .ok_or("--force-tool-set requires auto|all|write")?
                     .to_ascii_lowercase();
+                opts.force_tool_set = match raw.as_str() {
+                    "auto" => ForceToolSet::Auto,
+                    "write" => ForceToolSet::Write,
+                    "all" => ForceToolSet::All,
+                    other => {
+                        return Err(format!(
+                            "invalid --force-tool-set '{other}' (expected auto|write|all)"
+                        ));
+                    }
+                };
             }
             "--session" => {
                 i += 1;
@@ -405,15 +444,148 @@ fn handle_modules_cmd(suite: &ModulesSuite, args: &[String]) -> Result<u8, Strin
     Ok(0)
 }
 
+fn handle_goal_cmd(
+    store: &Store,
+    suite: &Arc<ModulesSuite>,
+    opts: &CliOptions,
+    args: &[String],
+) -> Result<u8, String> {
+    match args.first().map(String::as_str) {
+        Some("run") => {
+            let goal_id = args.get(1).ok_or("usage: nola goal run <goal_id>")?;
+            let cfg = load_active_config(store);
+            let route = resolve_model_route(&cfg)?;
+            let caller: Arc<dyn ModelCaller> =
+                Arc::new(HttpModelCaller::new(300).map_err(|e| e.to_string())?);
+            let profile = resolve_profile(opts);
+            let network_allowed = resolve_network_allowed(opts, &cfg);
+            let policy = EffectivePolicy::load(
+                &suite.workspace_root,
+                suite.user_home.as_deref(),
+                profile == PermissionProfile::AllowAll,
+                Some(profile),
+                network_allowed,
+            );
+            let done = GoalWorker::execute_goal(
+                suite,
+                caller,
+                route,
+                policy,
+                goal_id,
+                opts.max_steps.unwrap_or(32),
+                Arc::new(AtomicBool::new(false)),
+            )?;
+            println!("{}", serde_json::to_string_pretty(&done).unwrap());
+            Ok(0)
+        }
+        Some("list") | None => handle_modules_cmd(suite, &["goal".to_string()]),
+        Some(other) => Err(format!("unknown goal subcommand '{other}'")),
+    }
+}
+
+fn handle_room_cmd(
+    store: &Store,
+    suite: &Arc<ModulesSuite>,
+    opts: &CliOptions,
+    args: &[String],
+) -> Result<u8, String> {
+    match args.first().map(String::as_str) {
+        Some("send") => {
+            let room_id = args
+                .get(1)
+                .ok_or("usage: nola room send <room_id> <message>")?;
+            let msg = args[2..].join(" ");
+            if msg.trim().is_empty() {
+                return Err("room message cannot be empty".into());
+            }
+            let cfg = load_active_config(store);
+            let route = resolve_model_route(&cfg)?;
+            let caller: Arc<dyn ModelCaller> =
+                Arc::new(HttpModelCaller::new(300).map_err(|e| e.to_string())?);
+            let profile = resolve_profile(opts);
+            let network_allowed = resolve_network_allowed(opts, &cfg);
+            let policy = EffectivePolicy::load(
+                &suite.workspace_root,
+                suite.user_home.as_deref(),
+                profile == PermissionProfile::AllowAll,
+                Some(profile),
+                network_allowed,
+            );
+            let replies = RoomRuntime::send_message(suite, caller, route, policy, room_id, &msg)?;
+            println!("{}", serde_json::to_string_pretty(&replies).unwrap());
+            Ok(0)
+        }
+        Some("list") | None => handle_modules_cmd(suite, &["agent_room".to_string()]),
+        Some(other) => Err(format!("unknown room subcommand '{other}'")),
+    }
+}
+
+fn handle_scheduler_cmd(
+    store: &Store,
+    suite: &Arc<ModulesSuite>,
+    opts: &CliOptions,
+    args: &[String],
+) -> Result<u8, String> {
+    match args.first().map(String::as_str) {
+        Some("tick") => {
+            let cfg = load_active_config(store);
+            let route = resolve_model_route(&cfg)?;
+            let caller: Arc<dyn ModelCaller> =
+                Arc::new(HttpModelCaller::new(300).map_err(|e| e.to_string())?);
+            let profile = resolve_profile(opts);
+            let network_allowed = resolve_network_allowed(opts, &cfg);
+            let policy = EffectivePolicy::load(
+                &suite.workspace_root,
+                suite.user_home.as_deref(),
+                profile == PermissionProfile::AllowAll,
+                Some(profile),
+                network_allowed,
+            );
+            let results = AutomationScheduler::run_due(suite, caller, route, policy, Utc::now());
+            println!(
+                "{}",
+                serde_json::to_string_pretty(
+                    &results
+                        .into_iter()
+                        .map(|(id, r)| json!({"id": id, "ok": r.is_ok(), "output": r.ok()}))
+                        .collect::<Vec<_>>()
+                )
+                .unwrap()
+            );
+            Ok(0)
+        }
+        Some("list") | None => handle_modules_cmd(suite, &["automation".to_string()]),
+        Some(other) => Err(format!("unknown scheduler subcommand '{other}'")),
+    }
+}
+
+fn handle_update_cmd(args: &[String]) -> Result<u8, String> {
+    match args.first().map(String::as_str) {
+        Some("check") => {
+            let url = args
+                .get(1)
+                .ok_or("usage: nola update check <https://.../manifest.json>")?;
+            let res = check_for_update(url, "2.0.0")?;
+            println!("{}", serde_json::to_string_pretty(&res).unwrap());
+            Ok(0)
+        }
+        _ => Err("usage: nola update check <https://.../manifest.json>".into()),
+    }
+}
+
 fn print_help() {
     println!(
-        "Nola v2 (Lean 8-Crate Architecture)\n\n\
+        "Nola v2 (Lean 8-Crate Full-Capability Architecture)\n\n\
          Usage:\n  \
            nola [options] [prompt]\n  \
-           nola model apply-config <config.json>\n  \
+           nola model apply-config <config.json> | list\n  \
            nola mcp [list|auth <id>]\n  \
            nola sessions [list|delete <id>|backup <dest>]\n  \
-           nola modules <goal|sop|agent_room|expert_peer|data_source|automation|messaging_channel|local_model|plugin|skills>\n  \
+           nola goal [list|run <goal_id>]\n  \
+           nola room [list|send <room_id> <message>]\n  \
+           nola scheduler [list|tick]\n  \
+           nola update check <https://manifest.json>\n  \
+           nola modules <kind|skills>\n  \
            nola web [--host 127.0.0.1] [--port 7860]\n  \
            nola server [--socket <path>]\n  \
            nola tui"

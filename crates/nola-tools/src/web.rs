@@ -2,27 +2,38 @@
 //! DNS-pinned SSRF-safe `web_fetch` tool using `reqwest` + `scraper`.
 //! Always preserves full HTTP error body/status in `ToolModelPayload::Structured`.
 
+use std::io::Read;
 use std::net::{IpAddr, SocketAddr, ToSocketAddrs};
 use std::time::Duration;
 
 use nola_types::{CapabilityDomain, ToolExecutionResult, ToolSchema, ToolSpec, ToolTier};
-use scraper::{Html, Selector};
+use scraper::{Html, Node};
 use serde_json::{json, Value};
-use url::Url;
+use url::{Host, Url};
 
 use crate::{ToolContext, ToolHandler};
+
+const MAX_FETCH_BODY_BYTES: u64 = 4 * 1024 * 1024;
 
 pub fn is_forbidden_ip(ip: IpAddr) -> bool {
     match ip {
         IpAddr::V4(v4) => {
+            let o = v4.octets();
             v4.is_loopback()
                 || v4.is_private()
                 || v4.is_link_local()
                 || v4.is_unspecified()
                 || v4.is_multicast()
-                || v4.octets()[0] == 100 && (v4.octets()[1] & 0xc0) == 64 // CGNAT 100.64.0.0/10
+                || v4.is_broadcast()
+                || o[0] == 0
+                || o[0] >= 240
+                || (o[0] == 100 && (o[1] & 0xc0) == 64) // CGNAT 100.64.0.0/10
+                || (o[0] == 198 && (o[1] == 18 || o[1] == 19)) // Benchmark 198.18.0.0/15
         }
         IpAddr::V6(v6) => {
+            if let Some(v4) = v6.to_ipv4_mapped().or_else(|| v6.to_ipv4()) {
+                return is_forbidden_ip(IpAddr::V4(v4));
+            }
             v6.is_loopback()
                 || v6.is_unspecified()
                 || v6.is_multicast()
@@ -32,22 +43,26 @@ pub fn is_forbidden_ip(ip: IpAddr) -> bool {
     }
 }
 
-/// Resolve host DNS upfront, reject any private/loopback/link-local address (SSRF guard),
+/// Resolve host DNS upfront, reject any private/loopback/link-local/IPv4-mapped address,
 /// and return pinned `SocketAddr`s for `reqwest::ClientBuilder::resolve_to_addrs`.
 pub fn resolve_and_validate_public_url(raw_url: &str) -> Result<(Url, String, Vec<SocketAddr>), String> {
     let url = Url::parse(raw_url).map_err(|e| format!("invalid url: {e}"))?;
     if !matches!(url.scheme(), "http" | "https") {
         return Err("only http and https schemes are allowed".into());
     }
-    let host = url
-        .host_str()
-        .ok_or_else(|| "url missing host".to_string())?
-        .to_string();
     let port = url.port_or_known_default().unwrap_or(80);
-    let addrs: Vec<SocketAddr> = (host.as_str(), port)
-        .to_socket_addrs()
-        .map_err(|e| format!("dns resolution failed for {host}: {e}"))?
-        .collect();
+    let (host, addrs): (String, Vec<SocketAddr>) = match url.host() {
+        Some(Host::Ipv4(v4)) => (v4.to_string(), vec![SocketAddr::new(IpAddr::V4(v4), port)]),
+        Some(Host::Ipv6(v6)) => (v6.to_string(), vec![SocketAddr::new(IpAddr::V6(v6), port)]),
+        Some(Host::Domain(dom)) => {
+            let resolved: Vec<SocketAddr> = (dom, port)
+                .to_socket_addrs()
+                .map_err(|e| format!("dns resolution failed for {dom}: {e}"))?
+                .collect();
+            (dom.to_string(), resolved)
+        }
+        None => return Err("url missing host".into()),
+    };
     if addrs.is_empty() {
         return Err(format!("dns returned no addresses for {host}"));
     }
@@ -140,7 +155,15 @@ impl ToolHandler for WebFetchTool {
             .and_then(|v| v.to_str().ok())
             .unwrap_or("")
             .to_string();
-        let body = resp.text().unwrap_or_default();
+        let mut buf = Vec::new();
+        if let Err(e) = resp.take(MAX_FETCH_BODY_BYTES).read_to_end(&mut buf) {
+            return ToolExecutionResult::err_structured(
+                "fetch_read_error",
+                format!("failed to read HTTP body: {e}"),
+                None,
+            );
+        }
+        let body = String::from_utf8_lossy(&buf).into_owned();
         if status >= 400 {
             let preview: String = body.chars().take(2_000).collect();
             return ToolExecutionResult::err_structured(
@@ -173,22 +196,29 @@ impl ToolHandler for WebFetchTool {
 
 fn extract_html_text(html: &str) -> String {
     let doc = Html::parse_document(html);
-    let sel = Selector::parse("body").unwrap();
-    let root = doc.select(&sel).next();
-    let chunks: Vec<String> = match root {
-        Some(el) => el
-            .text()
-            .map(str::trim)
-            .filter(|s| !s.is_empty())
-            .map(ToString::to_string)
-            .collect(),
-        None => doc
-            .root_element()
-            .text()
-            .map(str::trim)
-            .filter(|s| !s.is_empty())
-            .map(ToString::to_string)
-            .collect(),
-    };
+    let mut chunks = Vec::new();
+    fn visit(node: scraper::ElementRef<'_>, out: &mut Vec<String>) {
+        let tag = node.value().name();
+        if matches!(tag, "script" | "style" | "noscript" | "svg") {
+            return;
+        }
+        for child in node.children() {
+            match child.value() {
+                Node::Text(t) => {
+                    let s = t.trim();
+                    if !s.is_empty() {
+                        out.push(s.to_string());
+                    }
+                }
+                Node::Element(_) => {
+                    if let Some(el) = scraper::ElementRef::wrap(child) {
+                        visit(el, out);
+                    }
+                }
+                _ => {}
+            }
+        }
+    }
+    visit(doc.root_element(), &mut chunks);
     chunks.join("\n")
 }

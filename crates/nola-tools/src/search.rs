@@ -120,7 +120,17 @@ impl ToolHandler for GlobTool {
             .unwrap_or(200);
 
         let mut files = Vec::new();
-        let walker = WalkBuilder::new(&base).hidden(false).build();
+        if !base.exists() {
+            return ToolExecutionResult::err_structured(
+                "not_found",
+                format!("path does not exist: {}", base.display()),
+                None,
+            );
+        }
+        let walker = WalkBuilder::new(&base)
+            .hidden(false)
+            .filter_entry(|e| e.file_name() != ".git")
+            .build();
         for dent in walker.flatten() {
             if !dent.file_type().map(|t| t.is_file()).unwrap_or(false) {
                 continue;
@@ -200,9 +210,23 @@ impl ToolHandler for GrepTool {
             .unwrap_or(200);
 
         let mut matches = Vec::new();
-        let walker = WalkBuilder::new(&base).hidden(false).build();
+        if !base.exists() {
+            return ToolExecutionResult::err_structured(
+                "not_found",
+                format!("path does not exist: {}", base.display()),
+                None,
+            );
+        }
+        let walker = WalkBuilder::new(&base)
+            .hidden(false)
+            .filter_entry(|e| e.file_name() != ".git")
+            .build();
         'outer: for dent in walker.flatten() {
             if !dent.file_type().map(|t| t.is_file()).unwrap_or(false) {
+                continue;
+            }
+            // Skip oversized files (>10 MiB) before loading into RAM
+            if dent.metadata().map(|m| m.len() > 10 * 1024 * 1024).unwrap_or(true) {
                 continue;
             }
             let Ok(bytes) = fs::read(dent.path()) else {

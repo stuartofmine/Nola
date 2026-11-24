@@ -13,6 +13,7 @@ nola-store = { workspace = true }
 nola-llm = { workspace = true }
 nola-tools = { workspace = true }
 globset = { workspace = true }
+libc = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
 thiserror = { workspace = true }

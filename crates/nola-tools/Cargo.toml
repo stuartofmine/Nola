@@ -14,6 +14,7 @@ calamine = { workspace = true }
 globset = { workspace = true }
 ignore = { workspace = true }
 image = { workspace = true }
+libc = { workspace = true }
 lopdf = { workspace = true }
 regex = { workspace = true }
 reqwest = { workspace = true }
@@ -24,6 +25,7 @@ serde = { workspace = true }
 serde_json = { workspace = true }
 symphonia = { workspace = true }
 url = { workspace = true }
+vt100 = { workspace = true }
 
 [dev-dependencies]
 tempfile = { workspace = true }

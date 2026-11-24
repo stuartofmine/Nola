@@ -10,10 +10,14 @@ workspace = true
 [dependencies]
 nola-types = { workspace = true }
 nola-store = { workspace = true }
+nola-llm = { workspace = true }
 nola-tools = { workspace = true }
+nola-engine = { workspace = true }
+chrono = { workspace = true }
 reqwest = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
+url = { workspace = true }
 
 [dev-dependencies]
 tempfile = { workspace = true }

@@ -39,12 +39,12 @@ fn anthropic_endpoint(base: &str) -> String {
     }
 }
 
-fn push_or_merge_user(messages: &mut Vec<Value>, mut new_blocks: Vec<Value>) {
+fn push_or_merge_role(messages: &mut Vec<Value>, role: &str, mut new_blocks: Vec<Value>) {
     if new_blocks.is_empty() {
         return;
     }
     if let Some(last) = messages.last_mut() {
-        if last.get("role").and_then(|v| v.as_str()) == Some("user") {
+        if last.get("role").and_then(|v| v.as_str()) == Some(role) {
             if let Some(arr) = last.get_mut("content").and_then(|v| v.as_array_mut()) {
                 arr.append(&mut new_blocks);
                 return;
@@ -52,16 +52,25 @@ fn push_or_merge_user(messages: &mut Vec<Value>, mut new_blocks: Vec<Value>) {
         }
     }
     messages.push(json!({
-        "role": "user",
+        "role": role,
         "content": new_blocks
     }));
+}
+
+fn push_or_merge_user(messages: &mut Vec<Value>, new_blocks: Vec<Value>) {
+    push_or_merge_role(messages, "user", new_blocks);
 }
 
 fn media_blocks(media: &[MediaAttachment]) -> Vec<Value> {
     media
         .iter()
         .map(|att| {
-            let mime = att.mime_type.trim().to_ascii_lowercase();
+            let raw_mime = att.mime_type.trim().to_ascii_lowercase();
+            let mime = if raw_mime == "image/jpg" {
+                "image/jpeg"
+            } else {
+                raw_mime.as_str()
+            };
             let block_type = if mime == "application/pdf" {
                 "document"
             } else {
@@ -146,10 +155,7 @@ impl ProviderWireAdapter for AnthropicMessagesAdapter {
                         b
                     };
                     if !blocks.is_empty() {
-                        messages.push(json!({
-                            "role": "assistant",
-                            "content": blocks
-                        }));
+                        push_or_merge_role(&mut messages, "assistant", blocks);
                     }
                 }
                 HistoryMessage::Tool {
@@ -159,8 +165,15 @@ impl ProviderWireAdapter for AnthropicMessagesAdapter {
                     media,
                     ..
                 } => {
-                    let mut tr_content = vec![json!({"type": "text", "text": payload.to_model_string()})];
+                    let mut tr_content = Vec::new();
+                    let text = payload.to_model_string();
+                    if !text.is_empty() {
+                        tr_content.push(json!({"type": "text", "text": text}));
+                    }
                     tr_content.extend(media_blocks(media));
+                    if tr_content.is_empty() {
+                        tr_content.push(json!({"type": "text", "text": "(empty)"}));
+                    }
                     push_or_merge_user(
                         &mut messages,
                         vec![json!({
@@ -178,6 +191,24 @@ impl ProviderWireAdapter for AnthropicMessagesAdapter {
         if let Some(tail) = format_tail_reminders(&req.ephemeral_tail_reminders) {
             push_or_merge_user(&mut messages, vec![json!({"type": "text", "text": tail})]);
         }
+        if let Some(schema) = &req.json_schema {
+            push_or_merge_user(
+                &mut messages,
+                vec![json!({
+                    "type": "text",
+                    "text": format!("Return ONLY valid JSON conforming to this JSON Schema:\n{}", serde_json::to_string(schema).unwrap_or_default())
+                })],
+            );
+        }
+        // Anthropic requires non-empty `messages` starting with a `user` turn.
+        if messages.is_empty()
+            || messages.first().and_then(|m| m.get("role")).and_then(|v| v.as_str()) != Some("user")
+        {
+            messages.insert(
+                0,
+                json!({"role": "user", "content": [{"type": "text", "text": "Continue."}]}),
+            );
+        }
 
         let mut body = serde_json::Map::new();
         body.insert("model".into(), Value::String(route.model.clone()));
@@ -188,11 +219,20 @@ impl ProviderWireAdapter for AnthropicMessagesAdapter {
         }
         body.insert("messages".into(), Value::Array(messages));
 
-        if route.capabilities.sampling_parameters {
+        let thinking_enabled = route.capabilities.reasoning
+            && route.reasoning_effort.as_deref().is_some_and(|e| !e.is_empty())
+            && req.max_output_tokens > 2_048;
+        if thinking_enabled {
+            let budget = (req.max_output_tokens / 2).clamp(1_024, 16_384);
+            body.insert(
+                "thinking".into(),
+                json!({"type": "enabled", "budget_tokens": budget}),
+            );
+        } else if route.capabilities.sampling_parameters {
+            // Claude 4.x rejects requests specifying both temperature and top_p simultaneously.
             if let Some(t) = route.temperature {
                 body.insert("temperature".into(), json!(t));
-            }
-            if let Some(tp) = route.top_p {
+            } else if let Some(tp) = route.top_p {
                 body.insert("top_p".into(), json!(tp));
             }
         }
@@ -342,6 +382,7 @@ impl ProviderWireAdapter for AnthropicMessagesAdapter {
         let mut usage = TokenUsage::default();
         // index -> (kind, id_or_sig, name, buffer)
         let mut blocks: BTreeMap<usize, (String, String, String, String)> = BTreeMap::new();
+        let mut saw_terminal = false;
 
         while let Some(ev) = sse.next_event()? {
             let trimmed = ev.data.trim();
@@ -355,6 +396,12 @@ impl ProviderWireAdapter for AnthropicMessagesAdapter {
                 .or(ev.event.as_deref())
                 .unwrap_or("");
             match kind {
+                "error" => {
+                    return Err(LlmError::Wire(format!("anthropic SSE error: {payload}")));
+                }
+                "message_stop" => {
+                    saw_terminal = true;
+                }
                 "message_start" => {
                     if let Some(m) = payload.get("message") {
                         response_id = m.get("id").and_then(|v| v.as_str()).map(ToString::to_string);
@@ -374,13 +421,14 @@ impl ProviderWireAdapter for AnthropicMessagesAdapter {
                         let btype = cb.get("type").and_then(|v| v.as_str()).unwrap_or("").to_string();
                         let id = cb.get("id").and_then(|v| v.as_str()).unwrap_or("").to_string();
                         let name = cb.get("name").and_then(|v| v.as_str()).unwrap_or("").to_string();
+                        let init_data = cb.get("data").and_then(|v| v.as_str()).unwrap_or("").to_string();
                         if btype == "tool_use" && !name.is_empty() {
                             on_delta(ModelStreamDelta::ToolCallStart {
                                 call_id: id.clone(),
                                 name: name.clone(),
                             });
                         }
-                        blocks.insert(idx, (btype, id, name, String::new()));
+                        blocks.insert(idx, (btype, id, name, init_data));
                     }
                 }
                 "content_block_delta" => {
@@ -452,15 +500,25 @@ impl ProviderWireAdapter for AnthropicMessagesAdapter {
             }
         }
 
+        if !saw_terminal {
+            return Err(LlmError::Wire(
+                "anthropic SSE stream ended prematurely without message_stop".into(),
+            ));
+        }
+
         let mut tool_calls = Vec::new();
         let mut cont_blocks = Vec::new();
         for (_, (btype, id_or_sig, name, buf)) in blocks {
             match btype.as_str() {
-                "text" => cont_blocks.push(json!({"type": "text", "text": buf})),
+                "text" if !buf.is_empty() => cont_blocks.push(json!({"type": "text", "text": buf})),
                 "thinking" => cont_blocks.push(json!({
                     "type": "thinking",
                     "thinking": buf,
                     "signature": id_or_sig
+                })),
+                "redacted_thinking" => cont_blocks.push(json!({
+                    "type": "redacted_thinking",
+                    "data": buf
                 })),
                 "tool_use" if stop_reason != ModelStopReason::OutputLimit => {
                     let parsed = parse_tool_arguments(&buf)?;
