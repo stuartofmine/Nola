@@ -2507,13 +2507,19 @@ impl ToolOutcome {
         paths.sort();
         paths.dedup();
         for path in paths {
-            let operation = match (before.get(&path), after.get(&path)) {
-                (None, Some(_)) => "create",
-                (Some(_), None) => "delete",
-                (Some(left), Some(right)) if left != right => "edit",
+            let (operation, before_version) = match (before.get(&path), after.get(&path)) {
+                (None, Some(_)) => ("create", Some("absent:v1".to_string())),
+                (Some(left), None) => (
+                    "delete",
+                    Some(format!("fingerprint:v1:{}:{:016x}", left.size, left.digest)),
+                ),
+                (Some(left), Some(right)) if left != right => (
+                    "edit",
+                    Some(format!("fingerprint:v1:{}:{:016x}", left.size, left.digest)),
+                ),
                 _ => continue,
             };
-            self = self.with_file_artifact(&path, operation);
+            self = self.with_file_artifact_version(&path, operation, before_version);
         }
         self
     }

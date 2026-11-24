@@ -3,18 +3,24 @@
 // - Purpose: Host-owned remote MCP connection and capability discovery.
 // - Security: Credentials and endpoints remain Host configuration; Core receives typed descriptors only.
 
+use crate::oauth::{parse_www_authenticate_headers, OAuthTokenSet, WwwAuthenticateChallenge};
 use nola_core::agent::capability::{
     McpPromptArgumentDescriptor, McpPromptDescriptor, McpResourceDescriptor,
     McpResourceTemplateDescriptor, McpServerAvailability, McpServerDescriptor, McpToolDescriptor,
     McpTransportKind,
 };
 use nola_core::agent::host::{validate_host_artifacts, HostArtifact};
-use reqwest::blocking::{Client, Response};
-use reqwest::header::{HeaderName, HeaderValue, ACCEPT, CONTENT_TYPE, USER_AGENT};
+use reqwest::blocking::Client;
+use reqwest::header::{
+    HeaderMap, HeaderName, HeaderValue, ACCEPT, AUTHORIZATION, CACHE_CONTROL, CONTENT_TYPE,
+    USER_AGENT,
+};
 use serde_json::{json, Map, Value};
 use std::collections::BTreeMap;
+use std::io::Read;
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Condvar, Mutex, MutexGuard, OnceLock, RwLock};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 const DEFAULT_PROTOCOL_VERSION: &str = "2025-06-18";
 const DEFAULT_TIMEOUT_MS: u64 = 15_000;
@@ -30,8 +36,10 @@ pub struct McpHostError {
 #[derive(Clone)]
 struct McpConnectionConfig {
     endpoint: String,
+    transport: McpTransportKind,
     timeout_ms: u64,
     headers: Vec<(HeaderName, HeaderValue)>,
+    oauth_token: Option<OAuthTokenSet>,
     resource: crate::mcp_connection_authority::ConnectionResource,
     server_id: String,
     display_name: String,
@@ -39,7 +47,9 @@ struct McpConnectionConfig {
 
 struct McpConnectionEntry {
     config: McpConnectionConfig,
-    client: Option<StreamableHttpMcpClient>,
+    client: Option<Arc<RemoteMcpClient>>,
+    oauth_token: Arc<RwLock<Option<OAuthTokenSet>>>,
+    last_oauth_challenge: Arc<RwLock<Option<WwwAuthenticateChallenge>>>,
     retired: bool,
     connecting: bool,
     connect_signal: Arc<Condvar>,
@@ -142,7 +152,7 @@ fn connection_registry() -> &'static RwLock<BTreeMap<String, Arc<Mutex<McpConnec
 fn install_connection(
     connection_ref: String,
     config: McpConnectionConfig,
-    client: Option<StreamableHttpMcpClient>,
+    client: Option<Arc<RemoteMcpClient>>,
 ) -> Result<(), McpHostError> {
     let mut registry = connection_registry().write().map_err(|_| {
         McpHostError::new(
@@ -158,8 +168,10 @@ fn install_connection(
             )
         })?;
         let unchanged = existing.config.endpoint == config.endpoint
+            && existing.config.transport == config.transport
             && existing.config.timeout_ms == config.timeout_ms
             && existing.config.headers == config.headers
+            && existing.config.oauth_token == config.oauth_token
             && existing.config.resource == config.resource;
         if unchanged {
             if client.is_some() {
@@ -168,11 +180,14 @@ fn install_connection(
             return Ok(());
         }
     }
+    let oauth_token = Arc::new(RwLock::new(config.oauth_token.clone()));
     registry.insert(
         connection_ref,
         Arc::new(Mutex::new(McpConnectionEntry {
             config,
             client,
+            oauth_token,
+            last_oauth_challenge: Arc::new(RwLock::new(None)),
             retired: false,
             connecting: false,
             connect_signal: Arc::new(Condvar::new()),
@@ -182,6 +197,187 @@ fn install_connection(
         })),
     );
     Ok(())
+}
+
+pub fn set_connection_oauth_token(
+    connection_ref: &str,
+    token: OAuthTokenSet,
+) -> Result<(), McpHostError> {
+    token
+        .bearer_header_value()
+        .map_err(|error| McpHostError::new(error.code, error.message))?;
+    let entry = connection_registry()
+        .read()
+        .map_err(|_| {
+            McpHostError::new(
+                "mcp_registry_unavailable",
+                "MCP connection registry is unavailable",
+            )
+        })?
+        .get(connection_ref)
+        .cloned()
+        .ok_or_else(|| {
+            McpHostError::new(
+                "mcp_connection_unavailable",
+                format!("MCP HTTP connection `{connection_ref}` is not registered by this Host"),
+            )
+        })?;
+    let (token_slot, challenge_slot) = {
+        let guard = entry.lock().map_err(|_| {
+            McpHostError::new(
+                "mcp_connection_unavailable",
+                "MCP connection state is unavailable",
+            )
+        })?;
+        if guard.retired {
+            return Err(McpHostError::new(
+                "mcp_connection_retired",
+                "MCP connection was retired",
+            ));
+        }
+        (
+            Arc::clone(&guard.oauth_token),
+            Arc::clone(&guard.last_oauth_challenge),
+        )
+    };
+    *token_slot
+        .write()
+        .unwrap_or_else(|poisoned| poisoned.into_inner()) = Some(token);
+    *challenge_slot
+        .write()
+        .unwrap_or_else(|poisoned| poisoned.into_inner()) = None;
+    Ok(())
+}
+
+pub fn connection_oauth_token(connection_ref: &str) -> Result<Option<OAuthTokenSet>, McpHostError> {
+    let entry = connection_registry()
+        .read()
+        .map_err(|_| {
+            McpHostError::new(
+                "mcp_registry_unavailable",
+                "MCP connection registry is unavailable",
+            )
+        })?
+        .get(connection_ref)
+        .cloned()
+        .ok_or_else(|| {
+            McpHostError::new(
+                "mcp_connection_unavailable",
+                format!("MCP HTTP connection `{connection_ref}` is not registered by this Host"),
+            )
+        })?;
+    let token_slot = {
+        let guard = entry.lock().map_err(|_| {
+            McpHostError::new(
+                "mcp_connection_unavailable",
+                "MCP connection state is unavailable",
+            )
+        })?;
+        Arc::clone(&guard.oauth_token)
+    };
+    let token = token_slot
+        .read()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
+        .clone();
+    Ok(token)
+}
+
+pub fn last_oauth_challenge(
+    connection_ref: &str,
+) -> Result<Option<WwwAuthenticateChallenge>, McpHostError> {
+    let entry = connection_registry()
+        .read()
+        .map_err(|_| {
+            McpHostError::new(
+                "mcp_registry_unavailable",
+                "MCP connection registry is unavailable",
+            )
+        })?
+        .get(connection_ref)
+        .cloned()
+        .ok_or_else(|| {
+            McpHostError::new(
+                "mcp_connection_unavailable",
+                format!("MCP HTTP connection `{connection_ref}` is not registered by this Host"),
+            )
+        })?;
+    let challenge_slot = {
+        let guard = entry.lock().map_err(|_| {
+            McpHostError::new(
+                "mcp_connection_unavailable",
+                "MCP connection state is unavailable",
+            )
+        })?;
+        Arc::clone(&guard.last_oauth_challenge)
+    };
+    let challenge = challenge_slot
+        .read()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
+        .clone();
+    Ok(challenge)
+}
+
+pub fn parse_oauth_discovery_from_error(error: &McpHostError) -> Option<WwwAuthenticateChallenge> {
+    if error.code != "mcp_authorization_required" {
+        return None;
+    }
+    let (_, raw_json) = error.message.split_once("oauth_discovery=")?;
+    serde_json::from_str::<WwwAuthenticateChallenge>(raw_json.trim()).ok()
+}
+
+fn configured_transport(value: &Value) -> McpTransportKind {
+    if crate::mcp_stdio::is_stdio_configuration(value) {
+        return McpTransportKind::Stdio;
+    }
+    match value
+        .get("transport")
+        .or_else(|| value.get("type"))
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .map(str::to_ascii_lowercase)
+        .as_deref()
+    {
+        Some("sse" | "server_sent_events" | "server-sent-events") => {
+            McpTransportKind::ServerSentEvents
+        }
+        _ => McpTransportKind::StreamableHttp,
+    }
+}
+
+fn configured_oauth_token(value: &Value) -> Result<Option<OAuthTokenSet>, McpHostError> {
+    let candidate = value
+        .get("oauth")
+        .and_then(|oauth| oauth.get("token_set").or(Some(oauth)))
+        .filter(|candidate| candidate.get("access_token").is_some());
+    if let Some(candidate) = candidate {
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_secs();
+        let token = OAuthTokenSet::from_token_response(candidate, now)
+            .map_err(|error| McpHostError::new(error.code, error.message))?;
+        return Ok(Some(token));
+    }
+    if let Some(bearer) = value
+        .get("auth")
+        .and_then(|auth| auth.get("bearer_token"))
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|token| !token.is_empty())
+    {
+        let token = OAuthTokenSet {
+            access_token: bearer.to_string(),
+            token_type: "Bearer".to_string(),
+            refresh_token: None,
+            scope: None,
+            expires_at_epoch_secs: None,
+        };
+        token
+            .bearer_header_value()
+            .map_err(|error| McpHostError::new(error.code, error.message))?;
+        return Ok(Some(token));
+    }
+    Ok(None)
 }
 
 pub fn register_configured_servers(values: &[Value]) -> Result<(), McpHostError> {
@@ -218,8 +414,10 @@ pub fn register_configured_servers(values: &[Value]) -> Result<(), McpHostError>
             .clamp(1_000, 120_000);
         let config = McpConnectionConfig {
             endpoint: endpoint.to_string(),
+            transport: configured_transport(value),
             timeout_ms,
             headers: configured_headers(value)?,
+            oauth_token: configured_oauth_token(value)?,
             resource: crate::mcp_connection_authority::resource_from_configuration(value)
                 .map_err(|message|McpHostError::new("mcp_owner_missing",message))?,
             server_id: server_id.clone(),
@@ -235,7 +433,10 @@ pub fn revoke_connection(transport: McpTransportKind, connection_ref: &str) -> R
     if transport == McpTransportKind::Stdio {
         return Ok(McpRetirement { http: None, _stdio: Some(crate::mcp_stdio::revoke_connection(connection_ref)) });
     }
-    if transport != McpTransportKind::StreamableHttp {
+    if !matches!(
+        transport,
+        McpTransportKind::StreamableHttp | McpTransportKind::ServerSentEvents
+    ) {
         return Err(McpHostError::new("mcp_transport_unsupported", "Cannot retire this MCP transport"));
     }
     let removed = connection_registry().write().unwrap_or_else(|poisoned| poisoned.into_inner()).remove(connection_ref);
@@ -251,15 +452,37 @@ impl Drop for McpRetirement {
     fn drop(&mut self) {
         if let Some(entry) = self.http.take() {
             let signal;
-            let _old_client;
+            let old_client;
             {
                 let mut guard = entry.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
                 guard.retired = true;
                 signal = guard.connect_signal.clone();
-                _old_client = guard.client.take();
+                old_client = guard.client.take();
+            }
+            if let Some(client) = old_client {
+                client.close();
             }
             signal.notify_all();
         }
+    }
+}
+
+fn invalidate_client_generation(
+    entry: &Arc<Mutex<McpConnectionEntry>>,
+    expected_generation: &Option<String>,
+) {
+    let old_client = {
+        let Ok(mut guard) = entry.lock() else {
+            return;
+        };
+        if guard.generation == *expected_generation {
+            guard.client.take()
+        } else {
+            None
+        }
+    };
+    if let Some(client) = old_client {
+        client.close();
     }
 }
 
@@ -327,7 +550,10 @@ pub fn call_tool_with_cancellation_and_progress(
             progress,
         );
     }
-    if transport == McpTransportKind::StreamableHttp {
+    if matches!(
+        transport,
+        McpTransportKind::StreamableHttp | McpTransportKind::ServerSentEvents
+    ) {
         return call_http_tool_with_cancellation(
             connection_ref,
             tool_name,
@@ -375,7 +601,41 @@ fn call_http_tool_with_cancellation(
     cancellation: &dyn crate::Cancellation,
     progress: &mut dyn FnMut(&Value),
 ) -> Result<McpToolExecution, McpHostError> {
-    let connection = connection_registry()
+    let (entry, client, generation) = checkout_remote_client(connection_ref)?;
+    // Registry and connection entry locks are released before blocking network I/O
+    // so concurrent HTTP/SSE MCP requests execute in parallel without blocking each other.
+    let result = client.request_with_cancellation(
+        "tools/call",
+        json!({"name": tool_name, "arguments": arguments}),
+        cancellation,
+        progress,
+    );
+    let output = match result {
+        Ok(output) => output,
+        Err(error) => {
+            // The active request may still produce a response after this
+            // method returns. A fresh session prevents that response from
+            // becoming input to the next invocation.
+            invalidate_client_generation(&entry, &generation);
+            return Err(error);
+        }
+    };
+    let is_error = output
+        .get("isError")
+        .and_then(Value::as_bool)
+        .unwrap_or(false);
+    let artifacts = mcp_result_artifacts(&output)?;
+    Ok(McpToolExecution {
+        output,
+        is_error,
+        artifacts,
+    })
+}
+
+fn checkout_remote_client(
+    connection_ref: &str,
+) -> Result<(Arc<Mutex<McpConnectionEntry>>, Arc<RemoteMcpClient>, Option<String>), McpHostError> {
+    let entry = connection_registry()
         .read()
         .map_err(|_| {
             McpHostError::new(
@@ -391,47 +651,27 @@ fn call_http_tool_with_cancellation(
                 format!("MCP HTTP connection `{connection_ref}` is not registered by this Host"),
             )
         })?;
-    let mut connection = connection.lock().map_err(|_| {
+    let guard = entry.lock().map_err(|_| {
         McpHostError::new(
             "mcp_connection_unavailable",
             "MCP connection state is unavailable",
         )
     })?;
-    if connection.retired {
-        return Err(McpHostError::new("mcp_connection_retired", "MCP connection was retired"));
+    if guard.retired {
+        return Err(McpHostError::new(
+            "mcp_connection_retired",
+            "MCP connection was retired",
+        ));
     }
-    if connection.client.is_none() { return Err(McpHostError::new("mcp_connection_required",
-        "The MCP connection is not active; call mcp_connect and obtain any required approval")); }
-    let result = connection
-        .client
-        .as_mut()
-        .expect("MCP HTTP client initialized")
-        .request_with_cancellation(
-            "tools/call",
-            json!({"name":tool_name,"arguments":arguments}),
-            cancellation,
-            progress,
-        );
-    let output = match result {
-        Ok(output) => output,
-        Err(error) => {
-            // The active request may still produce a response after this
-            // method returns. A fresh session prevents that response from
-            // becoming input to the next invocation.
-            connection.client = None;
-            return Err(error);
-        }
+    let Some(client) = guard.client.clone() else {
+        return Err(McpHostError::new(
+            "mcp_connection_required",
+            "The MCP connection is not active; call mcp_connect and obtain any required approval",
+        ));
     };
-    let is_error = output
-        .get("isError")
-        .and_then(Value::as_bool)
-        .unwrap_or(false);
-    let artifacts = mcp_result_artifacts(&output)?;
-    Ok(McpToolExecution {
-        output,
-        is_error,
-        artifacts,
-    })
+    let generation = guard.generation.clone();
+    drop(guard);
+    Ok((entry, client, generation))
 }
 
 pub fn read_resource(
@@ -482,44 +722,17 @@ fn request_capability(
     if transport == McpTransportKind::Stdio {
         return crate::mcp_stdio::request_capability(connection_ref, method, params);
     }
-    if transport != McpTransportKind::StreamableHttp {
+    if !matches!(
+        transport,
+        McpTransportKind::StreamableHttp | McpTransportKind::ServerSentEvents
+    ) {
         return Err(McpHostError::new(
             "mcp_transport_unsupported",
             format!("MCP transport `{transport:?}` cannot execute `{method}`"),
         ));
     }
-    let connection = connection_registry()
-        .read()
-        .map_err(|_| {
-            McpHostError::new(
-                "mcp_registry_unavailable",
-                "MCP connection registry is unavailable",
-            )
-        })?
-        .get(connection_ref)
-        .cloned();
-    let Some(connection) = connection else {
-        return Err(McpHostError::new(
-            "mcp_connection_unavailable",
-            format!("MCP HTTP connection `{connection_ref}` is not registered by this Host"),
-        ));
-    };
-    let mut connection = connection.lock().map_err(|_| {
-        McpHostError::new(
-            "mcp_connection_unavailable",
-            "MCP connection state is unavailable",
-        )
-    })?;
-    if connection.retired {
-        return Err(McpHostError::new("mcp_connection_retired", "MCP connection was retired"));
-    }
-    if connection.client.is_none() { return Err(McpHostError::new("mcp_connection_required",
-        "The MCP connection is not active; call mcp_connect and obtain any required approval")); }
-    let result = connection
-        .client
-        .as_mut()
-        .expect("MCP client initialized")
-        .request(method, params);
+    let (entry, client, generation) = checkout_remote_client(connection_ref)?;
+    let result = client.request(method, params);
     let output = match result {
         Ok(output) => output,
         Err(error) => {
@@ -527,7 +740,7 @@ fn request_capability(
             // client so the next independent invocation can re-initialize.
             // Never retry the current call automatically: the remote tool may
             // have completed before the transport failed.
-            connection.client = None;
+            invalidate_client_generation(&entry, &generation);
             return Err(error);
         }
     };
@@ -558,8 +771,7 @@ fn describe_servers(values:&[Value], connected:bool) -> Result<Vec<Value>,McpHos
         let server_id = configured_server_id(value,index)?;
         let display_name = value.get("display_name").or_else(||value.get("name"))
             .and_then(Value::as_str).unwrap_or(&server_id).to_owned();
-        let transport = if crate::mcp_stdio::is_stdio_configuration(value) {McpTransportKind::Stdio}
-            else {McpTransportKind::StreamableHttp};
+        let transport = configured_transport(value);
         let reference = value["_nola_mcp_connection"]["connection_ref"].as_str()
             .map(str::to_owned).unwrap_or_else(||format!("pending:{server_id}"));
         let cached = if connected {cached_descriptor(transport,&reference)?} else {None};
@@ -649,6 +861,8 @@ fn establish_http_entry(
     guard.admission_id = admission_id.clone();
     guard.connecting = true;
     let config = guard.config.clone();
+    let oauth_token = Arc::clone(&guard.oauth_token);
+    let last_oauth_challenge = Arc::clone(&guard.last_oauth_challenge);
     let signal = guard.connect_signal.clone();
     let mut reset_guard = HttpConnectingGuard {
         connection: Arc::clone(connection),
@@ -657,11 +871,24 @@ fn establish_http_entry(
     };
     drop(guard);
 
-    let mut client =
-        StreamableHttpMcpClient::connect(&config.endpoint, config.timeout_ms, config.headers)?;
-    let descriptor = client.discover(config.server_id, config.display_name, reference.into())?;
+    let client = Arc::new(RemoteMcpClient::connect(
+        config.transport,
+        &config.endpoint,
+        config.timeout_ms,
+        config.headers,
+        oauth_token,
+        last_oauth_challenge,
+    )?);
+    let descriptor = match client.discover(config.server_id, config.display_name, reference.into()) {
+        Ok(descriptor) => descriptor,
+        Err(error) => {
+            client.close();
+            return Err(error);
+        }
+    };
 
     let mut guard = connection.lock().map_err(|_| {
+        client.close();
         McpHostError::new("mcp_connection_unavailable", "MCP connection unavailable")
     })?;
     guard.connecting = false;
@@ -669,7 +896,7 @@ fn establish_http_entry(
     signal.notify_all();
     if guard.retired || guard.admission_id != admission_id || guard.config.resource != config.resource {
         drop(guard);
-        drop(client);
+        client.close();
         return Err(McpHostError::new(
             "mcp_connection_changed",
             "MCP resource changed; connection was not retained",
@@ -735,7 +962,10 @@ pub fn ensure_connected(
             expected_config_digest,
         );
     }
-    if transport != McpTransportKind::StreamableHttp {
+    if !matches!(
+        transport,
+        McpTransportKind::StreamableHttp | McpTransportKind::ServerSentEvents
+    ) {
         return Err(McpHostError::new(
             "mcp_transport_unsupported",
             "Cannot reconnect this MCP transport",
@@ -778,13 +1008,36 @@ pub fn discover_connected_servers(values:&[Value]) -> Result<Vec<Value>,McpHostE
         let connection = connection_registry().read().map_err(|_|McpHostError::new("mcp_registry_unavailable","MCP registry unavailable"))?
             .get(reference).cloned();
         let Some(connection) = connection else { continue; };
-        let mut connection = connection.lock().map_err(|_|McpHostError::new("mcp_connection_unavailable","MCP connection unavailable"))?;
-        if connection.retired || connection.client.is_none() { continue; }
-        let config = connection.config.clone();
-        let discovered = connection.client.as_mut().expect("checked client").discover(config.server_id,config.display_name,reference.into());
+        let (client, config, generation) = {
+            let guard = connection.lock().map_err(|_|McpHostError::new("mcp_connection_unavailable","MCP connection unavailable"))?;
+            if guard.retired { continue; }
+            let Some(client) = guard.client.clone() else { continue; };
+            (client, guard.config.clone(), guard.generation.clone())
+        };
+        let discovered = client.discover(config.server_id, config.display_name, reference.into());
         match discovered {
-            Ok(mut descriptor) => { descriptor.connection_ref = reference.into(); connection.descriptor = Some(descriptor); }
-            Err(error) => { connection.client = None; connection.descriptor = None; return Err(error); }
+            Ok(mut descriptor) => {
+                descriptor.connection_ref = reference.into();
+                client.catalog_dirty.store(false, Ordering::SeqCst);
+                if let Ok(mut guard) = connection.lock() {
+                    if !guard.retired && guard.generation == generation {
+                        guard.descriptor = Some(descriptor);
+                    }
+                }
+            }
+            Err(error) => {
+                if let Ok(mut guard) = connection.lock() {
+                    if guard.generation == generation {
+                        let old = guard.client.take();
+                        guard.descriptor = None;
+                        drop(guard);
+                        if let Some(old) = old {
+                            old.close();
+                        }
+                    }
+                }
+                return Err(error);
+            }
         }
     }
     describe_servers(values,true)
@@ -853,15 +1106,198 @@ fn configured_headers(value: &Value) -> Result<Vec<(HeaderName, HeaderValue)>, M
         .collect()
 }
 
-struct StreamableHttpMcpClient {
+fn resolve_http_headers(
+    base_headers: &[(HeaderName, HeaderValue)],
+    oauth_token: &RwLock<Option<OAuthTokenSet>>,
+) -> Result<Vec<(HeaderName, HeaderValue)>, McpHostError> {
+    let token = oauth_token
+        .read()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
+        .clone();
+    if let Some(token) = token {
+        let bearer = token
+            .bearer_header_value()
+            .map_err(|error| McpHostError::new(error.code, error.message))?;
+        let mut resolved: Vec<(HeaderName, HeaderValue)> = base_headers
+            .iter()
+            .filter(|(name, _)| *name != AUTHORIZATION)
+            .cloned()
+            .collect();
+        resolved.push((AUTHORIZATION, bearer));
+        return Ok(resolved);
+    }
+    Ok(base_headers.to_vec())
+}
+
+fn authorization_required_error(
+    status: reqwest::StatusCode,
+    headers: &HeaderMap,
+    challenge_sink: Option<&RwLock<Option<WwwAuthenticateChallenge>>>,
+) -> McpHostError {
+    if let Some(challenge) = parse_www_authenticate_headers(headers) {
+        if let Some(sink) = challenge_sink {
+            *sink
+                .write()
+                .unwrap_or_else(|poisoned| poisoned.into_inner()) = Some(challenge.clone());
+        }
+        let encoded = serde_json::to_string(&challenge).unwrap_or_default();
+        return McpHostError::new(
+            "mcp_authorization_required",
+            format!(
+                "MCP server requires authorization (HTTP {}); oauth_discovery={encoded}",
+                status.as_u16()
+            ),
+        );
+    }
+    McpHostError::new(
+        "mcp_authorization_required",
+        format!(
+            "MCP server requires authorization (HTTP {})",
+            status.as_u16()
+        ),
+    )
+}
+
+fn validate_remote_endpoint(endpoint: &str) -> Result<reqwest::Url, McpHostError> {
+    let parsed = reqwest::Url::parse(endpoint).map_err(|_| {
+        McpHostError::new(
+            "mcp_endpoint_invalid",
+            "MCP endpoint must be an absolute URL",
+        )
+    })?;
+    if !matches!(parsed.scheme(), "http" | "https") {
+        return Err(McpHostError::new(
+            "mcp_transport_unsupported",
+            "Remote MCP discovery supports only HTTP(S) Streamable HTTP and SSE endpoints",
+        ));
+    }
+    if !parsed.username().is_empty() || parsed.password().is_some() {
+        return Err(McpHostError::new(
+            "mcp_endpoint_credentials_forbidden",
+            "Put MCP credentials in headers, not in the endpoint URL",
+        ));
+    }
+    Ok(parsed)
+}
+
+fn build_http_client(
+    origin: &reqwest::Url,
+    timeout_ms: u64,
+    with_total_timeout: bool,
+) -> Result<Client, McpHostError> {
+    let origin = origin.clone();
+    let mut builder = Client::builder()
+        .no_proxy()
+        .connect_timeout(Duration::from_millis(timeout_ms.min(15_000)))
+        .redirect(reqwest::redirect::Policy::custom(move |attempt| {
+            if attempt.previous().len() >= 3 {
+                attempt.error("Too many MCP HTTP redirects")
+            } else if same_origin_mcp_redirect(&origin, attempt.url()) {
+                attempt.follow()
+            } else {
+                attempt.error("Cross-origin MCP HTTP redirect rejected")
+            }
+        }));
+    if with_total_timeout {
+        builder = builder.timeout(Duration::from_millis(timeout_ms));
+    }
+    builder
+        .build()
+        .map_err(|error| McpHostError::new("mcp_client_failed", error.to_string()))
+}
+
+struct NeverCancelled;
+impl crate::Cancellation for NeverCancelled {
+    fn is_requested(&self) -> bool {
+        false
+    }
+}
+
+struct StreamableHttpHandle {
     client: Client,
     endpoint: String,
     headers: Vec<(HeaderName, HeaderValue)>,
-    session_id: Option<String>,
+}
+
+enum SsePendingEvent {
+    Progress(Value),
+    Response(Value),
+    StreamClosed(McpHostError),
+}
+
+struct PendingRequestGuard {
+    id: u64,
+    pending: Arc<Mutex<BTreeMap<u64, std::sync::mpsc::Sender<SsePendingEvent>>>>,
+}
+
+impl Drop for PendingRequestGuard {
+    fn drop(&mut self) {
+        if let Ok(mut pending) = self.pending.lock() {
+            pending.remove(&self.id);
+        }
+    }
+}
+
+struct LegacySseHandle {
+    post_client: Client,
+    message_endpoint: String,
+    headers: Vec<(HeaderName, HeaderValue)>,
+    timeout: Duration,
+    pending: Arc<Mutex<BTreeMap<u64, std::sync::mpsc::Sender<SsePendingEvent>>>>,
+    closed_error: Arc<Mutex<Option<McpHostError>>>,
+    shutdown: Arc<AtomicBool>,
+}
+
+impl LegacySseHandle {
+    fn close(&self) {
+        self.shutdown.store(true, Ordering::SeqCst);
+        let closed_err = McpHostError::new(
+            "mcp_sse_disconnected",
+            "MCP SSE connection was closed",
+        );
+        {
+            let mut closed = self
+                .closed_error
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner());
+            if closed.is_none() {
+                *closed = Some(closed_err.clone());
+            }
+        }
+        let waiters = {
+            let mut pending = self
+                .pending
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner());
+            std::mem::take(&mut *pending)
+        };
+        for (_, tx) in waiters {
+            let _ = tx.send(SsePendingEvent::StreamClosed(closed_err.clone()));
+        }
+    }
+}
+
+impl Drop for LegacySseHandle {
+    fn drop(&mut self) {
+        self.close();
+    }
+}
+
+enum RemoteTransport {
+    StreamableHttp(StreamableHttpHandle),
+    LegacySse(LegacySseHandle),
+}
+
+struct RemoteMcpClient {
+    transport_kind: McpTransportKind,
+    transport: RemoteTransport,
     protocol_version: String,
     server_instructions: Option<String>,
-    next_request_id: u64,
-    catalog_dirty: bool,
+    session_id: RwLock<Option<String>>,
+    oauth_token: Arc<RwLock<Option<OAuthTokenSet>>>,
+    last_oauth_challenge: Arc<RwLock<Option<WwwAuthenticateChallenge>>>,
+    next_request_id: AtomicU64,
+    catalog_dirty: Arc<AtomicBool>,
 }
 
 struct HttpResponseSnapshot {
@@ -874,12 +1310,130 @@ enum HttpRequestEvent {
     Finished(Result<HttpResponseSnapshot, McpHostError>),
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct SseEvent {
+    event: String,
+    data: String,
+    #[allow(dead_code)]
+    id: Option<String>,
+}
+
+#[derive(Default)]
+struct SseEventStreamParser {
+    line_buf: Vec<u8>,
+    saw_cr: bool,
+    started: bool,
+    current_event: Option<String>,
+    current_data: Vec<String>,
+    current_id: Option<String>,
+    current_frame_bytes: usize,
+}
+
+impl SseEventStreamParser {
+    fn push_bytes(&mut self, chunk: &[u8]) -> Result<Vec<SseEvent>, McpHostError> {
+        let mut events = Vec::new();
+        for &byte in chunk {
+            if self.saw_cr {
+                self.saw_cr = false;
+                if byte == b'\n' {
+                    continue;
+                }
+            }
+            if byte == b'\r' || byte == b'\n' {
+                if byte == b'\r' {
+                    self.saw_cr = true;
+                }
+                let raw_line = std::str::from_utf8(&self.line_buf)
+                    .map_err(|error| McpHostError::new("mcp_response_invalid", error.to_string()))?;
+                let line = if !self.started {
+                    self.started = true;
+                    raw_line.trim_start_matches('\u{feff}')
+                } else {
+                    raw_line
+                };
+                if line.is_empty() {
+                    if !self.current_data.is_empty() {
+                        events.push(SseEvent {
+                            event: self
+                                .current_event
+                                .take()
+                                .unwrap_or_else(|| "message".to_string()),
+                            data: self.current_data.join("\n"),
+                            id: self.current_id.take(),
+                        });
+                        self.current_data.clear();
+                    } else {
+                        self.current_event = None;
+                        self.current_id = None;
+                    }
+                    self.current_frame_bytes = 0;
+                } else if !line.starts_with(':') {
+                    let (field, value) = match line.split_once(':') {
+                        Some((field, rest)) => (field, rest.strip_prefix(' ').unwrap_or(rest)),
+                        None => (line, ""),
+                    };
+                    match field {
+                        "event" => self.current_event = Some(value.to_string()),
+                        "data" => self.current_data.push(value.to_string()),
+                        "id" if !value.contains('\0') => self.current_id = Some(value.to_string()),
+                        _ => {}
+                    }
+                }
+                self.line_buf.clear();
+            } else {
+                self.current_frame_bytes = self.current_frame_bytes.saturating_add(1);
+                if self.current_frame_bytes as u64 > MAX_RESPONSE_BYTES {
+                    return Err(McpHostError::new(
+                        "mcp_response_too_large",
+                        "MCP SSE event exceeded the 4 MB limit",
+                    ));
+                }
+                self.line_buf.push(byte);
+            }
+        }
+        Ok(events)
+    }
+}
+
+fn resolve_sse_endpoint(
+    base_url: &reqwest::Url,
+    raw_endpoint: &str,
+) -> Result<reqwest::Url, McpHostError> {
+    let trimmed = raw_endpoint.trim();
+    if trimmed.is_empty() {
+        return Err(McpHostError::new(
+            "mcp_sse_endpoint_invalid",
+            "MCP SSE server announced an empty message endpoint",
+        ));
+    }
+    let resolved = base_url.join(trimmed).map_err(|_| {
+        McpHostError::new(
+            "mcp_sse_endpoint_invalid",
+            "MCP SSE server announced an invalid message endpoint URL",
+        )
+    })?;
+    if !matches!(resolved.scheme(), "http" | "https") {
+        return Err(McpHostError::new(
+            "mcp_sse_endpoint_rejected",
+            "MCP SSE message endpoint must use HTTP or HTTPS",
+        ));
+    }
+    if !same_origin_mcp_redirect(base_url, &resolved) {
+        return Err(McpHostError::new(
+            "mcp_sse_endpoint_rejected",
+            "Cross-origin or credentialed MCP SSE message endpoint rejected",
+        ));
+    }
+    Ok(resolved)
+}
+
 fn send_http_payload_streaming(
     client: Client,
     endpoint: String,
     headers: Vec<(HeaderName, HeaderValue)>,
     session_id: Option<String>,
     payload: Value,
+    challenge_sink: Arc<RwLock<Option<WwwAuthenticateChallenge>>>,
     events: std::sync::mpsc::Sender<HttpRequestEvent>,
 ) {
     let result = (|| {
@@ -910,12 +1464,10 @@ fn send_http_payload_streaming(
             .and_then(|value| value.to_str().ok())
             .is_some_and(|value| value.to_ascii_lowercase().contains("text/event-stream"));
         if status.as_u16() == 401 || status.as_u16() == 403 {
-            return Err(McpHostError::new(
-                "mcp_authorization_required",
-                format!(
-                    "MCP server requires authorization (HTTP {})",
-                    status.as_u16()
-                ),
+            return Err(authorization_required_error(
+                status,
+                response.headers(),
+                Some(&challenge_sink),
             ));
         }
         if !status.is_success() {
@@ -941,6 +1493,7 @@ fn send_http_payload(
     headers: Vec<(HeaderName, HeaderValue)>,
     session_id: Option<String>,
     payload: Value,
+    challenge_sink: Option<&RwLock<Option<WwwAuthenticateChallenge>>>,
 ) -> Result<HttpResponseSnapshot, McpHostError> {
     let mut request = client
         .post(endpoint)
@@ -963,18 +1516,20 @@ fn send_http_payload(
         .get("mcp-session-id")
         .and_then(|value| value.to_str().ok())
         .map(str::to_string);
-    let is_sse = status.is_success() && response.headers().get(CONTENT_TYPE)
-        .and_then(|value| value.to_str().ok()).is_some_and(|value| value.to_ascii_lowercase().contains("text/event-stream"));
-    let body = read_rpc_body(response, is_sse, payload.get("id"), |_| {})?;
     if status.as_u16() == 401 || status.as_u16() == 403 {
-        return Err(McpHostError::new(
-            "mcp_authorization_required",
-            format!(
-                "MCP server requires authorization (HTTP {})",
-                status.as_u16()
-            ),
+        return Err(authorization_required_error(
+            status,
+            response.headers(),
+            challenge_sink,
         ));
     }
+    let is_sse = status.is_success()
+        && response
+            .headers()
+            .get(CONTENT_TYPE)
+            .and_then(|value| value.to_str().ok())
+            .is_some_and(|value| value.to_ascii_lowercase().contains("text/event-stream"));
+    let body = read_rpc_body(response, is_sse, payload.get("id"), |_| {})?;
     if !status.is_success() {
         return Err(McpHostError::new(
             "mcp_http_failed",
@@ -991,64 +1546,297 @@ fn send_http_payload(
     })
 }
 
-impl StreamableHttpMcpClient {
+fn connect_legacy_sse(
+    parsed_endpoint: &reqwest::Url,
+    timeout_ms: u64,
+    headers: Vec<(HeaderName, HeaderValue)>,
+    oauth_token: Arc<RwLock<Option<OAuthTokenSet>>>,
+    last_oauth_challenge: Arc<RwLock<Option<WwwAuthenticateChallenge>>>,
+    catalog_dirty: Arc<AtomicBool>,
+) -> Result<LegacySseHandle, McpHostError> {
+    // Do not set a total-body timeout on the long-lived SSE GET stream; enforce
+    // `timeout_ms` on initial endpoint discovery and per-RPC responses instead.
+    let stream_client = build_http_client(parsed_endpoint, timeout_ms, false)?;
+    let initial_headers = resolve_http_headers(&headers, &oauth_token)?;
+    let pending: Arc<Mutex<BTreeMap<u64, std::sync::mpsc::Sender<SsePendingEvent>>>> =
+        Arc::new(Mutex::new(BTreeMap::new()));
+    let closed_error: Arc<Mutex<Option<McpHostError>>> = Arc::new(Mutex::new(None));
+    let shutdown = Arc::new(AtomicBool::new(false));
+    let (endpoint_tx, endpoint_rx) = std::sync::mpsc::sync_channel::<Result<reqwest::Url, McpHostError>>(1);
+
+    let stream_url = parsed_endpoint.to_string();
+    let reader_pending = Arc::clone(&pending);
+    let reader_closed = Arc::clone(&closed_error);
+    let reader_shutdown = Arc::clone(&shutdown);
+    let reader_challenge = Arc::clone(&last_oauth_challenge);
+    let reader_catalog_dirty = Arc::clone(&catalog_dirty);
+
+    std::thread::Builder::new()
+        .name("nola-mcp-sse-reader".to_string())
+        .spawn(move || {
+            let mut endpoint_tx = Some(endpoint_tx);
+            let mut request = stream_client
+                .get(&stream_url)
+                .header(ACCEPT, "text/event-stream")
+                .header(CACHE_CONTROL, "no-cache")
+                .header(USER_AGENT, concat!("Nola/", env!("CARGO_PKG_VERSION")));
+            for (name, value) in initial_headers {
+                request = request.header(name, value);
+            }
+            let mut response = match request.send() {
+                Ok(response) => response,
+                Err(error) => {
+                    let err = McpHostError::new("mcp_connection_failed", error.to_string());
+                    if let Some(tx) = endpoint_tx.take() {
+                        let _ = tx.send(Err(err));
+                    }
+                    return;
+                }
+            };
+            let status = response.status();
+            if status.as_u16() == 401 || status.as_u16() == 403 {
+                let err = authorization_required_error(
+                    status,
+                    response.headers(),
+                    Some(&reader_challenge),
+                );
+                if let Some(tx) = endpoint_tx.take() {
+                    let _ = tx.send(Err(err));
+                }
+                return;
+            }
+            if !status.is_success() {
+                let err = McpHostError::new(
+                    "mcp_http_failed",
+                    format!("MCP SSE endpoint returned HTTP {}", status.as_u16()),
+                );
+                if let Some(tx) = endpoint_tx.take() {
+                    let _ = tx.send(Err(err));
+                }
+                return;
+            }
+            let is_sse = response
+                .headers()
+                .get(CONTENT_TYPE)
+                .and_then(|value| value.to_str().ok())
+                .is_some_and(|value| value.to_ascii_lowercase().contains("text/event-stream"));
+            if !is_sse {
+                let err = McpHostError::new(
+                    "mcp_response_invalid",
+                    "MCP SSE endpoint did not respond with Content-Type: text/event-stream",
+                );
+                if let Some(tx) = endpoint_tx.take() {
+                    let _ = tx.send(Err(err));
+                }
+                return;
+            }
+
+            let base_url = response.url().clone();
+            let mut parser = SseEventStreamParser::default();
+            let mut buffer = [0_u8; 8192];
+            let mut disconnect_error: Option<McpHostError> = None;
+
+            loop {
+                if reader_shutdown.load(Ordering::SeqCst) {
+                    break;
+                }
+                match response.read(&mut buffer) {
+                    Ok(0) => break,
+                    Ok(count) => {
+                        let events = match parser.push_bytes(&buffer[..count]) {
+                            Ok(events) => events,
+                            Err(error) => {
+                                disconnect_error = Some(error);
+                                break;
+                            }
+                        };
+                        for event in events {
+                            if event.event == "endpoint" {
+                                let resolved = resolve_sse_endpoint(&base_url, &event.data);
+                                let failed = resolved.is_err();
+                                if let Some(tx) = endpoint_tx.take() {
+                                    let _ = tx.send(resolved);
+                                }
+                                if failed {
+                                    return;
+                                }
+                            } else if event.event == "message"
+                                && event.data.trim_start().starts_with('{')
+                            {
+                                let Ok(message) = serde_json::from_str::<Value>(&event.data) else {
+                                    continue;
+                                };
+                                if is_catalog_change_notification(&message) {
+                                    reader_catalog_dirty.store(true, Ordering::SeqCst);
+                                }
+                                if message.get("method").and_then(Value::as_str)
+                                    == Some("notifications/progress")
+                                {
+                                    let params =
+                                        message.get("params").cloned().unwrap_or(Value::Null);
+                                    let listeners: Vec<_> = {
+                                        let guard = reader_pending
+                                            .lock()
+                                            .unwrap_or_else(|poisoned| poisoned.into_inner());
+                                        guard.values().cloned().collect()
+                                    };
+                                    for listener in listeners {
+                                        let _ = listener
+                                            .send(SsePendingEvent::Progress(params.clone()));
+                                    }
+                                    continue;
+                                }
+                                if let Some(id) = message.get("id").and_then(Value::as_u64) {
+                                    if message.get("result").is_some()
+                                        || message.get("error").is_some()
+                                    {
+                                        let waiter = {
+                                            let mut guard = reader_pending
+                                                .lock()
+                                                .unwrap_or_else(|poisoned| poisoned.into_inner());
+                                            guard.remove(&id)
+                                        };
+                                        if let Some(tx) = waiter {
+                                            let _ = tx.send(SsePendingEvent::Response(message));
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    Err(error) => {
+                        disconnect_error = Some(McpHostError::new(
+                            "mcp_response_read_failed",
+                            error.to_string(),
+                        ));
+                        break;
+                    }
+                }
+            }
+
+            let final_error = disconnect_error.unwrap_or_else(|| {
+                McpHostError::new("mcp_sse_disconnected", "MCP SSE stream closed by server")
+            });
+            if let Some(tx) = endpoint_tx.take() {
+                let _ = tx.send(Err(final_error.clone()));
+            }
+            {
+                let mut closed = reader_closed
+                    .lock()
+                    .unwrap_or_else(|poisoned| poisoned.into_inner());
+                if closed.is_none() {
+                    *closed = Some(final_error.clone());
+                }
+            }
+            let waiters = {
+                let mut guard = reader_pending
+                    .lock()
+                    .unwrap_or_else(|poisoned| poisoned.into_inner());
+                std::mem::take(&mut *guard)
+            };
+            for (_, tx) in waiters {
+                let _ = tx.send(SsePendingEvent::StreamClosed(final_error.clone()));
+            }
+        })
+        .map_err(|error| McpHostError::new("mcp_worker_start_failed", error.to_string()))?;
+
+    let resolved_endpoint = match endpoint_rx.recv_timeout(Duration::from_millis(timeout_ms)) {
+        Ok(Ok(url)) => url,
+        Ok(Err(error)) => {
+            shutdown.store(true, Ordering::SeqCst);
+            return Err(error);
+        }
+        Err(std::sync::mpsc::RecvTimeoutError::Timeout) => {
+            shutdown.store(true, Ordering::SeqCst);
+            return Err(McpHostError::new(
+                "mcp_connection_failed",
+                "Timed out waiting for MCP SSE endpoint announcement",
+            ));
+        }
+        Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => {
+            shutdown.store(true, Ordering::SeqCst);
+            return Err(McpHostError::new(
+                "mcp_sse_disconnected",
+                "MCP SSE stream closed before announcing a message endpoint",
+            ));
+        }
+    };
+
+    let post_client = build_http_client(&resolved_endpoint, timeout_ms, true)?;
+    Ok(LegacySseHandle {
+        post_client,
+        message_endpoint: resolved_endpoint.to_string(),
+        headers,
+        timeout: Duration::from_millis(timeout_ms),
+        pending,
+        closed_error,
+        shutdown,
+    })
+}
+
+impl RemoteMcpClient {
     fn connect(
+        transport_kind: McpTransportKind,
         endpoint: &str,
         timeout_ms: u64,
         headers: Vec<(HeaderName, HeaderValue)>,
+        oauth_token: Arc<RwLock<Option<OAuthTokenSet>>>,
+        last_oauth_challenge: Arc<RwLock<Option<WwwAuthenticateChallenge>>>,
     ) -> Result<Self, McpHostError> {
-        let parsed = reqwest::Url::parse(endpoint).map_err(|_| {
-            McpHostError::new(
-                "mcp_endpoint_invalid",
-                "MCP endpoint must be an absolute URL",
-            )
-        })?;
-        if !matches!(parsed.scheme(), "http" | "https") {
-            return Err(McpHostError::new(
-                "mcp_transport_unsupported",
-                "Remote MCP discovery supports only Streamable HTTP endpoints",
-            ));
-        }
-        if !parsed.username().is_empty() || parsed.password().is_some() {
-            return Err(McpHostError::new(
-                "mcp_endpoint_credentials_forbidden",
-                "Put MCP credentials in headers, not in the endpoint URL",
-            ));
-        }
-        let origin = parsed.clone();
-        let client = Client::builder()
-            .no_proxy()
-            .connect_timeout(Duration::from_millis(timeout_ms.min(15_000)))
-            .timeout(Duration::from_millis(timeout_ms))
-            .redirect(reqwest::redirect::Policy::custom(move |attempt| {
-                if attempt.previous().len() >= 3 {
-                    attempt.error("Too many MCP HTTP redirects")
-                } else if same_origin_mcp_redirect(&origin, attempt.url()) {
-                    attempt.follow()
-                } else {
-                    attempt.error("Cross-origin MCP HTTP redirect rejected")
-                }
-            }))
-            .build()
-            .map_err(|error| McpHostError::new("mcp_client_failed", error.to_string()))?;
+        let parsed = validate_remote_endpoint(endpoint)?;
+        let catalog_dirty = Arc::new(AtomicBool::new(false));
+        let transport = match transport_kind {
+            McpTransportKind::StreamableHttp => {
+                let client = build_http_client(&parsed, timeout_ms, true)?;
+                RemoteTransport::StreamableHttp(StreamableHttpHandle {
+                    client,
+                    endpoint: parsed.to_string(),
+                    headers,
+                })
+            }
+            McpTransportKind::ServerSentEvents => {
+                let handle = connect_legacy_sse(
+                    &parsed,
+                    timeout_ms,
+                    headers,
+                    Arc::clone(&oauth_token),
+                    Arc::clone(&last_oauth_challenge),
+                    Arc::clone(&catalog_dirty),
+                )?;
+                RemoteTransport::LegacySse(handle)
+            }
+            _ => {
+                return Err(McpHostError::new(
+                    "mcp_transport_unsupported",
+                    format!("Remote MCP client does not support transport `{transport_kind:?}`"),
+                ));
+            }
+        };
         let mut connection = Self {
-            client,
-            endpoint: parsed.to_string(),
-            headers,
-            session_id: None,
+            transport_kind,
+            transport,
             protocol_version: DEFAULT_PROTOCOL_VERSION.to_string(),
             server_instructions: None,
-            next_request_id: 1,
-            catalog_dirty: false,
+            session_id: RwLock::new(None),
+            oauth_token,
+            last_oauth_challenge,
+            next_request_id: AtomicU64::new(1),
+            catalog_dirty,
         };
-        let initialize = connection.request(
+        let initialize = match connection.request(
             "initialize",
             json!({
                 "protocolVersion": DEFAULT_PROTOCOL_VERSION,
                 "capabilities": {},
                 "clientInfo": {"name": "nola", "version": env!("CARGO_PKG_VERSION")}
             }),
-        )?;
+        ) {
+            Ok(initialize) => initialize,
+            Err(error) => {
+                connection.close();
+                return Err(error);
+            }
+        };
         connection.protocol_version = initialize
             .get("protocolVersion")
             .and_then(Value::as_str)
@@ -1060,12 +1848,37 @@ impl StreamableHttpMcpClient {
             nola_core::agent::capability::bounded_mcp_server_instructions(
                 initialize.get("instructions").and_then(Value::as_str),
             );
-        connection.notification("notifications/initialized", json!({}))?;
+        if let Err(error) = connection.notification("notifications/initialized", json!({})) {
+            connection.close();
+            return Err(error);
+        }
         Ok(connection)
     }
 
+    fn close(&self) {
+        if let RemoteTransport::LegacySse(handle) = &self.transport {
+            handle.close();
+        }
+    }
+
+    fn current_session_id(&self) -> Option<String> {
+        self.session_id
+            .read()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .clone()
+    }
+
+    fn record_session_id(&self, session_id: Option<String>) {
+        if let Some(session_id) = session_id {
+            *self
+                .session_id
+                .write()
+                .unwrap_or_else(|poisoned| poisoned.into_inner()) = Some(session_id);
+        }
+    }
+
     fn discover(
-        &mut self,
+        &self,
         server_id: String,
         display_name: String,
         connection_ref: String,
@@ -1086,9 +1899,9 @@ impl StreamableHttpMcpClient {
             ));
         }
         Ok(McpServerDescriptor {
-            server_id: server_id.clone(),
+            server_id,
             display_name,
-            transport: McpTransportKind::StreamableHttp,
+            transport: self.transport_kind,
             connection_ref,
             availability: McpServerAvailability::Available,
             protocol_version: Some(self.protocol_version.clone()),
@@ -1112,16 +1925,16 @@ impl StreamableHttpMcpClient {
         })
     }
 
-    fn list_all(&mut self, method: &str, field: &str) -> Result<Vec<Value>, McpHostError> {
+    fn list_all(&self, method: &str, field: &str) -> Result<Vec<Value>, McpHostError> {
         self.list_pages(method, field, false)
     }
 
-    fn list_all_optional(&mut self, method: &str, field: &str) -> Result<Vec<Value>, McpHostError> {
+    fn list_all_optional(&self, method: &str, field: &str) -> Result<Vec<Value>, McpHostError> {
         self.list_pages(method, field, true)
     }
 
     fn list_pages(
-        &mut self,
+        &self,
         method: &str,
         field: &str,
         optional: bool,
@@ -1161,16 +1974,38 @@ impl StreamableHttpMcpClient {
         ))
     }
 
-    fn request(&mut self, method: &str, params: Value) -> Result<Value, McpHostError> {
-        let id = self.next_request_id;
-        self.next_request_id = self.next_request_id.saturating_add(1);
-        let payload = json!({"jsonrpc": "2.0", "id": id, "method": method, "params": params});
-        let response = self.send(&payload)?;
-        decode_rpc_response(&response, Some(id))
+    fn request(&self, method: &str, params: Value) -> Result<Value, McpHostError> {
+        match &self.transport {
+            RemoteTransport::StreamableHttp(http) => {
+                let id = self.next_request_id.fetch_add(1, Ordering::SeqCst);
+                let payload =
+                    json!({"jsonrpc": "2.0", "id": id, "method": method, "params": params});
+                let headers = resolve_http_headers(&http.headers, &self.oauth_token)?;
+                let snapshot = send_http_payload(
+                    http.client.clone(),
+                    http.endpoint.clone(),
+                    headers,
+                    self.current_session_id(),
+                    payload,
+                    Some(&self.last_oauth_challenge),
+                )?;
+                self.record_session_id(snapshot.session_id);
+                if contains_catalog_change_notification(&snapshot.body) {
+                    self.catalog_dirty.store(true, Ordering::SeqCst);
+                }
+                decode_rpc_response(&snapshot.body, Some(id))
+            }
+            RemoteTransport::LegacySse(_) => self.request_with_cancellation(
+                method,
+                params,
+                &NeverCancelled,
+                &mut |_| {},
+            ),
+        }
     }
 
     fn request_with_cancellation(
-        &mut self,
+        &self,
         method: &str,
         params: Value,
         cancellation: &dyn crate::Cancellation,
@@ -1182,146 +2017,255 @@ impl StreamableHttpMcpClient {
                 "MCP HTTP request was cancelled before transport send",
             ));
         }
-        let id = self.next_request_id;
-        self.next_request_id = self.next_request_id.saturating_add(1);
-        let payload = json!({"jsonrpc":"2.0","id":id,"method":method,"params":params});
-        let (sender, receiver) = std::sync::mpsc::channel();
-        let client = self.client.clone();
-        let endpoint = self.endpoint.clone();
-        let headers = self.headers.clone();
-        let session_id = self.session_id.clone();
-        std::thread::Builder::new()
-            .name(format!("nola-mcp-http-request-{id}"))
-            .spawn(move || {
-                send_http_payload_streaming(client, endpoint, headers, session_id, payload, sender);
-            })
-            .map_err(|error| McpHostError::new("mcp_worker_start_failed", error.to_string()))?;
-        loop {
-            match receiver.recv_timeout(Duration::from_millis(50)) {
-                Ok(HttpRequestEvent::Progress(params)) => progress(&params),
-                Ok(HttpRequestEvent::Finished(Ok(snapshot))) => {
-                    if let Some(session_id) = snapshot.session_id {
-                        self.session_id = Some(session_id);
+        match &self.transport {
+            RemoteTransport::StreamableHttp(http) => {
+                let id = self.next_request_id.fetch_add(1, Ordering::SeqCst);
+                let payload =
+                    json!({"jsonrpc": "2.0", "id": id, "method": method, "params": params});
+                let (sender, receiver) = std::sync::mpsc::channel();
+                let client = http.client.clone();
+                let endpoint = http.endpoint.clone();
+                let headers = resolve_http_headers(&http.headers, &self.oauth_token)?;
+                let session_id = self.current_session_id();
+                let challenge_sink = Arc::clone(&self.last_oauth_challenge);
+                std::thread::Builder::new()
+                    .name(format!("nola-mcp-http-request-{id}"))
+                    .spawn(move || {
+                        send_http_payload_streaming(
+                            client,
+                            endpoint,
+                            headers,
+                            session_id,
+                            payload,
+                            challenge_sink,
+                            sender,
+                        );
+                    })
+                    .map_err(|error| {
+                        McpHostError::new("mcp_worker_start_failed", error.to_string())
+                    })?;
+                loop {
+                    match receiver.recv_timeout(Duration::from_millis(50)) {
+                        Ok(HttpRequestEvent::Progress(params)) => progress(&params),
+                        Ok(HttpRequestEvent::Finished(Ok(snapshot))) => {
+                            self.record_session_id(snapshot.session_id);
+                            if contains_catalog_change_notification(&snapshot.body) {
+                                self.catalog_dirty.store(true, Ordering::SeqCst);
+                            }
+                            return decode_rpc_response(&snapshot.body, Some(id));
+                        }
+                        Ok(HttpRequestEvent::Finished(Err(error))) => return Err(error),
+                        Err(std::sync::mpsc::RecvTimeoutError::Timeout) => {
+                            if !cancellation.is_requested() {
+                                continue;
+                            }
+                            let notification = json!({
+                                "jsonrpc": "2.0",
+                                "method": "notifications/cancelled",
+                                "params": {"requestId": id, "reason": "Cancelled by user"}
+                            });
+                            let client = http.client.clone();
+                            let endpoint = http.endpoint.clone();
+                            let headers =
+                                resolve_http_headers(&http.headers, &self.oauth_token)
+                                    .unwrap_or_else(|_| http.headers.clone());
+                            let session_id = self.current_session_id();
+                            let _ = std::thread::Builder::new()
+                                .name(format!("nola-mcp-http-cancel-{id}"))
+                                .spawn(move || {
+                                    let _ = send_http_payload(
+                                        client,
+                                        endpoint,
+                                        headers,
+                                        session_id,
+                                        notification,
+                                        None,
+                                    );
+                                });
+                            return Err(McpHostError::new(
+                                "mcp_cancelled_after_send",
+                                format!(
+                                    "MCP HTTP cancellation notification was dispatched for request {id}; verify side effects before retrying"
+                                ),
+                            ));
+                        }
+                        Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => {
+                            return Err(McpHostError::new(
+                                "mcp_worker_failed",
+                                "MCP HTTP transport worker exited without a result",
+                            ));
+                        }
                     }
-                    self.catalog_dirty |= contains_catalog_change_notification(&snapshot.body);
-                    return decode_rpc_response(&snapshot.body, Some(id));
                 }
-                Ok(HttpRequestEvent::Finished(Err(error))) => return Err(error),
-                Err(std::sync::mpsc::RecvTimeoutError::Timeout) => {
-                    if !cancellation.is_requested() {
-                        continue;
+            }
+            RemoteTransport::LegacySse(sse) => {
+                if let Some(error) = sse
+                    .closed_error
+                    .lock()
+                    .unwrap_or_else(|poisoned| poisoned.into_inner())
+                    .clone()
+                {
+                    return Err(error);
+                }
+                let id = self.next_request_id.fetch_add(1, Ordering::SeqCst);
+                let payload =
+                    json!({"jsonrpc": "2.0", "id": id, "method": method, "params": params});
+                let (resp_tx, resp_rx) = std::sync::mpsc::channel();
+                {
+                    let mut pending = sse
+                        .pending
+                        .lock()
+                        .unwrap_or_else(|poisoned| poisoned.into_inner());
+                    pending.insert(id, resp_tx);
+                }
+                let _guard = PendingRequestGuard {
+                    id,
+                    pending: Arc::clone(&sse.pending),
+                };
+                if let Some(error) = sse
+                    .closed_error
+                    .lock()
+                    .unwrap_or_else(|poisoned| poisoned.into_inner())
+                    .clone()
+                {
+                    return Err(error);
+                }
+
+                let headers = resolve_http_headers(&sse.headers, &self.oauth_token)?;
+                let snapshot = send_http_payload(
+                    sse.post_client.clone(),
+                    sse.message_endpoint.clone(),
+                    headers,
+                    self.current_session_id(),
+                    payload,
+                    Some(&self.last_oauth_challenge),
+                )?;
+                self.record_session_id(snapshot.session_id);
+                if contains_catalog_change_notification(&snapshot.body) {
+                    self.catalog_dirty.store(true, Ordering::SeqCst);
+                }
+                // Some SSE servers return an immediate JSON-RPC response on POST; classic
+                // legacy SSE servers return 202 Accepted and push the response on the SSE stream.
+                let trimmed = snapshot.body.trim();
+                if !trimmed.is_empty() {
+                    if let Ok(messages) = decode_rpc_messages(trimmed) {
+                        if let Some(matched) = messages.into_iter().find(|message| {
+                            message.get("id").and_then(Value::as_u64) == Some(id)
+                                && (message.get("result").is_some()
+                                    || message.get("error").is_some())
+                        }) {
+                            return decode_rpc_value(&matched);
+                        }
                     }
-                    let notification = json!({
-                        "jsonrpc":"2.0",
-                        "method":"notifications/cancelled",
-                        "params":{"requestId":id,"reason":"Cancelled by user"}
-                    });
-                    let client = self.client.clone();
-                    let endpoint = self.endpoint.clone();
-                    let headers = self.headers.clone();
-                    let session_id = self.session_id.clone();
-                    let _ = std::thread::Builder::new()
-                        .name(format!("nola-mcp-http-cancel-{id}"))
-                        .spawn(move || {
-                            let _ = send_http_payload(
-                                client,
-                                endpoint,
-                                headers,
-                                session_id,
-                                notification,
-                            );
-                        });
-                    return Err(McpHostError::new(
-                        "mcp_cancelled_after_send",
-                        format!(
-                            "MCP HTTP cancellation notification was dispatched for request {id}; verify side effects before retrying"
-                        ),
-                    ));
                 }
-                Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => {
-                    return Err(McpHostError::new(
-                        "mcp_worker_failed",
-                        "MCP HTTP transport worker exited without a result",
-                    ));
+
+                let deadline = Instant::now() + sse.timeout;
+                loop {
+                    let now = Instant::now();
+                    if now >= deadline {
+                        return Err(McpHostError::new(
+                            "mcp_connection_failed",
+                            format!("MCP SSE request {id} timed out waiting for stream response"),
+                        ));
+                    }
+                    let slice = (deadline - now).min(Duration::from_millis(50));
+                    match resp_rx.recv_timeout(slice) {
+                        Ok(SsePendingEvent::Progress(params)) => progress(&params),
+                        Ok(SsePendingEvent::Response(message)) => {
+                            return decode_rpc_value(&message);
+                        }
+                        Ok(SsePendingEvent::StreamClosed(error)) => return Err(error),
+                        Err(std::sync::mpsc::RecvTimeoutError::Timeout) => {
+                            if cancellation.is_requested() {
+                                let notification = json!({
+                                    "jsonrpc": "2.0",
+                                    "method": "notifications/cancelled",
+                                    "params": {"requestId": id, "reason": "Cancelled by user"}
+                                });
+                                let client = sse.post_client.clone();
+                                let endpoint = sse.message_endpoint.clone();
+                                let headers =
+                                    resolve_http_headers(&sse.headers, &self.oauth_token)
+                                        .unwrap_or_else(|_| sse.headers.clone());
+                                let session_id = self.current_session_id();
+                                let _ = std::thread::Builder::new()
+                                    .name(format!("nola-mcp-sse-cancel-{id}"))
+                                    .spawn(move || {
+                                        let _ = send_http_payload(
+                                            client,
+                                            endpoint,
+                                            headers,
+                                            session_id,
+                                            notification,
+                                            None,
+                                        );
+                                    });
+                                return Err(McpHostError::new(
+                                    "mcp_cancelled_after_send",
+                                    format!(
+                                        "MCP SSE cancellation notification was dispatched for request {id}; verify side effects before retrying"
+                                    ),
+                                ));
+                            }
+                        }
+                        Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => {
+                            return Err(McpHostError::new(
+                                "mcp_sse_disconnected",
+                                "MCP SSE stream closed before response arrived",
+                            ));
+                        }
+                    }
                 }
             }
         }
     }
 
-    fn notification(&mut self, method: &str, params: Value) -> Result<(), McpHostError> {
+    fn notification(&self, method: &str, params: Value) -> Result<(), McpHostError> {
         let payload = json!({"jsonrpc": "2.0", "method": method, "params": params});
-        let response = self.send(&payload)?;
-        if response.trim().is_empty() {
+        let (client, endpoint, base_headers) = match &self.transport {
+            RemoteTransport::StreamableHttp(http) => {
+                (http.client.clone(), http.endpoint.clone(), &http.headers)
+            }
+            RemoteTransport::LegacySse(sse) => (
+                sse.post_client.clone(),
+                sse.message_endpoint.clone(),
+                &sse.headers,
+            ),
+        };
+        let headers = resolve_http_headers(base_headers, &self.oauth_token)?;
+        let snapshot = send_http_payload(
+            client,
+            endpoint,
+            headers,
+            self.current_session_id(),
+            payload,
+            Some(&self.last_oauth_challenge),
+        )?;
+        self.record_session_id(snapshot.session_id);
+        if contains_catalog_change_notification(&snapshot.body) {
+            self.catalog_dirty.store(true, Ordering::SeqCst);
+        }
+        let trimmed = snapshot.body.trim();
+        if trimmed.is_empty() || !trimmed.starts_with('{') {
             return Ok(());
         }
-        decode_rpc_response(&response, None).map(|_| ())
+        decode_rpc_response(trimmed, None).map(|_| ())
     }
+}
 
-    fn send(&mut self, payload: &Value) -> Result<String, McpHostError> {
-        let mut request = self
-            .client
-            .post(&self.endpoint)
-            .header(ACCEPT, "application/json, text/event-stream")
-            .header(CONTENT_TYPE, "application/json")
-            .header(USER_AGENT, concat!("Nola/", env!("CARGO_PKG_VERSION")));
-        for (name, value) in &self.headers {
-            request = request.header(name, value);
-        }
-        if let Some(session_id) = &self.session_id {
-            request = request.header("Mcp-Session-Id", session_id);
-        }
-        let response = request
-            .json(payload)
-            .send()
-            .map_err(|error| McpHostError::new("mcp_connection_failed", error.to_string()))?;
-        self.capture_response(response)
+fn decode_rpc_value(decoded: &Value) -> Result<Value, McpHostError> {
+    if let Some(error) = decoded.get("error") {
+        let code = if error.get("code").and_then(Value::as_i64) == Some(-32601) {
+            "mcp_method_not_found"
+        } else {
+            "mcp_rpc_failed"
+        };
+        return Err(McpHostError::new(code, truncate(&error.to_string(), 500)));
     }
-
-    fn capture_response(&mut self, response: Response) -> Result<String, McpHostError> {
-        let status = response.status();
-        if let Some(session_id) = response
-            .headers()
-            .get("mcp-session-id")
-            .and_then(|value| value.to_str().ok())
-            .map(str::to_string)
-        {
-            self.session_id = Some(session_id);
-        }
-        let mut body = String::new();
-        response
-            .take(MAX_RESPONSE_BYTES + 1)
-            .read_to_string(&mut body)
-            .map_err(|error| McpHostError::new("mcp_response_read_failed", error.to_string()))?;
-        if body.len() as u64 > MAX_RESPONSE_BYTES {
-            return Err(McpHostError::new(
-                "mcp_response_too_large",
-                "MCP response exceeded the 4 MB limit",
-            ));
-        }
-        if status.as_u16() == 401 || status.as_u16() == 403 {
-            return Err(McpHostError::new(
-                "mcp_authorization_required",
-                format!(
-                    "MCP server requires authorization (HTTP {})",
-                    status.as_u16()
-                ),
-            ));
-        }
-        if !status.is_success() {
-            return Err(McpHostError::new(
-                "mcp_http_failed",
-                format!(
-                    "MCP server returned HTTP {}: {}",
-                    status.as_u16(),
-                    truncate(&body, 500)
-                ),
-            ));
-        }
-        if contains_catalog_change_notification(&body) {
-            self.catalog_dirty = true;
-        }
-        Ok(body)
-    }
+    decoded
+        .get("result")
+        .cloned()
+        .ok_or_else(|| McpHostError::new("mcp_result_missing", "MCP response has no result"))
 }
 
 /// Re-discovers retained HTTP servers only after one of them reported a
@@ -1364,7 +2308,7 @@ pub fn refresh_changed_servers(
         dirty |= connection
             .client
             .as_ref()
-            .is_some_and(|client| client.catalog_dirty);
+            .is_some_and(|client| client.catalog_dirty.load(Ordering::SeqCst));
     }
     drop(registry);
     if !dirty {
@@ -1607,8 +2551,6 @@ fn same_origin_mcp_redirect(origin: &reqwest::Url, next: &reqwest::Url) -> bool 
         && next.host_str() == origin.host_str()
         && next.port_or_known_default() == origin.port_or_known_default()
 }
-
-use std::io::Read;
 
 #[cfg(test)]
 mod tests {
@@ -2155,6 +3097,541 @@ mod tests {
         })])
         .expect("same-origin 307 redirect should succeed");
         assert_eq!(discovered[0]["tools"]["ping"]["name"], "ping");
+        server.join().unwrap();
+    }
+
+    fn read_test_http_request(stream: &mut std::net::TcpStream) -> Option<(String, Vec<u8>)> {
+        let mut request = Vec::new();
+        let mut buffer = [0_u8; 4096];
+        let header_end = loop {
+            let count = stream.read(&mut buffer).ok()?;
+            if count == 0 {
+                return None;
+            }
+            request.extend_from_slice(&buffer[..count]);
+            if let Some(pos) = request.windows(4).position(|v| v == b"\r\n\r\n") {
+                break pos + 4;
+            }
+        };
+        let header_text = String::from_utf8_lossy(&request[..header_end]).into_owned();
+        let content_length = header_text
+            .lines()
+            .find_map(|line| {
+                let (name, value) = line.split_once(':')?;
+                name.eq_ignore_ascii_case("content-length")
+                    .then(|| value.trim().parse::<usize>().ok())
+                    .flatten()
+            })
+            .unwrap_or_default();
+        while request.len() < header_end + content_length {
+            let count = stream.read(&mut buffer).ok()?;
+            if count == 0 {
+                break;
+            }
+            request.extend_from_slice(&buffer[..count]);
+        }
+        let body = request[header_end..request.len().min(header_end + content_length)].to_vec();
+        Some((header_text, body))
+    }
+
+    #[test]
+    fn oauth_bearer_header_injection_and_401_www_authenticate_discovery() {
+        let base_headers = vec![
+            (AUTHORIZATION, HeaderValue::from_static("Bearer stale")),
+            (
+                HeaderName::from_static("x-custom"),
+                HeaderValue::from_static("kept"),
+            ),
+        ];
+        let token_lock = RwLock::new(Some(OAuthTokenSet {
+            access_token: "fresh-token".to_string(),
+            token_type: "Bearer".to_string(),
+            refresh_token: None,
+            scope: None,
+            expires_at_epoch_secs: None,
+        }));
+        let resolved = resolve_http_headers(&base_headers, &token_lock).unwrap();
+        assert_eq!(resolved.len(), 2);
+        assert!(resolved
+            .iter()
+            .any(|(k, v)| *k == AUTHORIZATION && v == "Bearer fresh-token"));
+        assert!(resolved
+            .iter()
+            .any(|(k, v)| k.as_str() == "x-custom" && v == "kept"));
+
+        let listener = TcpListener::bind("127.0.0.1:0").expect("bind OAuth MCP server");
+        let endpoint = format!("http://{}/mcp", listener.local_addr().unwrap());
+        let server = std::thread::spawn(move || {
+            for stream in listener.incoming().take(8) {
+                let mut stream = stream.expect("accept OAuth MCP request");
+                let Some((headers, body)) = read_test_http_request(&mut stream) else {
+                    continue;
+                };
+                let authorized = headers.lines().any(|line| {
+                    let Some((name, value)) = line.split_once(':') else {
+                        return false;
+                    };
+                    name.eq_ignore_ascii_case("authorization")
+                        && value.trim() == "Bearer valid-oauth-token"
+                });
+                if !authorized {
+                    write!(
+                        stream,
+                        "HTTP/1.1 401 Unauthorized\r\nWWW-Authenticate: Bearer realm=\"mcp\", resource_metadata=\"https://mcp.example.com/.well-known/oauth-protected-resource\", scope=\"mcp:tools\"\r\nContent-Length: 0\r\nConnection: close\r\n\r\n"
+                    )
+                    .unwrap();
+                    continue;
+                }
+                let payload: Value = serde_json::from_slice(&body).unwrap_or(Value::Null);
+                let method = payload["method"].as_str().unwrap_or_default();
+                let id = payload.get("id").cloned();
+                let response = match method {
+                    "notifications/initialized" => String::new(),
+                    "initialize" => json!({
+                        "jsonrpc":"2.0","id":id,
+                        "result":{"protocolVersion":DEFAULT_PROTOCOL_VERSION,"capabilities":{}}
+                    })
+                    .to_string(),
+                    "tools/list" => json!({
+                        "jsonrpc":"2.0","id":id,
+                        "result":{"tools":[{"name":"whoami","description":"auth check","inputSchema":{"type":"object"}}]}
+                    })
+                    .to_string(),
+                    "resources/list" | "resources/templates/list" | "prompts/list" => json!({
+                        "jsonrpc":"2.0","id":id,
+                        "error":{"code":-32601,"message":"Method not found"}
+                    })
+                    .to_string(),
+                    "tools/call" => json!({
+                        "jsonrpc":"2.0","id":id,
+                        "result":{"content":[{"type":"text","text":"authorized-ok"}]}
+                    })
+                    .to_string(),
+                    other => panic!("unexpected method {other}"),
+                };
+                write!(
+                    stream,
+                    "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+                    response.len(),
+                    response
+                )
+                .unwrap();
+            }
+        });
+
+        let config = vec![json!({
+            "server_id": "oauth-test",
+            "endpoint": endpoint,
+            "timeout_ms": 5_000,
+        })];
+        let owned = crate::mcp_connection_authority::bind_configurations(
+            &config,
+            "oauth-host",
+            &uuid::Uuid::new_v4().to_string(),
+        )
+        .unwrap();
+        register_configured_servers(&owned).unwrap();
+        let connection_ref = owned[0]["connection_ref"].as_str().unwrap().to_string();
+        let expected = crate::mcp_connection_authority::permission_resource(&connection_ref).unwrap();
+
+        let err = connect_approved(&connection_ref, &expected)
+            .expect_err("unauthenticated connect must fail with 401 discovery");
+        assert_eq!(err.code, "mcp_authorization_required");
+        let parsed = parse_oauth_discovery_from_error(&err)
+            .expect("error message should include structured OAuth discovery metadata");
+        assert_eq!(
+            parsed.resource_metadata.as_deref(),
+            Some("https://mcp.example.com/.well-known/oauth-protected-resource")
+        );
+        assert_eq!(parsed.scope.as_deref(), Some("mcp:tools"));
+        assert_eq!(last_oauth_challenge(&connection_ref).unwrap(), Some(parsed));
+
+        set_connection_oauth_token(
+            &connection_ref,
+            OAuthTokenSet {
+                access_token: "valid-oauth-token".to_string(),
+                token_type: "Bearer".to_string(),
+                refresh_token: Some("refresh-1".to_string()),
+                scope: Some("mcp:tools".to_string()),
+                expires_at_epoch_secs: None,
+            },
+        )
+        .unwrap();
+        assert!(last_oauth_challenge(&connection_ref).unwrap().is_none());
+        assert_eq!(
+            connection_oauth_token(&connection_ref)
+                .unwrap()
+                .unwrap()
+                .access_token,
+            "valid-oauth-token"
+        );
+
+        let refreshed_expected =
+            crate::mcp_connection_authority::permission_resource(&connection_ref).unwrap();
+        let established = connect_approved(&connection_ref, &refreshed_expected)
+            .expect("connect with OAuth bearer token should succeed");
+        assert!(established.server.tools.contains_key("whoami"));
+
+        let execution = call_tool(
+            McpTransportKind::StreamableHttp,
+            &connection_ref,
+            "whoami",
+            json!({}),
+        )
+        .expect("authenticated tool call should succeed");
+        assert_eq!(execution.output["content"][0]["text"], "authorized-ok");
+        server.join().unwrap();
+    }
+
+    #[test]
+    fn legacy_sse_endpoint_resolution_and_same_origin_guard() {
+        let base = reqwest::Url::parse("http://127.0.0.1:8080/api/sse").unwrap();
+        assert_eq!(
+            resolve_sse_endpoint(&base, "/messages?session_id=abc")
+                .unwrap()
+                .as_str(),
+            "http://127.0.0.1:8080/messages?session_id=abc"
+        );
+        assert_eq!(
+            resolve_sse_endpoint(&base, "messages?session_id=abc")
+                .unwrap()
+                .as_str(),
+            "http://127.0.0.1:8080/api/messages?session_id=abc"
+        );
+        assert_eq!(
+            resolve_sse_endpoint(&base, "http://127.0.0.1:8080/post")
+                .unwrap()
+                .as_str(),
+            "http://127.0.0.1:8080/post"
+        );
+        assert_eq!(
+            resolve_sse_endpoint(&base, "https://evil.example/messages")
+                .unwrap_err()
+                .code,
+            "mcp_sse_endpoint_rejected"
+        );
+        assert_eq!(
+            resolve_sse_endpoint(&base, "//evil.example/messages")
+                .unwrap_err()
+                .code,
+            "mcp_sse_endpoint_rejected"
+        );
+        assert_eq!(
+            resolve_sse_endpoint(&base, "http://127.0.0.1:9999/messages")
+                .unwrap_err()
+                .code,
+            "mcp_sse_endpoint_rejected"
+        );
+        assert_eq!(
+            resolve_sse_endpoint(&base, "http://user:pass@127.0.0.1:8080/messages")
+                .unwrap_err()
+                .code,
+            "mcp_sse_endpoint_rejected"
+        );
+        assert_eq!(
+            resolve_sse_endpoint(&base, "javascript:alert(1)")
+                .unwrap_err()
+                .code,
+            "mcp_sse_endpoint_rejected"
+        );
+        assert_eq!(
+            resolve_sse_endpoint(&base, "   ").unwrap_err().code,
+            "mcp_sse_endpoint_invalid"
+        );
+
+        let raw_stream = concat!(
+            ": keepalive\r\n\r\n",
+            "event: endpoint\r\n",
+            "data: /messages?session=42\r\n\r\n",
+            "data: {\"jsonrpc\":\"2.0\",\r\n",
+            "data: \"id\":1,\"result\":{\"ok\":true}}\r\n\r\n",
+        );
+        let mut parser = SseEventStreamParser::default();
+        let mut parsed_events = Vec::new();
+        for byte in raw_stream.as_bytes() {
+            parsed_events.extend(parser.push_bytes(&[*byte]).unwrap());
+        }
+        assert_eq!(parsed_events.len(), 2);
+        assert_eq!(parsed_events[0].event, "endpoint");
+        assert_eq!(parsed_events[0].data, "/messages?session=42");
+        assert_eq!(parsed_events[1].event, "message");
+        let msg: Value = serde_json::from_str(&parsed_events[1].data).unwrap();
+        assert_eq!(msg["id"], 1);
+        assert_eq!(msg["result"]["ok"], true);
+    }
+
+    #[test]
+    fn legacy_sse_end_to_end_connect_discover_and_call_tool() {
+        let listener = TcpListener::bind("127.0.0.1:0").expect("bind legacy SSE server");
+        let addr = listener.local_addr().unwrap();
+        let endpoint = format!("http://{addr}/sse");
+        let (sse_tx, sse_rx) = std::sync::mpsc::channel::<String>();
+        let server = std::thread::spawn(move || {
+            let mut sse_rx = Some(sse_rx);
+            let mut sse_writer_handle = None;
+            let mut post_count = 0usize;
+            for stream in listener.incoming().take(8) {
+                let mut stream = stream.expect("accept legacy SSE connection");
+                let Some((headers, body)) = read_test_http_request(&mut stream) else {
+                    continue;
+                };
+                let first_line = headers.lines().next().unwrap_or("");
+                if first_line.starts_with("GET /sse ") {
+                    write!(
+                        stream,
+                        "HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\nCache-Control: no-cache\r\nConnection: close\r\n\r\nevent: endpoint\ndata: /messages?session=sse-1\n\n"
+                    )
+                    .and_then(|_| stream.flush())
+                    .unwrap();
+                    let rx = sse_rx.take().expect("single SSE stream");
+                    sse_writer_handle = Some(std::thread::spawn(move || {
+                        while let Ok(frame) = rx.recv() {
+                            if stream.write_all(frame.as_bytes()).is_err() {
+                                break;
+                            }
+                            let _ = stream.flush();
+                        }
+                    }));
+                    continue;
+                }
+                assert!(
+                    first_line.starts_with("POST /messages?session=sse-1 "),
+                    "unexpected SSE POST path: {first_line}"
+                );
+                let payload: Value = serde_json::from_slice(&body).unwrap();
+                let method = payload["method"].as_str().unwrap_or_default();
+                let id = payload.get("id").cloned();
+                write!(
+                    stream,
+                    "HTTP/1.1 202 Accepted\r\nContent-Type: text/plain\r\nContent-Length: 8\r\nConnection: close\r\n\r\nAccepted"
+                )
+                .unwrap();
+                match method {
+                    "notifications/initialized" => {}
+                    "initialize" => {
+                        let frame = format!(
+                            "event: message\ndata: {}\n\n",
+                            json!({
+                                "jsonrpc":"2.0","id":id,
+                                "result":{"protocolVersion":DEFAULT_PROTOCOL_VERSION,"capabilities":{}}
+                            })
+                        );
+                        sse_tx.send(frame).unwrap();
+                    }
+                    "tools/list" => {
+                        let frame = format!(
+                            "event: message\ndata: {}\n\n",
+                            json!({
+                                "jsonrpc":"2.0","id":id,
+                                "result":{"tools":[{"name":"echo_sse","description":"legacy sse tool","inputSchema":{"type":"object"}}]}
+                            })
+                        );
+                        sse_tx.send(frame).unwrap();
+                    }
+                    "resources/list" | "resources/templates/list" | "prompts/list" => {
+                        let frame = format!(
+                            "event: message\ndata: {}\n\n",
+                            json!({
+                                "jsonrpc":"2.0","id":id,
+                                "error":{"code":-32601,"message":"Method not found"}
+                            })
+                        );
+                        sse_tx.send(frame).unwrap();
+                    }
+                    "tools/call" => {
+                        let msg = payload["params"]["arguments"]["msg"]
+                            .as_str()
+                            .unwrap_or_default();
+                        let progress_frame = format!(
+                            "event: message\ndata: {}\n\n",
+                            json!({
+                                "jsonrpc":"2.0",
+                                "method":"notifications/progress",
+                                "params":{"progress":1,"total":2,"message":"sse-working"}
+                            })
+                        );
+                        let response_frame = format!(
+                            "event: message\ndata: {}\n\n",
+                            json!({
+                                "jsonrpc":"2.0","id":id,
+                                "result":{"content":[{"type":"text","text":format!("sse:{msg}")}]}
+                            })
+                        );
+                        sse_tx.send(progress_frame).unwrap();
+                        sse_tx.send(response_frame).unwrap();
+                    }
+                    other => panic!("unexpected legacy SSE method {other}"),
+                }
+                post_count += 1;
+                if post_count >= 7 {
+                    break;
+                }
+            }
+            drop(sse_tx);
+            if let Some(writer) = sse_writer_handle {
+                let _ = writer.join();
+            }
+        });
+
+        let discovered = crate::mcp_connection_authority::connect_fixture_servers(&[json!({
+            "server_id": "legacy-sse-test",
+            "transport": "sse",
+            "endpoint": endpoint,
+            "timeout_ms": 5_000,
+        })])
+        .expect("legacy SSE server should connect and discover");
+        assert_eq!(discovered[0]["transport"], "server_sent_events");
+        assert_eq!(discovered[0]["tools"]["echo_sse"]["name"], "echo_sse");
+
+        let connection_ref = discovered[0]["connection_ref"]
+            .as_str()
+            .unwrap()
+            .to_string();
+        let cancellation = crate::CancellationToken::default();
+        let mut progress_events = Vec::new();
+        let execution = call_tool_with_cancellation_and_progress(
+            McpTransportKind::ServerSentEvents,
+            &connection_ref,
+            "echo_sse",
+            json!({"msg": "hello"}),
+            &cancellation,
+            &mut |event| progress_events.push(event.clone()),
+        )
+        .expect("legacy SSE tool call should succeed");
+        assert_eq!(execution.output["content"][0]["text"], "sse:hello");
+        assert_eq!(progress_events.len(), 1);
+        assert_eq!(progress_events[0]["message"], "sse-working");
+
+        let retirement =
+            revoke_connection(McpTransportKind::ServerSentEvents, &connection_ref).unwrap();
+        drop(retirement);
+        server.join().unwrap();
+    }
+
+    #[test]
+    fn concurrent_http_mcp_calls_do_not_block_on_registry_mutex() {
+        let listener = TcpListener::bind("127.0.0.1:0").expect("bind concurrent MCP server");
+        let endpoint = format!("http://{}/mcp", listener.local_addr().unwrap());
+        let rendezvous = Arc::new((Mutex::new(0usize), Condvar::new()));
+        let both_overlapped = Arc::new(AtomicBool::new(false));
+        let server_rendezvous = Arc::clone(&rendezvous);
+        let server_overlapped = Arc::clone(&both_overlapped);
+
+        let server = std::thread::spawn(move || {
+            let mut handlers = Vec::new();
+            for stream in listener.incoming().take(8) {
+                let mut stream = stream.expect("accept concurrent MCP request");
+                let rv = Arc::clone(&server_rendezvous);
+                let overlapped = Arc::clone(&server_overlapped);
+                handlers.push(std::thread::spawn(move || {
+                    let Some((_, body)) = read_test_http_request(&mut stream) else {
+                        return;
+                    };
+                    let payload: Value = serde_json::from_slice(&body).unwrap_or(Value::Null);
+                    let method = payload["method"].as_str().unwrap_or_default();
+                    let id = payload.get("id").cloned();
+                    let response = match method {
+                        "notifications/initialized" => String::new(),
+                        "initialize" => json!({
+                            "jsonrpc":"2.0","id":id,
+                            "result":{"protocolVersion":DEFAULT_PROTOCOL_VERSION,"capabilities":{}}
+                        })
+                        .to_string(),
+                        "tools/list" => json!({
+                            "jsonrpc":"2.0","id":id,
+                            "result":{"tools":[{"name":"parallel_read","description":"concurrent safe","inputSchema":{"type":"object"},"annotations":{"readOnlyHint":true}}]}
+                        })
+                        .to_string(),
+                        "resources/list" | "resources/templates/list" | "prompts/list" => json!({
+                            "jsonrpc":"2.0","id":id,
+                            "error":{"code":-32601,"message":"Method not found"}
+                        })
+                        .to_string(),
+                        "tools/call" => {
+                            let worker = payload["params"]["arguments"]["worker"]
+                                .as_u64()
+                                .unwrap_or_default();
+                            // Wait until BOTH tool calls are simultaneously in flight on the server.
+                            let (lock, cvar) = &*rv;
+                            let mut count = lock.lock().unwrap();
+                            *count += 1;
+                            cvar.notify_all();
+                            let deadline = Instant::now() + Duration::from_secs(2);
+                            while *count < 2 {
+                                let now = Instant::now();
+                                if now >= deadline {
+                                    break;
+                                }
+                                let (next, _) =
+                                    cvar.wait_timeout(count, deadline - now).unwrap();
+                                count = next;
+                            }
+                            if *count >= 2 {
+                                overlapped.store(true, Ordering::SeqCst);
+                            }
+                            drop(count);
+                            json!({
+                                "jsonrpc":"2.0","id":id,
+                                "result":{"content":[{"type":"text","text":format!("worker:{worker}")}]}
+                            })
+                            .to_string()
+                        }
+                        other => panic!("unexpected concurrent MCP method {other}"),
+                    };
+                    write!(
+                        stream,
+                        "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+                        response.len(),
+                        response
+                    )
+                    .unwrap();
+                }));
+            }
+            for handler in handlers {
+                handler.join().unwrap();
+            }
+        });
+
+        let discovered = crate::mcp_connection_authority::connect_fixture_servers(&[json!({
+            "server_id": "concurrent-http-test",
+            "endpoint": endpoint,
+            "timeout_ms": 5_000,
+        })])
+        .expect("connect concurrent HTTP MCP server");
+        let connection_ref = discovered[0]["connection_ref"]
+            .as_str()
+            .unwrap()
+            .to_string();
+
+        let ref_a = connection_ref.clone();
+        let ref_b = connection_ref.clone();
+        let thread_a = std::thread::spawn(move || {
+            call_tool(
+                McpTransportKind::StreamableHttp,
+                &ref_a,
+                "parallel_read",
+                json!({"worker": 1}),
+            )
+        });
+        let thread_b = std::thread::spawn(move || {
+            let cancel = crate::CancellationToken::default();
+            call_tool_with_cancellation(
+                McpTransportKind::StreamableHttp,
+                &ref_b,
+                "parallel_read",
+                json!({"worker": 2}),
+                &cancel,
+            )
+        });
+
+        let res_a = thread_a.join().unwrap().expect("worker 1 should succeed");
+        let res_b = thread_b.join().unwrap().expect("worker 2 should succeed");
+        assert_eq!(res_a.output["content"][0]["text"], "worker:1");
+        assert_eq!(res_b.output["content"][0]["text"], "worker:2");
+        assert!(
+            both_overlapped.load(Ordering::SeqCst),
+            "two HTTP MCP calls on the same connection_ref must overlap concurrently without blocking on a shared mutex"
+        );
         server.join().unwrap();
     }
 }

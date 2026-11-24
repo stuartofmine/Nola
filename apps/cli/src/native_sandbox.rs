@@ -3,6 +3,8 @@
 //! and shared child-process environment scrubbing helpers.
 
 use std::ffi::OsStr;
+#[cfg(any(target_os = "linux", test))]
+use std::ffi::OsString;
 use std::path::{Component, Path, PathBuf};
 use std::process::Command;
 
@@ -107,6 +109,15 @@ pub(crate) fn native_os_sandbox_disabled_by_env() -> bool {
         .ok()
         .map(|value| value.trim().to_ascii_lowercase())
         .is_some_and(|value| matches!(value.as_str(), "off" | "0" | "false" | "disabled"))
+}
+
+/// Returns true when `NOLA_NATIVE_OS_SANDBOX` explicitly requires native OS
+/// sandboxing (`required` or `strict`) so callers fail closed if unavailable.
+pub(crate) fn native_os_sandbox_required_by_env() -> bool {
+    std::env::var("NOLA_NATIVE_OS_SANDBOX")
+        .ok()
+        .map(|value| value.trim().to_ascii_lowercase())
+        .is_some_and(|value| matches!(value.as_str(), "required" | "strict"))
 }
 
 /// Returns true when a native OS sandbox backend is available on this platform
@@ -242,7 +253,7 @@ impl NativeOsSandboxPolicy {
     }
 }
 
-#[cfg(target_os = "macos")]
+#[cfg(any(target_os = "macos", test))]
 fn sbpl_escape_path(path: &Path) -> Result<String, String> {
     let text = path
         .to_str()
@@ -255,7 +266,7 @@ fn sbpl_escape_path(path: &Path) -> Result<String, String> {
 
 /// Generates an Apple Seatbelt SBPL `(version 1)` profile.
 /// Note: in Seatbelt SBPL, the LAST matching rule wins.
-#[cfg(target_os = "macos")]
+#[cfg(any(target_os = "macos", test))]
 pub(crate) fn build_macos_seatbelt_profile(policy: &NativeOsSandboxPolicy) -> Result<String, String> {
     let policy = policy.canonicalized();
     let mut profile = String::new();
@@ -266,7 +277,7 @@ pub(crate) fn build_macos_seatbelt_profile(policy: &NativeOsSandboxPolicy) -> Re
     for path in &policy.deny_read {
         let escaped = sbpl_escape_path(path)?;
         profile.push_str(&format!(
-            "(deny file-read-data (subpath \"{escaped}\") (literal \"{escaped}\"))\n"
+            "(deny file-read* (subpath \"{escaped}\") (literal \"{escaped}\"))\n"
         ));
     }
     // Default-deny all writes, then allow workspace / temp / device writes,
@@ -291,9 +302,65 @@ pub(crate) fn build_macos_seatbelt_profile(policy: &NativeOsSandboxPolicy) -> Re
     }
     if !policy.allow_network {
         profile.push_str("(deny network-outbound)\n");
+        profile.push_str("(deny network-bind)\n");
         profile.push_str("(allow network-outbound (local ip \"localhost:*\"))\n");
     }
     Ok(profile)
+}
+
+#[cfg(any(target_os = "linux", test))]
+pub(crate) fn build_linux_bwrap_args(
+    policy: &NativeOsSandboxPolicy,
+    program: &OsStr,
+    args: &[&OsStr],
+) -> Vec<OsString> {
+    let policy = policy.canonicalized();
+    let mut bwrap_args: Vec<OsString> = [
+        "--ro-bind",
+        "/",
+        "/",
+        "--dev",
+        "/dev",
+        "--proc",
+        "/proc",
+        "--unshare-pid",
+        "--unshare-ipc",
+    ]
+    .into_iter()
+    .map(OsString::from)
+    .collect();
+    for root in &policy.allowed_write_roots {
+        if root.exists() {
+            bwrap_args.push(OsString::from("--bind"));
+            bwrap_args.push(root.as_os_str().to_os_string());
+            bwrap_args.push(root.as_os_str().to_os_string());
+        }
+    }
+    for path in &policy.deny_read {
+        if path.is_dir() {
+            bwrap_args.push(OsString::from("--tmpfs"));
+            bwrap_args.push(path.as_os_str().to_os_string());
+        } else if path.is_file() {
+            bwrap_args.push(OsString::from("--ro-bind"));
+            bwrap_args.push(OsString::from("/dev/null"));
+            bwrap_args.push(path.as_os_str().to_os_string());
+        }
+    }
+    for path in &policy.deny_write {
+        if path.exists() {
+            bwrap_args.push(OsString::from("--ro-bind"));
+            bwrap_args.push(path.as_os_str().to_os_string());
+            bwrap_args.push(path.as_os_str().to_os_string());
+        }
+    }
+    if !policy.allow_network {
+        bwrap_args.push(OsString::from("--unshare-net"));
+    }
+    bwrap_args.push(OsString::from("--die-with-parent"));
+    bwrap_args.push(OsString::from("--"));
+    bwrap_args.push(program.to_os_string());
+    bwrap_args.extend(args.iter().map(|arg| arg.to_os_string()));
+    bwrap_args
 }
 
 fn copy_command_metadata(source: &Command, dest: &mut Command) {
@@ -335,28 +402,8 @@ pub(crate) fn wrap_command_in_native_sandbox(
     {
         let bwrap = find_in_path("bwrap")
             .ok_or_else(|| "bwrap is not available in PATH".to_string())?;
-        let policy = policy.canonicalized();
         let mut wrapped = Command::new(bwrap);
-        wrapped.args(["--ro-bind", "/", "/", "--dev", "/dev", "--proc", "/proc"]);
-        for root in &policy.allowed_write_roots {
-            if root.exists() {
-                wrapped.arg("--bind").arg(root).arg(root);
-            }
-        }
-        for path in &policy.deny_read {
-            if path.is_dir() {
-                wrapped.arg("--tmpfs").arg(path);
-            }
-        }
-        for path in &policy.deny_write {
-            if path.exists() {
-                wrapped.arg("--ro-bind").arg(path).arg(path);
-            }
-        }
-        if !policy.allow_network {
-            wrapped.arg("--unshare-net");
-        }
-        wrapped.arg("--die-with-parent").arg("--").arg(program).args(args);
+        wrapped.args(build_linux_bwrap_args(policy, program, &args));
         copy_command_metadata(original, &mut wrapped);
         Ok(wrapped)
     }
@@ -525,5 +572,111 @@ mod tests {
         );
         assert_eq!(std::fs::read_to_string(&tmp_probe).unwrap(), "ok");
         let _ = std::fs::remove_file(&tmp_probe);
+    }
+
+    #[test]
+    fn linux_bwrap_args_block_sensitive_files_with_dev_null_and_unshare_pid_ipc() {
+        let base = tempfile::tempdir().unwrap();
+        let workspace = base.path().join("workspace");
+        let ssh_dir = base.path().join(".ssh");
+        std::fs::create_dir_all(&workspace).unwrap();
+        std::fs::create_dir_all(&ssh_dir).unwrap();
+        let sensitive_files = [
+            ".git-credentials",
+            ".netrc",
+            ".pgpass",
+            ".bash_history",
+            ".zsh_history",
+        ]
+        .map(|name| {
+            let p = base.path().join(name);
+            std::fs::write(&p, "secret").unwrap();
+            p
+        });
+
+        let mut deny_read = vec![ssh_dir.clone()];
+        deny_read.extend(sensitive_files.iter().cloned());
+        let policy = NativeOsSandboxPolicy {
+            workspace_root: workspace.clone(),
+            allowed_write_roots: vec![workspace.clone()],
+            allowed_read_roots: vec![workspace.clone()],
+            deny_read,
+            deny_write: vec![workspace.join(".git")],
+            allow_network: false,
+        };
+
+        let args = build_linux_bwrap_args(
+            &policy,
+            OsStr::new("/bin/sh"),
+            &[OsStr::new("-c"), OsStr::new("echo ok")],
+        );
+        let text_args: Vec<String> = args
+            .iter()
+            .map(|value| value.to_string_lossy().into_owned())
+            .collect();
+
+        assert!(text_args.iter().any(|arg| arg == "--unshare-pid"));
+        assert!(text_args.iter().any(|arg| arg == "--unshare-ipc"));
+        assert!(text_args.iter().any(|arg| arg == "--unshare-net"));
+
+        let canonical_ssh = canonicalize_for_sandbox(&ssh_dir)
+            .to_string_lossy()
+            .into_owned();
+        assert!(
+            text_args
+                .windows(2)
+                .any(|pair| pair[0] == "--tmpfs" && pair[1] == canonical_ssh),
+            "expected --tmpfs for sensitive directory, got: {text_args:?}"
+        );
+
+        for file in &sensitive_files {
+            let canonical_file = canonicalize_for_sandbox(file)
+                .to_string_lossy()
+                .into_owned();
+            assert!(
+                text_args.windows(3).any(|triple| {
+                    triple[0] == "--ro-bind"
+                        && triple[1] == "/dev/null"
+                        && triple[2] == canonical_file
+                }),
+                "expected --ro-bind /dev/null for sensitive file {canonical_file}, got: {text_args:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn macos_seatbelt_profile_uses_file_read_star_and_denies_network_bind() {
+        let base = tempfile::tempdir().unwrap();
+        let workspace = base.path().join("workspace");
+        let secret = base.path().join(".git-credentials");
+        std::fs::create_dir_all(&workspace).unwrap();
+        std::fs::write(&secret, "token").unwrap();
+
+        let policy = NativeOsSandboxPolicy {
+            workspace_root: workspace.clone(),
+            allowed_write_roots: vec![workspace.clone()],
+            allowed_read_roots: vec![workspace.clone()],
+            deny_read: vec![secret.clone()],
+            deny_write: vec![workspace.join(".git")],
+            allow_network: false,
+        };
+
+        let profile = build_macos_seatbelt_profile(&policy).unwrap();
+        let canonical_secret = canonicalize_for_sandbox(&secret);
+        let expected_deny = format!(
+            "(deny file-read* (subpath \"{}\") (literal \"{}\"))",
+            canonical_secret.display(),
+            canonical_secret.display()
+        );
+        assert!(
+            profile.contains(&expected_deny),
+            "expected file-read* deny rule, got:\n{profile}"
+        );
+        assert!(
+            !profile.contains("file-read-data"),
+            "file-read-data should be replaced by file-read*:\n{profile}"
+        );
+        assert!(profile.contains("(deny network-outbound)\n"));
+        assert!(profile.contains("(deny network-bind)\n"));
     }
 }

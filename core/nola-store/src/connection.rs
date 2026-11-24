@@ -4,11 +4,16 @@
 use std::fmt::{Display, Formatter};
 use std::ops::Deref;
 use std::path::Path;
-use std::time::Duration;
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
-use rusqlite::Connection;
+use rusqlite::{params, Connection, OptionalExtension};
 
 use super::STORE_SCHEMA_VERSION;
+
+const SQLITE_WAL_JOURNAL_SIZE_LIMIT_BYTES: i64 = 67_108_864;
+const COMMAND_RECEIPT_RETAIN_ROWS: i64 = 5_000;
+const COMMAND_RECEIPT_RETAIN_WINDOW_MS: i64 = 14 * 24 * 60 * 60 * 1_000;
+const PROJECTION_EVENT_RETAIN_ROWS: i64 = 20_000;
 
 #[derive(Debug)]
 pub enum StoreError {
@@ -365,6 +370,11 @@ impl NolaStore {
         store
             .connection
             .pragma_update(None, "synchronous", "NORMAL")?;
+        store.connection.pragma_update(
+            None,
+            "journal_size_limit",
+            SQLITE_WAL_JOURNAL_SIZE_LIMIT_BYTES,
+        )?;
         if background {store.prune_settled_outbox_rows()?;}
         if background && path != Path::new(":memory:") {
             store.archive_worker=Some(crate::work_archive_worker::register(path)?);
@@ -610,6 +620,18 @@ impl NolaStore {
                     WHERE p.key=effect_outbox.effect_id
                   )
             )", [])?;
+        let now_ms = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .ok()
+            .and_then(|duration| i64::try_from(duration.as_millis()).ok())
+            .unwrap_or(0);
+        prune_bounded_journal_tables(
+            &transaction,
+            now_ms,
+            COMMAND_RECEIPT_RETAIN_ROWS,
+            COMMAND_RECEIPT_RETAIN_WINDOW_MS,
+            PROJECTION_EVENT_RETAIN_ROWS,
+        )?;
         transaction.commit()?;
         Ok(())
     }
@@ -812,5 +834,244 @@ mod read_only_tests {
         assert_eq!(observed, 1);
 
         writer.rollback_write_unit_of_work().unwrap();
+    }
+}
+
+fn format_utc_iso_seconds(unix_seconds: i64) -> String {
+    let days = unix_seconds.div_euclid(86_400);
+    let secs_of_day = unix_seconds.rem_euclid(86_400);
+    let hour = secs_of_day / 3_600;
+    let minute = (secs_of_day % 3_600) / 60;
+    let second = secs_of_day % 60;
+    let z = days + 719_468;
+    let era = z.div_euclid(146_097);
+    let doe = z - era * 146_097;
+    let yoe = (doe - doe / 1_460 + doe / 36_524 - doe / 146_096) / 365;
+    let y = yoe + era * 400;
+    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
+    let mp = (5 * doy + 2) / 153;
+    let day = doy - (153 * mp + 2) / 5 + 1;
+    let month = if mp < 10 { mp + 3 } else { mp - 9 };
+    let year = y + if month <= 2 { 1 } else { 0 };
+    format!("{year:04}-{month:02}-{day:02}T{hour:02}:{minute:02}:{second:02}Z")
+}
+
+fn prune_bounded_journal_tables(
+    transaction: &rusqlite::Transaction<'_>,
+    now_ms: i64,
+    receipt_retain_rows: i64,
+    receipt_retain_window_ms: i64,
+    projection_retain_rows: i64,
+) -> StoreResult<()> {
+    // Keep at least the newest `receipt_retain_rows` terminal receipts AND any
+    // terminal receipt within `receipt_retain_window_ms`. Never prune in-flight
+    // (`status = 'accepted'`) receipts.
+    if receipt_retain_rows >= 0 {
+        let cutoff_rowid: Option<i64> = transaction
+            .query_row(
+                "SELECT rowid FROM command_receipts
+                 WHERE status!='accepted'
+                 ORDER BY rowid DESC
+                 LIMIT 1 OFFSET ?1",
+                [receipt_retain_rows],
+                |row| row.get(0),
+            )
+            .optional()?;
+        if let Some(cutoff_rowid) = cutoff_rowid {
+            let cutoff_epoch_ms = now_ms.saturating_sub(receipt_retain_window_ms);
+            let cutoff_iso = format_utc_iso_seconds(cutoff_epoch_ms.div_euclid(1_000));
+            transaction.execute(
+                "DELETE FROM command_receipts
+                 WHERE status!='accepted'
+                   AND rowid<=?1
+                   AND NOT (
+                       COALESCE(completed_at, received_at) GLOB '[0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9]*'
+                       AND COALESCE(completed_at, received_at) NOT GLOB '*[^0-9]*'
+                       AND CAST(COALESCE(completed_at, received_at) AS INTEGER)>=?2
+                   )
+                   AND NOT (
+                       COALESCE(completed_at, received_at) LIKE '____-__-__T%'
+                       AND COALESCE(completed_at, received_at)>=?3
+                   )",
+                params![cutoff_rowid, cutoff_epoch_ms, cutoff_iso],
+            )?;
+        }
+    }
+
+    // Keep the newest `projection_retain_rows` projection events; cursor rows
+    // in `projection_cursors` remain untouched so sequences stay monotonic.
+    if projection_retain_rows >= 0 {
+        let cutoff_rowid: Option<i64> = transaction
+            .query_row(
+                "SELECT rowid FROM projection_events
+                 ORDER BY rowid DESC
+                 LIMIT 1 OFFSET ?1",
+                [projection_retain_rows],
+                |row| row.get(0),
+            )
+            .optional()?;
+        if let Some(cutoff_rowid) = cutoff_rowid {
+            transaction.execute(
+                "DELETE FROM projection_events WHERE rowid<=?1",
+                [cutoff_rowid],
+            )?;
+        }
+    }
+    Ok(())
+}
+
+#[cfg(test)]
+mod wal_and_journal_pruning_tests {
+    use super::*;
+
+    #[test]
+    fn open_configures_wal_journal_size_limit_and_preserves_schema_epoch() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("wal-limit.sqlite");
+        let store = NolaStore::open(&path).unwrap();
+
+        let limit: i64 = store
+            .connection
+            .query_row("PRAGMA journal_size_limit", [], |row| row.get(0))
+            .unwrap();
+        assert_eq!(limit, SQLITE_WAL_JOURNAL_SIZE_LIMIT_BYTES);
+
+        let epoch: String = store
+            .connection
+            .query_row(
+                "SELECT value FROM store_metadata WHERE key='schema_epoch'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(epoch, "1");
+    }
+
+    #[test]
+    fn format_utc_iso_seconds_matches_known_epoch_dates() {
+        assert_eq!(format_utc_iso_seconds(0), "1970-01-01T00:00:00Z");
+        assert_eq!(format_utc_iso_seconds(1_709_164_800), "2024-02-29T00:00:00Z");
+    }
+
+    #[test]
+    fn journal_pruning_caps_aged_receipts_and_projection_events_conservatively() {
+        let mut store = NolaStore::open(":memory:").unwrap();
+        // Fixed "now": 2026-11-24T00:00:00Z in epoch milliseconds.
+        let now_sec: i64 = 1_795_478_400;
+        let now_ms: i64 = now_sec * 1_000;
+        let twenty_days_ago_ms = now_ms - 20 * 24 * 60 * 60 * 1_000;
+        let two_days_ago_ms = now_ms - 2 * 24 * 60 * 60 * 1_000;
+
+        let insert_terminal = |conn: &Connection, req_id: &str, ts: &str| {
+            conn.execute(
+                "INSERT INTO command_receipts(
+                    client_id,request_id,command_type,command_json,status,result_json,received_at,completed_at
+                 ) VALUES ('c',?1,'put_product_setting','{}','committed','{}',?2,?2)",
+                params![req_id, ts],
+            )
+            .unwrap();
+        };
+
+        // 1. Old accepted (in-flight) receipt: must NEVER be pruned.
+        store
+            .connection
+            .execute(
+                "INSERT INTO command_receipts(
+                    client_id,request_id,command_type,command_json,status,received_at
+                 ) VALUES ('c','in-flight','put_product_setting','{}','accepted',?1)",
+                [twenty_days_ago_ms.to_string()],
+            )
+            .unwrap();
+
+        // 2. Two aged terminal receipts (epoch-ms & ISO-8601) beyond retain count -> pruned.
+        insert_terminal(&store.connection, "old-epoch", &twenty_days_ago_ms.to_string());
+        insert_terminal(&store.connection, "old-iso", "2026-10-01T00:00:00Z");
+
+        // 3. Two recent terminal receipts (within 14d window) beyond retain count -> retained.
+        insert_terminal(&store.connection, "recent-epoch", &two_days_ago_ms.to_string());
+        insert_terminal(
+            &store.connection,
+            "recent-iso",
+            &format_utc_iso_seconds(now_sec - 2 * 86_400),
+        );
+
+        // 4. Two newest terminal receipts (even with aged timestamps) within retain count (2) -> retained.
+        insert_terminal(&store.connection, "newest-1", "2020-01-01T00:00:00Z");
+        insert_terminal(&store.connection, "newest-2", "2020-01-02T00:00:00Z");
+
+        // Populate 7 projection_events for a single scope.
+        let scope = crate::ProjectionScopeKey {
+            scope_type: "conversation".into(),
+            scope_id: "conv-prune".into(),
+        };
+        for seq in 1..=7_u64 {
+            store
+                .append_projection_event(&crate::AppendProjectionEventInput {
+                    event_id: format!("evt-{seq}"),
+                    scope: scope.clone(),
+                    expected_after_sequence: seq - 1,
+                    payload_json: "{}".into(),
+                    occurred_at: now_ms.to_string(),
+                })
+                .unwrap();
+        }
+
+        let transaction = store.connection.transaction().unwrap();
+        prune_bounded_journal_tables(
+            &transaction,
+            now_ms,
+            2,
+            COMMAND_RECEIPT_RETAIN_WINDOW_MS,
+            3,
+        )
+        .unwrap();
+        transaction.commit().unwrap();
+
+        let remaining_receipts: Vec<String> = {
+            let mut stmt = store
+                .connection
+                .prepare("SELECT request_id FROM command_receipts ORDER BY rowid ASC")
+                .unwrap();
+            stmt.query_map([], |row| row.get(0))
+                .unwrap()
+                .collect::<Result<Vec<_>, _>>()
+                .unwrap()
+        };
+        assert_eq!(
+            remaining_receipts,
+            vec![
+                "in-flight",
+                "recent-epoch",
+                "recent-iso",
+                "newest-1",
+                "newest-2",
+            ]
+        );
+
+        let remaining_events: Vec<i64> = {
+            let mut stmt = store
+                .connection
+                .prepare("SELECT sequence FROM projection_events ORDER BY sequence ASC")
+                .unwrap();
+            stmt.query_map([], |row| row.get(0))
+                .unwrap()
+                .collect::<Result<Vec<_>, _>>()
+                .unwrap()
+        };
+        assert_eq!(remaining_events, vec![5, 6, 7]);
+
+        // Cursor remains at 7 and new events continue monotonically at 8.
+        let cursor = store.projection_cursor(&scope).unwrap().unwrap();
+        assert_eq!(cursor.current_sequence, 7);
+        let next = store
+            .append_projection_event(&crate::AppendProjectionEventInput {
+                event_id: "evt-8".into(),
+                scope: scope.clone(),
+                expected_after_sequence: 7,
+                payload_json: "{}".into(),
+                occurred_at: now_ms.to_string(),
+            })
+            .unwrap();
+        assert_eq!(next.sequence, 8);
     }
 }

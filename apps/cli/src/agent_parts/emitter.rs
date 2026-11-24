@@ -89,6 +89,12 @@ fn committed_assistant_journal(
     ) { Emitter::committed_assistant_journal(self, through) }
 fn needs_ephemeral_public_text(&self) -> bool { self.json && self.event_sink.is_none() }
 fn ephemeral_public_text(&mut self, seal: &nola_domain::assistant_run_terminal::AssistantRunTerminalSeal, text: &str) {
+    if self.buffered_json {
+        if self.markdown_text.is_empty() && !text.is_empty() {
+            self.markdown_text = text.to_string();
+        }
+        return;
+    }
     self.emit_json_value(json!({
         "type": "ephemeral_assistant_text", "session_id": seal.identity.conversation_id,
         "run_id": seal.identity.run_id, "assistant_message_id": seal.identity.assistant_message_id,
@@ -131,6 +137,22 @@ const STREAM_COMMIT_MAX_LINES: usize = 3;
 const STREAM_COMMIT_MAX_CHARS: usize = 360;
 const STREAM_COMMIT_SOFT_CHARS: usize = 240;
 static TERMINAL_RENDER_LOCK: Mutex<()> = Mutex::new(());
+static INTERACTIVE_VERBOSE_OUTPUT: std::sync::atomic::AtomicBool =
+    std::sync::atomic::AtomicBool::new(false);
+
+pub fn set_interactive_verbose_output(enabled: bool) {
+    INTERACTIVE_VERBOSE_OUTPUT.store(enabled, std::sync::atomic::Ordering::Relaxed);
+}
+
+pub fn is_interactive_verbose_output() -> bool {
+    INTERACTIVE_VERBOSE_OUTPUT.load(std::sync::atomic::Ordering::Relaxed)
+}
+
+pub fn toggle_interactive_verbose_output() -> bool {
+    let next = !is_interactive_verbose_output();
+    set_interactive_verbose_output(next);
+    next
+}
 
 fn emit_durable_terminal_line(line: &str) {
     if crate::terminal_ui::owns_terminal() {
@@ -740,9 +762,11 @@ mod native_host_trace_transport_tests {
 
 pub struct Emitter {
     json: bool,
+    buffered_json: bool,
     printed_text: bool,
     event_sink: Option<Box<dyn FnMut(Value) + Send>>,
     markdown_text: String,
+    last_error: Option<String>,
     quiet_status: bool,
     last_quiet_status: Option<String>,
     in_code_block: bool,
@@ -786,6 +810,8 @@ pub struct Emitter {
     journal_inbox: std::sync::Arc<std::sync::Mutex<crate::terminal_journal_presentation::JournalInbox>>,
     journal_presentation: crate::terminal_journal_presentation::TerminalJournalPresentation,
     task_statuses: std::collections::HashMap<String, String>,
+    reasoning_buffer: String,
+    reasoning_lines_emitted: usize,
 }
 
 #[derive(Debug, Clone)]
@@ -815,6 +841,7 @@ struct DisplayedToolItem {
     is_error: bool,
     is_cancelled: bool,
     is_read_activity: bool,
+    diff_preview: Vec<String>,
 }
 
 #[derive(Debug, Clone)]
@@ -1092,8 +1119,10 @@ impl Emitter {
     pub fn new(json: bool) -> Self {
         Self {
             json,
+            buffered_json: false,
             printed_text: false,
             markdown_text: String::new(),
+            last_error: None,
             event_sink: None,
             quiet_status: true,
             last_quiet_status: None,
@@ -1136,6 +1165,8 @@ impl Emitter {
             journal_inbox: Default::default(),
             journal_presentation: Default::default(),
             task_statuses: std::collections::HashMap::new(),
+            reasoning_buffer: String::new(),
+            reasoning_lines_emitted: 0,
         }
     }
 
@@ -1176,6 +1207,18 @@ impl Emitter {
     pub fn with_quiet_status(mut self, quiet_status: bool) -> Self {
         self.quiet_status = quiet_status;
         self
+    }
+
+    pub fn with_buffered_json(mut self, buffered_json: bool) -> Self {
+        self.buffered_json = buffered_json;
+        if buffered_json {
+            self.json = true;
+        }
+        self
+    }
+
+    pub fn take_last_error(&mut self) -> Option<String> {
+        self.last_error.take()
     }
 
     pub fn with_sticky_footer(mut self, footer: Option<String>) -> Self {
@@ -1743,7 +1786,7 @@ impl Emitter {
     }
 
     pub(crate) fn journal_observer(&self) -> Option<Box<dyn crate::runtime_output::JournalPublicationObserver>> {
-        (!self.json).then(|| Box::new(crate::terminal_journal_presentation::JournalObserver(
+        (!self.json || self.buffered_json).then(|| Box::new(crate::terminal_journal_presentation::JournalObserver(
             self.journal_inbox.clone(),
         )) as Box<dyn crate::runtime_output::JournalPublicationObserver>)
     }
@@ -1755,7 +1798,7 @@ impl Emitter {
         if self.recovery_transport_suppressed {
             return;
         }
-        if !self.json {
+        if !self.json || self.buffered_json {
             let updates = std::mem::take(&mut self.journal_inbox.lock()
                 .unwrap_or_else(|error| error.into_inner()).updates);
             let mut presentation = std::mem::take(&mut self.journal_presentation);
@@ -1782,7 +1825,7 @@ impl Emitter {
         if self.recovery_transport_suppressed {
             return;
         }
-        if !self.json {
+        if !self.json || self.buffered_json {
             if let nola_domain::run_result::RunResultValue::Blocked {
                 reason, resolution_condition, ..
             } = &seal.result.value {
@@ -1791,9 +1834,12 @@ impl Emitter {
                 } else {
                     format!("{}: {}", reason.code, resolution_condition)
                 };
+                self.last_error = Some(message.clone());
                 self.done("blocked");
-                let label = format_error("").trim().to_string();
-                self.print_status_line("error", &label, Some(&message));
+                if !self.buffered_json {
+                    let label = format_error("").trim().to_string();
+                    self.print_status_line("error", &label, Some(&message));
+                }
             }
             return;
         }
@@ -1893,8 +1939,10 @@ impl Emitter {
     {
         Self {
             json: true,
+            buffered_json: false,
             printed_text: false,
             markdown_text: String::new(),
+            last_error: None,
             event_sink: Some(Box::new(event_sink)),
             quiet_status: true,
             last_quiet_status: None,
@@ -1937,6 +1985,8 @@ impl Emitter {
             journal_inbox: Default::default(),
             journal_presentation: Default::default(),
             task_statuses: std::collections::HashMap::new(),
+            reasoning_buffer: String::new(),
+            reasoning_lines_emitted: 0,
         }
     }
 
@@ -1987,11 +2037,16 @@ impl Emitter {
     }
 
     fn present_text(&mut self, text: &str, preview: bool) {
+        if self.buffered_json {
+            self.markdown_text.push_str(text);
+            return;
+        }
         if self.json {
             // JSON clients read committed source journals; never publish a
             // second response-body transport.
             let _ = text;
         } else {
+            self.flush_reasoning_buffer(true);
             if crate::terminal_ui::has_active_document() {
                 self.stop_activity_spinner();
                 self.clear_transient_status_line();
@@ -2073,10 +2128,70 @@ impl Emitter {
     }
 
     pub fn reasoning(&mut self, text: &str) {
-        if self.json {
-            // Reasoning is represented by Core Reasoning Parts and Trace.
-            let _ = text;
+        if self.json || text.is_empty() {
+            // In JSON transport mode, reasoning is represented by Core Reasoning
+            // Parts and Trace; never pollute structured stdout.
+            return;
         }
+        self.reasoning_buffer.push_str(text);
+        while let Some(chunk) = take_ready_reasoning_chunk(&mut self.reasoning_buffer, false) {
+            self.emit_reasoning_chunk(&chunk);
+        }
+    }
+
+    fn flush_reasoning_buffer(&mut self, reset_segment: bool) {
+        if self.json {
+            self.reasoning_buffer.clear();
+            if reset_segment {
+                self.reasoning_lines_emitted = 0;
+            }
+            return;
+        }
+        while let Some(chunk) = take_ready_reasoning_chunk(&mut self.reasoning_buffer, true) {
+            self.emit_reasoning_chunk(&chunk);
+        }
+        if reset_segment {
+            self.reasoning_lines_emitted = 0;
+        }
+    }
+
+    fn emit_reasoning_chunk(&mut self, chunk: &str) {
+        let width = if crate::terminal_ui::owns_terminal() {
+            crate::terminal_ui::transcript_width(agent_terminal_columns())
+        } else {
+            agent_terminal_columns().saturating_sub(2).max(24)
+        };
+        let Some(formatted) = format_reasoning_line(chunk, width, terminal_color_enabled()) else {
+            return;
+        };
+        let max_reasoning_lines = reasoning_line_limit_for(is_interactive_verbose_output());
+        if self.reasoning_lines_emitted >= max_reasoning_lines {
+            if let Some(spinner) = self.activity_spinner.as_ref() {
+                let snippet = strip_ansi_sequences(&formatted);
+                let snippet = snippet.trim().trim_start_matches('·').trim();
+                if !snippet.is_empty() {
+                    spinner.update_detail(snippet);
+                }
+            }
+            return;
+        }
+        self.reasoning_lines_emitted = self.reasoning_lines_emitted.saturating_add(1);
+        if crate::terminal_ui::owns_terminal() {
+            self.clear_transient_status_line();
+            crate::terminal_ui::commit_history(&formatted);
+            self.output_ended_with_newline = true;
+            self.draw_sticky_footer();
+            return;
+        }
+        self.clear_transient_status_line();
+        if !io::stdout().is_terminal() {
+            eprintln!("{formatted}");
+            return;
+        }
+        self.ensure_output_line_for_status();
+        println!("{formatted}");
+        self.output_ended_with_newline = true;
+        self.draw_sticky_footer();
     }
 
     pub fn status(&mut self, phase: &str, message: &str) {
@@ -2160,6 +2275,7 @@ impl Emitter {
         repaired_from: Option<&str>,
         repaired_fields: Option<&[String]>,
     ) {
+        self.flush_reasoning_buffer(true);
         self.prepare_sticky_footer_for_durable_output();
         // Journal visibility, not the presence/name of a tool, owns content.
         // A public narration stays in the transcript at its original position.
@@ -2240,6 +2356,7 @@ impl Emitter {
         }
         self.stop_activity_spinner();
         self.clear_transient_status_line();
+        self.flush_reasoning_buffer(true);
         self.flush_stream_text(true);
         let args = if is_bash_command_tool(&request.name) {
             compact_bash_request_for_ui(request, agent_terminal_columns().saturating_sub(18))
@@ -2354,13 +2471,16 @@ impl Emitter {
                 tool_result_summary(request, outcome, false)
                     .or_else(|| tool_done_detail(&tool_name).map(str::to_string))
             };
-            self.push_pending_tool_item(
+            let verbose = is_interactive_verbose_output();
+            let diff_preview = extract_tool_preview_with_verbose(request, outcome, verbose);
+            self.push_pending_tool_item_with_diff(
                 tool_name,
                 args,
                 detail,
                 false,
                 false,
                 is_read,
+                diff_preview,
             );
             // Keep the shared read/search activity row alive. The following
             // read reuses it; assistant text, an error, or a different tool
@@ -2384,7 +2504,17 @@ impl Emitter {
                 tool_argument_summary(request)
             };
             let detail = tool_result_summary(request, outcome, true);
-            self.push_pending_tool_item(tool_name, args, detail, true, false, false);
+            let verbose = is_interactive_verbose_output();
+            let diff_preview = extract_tool_preview_with_verbose(request, outcome, verbose);
+            self.push_pending_tool_item_with_diff(
+                tool_name,
+                args,
+                detail,
+                true,
+                false,
+                false,
+                diff_preview,
+            );
             if permission_recovery_hint(outcome).is_some() {
                 self.flush_pending_tool_block();
                 emit_durable_terminal_line(permission_recovery_hint(outcome).unwrap());
@@ -2400,13 +2530,16 @@ impl Emitter {
             };
             let args = tool_argument_summary(request);
             let detail = tool_result_summary(request, outcome, false);
-            self.push_pending_tool_item(
+            let verbose = is_interactive_verbose_output();
+            let diff_preview = extract_tool_preview_with_verbose(request, outcome, verbose);
+            self.push_pending_tool_item_with_diff(
                 tool_name,
                 args,
                 detail,
                 false,
                 false,
                 tool_request_is_read_activity(request),
+                diff_preview,
             );
         }
         // Interactive receipts have already settled at the transcript anchor.
@@ -2421,6 +2554,27 @@ impl Emitter {
         is_error: bool,
         is_cancelled: bool,
         is_read_activity: bool,
+    ) {
+        self.push_pending_tool_item_with_diff(
+            name,
+            args,
+            detail,
+            is_error,
+            is_cancelled,
+            is_read_activity,
+            Vec::new(),
+        );
+    }
+
+    fn push_pending_tool_item_with_diff(
+        &mut self,
+        name: String,
+        args: Option<String>,
+        detail: Option<String>,
+        is_error: bool,
+        is_cancelled: bool,
+        is_read_activity: bool,
+        diff_preview: Vec<String>,
     ) {
         let interactive_turn = (!self.json && crate::terminal_ui::owns_terminal())
             .then(|| {
@@ -2440,6 +2594,7 @@ impl Emitter {
             is_error,
             is_cancelled,
             is_read_activity,
+            diff_preview,
         });
         if interactive {
             if is_read_activity && !is_error && !is_cancelled {
@@ -2526,7 +2681,7 @@ impl Emitter {
             // Rendering each receipt separately makes long investigations look
             // like build logs and can bury the answer. Keep one stable summary;
             // the canonical transcript still owns every call and result.
-            if read_end.saturating_sub(index) > 1 {
+            if !is_interactive_verbose_output() && read_end.saturating_sub(index) > 1 {
                 let line = Self::collapsed_read_activity_line(&items[index..read_end], width);
                 lines.push(if terminal_color_enabled() {
                     format!("{CODE_COLOR_COMMENT}{line}{CODE_COLOR_RESET}")
@@ -2618,6 +2773,10 @@ impl Emitter {
             } else {
                 format!("{prefix_plain}{verb_visible}{args_visible}{result}")
             });
+            let color = terminal_color_enabled();
+            for diff_line in &item.diff_preview {
+                lines.push(format_inline_diff_preview_line(diff_line, width, color));
+            }
             index += 1;
         }
         // The viewport owns clipping, not the transcript. Retain distinct
@@ -2660,10 +2819,41 @@ impl Emitter {
         detail: Option<&str>,
     ) {
         if self.quiet_status && !self.json {
+            let width = if crate::terminal_ui::owns_terminal() {
+                crate::terminal_ui::transcript_width(agent_terminal_columns())
+            } else {
+                agent_terminal_columns().saturating_sub(2).max(24)
+            };
+            if let Some(line) = format_quiet_subagent_line(
+                agent_type,
+                description,
+                stage,
+                detail,
+                width,
+                terminal_color_enabled(),
+            ) {
+                self.flush_reasoning_buffer(true);
+                self.flush_pending_tool_block();
+                self.clear_transient_status_line();
+                if crate::terminal_ui::owns_terminal() {
+                    crate::terminal_ui::commit_history(&line);
+                    self.output_ended_with_newline = true;
+                    self.draw_sticky_footer();
+                } else if !io::stdout().is_terminal() {
+                    eprintln!("{line}");
+                } else {
+                    self.ensure_output_line_for_status();
+                    println!("{line}");
+                    self.output_ended_with_newline = true;
+                    self.draw_sticky_footer();
+                }
+            }
             return;
         }
+        self.flush_reasoning_buffer(true);
         self.stop_activity_spinner();
         self.clear_transient_status_line();
+        self.flush_reasoning_buffer(true);
         self.flush_stream_text(true);
         if self.json {
             let mut payload = json!({
@@ -2711,6 +2901,7 @@ impl Emitter {
         }
         self.terminal_reason = Some(reason.to_string());
         self.stop_activity_spinner();
+        self.flush_reasoning_buffer(true);
         if !self.json && crate::terminal_ui::owns_terminal() {
             self.clear_transient_status_line();
             self.flush_stream_text(true);
@@ -2797,6 +2988,7 @@ impl Emitter {
 
     #[allow(dead_code)]
     pub fn error(&mut self, message: &str) {
+        self.last_error = Some(message.to_string());
         let terminal_reason = if is_user_cancelled_error(message) {
             "cancelled"
         } else {
@@ -2823,6 +3015,7 @@ impl Emitter {
             crate::terminal_ui::set_footer_plan(None);
         }
         self.clear_transient_status_line();
+        self.flush_reasoning_buffer(true);
         self.flush_stream_text(true);
         if self.json {
             let event_type = if terminal_reason == "cancelled" {
@@ -2966,6 +3159,9 @@ impl Emitter {
     fn emit_json_value_direct(&mut self, value: Value) {
         if let Some(event_sink) = &mut self.event_sink {
             event_sink(value);
+        } else if self.buffered_json {
+            // Single-object `--output-format json` suppresses intermediate JSONL
+            // frames on stdout and emits one structured summary upon completion.
         } else if crate::tools::permission_trace_uses_direct_native_transport() {
             self.handle_native_delivery_result(crate::native_host_output::emit(value));
         } else {
@@ -4070,6 +4266,7 @@ mod tool_activity_line_width_tests {
         let items = (0..4).map(|index| DisplayedToolItem {
             name: "bash".into(), args: Some("very-long-command-name-with-many-arguments".into()),
             detail: Some(format!("failure-{index}")), is_error: true, is_cancelled: false, is_read_activity: false,
+            diff_preview: Vec::new(),
         }).collect::<Vec<_>>();
         let lines = Emitter::tool_history_lines(&items, 42, 10);
         assert_eq!(lines.len(), 4, "viewport height must not erase history");
@@ -4208,6 +4405,7 @@ mod tool_activity_line_width_tests {
                 is_error: false,
                 is_cancelled: false,
                 is_read_activity: true,
+                diff_preview: Vec::new(),
             })
             .collect::<Vec<_>>();
         let line = Emitter::collapsed_read_activity_line(&items, 56);
@@ -4229,6 +4427,7 @@ mod tool_activity_line_width_tests {
                 is_error: false,
                 is_cancelled: false,
                 is_read_activity: true,
+                diff_preview: Vec::new(),
             })
             .collect::<Vec<_>>();
         let width = crate::terminal_ui::transcript_width(60);
@@ -4276,6 +4475,7 @@ mod tool_activity_line_width_tests {
                 is_error: false,
                 is_cancelled: false,
                 is_read_activity: true,
+                diff_preview: Vec::new(),
             })
             .collect::<Vec<_>>();
         let line = Emitter::collapsed_read_activity_line(&items, 72);
@@ -4351,6 +4551,7 @@ mod tool_activity_line_width_tests {
                 is_error: false,
                 is_cancelled: false,
                 is_read_activity: false,
+                diff_preview: Vec::new(),
             },
             DisplayedToolItem {
                 name: "bash".into(),
@@ -4359,6 +4560,7 @@ mod tool_activity_line_width_tests {
                 is_error: true,
                 is_cancelled: false,
                 is_read_activity: false,
+                diff_preview: Vec::new(),
             },
             DisplayedToolItem {
                 name: "bash".into(),
@@ -4367,6 +4569,7 @@ mod tool_activity_line_width_tests {
                 is_error: false,
                 is_cancelled: true,
                 is_read_activity: false,
+                diff_preview: Vec::new(),
             },
         ];
         let lines = Emitter::tool_history_lines(&items, 80, 24);
@@ -4527,5 +4730,458 @@ fn localized_task_status(status_key: &str) -> &'static str {
             "cancelled" => "cancelled",
             _ => "active",
         },
+    }
+}
+
+const MAX_REASONING_LINES_PER_SEGMENT: usize = 8;
+const MAX_REASONING_LINES_PER_SEGMENT_VERBOSE: usize = 32;
+const MAX_REASONING_BUFFER_CHARS: usize = 180;
+const MAX_INLINE_DIFF_PREVIEW_LINES: usize = 12;
+const MAX_INLINE_DIFF_PREVIEW_LINES_VERBOSE: usize = 40;
+const MAX_VERBOSE_TOOL_OUTPUT_LINES: usize = 40;
+
+fn reasoning_line_limit_for(verbose: bool) -> usize {
+    if verbose {
+        MAX_REASONING_LINES_PER_SEGMENT_VERBOSE
+    } else {
+        MAX_REASONING_LINES_PER_SEGMENT
+    }
+}
+
+fn inline_diff_preview_limit_for(verbose: bool) -> usize {
+    if verbose {
+        MAX_INLINE_DIFF_PREVIEW_LINES_VERBOSE
+    } else {
+        MAX_INLINE_DIFF_PREVIEW_LINES
+    }
+}
+
+fn take_ready_reasoning_chunk(buffer: &mut String, force: bool) -> Option<String> {
+    loop {
+        if let Some(newline_idx) = buffer.find('\n') {
+            let chunk = buffer.drain(..=newline_idx).collect::<String>();
+            let trimmed = chunk.trim();
+            if !trimmed.is_empty() {
+                return Some(trimmed.to_string());
+            }
+            continue;
+        }
+        if !force {
+            if buffer.chars().count() < MAX_REASONING_BUFFER_CHARS {
+                return None;
+            }
+            let split_byte = buffer
+                .char_indices()
+                .nth(MAX_REASONING_BUFFER_CHARS)
+                .map(|(idx, _)| idx)
+                .unwrap_or(buffer.len());
+            let word_split = buffer[..split_byte]
+                .rfind(char::is_whitespace)
+                .filter(|idx| *idx > split_byte / 2)
+                .unwrap_or(split_byte);
+            let chunk = buffer.drain(..word_split).collect::<String>();
+            let trimmed = chunk.trim();
+            if !trimmed.is_empty() {
+                return Some(trimmed.to_string());
+            }
+            continue;
+        }
+        let rest = std::mem::take(buffer);
+        let trimmed = rest.trim();
+        return (!trimmed.is_empty()).then(|| trimmed.to_string());
+    }
+}
+
+fn format_reasoning_line(text: &str, max_width: usize, color: bool) -> Option<String> {
+    let collapsed = text.split_whitespace().collect::<Vec<_>>().join(" ");
+    if collapsed.is_empty() {
+        return None;
+    }
+    let safe = redact_sensitive_text(&collapsed);
+    let budget = max_width.saturating_sub(6).max(16);
+    let visible = truncate_display_value(&safe, budget);
+    if visible.is_empty() {
+        return None;
+    }
+    if color {
+        Some(format!("    \x1b[2;39m· {visible}{CODE_COLOR_RESET}"))
+    } else {
+        Some(format!("    · {visible}"))
+    }
+}
+
+fn format_quiet_subagent_line(
+    agent_type: &str,
+    description: &str,
+    stage: &str,
+    detail: Option<&str>,
+    max_width: usize,
+    color: bool,
+) -> Option<String> {
+    let stage_trimmed = stage.trim();
+    if stage_trimmed.is_empty() {
+        return None;
+    }
+    let stage_lower = stage_trimmed.to_ascii_lowercase();
+    if matches!(stage_lower.as_str(), "heartbeat" | "tick") {
+        return None;
+    }
+    let (glyph, glyph_color) = match stage_lower.as_str() {
+        "completed" | "done" | "finished" | "succeeded" => ("✓", "\x1b[2;32m"),
+        "failed" | "error" => ("✗", "\x1b[31m"),
+        "cancelled" | "stopped" => ("⊘", "\x1b[33m"),
+        "started" | "start" | "spawned" | "running" | "queued" => ("▸", "\x1b[2;36m"),
+        _ => ("•", "\x1b[2;39m"),
+    };
+    let mut parts = Vec::new();
+    let label = if description.trim().is_empty() {
+        agent_type.trim().to_string()
+    } else if agent_type.trim().is_empty() {
+        description.trim().to_string()
+    } else {
+        format!("{}: {}", agent_type.trim(), description.trim())
+    };
+    if !label.is_empty() {
+        parts.push(label);
+    }
+    parts.push(stage_trimmed.to_string());
+    if let Some(detail) = detail.map(str::trim).filter(|value| !value.is_empty()) {
+        parts.push(redact_sensitive_text(detail).replace('\n', " "));
+    }
+    let summary = parts.join(" · ");
+    let budget = max_width.saturating_sub(6).max(16);
+    let visible = truncate_display_value(&summary, budget);
+    if color {
+        Some(format!(
+            "    {glyph_color}{glyph}{CODE_COLOR_RESET} \x1b[2;39m{visible}{CODE_COLOR_RESET}"
+        ))
+    } else {
+        Some(format!("    {glyph} {visible}"))
+    }
+}
+
+fn is_file_edit_tool(name: &str) -> bool {
+    matches!(
+        name,
+        "edit_file"
+            | "edit_file_lines"
+            | "multi_edit_file"
+            | "write_file"
+            | "append_file"
+            | "apply_patch"
+            | "notebook_edit"
+    )
+}
+
+#[cfg(test)]
+fn extract_inline_diff_preview(request: &ToolRequest, outcome: &ToolOutcome) -> Vec<String> {
+    extract_inline_diff_preview_with_verbose(request, outcome, false)
+}
+
+fn extract_inline_diff_preview_with_verbose(
+    request: &ToolRequest,
+    outcome: &ToolOutcome,
+    verbose: bool,
+) -> Vec<String> {
+    if outcome.error || !is_file_edit_tool(&request.name) {
+        return Vec::new();
+    }
+    let data_diff = outcome.data.as_ref().and_then(|value| {
+        ["diff", "unified_diff", "patch"]
+            .into_iter()
+            .find_map(|key| value.get(key).and_then(Value::as_str))
+    });
+    let diff_source = if let Some(diff) = data_diff {
+        diff
+    } else if let Some((_, after_heading)) = outcome.text.split_once("\n## Diff\n") {
+        after_heading
+            .split_once("\n## ")
+            .map(|(section, _)| section)
+            .unwrap_or(after_heading)
+    } else if outcome.text.starts_with("## Diff\n") {
+        let rest = &outcome.text["## Diff\n".len()..];
+        rest.split_once("\n## ")
+            .map(|(section, _)| section)
+            .unwrap_or(rest)
+    } else {
+        outcome.text.as_str()
+    };
+
+    let mut collected = Vec::new();
+    let mut changed_count = 0usize;
+    for raw_line in diff_source.lines() {
+        let line = raw_line.trim_end_matches('\r');
+        let is_added = line.starts_with('+') && !line.starts_with("+++");
+        let is_removed = line.starts_with('-') && !line.starts_with("---");
+        let is_hunk = line.starts_with("@@");
+        if is_added || is_removed {
+            changed_count += 1;
+            collected.push(redact_sensitive_text(line));
+        } else if is_hunk {
+            collected.push(redact_sensitive_text(line));
+        }
+    }
+    if changed_count == 0 {
+        return Vec::new();
+    }
+    let max_lines = inline_diff_preview_limit_for(verbose);
+    if collected.len() > max_lines {
+        let remaining = collected.len() - max_lines;
+        collected.truncate(max_lines);
+        collected.push(format!("… (+{remaining} more lines)"));
+    }
+    collected
+}
+
+fn extract_tool_preview_with_verbose(
+    request: &ToolRequest,
+    outcome: &ToolOutcome,
+    verbose: bool,
+) -> Vec<String> {
+    let diff = extract_inline_diff_preview_with_verbose(request, outcome, verbose);
+    if !diff.is_empty() || !verbose {
+        return diff;
+    }
+    let source = if !outcome.text.trim().is_empty() {
+        outcome.text.as_str()
+    } else {
+        outcome.display.as_str()
+    };
+    let mut collected: Vec<String> = source
+        .lines()
+        .map(|line| line.trim_end_matches('\r'))
+        .filter(|line| !line.trim().is_empty())
+        .map(redact_sensitive_text)
+        .collect();
+    if collected.len() > MAX_VERBOSE_TOOL_OUTPUT_LINES {
+        let remaining = collected.len() - MAX_VERBOSE_TOOL_OUTPUT_LINES;
+        collected.truncate(MAX_VERBOSE_TOOL_OUTPUT_LINES);
+        collected.push(format!("… (+{remaining} more lines)"));
+    }
+    collected
+}
+
+fn format_inline_diff_preview_line(line: &str, width: usize, color: bool) -> String {
+    let budget = width.saturating_sub(6).max(16);
+    let visible = truncate_display_value(line, budget);
+    if !color {
+        return format!("      {visible}");
+    }
+    if visible.starts_with('+') && !visible.starts_with("+++") {
+        format!("      \x1b[32m{visible}{CODE_COLOR_RESET}")
+    } else if visible.starts_with('-') && !visible.starts_with("---") {
+        format!("      \x1b[31m{visible}{CODE_COLOR_RESET}")
+    } else if visible.starts_with("@@") {
+        format!("      \x1b[2;36m{visible}{CODE_COLOR_RESET}")
+    } else {
+        format!("      \x1b[2;39m{visible}{CODE_COLOR_RESET}")
+    }
+}
+
+#[cfg(test)]
+mod transparency_dx_tests {
+    use super::*;
+
+    #[test]
+    fn reasoning_formatting_renders_dim_lines_and_json_mode_stays_silent() {
+        let colored = format_reasoning_line("Inspecting   parser state\nnow", 80, true).unwrap();
+        assert!(colored.contains("\x1b[2;39m"), "{colored:?}");
+        assert!(colored.contains("Inspecting parser state now"), "{colored:?}");
+        let plain = format_reasoning_line("Checking tests", 80, false).unwrap();
+        assert_eq!(plain, "    · Checking tests");
+        assert!(format_reasoning_line("   \n\t  ", 80, true).is_none());
+
+        let mut buf = String::from("First thought\nSecond thought");
+        assert_eq!(take_ready_reasoning_chunk(&mut buf, false).as_deref(), Some("First thought"));
+        assert_eq!(take_ready_reasoning_chunk(&mut buf, false), None);
+        assert_eq!(take_ready_reasoning_chunk(&mut buf, true).as_deref(), Some("Second thought"));
+
+        let captured = Arc::new(Mutex::new(Vec::<Value>::new()));
+        let sink = Arc::clone(&captured);
+        let mut json_emitter = Emitter::with_event_sink(move |event| {
+            sink.lock().unwrap().push(event);
+        });
+        json_emitter.reasoning("secret reasoning delta\n");
+        assert!(json_emitter.reasoning_buffer.is_empty());
+        assert!(captured.lock().unwrap().is_empty());
+    }
+
+    #[test]
+    fn quiet_subagent_event_formats_concise_lifecycle_status_lines() {
+        let started = format_quiet_subagent_line(
+            "reviewer",
+            "Audit auth flow",
+            "started",
+            None,
+            80,
+            true,
+        )
+        .unwrap();
+        assert!(started.contains("▸"), "{started:?}");
+        assert!(started.contains("\x1b[2;39m"), "{started:?}");
+        assert!(started.contains("reviewer: Audit auth flow · started"), "{started:?}");
+
+        let completed = format_quiet_subagent_line(
+            "reviewer",
+            "Audit auth flow",
+            "completed",
+            Some("2 findings"),
+            80,
+            false,
+        )
+        .unwrap();
+        assert_eq!(completed, "    ✓ reviewer: Audit auth flow · completed · 2 findings");
+
+        let failed = format_quiet_subagent_line(
+            "tester",
+            "Run suite",
+            "failed",
+            Some("exit 1"),
+            80,
+            true,
+        )
+        .unwrap();
+        assert!(failed.contains("\x1b[31m✗"), "{failed:?}");
+        assert!(format_quiet_subagent_line("tester", "Run suite", "heartbeat", None, 80, false).is_none());
+    }
+
+    #[test]
+    fn edit_tool_inline_diff_preview_extracts_bounded_colored_lines() {
+        let request = ToolRequest {
+            id: "call-edit".into(),
+            name: "edit_file".into(),
+            args: Map::from_iter([("path".into(), Value::String("src/lib.rs".into()))]),
+        };
+        let mut diff_body = String::from("Edited src/lib.rs (1 replacement)\n\n## Diff\n--- a/src/lib.rs\n+++ b/src/lib.rs\n@@ -1,3 +1,16 @@\n");
+        diff_body.push_str("-let old = 1;\n");
+        for i in 0..14 {
+            diff_body.push_str(&format!("+let line_{i} = {i};\n"));
+        }
+        let outcome = ToolOutcome {
+            full_output_ref: None,
+            data: None,
+            execution: None,
+            text: diff_body,
+            display: "Edited src/lib.rs".into(),
+            error: false,
+            artifacts: Vec::new(),
+            activation: None,
+        };
+        let preview = extract_inline_diff_preview(&request, &outcome);
+        assert_eq!(preview.len(), MAX_INLINE_DIFF_PREVIEW_LINES + 1, "{preview:?}");
+        assert_eq!(preview[0], "@@ -1,3 +1,16 @@");
+        assert_eq!(preview[1], "-let old = 1;");
+        assert_eq!(preview[2], "+let line_0 = 0;");
+        assert!(preview.last().unwrap().starts_with("… (+"), "{preview:?}");
+
+        let added = format_inline_diff_preview_line("+let x = 1;", 80, true);
+        let removed = format_inline_diff_preview_line("-let x = 0;", 80, true);
+        let hunk = format_inline_diff_preview_line("@@ -1,1 +1,1 @@", 80, true);
+        assert!(added.contains("\x1b[32m+let x = 1;"), "{added:?}");
+        assert!(removed.contains("\x1b[31m-let x = 0;"), "{removed:?}");
+        assert!(hunk.contains("\x1b[2;36m@@ -1,1 +1,1 @@"), "{hunk:?}");
+
+        // Non-edit tools must not emit diff preview lines.
+        let read_req = ToolRequest {
+            id: "call-read".into(),
+            name: "read_file".into(),
+            args: Map::new(),
+        };
+        assert!(extract_inline_diff_preview(&read_req, &outcome).is_empty());
+    }
+
+    #[test]
+    fn interactive_verbose_output_toggle_and_expanded_limits() {
+        static VERBOSE_TEST_LOCK: Mutex<()> = Mutex::new(());
+        struct RestoreVerbose(bool);
+        impl Drop for RestoreVerbose {
+            fn drop(&mut self) {
+                set_interactive_verbose_output(self.0);
+            }
+        }
+
+        let _guard = VERBOSE_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let previous = is_interactive_verbose_output();
+        let _restore = RestoreVerbose(previous);
+
+        set_interactive_verbose_output(false);
+        assert!(!is_interactive_verbose_output());
+        assert_eq!(reasoning_line_limit_for(false), MAX_REASONING_LINES_PER_SEGMENT);
+        assert_eq!(
+            inline_diff_preview_limit_for(false),
+            MAX_INLINE_DIFF_PREVIEW_LINES
+        );
+
+        assert!(toggle_interactive_verbose_output());
+        assert!(is_interactive_verbose_output());
+        assert_eq!(
+            reasoning_line_limit_for(true),
+            MAX_REASONING_LINES_PER_SEGMENT_VERBOSE
+        );
+        assert_eq!(
+            inline_diff_preview_limit_for(true),
+            MAX_INLINE_DIFF_PREVIEW_LINES_VERBOSE
+        );
+        assert!(!toggle_interactive_verbose_output());
+        assert!(!is_interactive_verbose_output());
+
+        // Verbose diff preview expands from 12 lines up to 40 lines.
+        let edit_req = ToolRequest {
+            id: "call-edit-verbose".into(),
+            name: "edit_file".into(),
+            args: Map::from_iter([("path".into(), Value::String("src/main.rs".into()))]),
+        };
+        let mut large_diff = String::from("## Diff\n@@ -1,1 +1,50 @@\n");
+        for i in 0..48 {
+            large_diff.push_str(&format!("+let line_{i} = {i};\n"));
+        }
+        let edit_outcome = ToolOutcome {
+            full_output_ref: None,
+            data: None,
+            execution: None,
+            text: large_diff,
+            display: "Edited src/main.rs".into(),
+            error: false,
+            artifacts: Vec::new(),
+            activation: None,
+        };
+        let compact_diff = extract_tool_preview_with_verbose(&edit_req, &edit_outcome, false);
+        assert_eq!(compact_diff.len(), MAX_INLINE_DIFF_PREVIEW_LINES + 1);
+        let verbose_diff = extract_tool_preview_with_verbose(&edit_req, &edit_outcome, true);
+        assert_eq!(verbose_diff.len(), MAX_INLINE_DIFF_PREVIEW_LINES_VERBOSE + 1);
+        assert!(verbose_diff.last().unwrap().starts_with("… (+"));
+
+        // Verbose non-edit tool output expands up to 40 lines while compact stays empty.
+        let bash_req = ToolRequest {
+            id: "call-bash".into(),
+            name: "bash".into(),
+            args: Map::from_iter([("command".into(), Value::String("cargo test".into()))]),
+        };
+        let bash_text = (0..50)
+            .map(|i| format!("test case_{i} ... ok"))
+            .collect::<Vec<_>>()
+            .join("\n");
+        let bash_outcome = ToolOutcome {
+            full_output_ref: None,
+            data: None,
+            execution: None,
+            text: bash_text,
+            display: "50 passed".into(),
+            error: false,
+            artifacts: Vec::new(),
+            activation: None,
+        };
+        assert!(extract_tool_preview_with_verbose(&bash_req, &bash_outcome, false).is_empty());
+        let verbose_bash = extract_tool_preview_with_verbose(&bash_req, &bash_outcome, true);
+        assert_eq!(verbose_bash.len(), MAX_VERBOSE_TOOL_OUTPUT_LINES + 1);
+        assert_eq!(verbose_bash[0], "test case_0 ... ok");
+        assert!(verbose_bash.last().unwrap().starts_with("… (+10 more lines)"));
+
+        // Buffered JSON emitter captures text & errors cleanly without stdout frames.
+        let mut buffered = Emitter::new(true).with_buffered_json(true);
+        buffered.text("{\"ok\":true}");
+        assert_eq!(buffered.take_markdown_text(), "{\"ok\":true}");
+        buffered.error("provider timeout");
+        assert_eq!(buffered.take_last_error().as_deref(), Some("provider timeout"));
     }
 }

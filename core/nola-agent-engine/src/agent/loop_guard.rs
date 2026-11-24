@@ -3,7 +3,7 @@
 // - Purpose: Detects repeated model tool batches without imposing a turn limit.
 
 use serde_json::Value;
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 
 use super::host::{HostLoopProgressDeclaration, HostResourceProjectionDeclaration};
 use super::protocol::ModelToolCall;
@@ -384,29 +384,40 @@ fn normalized_resource_value(value: &str) -> String {
 /// Detects model output that is expanding by repeating already-emitted prose.
 ///
 /// This intentionally operates on output structure rather than language or
-/// task keywords. Long source code and tables commonly repeat short tokens,
-/// so only substantial lines/paragraphs participate and repetition must
-/// dominate the sample before the guard trips.
+/// task keywords. Long source code, Markdown tables, and structured lists
+/// commonly repeat short rows or boilerplate tokens, so table rows and short
+/// structured lines are excluded and strong repetition dominance is required
+/// before the guard trips.
 pub fn output_is_structurally_repetitive(text: &str) -> bool {
-    let units = text
-        .split(|character| {
-            matches!(
-                character,
-                '\n' | '\r' | '.' | '!' | '?' | '。' | '！' | '？'
-            )
+    let prose_lines = extract_prose_lines_for_repetition_check(text);
+    if prose_lines.is_empty() {
+        return false;
+    }
+
+    let units = prose_lines
+        .iter()
+        .flat_map(|line| {
+            line.split(|character| {
+                matches!(character, '\r' | '.' | '!' | '?' | '。' | '！' | '？')
+            })
         })
         .map(normalize_output_unit)
-        .filter(|unit| unit.chars().count() >= 24)
+        .filter(|unit| unit.chars().count() >= 32)
         .collect::<Vec<_>>();
-    if units.len() >= 8 {
-        let unique = units.iter().collect::<BTreeSet<_>>();
-        if unique.len().saturating_mul(2) < units.len() {
+    if units.len() >= 12 {
+        let mut counts = BTreeMap::<&str, usize>::new();
+        for unit in &units {
+            *counts.entry(unit.as_str()).or_insert(0) += 1;
+        }
+        let max_repeats = counts.values().copied().max().unwrap_or(0);
+        if max_repeats >= 4 && counts.len().saturating_mul(3) < units.len() {
             return true;
         }
     }
 
-    let normalized = text
-        .split_whitespace()
+    let normalized = prose_lines
+        .iter()
+        .flat_map(|line| line.split_whitespace())
         .collect::<Vec<_>>()
         .join(" ")
         .to_lowercase();
@@ -429,7 +440,95 @@ pub fn output_is_structurally_repetitive(text: &str) -> bool {
         offset += stride;
     }
     let unique = windows.iter().collect::<BTreeSet<_>>();
-    unique.len().saturating_mul(3) < windows.len().saturating_mul(2)
+    unique.len().saturating_mul(2) < windows.len()
+}
+
+fn is_markdown_table_row(trimmed: &str) -> bool {
+    trimmed.starts_with('|') && (trimmed.ends_with('|') || trimmed.matches('|').count() >= 2)
+}
+
+fn is_separator_line(trimmed: &str) -> bool {
+    !trimmed.is_empty()
+        && trimmed
+            .chars()
+            .all(|ch| matches!(ch, '-' | '=' | '*' | '_' | '|' | ':' | ' ' | '\t'))
+}
+
+fn is_short_structured_line(trimmed: &str) -> bool {
+    let char_count = trimmed.chars().count();
+    if char_count >= 64 {
+        return false;
+    }
+    let is_bullet = trimmed.starts_with("- ")
+        || trimmed.starts_with("* ")
+        || trimmed.starts_with("+ ")
+        || trimmed
+            .split_once(". ")
+            .is_some_and(|(prefix, _)| !prefix.is_empty() && prefix.bytes().all(|b| b.is_ascii_digit()));
+    if is_bullet {
+        return true;
+    }
+    trimmed.contains('{')
+        || trimmed.contains('}')
+        || trimmed.contains('[')
+        || trimmed.contains(']')
+        || trimmed.contains(';')
+        || trimmed.contains("=>")
+        || trimmed.contains("::")
+}
+
+fn extract_prose_lines_for_repetition_check(text: &str) -> Vec<&str> {
+    let mut prose = Vec::new();
+    let mut fence: Option<(char, usize)> = None;
+
+    for raw_line in text.lines() {
+        let trimmed = raw_line.trim();
+        let leading_spaces = raw_line.bytes().take_while(|&b| b == b' ').count();
+        let after_indent = &raw_line[leading_spaces..];
+
+        if let Some((fence_char, fence_len)) = fence {
+            if leading_spaces <= 3 {
+                let run = after_indent
+                    .chars()
+                    .take_while(|&ch| ch == fence_char)
+                    .count();
+                if run >= fence_len
+                    && after_indent[run * fence_char.len_utf8()..].trim().is_empty()
+                {
+                    fence = None;
+                    continue;
+                }
+            }
+            // Ignore short/medium code & fixture lines inside fenced code blocks.
+            if trimmed.chars().count() < 80 {
+                continue;
+            }
+            prose.push(trimmed);
+            continue;
+        }
+
+        if leading_spaces <= 3 {
+            if let Some(first) = after_indent.chars().next().filter(|&ch| ch == '`' || ch == '~') {
+                let run = after_indent.chars().take_while(|&ch| ch == first).count();
+                let info = &after_indent[run * first.len_utf8()..];
+                if run >= 3 && (first == '~' || !info.contains('`')) {
+                    fence = Some((first, run));
+                    continue;
+                }
+            }
+        }
+
+        if trimmed.is_empty()
+            || is_markdown_table_row(trimmed)
+            || is_separator_line(trimmed)
+            || is_short_structured_line(trimmed)
+        {
+            continue;
+        }
+        prose.push(trimmed);
+    }
+
+    prose
 }
 
 fn normalize_output_unit(value: &str) -> String {
@@ -505,6 +604,33 @@ mod tests {
         assert!(!output_is_structurally_repetitive(
             "A short answer can legitimately repeat a label twice.\nA short answer can legitimately repeat a label twice."
         ));
+    }
+
+    #[test]
+    fn markdown_tables_and_structured_code_fixtures_are_not_killed_as_repetitive() {
+        let mut table = String::from(
+            "| Check | Status | Owner | Notes |\n| --- | --- | --- | --- |\n",
+        );
+        for _ in 0..80 {
+            table.push_str("| lint_and_unit_tests | passed | core-runtime | all checks green |\n");
+        }
+        assert!(
+            !output_is_structurally_repetitive(&table),
+            "Markdown tables must not trigger structural repetition guard"
+        );
+
+        let mut code_fixture = String::from("Here is the generated test fixture:\n```rust\n");
+        for i in 0..40 {
+            code_fixture.push_str(&format!(
+                "assert_eq!(registry.resolve_status(\"ok\"), Status::Ready); // case {i}\n"
+            ));
+            code_fixture.push_str("assert_eq!(registry.resolve_status(\"ok\"), Status::Ready);\n");
+        }
+        code_fixture.push_str("```\n");
+        assert!(
+            !output_is_structurally_repetitive(&code_fixture),
+            "Structured fenced code fixtures must not trigger structural repetition guard"
+        );
     }
 
     #[test]

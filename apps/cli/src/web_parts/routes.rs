@@ -676,6 +676,17 @@ fn handle_request(mut request: Request, config: &Config) -> Result<(), String> {
                 "message": "The Web session request could not be verified. Reload the page and try again.",
             }),
         )
+    } else if let Some((code, message)) = (!is_remote && path.starts_with("/api/"))
+        .then(|| validate_local_trust_api_request(&request, &method).err())
+        .flatten()
+    {
+        json_response(
+            StatusCode(403),
+            json!({
+                "error": code,
+                "message": message,
+            }),
+        )
     } else if request
         .body_length()
         .is_some_and(|length| length > MAX_WEB_REQUEST_BODY_BYTES)
@@ -2100,6 +2111,258 @@ fn web_login_result(
 
 fn web_loopback_is_trusted(peer: Option<&std::net::SocketAddr>, tailcat_ingress: bool) -> bool {
     !tailcat_ingress && peer.is_some_and(|address| address.ip().is_loopback())
+}
+
+fn is_loopback_hostname(host: &str) -> bool {
+    matches!(
+        host.to_ascii_lowercase().as_str(),
+        "127.0.0.1" | "localhost" | "[::1]"
+    )
+}
+
+fn is_loopback_host_header(value: &str) -> bool {
+    let trimmed = value.trim();
+    if trimmed.is_empty()
+        || trimmed.bytes().any(|byte| {
+            byte.is_ascii_whitespace()
+                || matches!(byte, b'/' | b'@' | b'?' | b'#' | b'\\' | b',')
+        })
+    {
+        return false;
+    }
+    let Ok(parsed) = reqwest::Url::parse(&format!("http://{trimmed}")) else {
+        return false;
+    };
+    parsed.username().is_empty()
+        && parsed.password().is_none()
+        && parsed.path() == "/"
+        && parsed.query().is_none()
+        && parsed.fragment().is_none()
+        && parsed.host_str().is_some_and(is_loopback_hostname)
+}
+
+fn is_loopback_origin_header(value: &str) -> bool {
+    let trimmed = value.trim();
+    if trimmed.is_empty() || trimmed.bytes().any(|byte| byte.is_ascii_whitespace()) {
+        return false;
+    }
+    let Ok(parsed) = reqwest::Url::parse(trimmed) else {
+        return false;
+    };
+    matches!(parsed.scheme(), "http" | "https")
+        && parsed.username().is_empty()
+        && parsed.password().is_none()
+        && parsed.path() == "/"
+        && parsed.query().is_none()
+        && parsed.fragment().is_none()
+        && parsed.host_str().is_some_and(is_loopback_hostname)
+}
+
+fn is_mutating_http_method(method: &Method) -> bool {
+    matches!(
+        method,
+        &Method::Post | &Method::Put | &Method::Patch | &Method::Delete
+    )
+}
+
+fn validate_local_trust_api_headers(
+    method: &Method,
+    host_headers: &[&str],
+    origin_headers: &[&str],
+    sec_fetch_site_headers: &[&str],
+) -> Result<(), (&'static str, &'static str)> {
+    if host_headers.len() > 1
+        || host_headers
+            .first()
+            .is_some_and(|host| !is_loopback_host_header(host))
+    {
+        return Err((
+            "invalid_local_host",
+            "Local Web API requests require a loopback Host header.",
+        ));
+    }
+    if is_mutating_http_method(method) {
+        if origin_headers.len() > 1
+            || origin_headers
+                .first()
+                .is_some_and(|origin| !is_loopback_origin_header(origin))
+        {
+            return Err((
+                "cross_origin_forbidden",
+                "Local Web API mutations reject non-loopback Origin headers.",
+            ));
+        }
+        if sec_fetch_site_headers
+            .iter()
+            .any(|site| site.trim().eq_ignore_ascii_case("cross-site"))
+        {
+            return Err((
+                "cross_site_forbidden",
+                "Local Web API mutations reject cross-site browser requests.",
+            ));
+        }
+    }
+    Ok(())
+}
+
+fn validate_local_trust_api_request(
+    request: &Request,
+    method: &Method,
+) -> Result<(), (&'static str, &'static str)> {
+    let host_headers: Vec<&str> = request
+        .headers()
+        .iter()
+        .filter(|header| header.field.to_string().eq_ignore_ascii_case("Host"))
+        .map(|header| header.value.as_str())
+        .collect();
+    let origin_headers: Vec<&str> = request
+        .headers()
+        .iter()
+        .filter(|header| header.field.to_string().eq_ignore_ascii_case("Origin"))
+        .map(|header| header.value.as_str())
+        .collect();
+    let sec_fetch_site_headers: Vec<&str> = request
+        .headers()
+        .iter()
+        .filter(|header| header.field.to_string().eq_ignore_ascii_case("Sec-Fetch-Site"))
+        .map(|header| header.value.as_str())
+        .collect();
+    validate_local_trust_api_headers(
+        method,
+        &host_headers,
+        &origin_headers,
+        &sec_fetch_site_headers,
+    )
+}
+
+#[cfg(test)]
+mod local_trust_host_csrf_tests {
+    use super::*;
+
+    #[test]
+    fn loopback_host_header_blocks_dns_rebinding_and_allows_loopback() {
+        for valid in [
+            "127.0.0.1",
+            "127.0.0.1:8787",
+            "localhost",
+            "LOCALHOST:3000",
+            "[::1]",
+            "[::1]:8787",
+        ] {
+            assert!(is_loopback_host_header(valid), "expected valid host: {valid}");
+            assert!(validate_local_trust_api_headers(&Method::Get, &[valid], &[], &[]).is_ok());
+        }
+        // Absent Host header stays allowed for minimal HTTP/1.0 or local CLI probes.
+        assert!(validate_local_trust_api_headers(&Method::Get, &[], &[], &[]).is_ok());
+
+        for invalid in [
+            "",
+            "evil.com",
+            "rebind.evil.com:8787",
+            "localhost.evil.com",
+            "127.0.0.1.nip.io:8787",
+            "127.0.0.1@evil.com",
+            "192.168.1.5:8787",
+            "0.0.0.0:8787",
+            "localhost/extra",
+            "localhost:abc",
+        ] {
+            assert!(!is_loopback_host_header(invalid), "expected invalid host: {invalid}");
+            assert_eq!(
+                validate_local_trust_api_headers(&Method::Get, &[invalid], &[], &[])
+                    .unwrap_err()
+                    .0,
+                "invalid_local_host"
+            );
+        }
+        assert_eq!(
+            validate_local_trust_api_headers(
+                &Method::Get,
+                &["127.0.0.1:8787", "evil.com"],
+                &[],
+                &[],
+            )
+            .unwrap_err()
+            .0,
+            "invalid_local_host"
+        );
+    }
+
+    #[test]
+    fn local_trust_mutations_block_cross_site_origin_and_sec_fetch_site_while_allowing_cli() {
+        for method in [Method::Post, Method::Put, Method::Patch, Method::Delete] {
+            // CLI / curl with no Origin or Sec-Fetch-Site continues working.
+            assert!(validate_local_trust_api_headers(&method, &["127.0.0.1:8787"], &[], &[]).is_ok());
+
+            // Same-origin / local loopback browser requests succeed.
+            for origin in [
+                "http://127.0.0.1:8787",
+                "http://localhost:5173",
+                "https://[::1]:8787",
+            ] {
+                assert!(validate_local_trust_api_headers(
+                    &method,
+                    &["127.0.0.1:8787"],
+                    &[origin],
+                    &["same-origin"],
+                )
+                .is_ok());
+            }
+
+            // Cross-origin and null origins are rejected.
+            for bad_origin in [
+                "https://evil.com",
+                "http://localhost.evil.com:8787",
+                "null",
+                "file://localhost",
+            ] {
+                assert_eq!(
+                    validate_local_trust_api_headers(
+                        &method,
+                        &["127.0.0.1:8787"],
+                        &[bad_origin],
+                        &[],
+                    )
+                    .unwrap_err()
+                    .0,
+                    "cross_origin_forbidden"
+                );
+            }
+
+            // Cross-site Sec-Fetch-Site is rejected.
+            assert_eq!(
+                validate_local_trust_api_headers(
+                    &method,
+                    &["127.0.0.1:8787"],
+                    &[],
+                    &["cross-site"],
+                )
+                .unwrap_err()
+                .0,
+                "cross_site_forbidden"
+            );
+            assert_eq!(
+                validate_local_trust_api_headers(
+                    &method,
+                    &["127.0.0.1:8787"],
+                    &["http://127.0.0.1:8787"],
+                    &["Cross-Site"],
+                )
+                .unwrap_err()
+                .0,
+                "cross_site_forbidden"
+            );
+        }
+
+        // Read-only GET with loopback Host is not blocked by Origin/Sec-Fetch-Site.
+        assert!(validate_local_trust_api_headers(
+            &Method::Get,
+            &["127.0.0.1:8787"],
+            &["https://evil.com"],
+            &["cross-site"],
+        )
+        .is_ok());
+    }
 }
 
 #[cfg(test)]

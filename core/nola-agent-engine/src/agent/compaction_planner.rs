@@ -4,14 +4,39 @@
 // - Boundary: Kernel selects body-free indices; Core retains and partitions original items.
 
 use nola_domain::compaction_plan::{CompactionItemFact, CompactionItemKind};
+use std::borrow::Cow;
 use std::collections::BTreeSet;
 
 use super::protocol::{AgentItem, AgentRole, ItemId};
+
+pub const DEFAULT_MICRO_COMPACTION_KEEP_RECENT_ITEMS: usize = 6;
+pub const DEFAULT_MICRO_COMPACTION_MAX_STALE_TOOL_RESULT_CHARS: usize = 1_500;
 
 #[derive(Debug, Clone, Default)]
 pub struct CompactionPlan {
     pub items_to_summarize: Vec<AgentItem>,
     pub kept_items: Vec<AgentItem>,
+}
+
+/// Output of Tier-1 cheap, zero-LLM-call micro-compaction over stale tool
+/// results in the replaceable model working set.
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct MicroCompactionResult {
+    pub items: Vec<AgentItem>,
+    pub compacted_item_ids: Vec<ItemId>,
+    pub original_tokens: usize,
+    pub compacted_tokens: usize,
+    pub tokens_reclaimed: usize,
+}
+
+impl MicroCompactionResult {
+    pub fn compacted_count(&self) -> usize {
+        self.compacted_item_ids.len()
+    }
+
+    pub fn did_compact(&self) -> bool {
+        !self.compacted_item_ids.is_empty() && self.tokens_reclaimed > 0
+    }
 }
 
 /// A recovery-only model projection for one atomic source unit which cannot fit
@@ -440,6 +465,158 @@ fn bounded_head_tail(value: &str, char_budget: usize) -> String {
     format!("{head}{separator}{}", tail.into_iter().collect::<String>())
 }
 
+/// Tier-1 cheap, deterministic micro-compaction for stale bulky `ToolResult`
+/// items in the replaceable model working set.
+///
+/// - Leaves the most recent `keep_recent_items` items byte-for-byte untouched
+///   so active working context is never disturbed.
+/// - For older `ToolResult` items whose payload exceeds
+///   `max_stale_tool_result_chars`, replaces only the bulky body with a concise
+///   deterministic head+tail preview plus a metadata marker while preserving
+///   `id`, `call_id`, `name`, `is_error`, `full_output_ref`, `artifacts`, and
+///   conversation order.
+/// - Never expands an item and is idempotent across repeated invocations.
+pub fn micro_compact_stale_tool_results(
+    items: &[AgentItem],
+    keep_recent_items: usize,
+    max_stale_tool_result_chars: usize,
+) -> MicroCompactionResult {
+    let compactable_len = items.len().saturating_sub(keep_recent_items);
+    let mut result_items = Vec::with_capacity(items.len());
+    let mut compacted_item_ids = Vec::new();
+    let mut original_tokens = 0usize;
+    let mut compacted_tokens = 0usize;
+
+    for (index, item) in items.iter().enumerate() {
+        let item_tokens = item.estimated_tokens();
+        original_tokens = original_tokens.saturating_add(item_tokens);
+
+        if index < compactable_len {
+            if let Some(compacted) =
+                micro_compact_tool_result(item, max_stale_tool_result_chars)
+            {
+                let next_tokens = compacted.estimated_tokens();
+                if next_tokens < item_tokens {
+                    compacted_tokens = compacted_tokens.saturating_add(next_tokens);
+                    compacted_item_ids.push(item.id().clone());
+                    result_items.push(compacted);
+                    continue;
+                }
+            }
+        }
+
+        compacted_tokens = compacted_tokens.saturating_add(item_tokens);
+        result_items.push(item.clone());
+    }
+
+    MicroCompactionResult {
+        items: result_items,
+        compacted_item_ids,
+        original_tokens,
+        compacted_tokens,
+        tokens_reclaimed: original_tokens.saturating_sub(compacted_tokens),
+    }
+}
+
+fn micro_compact_tool_result(
+    item: &AgentItem,
+    max_stale_tool_result_chars: usize,
+) -> Option<AgentItem> {
+    let AgentItem::ToolResult {
+        id,
+        call_id,
+        name,
+        output,
+        is_error,
+        full_output_ref,
+        artifacts,
+    } = item
+    else {
+        return None;
+    };
+
+    let already_micro_compacted = output
+        .get("micro_compacted")
+        .and_then(serde_json::Value::as_bool)
+        .unwrap_or(false)
+        || output
+            .as_str()
+            .is_some_and(|text| text.starts_with("[micro-compacted:"));
+    if already_micro_compacted {
+        return None;
+    }
+
+    let (is_plain_string, raw_body) = match output {
+        serde_json::Value::String(text) => (true, Cow::Borrowed(text.as_str())),
+        _ => (false, Cow::Owned(output.to_string())),
+    };
+    let total_chars = raw_body.chars().count();
+    if total_chars <= max_stale_tool_result_chars {
+        return None;
+    }
+
+    let marker = format!(
+        "[micro-compacted: kept head/tail of {total_chars} chars; tool={name} call_id={}]",
+        call_id.as_str()
+    );
+    let available_after_marker =
+        max_stale_tool_result_chars.saturating_sub(marker.chars().count().saturating_add(1));
+    let preview_budget = (max_stale_tool_result_chars / 2).min(available_after_marker);
+    let preview = micro_compact_head_tail(&raw_body, preview_budget);
+    let preview_text = if preview.is_empty() {
+        marker
+    } else {
+        format!("{marker}\n{preview}")
+    };
+
+    let compacted_output = if is_plain_string {
+        serde_json::Value::String(preview_text)
+    } else {
+        let mut payload = serde_json::json!({
+            "micro_compacted": true,
+            "canonical_source_item_id": id.as_str(),
+            "original_chars": total_chars,
+            "preview": preview_text,
+        });
+        if let Some(reference) = full_output_ref {
+            payload["full_output_ref"] = serde_json::Value::String(reference.clone());
+        }
+        payload
+    };
+
+    Some(AgentItem::ToolResult {
+        id: id.clone(),
+        call_id: call_id.clone(),
+        name: name.clone(),
+        output: compacted_output,
+        is_error: *is_error,
+        full_output_ref: full_output_ref.clone(),
+        artifacts: artifacts.clone(),
+    })
+}
+
+fn micro_compact_head_tail(value: &str, char_budget: usize) -> String {
+    if char_budget == 0 {
+        return String::new();
+    }
+    let count = value.chars().count();
+    if count <= char_budget {
+        return value.to_string();
+    }
+    let separator = "\n...\n";
+    let separator_chars = separator.chars().count();
+    if char_budget <= separator_chars {
+        return value.chars().take(char_budget).collect();
+    }
+    let content_budget = char_budget - separator_chars;
+    let head_count = content_budget / 2;
+    let tail_count = content_budget - head_count;
+    let head = value.chars().take(head_count).collect::<String>();
+    let mut tail = value.chars().rev().take(tail_count).collect::<Vec<_>>();
+    tail.reverse();
+    format!("{head}{separator}{}", tail.into_iter().collect::<String>())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -862,5 +1039,236 @@ mod handoff_budget_tests {
         assert!(handoff > ordinary);
         assert!(handoff + 4 < original, "even a handoff must reduce history");
         assert_eq!(plan.summary_token_budget(10, 10000, true).unwrap(), 6);
+    }
+}
+
+#[cfg(test)]
+mod micro_compaction_tests {
+    use super::*;
+    use crate::agent::{CallId, ItemId};
+    use serde_json::json;
+
+    #[test]
+    fn micro_compaction_shrinks_stale_tool_results_and_preserves_recent_working_context() {
+        let stale_obj_body =
+            format!("开头-HEAD-0\n{}\n结尾-TAIL-0", "stale-object-line ".repeat(240));
+        let stale_str_body =
+            format!("HEAD-ERR-1\n{}\nTAIL-ERR-1", "stale-error-trace ".repeat(220));
+        let recent_bulky_body =
+            format!("RECENT-HEAD\n{}\nRECENT-TAIL", "active-working-data ".repeat(240));
+
+        let items = vec![
+            AgentItem::Message {
+                id: ItemId::from_string("sys".into()),
+                role: AgentRole::System,
+                content: "Follow instructions.".into(),
+            },
+            AgentItem::user_message(ItemId::from_string("user".into()), "Investigate logs."),
+            AgentItem::ToolCall {
+                id: ItemId::from_string("call-item-0".into()),
+                call_id: CallId::from_string("call-0".into()),
+                name: "read_file".into(),
+                arguments: json!({"path": "a.log"}),
+            },
+            AgentItem::ToolResult {
+                id: ItemId::from_string("res-item-0".into()),
+                call_id: CallId::from_string("call-0".into()),
+                name: "read_file".into(),
+                output: json!({"content": stale_obj_body}),
+                is_error: false,
+                full_output_ref: Some("blob://run/call-0".into()),
+                artifacts: vec![],
+            },
+            AgentItem::ToolCall {
+                id: ItemId::from_string("call-item-1".into()),
+                call_id: CallId::from_string("call-1".into()),
+                name: "bash".into(),
+                arguments: json!({"command": "cargo test"}),
+            },
+            AgentItem::ToolResult {
+                id: ItemId::from_string("res-item-1".into()),
+                call_id: CallId::from_string("call-1".into()),
+                name: "bash".into(),
+                output: serde_json::Value::String(stale_str_body),
+                is_error: true,
+                full_output_ref: None,
+                artifacts: vec![],
+            },
+            // Last 6 items form the untouched recent working window.
+            AgentItem::ToolCall {
+                id: ItemId::from_string("call-item-2".into()),
+                call_id: CallId::from_string("call-2".into()),
+                name: "read_file".into(),
+                arguments: json!({"path": "small.rs"}),
+            },
+            AgentItem::ToolResult {
+                id: ItemId::from_string("res-item-2".into()),
+                call_id: CallId::from_string("call-2".into()),
+                name: "read_file".into(),
+                output: json!({"content": recent_bulky_body}),
+                is_error: false,
+                full_output_ref: None,
+                artifacts: vec![],
+            },
+            AgentItem::ToolCall {
+                id: ItemId::from_string("call-item-3".into()),
+                call_id: CallId::from_string("call-3".into()),
+                name: "read_file".into(),
+                arguments: json!({"path": "b.rs"}),
+            },
+            AgentItem::ToolResult {
+                id: ItemId::from_string("res-item-3".into()),
+                call_id: CallId::from_string("call-3".into()),
+                name: "read_file".into(),
+                output: json!({"content": "recent small result"}),
+                is_error: false,
+                full_output_ref: None,
+                artifacts: vec![],
+            },
+            AgentItem::ToolCall {
+                id: ItemId::from_string("call-item-4".into()),
+                call_id: CallId::from_string("call-4".into()),
+                name: "read_file".into(),
+                arguments: json!({"path": "c.rs"}),
+            },
+            AgentItem::ToolResult {
+                id: ItemId::from_string("res-item-4".into()),
+                call_id: CallId::from_string("call-4".into()),
+                name: "read_file".into(),
+                output: json!({"content": "latest result"}),
+                is_error: false,
+                full_output_ref: None,
+                artifacts: vec![],
+            },
+        ];
+
+        let result = micro_compact_stale_tool_results(&items, 6, 1_500);
+        assert!(result.did_compact());
+        assert_eq!(result.compacted_count(), 2);
+        assert_eq!(
+            result
+                .compacted_item_ids
+                .iter()
+                .map(ItemId::as_str)
+                .collect::<Vec<_>>(),
+            vec!["res-item-0", "res-item-1"]
+        );
+        assert!(result.tokens_reclaimed > 0);
+        assert_eq!(
+            result.tokens_reclaimed,
+            result.original_tokens - result.compacted_tokens
+        );
+        assert_eq!(result.items.len(), items.len());
+
+        // Recent 6 items (including bulky `res-item-2`) remain byte-for-byte untouched.
+        assert_eq!(&result.items[6..], &items[6..]);
+        // System, user, and ToolCall items remain untouched.
+        assert_eq!(result.items[0], items[0]);
+        assert_eq!(result.items[1], items[1]);
+        assert_eq!(result.items[2], items[2]);
+        assert_eq!(result.items[4], items[4]);
+
+        // Stale object ToolResult preserves protocol metadata and head/tail preview.
+        match &result.items[3] {
+            AgentItem::ToolResult {
+                id,
+                call_id,
+                name,
+                output,
+                is_error,
+                full_output_ref,
+                ..
+            } => {
+                assert_eq!(id.as_str(), "res-item-0");
+                assert_eq!(call_id.as_str(), "call-0");
+                assert_eq!(name, "read_file");
+                assert!(!is_error);
+                assert_eq!(full_output_ref.as_deref(), Some("blob://run/call-0"));
+                let preview = output["preview"].as_str().expect("preview string");
+                assert!(preview.contains("[micro-compacted: kept head/tail of "));
+                assert!(preview.contains("tool=read_file call_id=call-0]"));
+                assert!(preview.contains("开头-HEAD-0"));
+                assert!(preview.contains("结尾-TAIL-0"));
+                assert!(result.items[3].estimated_tokens() < items[3].estimated_tokens());
+            }
+            other => panic!("expected compacted ToolResult, got {other:?}"),
+        }
+
+        // Stale string ToolResult preserves error status, call_id, and string shape.
+        match &result.items[5] {
+            AgentItem::ToolResult {
+                id,
+                call_id,
+                name,
+                output,
+                is_error,
+                ..
+            } => {
+                assert_eq!(id.as_str(), "res-item-1");
+                assert_eq!(call_id.as_str(), "call-1");
+                assert_eq!(name, "bash");
+                assert!(*is_error);
+                let text = output.as_str().expect("string output preserved");
+                assert!(text.starts_with("[micro-compacted: kept head/tail of "));
+                assert!(text.contains("tool=bash call_id=call-1]"));
+                assert!(text.contains("HEAD-ERR-1"));
+                assert!(text.contains("TAIL-ERR-1"));
+                assert!(result.items[5].estimated_tokens() < items[5].estimated_tokens());
+            }
+            other => panic!("expected compacted ToolResult, got {other:?}"),
+        }
+
+        // Exact call_id pairing across the conversation remains intact.
+        let calls = result
+            .items
+            .iter()
+            .filter_map(|item| match item {
+                AgentItem::ToolCall { call_id, .. } => Some(call_id.as_str()),
+                _ => None,
+            })
+            .collect::<Vec<_>>();
+        let results = result
+            .items
+            .iter()
+            .filter_map(|item| match item {
+                AgentItem::ToolResult { call_id, .. } => Some(call_id.as_str()),
+                _ => None,
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(calls, results);
+
+        // Repeating micro-compaction is idempotent and reclaims 0 additional tokens.
+        let second = micro_compact_stale_tool_results(&result.items, 6, 1_500);
+        assert!(!second.did_compact());
+        assert_eq!(second.tokens_reclaimed, 0);
+        assert_eq!(second.items, result.items);
+    }
+
+    #[test]
+    fn micro_compaction_skips_small_older_tool_results_without_mutating_items() {
+        let items = vec![
+            AgentItem::ToolCall {
+                id: ItemId::from_string("c0".into()),
+                call_id: CallId::from_string("call-0".into()),
+                name: "read_file".into(),
+                arguments: json!({"path": "small.txt"}),
+            },
+            AgentItem::ToolResult {
+                id: ItemId::from_string("r0".into()),
+                call_id: CallId::from_string("call-0".into()),
+                name: "read_file".into(),
+                output: json!({"content": "short output"}),
+                is_error: false,
+                full_output_ref: None,
+                artifacts: vec![],
+            },
+            AgentItem::user_message(ItemId::from_string("u1".into()), "continue"),
+        ];
+
+        let result = micro_compact_stale_tool_results(&items, 1, 1_500);
+        assert!(!result.did_compact());
+        assert_eq!(result.compacted_count(), 0);
+        assert_eq!(result.tokens_reclaimed, 0);
+        assert_eq!(result.items, items);
     }
 }

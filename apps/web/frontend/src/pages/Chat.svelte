@@ -142,6 +142,7 @@
         else delete entry.nolaPluginDestination;
         window.history.replaceState(entry, '', location);
         if (returning) {
+            void sessionSettings?.refreshModelCatalog();
             const position = active && workspaceHost?.readingPositions.get(active.conversationId);
             if (position) { const token = scroll.restoreIntent(scroll.token, position); if (token) void restoreConversationReading(position, token); }
             else followLatest(scroll.token);
@@ -395,8 +396,31 @@
     const runStatusKey = $derived(turn?.phase === 'awaiting_permission' ? 'chatPage.awaiting'
         : turn?.phase === 'cancel_requested' ? 'chatPage.cancelPending'
         : turn?.phase === 'recovering' ? 'chatPage.uncertain' : 'chatPage.working');
+    const MESSAGE_WINDOW_CHUNK = 80;
+    let renderedMessageWindow = $state(MESSAGE_WINDOW_CHUNK);
     const messages = $derived(timeline?.messages ?? []);
+    const hiddenMessageCount = $derived(Math.max(0, messages.length - renderedMessageWindow));
+    const visibleMessages = $derived(hiddenMessageCount > 0 ? messages.slice(hiddenMessageCount) : messages);
+    const earlierMessagesLabel = $derived(
+        $locale === 'zh-Hans'
+            ? `显示更早的消息（已隐藏 ${hiddenMessageCount} 条）`
+            : `Show earlier messages (${hiddenMessageCount} hidden)`,
+    );
+    const needsModelOnboarding = $derived(
+        !!active
+        && canInteract
+        && (!active.executionBackend || active.executionBackend === 'nola')
+        && modelState !== null
+        && !modelState.disabled
+        && !modelState.errorKey
+        && modelState.options.length === 0,
+    );
+    const messageIdSet = $derived(new Set(messages.map(message => message.id)));
+    const hasTurnUserMessage = $derived(!!turn && messageIdSet.has(turn.identity.userMessageId));
+    const hasTurnAssistantMessage = $derived(!!turn && messageIdSet.has(turn.identity.assistantMessageId));
+    const conversationOwnerKey = $derived(JSON.stringify([hostId, active?.conversationId, generation]));
     let uiSurfaces = $state<UiSnapshot[]>([]);
+    const uiSurfaceByKey = $derived(new Map(uiSurfaces.map(value => [uiIdentityKey(value.identity), value])));
     let uiSurfaceFailure = $state('');
     let uiReadSequence = 0;
     $effect(() => {
@@ -470,6 +494,25 @@
     }
 
     const replyNotices = $derived(active ? workspaceHost?.replyNotices.get(active.conversationId) ?? [] : []);
+    const replyNoticeLayout = $derived.by(() => {
+        const byMessageId = new Map<string, typeof replyNotices>();
+        const unattached: typeof replyNotices = [];
+        for (const item of replyNotices) {
+            const anchorId = messageIdSet.has(item.assistantMessageId)
+                ? item.assistantMessageId
+                : messageIdSet.has(item.userMessageId)
+                    ? item.userMessageId
+                    : null;
+            if (anchorId !== null) {
+                const bucket = byMessageId.get(anchorId);
+                if (bucket) bucket.push(item);
+                else byMessageId.set(anchorId, [item]);
+            } else {
+                unattached.push(item);
+            }
+        }
+        return { byMessageId, unattached };
+    });
     async function continueConversation() {
         // Recovery links lead to the single creation entry, never create a second one.
         inspectorTab = null;
@@ -894,6 +937,7 @@
         if (!workspaceHost.isLoaded(conversation.conversationId)) { localError = 'chatPage.draftStorageFailed'; return; }
         localError = ''; controllerError = '';
         if (userScrollTimer) clearTimeout(userScrollTimer);
+        renderedMessageWindow = MESSAGE_WINDOW_CHUNK;
         renderedMessageIds = [];
         timelineHydrated = false;
         historyPrepending = false;
@@ -1000,7 +1044,33 @@
             }
         }
     }
-    function loadHistory(mode: 'replace' | 'prepend') { return submissionController?.loadHistory(mode) ?? Promise.resolve(); }
+    async function showEarlierMessages() {
+        const first = transcript
+            ? [...transcript.querySelectorAll<HTMLElement>('[data-message-id]')]
+                .find(element => element.getBoundingClientRect().bottom > transcript.getBoundingClientRect().top)
+            : null;
+        const anchor = first?.dataset.messageId && transcript
+            ? scroll.beginHistoryPrepend(scroll.token, metrics(), { id: first.dataset.messageId, contentTop: contentTop(first) })
+            : null;
+        if (anchor) {
+            historyPrepending = true;
+            showLatest = true;
+        }
+        renderedMessageWindow += MESSAGE_WINDOW_CHUNK;
+        await tick();
+        if (anchor && transcript) {
+            const element = anchorElement(anchor.id);
+            const target = scroll.restoreHistoryAnchor(anchor, metrics(), element ? { id: anchor.id, contentTop: contentTop(element) } : null);
+            if (target !== null) transcript.scrollTop = target;
+            historyPrepending = false;
+        }
+    }
+    function loadHistory(mode: 'replace' | 'prepend') {
+        if (mode === 'prepend') {
+            renderedMessageWindow = Math.max(renderedMessageWindow, messages.length + MESSAGE_WINDOW_CHUNK);
+        }
+        return submissionController?.loadHistory(mode) ?? Promise.resolve();
+    }
     function observeSelected() { submissionController?.observe(); }
     async function rereadSelected() {
         localError = '';
@@ -1146,6 +1216,7 @@
     function clearActiveConversationState() {
         submissionController?.detach(); submissionController = null;
         active = null; timeline = null; turn = null; contentTabs = emptyContentTabs();
+        renderedMessageWindow = MESSAGE_WINDOW_CHUNK;
         draft = ''; attachments = []; permissionState = null; reasoningState = null;
         modelState = null; selectedModelName = '';
         queuedDispatch = null; queuedCancelling = false;
@@ -1521,7 +1592,15 @@
             <!-- svelte-ignore a11y_no_noninteractive_tabindex (The named scrollable log needs a keyboard reading target.) -->
             <div class="transcript-shell">
             <div class="transcript" bind:this={transcript} onwheel={userScrollStarted} ontouchstart={transcriptPointerStarted} ontouchmove={userScrollStarted} onpointerdown={transcriptPointerStarted} onscroll={observedScroll} tabindex="0" aria-label={t($locale, 'chatPage.title')} role="log" aria-live="polite" aria-relevant="additions text">
-                {#if timeline?.window?.hasMore}<button class="older" onclick={() => loadHistory('prepend')} disabled={historyLoading || busy}>{t($locale, 'chatPage.history')}</button>{/if}
+                {#if hiddenMessageCount > 0}
+                    <div class="window-bar" role="region" aria-label={earlierMessagesLabel}>
+                        <button type="button" class="window-expand" onclick={() => void showEarlierMessages()}>
+                            {earlierMessagesLabel}
+                        </button>
+                    </div>
+                {:else if timeline?.window?.hasMore}
+                    <button class="older" onclick={() => loadHistory('prepend')} disabled={historyLoading || busy}>{t($locale, 'chatPage.history')}</button>
+                {/if}
                 {#if !messages.length && (initializing || historyLoading)}
                     <p class="placeholder">{t($locale, 'chatPage.loading')}</p>
                 {:else if !active && !initializationFailed}
@@ -1534,14 +1613,49 @@
                     <div class="empty-conversation">
                         <div class="empty-mark" aria-hidden="true">n</div>
                         <h2>{t($locale, 'chatPage.welcome')}</h2>
+                        {#if needsModelOnboarding}
+                            <section
+                                class="onboarding-card"
+                                aria-label={$locale === 'zh-Hans' ? '首次使用引导' : 'First-run setup'}
+                            >
+                                <header class="onboarding-header">
+                                    <h3>{$locale === 'zh-Hans' ? '两步开始对话' : 'Get started in 2 steps'}</h3>
+                                    <p>{$locale === 'zh-Hans' ? '当前尚未配置可用模型，完成连接即可开始与 Nola 对话。' : 'No runnable model is configured yet. Connect a model to start chatting.'}</p>
+                                </header>
+                                <ol class="onboarding-steps">
+                                    <li class="onboarding-step">
+                                        <span class="step-badge" aria-hidden="true">1</span>
+                                        <div class="step-body">
+                                            <strong>{$locale === 'zh-Hans' ? '连接 API 密钥或本地模型' : 'Connect an API key or local model'}</strong>
+                                            <p>{$locale === 'zh-Hans' ? '前往模型中心配置云端 API 密钥，或下载并启用本地模型。' : 'Open Model Center to add an API key or enable a local model.'}</p>
+                                            <div class="onboarding-actions">
+                                                <button type="button" class="primary" onclick={() => openManagementTab('/models')}>
+                                                    {t($locale, 'chatSession.configureModel')}
+                                                </button>
+                                                <button type="button" onclick={() => openManagementTab('/settings')}>
+                                                    {t($locale, 'shell.settings')}
+                                                </button>
+                                            </div>
+                                        </div>
+                                    </li>
+                                    <li class="onboarding-step">
+                                        <span class="step-badge" aria-hidden="true">2</span>
+                                        <div class="step-body">
+                                            <strong>{$locale === 'zh-Hans' ? '返回此处开始对话' : 'Come back and start chatting'}</strong>
+                                            <p>{$locale === 'zh-Hans' ? '配置完成后回到这个页面，在下方输入你的第一条消息。' : 'Return to this conversation once a model is ready and send your first message below.'}</p>
+                                        </div>
+                                    </li>
+                                </ol>
+                            </section>
+                        {/if}
                     </div>
                 {/if}
-                {#each messages as message (JSON.stringify([hostId, active?.conversationId, message.id]))}
+                {#each visibleMessages as message (JSON.stringify([hostId, active?.conversationId, message.id]))}
                     {@const attachmentDisplay = message.role === 'user' ? displayTextAttachmentMessage(timelineMessageText(message)) : null}
                     {@const visibleUserText=attachmentDisplay?.displayText??timelineMessageText(message)}
                     {@const messageMentions=message.role==='user'&&message.parts.length===1?partMentions(message.parts[0].value,visibleUserText,message.parts[0].source==='optimistic'):[]}
 
-                    {#if (pendingText || pendingAttachmentNames.length) && busy && !messages.some(item => item.id === turn?.identity.userMessageId) && message.id === turn?.identity.assistantMessageId}<article class="user pending"><div class="message-content">{#if pendingText}<Markdown source={pendingText} />{/if}{#if pendingAttachmentNames.length}<ul class="attached-files">{#each pendingAttachmentNames as name}<li>{name}</li>{/each}</ul>{/if}<small>{t($locale, 'chatPage.pendingUser')}</small></div></article>{/if}
+                    {#if (pendingText || pendingAttachmentNames.length) && busy && !hasTurnUserMessage && message.id === turn?.identity.assistantMessageId}<article class="user pending"><div class="message-content">{#if pendingText}<Markdown source={pendingText} />{/if}{#if pendingAttachmentNames.length}<ul class="attached-files">{#each pendingAttachmentNames as name}<li>{name}</li>{/each}</ul>{/if}<small>{t($locale, 'chatPage.pendingUser')}</small></div></article>{/if}
                     <article class:user={message.role === 'user'} class:selected={selectedMessageId === message.id} class:search-match={matchingMessageIds.has(message.id)} data-message-id={message.id}
                         in:fly={enteringMessageIds.has(message.id) && !reducedMotion ? { y: 8, duration: 180, easing: cubicOut } : { y: 0, duration: 0 }}
                         onintroend={() => { if (enteringMessageIds.has(message.id)) { const next = new Set(enteringMessageIds); next.delete(message.id); enteringMessageIds = next; } }}>
@@ -1562,19 +1676,19 @@
                             {/if}
                             {#if attachmentDisplay}{#if attachmentDisplay.displayText && !messageMentions.length}<Markdown source={attachmentDisplay.displayText} />{/if}<ul class="attached-files">{#each attachmentDisplay.files as file}<li>{file.name}{file.clipped ? ` · ${t($locale, 'chatTextAttachment.clipped')}` : ''}</li>{/each}</ul>
                             {/if}
-                            <ChatMessageContent {message} ownerKey={JSON.stringify([hostId,active?.conversationId,generation])} readingActive={contentTabs.selected===conversationTabKey} skipText={!!attachmentDisplay || !!messageMentions.length} taskClientId={clientId} onTaskRecovered={() => { void loadHistory('replace'); observeSelected(); }} taskOwner={canInteract && active && turn?.runId ? {conversationId: active.conversationId, runId: turn.runId, hostId} : undefined}>
+                            <ChatMessageContent {message} ownerKey={conversationOwnerKey} readingActive={contentTabs.selected===conversationTabKey} skipText={!!attachmentDisplay || !!messageMentions.length} taskClientId={clientId} onTaskRecovered={() => { void loadHistory('replace'); observeSelected(); }} taskOwner={canInteract && active && turn?.runId ? {conversationId: active.conversationId, runId: turn.runId, hostId} : undefined}>
                                 {#snippet surface(part)}
                                     {@const reference = uiSurfaceReference(part.value, active?.conversationId ?? '', message.id)}
                                     {#if reference}
                                         <ChatSurfaceReference readOnly={!canInteract || part.value.kind !== 'ui_surface'} {reference} recoverable={part.value.kind === 'ui_surface'} summary={typeof part.value.summary === 'string' ? part.value.summary : ''}
-                                            snapshot={part.value.kind === 'ui_surface' ? uiSurfaces.find(value => uiIdentityKey(value.identity) === uiIdentityKey(reference.identity)) : undefined}
+                                            snapshot={part.value.kind === 'ui_surface' ? uiSurfaceByKey.get(uiIdentityKey(reference.identity)) : undefined}
                                             oninteraction={submitUiInteraction}
                                             onrefresh={async () => { const selected = owner(); if (selected) await refreshUiSurfaces(selected); }} />
                                     {/if}
                                 {/snippet}
                             </ChatMessageContent>
                         </div>
-                            <ChatMessageActions mentionDirectory={expertDirectory?.agents??[]} mentionMembers={expertRoom?.room.participants??[]} loadMentions={loadMentionDirectory} mentionEpoch={()=>expertSourceEpoch} {message} ownerKey={JSON.stringify([hostId, active?.conversationId, generation])}
+                            <ChatMessageActions mentionDirectory={expertDirectory?.agents??[]} mentionMembers={expertRoom?.room.participants??[]} loadMentions={loadMentionDirectory} mentionEpoch={()=>expertSourceEpoch} {message} ownerKey={conversationOwnerKey}
                                 editSource={active ? editedResendSourceForMessage(message, {hostId, clientId, conversationId: active.conversationId}) ?? undefined : undefined}
                                 oneditresend={canInteract ? editAndResend : undefined} ownerCurrent={() => !!active && canInteract && !disposed}
                                 busy={busy || expertAdmissionPending || expertExecutionPending || conversationWriting || !canInteract} selected={selectedMessageId === message.id} onselect={() => selectedMessageId = selectedMessageId === message.id ? null : message.id} onoperation={canInteract ? (operation, messageId) => conversationManager.mutateMessage(operation, messageId, {conversationId: active?.conversationId ?? null, generation}) : undefined} />
@@ -1602,15 +1716,15 @@
                                 onclick={()=>void resumeCompleteExpertMessage(message)}>{editedResendLabel($locale,'resumeExperts')}</button>
                         {/if}
                     {/if}
-                    {#each replyNotices.filter(item => item.assistantMessageId === message.id || item.userMessageId === message.id && !messages.some(candidate => candidate.id === item.assistantMessageId)) as reply (reply.submissionId)}
+                    {#each replyNoticeLayout.byMessageId.get(message.id) ?? [] as reply (reply.submissionId)}
                         <article class="reply-notice" data-reply-submission={reply.submissionId}><div class="message-content"><ChatReplyError kind={reply.kind} detail={reply.detail ?? ''} oncontinue={continueConversation} continuing={conversationWriting} /></div></article>
                     {/each}
                 {/each}
-                {#each replyNotices.filter(item => !messages.some(message => message.id === item.userMessageId || message.id === item.assistantMessageId)) as reply (reply.submissionId)}
+                {#each replyNoticeLayout.unattached as reply (reply.submissionId)}
                     <article class="reply-notice" data-reply-submission={reply.submissionId}><div class="message-content"><ChatReplyError kind={reply.kind} detail={reply.detail ?? ''} oncontinue={continueConversation} continuing={conversationWriting} /></div></article>
                 {/each}
-                {#if (pendingText || pendingAttachmentNames.length) && busy && !messages.some(message => message.id === turn?.identity.userMessageId || message.id === turn?.identity.assistantMessageId)}<article class="user pending"><div class="message-content">{#if pendingText}<Markdown source={pendingText} />{/if}{#if pendingAttachmentNames.length}<ul class="attached-files">{#each pendingAttachmentNames as name}<li>{name}</li>{/each}</ul>{/if}<small>{t($locale, 'chatPage.pendingUser')}</small></div></article>{/if}
-                {#if turn && busy && !messages.some(message => message.id === turn?.identity.assistantMessageId)}<p class="run-status live" role="status">{t($locale, runStatusKey)}</p>{/if}
+                {#if (pendingText || pendingAttachmentNames.length) && busy && !hasTurnUserMessage && !hasTurnAssistantMessage}<article class="user pending"><div class="message-content">{#if pendingText}<Markdown source={pendingText} />{/if}{#if pendingAttachmentNames.length}<ul class="attached-files">{#each pendingAttachmentNames as name}<li>{name}</li>{/each}</ul>{/if}<small>{t($locale, 'chatPage.pendingUser')}</small></div></article>{/if}
+                {#if turn && busy && !hasTurnAssistantMessage}<p class="run-status live" role="status">{t($locale, runStatusKey)}</p>{/if}
                 {#if active && canInteract}{#key `${generation}:${active.conversationId}`}
                     <ChatUserQuestions conversationId={active.conversationId} {busy} onresolved={observeSelected} />
                 {/key}{/if}
@@ -1833,6 +1947,18 @@
     .empty-conversation { display: grid; justify-items: center; align-content: center; gap: 14px; min-height: 100%; padding: 16px; text-align: center; }
     .empty-mark { font: italic 600 40px/1 Georgia, serif; color: var(--content); }
     .empty-conversation h2 { font-family: var(--font-display); color: var(--content); font-size: clamp(1.5rem, 1.25rem + 1vw, 2rem); line-height: 1.3; font-weight: 600; text-wrap: balance; }
+    .onboarding-card { width: min(520px, 100%); margin-top: 6px; padding: 18px 20px; border: 1px solid var(--border); border-radius: 16px; background: var(--surface); text-align: start; display: grid; gap: 14px; box-shadow: 0 4px 20px rgb(0 0 0 / .06); }
+    .onboarding-header { display: grid; gap: 4px; }
+    .onboarding-header h3 { margin: 0; font-size: 1rem; font-weight: 650; color: var(--content); }
+    .onboarding-header p { margin: 0; font-size: 0.875rem; color: var(--muted); line-height: 1.5; }
+    .onboarding-steps { list-style: none; margin: 0; padding: 0; display: grid; gap: 12px; }
+    .onboarding-step { display: flex; align-items: flex-start; gap: 12px; padding: 12px; border-radius: 12px; background: var(--panel); border: 1px solid var(--border); }
+    .step-badge { display: inline-flex; align-items: center; justify-content: center; width: 24px; height: 24px; border-radius: 999px; background: var(--accent-subtle); color: var(--content); font-size: 0.8rem; font-weight: 700; flex: none; margin-top: 1px; }
+    .step-body { display: grid; gap: 4px; min-width: 0; flex: 1; }
+    .step-body strong { font-size: 0.9rem; font-weight: 600; color: var(--content); }
+    .step-body p { margin: 0; font-size: 0.82rem; color: var(--muted); line-height: 1.45; }
+    .onboarding-actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 6px; }
+    .onboarding-actions button { min-height: 36px; padding: 6px 14px; border-radius: 9px; font-size: 0.84rem; font-weight: 550; }
     .panel-column { position: relative; min-width: 0; min-height: 0; }
     .chat-navigation { display: flex; flex-direction: column; gap: 12px; min-width: 0; height: calc(100dvh - 48px); max-height: calc(100dvh - 48px); overflow: hidden; padding: 12px; border: 0; background: var(--canvas); border-right:1px solid var(--border); }
     .activity-source-return { display:flex; align-items:center; gap:8px; min-height:44px; flex-shrink:0; padding:8px 16px; border-bottom:1px solid var(--border); }
@@ -1871,6 +1997,9 @@
     .attached-files li { max-width: 100%; overflow-wrap: anywhere; padding: 3px 7px; border: 1px solid var(--border); border-radius: 7px; background: var(--panel); color: var(--muted); font-size: 11px; }
     .placeholder { color: var(--muted); text-align: center; margin-top: 12vh; } .muted, small { color: var(--muted); font-size: 12px; }
     .older { display: block; margin: 0 auto; }
+    .window-bar { position: sticky; top: 0; z-index: 4; display: flex; justify-content: center; padding: 4px 0 12px; pointer-events: none; }
+    .window-expand { pointer-events: auto; background: var(--surface-elevated, var(--surface)); color: var(--content); border: 1px solid var(--border); border-radius: 999px; padding: 6px 14px; font-size: 12.5px; font-weight: 550; box-shadow: 0 2px 12px rgb(0 0 0 / .1); }
+    .window-expand:hover { border-color: var(--outline); background: var(--panel); }
     .latest { position: absolute; bottom: 12px; inset-inline: 0; margin-inline: auto; width: fit-content; z-index: 5; background: var(--surface-elevated, var(--surface)); border-radius: 999px; padding: 6px 14px; font-size: 13px; box-shadow: 0 4px 16px rgb(0 0 0 / .14); }
     .response-identity { display: flex; flex: none; min-width: 0; align-items: center; gap: 7px; font-size: 14px; line-height: 20px; overflow-wrap: anywhere; }
     .response-avatar { display: grid; place-items: center; width: 19px; height: 19px; border: 1px solid var(--outline); border-radius: 50%; color: var(--content); font-size: 13px; }

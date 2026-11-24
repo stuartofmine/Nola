@@ -232,6 +232,14 @@ pub struct AgentEngineeringLoopState {
     model_tool_batch: Option<usize>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     last_correction_batch: Option<usize>,
+    /// Distinct consecutive non-error tool batches observed since the last
+    /// failed tool batch. Sustained clean execution (3+ batches without any
+    /// error) clears stale scattered failure debt so early exploratory errors
+    /// do not falsely kill a productive long-running turn.
+    #[serde(default)]
+    consecutive_successful_batches_since_failure: u32,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    last_success_batch: Option<usize>,
     /// Canonical investigation calls already executed in the current
     /// mutation epoch. Call IDs are deliberately excluded.
     #[serde(default)]
@@ -677,6 +685,7 @@ impl AgentEngineeringLoopState {
                 self.repeated_failure_count = 1;
             }
             self.phase = AgentEngineeringPhase::Correcting;
+            self.consecutive_successful_batches_since_failure = 0;
             self.correction_count = self.correction_count.saturating_add(1);
             if new_correction_attempt {
                 self.correction_count_since_progress =
@@ -768,12 +777,24 @@ impl AgentEngineeringLoopState {
         }
         if recovered_protocol_failure {
             self.correction_count_since_progress = 0;
+            self.consecutive_successful_batches_since_failure = 0;
             if self.recovery_tool.as_deref() == Some("append_file") && tool_name == "append_file" {
                 self.continuation_tool = Some("append_file".to_string());
             }
             self.recovery_required = false;
             self.recovery_purpose = None;
             self.recovery_tool = None;
+        } else if after_failure_feedback
+            && !self.has_protocol_recovery()
+            && self.no_progress_recovery.reason().is_none()
+            && (self.model_tool_batch.is_none() || self.last_success_batch != self.model_tool_batch)
+        {
+            self.last_success_batch = self.model_tool_batch;
+            self.consecutive_successful_batches_since_failure =
+                self.consecutive_successful_batches_since_failure.saturating_add(1);
+            if self.consecutive_successful_batches_since_failure >= 3 {
+                self.correction_count_since_progress = 0;
+            }
         }
 
         match purpose {
@@ -4621,5 +4642,39 @@ mod capability_budget_tests {
         assert!(!turn
             .exhausted_capability_groups
             .contains_key("external_web_retrieval"));
+    }
+
+    #[test]
+    fn scattered_exploratory_failures_reset_after_sustained_clean_batches() {
+        let mut state = super::AgentEngineeringLoopState::default();
+        // Simulate a long task where occasional exploratory shell commands fail,
+        // separated by 3+ clean successful tool batches.
+        let mut batch = 1usize;
+        for _round in 0..12 {
+            state.begin_model_tool_batch(batch);
+            batch += 1;
+            state.observe_tool_result(
+                "bash",
+                super::HostCapabilityEffect::Investigate,
+                false,
+                true,
+                Some("exit=127: command not found".into()),
+                false,
+            );
+            for _ok_step in 0..3 {
+                state.begin_model_tool_batch(batch);
+                batch += 1;
+                state.observe_tool_result(
+                    "bash",
+                    super::HostCapabilityEffect::Execute,
+                    false,
+                    false,
+                    None,
+                    false,
+                );
+            }
+            assert_eq!(state.correction_count_since_progress, 0);
+            assert!(state.no_progress_recovery.reason().is_none());
+        }
     }
 }

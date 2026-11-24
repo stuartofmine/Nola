@@ -56,6 +56,51 @@ mod reasoning_progress_tests {
         }
         guard.observe(&LlmEvent::TextDelta("Repeated answer. ".repeat(500))).unwrap();
     }
+
+    #[test]
+    fn append_choice_text_streams_distinct_tokens_and_stops_repetitive_tail() {
+        let mut choice = StreamedChoice::default();
+        let mut emitted = String::new();
+        for idx in 0..600 {
+            let chunk = format!("token-{idx:04} ");
+            assert!(append_choice_text(&mut choice, &chunk, &mut |event| {
+                if let LlmEvent::TextDelta(delta) = event {
+                    emitted.push_str(&delta);
+                }
+                Ok(())
+            })
+            .unwrap());
+        }
+        assert_eq!(choice.content, emitted);
+        assert!(choice.finish_reason.is_empty());
+
+        let mut repeated_choice = StreamedChoice::default();
+        let block = "This exact 160-character diagnostic paragraph keeps repeating without any forward progress in the streamed assistant response body for regression testing! ";
+        let mut stopped = false;
+        let mut emitted_repeated = String::new();
+        for _ in 0..30 {
+            for part in block.as_bytes().chunks(19) {
+                let delta = std::str::from_utf8(part).unwrap();
+                if !append_choice_text(&mut repeated_choice, delta, &mut |event| {
+                    if let LlmEvent::TextDelta(text) = event {
+                        emitted_repeated.push_str(&text);
+                    }
+                    Ok(())
+                })
+                .unwrap()
+                {
+                    stopped = true;
+                    break;
+                }
+            }
+            if stopped {
+                break;
+            }
+        }
+        assert!(stopped, "repetitive stream should be stopped by throttled guard");
+        assert_eq!(repeated_choice.finish_reason, "repetition_guard");
+        assert_eq!(repeated_choice.content, emitted_repeated);
+    }
 }
 
 pub(super) fn capture_openai_response_identity(choice: &mut StreamedChoice, envelope: &Value) {
@@ -85,19 +130,24 @@ pub(super) fn append_choice_text<F>(
 where
     F: FnMut(LlmEvent) -> Result<(), String>,
 {
+    const REPETITION_CHECK_STRIDE_BYTES: usize = 256;
+    const MIN_REPETITION_CHECK_BYTES: usize = 1800;
+
     if text.is_empty() {
         return Ok(true);
     }
-    let mut candidate = String::with_capacity(choice.content.len() + text.len());
-    candidate.push_str(&choice.content);
-    candidate.push_str(text);
-    if should_stop_repetitive_output(&candidate) {
+    let prev_len = choice.content.len();
+    choice.content.push_str(text);
+    let next_len = choice.content.len();
+    let crossed_stride = next_len >= MIN_REPETITION_CHECK_BYTES
+        && (next_len / REPETITION_CHECK_STRIDE_BYTES > prev_len / REPETITION_CHECK_STRIDE_BYTES);
+    if crossed_stride && should_stop_repetitive_output(&choice.content) {
+        choice.content.truncate(prev_len);
         if choice.finish_reason.is_empty() {
             choice.finish_reason = "repetition_guard".to_string();
         }
         return Ok(false);
     }
-    choice.content.push_str(text);
     on_event(LlmEvent::TextDelta(text.to_string()))?;
     Ok(true)
 }
@@ -109,17 +159,21 @@ pub(super) fn should_stop_repetitive_output(text: &str) -> bool {
     const MAX_REPEAT_BLOCK_CHARS: usize = 1024;
     const REPEAT_LIMIT: usize = 3;
 
-    if text.chars().count() < MIN_CHARS {
+    if text.len() < MIN_CHARS {
         return false;
     }
 
     // Repeated headings, table cells, and list labels are normal in long Markdown
     // answers. A generation loop repeats a substantial block at the output tail.
+    // Scan only the bounded trailing window instead of counting all chars from start.
     let mut recent = text
         .chars()
         .rev()
         .take(RECENT_CHAR_WINDOW)
         .collect::<Vec<_>>();
+    if recent.len() < MIN_CHARS {
+        return false;
+    }
     recent.reverse();
     let max_block = MAX_REPEAT_BLOCK_CHARS.min(recent.len() / REPEAT_LIMIT);
     if max_block < MIN_REPEAT_BLOCK_CHARS {
@@ -147,6 +201,7 @@ pub(super) fn stream_progress_size(
 ) -> usize {
     choice.content.len()
         + choice.reasoning.len()
+        + choice.response_items.len()
         + slots
             .values()
             .map(|slot| slot.id.len() + slot.name.len() + slot.arguments.len())

@@ -26,8 +26,10 @@ use super::diagnostics::{
 };
 use super::provider_protocols::{
     anthropic_request_body, apply_thinking_policy, detect_chat_provider,
-    non_stream_required_tools_enabled, normalize_anthropic_endpoint, normalize_chat_endpoint,
-    normalize_openai_compatible_messages, parse_anthropic_stream_event, ChatProvider, OpenAiFlavor,
+    finalize_anthropic_response_items, non_stream_required_tools_enabled,
+    normalize_anthropic_endpoint, normalize_chat_endpoint,
+    normalize_mid_conversation_system_messages_for_provider, normalize_openai_compatible_messages,
+    parse_anthropic_stream_event, ChatProvider, OpenAiFlavor,
 };
 use super::responses::stream_responses;
 use super::stream_state::{
@@ -3530,6 +3532,7 @@ pub(super) fn openai_request_body(
     if !cfg.model.trim().is_empty() {
         body["model"] = Value::String(cfg.model.clone());
     }
+    normalize_mid_conversation_system_messages_for_provider(cfg, &mut body);
     apply_thinking_policy(cfg, &mut body);
     cfg.generation_options.validate()?;
     if let Value::Object(options) =
@@ -4841,6 +4844,7 @@ where F: FnMut(LlmEvent) -> Result<(), String> {
                 })
             })
             .collect();
+        finalize_anthropic_response_items(&mut choice.response_items);
         finalize_stream_completion(&mut choice, saw_terminal_event)?;
 
         log_llm_debug_event(

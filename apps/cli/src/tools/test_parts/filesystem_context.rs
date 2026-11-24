@@ -804,7 +804,7 @@ fn write_file_auto_formats_rust_files() {
 
     assert!(!outcome.error, "{}", outcome.text);
     assert!(outcome.text.contains("## Formatting"));
-    assert!(outcome.text.contains("cargo fmt"));
+    assert!(outcome.text.contains("rustfmt"));
     assert_eq!(
         fs::read_to_string(&target).unwrap(),
         "fn main() {\n    println!(\"hi\");\n}\n"

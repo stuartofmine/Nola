@@ -24,17 +24,40 @@ use serde_json::{json, Value};
 #[cfg(unix)]
 const LSP_INIT_TIMEOUT: Duration = Duration::from_secs(3);
 #[cfg(unix)]
-const LSP_DIAG_WAIT: Duration = Duration::from_millis(1200);
+const LSP_DIAG_WAIT_DEFAULT_MS: u64 = 1200;
+#[cfg(unix)]
+const LSP_DIAG_WAIT_MIN_MS: u64 = 100;
+#[cfg(unix)]
+const LSP_DIAG_WAIT_MAX_MS: u64 = 30_000;
 #[cfg(unix)]
 const LSP_SETTLE_GRACE: Duration = Duration::from_millis(120);
 #[cfg(unix)]
 const MAX_DIAGNOSTIC_ITEMS: usize = 8;
+
+#[cfg(unix)]
+fn configured_diag_wait() -> Duration {
+    parse_diag_wait_ms(std::env::var("NOLA_LSP_DIAG_WAIT_MS").ok().as_deref())
+}
+
+#[cfg(unix)]
+fn parse_diag_wait_ms(raw: Option<&str>) -> Duration {
+    let ms = raw
+        .and_then(|value| value.trim().parse::<u64>().ok())
+        .map(|value| value.clamp(LSP_DIAG_WAIT_MIN_MS, LSP_DIAG_WAIT_MAX_MS))
+        .unwrap_or(LSP_DIAG_WAIT_DEFAULT_MS);
+    Duration::from_millis(ms)
+}
 
 /// Queries a persistent, auto-detected LSP server (if installed in `PATH`) for
 /// diagnostics on `path` after a committed file edit. Returns `None` when no
 /// matching server is installed, when timed out, or when diagnostics are clean.
 #[cfg(unix)]
 pub(crate) fn query_lsp_diagnostics(path: &Path) -> Option<String> {
+    query_lsp_diagnostics_with_timeout(path, configured_diag_wait())
+}
+
+#[cfg(unix)]
+pub(crate) fn query_lsp_diagnostics_with_timeout(path: &Path, wait: Duration) -> Option<String> {
     if std::env::var_os("NOLA_DISABLE_AUTO_LSP").is_some() {
         return None;
     }
@@ -44,7 +67,9 @@ pub(crate) fn query_lsp_diagnostics(path: &Path) -> Option<String> {
     let content = std::fs::read_to_string(&canonical).ok()?;
     let pool = LSP_POOL.get_or_init(|| Mutex::new(HashMap::new()));
     let mut guard = pool.lock().ok()?;
-    let key = (root.clone(), spec.language_id.to_string());
+    // Key by (workspace_root, resolved_server_program) so .ts/.tsx/.js/.jsx
+    // share one persistent server process while sending per-file languageId.
+    let key = (root.clone(), spec.program.clone());
     let needs_spawn = guard
         .get_mut(&key)
         .map(|client| !client.is_alive())
@@ -55,7 +80,11 @@ pub(crate) fn query_lsp_diagnostics(path: &Path) -> Option<String> {
         guard.insert(key.clone(), client);
     }
     let client = guard.get_mut(&key)?;
-    match client.diagnose_file(&canonical, spec.language_id, &content, LSP_DIAG_WAIT) {
+    let bounded_wait = Duration::from_millis(
+        (wait.as_millis().min(u128::from(LSP_DIAG_WAIT_MAX_MS)) as u64)
+            .clamp(LSP_DIAG_WAIT_MIN_MS, LSP_DIAG_WAIT_MAX_MS),
+    );
+    match client.diagnose_file(&canonical, spec.language_id, &content, bounded_wait) {
         Ok(diags) => format_diagnostics(&canonical, &diags),
         Err(_) => {
             guard.remove(&key);
@@ -69,8 +98,24 @@ pub(crate) fn query_lsp_diagnostics(_path: &std::path::Path) -> Option<String> {
     None
 }
 
+#[cfg(not(unix))]
+pub(crate) fn query_lsp_diagnostics_with_timeout(
+    _path: &std::path::Path,
+    _wait: std::time::Duration,
+) -> Option<String> {
+    None
+}
+
 #[cfg(unix)]
 static LSP_POOL: OnceLock<Mutex<HashMap<(PathBuf, String), LspClient>>> = OnceLock::new();
+
+#[cfg(unix)]
+type CandidateServer = (
+    &'static str,
+    &'static str,
+    &'static [&'static str],
+    &'static [&'static str],
+);
 
 #[cfg(unix)]
 #[derive(Debug, Clone)]
@@ -82,27 +127,41 @@ struct ServerSpec {
 }
 
 #[cfg(unix)]
-fn detect_server_spec(path: &Path) -> Option<ServerSpec> {
-    let ext = path.extension()?.to_str()?.to_ascii_lowercase();
-    let candidates: &[(&str, &str, &[&str], &[&str])] = match ext.as_str() {
-        "py" | "pyi" => &[
+fn language_candidates_for_extension(ext: &str) -> Option<&'static [CandidateServer]> {
+    match ext {
+        "py" | "pyi" => Some(&[
             ("python", "basedpyright-langserver", &["--stdio"], &["pyproject.toml", "setup.py", ".git"]),
             ("python", "pyright-langserver", &["--stdio"], &["pyproject.toml", "setup.py", ".git"]),
-        ],
-        "ts" | "tsx" => &[
+        ]),
+        "ts" | "mts" | "cts" => Some(&[
             ("typescript", "typescript-language-server", &["--stdio"], &["tsconfig.json", "package.json", ".git"]),
-        ],
-        "rs" => &[
+        ]),
+        "tsx" => Some(&[
+            ("typescriptreact", "typescript-language-server", &["--stdio"], &["tsconfig.json", "package.json", ".git"]),
+        ]),
+        "js" | "mjs" | "cjs" => Some(&[
+            ("javascript", "typescript-language-server", &["--stdio"], &["jsconfig.json", "tsconfig.json", "package.json", ".git"]),
+        ]),
+        "jsx" => Some(&[
+            ("javascriptreact", "typescript-language-server", &["--stdio"], &["jsconfig.json", "tsconfig.json", "package.json", ".git"]),
+        ]),
+        "rs" => Some(&[
             ("rust", "rust-analyzer", &[], &["Cargo.toml"]),
-        ],
-        "go" => &[
+        ]),
+        "go" => Some(&[
             ("go", "gopls", &[], &["go.mod", ".git"]),
-        ],
-        "c" | "cc" | "cpp" | "cxx" | "h" | "hpp" => &[
+        ]),
+        "c" | "cc" | "cpp" | "cxx" | "h" | "hpp" => Some(&[
             ("cpp", "clangd", &["--background-index=false", "--log=error"], &["compile_commands.json", "CMakeLists.txt", ".git"]),
-        ],
-        _ => return None,
-    };
+        ]),
+        _ => None,
+    }
+}
+
+#[cfg(unix)]
+fn detect_server_spec(path: &Path) -> Option<ServerSpec> {
+    let ext = path.extension()?.to_str()?.to_ascii_lowercase();
+    let candidates = language_candidates_for_extension(&ext)?;
     for (lang, bin, args, markers) in candidates {
         if let Some(resolved) = find_in_path(bin) {
             return Some(ServerSpec {
@@ -536,5 +595,38 @@ while True:
 
         drop(client);
         let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn language_mapping_covers_js_jsx_ts_and_tsx() {
+        let js = language_candidates_for_extension("js").expect(".js should map");
+        assert_eq!(js[0].0, "javascript");
+        assert_eq!(js[0].1, "typescript-language-server");
+
+        let mjs = language_candidates_for_extension("mjs").expect(".mjs should map");
+        assert_eq!(mjs[0].0, "javascript");
+
+        let jsx = language_candidates_for_extension("jsx").expect(".jsx should map");
+        assert_eq!(jsx[0].0, "javascriptreact");
+        assert_eq!(jsx[0].1, "typescript-language-server");
+
+        let ts = language_candidates_for_extension("ts").expect(".ts should map");
+        assert_eq!(ts[0].0, "typescript");
+        assert_eq!(ts[0].1, "typescript-language-server");
+
+        let tsx = language_candidates_for_extension("tsx").expect(".tsx should map");
+        assert_eq!(tsx[0].0, "typescriptreact");
+        assert_eq!(tsx[0].1, "typescript-language-server");
+
+        assert!(language_candidates_for_extension("txt").is_none());
+    }
+
+    #[test]
+    fn diag_wait_timeout_parses_and_clamps_configured_values() {
+        assert_eq!(parse_diag_wait_ms(None), Duration::from_millis(LSP_DIAG_WAIT_DEFAULT_MS));
+        assert_eq!(parse_diag_wait_ms(Some("invalid")), Duration::from_millis(LSP_DIAG_WAIT_DEFAULT_MS));
+        assert_eq!(parse_diag_wait_ms(Some("2500")), Duration::from_millis(2500));
+        assert_eq!(parse_diag_wait_ms(Some("10")), Duration::from_millis(LSP_DIAG_WAIT_MIN_MS));
+        assert_eq!(parse_diag_wait_ms(Some("999999")), Duration::from_millis(LSP_DIAG_WAIT_MAX_MS));
     }
 }

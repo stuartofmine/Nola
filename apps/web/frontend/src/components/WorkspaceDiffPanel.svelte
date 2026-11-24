@@ -1,6 +1,7 @@
 <script lang="ts">
     import { locale, t } from '../lib/i18n';
     import { errorMessage } from '../lib/api';
+    import { highlightCode, languageFromPath } from '../lib/markdown';
     import { pushToast } from '../lib/toast';
     import PrototypeIcon from './PrototypeIcon.svelte';
     import {
@@ -31,9 +32,12 @@
     } = $props();
 
     type TabId = 'diff' | 'checkpoints' | 'worktrees';
+    type DiffViewMode = 'unified' | 'split';
 
     let activeTab = $state<TabId>('diff');
+    let diffViewMode = $state<DiffViewMode>('unified');
     let loading = $state(false);
+    let diffLoading = $state(false);
     let mutating = $state(false);
     let loadError = $state('');
     let selectedPath = $state<string | null>(null);
@@ -49,20 +53,166 @@
 
     let requestController: AbortController | null = null;
     let requestEpoch = 0;
+    let diffController: AbortController | null = null;
+    let diffEpoch = 0;
+
+    type RenderedDiffLine = {
+        kind: 'file' | 'hunk' | 'add' | 'del' | 'context';
+        oldNum: string;
+        newNum: string;
+        sign: string;
+        text: string;
+        html: string | null;
+    };
 
     const diffLines = $derived(parseUnifiedDiffLines(diffData?.diff_text ?? ''));
+    const renderedDiffLines = $derived.by<RenderedDiffLine[]>(() => {
+        let currentLang = languageFromPath(selectedPath);
+        let oldLine = 0;
+        let newLine = 0;
+        const out: RenderedDiffLine[] = [];
+        for (const line of diffLines) {
+            if (line.kind === 'file') {
+                const gitMatch = /^diff --git a\/.+ b\/(.+)$/.exec(line.text);
+                if (gitMatch) {
+                    currentLang = languageFromPath(gitMatch[1]);
+                } else if (line.text.startsWith('+++ b/')) {
+                    currentLang = languageFromPath(line.text.slice(6));
+                }
+                out.push({ kind: 'file', oldNum: '', newNum: '', sign: '', text: line.text, html: null });
+                continue;
+            }
+            if (line.kind === 'hunk') {
+                const hunkMatch = /^@@ -(\d+)(?:,\d+)? \+(\d+)(?:,\d+)? @@/.exec(line.text);
+                if (hunkMatch) {
+                    oldLine = Number.parseInt(hunkMatch[1], 10);
+                    newLine = Number.parseInt(hunkMatch[2], 10);
+                }
+                out.push({ kind: 'hunk', oldNum: '', newNum: '', sign: '', text: line.text, html: null });
+                continue;
+            }
+            if (line.kind === 'add') {
+                const codeText = line.text.slice(1);
+                out.push({
+                    kind: 'add',
+                    oldNum: '',
+                    newNum: newLine > 0 ? String(newLine++) : '',
+                    sign: '+',
+                    text: line.text,
+                    html: codeText ? highlightCode(codeText, currentLang) : ' ',
+                });
+                continue;
+            }
+            if (line.kind === 'del') {
+                const codeText = line.text.slice(1);
+                out.push({
+                    kind: 'del',
+                    oldNum: oldLine > 0 ? String(oldLine++) : '',
+                    newNum: '',
+                    sign: '-',
+                    text: line.text,
+                    html: codeText ? highlightCode(codeText, currentLang) : ' ',
+                });
+                continue;
+            }
+            const hasLeadingSpace = line.text.startsWith(' ');
+            const codeText = hasLeadingSpace ? line.text.slice(1) : line.text;
+            out.push({
+                kind: 'context',
+                oldNum: oldLine > 0 ? String(oldLine++) : '',
+                newNum: newLine > 0 ? String(newLine++) : '',
+                sign: hasLeadingSpace ? ' ' : '',
+                text: line.text,
+                html: codeText ? highlightCode(codeText, currentLang) : ' ',
+            });
+        }
+        return out;
+    });
+
+    type SplitDiffCell = {
+        kind: 'add' | 'del' | 'context' | 'empty';
+        num: string;
+        sign: string;
+        html: string;
+    };
+    type SplitDiffRow =
+        | { kind: 'meta'; lineKind: 'file' | 'hunk'; text: string }
+        | { kind: 'pair'; left: SplitDiffCell; right: SplitDiffCell };
+
+    const EMPTY_SPLIT_CELL: SplitDiffCell = { kind: 'empty', num: '', sign: '', html: '' };
+
+    const splitDiffRows = $derived.by<SplitDiffRow[]>(() => {
+        const rows: SplitDiffRow[] = [];
+        const lines = renderedDiffLines;
+        let i = 0;
+        while (i < lines.length) {
+            const line = lines[i];
+            if (line.kind === 'file' || line.kind === 'hunk') {
+                rows.push({ kind: 'meta', lineKind: line.kind, text: line.text });
+                i++;
+                continue;
+            }
+            if (line.kind === 'context') {
+                const html = line.html ?? ' ';
+                rows.push({
+                    kind: 'pair',
+                    left: { kind: 'context', num: line.oldNum, sign: line.sign, html },
+                    right: { kind: 'context', num: line.newNum, sign: line.sign, html },
+                });
+                i++;
+                continue;
+            }
+            const dels: RenderedDiffLine[] = [];
+            while (i < lines.length && lines[i].kind === 'del') {
+                dels.push(lines[i++]);
+            }
+            const adds: RenderedDiffLine[] = [];
+            while (i < lines.length && lines[i].kind === 'add') {
+                adds.push(lines[i++]);
+            }
+            const pairCount = Math.max(dels.length, adds.length);
+            for (let j = 0; j < pairCount; j++) {
+                const delLine = dels[j];
+                const addLine = adds[j];
+                rows.push({
+                    kind: 'pair',
+                    left: delLine
+                        ? { kind: 'del', num: delLine.oldNum, sign: '-', html: delLine.html ?? ' ' }
+                        : EMPTY_SPLIT_CELL,
+                    right: addLine
+                        ? { kind: 'add', num: addLine.newNum, sign: '+', html: addLine.html ?? ' ' }
+                        : EMPTY_SPLIT_CELL,
+                });
+            }
+        }
+        return rows;
+    });
+    const diffModeLabel = $derived(
+        diffViewMode === 'split'
+            ? ($locale === 'zh-Hans' ? '单栏视图' : 'Unified')
+            : ($locale === 'zh-Hans' ? '双栏对比' : 'Split'),
+    );
+    const diffModeTitle = $derived(
+        diffViewMode === 'split'
+            ? ($locale === 'zh-Hans' ? '切换为单栏统一差异视图' : 'Switch to unified diff view')
+            : ($locale === 'zh-Hans' ? '切换为双栏并排差异视图' : 'Switch to side-by-side split diff view'),
+    );
     const reversedCheckpoints = $derived([...checkpoints].reverse());
     const canUndo = $derived(checkpoints.length > 0 && !mutating);
     const canRedo = $derived(redoCount > 0 && !mutating);
 
     async function refreshAll(pathOverride?: string | null) {
         requestController?.abort();
+        diffController?.abort();
+        diffController = null;
         const controller = new AbortController();
         requestController = controller;
         const epoch = ++requestEpoch;
+        const currentDiffEpoch = ++diffEpoch;
         const targetPath = pathOverride === undefined ? selectedPath : pathOverride;
 
         loading = true;
+        diffLoading = false;
         loadError = '';
         try {
             const [diff, cp, wt] = await Promise.all([
@@ -81,17 +231,19 @@
                 }),
             ]);
             if (controller.signal.aborted || epoch !== requestEpoch) return;
-            diffData = diff;
             checkpoints = cp.checkpoints ?? [];
             redoCount = cp.redo_count ?? 0;
             worktrees = wt.worktrees ?? [];
             worktreesIsGitRepo = wt.is_git_repo;
-            if (targetPath === null) {
-                onsummary?.({
-                    changedCount: diff.files.length,
-                    branch: diff.branch,
-                    isGitRepo: diff.is_git_repo,
-                });
+            if (currentDiffEpoch === diffEpoch) {
+                diffData = diff;
+                if (targetPath === null) {
+                    onsummary?.({
+                        changedCount: diff.files.length,
+                        branch: diff.branch,
+                        isGitRepo: diff.is_git_repo,
+                    });
+                }
             }
         } catch (cause) {
             if (controller.signal.aborted || epoch !== requestEpoch) return;
@@ -103,9 +255,42 @@
         }
     }
 
+    async function loadDiffOnly(targetPath: string | null) {
+        diffController?.abort();
+        const controller = new AbortController();
+        diffController = controller;
+        const currentDiffEpoch = ++diffEpoch;
+
+        diffLoading = true;
+        loadError = '';
+        try {
+            const diff = await fetchWorkspaceDiff({
+                conversationId,
+                path: targetPath ?? undefined,
+                signal: controller.signal,
+            });
+            if (controller.signal.aborted || currentDiffEpoch !== diffEpoch) return;
+            diffData = diff;
+            if (targetPath === null) {
+                onsummary?.({
+                    changedCount: diff.files.length,
+                    branch: diff.branch,
+                    isGitRepo: diff.is_git_repo,
+                });
+            }
+        } catch (cause) {
+            if (controller.signal.aborted || currentDiffEpoch !== diffEpoch) return;
+            loadError = errorMessage(cause);
+        } finally {
+            if (!controller.signal.aborted && currentDiffEpoch === diffEpoch) {
+                diffLoading = false;
+            }
+        }
+    }
+
     async function selectFile(path: string | null) {
         selectedPath = path;
-        await refreshAll(path);
+        await loadDiffOnly(path);
     }
 
     async function handleUndo() {
@@ -197,6 +382,8 @@
         } else {
             requestController?.abort();
             requestController = null;
+            diffController?.abort();
+            diffController = null;
         }
     });
 </script>
@@ -213,6 +400,7 @@
     >
         <div
             class="workflow-drawer"
+            class:split-mode={activeTab === 'diff' && diffViewMode === 'split'}
             role="dialog"
             aria-modal="true"
             aria-label={t($locale, 'workspaceWorkflow.panelTitle')}
@@ -233,6 +421,27 @@
                     {/if}
                 </div>
                 <div class="drawer-header-actions">
+                    {#if activeTab === 'diff'}
+                        <button
+                            type="button"
+                            class="action-btn diff-mode-toggle"
+                            class:active={diffViewMode === 'split'}
+                            aria-pressed={diffViewMode === 'split'}
+                            onclick={() => (diffViewMode = diffViewMode === 'unified' ? 'split' : 'unified')}
+                            title={diffModeTitle}
+                        >
+                            <svg aria-hidden="true" viewBox="0 0 24 24" class="mini-icon">
+                                {#if diffViewMode === 'split'}
+                                    <rect x="3" y="4" width="18" height="16" rx="2" />
+                                    <path d="M7 9h10M7 13h10M7 17h6" />
+                                {:else}
+                                    <rect x="3" y="4" width="18" height="16" rx="2" />
+                                    <path d="M12 4v16" />
+                                {/if}
+                            </svg>
+                            <span>{diffModeLabel}</span>
+                        </button>
+                    {/if}
                     <button
                         type="button"
                         class="action-btn"
@@ -370,12 +579,56 @@
                                         {t($locale, 'workspaceWorkflow.diffTruncated')}
                                     </p>
                                 {/if}
-                                {#if diffLines.length}
+                                {#if renderedDiffLines.length}
                                     <!-- svelte-ignore a11y_no_noninteractive_tabindex -->
-                                    <div class="diff-code" tabindex="0" role="region" aria-label={t($locale, 'workspaceWorkflow.tabDiff')}>
-                                        {#each diffLines as line, idx (idx)}
-                                            <div class={`diff-line diff-${line.kind}`}>{line.text || ' '}</div>
-                                        {/each}
+                                    <div class="diff-code" class:loading={diffLoading} class:split={diffViewMode === 'split'} tabindex="0" role="region" aria-label={t($locale, 'workspaceWorkflow.tabDiff')}>
+                                        {#if diffViewMode === 'split'}
+                                            <table class="diff-split-table">
+                                                <colgroup>
+                                                    <col class="diff-split-col-gutter" />
+                                                    <col class="diff-split-col-code" />
+                                                    <col class="diff-split-col-gutter" />
+                                                    <col class="diff-split-col-code" />
+                                                </colgroup>
+                                                <tbody>
+                                                    {#each splitDiffRows as row, idx (idx)}
+                                                        {#if row.kind === 'meta'}
+                                                            <tr class={`diff-split-meta diff-${row.lineKind}`}>
+                                                                <td colspan="4">{row.text || ' '}</td>
+                                                            </tr>
+                                                        {:else}
+                                                            <tr class="diff-split-row">
+                                                                <td class={`diff-split-gutter diff-${row.left.kind}`} aria-hidden="true">{row.left.num}</td>
+                                                                <td class={`diff-split-cell diff-split-left diff-${row.left.kind}`}>
+                                                                    {#if row.left.kind !== 'empty'}
+                                                                        <span class="diff-sign" aria-hidden="true">{row.left.sign}</span><span class="diff-content">{@html row.left.html}</span>
+                                                                    {/if}
+                                                                </td>
+                                                                <td class={`diff-split-gutter diff-${row.right.kind}`} aria-hidden="true">{row.right.num}</td>
+                                                                <td class={`diff-split-cell diff-split-right diff-${row.right.kind}`}>
+                                                                    {#if row.right.kind !== 'empty'}
+                                                                        <span class="diff-sign" aria-hidden="true">{row.right.sign}</span><span class="diff-content">{@html row.right.html}</span>
+                                                                    {/if}
+                                                                </td>
+                                                            </tr>
+                                                        {/if}
+                                                    {/each}
+                                                </tbody>
+                                            </table>
+                                        {:else}
+                                            {#each renderedDiffLines as line, idx (idx)}
+                                                <div class={`diff-line diff-${line.kind}`}>
+                                                    {#if line.html !== null}
+                                                        <span class="diff-gutter" aria-hidden="true">{line.oldNum}</span>
+                                                        <span class="diff-gutter" aria-hidden="true">{line.newNum}</span>
+                                                        <span class="diff-sign" aria-hidden="true">{line.sign}</span>
+                                                        <span class="diff-content">{@html line.html}</span>
+                                                    {:else}
+                                                        <span class="diff-meta-line">{line.text || ' '}</span>
+                                                    {/if}
+                                                </div>
+                                            {/each}
+                                        {/if}
                                     </div>
                                 {:else}
                                     <p class="empty-state">{t($locale, 'workspaceWorkflow.noDiffText')}</p>
@@ -479,6 +732,9 @@
         border-left: 1px solid var(--border);
         box-shadow: var(--dialog-shadow);
     }
+    .workflow-drawer.split-mode {
+        width: min(1080px, 100vw);
+    }
     .drawer-header {
         display: flex;
         align-items: center;
@@ -529,6 +785,12 @@
         padding: 4px 10px;
         font-size: 0.78rem;
         border-radius: 8px;
+    }
+    .diff-mode-toggle.active {
+        background: var(--accent-subtle);
+        border-color: var(--outline);
+        color: var(--content);
+        font-weight: 600;
     }
     .icon-btn {
         display: inline-flex;
@@ -717,19 +979,95 @@
         font-family: var(--font-code);
         font-size: 12px;
         line-height: 1.55;
+        --tok-kw: #9a2b7c;
+        --tok-str: #146c37;
+        --tok-num: #9a4d00;
+        --tok-cmt: #63636e;
+        --tok-type: #0e5a8a;
+        --tok-attr: #6f42c1;
+        --tok-tag: #1d4ed8;
+        --tok-meta: #8a4b08;
+        --tok-key: #0f5a78;
+        --tok-var: #b43a1c;
+    }
+    .diff-code.loading {
+        opacity: 0.72;
+    }
+    @media (prefers-color-scheme: dark) {
+        :global(:root:not([data-appearance="light"])) .diff-code {
+            --tok-kw: #d896ff;
+            --tok-str: #7ee787;
+            --tok-num: #f0b85a;
+            --tok-cmt: #8b8b96;
+            --tok-type: #79c0ff;
+            --tok-attr: #d2a8ff;
+            --tok-tag: #7ee787;
+            --tok-meta: #ffa657;
+            --tok-key: #79c0ff;
+            --tok-var: #ffa198;
+        }
+    }
+    :global(:root[data-appearance="dark"]) .diff-code {
+        --tok-kw: #d896ff;
+        --tok-str: #7ee787;
+        --tok-num: #f0b85a;
+        --tok-cmt: #8b8b96;
+        --tok-type: #79c0ff;
+        --tok-attr: #d2a8ff;
+        --tok-tag: #7ee787;
+        --tok-meta: #ffa657;
+        --tok-key: #79c0ff;
+        --tok-var: #ffa198;
     }
     .diff-line {
-        padding: 0 12px;
+        display: flex;
+        align-items: baseline;
+        padding: 0 12px 0 0;
         white-space: pre;
         min-width: max-content;
     }
+    .diff-gutter {
+        display: inline-block;
+        width: 3.4em;
+        padding-right: 0.65em;
+        text-align: right;
+        color: var(--muted);
+        opacity: 0.72;
+        user-select: none;
+        flex: none;
+    }
+    .diff-sign {
+        display: inline-block;
+        width: 1.4em;
+        text-align: center;
+        user-select: none;
+        flex: none;
+        font-weight: 600;
+    }
+    .diff-content {
+        flex: 1;
+        min-width: 0;
+    }
+    .diff-meta-line {
+        padding-left: 12px;
+    }
     .diff-add {
-        background: color-mix(in srgb, var(--success) 15%, transparent);
+        background: color-mix(in srgb, var(--success) 14%, transparent);
+        color: var(--content);
+    }
+    .diff-add .diff-sign,
+    .diff-add .diff-gutter {
         color: var(--success);
+        opacity: 0.9;
     }
     .diff-del {
-        background: color-mix(in srgb, var(--danger) 15%, transparent);
+        background: color-mix(in srgb, var(--danger) 14%, transparent);
+        color: var(--content);
+    }
+    .diff-del .diff-sign,
+    .diff-del .diff-gutter {
         color: var(--danger);
+        opacity: 0.9;
     }
     .diff-hunk {
         background: color-mix(in srgb, var(--info) 14%, transparent);
@@ -740,6 +1078,70 @@
         color: var(--muted);
         font-weight: 600;
     }
+    .diff-code.split {
+        padding: 0;
+    }
+    .diff-split-table {
+        width: 100%;
+        min-width: 620px;
+        border-collapse: collapse;
+        table-layout: fixed;
+    }
+    .diff-split-col-gutter {
+        width: 3.6em;
+    }
+    .diff-split-col-code {
+        width: calc(50% - 3.6em);
+    }
+    .diff-split-meta td {
+        padding: 3px 12px;
+        white-space: pre-wrap;
+        overflow-wrap: anywhere;
+        border-bottom: 1px solid var(--border);
+    }
+    .diff-split-gutter {
+        padding: 0 0.6em 0 0.4em;
+        text-align: right;
+        vertical-align: top;
+        color: var(--muted);
+        opacity: 0.72;
+        user-select: none;
+        white-space: nowrap;
+        border-right: 1px solid color-mix(in srgb, var(--border) 60%, transparent);
+    }
+    .diff-split-cell {
+        padding: 0 8px 0 4px;
+        vertical-align: top;
+        white-space: pre-wrap;
+        overflow-wrap: anywhere;
+        tab-size: 4;
+    }
+    .diff-split-left {
+        border-right: 1px solid var(--border);
+    }
+    .diff-split-gutter.diff-add,
+    .diff-split-cell.diff-add .diff-sign {
+        color: var(--success);
+        opacity: 0.9;
+    }
+    .diff-split-gutter.diff-del,
+    .diff-split-cell.diff-del .diff-sign {
+        color: var(--danger);
+        opacity: 0.9;
+    }
+    .diff-empty {
+        background: color-mix(in srgb, var(--panel) 55%, transparent);
+    }
+    .diff-code :global(.tok-kw) { color: var(--tok-kw); }
+    .diff-code :global(.tok-str) { color: var(--tok-str); }
+    .diff-code :global(.tok-num) { color: var(--tok-num); }
+    .diff-code :global(.tok-cmt) { color: var(--tok-cmt); font-style: italic; }
+    .diff-code :global(.tok-type) { color: var(--tok-type); }
+    .diff-code :global(.tok-attr) { color: var(--tok-attr); }
+    .diff-code :global(.tok-tag) { color: var(--tok-tag); }
+    .diff-code :global(.tok-meta) { color: var(--tok-meta); }
+    .diff-code :global(.tok-key) { color: var(--tok-key); }
+    .diff-code :global(.tok-var) { color: var(--tok-var); }
     .checkpoint-list,
     .worktree-list {
         list-style: none;

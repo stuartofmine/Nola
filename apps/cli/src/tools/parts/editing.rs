@@ -523,30 +523,6 @@ fn format_plan_items(root: &Path, paths: &[PathBuf]) -> (Vec<String>, Vec<String
     (deduped, notes, targets)
 }
 
-fn format_command_is_formatter(command: &str) -> bool {
-    let lowered = command.to_lowercase();
-    if lowered.contains("lint")
-        || lowered.contains("check")
-        || lowered.contains("test")
-        || lowered.contains("pytest")
-    {
-        return false;
-    }
-    [
-        "cargo fmt",
-        "gofmt -w",
-        "swiftformat",
-        "ktlint -f",
-        "ktlintformat",
-        "npx prettier --write",
-        "-m ruff format",
-        "-m black",
-        "npm run format",
-    ]
-    .iter()
-    .any(|token| lowered.contains(token))
-}
-
 fn format_root_for_path(path: &Path, allowed_dirs: &[PathBuf]) -> Option<PathBuf> {
     let resolved = path.canonicalize().unwrap_or_else(|_| path.to_path_buf());
     let mut best: Option<PathBuf> = None;
@@ -565,6 +541,199 @@ fn format_root_for_path(path: &Path, allowed_dirs: &[PathBuf]) -> Option<PathBuf
     best
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct FormatterCommand {
+    working_dir: PathBuf,
+    program: String,
+    args: Vec<std::ffi::OsString>,
+    display: String,
+}
+
+fn targets_for_ext(targets: &[PathBuf], extensions: &[&str]) -> Vec<PathBuf> {
+    targets
+        .iter()
+        .filter(|path| {
+            path.extension()
+                .and_then(|ext| ext.to_str())
+                .is_some_and(|ext| extensions.contains(&ext))
+        })
+        .cloned()
+        .collect()
+}
+
+fn safe_relative_formatter_arg(root: &Path, path: &Path) -> std::ffi::OsString {
+    let rel = path.strip_prefix(root).unwrap_or(path);
+    if rel
+        .to_str()
+        .is_some_and(|text| text.starts_with('-'))
+    {
+        let mut prefixed = std::ffi::OsString::from("./");
+        prefixed.push(rel.as_os_str());
+        prefixed
+    } else {
+        rel.as_os_str().to_os_string()
+    }
+}
+
+fn cargo_toml_edition(manifests: &[PathBuf]) -> Option<&'static str> {
+    for manifest in manifests {
+        if manifest.file_name().and_then(|name| name.to_str()) != Some("Cargo.toml") {
+            continue;
+        }
+        let Ok(text) = fs::read_to_string(manifest) else {
+            continue;
+        };
+        for line in text.lines() {
+            let trimmed = line.trim();
+            if let Some(rest) = trimmed.strip_prefix("edition") {
+                let rest = rest.trim_start();
+                if let Some(value) = rest.strip_prefix('=') {
+                    let value = value.trim().trim_matches('"').trim_matches('\'');
+                    match value {
+                        "2024" => return Some("2024"),
+                        "2021" => return Some("2021"),
+                        "2018" => return Some("2018"),
+                        "2015" => return Some("2015"),
+                        _ => {}
+                    }
+                }
+            }
+        }
+    }
+    None
+}
+
+fn format_display_command(program: &str, args: &[std::ffi::OsString]) -> String {
+    let mut parts = Vec::with_capacity(args.len() + 1);
+    parts.push(program.to_string());
+    for arg in args {
+        parts.push(arg.to_string_lossy().into_owned());
+    }
+    parts.join(" ")
+}
+
+/// Builds target-scoped direct-argv formatter invocations for single-file or
+/// targeted post-edit formatting. Never invokes a shell and never triggers
+/// repo-wide formatters (`cargo fmt`, `npm run format`, `swiftformat .`,
+/// `./gradlew ktlintFormat`).
+fn single_file_formatter_commands(root: &Path, paths: &[PathBuf]) -> Vec<FormatterCommand> {
+    let targets = paths
+        .iter()
+        .filter(|path| path.is_file() && is_code_source(path))
+        .cloned()
+        .collect::<Vec<_>>();
+    if targets.is_empty() {
+        return Vec::new();
+    }
+    let (manifests, _languages, _docs, _scanned, _truncated) = scan_project(root, 5000);
+    let (configs, _config_scanned) = scan_convention_config_files(root, 40);
+    let mut commands = Vec::new();
+
+    let web_targets = targets_for_ext(&targets, &["js", "jsx", "ts", "tsx", "css", "html"]);
+    if !web_targets.is_empty() && has_prettier_config(&configs) {
+        let mut args = vec![
+            std::ffi::OsString::from("prettier"),
+            std::ffi::OsString::from("--write"),
+            std::ffi::OsString::from("--"),
+        ];
+        args.extend(
+            web_targets
+                .iter()
+                .map(|path| safe_relative_formatter_arg(root, path)),
+        );
+        let display = format_display_command("npx", &args);
+        commands.push(FormatterCommand {
+            working_dir: root.to_path_buf(),
+            program: "npx".to_string(),
+            args,
+            display,
+        });
+    }
+
+    let py_targets = targets_for_ext(&targets, &["py"]);
+    if !py_targets.is_empty() {
+        let python = preferred_python_command().to_string();
+        if has_file_name(&configs, "ruff.toml") || pyproject_contains(&manifests, "ruff") {
+            let mut args = vec![
+                std::ffi::OsString::from("-m"),
+                std::ffi::OsString::from("ruff"),
+                std::ffi::OsString::from("format"),
+                std::ffi::OsString::from("--"),
+            ];
+            args.extend(
+                py_targets
+                    .iter()
+                    .map(|path| safe_relative_formatter_arg(root, path)),
+            );
+            let display = format_display_command(&python, &args);
+            commands.push(FormatterCommand {
+                working_dir: root.to_path_buf(),
+                program: python,
+                args,
+                display,
+            });
+        } else if pyproject_contains(&manifests, "black") {
+            let mut args = vec![
+                std::ffi::OsString::from("-m"),
+                std::ffi::OsString::from("black"),
+                std::ffi::OsString::from("--"),
+            ];
+            args.extend(
+                py_targets
+                    .iter()
+                    .map(|path| safe_relative_formatter_arg(root, path)),
+            );
+            let display = format_display_command(&python, &args);
+            commands.push(FormatterCommand {
+                working_dir: root.to_path_buf(),
+                program: python,
+                args,
+                display,
+            });
+        }
+    }
+
+    let rs_targets = targets_for_ext(&targets, &["rs"]);
+    if !rs_targets.is_empty() && has_file_name(&manifests, "Cargo.toml") {
+        let mut args = Vec::new();
+        if let Some(edition) = cargo_toml_edition(&manifests) {
+            args.push(std::ffi::OsString::from("--edition"));
+            args.push(std::ffi::OsString::from(edition));
+        }
+        args.extend(
+            rs_targets
+                .iter()
+                .map(|path| safe_relative_formatter_arg(root, path)),
+        );
+        let display = format_display_command("rustfmt", &args);
+        commands.push(FormatterCommand {
+            working_dir: root.to_path_buf(),
+            program: "rustfmt".to_string(),
+            args,
+            display,
+        });
+    }
+
+    let go_targets = targets_for_ext(&targets, &["go"]);
+    if !go_targets.is_empty() {
+        let mut args = vec![std::ffi::OsString::from("-w")];
+        args.extend(
+            go_targets
+                .iter()
+                .map(|path| safe_relative_formatter_arg(root, path)),
+        );
+        let display = format_display_command("gofmt", &args);
+        commands.push(FormatterCommand {
+            working_dir: root.to_path_buf(),
+            program: "gofmt".to_string(),
+            args,
+            display,
+        });
+    }
+
+    commands
+}
+
 fn formatting_sections(
     root: &Path,
     paths: &[PathBuf],
@@ -579,20 +748,23 @@ fn formatting_sections(
     if code_paths.is_empty() {
         return Ok(Vec::new());
     }
-    let (commands, _notes, _targets) = format_plan_items(root, &code_paths);
-    let formatter_commands = commands
-        .into_iter()
-        .filter(|command| format_command_is_formatter(command))
-        .collect::<Vec<_>>();
+    let formatter_commands = single_file_formatter_commands(root, &code_paths);
     if formatter_commands.is_empty() {
         return Ok(Vec::new());
     }
+    if process_sandbox.is_some() {
+        return Ok(vec![
+            String::new(),
+            "## Formatting".to_string(),
+            "- skipped: automatic post-edit formatting is bypassed while the process sandbox is active; run the formatter explicitly via bash if needed.".to_string(),
+        ]);
+    }
     let mut sections = vec![String::new(), "## Formatting".to_string()];
-    for command in formatter_commands {
-        let output = run_shell_command(root, &command, cancellation,process_sandbox)?;
+    for spec in formatter_commands {
+        let output = run_formatter_argv(&spec.working_dir, &spec.program, &spec.args, cancellation)?;
         if !output.status.success() {
             let detail = command_output_text(&output);
-            return Err(error(format!("{command}\n{detail}")));
+            return Err(error(format!("{}\n{detail}", spec.display)));
         }
         let mut snippet = successful_command_output_text(&output.stdout, &output.stderr);
         if snippet.len() > 2000 {
@@ -600,9 +772,9 @@ fn formatting_sections(
             snippet = snippet.trim_end().to_string() + "\n...[output truncated]";
         }
         if snippet.trim().is_empty() {
-            sections.push(format!("- {command}: ok"));
+            sections.push(format!("- {}: ok", spec.display));
         } else {
-            sections.push(format!("- {command}: ok\n{}", snippet.trim()));
+            sections.push(format!("- {}: ok\n{}", spec.display, snippet.trim()));
         }
     }
     Ok(sections)
@@ -633,12 +805,19 @@ fn commit_formatted_file_edit(
             target.display()
         )));
     }
+    let had_full_read = existing_file_access_snapshot(target, &Map::new())
+        .ok()
+        .flatten()
+        .is_some_and(|snapshot| snapshot.full_read);
     atomic_write_text_file(target, updated)
         .map_err(|err| error(format!("Atomic write failed: {err}")))?;
     refresh_file_access_state(target);
 
     let format_sections = if format_after_edit {
         let Some(format_root) = format_root_for_path(target, allowed_dirs) else {
+            if had_full_read {
+                record_authored_file_full_access(target, updated);
+            }
             return Ok((Vec::new(), updated.to_string()));
         };
         match formatting_sections(
@@ -688,6 +867,9 @@ fn commit_formatted_file_edit(
         }
     };
     refresh_file_access_state(target);
+    if had_full_read && committed == updated {
+        record_authored_file_full_access(target, &committed);
+    }
     Ok((format_sections, committed))
 }
 
@@ -1146,6 +1328,254 @@ mod edit_transaction_output_tests {
         assert!(committed.starts_with("new\n"));
         let _ = fs::remove_dir_all(directory);
     }
+
+    #[test]
+    fn single_file_formatter_commands_scope_to_targets_and_avoid_shell_injection() {
+        let fixture = tempfile::tempdir().unwrap();
+        let root = fixture.path();
+        fs::write(
+            root.join("Cargo.toml"),
+            "[package]\nname = \"demo\"\nversion = \"0.1.0\"\nedition = \"2021\"\n",
+        )
+        .unwrap();
+        fs::write(
+            root.join("package.json"),
+            r#"{"scripts":{"format":"prettier --write .","lint":"eslint ."}}"#,
+        )
+        .unwrap();
+        fs::write(root.join(".prettierrc"), "{}\n").unwrap();
+        fs::write(root.join("pyproject.toml"), "[tool.ruff]\n").unwrap();
+        fs::write(root.join(".swiftformat"), "--indent 4\n").unwrap();
+        fs::write(root.join("build.gradle.kts"), "\n").unwrap();
+
+        let src = root.join("src");
+        fs::create_dir_all(&src).unwrap();
+        let weird_rs = src.join("$(touch pwned);demo.rs");
+        let ts = src.join("app.ts");
+        let py = src.join("worker.py");
+        let go = src.join("main.go");
+        let swift = src.join("View.swift");
+        let kt = src.join("Main.kt");
+        for f in [&weird_rs, &ts, &py, &go, &swift, &kt] {
+            fs::write(f, "x\n").unwrap();
+        }
+
+        let cmds = single_file_formatter_commands(root, &[weird_rs.clone(), ts.clone(), py.clone(), go.clone(), swift, kt]);
+        // Must NEVER produce repo-wide formatters.
+        for cmd in &cmds {
+            assert_ne!(cmd.program, "cargo", "single-file formatting must not run repo-wide cargo fmt");
+            assert_ne!(cmd.program, "npm", "single-file formatting must not run repo-wide npm run format");
+            assert_ne!(cmd.program, "swiftformat", "single-file formatting must not run repo-wide swiftformat .");
+            assert!(!cmd.program.contains("gradlew"), "single-file formatting must not run repo-wide gradlew");
+        }
+        // Rust file with shell metacharacters is passed as a single verbatim OsString arg to rustfmt.
+        let rust_cmd = cmds.iter().find(|c| c.program == "rustfmt").expect("rustfmt command");
+        assert!(
+            rust_cmd.args.iter().any(|arg| arg == std::ffi::OsStr::new("src/$(touch pwned);demo.rs")),
+            "expected verbatim path arg, got: {:?}",
+            rust_cmd.args
+        );
+        // Prettier, ruff, and gofmt are target-scoped.
+        let prettier = cmds.iter().find(|c| c.program == "npx").expect("prettier command");
+        assert!(prettier.args.iter().any(|a| a == "prettier"));
+        assert!(prettier.args.iter().any(|a| a == "--write"));
+        assert!(prettier.args.iter().any(|a| a == "src/app.ts"));
+
+        let ruff = cmds.iter().find(|c| c.args.iter().any(|a| a == "ruff")).expect("ruff command");
+        assert!(ruff.args.iter().any(|a| a == "format"));
+        assert!(ruff.args.iter().any(|a| a == "src/worker.py"));
+
+        let gofmt = cmds.iter().find(|c| c.program == "gofmt").expect("gofmt command");
+        assert_eq!(gofmt.args, vec![std::ffi::OsString::from("-w"), std::ffi::OsString::from("src/main.go")]);
+    }
+
+    #[test]
+    fn formatting_sections_and_write_file_skip_gracefully_under_process_sandbox() {
+        let fixture = tempfile::tempdir().unwrap();
+        let root = fixture.path().canonicalize().unwrap();
+        fs::write(
+            root.join("Cargo.toml"),
+            "[package]\nname = \"demo\"\nversion = \"0.1.0\"\nedition = \"2021\"\n",
+        )
+        .unwrap();
+        let target = root.join("src").join("lib.rs");
+        let mut ctx = ToolContext {
+            memory_binding: nola_domain::memory_owner::MemoryExecutionBinding::local_profile(),
+            language_services: Default::default(),
+            skills: Default::default(),
+            allowed_dirs: vec![root.clone()],
+            policy: crate::tools::ToolExecutionPolicy::new(Vec::new(), true, "allow".into(), Vec::new())
+                .with_process_sandbox(Some(crate::process_sandbox::unavailable_process_sandbox_fixture(&root))),
+            permission_scope: Default::default(),
+            cancellation: Default::default(),
+            plan_state: Default::default(),
+            output_store: ToolOutputStore::new(root.join("outputs")),
+            browser: BrowserRuntime::new(root.join("browser")),
+        };
+        let _scope = ctx.permission_scope.enter();
+        let outcome = write_file(
+            json!({"path": target, "content": "pub fn answer() -> i32 { 42 }\n"}).as_object().unwrap(),
+            &ctx,
+        );
+        assert!(!outcome.error, "write_file must not fail under ASRT: {}", outcome.text);
+        assert!(
+            outcome.text.contains("skipped: automatic post-edit formatting is bypassed"),
+            "expected informational formatting skip note, got: {}",
+            outcome.text
+        );
+        assert_eq!(
+            fs::read_to_string(&target).unwrap(),
+            "pub fn answer() -> i32 { 42 }\n"
+        );
+        // Read continuity is preserved because no external formatter modified the bytes.
+        ctx.policy = ctx.policy.with_process_sandbox(None);
+        let follow_up = edit_file(
+            json!({
+                "path": target,
+                "old_text": "42",
+                "new_text": "43",
+                "format_after_edit": false
+            })
+            .as_object()
+            .unwrap(),
+            &ctx,
+        );
+        assert!(!follow_up.error, "follow-up edit should preserve read continuity: {}", follow_up.text);
+    }
+
+    #[test]
+    fn run_shell_command_rejects_shell_injection_metacharacters() {
+        let fixture = tempfile::tempdir().unwrap();
+        let root = fixture.path();
+        let marker = root.join("pwned");
+        let err = run_shell_command(
+            root,
+            &format!("gofmt -w a.go; touch {}", marker.display()),
+            &RuntimeExecutionControl::default(),
+            None,
+        )
+        .unwrap_err();
+        assert!(err.text.contains("disallowed shell metacharacters"));
+        assert!(!marker.exists());
+    }
+
+    #[test]
+    fn consecutive_edits_preserve_full_read_continuity() {
+        let fixture = tempfile::tempdir().unwrap();
+        let root = fixture.path();
+        let target = root.join("notes.txt");
+        fs::write(&target, "alpha\nbeta\ngamma\n").unwrap();
+        let ctx = ToolContext {
+            memory_binding: nola_domain::memory_owner::MemoryExecutionBinding::local_profile(),
+            language_services: Default::default(),
+            skills: Default::default(),
+            allowed_dirs: vec![root.to_path_buf()],
+            policy: crate::tools::ToolExecutionPolicy::new(Vec::new(), true, "allow".into(), Vec::new()),
+            permission_scope: Default::default(),
+            cancellation: Default::default(),
+            plan_state: Default::default(),
+            output_store: ToolOutputStore::new(root.join("outputs")),
+            browser: BrowserRuntime::new(root.join("browser")),
+        };
+        let _scope = ctx.permission_scope.enter();
+        let read = read_file(json!({"path": target}).as_object().unwrap(), &ctx);
+        assert!(!read.error, "{}", read.text);
+
+        let edit1 = edit_file(
+            json!({"path": target, "old_text": "alpha", "new_text": "ALPHA"}).as_object().unwrap(),
+            &ctx,
+        );
+        assert!(!edit1.error, "first edit failed: {}", edit1.text);
+
+        let edit2 = edit_file(
+            json!({"path": target, "old_text": "beta", "new_text": "BETA"}).as_object().unwrap(),
+            &ctx,
+        );
+        assert!(!edit2.error, "second consecutive edit must keep read continuity: {}", edit2.text);
+        assert_eq!(fs::read_to_string(&target).unwrap(), "ALPHA\nBETA\ngamma\n");
+    }
+}
+
+fn parse_direct_formatter_argv(
+    root: &Path,
+    command: &str,
+) -> Result<(PathBuf, String, Vec<std::ffi::OsString>), ToolOutcome> {
+    let trimmed = command.trim();
+    if trimmed.is_empty() {
+        return Err(error("formatter command is empty".to_string()));
+    }
+    let (working_dir, rest) = if let Some(after_cd) = trimmed.strip_prefix("cd ") {
+        let Some((dir_part, cmd_part)) = after_cd.split_once(" && ") else {
+            return Err(error(
+                "formatter command with `cd` must use the safe `cd <relative_dir> && <cmd>` form"
+                    .to_string(),
+            ));
+        };
+        let rel_dir = dir_part.trim();
+        let candidate = Path::new(rel_dir);
+        if rel_dir.is_empty()
+            || candidate.is_absolute()
+            || candidate
+                .components()
+                .any(|c| matches!(c, std::path::Component::ParentDir))
+        {
+            return Err(error(format!(
+                "unsafe formatter working directory rejected: {rel_dir}"
+            )));
+        }
+        (root.join(candidate), cmd_part.trim())
+    } else {
+        (root.to_path_buf(), trimmed)
+    };
+    if rest.chars().any(|ch| {
+        matches!(
+            ch,
+            ';' | '|' | '&' | '`' | '$' | '<' | '>' | '\n' | '\r' | '(' | ')'
+        )
+    }) {
+        return Err(error(format!(
+            "formatter command contains disallowed shell metacharacters and was rejected: {command}"
+        )));
+    }
+    let tokens: Vec<String> = rest.split_whitespace().map(ToOwned::to_owned).collect();
+    let Some((program, args)) = tokens.split_first() else {
+        return Err(error("formatter command has no executable".to_string()));
+    };
+    Ok((
+        working_dir,
+        program.clone(),
+        args.iter().map(std::ffi::OsString::from).collect(),
+    ))
+}
+
+fn run_formatter_argv(
+    working_dir: &Path,
+    program: &str,
+    args: &[std::ffi::OsString],
+    cancellation: &RuntimeExecutionControl,
+) -> Result<std::process::Output, ToolOutcome> {
+    let mut cmd = Command::new(program);
+    crate::native_sandbox::scrub_sensitive_env(&mut cmd);
+    cmd.args(args)
+        .current_dir(working_dir)
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped());
+    #[cfg(unix)]
+    cmd.process_group(0);
+    let child = match cmd.spawn() {
+        Ok(child) => child,
+        Err(err) => {
+            return Err(error(format!(
+                "formatter command `{program}` failed to start: {err}"
+            )))
+        }
+    };
+    wait_for_child_output(
+        child,
+        cancellation,
+        Duration::from_secs(120),
+        "formatter command",
+    )
 }
 
 fn run_shell_command(
@@ -1158,25 +1588,8 @@ fn run_shell_command(
         return Err(error_data(json!({"error":"native_shell_sandbox_requires_supervision","command_not_started":true,
             "message":"This direct formatter entry has no supervised sandbox lifecycle. Run the command through the normal bash tool; the required policy was not dropped."})));
     }
-    let mut cmd = Command::new("sh");
-    crate::native_sandbox::scrub_sensitive_env(&mut cmd);
-    cmd.arg("-lc")
-        .arg(command)
-        .current_dir(root)
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped());
-    #[cfg(unix)]
-    cmd.process_group(0);
-    let child = match cmd.spawn() {
-        Ok(child) => child,
-        Err(err) => return Err(error(format!("formatter command failed to start: {err}"))),
-    };
-    wait_for_child_output(
-        child,
-        cancellation,
-        Duration::from_secs(120),
-        "formatter command",
-    )
+    let (working_dir, program, args) = parse_direct_formatter_argv(root, command)?;
+    run_formatter_argv(&working_dir, &program, &args, cancellation)
 }
 
 const MAX_CHILD_OUTPUT_BYTES: usize = 8 * 1024 * 1024;

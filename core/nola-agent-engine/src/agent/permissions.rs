@@ -1225,8 +1225,16 @@ mod tests {
         };
 
         assert_eq!(
-            rules.evaluate(&subject("rm second.txt")),
+            rules.evaluate(&subject("rm first.txt")),
             PermissionPolicyDecision::Allow
+        );
+        assert_eq!(
+            rules.evaluate(&subject("rm second.txt")),
+            PermissionPolicyDecision::Ask
+        );
+        assert_eq!(
+            rules.evaluate(&subject("rm -rf *")),
+            PermissionPolicyDecision::Ask
         );
         assert_eq!(
             rules.evaluate(&subject("find . -name other.txt -delete")),
@@ -1239,7 +1247,7 @@ mod tests {
         let first = permission_resource_for_input(
             "bash",
             Some("shell.execute"),
-            &json!({"command": "rm first.txt", "cwd": "/workspace"}),
+            &json!({"command": "cargo test unit_a", "cwd": "/workspace"}),
         );
         let (capability_pattern, resource_pattern) =
             conversation_permission_rule("shell.execute", first);
@@ -1261,11 +1269,11 @@ mod tests {
         };
 
         assert_eq!(
-            rules.evaluate(&subject("rm second.txt", "/workspace")),
+            rules.evaluate(&subject("cargo test unit_b", "/workspace")),
             PermissionPolicyDecision::Allow
         );
         assert_eq!(
-            rules.evaluate(&subject("rm second.txt", "/other")),
+            rules.evaluate(&subject("cargo test unit_b", "/other")),
             PermissionPolicyDecision::Ask
         );
         assert_eq!(
@@ -1279,7 +1287,7 @@ mod tests {
         let implicit_first = permission_resource_for_input(
             "bash",
             Some("shell.execute"),
-            &json!({"command": "rm first.txt"}),
+            &json!({"command": "cargo test unit_a"}),
         );
         let (capability_pattern, resource_pattern) =
             conversation_permission_rule("shell.execute", implicit_first);
@@ -1297,7 +1305,7 @@ mod tests {
                 resource: permission_resource_for_input(
                     "bash",
                     Some("shell.execute"),
-                    &json!({"command": "rm second.txt"}),
+                    &json!({"command": "cargo test unit_b"}),
                 ),
             }),
             PermissionPolicyDecision::Allow

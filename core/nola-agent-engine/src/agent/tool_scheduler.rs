@@ -11,7 +11,7 @@ use super::tool_lifecycle::{ToolCallState, ToolCallStatus};
 
 /// Prevents a single model step from exhausting Host threads, descriptors, or
 /// network sockets. Remaining safe calls are admitted in subsequent batches.
-pub use nola_kernel::MAX_CONCURRENT_TOOL_BATCH_SIZE;
+pub const MAX_CONCURRENT_TOOL_BATCH_SIZE: usize = 12;
 
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct ToolBatchPlan {
@@ -85,7 +85,7 @@ pub fn plan_next_tool_batch(
     catalog: &HostCapabilityCatalog,
 ) -> ToolBatchPlan {
     use nola_domain::{ToolBatchCandidate, ToolBatchCandidateState, ToolBatchCapabilityFacts};
-    let candidates = tools
+    let mut candidates = tools
         .iter()
         .map(|tool| ToolBatchCandidate {
             call_id: tool.call_id.0.clone(),
@@ -113,13 +113,50 @@ pub fn plan_next_tool_batch(
                 .unwrap_or_default(),
         })
         .collect::<Vec<_>>();
-    ToolBatchPlan {
-        call_ids: nola_kernel::plan_tool_batch(&candidates)
-            .call_ids
-            .into_iter()
-            .map(CallId::from_string)
-            .collect(),
+    let is_concurrent_safe = |candidate: &ToolBatchCandidate| {
+        candidate.capability.available
+            && candidate.capability.is_tool
+            && candidate.capability.concurrent_safe
+    };
+    let mut selected = Vec::new();
+    loop {
+        let remaining = MAX_CONCURRENT_TOOL_BATCH_SIZE.saturating_sub(selected.len());
+        if remaining == 0 {
+            break;
+        }
+        let chunk = nola_kernel::plan_tool_batch(&candidates).call_ids;
+        if chunk.is_empty() {
+            break;
+        }
+        let chunk_len = chunk.len();
+        let first_is_concurrent = candidates
+            .iter()
+            .find(|candidate| candidate.call_id == chunk[0])
+            .is_some_and(is_concurrent_safe);
+        for call_id in chunk.into_iter().take(remaining) {
+            if let Some(candidate) = candidates
+                .iter_mut()
+                .find(|candidate| candidate.call_id == call_id)
+            {
+                candidate.state = ToolBatchCandidateState::Inactive;
+            }
+            selected.push(CallId::from_string(call_id));
+        }
+        if !first_is_concurrent
+            || chunk_len < nola_kernel::MAX_CONCURRENT_TOOL_BATCH_SIZE
+            || selected.len() >= MAX_CONCURRENT_TOOL_BATCH_SIZE
+        {
+            break;
+        }
+        let next_pending_is_concurrent = candidates
+            .iter()
+            .find(|candidate| candidate.state == ToolBatchCandidateState::Pending)
+            .is_some_and(is_concurrent_safe);
+        if !next_pending_is_concurrent {
+            break;
+        }
     }
+    ToolBatchPlan { call_ids: selected }
 }
 
 #[cfg(test)]
@@ -152,7 +189,7 @@ mod tests {
         }
     }
     fn calls() -> Vec<ToolCallState> {
-        (0..5)
+        (0..13)
             .map(|id| {
                 ToolCallState::from_model(ModelToolCall {
                     call_id: CallId::from_string(id.to_string()),
@@ -171,14 +208,14 @@ mod tests {
         let mut tools = calls();
         assert_eq!(
             plan_next_tool_batch(&tools, &catalog).call_ids,
-            tools[..4]
+            tools[..12]
                 .iter()
                 .map(|t| t.call_id.clone())
                 .collect::<Vec<_>>()
         );
-        assert_eq!(MAX_CONCURRENT_TOOL_BATCH_SIZE, 4);
+        assert_eq!(MAX_CONCURRENT_TOOL_BATCH_SIZE, 12);
         for status in [ToolCallStatus::Running, ToolCallStatus::AwaitingPermission] {
-            tools[4].status = status;
+            tools[12].status = status;
             assert!(
                 plan_next_tool_batch(&tools, &catalog).is_empty(),
                 "barrier beyond batch must block"
@@ -192,14 +229,34 @@ mod tests {
             ToolCallStatus::Cancelled,
         ] {
             tools = calls();
-            for tool in &mut tools[..4] {
+            for tool in &mut tools[..12] {
                 tool.status = status;
             }
             assert_eq!(
                 plan_next_tool_batch(&tools, &catalog).call_ids,
-                vec![tools[4].call_id.clone()]
+                vec![tools[12].call_id.clone()]
             );
         }
+    }
+
+    #[test]
+    fn concurrent_batch_stops_before_serial_tool_boundary() {
+        let mut catalog = HostCapabilityCatalog::empty("host");
+        catalog.capabilities.insert("tool".into(), descriptor());
+        let mut serial = descriptor();
+        serial.id = "serial_tool".into();
+        serial.parallelism = HostCapabilityParallelism::Serial;
+        catalog.capabilities.insert("serial_tool".into(), serial);
+
+        let mut tools = calls();
+        tools[6].name = "serial_tool".into();
+        assert_eq!(
+            plan_next_tool_batch(&tools, &catalog).call_ids,
+            tools[..6]
+                .iter()
+                .map(|t| t.call_id.clone())
+                .collect::<Vec<_>>()
+        );
     }
     #[test]
     fn unknown_unavailable_non_tool_and_serial_are_singletons() {

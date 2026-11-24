@@ -20,6 +20,10 @@ static ACCESS_KEY: LazyLock<Regex> = LazyLock::new(|| {
     r#"(?-u:\b)(?:sk-[A-Za-z0-9_-]{16,}|gh[pousr]_[A-Za-z0-9_]{16,}|github_pat_[A-Za-z0-9_]{16,}|AIza[A-Za-z0-9_-]{35}|xox[baprs]-[A-Za-z0-9-]{12,}|(?:AKIA|ASIA)[A-Z0-9]{16}(?-u:\b))"#
 ).expect("valid accessKey pattern")
 });
+static JWT: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(r#"(?-u:\b)eyJ[A-Za-z0-9_-]{8,}\.eyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}(?-u:\b)"#)
+        .expect("valid jwt pattern")
+});
 static USERINFO: LazyLock<Regex> = LazyLock::new(|| {
     Regex::new(r#"(?i)([a-z][a-z0-9+.-]*://)([^/\s@?#]+)@"#).expect("valid urlUserinfo pattern")
 });
@@ -172,12 +176,40 @@ fn is_bind_placeholder(value: &str) -> bool {
     false
 }
 
+fn has_known_secret_prefix(value: &str) -> bool {
+    value.starts_with("sk-")
+        || value.starts_with("ghp_")
+        || value.starts_with("gho_")
+        || value.starts_with("ghu_")
+        || value.starts_with("ghs_")
+        || value.starts_with("ghr_")
+        || value.starts_with("github_pat_")
+        || value.starts_with("AKIA")
+        || value.starts_with("ASIA")
+        || value.starts_with("AIza")
+        || value.starts_with("xoxb-")
+        || value.starts_with("xoxa-")
+        || value.starts_with("xoxp-")
+        || value.starts_with("xoxr-")
+        || value.starts_with("xoxs-")
+        || (value.starts_with("eyJ") && value.matches('.').count() == 2)
+}
+
 /// Distinguishes ordinary schema/config/code values (e.g. `card_token: sha256`,
-/// `session_token: mask_secret`, `TOKEN=$API_TOKEN`, `token: os.environ["X"]`)
-/// from literal secrets so wire privacy redaction does not corrupt source files
-/// or YAML policies.
+/// `session_token: mask_secret`, `TOKEN=$API_TOKEN`, `let token = "EOF"`,
+/// `password = "test"`, `"token": "foo"`) from literal credentials so wire
+/// privacy redaction does not corrupt source files, tests, or YAML policies.
 fn is_non_secret_labeled_value(inner: &str, quoted: bool) -> bool {
     if inner.is_empty() || inner == "[CREDENTIAL]" || is_bind_placeholder(inner) {
+        return true;
+    }
+    if has_known_secret_prefix(inner) {
+        return false;
+    }
+    // Generic labeled patterns require a credential-length value (>= 16 bytes)
+    // so short code literals like `let token = "EOF"` or `password = "test"`
+    // are never corrupted.
+    if inner.len() < 16 {
         return true;
     }
     if quoted {
@@ -272,7 +304,7 @@ pub fn redact_secrets_text(input: &str, placeholder: &str) -> (String, u32) {
     let mut text = input.to_string();
     let mut count = 0_u32;
 
-    for pattern in [&*PRIVATE_KEY, &*ACCESS_KEY] {
+    for pattern in [&*PRIVATE_KEY, &*ACCESS_KEY, &*JWT] {
         let matches = pattern.find_iter(&text).count() as u32;
         if matches > 0 {
             count = count.saturating_add(matches);
@@ -344,6 +376,7 @@ fn redact(text: &mut String, credential: &str, options: RedactionOptions) {
     for (pattern, replacement) in [
         (&*PRIVATE_KEY, "[CREDENTIAL]"),
         (&*ACCESS_KEY, "[CREDENTIAL]"),
+        (&*JWT, "[CREDENTIAL]"),
         (&*USERINFO, "${1}[CREDENTIAL]@"),
         (&*BEARER, "${1}[CREDENTIAL]"),
     ] {
@@ -390,10 +423,15 @@ fn secret_field(name: &str) -> bool {
         "_api_key",
         "_access_token",
         "_refresh_token",
+        "_id_token",
+        "_auth_token",
+        "_bearer_token",
         "_client_secret",
         "_secret_access_key",
+        "_secret_key",
+        "_private_key",
         "_password",
-        "_token",
+        "_passwd",
     ]
     .iter()
     .any(|suffix| field.ends_with(suffix))
@@ -407,13 +445,16 @@ fn secret_field(name: &str) -> bool {
             | "authorization"
             | "password"
             | "passwd"
-            | "token"
             | "accesstoken"
             | "refreshtoken"
+            | "idtoken"
+            | "authtoken"
+            | "bearertoken"
             | "clientsecret"
-            | "cookie"
-            | "setcookie"
+            | "secretkey"
+            | "secretaccesskey"
             | "privatekey"
+            | "setcookie"
     )
 }
 
@@ -470,14 +511,9 @@ fn tool_data(
             }
             redact(text, credential, options);
         }
-        Value::Number(number) => {
-            let original = number.to_string();
-            let mut text = original.clone();
-            redact(&mut text, credential, options);
-            if text != original {
-                *value = Value::String(text);
-            }
-        }
+        // Never run string regex redaction on JSON numbers: timestamps, IDs,
+        // counters, and token budgets must retain their exact numeric type.
+        Value::Number(_) => {}
         _ => {}
     }
 }
@@ -651,7 +687,7 @@ mod tests {
             "messages":[{"role":"user","content":[{"type":"text","text":person}]},
                 {"role":"assistant","tool_calls":[{"id":"call_1","function":{"name":"lookup",
                      "arguments":r#"{"accessToken":"opaque value","email":"anne+test@example.org"}"#}}]},
-                {"role":"tool","tool_call_id":"call_1","content":r#"{"nested":{"Cookie":"session=example","phone":13800138000}}"#},
+                {"role":"tool","tool_call_id":"call_1","content":r#"{"nested":{"Set-Cookie":"session=example","phone":"13800138000"}}"#},
                 {"role":"user","content":[{"type":"tool_result","tool_use_id":"call_1","content":person},
                     {"type":"tool_use","name":"lookup","id":"call_2","input":{"passwd":"my secret"}}]}],
             "input":[{"type":"function_call_output","call_id":"call_2","output":"Bearer fixture-bearer-value"},
@@ -691,7 +727,7 @@ mod tests {
             "required":["title"]}}}],
         "input":[{"type":"function_call_output","call_id":"live","output":{
             "first@example.org":1, "second@example.org":2,
-            "serialized":r#"{"Cookie":"raw cookie value"}"#
+            "serialized":r#"{"Authorization":"raw auth header value"}"#
         }}]});
         redact_model_request(&mut request, "");
         assert_eq!(
@@ -713,12 +749,12 @@ mod tests {
         let result = &request["input"][0]["output"];
         assert_eq!(result["[EMAIL]"], 1);
         assert_eq!(result["[EMAIL] 2"], 2);
-        assert_eq!(result["serialized"], r#"{"Cookie":"[CREDENTIAL]"}"#);
+        assert_eq!(result["serialized"], r#"{"Authorization":"[CREDENTIAL]"}"#);
     }
 
     #[test]
     fn model_privacy_handles_text_credentials_and_preserves_ordinary_content() {
-        let mut body = json!({"input":"文档 v1.2.3，日期 2026-11-23，订单 12345678901234\npassword='multi word' token=sample-url-value&x=1 NOLA_HOST_TOKEN=freeformvalue\n-----BEGIN PRIVATE KEY-----\nprivate fixture\n-----END PRIVATE KEY-----\n配置 fixture-secret-key"});
+        let mut body = json!({"input":"文档 v1.2.3，日期 2026-11-23，订单 12345678901234\npassword='multi word live secret' token=sample-url-value&x=1 NOLA_HOST_TOKEN=freeformlivevalue123\n-----BEGIN PRIVATE KEY-----\nprivate fixture\n-----END PRIVATE KEY-----\n配置 fixture-secret-key"});
         redact_model_request(&mut body, "fixture-secret-key");
         assert_eq!(body["input"], "文档 v1.2.3，日期 2026-11-23，订单 12345678901234\npassword='[CREDENTIAL]' token=[CREDENTIAL]&x=1 NOLA_HOST_TOKEN=[CREDENTIAL]\n[CREDENTIAL]\n配置 [CREDENTIAL]");
         let once = body.clone();
@@ -801,7 +837,7 @@ mod tests {
 
     #[test]
     fn redact_secrets_text_preserves_pii_and_is_idempotent() {
-        let input = "email alice@example.com phone 13800138000 url https://u:p@git.example.com/r.git token=abc123456789";
+        let input = "email alice@example.com phone 13800138000 url https://u:p@git.example.com/r.git token=abc1234567890def";
         let (first, count) = redact_secrets_text(input, "[REDACTED]");
         assert_eq!(count, 2);
         assert_eq!(
@@ -823,8 +859,8 @@ mod tests {
             "echo \"TOKEN=$DISPATCH_EVENT_API_TOKEN\"\n",
             "echo \"LEN=${#DISPATCH_EVENT_API_TOKEN}\"\n",
             "TOKEN=\n/usr/bin/python3\n",
-            "real_token=abc123456789\n",
-            "client_secret='my live secret'\n",
+            "real_token=abc1234567890def\n",
+            "client_secret='my live secret value 123'\n",
         );
         let mut body = json!({
             "messages": [{"role": "tool", "content": yaml_and_shell}]
@@ -844,8 +880,91 @@ mod tests {
         assert!(content.contains("TOKEN=\n/usr/bin/python3\n"), "{content}");
         assert!(content.contains("real_token=[CREDENTIAL]"), "{content}");
         assert!(content.contains("client_secret='[CREDENTIAL]'"), "{content}");
-        assert!(!content.contains("abc123456789"));
-        assert!(!content.contains("my live secret"));
+        assert!(!content.contains("abc1234567890def"));
+        assert!(!content.contains("my live secret value 123"));
+    }
+
+    #[test]
+    fn preserves_json_numbers_pagination_tokens_and_short_code_literals() {
+        let mut body = json!({
+            "messages": [
+                {
+                    "role": "tool",
+                    "tool_call_id": "call_page",
+                    "content": json!({
+                        "next_page_token": "cursor-page-2",
+                        "page_token": "p2",
+                        "continuation_token": "cont-99",
+                        "cancellation_token": "cancel-1",
+                        "csrf_token": "csrf-form",
+                        "token": "EOF",
+                        "cookie": "theme=dark",
+                        "max_tokens": 4096,
+                        "prompt_tokens": 1200,
+                        "completion_tokens": 350,
+                        "timestamp_ms": 13800138000_i64,
+                        "api_key": "short-key",
+                        "access_token": "live-access",
+                        "refresh_token": "live-refresh",
+                        "id_token": "live-id",
+                        "auth_token": "live-auth",
+                        "bearer_token": "live-bearer",
+                        "client_secret": "live-client-secret",
+                        "private_key": "live-private",
+                        "secret_key": "live-secret",
+                        "password": "live-password",
+                        "passwd": "live-passwd",
+                        "authorization": "Basic abc",
+                        "x-api-key": "header-key"
+                    }).to_string()
+                },
+                {
+                    "role": "user",
+                    "content": "let token = \"EOF\";\nlet password = \"test\";\nconst obj = {\"token\": \"foo\"};\nconst jwt = \"eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxMjM0NTY3ODkwIn0.signaturevalue123\";\nconst sk = \"sk-proj1234567890abcdef\";\nconst gh = \"ghp_1234567890abcdef1234\";"
+                }
+            ]
+        });
+
+        redact_model_request(&mut body, "");
+
+        let tool_json: Value =
+            serde_json::from_str(body["messages"][0]["content"].as_str().unwrap()).unwrap();
+        assert_eq!(tool_json["next_page_token"], "cursor-page-2");
+        assert_eq!(tool_json["page_token"], "p2");
+        assert_eq!(tool_json["continuation_token"], "cont-99");
+        assert_eq!(tool_json["cancellation_token"], "cancel-1");
+        assert_eq!(tool_json["csrf_token"], "csrf-form");
+        assert_eq!(tool_json["token"], "EOF");
+        assert_eq!(tool_json["cookie"], "theme=dark");
+        assert_eq!(tool_json["max_tokens"], json!(4096));
+        assert_eq!(tool_json["prompt_tokens"], json!(1200));
+        assert_eq!(tool_json["completion_tokens"], json!(350));
+        assert_eq!(tool_json["timestamp_ms"], json!(13800138000_i64));
+        for secret_key in [
+            "api_key",
+            "access_token",
+            "refresh_token",
+            "id_token",
+            "auth_token",
+            "bearer_token",
+            "client_secret",
+            "private_key",
+            "secret_key",
+            "password",
+            "passwd",
+            "authorization",
+            "x-api-key",
+        ] {
+            assert_eq!(tool_json[secret_key], "[CREDENTIAL]", "key={secret_key}");
+        }
+
+        let code = body["messages"][1]["content"].as_str().unwrap();
+        assert!(code.contains("let token = \"EOF\";"), "{code}");
+        assert!(code.contains("let password = \"test\";"), "{code}");
+        assert!(code.contains("{\"token\": \"foo\"}"), "{code}");
+        assert!(!code.contains("eyJhbGciOiJIUzI1NiJ9"), "{code}");
+        assert!(!code.contains("sk-proj1234567890abcdef"), "{code}");
+        assert!(!code.contains("ghp_1234567890abcdef1234"), "{code}");
     }
 
     #[test]

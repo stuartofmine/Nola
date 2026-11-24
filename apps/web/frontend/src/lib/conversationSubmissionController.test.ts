@@ -1,6 +1,11 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { createConversationSubmissionController, observedGoalResumeRoute } from './conversationSubmissionController.ts';
+import {
+    HISTORY_JOURNAL_CONCURRENCY,
+    createConversationSubmissionController,
+    mapWithConcurrency,
+    observedGoalResumeRoute,
+} from './conversationSubmissionController.ts';
 import type { ConversationSubmissionSnapshot } from './conversationSubmissionController.ts';
 import { ApiError } from './api.ts';
 import { createChatTurn } from './chatTurn.ts';
@@ -262,4 +267,167 @@ for (const outcome of ['success', 'history-in-flight', 'wrong-host', 'unavailabl
         assert.equal(historyReads,2,'Exactly initial history and one independent metadata read');
         assert.ok(paths.every(path=>!path.endsWith('/submit')&&!path.endsWith('/resume')&&!path.endsWith('/control')));
     }finally{controller.dispose();}
+});
+
+test('mapWithConcurrency bounds parallelism, preserves exact order, and propagates first failure', async () => {
+    const items = Array.from({ length: 14 }, (_, i) => i);
+    let inFlight = 0;
+    let peak = 0;
+    const output = await mapWithConcurrency(items, HISTORY_JOURNAL_CONCURRENCY, async value => {
+        inFlight++;
+        peak = Math.max(peak, inFlight);
+        // Reverse finish delays so out-of-order completion proves result order is preserved.
+        await new Promise(resolve => setTimeout(resolve, (items.length - value) * 2));
+        inFlight--;
+        return `msg-${value}`;
+    });
+    assert.equal(HISTORY_JOURNAL_CONCURRENCY, 6);
+    assert.equal(peak, 6);
+    assert.deepEqual(output, items.map(value => `msg-${value}`));
+
+    let aborted = false;
+    await assert.rejects(
+        () => mapWithConcurrency(items, 4, async value => {
+            await new Promise(resolve => setTimeout(resolve, 2));
+            if (value === 2) throw new Error('boom-2');
+            return value;
+        }, () => true, () => { aborted = true; }),
+        /boom-2/,
+    );
+    assert.equal(aborted, true);
+});
+
+test('loadHistory hydrates assistant journal heads with bounded concurrency up to 6 and preserves message order', async () => {
+    const owner = { hostId: 'host', clientId: 'client', conversationId: 'conversation', generation: 1 };
+    const count = 10;
+    const fixtures = Array.from({ length: count }, (_, idx) => {
+        const turn = createChatTurn(owner, `hist-run-${idx}`);
+        const fx = terminalFixture(turn, 'completed', [], true, `user-${idx}`);
+        return { idx, turn, fx };
+    });
+    const byMessageId = new Map(fixtures.map(item => [item.turn.identity.assistantMessageId, item]));
+    const bySnapshotId = new Map<string, (typeof fixtures)[number]>();
+    let activeOpens = 0;
+    let peakOpens = 0;
+
+    const storage = new SourceSubmissionStorage({ length: 0, key: () => null, getItem: () => null, setItem: () => {}, removeItem: () => {} });
+    const workspace = {
+        load: async () => {}, isLoaded: () => true, restoreSubmissions: async () => [],
+        updateSubmission: async () => {}, retireSubmission: async () => {},
+        submissions: new Map(), replyNotices: new Map(), knowledge: new Map(),
+        text: { read: () => '' }, attachments: { read: () => [] }, completions: { watch: async () => {} },
+    };
+    let snapshot: ConversationSubmissionSnapshot | undefined;
+    const controller = createConversationSubmissionController({
+        conversation: { conversationId: 'conversation' } as never,
+        hostId: 'host', clientId: 'client', storage,
+        workspace: workspace as never, recoveryOwners: async () => [],
+        request: (async (path: string, options?: RequestInit) => {
+            if (path.includes('/queued-input')) return { head: null, dispatch: null };
+            if (path.endsWith('/observe')) {
+                return { source_host_id: 'host', conversation_id: 'conversation', client_id: 'client', goal_control: null, result: null };
+            }
+            if (path.includes('/messages')) {
+                return {
+                    sourceHostId: 'host',
+                    assistantJournalHeads: fixtures.map(item => item.fx.through),
+                    conversationProjection: {
+                        contract_version: 1,
+                        conversation_id: 'conversation',
+                        revision: count,
+                        messages: fixtures.map(item => ({
+                            message_id: item.turn.identity.assistantMessageId,
+                            role: 'assistant',
+                            state: 'completed',
+                            revision: 2,
+                            created_at_ms: item.idx * 1000,
+                            parts: [],
+                        })),
+                    },
+                    messageWindow: { projectionRevision: count, eventSequence: count, before: null, hasMore: false, totalCount: count },
+                };
+            }
+            if (path.endsWith('/journal')) {
+                const body = JSON.parse(String(options?.body));
+                if (body.operation === 'open_snapshot') {
+                    const entry = byMessageId.get(body.at.identity.assistant_message_id)!;
+                    activeOpens++;
+                    peakOpens = Math.max(peakOpens, activeOpens);
+                    await new Promise(resolve => setTimeout(resolve, (count - entry.idx) * 3));
+                    const snapshotId = `snap-${entry.idx}`;
+                    bySnapshotId.set(snapshotId, entry);
+                    activeOpens--;
+                    return { source_host_id: 'host', result: { snapshot_id: snapshotId, at: body.at } };
+                }
+                if (body.operation === 'context_usage') {
+                    return { source_host_id: 'host', result: null };
+                }
+                const entry = bySnapshotId.get(body.snapshot?.snapshot_id) ?? byMessageId.get(body.at?.identity?.assistant_message_id);
+                if (!entry) throw new Error(`Unexpected journal request: ${body.operation}`);
+                if (body.operation === 'parts') {
+                    const text = `Reply ${entry.idx}`;
+                    const bytes = String(new TextEncoder().encode(text).length);
+                    return {
+                        source_host_id: 'host',
+                        result: {
+                            at: entry.fx.through,
+                            parts: [{
+                                identity: entry.fx.through.identity,
+                                part_id: `part-${entry.idx}`,
+                                generation: '1',
+                                revision: '1',
+                                metadata_revision: '1',
+                                order_key: { section: 'transcript', position: '1' },
+                                metadata: { kind: 'text', data: { visibility: 'public', review: 'approved' } },
+                                bodies: [{
+                                    field: 'markdown',
+                                    content_generation: '1',
+                                    utf8_bytes: bytes,
+                                    chunk_count: '1',
+                                    content_root: 'd'.repeat(64),
+                                }],
+                            }],
+                            next_part_id: null,
+                        },
+                    };
+                }
+                if (body.operation === 'range') {
+                    const text = `Reply ${entry.idx}`;
+                    const bytes = String(new TextEncoder().encode(text).length);
+                    return {
+                        source_host_id: 'host',
+                        result: {
+                            offset_bytes: '0',
+                            next_offset_bytes: bytes,
+                            total_utf8_bytes: bytes,
+                            text,
+                            end_of_content: true,
+                        },
+                    };
+                }
+                return entry.fx.transport(body);
+            }
+            throw new Error(`Unexpected path: ${path}`);
+        }) as never,
+    });
+    try {
+        controller.attach(value => { snapshot = value; });
+        await controller.initialize();
+        await new Promise(resolve => setTimeout(resolve, 20));
+        const current = snapshot as ConversationSubmissionSnapshot | undefined;
+        assert.ok(peakOpens > 1 && peakOpens <= HISTORY_JOURNAL_CONCURRENCY, `Expected 2..6 concurrent journal opens, got ${peakOpens}`);
+        assert.equal(current?.error, '');
+        const timelineMessages = current?.timeline?.messages ?? [];
+        assert.deepEqual(
+            timelineMessages.map(m => m.id),
+            fixtures.map(item => item.turn.identity.assistantMessageId),
+        );
+        for (const item of fixtures) {
+            const matched = timelineMessages.find(m => m.id === item.turn.identity.assistantMessageId);
+            assert.ok(matched !== undefined && matched.parts.length === 1, `Expected hydrated part for message ${item.idx}`);
+            assert.equal(matched.parts[0].value.markdown, `Reply ${item.idx}`);
+        }
+    } finally {
+        controller.dispose();
+    }
 });

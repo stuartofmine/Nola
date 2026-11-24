@@ -80,7 +80,19 @@ fn read_file(args: &Map<String, Value>, ctx: &ToolContext) -> ToolOutcome {
         }
         let snapshot = tool_try!(ctx.output_store.persist_media(&bytes).map_err(|err| error(format!("Media snapshot failed: {err}"))));
         let mut outcome = ok(
-            format!("Read {} as {mime} ({} bytes). Visual content is attached when the selected model supports it; text extraction is not visual inspection.", target.display(), bytes.len()),
+            if mime == "application/pdf" {
+                format!(
+                    "Read {} as {mime} ({} bytes). Native PDF attachment requires a provider transport with native PDF input; if the active transport only supports image input, call read_file with pdf_page=1 to render a page to PNG (text extraction is not visual inspection).",
+                    target.display(),
+                    bytes.len()
+                )
+            } else {
+                format!(
+                    "Read {} as {mime} ({} bytes). Visual content is attached when the selected model supports it; text extraction is not visual inspection.",
+                    target.display(),
+                    bytes.len()
+                )
+            },
             format!("Read {}", target.display()),
         ).with_file_artifact(&snapshot, "read");
         if let Some(artifact) = outcome.artifacts.last_mut() {
@@ -154,7 +166,7 @@ fn read_file(args: &Map<String, Value>, ctx: &ToolContext) -> ToolOutcome {
     }
     let mut data = json!({
         "path": target.to_string_lossy(),
-        "content": observed.raw_content,
+        "content": observed.raw_content.as_deref().unwrap_or(&observed.text),
         "content_kind": if observed.raw_content.is_some() { "utf8_source" } else { "extracted_document" },
         "next_start_line": observed.next_start_line,
         "complete": observed.observation.as_ref().is_some_and(|observation|

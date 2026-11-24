@@ -377,58 +377,395 @@ fn interactive_mention_candidates(config: &Config, prefix: &str) -> Vec<(String,
     candidates
 }
 
+const WORKSPACE_FILE_COMPLETION_SCAN_LIMIT: usize = 4_000;
+
+#[derive(Debug, Clone, Copy)]
+enum GitignoreGlobToken {
+    DoubleStarSlash,
+    DoubleStar,
+    Star,
+    AnyNonSlash,
+    Literal(char),
+}
+
+fn compile_gitignore_glob(pattern: &str) -> Vec<GitignoreGlobToken> {
+    let chars: Vec<char> = pattern.chars().collect();
+    let mut tokens = Vec::with_capacity(chars.len());
+    let mut idx = 0usize;
+    while idx < chars.len() {
+        if chars[idx] == '*' && idx + 1 < chars.len() && chars[idx + 1] == '*' {
+            if idx + 2 < chars.len() && chars[idx + 2] == '/' {
+                tokens.push(GitignoreGlobToken::DoubleStarSlash);
+                idx += 3;
+            } else {
+                tokens.push(GitignoreGlobToken::DoubleStar);
+                idx += 2;
+            }
+        } else if chars[idx] == '*' {
+            tokens.push(GitignoreGlobToken::Star);
+            idx += 1;
+        } else if chars[idx] == '?' {
+            tokens.push(GitignoreGlobToken::AnyNonSlash);
+            idx += 1;
+        } else {
+            tokens.push(GitignoreGlobToken::Literal(chars[idx]));
+            idx += 1;
+        }
+    }
+    tokens
+}
+
+fn gitignore_glob_matches(pattern: &str, text: &str) -> bool {
+    let tokens = compile_gitignore_glob(pattern);
+    let chars: Vec<char> = text.chars().collect();
+    let mut prev = vec![false; chars.len() + 1];
+    prev[0] = true;
+    for token in tokens {
+        let mut curr = vec![false; chars.len() + 1];
+        match token {
+            GitignoreGlobToken::Literal(expected) => {
+                for j in 0..chars.len() {
+                    if prev[j] && chars[j] == expected {
+                        curr[j + 1] = true;
+                    }
+                }
+            }
+            GitignoreGlobToken::AnyNonSlash => {
+                for j in 0..chars.len() {
+                    if prev[j] && chars[j] != '/' {
+                        curr[j + 1] = true;
+                    }
+                }
+            }
+            GitignoreGlobToken::Star => {
+                for j in 0..=chars.len() {
+                    if prev[j] {
+                        curr[j] = true;
+                    }
+                    if j > 0 && curr[j - 1] && chars[j - 1] != '/' {
+                        curr[j] = true;
+                    }
+                }
+            }
+            GitignoreGlobToken::DoubleStar => {
+                let mut seen = false;
+                for j in 0..=chars.len() {
+                    if prev[j] {
+                        seen = true;
+                    }
+                    if seen {
+                        curr[j] = true;
+                    }
+                }
+            }
+            GitignoreGlobToken::DoubleStarSlash => {
+                let mut seen = false;
+                for j in 0..=chars.len() {
+                    if prev[j] {
+                        curr[j] = true;
+                        seen = true;
+                    }
+                    if j > 0 && seen && chars[j - 1] == '/' {
+                        curr[j] = true;
+                    }
+                }
+            }
+        }
+        prev = curr;
+    }
+    prev[chars.len()]
+}
+
+#[derive(Debug, Clone)]
+struct GitignoreRule {
+    negated: bool,
+    dir_only: bool,
+    anchored: bool,
+    pattern: String,
+}
+
+#[derive(Debug, Default, Clone)]
+struct RootGitignoreMatcher {
+    rules: Vec<GitignoreRule>,
+}
+
+impl RootGitignoreMatcher {
+    fn from_workspace(project_root: &std::path::Path) -> Self {
+        let Ok(content) = std::fs::read_to_string(project_root.join(".gitignore")) else {
+            return Self::default();
+        };
+        Self::parse(&content)
+    }
+
+    fn parse(content: &str) -> Self {
+        let mut rules = Vec::new();
+        for raw_line in content.lines() {
+            let mut line = raw_line.trim_end_matches('\r');
+            if !line.ends_with("\\ ") {
+                line = line.trim_end_matches(' ');
+            }
+            if line.is_empty() || line.starts_with('#') {
+                continue;
+            }
+            let (negated, rest) = if let Some(stripped) = line.strip_prefix('!') {
+                (true, stripped)
+            } else if let Some(stripped) = line.strip_prefix("\\#").or_else(|| line.strip_prefix("\\!")) {
+                (false, stripped)
+            } else {
+                (false, line)
+            };
+            if rest.is_empty() {
+                continue;
+            }
+            let (dir_only, rest) = if let Some(stripped) = rest.strip_suffix('/') {
+                (true, stripped)
+            } else {
+                (false, rest)
+            };
+            if rest.is_empty() {
+                continue;
+            }
+            let (anchored, pattern) = if let Some(stripped) = rest.strip_prefix('/') {
+                (true, stripped)
+            } else {
+                (rest.contains('/'), rest)
+            };
+            if pattern.is_empty() {
+                continue;
+            }
+            rules.push(GitignoreRule {
+                negated,
+                dir_only,
+                anchored,
+                pattern: pattern.to_string(),
+            });
+        }
+        Self { rules }
+    }
+
+    fn is_ignored(&self, rel_path: &str, name: &str, is_dir: bool) -> bool {
+        let mut ignored = false;
+        for rule in &self.rules {
+            if rule.dir_only && !is_dir {
+                continue;
+            }
+            let matched = if rule.anchored {
+                gitignore_glob_matches(&rule.pattern, rel_path)
+            } else {
+                gitignore_glob_matches(&rule.pattern, name)
+                    || gitignore_glob_matches(&rule.pattern, rel_path)
+            };
+            if matched {
+                ignored = !rule.negated;
+            }
+        }
+        ignored
+    }
+}
+
+fn is_ignored_completion_dir_name(name: &str) -> bool {
+    name.starts_with('.')
+        || matches!(
+            name,
+            "target"
+                | "node_modules"
+                | "dist"
+                | "build"
+                | "out"
+                | "coverage"
+                | "vendor"
+                | "__pycache__"
+                | "DerivedData"
+                | "Pods"
+                | "venv"
+                | "env"
+        )
+}
+
+fn subsequence_match_score(candidate_lower: &str, query_lower: &str) -> Option<usize> {
+    let mut query_chars = query_lower.chars();
+    let mut target = query_chars.next()?;
+    let mut first_pos: Option<usize> = None;
+    let mut prev_pos: Option<usize> = None;
+    let mut prev_ch: Option<char> = None;
+    let mut penalty = 0usize;
+
+    for (pos, ch) in candidate_lower.chars().enumerate() {
+        if ch == target {
+            if first_pos.is_none() {
+                first_pos = Some(pos);
+            }
+            if let Some(previous) = prev_pos {
+                let gap = pos.saturating_sub(previous + 1);
+                penalty = penalty.saturating_add(gap * 2);
+            }
+            let at_boundary = pos == 0
+                || prev_ch.is_some_and(|before| matches!(before, '/' | '_' | '-' | '.'));
+            if !at_boundary {
+                penalty = penalty.saturating_add(2);
+            }
+            prev_pos = Some(pos);
+            if let Some(next) = query_chars.next() {
+                target = next;
+            } else {
+                let span = pos.saturating_sub(first_pos.unwrap_or(pos));
+                return Some(penalty.saturating_add(span));
+            }
+        }
+        prev_ch = Some(ch);
+    }
+    None
+}
+
+fn score_workspace_completion_match(candidate: &str, query_lower: &str) -> Option<(u8, usize, usize)> {
+    if query_lower.is_empty() {
+        let depth = candidate.trim_end_matches('/').matches('/').count();
+        return Some((0, depth, candidate.len()));
+    }
+    let cand_lower = candidate.to_ascii_lowercase();
+    let trimmed = cand_lower.trim_end_matches('/');
+    let basename = trimmed.rsplit('/').next().unwrap_or(trimmed);
+
+    if cand_lower.starts_with(query_lower) {
+        return Some((0, 0, candidate.len()));
+    }
+    if basename.starts_with(query_lower) {
+        return Some((1, 0, candidate.len()));
+    }
+    if let Some(pos) = basename.find(query_lower) {
+        return Some((2, pos, candidate.len()));
+    }
+    if let Some(pos) = cand_lower.find(query_lower) {
+        return Some((3, pos, candidate.len()));
+    }
+    let fuzzy_penalty = subsequence_match_score(basename, query_lower)
+        .or_else(|| subsequence_match_score(&cand_lower, query_lower).map(|p| p.saturating_add(16)))?;
+    Some((4, fuzzy_penalty, candidate.len()))
+}
+
 fn workspace_file_completions(project_root: &std::path::Path, prefix: &str) -> Vec<String> {
-    let mut stack = vec![project_root.to_path_buf()];
-    let mut collected = Vec::new();
-    let max_entries = 400usize;
+    let gitignore = RootGitignoreMatcher::from_workspace(project_root);
+    let mut queue = std::collections::VecDeque::from([project_root.to_path_buf()]);
+    let mut scored: Vec<((u8, usize, usize), String)> = Vec::new();
+    let mut scanned = 0usize;
     let query = prefix.trim().to_ascii_lowercase();
-    while let Some(dir) = stack.pop() {
+
+    while let Some(dir) = queue.pop_front() {
         let Ok(entries) = std::fs::read_dir(&dir) else {
             continue;
         };
         for entry in entries.flatten() {
-            if collected.len() >= max_entries {
+            if scanned >= WORKSPACE_FILE_COMPLETION_SCAN_LIMIT {
                 break;
             }
             let path = entry.path();
             let name = entry.file_name();
             let name_str = name.to_string_lossy();
-            if name_str.starts_with('.')
-                || matches!(
-                    name_str.as_ref(),
-                    "target" | "node_modules" | "dist" | "build" | ".git"
-                )
-            {
+            let Ok(kind) = entry.file_type() else {
+                continue;
+            };
+            if kind.is_symlink() {
+                continue;
+            }
+            let is_dir = kind.is_dir();
+            if is_dir && is_ignored_completion_dir_name(name_str.as_ref()) {
+                continue;
+            }
+            if !is_dir && name_str.starts_with('.') {
                 continue;
             }
             let Ok(rel) = path.strip_prefix(project_root) else {
                 continue;
             };
             let rel_str = rel.to_string_lossy().replace('\\', "/");
-            if entry.file_type().is_ok_and(|kind| kind.is_dir()) {
-                stack.push(path);
+            if gitignore.is_ignored(&rel_str, name_str.as_ref(), is_dir) {
+                continue;
+            }
+            scanned += 1;
+            if is_dir {
+                queue.push_back(path);
                 let dir_entry = format!("{rel_str}/");
-                if query.is_empty() || dir_entry.to_ascii_lowercase().contains(&query) {
-                    collected.push(dir_entry);
+                if let Some(score) = score_workspace_completion_match(&dir_entry, &query) {
+                    scored.push((score, dir_entry));
                 }
-            } else if query.is_empty() || rel_str.to_ascii_lowercase().contains(&query) {
-                collected.push(rel_str);
+            } else if let Some(score) = score_workspace_completion_match(&rel_str, &query) {
+                scored.push((score, rel_str));
             }
         }
-        if collected.len() >= max_entries {
+        if scanned >= WORKSPACE_FILE_COMPLETION_SCAN_LIMIT {
             break;
         }
     }
-    collected.sort_by(|a, b| {
-        let a_pref = !query.is_empty() && a.to_ascii_lowercase().starts_with(&query);
-        let b_pref = !query.is_empty() && b.to_ascii_lowercase().starts_with(&query);
-        b_pref
-            .cmp(&a_pref)
-            .then_with(|| a.len().cmp(&b.len()))
-            .then_with(|| a.cmp(b))
+    scored.sort_by(|(a_score, a_path), (b_score, b_path)| {
+        a_score.cmp(b_score).then_with(|| a_path.cmp(b_path))
     });
-    collected.truncate(12);
-    collected
+    scored.truncate(12);
+    scored.into_iter().map(|(_, path)| path).collect()
+}
+
+#[cfg(test)]
+mod workspace_completion_upgrade_tests {
+    use super::*;
+
+    #[test]
+    fn root_gitignore_filters_files_directories_and_negations() {
+        let workspace = tempfile::tempdir().unwrap();
+        std::fs::write(
+            workspace.path().join(".gitignore"),
+            "# comment\n*.log\n!keep.log\ngenerated/\n**/scratch/*.tmp\n",
+        )
+        .unwrap();
+        std::fs::create_dir_all(workspace.path().join("generated")).unwrap();
+        std::fs::create_dir_all(workspace.path().join("src/scratch")).unwrap();
+        std::fs::create_dir_all(workspace.path().join("__pycache__")).unwrap();
+        std::fs::write(workspace.path().join("debug.log"), "ignored").unwrap();
+        std::fs::write(workspace.path().join("keep.log"), "kept").unwrap();
+        std::fs::write(workspace.path().join("generated/out.rs"), "ignored").unwrap();
+        std::fs::write(workspace.path().join("src/scratch/a.tmp"), "ignored").unwrap();
+        std::fs::write(workspace.path().join("__pycache__/mod.pyc"), "ignored").unwrap();
+        std::fs::write(workspace.path().join("src/lib.rs"), "kept").unwrap();
+
+        let all = workspace_file_completions(workspace.path(), "");
+        assert!(all.iter().any(|item| item == "keep.log"), "{all:?}");
+        assert!(all.iter().any(|item| item == "src/lib.rs"), "{all:?}");
+        assert!(!all.iter().any(|item| item.contains("debug.log")), "{all:?}");
+        assert!(!all.iter().any(|item| item.contains("generated")), "{all:?}");
+        assert!(!all.iter().any(|item| item.contains("a.tmp")), "{all:?}");
+        assert!(!all.iter().any(|item| item.contains("__pycache__")), "{all:?}");
+    }
+
+    #[test]
+    fn workspace_file_completions_rank_prefix_then_basename_then_fuzzy() {
+        let workspace = tempfile::tempdir().unwrap();
+        std::fs::create_dir_all(workspace.path().join("src/deep")).unwrap();
+        std::fs::write(workspace.path().join("main.rs"), "").unwrap();
+        std::fs::write(workspace.path().join("src/main_loop.rs"), "").unwrap();
+        std::fs::write(workspace.path().join("src/domain.rs"), "").unwrap();
+        std::fs::write(workspace.path().join("src/deep/my_api_index_node.rs"), "").unwrap();
+
+        let matches = workspace_file_completions(workspace.path(), "main");
+        assert_eq!(matches[0], "main.rs", "{matches:?}");
+        assert_eq!(matches[1], "src/main_loop.rs", "{matches:?}");
+        assert_eq!(matches[2], "src/domain.rs", "{matches:?}");
+        assert!(
+            matches.iter().any(|item| item == "src/deep/my_api_index_node.rs"),
+            "subsequence fuzzy match should be included: {matches:?}"
+        );
+    }
+
+    #[test]
+    fn workspace_file_completions_scan_cap_exceeds_old_400_limit() {
+        let workspace = tempfile::tempdir().unwrap();
+        let bulk = workspace.path().join("bulk");
+        std::fs::create_dir_all(&bulk).unwrap();
+        for index in 0..500 {
+            std::fs::write(bulk.join(format!("item_{index:04}.txt")), "").unwrap();
+        }
+        std::fs::write(bulk.join("zzz_needle_target.rs"), "").unwrap();
+
+        let matches = workspace_file_completions(workspace.path(), "zzz_needle");
+        assert_eq!(matches, vec!["bulk/zzz_needle_target.rs"]);
+    }
 }
 
 fn insert_composer_candidate(

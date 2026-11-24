@@ -40,8 +40,47 @@ const INTERACTIVE_ACCENT: &str = "\x1b[36m";
 const INTERACTIVE_COMPOSER_BG: &str = "\x1b[38;2;242;240;235;48;2;35;35;32m";
 const INTERACTIVE_COMPOSER_DIM_FG: &str = "\x1b[38;2;184;181;173;48;2;35;35;32m";
 const INTERACTIVE_COMPOSER_PREFIX_FG: &str = "\x1b[1;32;48;2;35;35;32m";
+// Safe terminal-theme-adaptive fallback for non-truecolor terminals (e.g. macOS Terminal.app
+// and light-theme emulators where hardcoded 24-bit RGB backgrounds break legibility).
+const INTERACTIVE_COMPOSER_BG_FALLBACK: &str = "\x1b[7m";
+const INTERACTIVE_COMPOSER_DIM_FG_FALLBACK: &str = "\x1b[2;7m";
+const INTERACTIVE_COMPOSER_PREFIX_FG_FALLBACK: &str = "\x1b[1;7m";
 const INTERACTIVE_SELECTION_BG: &str = "\x1b[7m";
 const INTERACTIVE_RESET: &str = "\x1b[0m";
+
+fn colorterm_supports_truecolor(colorterm: Option<&str>) -> bool {
+    colorterm.is_some_and(|value| {
+        let trimmed = value.trim();
+        trimmed.eq_ignore_ascii_case("truecolor") || trimmed.eq_ignore_ascii_case("24bit")
+    })
+}
+
+fn interactive_truecolor_enabled() -> bool {
+    let colorterm = std::env::var("COLORTERM").ok();
+    colorterm_supports_truecolor(colorterm.as_deref())
+}
+
+fn interactive_composer_palette_for(
+    truecolor: bool,
+) -> (&'static str, &'static str, &'static str) {
+    if truecolor {
+        (
+            INTERACTIVE_COMPOSER_BG,
+            INTERACTIVE_COMPOSER_DIM_FG,
+            INTERACTIVE_COMPOSER_PREFIX_FG,
+        )
+    } else {
+        (
+            INTERACTIVE_COMPOSER_BG_FALLBACK,
+            INTERACTIVE_COMPOSER_DIM_FG_FALLBACK,
+            INTERACTIVE_COMPOSER_PREFIX_FG_FALLBACK,
+        )
+    }
+}
+
+fn interactive_composer_palette() -> (&'static str, &'static str, &'static str) {
+    interactive_composer_palette_for(interactive_truecolor_enabled())
+}
 const INTERACTIVE_LABEL_WIDTH: usize = 11;
 const INTERACTIVE_PROMPT_PREFIX: &str = "  ";
 const INTERACTIVE_PANEL_TOP_LEFT: &str = "╭";
@@ -440,7 +479,26 @@ fn configure_command_surface(config: &mut Config) {
             },
         );
     }
-    config.permission_profile = Some(configured_cli_permission_profile(config));
+    if let Some(cli_profile) = config.cli_permission_profile {
+        config.permission_profile = Some(cli_profile.base_domain_profile());
+        if cli_profile == crate::permissions::CliPermissionProfile::AcceptEdits {
+            config::prepend_accept_edits_workspace_rules(
+                &mut config.runtime.permissions,
+                &config.project_root,
+            );
+        }
+    } else {
+        let resolved = configured_cli_permission_profile(config);
+        config.permission_profile = Some(resolved);
+        config.cli_permission_profile = Some(match resolved {
+            crate::permissions::PermissionProfile::Cautious => {
+                crate::permissions::CliPermissionProfile::Cautious
+            }
+            crate::permissions::PermissionProfile::AllowAll => {
+                crate::permissions::CliPermissionProfile::AllowAll
+            }
+        });
+    }
 }
 
 /// Resolves the standalone CLI's effective permission profile into its typed
@@ -1103,6 +1161,150 @@ fn print_session_summary(saved: &session::SavedSession) {
     println!("{} {}", tr(Message::MessagesLabel), saved.messages.len());
 }
 
+fn format_single_json_usage(
+    usage: Option<&nola_core::agent::context_window::ContextUsageSnapshot>,
+) -> Value {
+    let Some(usage) = usage else {
+        return Value::Null;
+    };
+    let mut obj = serde_json::Map::new();
+    obj.insert("used_tokens".into(), Value::from(usage.used_tokens));
+    obj.insert(
+        "context_window_tokens".into(),
+        Value::from(usage.context_window_tokens),
+    );
+    obj.insert(
+        "prompt_token_limit".into(),
+        Value::from(usage.prompt_token_limit),
+    );
+    obj.insert("usage_percent".into(), json!(usage.usage_percent));
+    obj.insert(
+        "usage_is_estimated".into(),
+        Value::from(usage.usage_is_estimated),
+    );
+    if let Some(cache) = usage.cache_usage {
+        obj.insert(
+            "cache_usage".into(),
+            serde_json::to_value(cache).unwrap_or(Value::Null),
+        );
+    }
+    Value::Object(obj)
+}
+
+fn build_single_json_output_payload(
+    status: &str,
+    session_id: Option<&str>,
+    text: &str,
+    error: Option<&str>,
+    usage: Option<&nola_core::agent::context_window::ContextUsageSnapshot>,
+) -> Value {
+    json!({
+        "status": status,
+        "session_id": session_id,
+        "text": text,
+        "error": error,
+        "usage": format_single_json_usage(usage),
+    })
+}
+
+fn single_json_output_from_prompt_result(
+    result: &PromptRunResult,
+    captured_error: Option<&str>,
+    fallback_session_id: Option<&str>,
+    fallback_text: Option<&str>,
+) -> (Value, bool) {
+    let session_id = result.session_id.as_deref().or(fallback_session_id);
+    let text = if !result.output.trim().is_empty() {
+        result.output.as_str()
+    } else {
+        fallback_text.unwrap_or("")
+    };
+    let (status, error, ok) = if !result.run_outcome.is_terminal() {
+        (
+            "pending",
+            captured_error.map(str::to_string).or_else(|| {
+                Some(format!(
+                    "Run remains pending ({:?}); no completion or permission decision was recorded.",
+                    result.run_outcome.turn_status
+                ))
+            }),
+            false,
+        )
+    } else if result.terminal_reason.as_deref() == Some("blocked")
+        || matches!(
+            result.run_outcome.run_result,
+            Some(nola_domain::run_result::RunResultValue::Blocked { .. })
+        )
+    {
+        let err = captured_error.map(str::to_string).or_else(|| {
+            match &result.run_outcome.run_result {
+                Some(nola_domain::run_result::RunResultValue::Blocked {
+                    reason,
+                    resolution_condition,
+                    ..
+                }) => Some(format!("{}: {}", reason.code, resolution_condition)),
+                _ => Some("run blocked".to_string()),
+            }
+        });
+        ("blocked", err, false)
+    } else if result.run_outcome.turn_status == nola_core::agent::AgentTurnStatus::Cancelled
+        || result.terminal_reason.as_deref() == Some("cancelled")
+    {
+        ("cancelled", captured_error.map(str::to_string), false)
+    } else if result.run_outcome.turn_status == nola_core::agent::AgentTurnStatus::Failed
+        || result.terminal_reason.as_deref() == Some("failed")
+        || matches!(
+            result.run_outcome.run_result,
+            Some(nola_domain::run_result::RunResultValue::Failed { .. })
+        )
+    {
+        let err = captured_error.map(str::to_string).or_else(|| {
+            match &result.run_outcome.run_result {
+                Some(nola_domain::run_result::RunResultValue::Failed { error_ref, .. }) => {
+                    Some(error_ref.clone())
+                }
+                _ => Some("run failed".to_string()),
+            }
+        });
+        ("failed", err, false)
+    } else {
+        ("completed", None, true)
+    };
+    (
+        build_single_json_output_payload(
+            status,
+            session_id,
+            text,
+            error.as_deref(),
+            result.context_usage.as_ref(),
+        ),
+        ok,
+    )
+}
+
+fn emit_single_json_output(payload: &Value) {
+    println!(
+        "{}",
+        serde_json::to_string(payload).unwrap_or_else(|_| payload.to_string())
+    );
+}
+
+fn resolve_forked_session_config(config: &Config) -> Result<Config, String> {
+    if !config.fork_session {
+        return Ok(config.clone());
+    }
+    let mut source = config.clone();
+    if source.session_id.is_none() && source.continue_last {
+        let latest = resolve_continue_session_id(&source)?
+            .ok_or_else(|| tr(Message::NoSavedSessions).to_string())?;
+        source.session_id = Some(latest);
+        source.continue_last = false;
+    }
+    let (mut forked, _created) = fork_interactive_session(&source, None)?;
+    forked.fork_session = false;
+    Ok(forked)
+}
+
 fn run_prompt(config: &Config) -> Result<(), String> {
     run_prompt_with_optional_cancellation(config, None)
 }
@@ -1111,13 +1313,25 @@ fn run_prompt_with_optional_cancellation(
     config: &Config,
     cancellation: Option<interaction::ExecutionCancellation>,
 ) -> Result<(), String> {
+    let single_json = config.output_format == config::CliOutputFormat::Json;
     if config.resume_session {
         if !config.message.trim().is_empty() {
             let text = crate::i18n::interaction_text();
-            return Err(format!(
+            let message = format!(
                 "{}: {}",
                 text.resume_title, text.resume_inline_unsupported
-            ));
+            );
+            if single_json {
+                emit_single_json_output(&build_single_json_output_payload(
+                    "failed",
+                    config.session_id.as_deref(),
+                    "",
+                    Some(&message),
+                    None,
+                ));
+                return Err(String::new());
+            }
+            return Err(message);
         }
         return run_resume_session_interactive_prompt(config);
     }
@@ -1127,14 +1341,56 @@ fn run_prompt_with_optional_cancellation(
 
     let prompt = match read_prompt(&config.message) {
         Ok(prompt) => prompt,
-        Err(err) => return Err(format!("{} {err}", tr(Message::FailedReadPromptPrefix))),
+        Err(err) => {
+            let message = format!("{} {err}", tr(Message::FailedReadPromptPrefix));
+            if single_json {
+                emit_single_json_output(&build_single_json_output_payload(
+                    "failed",
+                    config.session_id.as_deref(),
+                    "",
+                    Some(&message),
+                    None,
+                ));
+                return Err(String::new());
+            }
+            return Err(message);
+        }
     };
+
+    let effective_config = match resolve_forked_session_config(config) {
+        Ok(effective) => effective,
+        Err(err) => {
+            if single_json {
+                emit_single_json_output(&build_single_json_output_payload(
+                    "failed",
+                    config.session_id.as_deref(),
+                    "",
+                    Some(&err),
+                    None,
+                ));
+                return Err(String::new());
+            }
+            return Err(err);
+        }
+    };
+    let config = &effective_config;
 
     if prompt.trim().is_empty() {
         if io::stdin().is_terminal() {
             return run_interactive_prompt(config);
         }
-        return Err(tr(Message::PromptRequired).to_string());
+        let message = tr(Message::PromptRequired).to_string();
+        if single_json {
+            emit_single_json_output(&build_single_json_output_payload(
+                "failed",
+                config.session_id.as_deref(),
+                "",
+                Some(&message),
+                None,
+            ));
+            return Err(String::new());
+        }
+        return Err(message);
     }
 
     // Product control commands must never become model input. Interactive
@@ -1151,12 +1407,47 @@ fn run_prompt_with_optional_cancellation(
         return handle_data_source_command(&prompt, config);
     }
 
-    let result = match cancellation {
+    let run_result = match cancellation {
         Some(cancellation) => {
-            run_single_prompt_with_execution_cancellation(config, &prompt, cancellation)?
+            run_single_prompt_with_execution_cancellation_internal(config, &prompt, cancellation)
         }
-        None => run_single_prompt(config, &prompt)?,
+        None => run_single_prompt_internal(config, &prompt),
     };
+    if single_json {
+        match run_result {
+            Ok((result, last_error)) => {
+                let fallback_text = if result.output.trim().is_empty() && config.save_session {
+                    result
+                        .session_id
+                        .as_deref()
+                        .or(config.session_id.as_deref())
+                        .and_then(|id| session::load_session(id).ok())
+                        .and_then(|saved| latest_assistant_reply_text(&saved))
+                } else {
+                    None
+                };
+                let (payload, ok) = single_json_output_from_prompt_result(
+                    &result,
+                    last_error.as_deref(),
+                    config.session_id.as_deref(),
+                    fallback_text.as_deref(),
+                );
+                emit_single_json_output(&payload);
+                return if ok { Ok(()) } else { Err(String::new()) };
+            }
+            Err(err) => {
+                emit_single_json_output(&build_single_json_output_payload(
+                    "failed",
+                    config.session_id.as_deref(),
+                    "",
+                    Some(&err),
+                    None,
+                ));
+                return Err(String::new());
+            }
+        }
+    }
+    let (result, _last_error) = run_result?;
     if !result.run_outcome.is_terminal() {
         if !config.json_output {
             eprintln!(
@@ -1238,6 +1529,11 @@ fn run_resumed_session_interactive_prompt(config: &Config, session_id: &str) -> 
     resumed.session_id = Some(session_id.to_string());
     resumed.continue_last = false;
     resumed.resume_session = false;
+    if resumed.fork_session {
+        let (mut forked, _created) = fork_interactive_session(&resumed, None)?;
+        forked.fork_session = false;
+        return run_interactive_prompt_with_recovery(&forked, false);
+    }
     crate::conversation_invocation::initialize_or_restore(&mut resumed)?;
     run_interactive_prompt_with_recovery(&resumed, true)
 }
@@ -3573,5 +3869,157 @@ fn load_interactive_session_for_command(
             Ok(None)
         }
         Err(err) => Err(err.to_string()),
+    }
+}
+
+#[cfg(test)]
+mod interactive_palette_compat_tests {
+    use super::*;
+
+    #[test]
+    fn colorterm_truecolor_detection_gates_rgb_composer_palette() {
+        assert!(colorterm_supports_truecolor(Some("truecolor")));
+        assert!(colorterm_supports_truecolor(Some("TRUECOLOR")));
+        assert!(colorterm_supports_truecolor(Some("24bit")));
+        assert!(colorterm_supports_truecolor(Some(" 24BIT ")));
+        assert!(!colorterm_supports_truecolor(None));
+        assert!(!colorterm_supports_truecolor(Some("")));
+        assert!(!colorterm_supports_truecolor(Some("256color")));
+        assert!(!colorterm_supports_truecolor(Some("ansi")));
+
+        assert_eq!(
+            interactive_composer_palette_for(true),
+            (
+                INTERACTIVE_COMPOSER_BG,
+                INTERACTIVE_COMPOSER_DIM_FG,
+                INTERACTIVE_COMPOSER_PREFIX_FG,
+            )
+        );
+        let (bg, dim, prefix) = interactive_composer_palette_for(false);
+        assert_eq!(bg, INTERACTIVE_COMPOSER_BG_FALLBACK);
+        assert_eq!(dim, INTERACTIVE_COMPOSER_DIM_FG_FALLBACK);
+        assert_eq!(prefix, INTERACTIVE_COMPOSER_PREFIX_FG_FALLBACK);
+        assert!(!bg.contains(";2;"));
+        assert!(!dim.contains(";2;"));
+        assert!(!prefix.contains(";2;"));
+    }
+
+    #[test]
+    fn single_json_output_payload_formats_completed_failed_and_blocked_outcomes() {
+        let usage = nola_core::agent::context_window::ContextUsageSnapshot {
+            used_tokens: 1200,
+            context_window_tokens: 32000,
+            prompt_token_limit: 28000,
+            usage_percent: 3.75,
+            usage_is_estimated: true,
+            ..Default::default()
+        };
+        let completed_run = PromptRunResult {
+            run_outcome: core_agent_runtime::CoreRunOutcome {
+                turn_status: nola_core::agent::AgentTurnStatus::Completed,
+                run_result: None,
+                goal_signal: None,
+            },
+            output: "{\"ok\":true}".to_string(),
+            goal_signal: None,
+            terminal_reason: Some("completed".to_string()),
+            session_id: Some("ses-ci-1".to_string()),
+            queued_user_inputs: Vec::new(),
+            draft_user_input: None,
+            context_usage: Some(usage),
+        };
+        let (payload, ok) = single_json_output_from_prompt_result(
+            &completed_run,
+            None,
+            None,
+            None,
+        );
+        assert!(ok);
+        assert_eq!(payload["status"], json!("completed"));
+        assert_eq!(payload["session_id"], json!("ses-ci-1"));
+        assert_eq!(payload["text"], json!("{\"ok\":true}"));
+        assert!(payload["error"].is_null());
+        assert_eq!(payload["usage"]["used_tokens"], json!(1200));
+        assert_eq!(payload["usage"]["context_window_tokens"], json!(32000));
+        assert_eq!(payload["usage"]["prompt_token_limit"], json!(28000));
+
+        let failed_run = PromptRunResult {
+            run_outcome: core_agent_runtime::CoreRunOutcome {
+                turn_status: nola_core::agent::AgentTurnStatus::Failed,
+                run_result: None,
+                goal_signal: None,
+            },
+            output: String::new(),
+            goal_signal: None,
+            terminal_reason: Some("failed".to_string()),
+            session_id: None,
+            queued_user_inputs: Vec::new(),
+            draft_user_input: None,
+            context_usage: None,
+        };
+        let (failed_payload, failed_ok) = single_json_output_from_prompt_result(
+            &failed_run,
+            Some("upstream 503"),
+            Some("ses-fallback"),
+            None,
+        );
+        assert!(!failed_ok);
+        assert_eq!(failed_payload["status"], json!("failed"));
+        assert_eq!(failed_payload["session_id"], json!("ses-fallback"));
+        assert_eq!(failed_payload["text"], json!(""));
+        assert_eq!(failed_payload["error"], json!("upstream 503"));
+        assert!(failed_payload["usage"].is_null());
+
+        let blocked_run = PromptRunResult {
+            run_outcome: core_agent_runtime::CoreRunOutcome {
+                turn_status: nola_core::agent::AgentTurnStatus::Completed,
+                run_result: Some(nola_domain::run_result::RunResultValue::Blocked {
+                    reason: nola_domain::run_result::RunResultReason {
+                        code: "context.input_budget_exceeded".to_string(),
+                        detail: None,
+                    },
+                    blocking_fact_refs: vec!["budget".to_string()],
+                    resolution_condition: "Reduce input".to_string(),
+                }),
+                goal_signal: None,
+            },
+            output: String::new(),
+            goal_signal: None,
+            terminal_reason: Some("blocked".to_string()),
+            session_id: Some("ses-blocked".to_string()),
+            queued_user_inputs: Vec::new(),
+            draft_user_input: None,
+            context_usage: None,
+        };
+        let (blocked_payload, blocked_ok) =
+            single_json_output_from_prompt_result(&blocked_run, None, None, None);
+        assert!(!blocked_ok);
+        assert_eq!(blocked_payload["status"], json!("blocked"));
+        assert_eq!(
+            blocked_payload["error"],
+            json!("context.input_budget_exceeded: Reduce input")
+        );
+    }
+
+    #[test]
+    fn configure_command_surface_preserves_accept_edits_workspace_rules_idempotently() {
+        let mut config = Config::for_test().unwrap();
+        config.cli_permission_profile = Some(crate::permissions::CliPermissionProfile::AcceptEdits);
+        config.permission_profile = Some(crate::permissions::PermissionProfile::Cautious);
+        config.runtime.permissions.clear();
+
+        configure_command_surface(&mut config);
+        let first_len = config.runtime.permissions.len();
+        assert_eq!(
+            config.permission_profile,
+            Some(crate::permissions::PermissionProfile::Cautious)
+        );
+        assert_eq!(
+            first_len,
+            crate::permissions::ACCEPT_EDITS_AUTO_ALLOW_TOOLS.len()
+        );
+
+        configure_command_surface(&mut config);
+        assert_eq!(config.runtime.permissions.len(), first_len);
     }
 }

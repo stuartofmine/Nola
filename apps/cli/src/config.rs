@@ -19,6 +19,30 @@ pub use crate::external_execution_settings::HostAttachment;
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum ConfigFileAction { Show, Edit, Check, Apply, Example }
 
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum CliOutputFormat {
+    #[default]
+    Text,
+    Jsonl,
+    Json,
+}
+
+impl CliOutputFormat {
+    pub fn parse(raw: &str) -> Result<Self, String> {
+        match raw.trim().to_ascii_lowercase().as_str() {
+            "text" => Ok(Self::Text),
+            "jsonl" => Ok(Self::Jsonl),
+            "json" => Ok(Self::Json),
+            _ => Err("--output-format must be text, jsonl, or json".to_string()),
+        }
+    }
+
+    pub const fn is_structured(self) -> bool {
+        matches!(self, Self::Jsonl | Self::Json)
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum CommandMode {
     Run,
@@ -144,6 +168,12 @@ pub struct Config {
     pub bash_prefixes: Vec<String>,
     pub max_iterations: usize,
     pub json_output: bool,
+    #[serde(default)]
+    pub output_format: CliOutputFormat,
+    /// Validated JSON Schema object supplied via `--json-schema <inline-or-@path>`
+    /// to enforce structured output on prompt execution.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub json_schema: Option<Value>,
     pub debug_mode: bool,
     pub auto_approve: bool,
     /// First-class read-only Plan mode toggled by `/mode plan` or `Shift+Tab`.
@@ -155,6 +185,10 @@ pub struct Config {
     /// product entrypoint. Keeping this on Config avoids process-global
     /// environment state leaking between concurrent Web/native requests.
     pub permission_profile: Option<crate::permissions::PermissionProfile>,
+    /// CLI-level permission profile preserving `accept_edits` alongside the
+    /// base domain `PermissionProfile`.
+    #[serde(skip)]
+    pub cli_permission_profile: Option<crate::permissions::CliPermissionProfile>,
     pub tools_enabled: bool,
     pub force_tool_set: String,
     pub tool_allowlist: Option<Vec<String>>,
@@ -171,6 +205,8 @@ pub struct Config {
     /// the parent conversation's permission scope explicitly.
     pub permission_scope_id: Option<String>,
     pub continue_last: bool,
+    #[serde(default)]
+    pub fork_session: bool,
     pub save_session: bool,
     pub output_path: Option<PathBuf>,
     pub context_files: Vec<PathBuf>,
@@ -368,6 +404,14 @@ impl Config {
         }
 
         let mut permission_profile = permission_profile_from_environment(env::var("NOLA_PERMISSION_PROFILE")).map_err(ConfigStartError::Runtime)?;
+        let mut cli_permission_profile = permission_profile.map(|profile| match profile {
+            crate::permissions::PermissionProfile::Cautious => {
+                crate::permissions::CliPermissionProfile::Cautious
+            }
+            crate::permissions::PermissionProfile::AllowAll => {
+                crate::permissions::CliPermissionProfile::AllowAll
+            }
+        });
         let mut permission_profile_explicit = false;
         let mut args = raw_args.into_iter().peekable();
         let mut command = None;
@@ -423,6 +467,8 @@ impl Config {
             .and_then(|raw| parse_bool_flag(&raw).map(|value| (value, true)))
             .unwrap_or((false, false));
         let mut json_output = false;
+        let mut output_format = CliOutputFormat::Text;
+        let mut json_schema: Option<Value> = None;
         let mut auto_approve = false;
         let mut tools_enabled = true;
         let (mut force_tool_set, force_tool_set_from_env) = match force_tool_set_from_environment(
@@ -444,6 +490,7 @@ impl Config {
         };
         let mut session_id = None;
         let mut continue_last = false;
+        let mut fork_session = false;
         let mut resume_session = false;
         let mut save_session = true;
         let mut output_path = None;
@@ -745,20 +792,31 @@ impl Config {
             if arg == "-h" || arg == "--help" {
                 show_help = true;
             } else if arg == "--json" {
+                output_format = CliOutputFormat::Jsonl;
                 json_output = true;
+            } else if let Some(value) = option_value(&arg, "--output-format", &mut args)? {
+                output_format = CliOutputFormat::parse(&value)?;
+                json_output = output_format.is_structured();
+            } else if let Some(value) = option_value(&arg, "--json-schema", &mut args)? {
+                json_schema = Some(parse_json_schema_option(&value)?);
             } else if arg == "--host-request-stdin" {
                 host_request_stdin = true;
             } else if arg == "--debug" {
                 debug_mode = true;
                 debug_mode_explicit = true;
             } else if let Some(value) = option_value(&arg, "--permission-profile", &mut args)? {
-                let profile = crate::permissions::PermissionProfile::from_canonical_name(&value)
-                    .ok_or_else(|| "--permission-profile must be cautious or allow_all".to_string())?;
-                permission_profile = Some(profile);
+                let cli_profile = crate::permissions::CliPermissionProfile::from_canonical_name(&value)
+                    .ok_or_else(|| {
+                        "--permission-profile must be cautious, accept_edits, or allow_all"
+                            .to_string()
+                    })?;
+                cli_permission_profile = Some(cli_profile);
+                permission_profile = Some(cli_profile.base_domain_profile());
                 permission_profile_explicit = true;
             } else if arg == "--yes" || arg == "-y" {
                 auto_approve = true;
                 if !permission_profile_explicit {
+                    cli_permission_profile = Some(crate::permissions::CliPermissionProfile::AllowAll);
                     permission_profile = Some(crate::permissions::PermissionProfile::AllowAll);
                 }
             } else if arg == "--no-tools" {
@@ -779,6 +837,8 @@ impl Config {
                 force_tool_set = normalize_force_tool_set(&value)?;
             } else if arg == "--continue" || arg == "-c" {
                 continue_last = true;
+            } else if arg == "--fork-session" {
+                fork_session = true;
             } else if arg == "--resume" {
                 resume_session = true;
             } else if arg == "--swe-mode" {
@@ -1018,6 +1078,9 @@ impl Config {
         if let Some(selection) = reasoning_effort_override.take() {
             runtime.reasoning_selection = selection;
         }
+        if cli_permission_profile == Some(crate::permissions::CliPermissionProfile::AcceptEdits) {
+            prepend_accept_edits_workspace_rules(&mut runtime.permissions, &project_root);
+        }
 
         // Saved conversations own their model configuration. Argument parsing
         // must not require a global route before the selected conversation (or
@@ -1081,6 +1144,12 @@ impl Config {
         }
         if resume_session && continue_last {
             return Err("cannot use --resume with --continue".into());
+        }
+        if fork_session && session_id.is_none() && !continue_last && !resume_session {
+            return Err("--fork-session requires --session <id>, --continue, or --resume".into());
+        }
+        if fork_session && !save_session {
+            return Err("--fork-session cannot be combined with --no-save".into());
         }
 
         if !language_explicit {
@@ -1158,10 +1227,13 @@ impl Config {
             bash_prefixes,
             max_iterations,
             json_output,
+            output_format,
+            json_schema,
             debug_mode,
             auto_approve,
             plan_mode: false,
             permission_profile,
+            cli_permission_profile,
             tools_enabled,
             force_tool_set,
             tool_allowlist: None,
@@ -1172,6 +1244,7 @@ impl Config {
             session_id,
             permission_scope_id: None,
             continue_last,
+            fork_session,
             save_session,
             output_path,
             context_files,
@@ -1276,6 +1349,55 @@ fn permission_profile_from_environment(value: Result<String, env::VarError>) -> 
     }
 }
 
+pub(crate) fn prepend_accept_edits_workspace_rules(
+    permissions: &mut Vec<crate::runtime_config::PermissionRule>,
+    project_root: &Path,
+) {
+    let defaults =
+        crate::permissions::CliPermissionProfile::AcceptEdits.default_rules_for_workspace(project_root);
+    let mut missing: Vec<crate::runtime_config::PermissionRule> = defaults
+        .into_iter()
+        .filter(|rule| !permissions.iter().any(|existing| existing == rule))
+        .collect();
+    if !missing.is_empty() {
+        missing.append(permissions);
+        *permissions = missing;
+    }
+}
+
+pub(crate) fn parse_json_schema_option(raw: &str) -> Result<Value, String> {
+    let trimmed = raw.trim();
+    if trimmed.is_empty() {
+        return Err("--json-schema requires a JSON object or @path".to_string());
+    }
+    let parsed: Value = if let Some(path_str) = trimmed.strip_prefix('@') {
+        let path_trimmed = path_str.trim();
+        if path_trimmed.is_empty() {
+            return Err("--json-schema @path requires a file path".to_string());
+        }
+        let expanded = expand_home(Path::new(path_trimmed));
+        let contents = std::fs::read_to_string(&expanded).map_err(|err| {
+            format!(
+                "failed to read --json-schema file '{}': {err}",
+                expanded.display()
+            )
+        })?;
+        serde_json::from_str(&contents).map_err(|err| {
+            format!(
+                "invalid JSON in --json-schema file '{}': {err}",
+                expanded.display()
+            )
+        })?
+    } else {
+        serde_json::from_str(trimmed)
+            .map_err(|err| format!("invalid --json-schema JSON: {err}"))?
+    };
+    if !parsed.is_object() {
+        return Err("--json-schema must be a valid JSON object".to_string());
+    }
+    Ok(parsed)
+}
+
 #[cfg(test)]
 #[test]
 fn permission_environment_distinguishes_absent_from_invalid_explicit_configuration() {
@@ -1368,6 +1490,7 @@ fn is_global_switch(arg: &str) -> bool {
     matches!(
         arg,
         "--json"
+            | "--fork-session"
             | "--tailcat-ingress"
             | "--host-request-stdin"
             | "--debug"
@@ -1390,6 +1513,8 @@ fn is_global_option_token(arg: &str) -> bool {
         "--force-tool-set",
         "--max-iterations",
         "--permission-profile",
+        "--output-format",
+        "--json-schema",
         "--endpoint",
         "--api-key",
         "--model",
@@ -1630,10 +1755,17 @@ impl Config {
             bash_prefixes: Vec::new(),
             max_iterations: 0,
             json_output,
+            output_format: if json_output {
+                CliOutputFormat::Jsonl
+            } else {
+                CliOutputFormat::Text
+            },
+            json_schema: None,
             debug_mode: false,
             auto_approve: false,
             plan_mode: false,
             permission_profile: None,
+            cli_permission_profile: None,
             tools_enabled: true,
             force_tool_set: "auto".to_string(),
             tool_allowlist: None,
@@ -1644,6 +1776,7 @@ impl Config {
             session_id: None,
             permission_scope_id: None,
             continue_last: false,
+            fork_session: false,
             save_session: true,
             output_path: None,
             context_files: Vec::new(),
@@ -3416,5 +3549,168 @@ mod tests {
 
         let err = parse_with(&["--reasoning-effort", "bogus"], RuntimeConfig::default()).unwrap_err();
         assert!(err.contains("invalid reasoning effort"), "{err}");
+    }
+
+    #[test]
+    fn permission_profile_accept_edits_maps_domain_profile_and_populates_workspace_rules() {
+        use super::{ConfigStartError, NoConfigurationSetup, RuntimeConfig};
+        use crate::permissions::{
+            CliPermissionProfile, PermissionProfile, ACCEPT_EDITS_AUTO_ALLOW_TOOLS,
+        };
+        use crate::runtime_config::{PermissionAction, PermissionRule};
+
+        let dir = tempfile::tempdir().unwrap();
+        let project = dir.path().canonicalize().unwrap();
+        let mut base = RuntimeConfig::default();
+        let user_deny = PermissionRule {
+            permission: "edit".to_string(),
+            pattern: format!("{}/*", project.join(".env").display()),
+            action: PermissionAction::Deny,
+        };
+        base.permissions.push(user_deny.clone());
+
+        let parsed = Config::from_args_with_runtime(
+            [
+                "--endpoint",
+                "http://127.0.0.1:11434/v1",
+                "--model",
+                "fixture",
+                "--project",
+                project.to_str().unwrap(),
+                "--permission-profile",
+                "accept_edits",
+                "apply refactor",
+            ]
+            .into_iter()
+            .map(str::to_string),
+            &NoConfigurationSetup,
+            Some(base),
+        )
+        .map_err(ConfigStartError::into_message)
+        .unwrap();
+
+        assert_eq!(
+            parsed.cli_permission_profile,
+            Some(CliPermissionProfile::AcceptEdits)
+        );
+        assert_eq!(parsed.permission_profile, Some(PermissionProfile::Cautious));
+        // Workspace default rules must precede explicit user rules so user rules retain precedence.
+        assert_eq!(parsed.runtime.permissions.last(), Some(&user_deny));
+        for tool in ACCEPT_EDITS_AUTO_ALLOW_TOOLS {
+            assert!(
+                parsed.runtime.permissions.iter().any(|rule| {
+                    rule.permission == *tool
+                        && rule.action == PermissionAction::Allow
+                        && rule.pattern.starts_with(&project.to_string_lossy().to_string())
+                }),
+                "missing accept_edits workspace allow rule for {tool}"
+            );
+        }
+
+        // Invalid profile fails closed with accept_edits mentioned.
+        let err = Config::from_args_with_runtime(
+            [
+                "--endpoint",
+                "http://127.0.0.1:11434/v1",
+                "--permission-profile",
+                "bogus",
+                "hi",
+            ]
+            .into_iter()
+            .map(str::to_string),
+            &NoConfigurationSetup,
+            Some(RuntimeConfig::default()),
+        )
+        .map_err(ConfigStartError::into_message)
+        .unwrap_err();
+        assert!(err.contains("accept_edits"), "{err}");
+    }
+
+    #[test]
+    fn parses_output_format_json_schema_and_fork_session_flags() {
+        use super::{CliOutputFormat, ConfigStartError, NoConfigurationSetup, RuntimeConfig};
+
+        let parse = |extra: &[&str]| {
+            let mut argv = vec![
+                "--endpoint".to_string(),
+                "http://127.0.0.1:11434/v1".to_string(),
+                "--model".to_string(),
+                "fixture".to_string(),
+            ];
+            argv.extend(extra.iter().map(|s| (*s).to_string()));
+            Config::from_args_with_runtime(argv, &NoConfigurationSetup, Some(RuntimeConfig::default()))
+                .map_err(ConfigStartError::into_message)
+        };
+
+        // --output-format json | jsonl | text and --json alias
+        let text_cfg = parse(&["--output-format", "text", "hello"]).unwrap();
+        assert_eq!(text_cfg.output_format, CliOutputFormat::Text);
+        assert!(!text_cfg.json_output);
+
+        let jsonl_cfg = parse(&["--output-format=jsonl", "hello"]).unwrap();
+        assert_eq!(jsonl_cfg.output_format, CliOutputFormat::Jsonl);
+        assert!(jsonl_cfg.json_output);
+
+        let alias_cfg = parse(&["--json", "hello"]).unwrap();
+        assert_eq!(alias_cfg.output_format, CliOutputFormat::Jsonl);
+        assert!(alias_cfg.json_output);
+
+        let json_cfg = parse(&["--output-format", "json", "hello"]).unwrap();
+        assert_eq!(json_cfg.output_format, CliOutputFormat::Json);
+        assert!(json_cfg.json_output);
+
+        let bad_fmt = parse(&["--output-format", "yaml", "hello"]).unwrap_err();
+        assert!(bad_fmt.contains("text, jsonl, or json"), "{bad_fmt}");
+
+        // --json-schema inline JSON object
+        let inline_schema = parse(&[
+            "--json-schema",
+            r#"{"type":"object","properties":{"ok":{"type":"boolean"}},"required":["ok"]}"#,
+            "check",
+        ])
+        .unwrap();
+        assert_eq!(
+            inline_schema.json_schema.as_ref().unwrap()["type"],
+            serde_json::json!("object")
+        );
+
+        // --json-schema @file
+        let dir = tempfile::tempdir().unwrap();
+        let schema_path = dir.path().join("schema.json");
+        std::fs::write(
+            &schema_path,
+            r#"{"type":"object","properties":{"count":{"type":"integer"}}}"#,
+        )
+        .unwrap();
+        let file_arg = format!("@{}", schema_path.display());
+        let file_schema = parse(&["--json-schema", &file_arg, "count items"]).unwrap();
+        assert_eq!(
+            file_schema.json_schema.as_ref().unwrap()["properties"]["count"]["type"],
+            serde_json::json!("integer")
+        );
+
+        // Invalid JSON, non-object JSON, and missing file must fail closed.
+        assert!(parse(&["--json-schema", "{not-json", "hi"]).is_err());
+        assert!(parse(&["--json-schema", "[1,2,3]", "hi"]).is_err());
+        assert!(parse(&["--json-schema", "\"just-a-string\"", "hi"]).is_err());
+        let missing = format!("@{}", dir.path().join("does-not-exist.json").display());
+        assert!(parse(&["--json-schema", &missing, "hi"]).is_err());
+
+        // --fork-session with --session / --continue / --resume
+        let fork_session = parse(&["--session", "ses-1", "--fork-session", "branch out"]).unwrap();
+        assert!(fork_session.fork_session);
+        assert_eq!(fork_session.session_id.as_deref(), Some("ses-1"));
+
+        let fork_continue = parse(&["--continue", "--fork-session", "branch out"]).unwrap();
+        assert!(fork_continue.fork_session);
+        assert!(fork_continue.continue_last);
+
+        let fork_resume = parse(&["--resume", "--fork-session"]).unwrap();
+        assert!(fork_resume.fork_session);
+        assert!(fork_resume.resume_session);
+
+        // --fork-session without target or with --no-save must error
+        assert!(parse(&["--fork-session", "hi"]).is_err());
+        assert!(parse(&["--session", "ses-1", "--fork-session", "--no-save", "hi"]).is_err());
     }
 }

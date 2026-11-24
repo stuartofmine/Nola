@@ -3357,8 +3357,93 @@ fn audit_receipts_valid(report: &Value, receipts: &std::collections::BTreeSet<St
     })
 }
 
+fn strip_markdown_code(text: &str) -> String {
+    let mut out = String::with_capacity(text.len());
+    let mut fence: Option<(char, usize)> = None;
+
+    for line in text.split_inclusive('\n') {
+        let trimmed_newline = line.trim_end_matches(['\r', '\n']);
+        let leading_spaces = trimmed_newline.bytes().take_while(|&b| b == b' ').count();
+        let after_indent = &trimmed_newline[leading_spaces..];
+
+        if let Some((fence_char, fence_len)) = fence {
+            if leading_spaces <= 3 {
+                let run = after_indent
+                    .chars()
+                    .take_while(|&ch| ch == fence_char)
+                    .count();
+                if run >= fence_len && after_indent[run * fence_char.len_utf8()..].trim().is_empty()
+                {
+                    fence = None;
+                }
+            }
+            out.push('\n');
+            continue;
+        }
+
+        if leading_spaces <= 3 {
+            if let Some(first) = after_indent.chars().next().filter(|&ch| ch == '`' || ch == '~') {
+                let run = after_indent.chars().take_while(|&ch| ch == first).count();
+                let info = &after_indent[run * first.len_utf8()..];
+                // CommonMark: backtick fence info strings may not contain backticks.
+                if run >= 3 && (first == '~' || !info.contains('`')) {
+                    fence = Some((first, run));
+                    out.push('\n');
+                    continue;
+                }
+            }
+        }
+
+        // Strip inline code spans (`...`, ``...``, etc.) on this line.
+        let bytes = line.as_bytes();
+        let mut cursor = 0usize;
+        while cursor < bytes.len() {
+            if bytes[cursor] == b'`' {
+                let run_start = cursor;
+                while cursor < bytes.len() && bytes[cursor] == b'`' {
+                    cursor += 1;
+                }
+                let tick_len = cursor - run_start;
+                // Search for a matching closing run of exact length `tick_len`.
+                let mut search = cursor;
+                let mut closed_at = None;
+                while search < bytes.len() {
+                    if bytes[search] == b'`' {
+                        let close_start = search;
+                        while search < bytes.len() && bytes[search] == b'`' {
+                            search += 1;
+                        }
+                        if search - close_start == tick_len {
+                            closed_at = Some(search);
+                            break;
+                        }
+                    } else {
+                        search += 1;
+                    }
+                }
+                if let Some(end) = closed_at {
+                    out.push(' ');
+                    cursor = end;
+                } else {
+                    out.push_str(&line[run_start..cursor]);
+                }
+            } else {
+                let next_tick = bytes[cursor..]
+                    .iter()
+                    .position(|&b| b == b'`')
+                    .map_or(bytes.len(), |offset| cursor + offset);
+                out.push_str(&line[cursor..next_tick]);
+                cursor = next_tick;
+            }
+        }
+    }
+
+    out
+}
+
 fn contains_embedded_tool_call_protocol(text: &str) -> bool {
-    let normalized = text.to_ascii_lowercase();
+    let stripped = strip_markdown_code(text);
+    let normalized = stripped.to_ascii_lowercase();
     (normalized.contains("<tool_calls") && normalized.contains("</tool_calls>"))
         || (normalized.contains("<tool_call") && normalized.contains("</tool_call>"))
         || (normalized.contains("<tool name=") && normalized.contains("</tool>"))
@@ -4169,6 +4254,15 @@ mod embedded_tool_protocol_tests {
         ));
         assert!(!contains_embedded_tool_call_protocol(
             "<article><invoke>ordinary quoted XML</invoke></article>"
+        ));
+        assert!(!contains_embedded_tool_call_protocol(
+            "Example syntax:\n```xml\n<tool_call>{\"name\":\"read_file\"}</tool_call>\n```\n"
+        ));
+        assert!(!contains_embedded_tool_call_protocol(
+            "Avoid raw `<tool_call>{\"name\":\"bash\"}</tool_call>` or ``<tool name=\"x\"></tool>`` markup."
+        ));
+        assert!(contains_embedded_tool_call_protocol(
+            "```xml\n<tool_call>safe example</tool_call>\n```\n<tool_call>{\"name\":\"bash\"}</tool_call>"
         ));
     }
 

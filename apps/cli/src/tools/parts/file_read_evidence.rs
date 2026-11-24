@@ -52,6 +52,8 @@ struct FileReadObservation {
     coverage: FileReadCoverage,
 }
 
+const LARGE_FILE_BOUNDED_READ_THRESHOLD_BYTES: u64 = 8 * 1024 * 1024;
+
 struct FileReadSelection {
     first_line: usize,
     line_count: Option<usize>,
@@ -62,9 +64,13 @@ struct FileReadSnapshot {
     text: Option<String>,
     observation: Option<FileReadObservation>,
     file_bytes: u64,
+    bytes_scanned: u64,
     total_lines: usize,
+    complete_lines: usize,
     byte_truncated: bool,
     first_line_offset: u64,
+    large_file_unhashed: bool,
+    stopped_before_eof: bool,
 }
 
 struct ObservedFileText {
@@ -143,7 +149,10 @@ fn file_read_metadata_matches(before: &fs::Metadata, after: &fs::Metadata) -> bo
 }
 
 /// Hash every byte from this descriptor while retaining only the requested
-/// bounded text. Never reopen the path to attach a different version's hash.
+/// bounded text for normal files (`<= 8 MiB`). For very large text files
+/// (`> 8 MiB`), stop reading as soon as the requested window is satisfied
+/// without reading or SHA-256 hashing to EOF, recording an unhashed partial
+/// snapshot instead. Never reopen the path to attach a different version's hash.
 fn read_file_snapshot(target: &Path, selection: FileReadSelection) -> Result<FileReadSnapshot, ToolOutcome> {
     use sha2::{Digest, Sha256};
     let path = file_state_key(target);
@@ -163,16 +172,18 @@ fn read_file_snapshot(target: &Path, selection: FileReadSelection) -> Result<Fil
     let modified = before.modified().map_err(|err| error(format!("Read mtime failed: {err}")))?;
     let last_line = selection.line_count.map(|count|
         selection.first_line.saturating_add(count).saturating_sub(1)).unwrap_or(usize::MAX);
+    let large_bounded_read = before.len() > LARGE_FILE_BOUNDED_READ_THRESHOLD_BYTES;
     let mut digest = Sha256::new();
     let mut data = Vec::new();
     let mut header = Vec::new();
     let mut buffer = [0u8; 65_536];
-    let mut file_bytes = 0u64;
+    let mut bytes_scanned = 0u64;
     let mut eligible_bytes = 0u64;
     let mut first_line_offset = 0u64;
     let mut line = 1usize;
     let mut newlines = 0usize;
     let mut ends_with_newline = false;
+    let mut stopped_before_eof = false;
     loop {
         let read = file.read(&mut buffer).map_err(|err| error(format!("Read failed: {err}")))?;
         if read == 0 { break; }
@@ -183,30 +194,59 @@ fn read_file_snapshot(target: &Path, selection: FileReadSelection) -> Result<Fil
             // Extraction has its own bounded source reader and produces no
             // raw-text observation. Do not hash an arbitrarily large binary
             // before that reader can enforce its size limit.
-            return Ok(FileReadSnapshot { text: None, observation: None,
-                file_bytes: before.len(), total_lines: 0, byte_truncated: false, first_line_offset: 0 });
+            return Ok(FileReadSnapshot {
+                text: None,
+                observation: None,
+                file_bytes: before.len(),
+                bytes_scanned,
+                total_lines: 0,
+                complete_lines: 0,
+                byte_truncated: false,
+                first_line_offset: 0,
+                large_file_unhashed: large_bounded_read,
+                stopped_before_eof: false,
+            });
         }
-        digest.update(bytes);
-        file_bytes = file_bytes.saturating_add(read as u64);
-        ends_with_newline = bytes.last() == Some(&b'\n');
+        if !large_bounded_read {
+            digest.update(bytes);
+        }
+        bytes_scanned = bytes_scanned.saturating_add(read as u64);
+        let mut chunk_consumed = 0usize;
         for segment in bytes.split_inclusive(|byte| *byte == b'\n') {
+            chunk_consumed = chunk_consumed.saturating_add(segment.len());
+            ends_with_newline = segment.last() == Some(&b'\n');
             if line < selection.first_line { first_line_offset += segment.len() as u64; }
             if line >= selection.first_line && line <= last_line {
                 eligible_bytes = eligible_bytes.saturating_add(segment.len() as u64);
                 let take = selection.max_bytes.saturating_sub(data.len()).min(segment.len());
                 data.extend_from_slice(&segment[..take]);
             }
-            if segment.last() == Some(&b'\n') {
+            if ends_with_newline {
                 line = line.saturating_add(1);
                 newlines = newlines.saturating_add(1);
             }
+            if large_bounded_read {
+                let has_more_file_bytes = chunk_consumed < read || bytes_scanned < before.len();
+                if (line > last_line && has_more_file_bytes)
+                    || eligible_bytes > selection.max_bytes as u64
+                {
+                    stopped_before_eof = true;
+                    break;
+                }
+            }
+        }
+        if stopped_before_eof {
+            break;
         }
     }
     let after = file.metadata().map_err(|err| error(format!("Read failed: {err}")))?;
-    if !file_read_metadata_matches(&before, &after) || after.len() != file_bytes {
+    if !file_read_metadata_matches(&before, &after)
+        || (!stopped_before_eof && after.len() != bytes_scanned)
+    {
         return Err(error(format!("File changed during read. Read it again: {}", target.display())));
     }
-    let total_lines = newlines.saturating_add(usize::from(file_bytes > 0 && !ends_with_newline));
+    let file_bytes = after.len();
+    let total_lines = newlines.saturating_add(usize::from(bytes_scanned > 0 && !ends_with_newline));
     let byte_truncated = eligible_bytes > data.len() as u64;
     // A byte cap may split one UTF-8 scalar; return its complete prefix, not a
     // lossy replacement. Invalid source text and derived binary extraction do
@@ -221,22 +261,48 @@ fn read_file_snapshot(target: &Path, selection: FileReadSelection) -> Result<Fil
         }
         Err(_) => None,
     };
-    let observation = text.as_ref().map(|text| {
-        let complete_lines = text.bytes().filter(|byte| *byte == b'\n').count()
-            + usize::from(!text.is_empty() && !text.ends_with('\n') && !byte_truncated);
-        let coverage = if selection.first_line == 1 && !byte_truncated && eligible_bytes == file_bytes {
-            FileReadCoverage::Full
-        } else if complete_lines > 0 {
-            FileReadCoverage::Lines { first: selection.first_line,
-                last: selection.first_line.saturating_add(complete_lines).saturating_sub(1) }
-        } else {
-            FileReadCoverage::None
-        };
-        FileReadObservation { path, scope, version: FileReadVersion {
-            sha256: format!("{:x}", digest.finalize()), modified, total_lines,
-        }, coverage }
+    let complete_lines = text.as_ref().map_or(0, |text| {
+        text.bytes().filter(|byte| *byte == b'\n').count()
+            + usize::from(!text.is_empty() && !text.ends_with('\n') && !byte_truncated)
     });
-    Ok(FileReadSnapshot { text, observation, file_bytes, total_lines, byte_truncated, first_line_offset })
+    let observation = if large_bounded_read {
+        None
+    } else {
+        text.as_ref().map(|_| {
+            let coverage = if selection.first_line == 1 && !byte_truncated && eligible_bytes == file_bytes {
+                FileReadCoverage::Full
+            } else if complete_lines > 0 {
+                FileReadCoverage::Lines {
+                    first: selection.first_line,
+                    last: selection.first_line.saturating_add(complete_lines).saturating_sub(1),
+                }
+            } else {
+                FileReadCoverage::None
+            };
+            FileReadObservation {
+                path,
+                scope,
+                version: FileReadVersion {
+                    sha256: format!("{:x}", digest.finalize()),
+                    modified,
+                    total_lines,
+                },
+                coverage,
+            }
+        })
+    };
+    Ok(FileReadSnapshot {
+        text,
+        observation,
+        file_bytes,
+        bytes_scanned,
+        total_lines,
+        complete_lines,
+        byte_truncated,
+        first_line_offset,
+        large_file_unhashed: large_bounded_read,
+        stopped_before_eof,
+    })
 }
 
 /// Render complete raw lines within the actual model-output budget, before
@@ -251,23 +317,40 @@ fn render_file_read_snapshot(
     budget: FileReadPresentationBudget,
 ) -> Result<ObservedFileText, ToolOutcome> {
     let selected = snapshot.text.as_deref().expect("raw text snapshot");
-    let complete_count = match snapshot.observation.as_ref().map(|observation| &observation.coverage) {
-        Some(FileReadCoverage::Full) => snapshot.total_lines,
-        Some(FileReadCoverage::Lines { first, last }) => last.saturating_sub(*first).saturating_add(1),
-        _ => 0,
-    };
+    let complete_count = snapshot.complete_lines;
     let lines = selected.split_inclusive('\n').take(complete_count).collect::<Vec<_>>();
     let next_line = |kept: usize| {
         let next = start_line.saturating_add(kept);
-        (next <= snapshot.total_lines).then_some(next)
+        if snapshot.stopped_before_eof {
+            Some(next)
+        } else {
+            (next <= snapshot.total_lines).then_some(next)
+        }
     };
     let render = |kept: usize| {
         let end_line = start_line.saturating_add(kept).saturating_sub(1);
         let raw = lines[..kept].concat();
         let body = format_numbered_lines(&raw, start_line, show_line_numbers);
-        let mut text = format!("# {}\nlines: {}-{} of {}\n\n{}",
-            target.display(), start_line, end_line, snapshot.total_lines, body);
-        if snapshot.file_bytes > MAX_WRITE_BYTES as u64 {
+        let total_lines_label = if snapshot.stopped_before_eof {
+            format!("{}+", snapshot.total_lines)
+        } else {
+            snapshot.total_lines.to_string()
+        };
+        let mut text = format!(
+            "# {}\nlines: {}-{} of {}\n\n{}",
+            target.display(),
+            start_line,
+            end_line,
+            total_lines_label,
+            body
+        );
+        if snapshot.large_file_unhashed {
+            text = format!(
+                "file_metadata: bytes={} large_file=true snapshot=partial_unhashed bytes_scanned={}\nedit_strategy: read exact line ranges; bounded large-file reads stop after the requested window without hashing to EOF.\n\n{text}",
+                snapshot.file_bytes,
+                snapshot.bytes_scanned
+            );
+        } else if snapshot.file_bytes > MAX_WRITE_BYTES as u64 {
             text = format!("file_metadata: bytes={} large_file=true\nedit_strategy: read exact line ranges, then use edit_file_lines for observed ranges; existing files up to {MAX_EDITED_FILE_BYTES} bytes can be edited safely.\n\n{text}", snapshot.file_bytes);
         }
         if snapshot.byte_truncated { text.push_str("\n...[byte truncated]"); }
@@ -368,4 +451,94 @@ fn record_returned_file_observations(text: &str, observations: impl IntoIterator
         return;
     }
     for observation in observations { record_file_read_observation(observation); }
+}
+
+#[cfg(test)]
+mod large_file_bounded_read_tests {
+    use super::*;
+    use std::io::{BufWriter, Write};
+
+    #[test]
+    fn large_file_ranged_snapshot_stops_before_eof_without_full_hashing() {
+        let dir = tempfile::tempdir().unwrap();
+        let target = dir.path().join("huge.log");
+        {
+            let file = fs::File::create(&target).unwrap();
+            let mut writer = BufWriter::new(file);
+            let padding = "x".repeat(88);
+            for idx in 1..=90_000usize {
+                writeln!(writer, "line-{idx:06} {padding}").unwrap();
+            }
+            writer.flush().unwrap();
+        }
+        let file_len = fs::metadata(&target).unwrap().len();
+        assert!(file_len > LARGE_FILE_BOUNDED_READ_THRESHOLD_BYTES);
+
+        let snapshot = read_file_snapshot(
+            &target,
+            FileReadSelection {
+                first_line: 3,
+                line_count: Some(4),
+                max_bytes: 200_000,
+            },
+        )
+        .expect("bounded read of >8MiB file should succeed");
+
+        assert_eq!(snapshot.file_bytes, file_len);
+        assert!(snapshot.large_file_unhashed);
+        assert!(snapshot.stopped_before_eof);
+        assert!(
+            snapshot.bytes_scanned < 256 * 1024,
+            "expected early stop near requested window, scanned {} of {} bytes",
+            snapshot.bytes_scanned,
+            snapshot.file_bytes
+        );
+        assert!(snapshot.observation.is_none());
+        assert_eq!(snapshot.complete_lines, 4);
+        let text = snapshot.text.as_deref().unwrap();
+        assert!(text.contains("line-000003"));
+        assert!(text.contains("line-000006"));
+        assert!(!text.contains("line-000002"));
+        assert!(!text.contains("line-000007"));
+
+        let rendered = render_file_read_snapshot(
+            &target,
+            snapshot,
+            3,
+            true,
+            false,
+            FileReadPresentationBudget::direct(),
+        )
+        .expect("render bounded large-file snapshot");
+        assert_eq!(rendered.next_start_line, Some(7));
+        assert!(rendered.text.contains("snapshot=partial_unhashed"), "{}", rendered.text);
+        assert!(rendered.text.contains("lines: 3-6 of "), "{}", rendered.text);
+        assert!(rendered.text.contains("next_start_line: 7"), "{}", rendered.text);
+    }
+
+    #[test]
+    fn normal_file_snapshot_preserves_full_sha256_observation() {
+        let dir = tempfile::tempdir().unwrap();
+        let target = dir.path().join("normal.txt");
+        let body = "alpha\nbeta\ngamma\n";
+        fs::write(&target, body).unwrap();
+
+        let snapshot = read_file_snapshot(
+            &target,
+            FileReadSelection {
+                first_line: 1,
+                line_count: None,
+                max_bytes: 200_000,
+            },
+        )
+        .expect("normal file snapshot should succeed");
+
+        assert!(!snapshot.large_file_unhashed);
+        assert!(!snapshot.stopped_before_eof);
+        assert_eq!(snapshot.bytes_scanned, body.len() as u64);
+        assert_eq!(snapshot.total_lines, 3);
+        let obs = snapshot.observation.expect("normal file should record SHA-256 observation");
+        assert_eq!(obs.coverage, FileReadCoverage::Full);
+        assert_eq!(obs.version.sha256, sha256_hex(body.as_bytes()));
+    }
 }

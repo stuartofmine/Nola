@@ -27,7 +27,7 @@ pub enum HostCapability {
     Computer,
 }
 
-pub const DEFAULT_ACTIVE_CONTEXT_TOKEN_CEILING: usize = 96_000;
+pub const DEFAULT_ACTIVE_CONTEXT_TOKEN_CEILING: usize = 180_000;
 pub const DEFAULT_MODEL_OUTPUT_TOKENS: usize = 16_384;
 pub const SAFE_MODEL_OUTPUT_TOKEN_CEILING: usize = 32_768;
 pub const ABSOLUTE_MODEL_OUTPUT_TOKEN_CEILING: usize = 200_000;

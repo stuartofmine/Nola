@@ -2089,6 +2089,23 @@ mod background_lifecycle_tests {
         assert!(!marker.exists());
     }
 
+    #[test]
+    fn native_sandbox_wrap_failure_fails_closed_for_foreground_shell() {
+        let mut cmd = Command::new("/bin/sh");
+        cmd.arg("-c").arg("echo should-not-run");
+        let outcome = apply_native_sandbox_wrapping(&mut cmd, |_| {
+            Err("simulated sandbox wrap failure".to_string())
+        })
+        .unwrap_err();
+        assert!(outcome.error);
+        assert_eq!(
+            outcome.data.as_ref().unwrap()["error"],
+            "native_os_sandbox_wrap_failed"
+        );
+        assert_eq!(outcome.data.as_ref().unwrap()["tool_execution_skipped"], true);
+        assert!(outcome.text.contains("simulated sandbox wrap failure"));
+    }
+
     fn temporary_test_root(label: &str) -> PathBuf {
         let stamp = SystemTime::now()
             .duration_since(UNIX_EPOCH)
@@ -2814,6 +2831,23 @@ fn direct_shell_terminal_and_failed_artifact_observation_keep_the_owned_local_st
     }
 }
 
+fn apply_native_sandbox_wrapping(
+    child_command: &mut Command,
+    wrap: impl FnOnce(&Command) -> Result<Command, String>,
+) -> Result<(), ToolOutcome> {
+    match wrap(child_command) {
+        Ok(wrapped) => {
+            *child_command = wrapped;
+            Ok(())
+        }
+        Err(err) => Err(error_data(json!({
+            "error": "native_os_sandbox_wrap_failed",
+            "tool_execution_skipped": true,
+            "message": format!("Native OS sandbox failed to wrap shell command (fail-closed): {err}"),
+        }))),
+    }
+}
+
 fn run_bash_execution(
     args: &Map<String, Value>,
     ctx: &ToolContext,
@@ -3535,28 +3569,36 @@ fn run_bash_execution(
     child_command
         .env("NOLA_SHELL_EVIDENCE_PATH", crate::platform_paths::shell_path(&evidence_path))
         .current_dir(&cwd);
-    if prepared_sandbox.is_none() && crate::native_sandbox::native_os_sandbox_available() {
-        let workspace_root = ctx
-            .allowed_dirs
-            .first()
-            .map(PathBuf::as_path)
-            .unwrap_or(&cwd);
-        let mut extra_write_roots = vec![cwd.clone()];
-        extra_write_roots.extend(ctx.allowed_dirs.iter().cloned());
-        for artifact_path in [&evidence_path, &status_path, &stdout_path, &stderr_path] {
-            if let Some(parent) = artifact_path.parent() {
-                extra_write_roots.push(parent.to_path_buf());
+    if prepared_sandbox.is_none() {
+        if crate::native_sandbox::native_os_sandbox_available() {
+            let workspace_root = ctx
+                .allowed_dirs
+                .first()
+                .map(PathBuf::as_path)
+                .unwrap_or(&cwd);
+            let mut extra_write_roots = vec![cwd.clone()];
+            extra_write_roots.extend(ctx.allowed_dirs.iter().cloned());
+            for artifact_path in [&evidence_path, &status_path, &stdout_path, &stderr_path] {
+                if let Some(parent) = artifact_path.parent() {
+                    extra_write_roots.push(parent.to_path_buf());
+                }
             }
-        }
-        let mut native_policy =
-            crate::native_sandbox::NativeOsSandboxPolicy::for_workspace(workspace_root, &extra_write_roots);
-        if verified_read_only.is_some() {
-            native_policy.allow_network = false;
-        }
-        if let Ok(wrapped) =
-            crate::native_sandbox::wrap_command_in_native_sandbox(&native_policy, child_command)
-        {
-            *child_command = wrapped;
+            let mut native_policy =
+                crate::native_sandbox::NativeOsSandboxPolicy::for_workspace(workspace_root, &extra_write_roots);
+            if verified_read_only.is_some() {
+                native_policy.allow_network = false;
+            }
+            if let Err(outcome) = apply_native_sandbox_wrapping(child_command, |cmd| {
+                crate::native_sandbox::wrap_command_in_native_sandbox(&native_policy, cmd)
+            }) {
+                return outcome;
+            }
+        } else if crate::native_sandbox::native_os_sandbox_required_by_env() {
+            return error_data(json!({
+                "error": "native_os_sandbox_unavailable",
+                "tool_execution_skipped": true,
+                "message": "Native OS sandbox is explicitly required (NOLA_NATIVE_OS_SANDBOX=required) but unavailable on this host.",
+            }));
         }
     }
     if durable_task {

@@ -40,6 +40,44 @@ import type { ChatConversation } from './chatConversations.ts';
 import type { WorkspaceDrafts } from './workspaceDrafts.ts';
 import { BrowserRecoveryIntentStore, type RecoveryOwner } from './unknownEffectRecovery.ts';
 
+/** Maximum number of historical assistant journals fetched in parallel. */
+export const HISTORY_JOURNAL_CONCURRENCY = 6;
+
+/** Bounded parallel mapper that preserves input order and cancels promptly on first error. */
+export async function mapWithConcurrency<T, R>(
+    items: readonly T[],
+    concurrency: number,
+    worker: (item: T, index: number) => Promise<R>,
+    shouldContinue: () => boolean = () => true,
+    onFirstError?: () => void,
+): Promise<R[]> {
+    if (!items.length) return [];
+    const limit = Math.max(1, Math.min(concurrency, items.length));
+    const results = new Array<R>(items.length);
+    let nextIndex = 0;
+    let failed = false;
+    let firstError: unknown;
+    const workers = Array.from({ length: limit }, async () => {
+        while (!failed && shouldContinue()) {
+            const index = nextIndex++;
+            if (index >= items.length) break;
+            try {
+                results[index] = await worker(items[index], index);
+            } catch (cause) {
+                if (!failed) {
+                    failed = true;
+                    firstError = cause;
+                    onFirstError?.();
+                }
+                break;
+            }
+        }
+    });
+    await Promise.all(workers);
+    if (failed) throw firstError;
+    return results;
+}
+
 /** Route recovery only from the same authoritative Goal observation. */
 export function observedGoalResumeRoute(owner: GoalExecutionOwner | null, control: GoalControlObservation | null): 'run' | 'goal' | 'refresh' {
     if (!owner) return 'run';
@@ -579,7 +617,7 @@ export function createConversationSubmissionController(options: {
         const restartObserver = mode === 'replace';
         if (restartObserver) stopObservation();
         let observationStarted = false;
-        let historicalReader: AssistantJournalReader | null = null;
+        const historicalReaders = new Map<string, AssistantJournalReader>();
         historyController?.abort(); const controller = new AbortController(); historyController = controller;
         state.historyLoading = true; state.error = '';
         try {
@@ -593,17 +631,37 @@ export function createConversationSubmissionController(options: {
             // Parent revision/admission and restored drafts are sufficient for submission.
             // Historical Part bodies are presentation data, not a send prerequisite.
             if (initializationPrepared) initialized = true;
-            // The live observer and history replay have independent cancellation/read queues.
-            historicalReader = new AssistantJournalReader(hostId, current.conversationId, generation,
-                (body, signal) => api('/api/chat/agent/v2/journal', { method: 'POST', body: JSON.stringify(body), signal: signal ? AbortSignal.any([signal, controller.signal]) : controller.signal }));
             if (restartObserver) { observeSelected(); observationStarted = true; }
             const journalWindow = payload as { sourceHostId?: unknown; assistantJournalHeads?: unknown };
             if (Array.isArray(journalWindow.assistantJournalHeads) && journalWindow.assistantJournalHeads.length) {
                 if (journalWindow.sourceHostId !== hostId) throw new Error('History journal source mismatch');
-                for (const head of journalWindow.assistantJournalHeads) {
-                    const cursor = parseJournalCursor(head);
-                    if (!sameActive(current) || controller.signal.aborted) return;
-                    applyJournal(await historicalReader.read(cursor, cursor.identity.run_id), current);
+                const cursors = journalWindow.assistantJournalHeads.map(parseJournalCursor);
+                const batchController = new AbortController();
+                const batchSignal = AbortSignal.any([controller.signal, batchController.signal]);
+                const readerForScope = (scopeKey: string): AssistantJournalReader => {
+                    let reader = historicalReaders.get(scopeKey);
+                    if (!reader) {
+                        // Independent per-message readers allow bounded parallel hydration while
+                        // preserving serialized replay order for any duplicate message scope.
+                        reader = new AssistantJournalReader(hostId, current.conversationId, generation,
+                            (body, signal) => api('/api/chat/agent/v2/journal', { method: 'POST', body: JSON.stringify(body), signal: signal ? AbortSignal.any([signal, batchSignal]) : batchSignal }));
+                        historicalReaders.set(scopeKey, reader);
+                    }
+                    return reader;
+                };
+                const updates = await mapWithConcurrency(
+                    cursors,
+                    HISTORY_JOURNAL_CONCURRENCY,
+                    async cursor => {
+                        const scopeKey = JSON.stringify([cursor.identity.conversation_id, cursor.identity.run_id, cursor.identity.assistant_message_id]);
+                        return readerForScope(scopeKey).read(cursor, cursor.identity.run_id);
+                    },
+                    () => sameActive(current) && !controller.signal.aborted,
+                    () => { batchController.abort(); },
+                );
+                if (!sameActive(current) || controller.signal.aborted) return;
+                for (const update of updates) {
+                    applyJournal(update, current);
                 }
             }
             if (!sameActive(current) || controller.signal.aborted) return;
@@ -633,7 +691,8 @@ export function createConversationSubmissionController(options: {
                 await loadHistory('replace');
             } else state.error = 'chatPage.loadFailed';
         } finally {
-            historicalReader?.dispose();
+            for (const reader of historicalReaders.values()) reader.dispose();
+            historicalReaders.clear();
             if (historyController === controller) { historyController = null; state.historyLoading = false; }
             if (restartObserver && !observationStarted && sameActive(current) && !controller.signal.aborted) observeSelected();
             if (terminalWitness) void readTerminalWitness(terminalWitness);

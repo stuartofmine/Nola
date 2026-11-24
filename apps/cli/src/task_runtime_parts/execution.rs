@@ -1841,6 +1841,21 @@ fn shell_output_writer_preserves_prior_output() {
     assert_eq!(std::fs::read(&path).unwrap(), b"prior-next");
 }
 
+fn apply_background_native_sandbox_wrapping(
+    command: &mut Command,
+    wrap: impl FnOnce(&Command) -> Result<Command, String>,
+) -> Result<(), String> {
+    match wrap(command) {
+        Ok(wrapped) => {
+            *command = wrapped;
+            Ok(())
+        }
+        Err(error) => Err(format!(
+            "native OS sandbox failed to wrap background shell command (fail-closed): {error}"
+        )),
+    }
+}
+
 fn run_shell_task(request: ShellTaskProcessRequest) -> i32 {
     let task = request.task.clone();
     let lease = crate::runtime_task_port::register_runtime_task_attempt(
@@ -2013,26 +2028,34 @@ fn run_shell_task(request: ShellTaskProcessRequest) -> i32 {
         .arg(tools::shell_evidence_script(&execution_command))
         .env("NOLA_SHELL_EVIDENCE_PATH", crate::platform_paths::shell_path(&evidence_path))
         .current_dir(&task.cwd);
-    if prepared_sandbox.is_none() && crate::native_sandbox::native_os_sandbox_available() {
-        let mut extra_write_roots = Vec::new();
-        for artifact_path in [
-            evidence_path.as_path(),
-            Path::new(&task.status_path),
-            Path::new(&task.stdout_path),
-            Path::new(&task.stderr_path),
-        ] {
-            if let Some(parent) = artifact_path.parent() {
-                extra_write_roots.push(parent.to_path_buf());
+    if prepared_sandbox.is_none() {
+        if crate::native_sandbox::native_os_sandbox_available() {
+            let mut extra_write_roots = Vec::new();
+            for artifact_path in [
+                evidence_path.as_path(),
+                Path::new(&task.status_path),
+                Path::new(&task.stdout_path),
+                Path::new(&task.stderr_path),
+            ] {
+                if let Some(parent) = artifact_path.parent() {
+                    extra_write_roots.push(parent.to_path_buf());
+                }
             }
-        }
-        let native_policy = crate::native_sandbox::NativeOsSandboxPolicy::for_workspace(
-            Path::new(&task.cwd),
-            &extra_write_roots,
-        );
-        if let Ok(wrapped) =
-            crate::native_sandbox::wrap_command_in_native_sandbox(&native_policy, &command)
-        {
-            command = wrapped;
+            let native_policy = crate::native_sandbox::NativeOsSandboxPolicy::for_workspace(
+                Path::new(&task.cwd),
+                &extra_write_roots,
+            );
+            if let Err(error) = apply_background_native_sandbox_wrapping(&mut command, |cmd| {
+                crate::native_sandbox::wrap_command_in_native_sandbox(&native_policy, cmd)
+            }) {
+                return finish_shell_start_failure(&request, &lease, &error);
+            }
+        } else if crate::native_sandbox::native_os_sandbox_required_by_env() {
+            return finish_shell_start_failure(
+                &request,
+                &lease,
+                "native OS sandbox is explicitly required (NOLA_NATIVE_OS_SANDBOX=required) but unavailable on this host",
+            );
         }
     }
     command
@@ -5465,9 +5488,11 @@ mod subagent_worktree_tests {
 #[cfg(test)]
 mod agent_stall_watchdog_tests {
     use super::{
-        set_agent_task_permission_wait, touch_agent_task_activity, unix_epoch_millis,
-        AgentActivityWatchdog, AgentTaskLeaseHeartbeat, StallWatchdogAction,
+        apply_background_native_sandbox_wrapping, set_agent_task_permission_wait,
+        touch_agent_task_activity, unix_epoch_millis, AgentActivityWatchdog,
+        AgentTaskLeaseHeartbeat, StallWatchdogAction,
     };
+    use std::process::Command;
     use crate::runtime_control::RuntimeExecutionControl;
     use crate::store::{DbBackgroundTask, NolaStore};
     use std::time::{Duration, Instant};
@@ -5757,5 +5782,17 @@ mod agent_stall_watchdog_tests {
         drop(heartbeat);
         std::env::remove_var("NOLA_DB_PATH");
         let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn background_shell_native_sandbox_wrap_failure_fails_closed() {
+        let mut cmd = Command::new("/bin/sh");
+        cmd.arg("-c").arg("echo should-not-run");
+        let err = apply_background_native_sandbox_wrapping(&mut cmd, |_| {
+            Err("simulated bwrap wrap error".to_string())
+        })
+        .unwrap_err();
+        assert!(err.contains("fail-closed"));
+        assert!(err.contains("simulated bwrap wrap error"));
     }
 }

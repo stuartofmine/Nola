@@ -105,6 +105,118 @@ impl Drop for Worker {
     }
 }
 static WORKERS: OnceLock<Mutex<HashMap<PathBuf, Weak<Worker>>>> = OnceLock::new();
+
+const ARCHIVE_POLL_BASE_INTERVAL: Duration = Duration::from_secs(1);
+const ARCHIVE_POLL_MAX_INTERVAL: Duration = Duration::from_secs(8);
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct AdaptiveIdleBackoff {
+    current: Duration,
+    base: Duration,
+    max: Duration,
+}
+
+impl AdaptiveIdleBackoff {
+    fn new(base: Duration, max: Duration) -> Self {
+        Self {
+            current: base,
+            base,
+            max: max.max(base),
+        }
+    }
+
+    fn default_worker() -> Self {
+        Self::new(ARCHIVE_POLL_BASE_INTERVAL, ARCHIVE_POLL_MAX_INTERVAL)
+    }
+
+    fn current_interval(&self) -> Duration {
+        self.current
+    }
+
+    fn record_idle(&mut self) -> Duration {
+        self.current = self.current.saturating_mul(2).min(self.max);
+        self.current
+    }
+
+    fn reset(&mut self) -> Duration {
+        self.current = self.base;
+        self.current
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum PublicationReadiness {
+    UpToDate,
+    DeferredRetry,
+    Pending,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum WorkerTickOutcome {
+    Idle,
+    DeferredRetry,
+    Published,
+    Failed,
+}
+
+fn inspect_publication_readiness(
+    connection: &Connection,
+    now_ms: i64,
+) -> StoreResult<PublicationReadiness> {
+    let (target_generation, published_generation, next_retry_at_ms): (i64, i64, i64) =
+        connection.query_row(
+            "SELECT target_generation, published_generation, next_retry_at_ms
+             FROM work_archive_publication
+             WHERE singleton = 1",
+            [],
+            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+        )?;
+    if target_generation <= published_generation {
+        return Ok(PublicationReadiness::UpToDate);
+    }
+    if next_retry_at_ms > now_ms {
+        return Ok(PublicationReadiness::DeferredRetry);
+    }
+    Ok(PublicationReadiness::Pending)
+}
+
+fn run_worker_tick(
+    database: &Path,
+    read_store: &mut Option<NolaStore>,
+    write_store: &mut Option<NolaStore>,
+    now_ms: i64,
+) -> WorkerTickOutcome {
+    // Perform a lightweight read-only check before opening or using any write-capable
+    // handle so no-op ticks never acquire SQLite's WAL write lock.
+    if read_store.is_none() {
+        *read_store = NolaStore::open_read_only(database).ok();
+    }
+    let Some(ro_store) = read_store.as_ref() else {
+        return WorkerTickOutcome::Failed;
+    };
+    match inspect_publication_readiness(&ro_store.connection, now_ms) {
+        Ok(PublicationReadiness::UpToDate) => return WorkerTickOutcome::Idle,
+        Ok(PublicationReadiness::DeferredRetry) => return WorkerTickOutcome::DeferredRetry,
+        Ok(PublicationReadiness::Pending) => {}
+        Err(_) => {
+            *read_store = None;
+            return WorkerTickOutcome::Failed;
+        }
+    }
+
+    if write_store.is_none() {
+        *write_store = NolaStore::open_archive_mode(database, false).ok();
+    }
+    let Some(rw_store) = write_store.as_ref() else {
+        return WorkerTickOutcome::Failed;
+    };
+    if rw_store.publish_pending_work_archives().is_ok() {
+        WorkerTickOutcome::Published
+    } else {
+        WorkerTickOutcome::Failed
+    }
+}
+
 pub(super) fn register(path: &Path) -> StoreResult<Arc<Worker>> {
     let path = std::fs::canonicalize(path)
         .map_err(|_| StoreError::Invariant("archive database identity unavailable".into()))?;
@@ -127,29 +239,25 @@ pub(super) fn register(path: &Path) -> StoreResult<Arc<Worker>> {
         .spawn(move || {
             // No worker Arc/notification sender is retained by this thread. Last
             // owning Store Drop disconnects the channel; no permanent per-DB thread.
-            let mut store = None;
+            let mut read_store = None;
+            let mut write_store = None;
+            let mut backoff = AdaptiveIdleBackoff::default_worker();
             loop {
-                match receiver.recv_timeout(Duration::from_secs(1)) {
+                match receiver.recv_timeout(backoff.current_interval()) {
                     Err(mpsc::RecvTimeoutError::Disconnected) => break,
                     _ => {}
                 }
-                if store.is_none() {
-                    store = NolaStore::open_archive_mode(&database, false).ok();
+                match run_worker_tick(&database, &mut read_store, &mut write_store, now()) {
+                    WorkerTickOutcome::Idle | WorkerTickOutcome::DeferredRetry => {
+                        backoff.record_idle();
+                    }
+                    WorkerTickOutcome::Published | WorkerTickOutcome::Failed => {
+                        backoff.reset();
+                    }
                 }
-                let Some(store) = store.as_ref() else {
-                    continue;
-                };
-                let Ok(status) = store.archive_publication_status() else {
-                    continue;
-                };
-                if status.target_generation <= status.published_generation
-                    || status.next_retry_at_ms > now()
-                {
-                    continue;
-                }
-                let _ = store.publish_pending_work_archives();
             }
-            drop(store);
+            drop(write_store);
+            drop(read_store);
             #[cfg(test)]
             finished_in_thread.store(true, std::sync::atomic::Ordering::SeqCst);
         })
@@ -221,5 +329,86 @@ mod tests {
         assert!(finished.load(std::sync::atomic::Ordering::SeqCst),
             "last owner close returned before publisher released its SQLite connection");
         drop(lock);
+    }
+
+    #[test]
+    fn adaptive_idle_backoff_doubles_to_cap_and_resets_on_work() {
+        let mut backoff = AdaptiveIdleBackoff::default_worker();
+        assert_eq!(backoff.current_interval(), Duration::from_secs(1));
+        assert_eq!(backoff.record_idle(), Duration::from_secs(2));
+        assert_eq!(backoff.record_idle(), Duration::from_secs(4));
+        assert_eq!(backoff.record_idle(), Duration::from_secs(8));
+        // Capped at 8 seconds across further idle ticks.
+        assert_eq!(backoff.record_idle(), Duration::from_secs(8));
+        assert_eq!(backoff.current_interval(), Duration::from_secs(8));
+        // Immediately resets to 1 second when work is published.
+        assert_eq!(backoff.reset(), Duration::from_secs(1));
+        assert_eq!(backoff.current_interval(), Duration::from_secs(1));
+        assert_eq!(backoff.record_idle(), Duration::from_secs(2));
+    }
+
+    #[test]
+    fn idle_worker_tick_skips_write_lock_when_generation_unchanged() {
+        let temp = tempfile::tempdir().unwrap();
+        let path = temp.path().join("idle-skip.sqlite");
+        let store = NolaStore::open_archive_mode(&path, false).unwrap();
+        // Publish initial generation so target_generation == published_generation.
+        store.flush_work_archives().unwrap();
+        let status = store.archive_publication_status().unwrap();
+        assert_eq!(status.target_generation, status.published_generation);
+
+        // Hold an active SQLite WAL write lock on a separate connection.
+        let writer = Connection::open(&path).unwrap();
+        writer.execute_batch("BEGIN IMMEDIATE").unwrap();
+
+        let mut read_store = None;
+        let mut write_store = None;
+        let outcome = run_worker_tick(&path, &mut read_store, &mut write_store, now());
+        assert_eq!(outcome, WorkerTickOutcome::Idle);
+        assert!(
+            read_store.is_some(),
+            "read-only check should reuse a read-only handle"
+        );
+        assert!(
+            write_store.is_none(),
+            "idle tick must not open a write handle or acquire SQLite's write lock"
+        );
+
+        // Pending work whose retry window is in the future also skips writes.
+        writer
+            .execute(
+                "UPDATE work_archive_publication
+                 SET target_generation = target_generation + 1, next_retry_at_ms = ?1
+                 WHERE singleton = 1",
+                [now().saturating_add(60_000)],
+            )
+            .unwrap();
+        writer.execute_batch("COMMIT").unwrap();
+
+        assert_eq!(
+            run_worker_tick(&path, &mut read_store, &mut write_store, now()),
+            WorkerTickOutcome::DeferredRetry
+        );
+        assert!(write_store.is_none());
+
+        // Once retry window elapses, worker publishes and catches up.
+        assert_eq!(
+            run_worker_tick(
+                &path,
+                &mut read_store,
+                &mut write_store,
+                now().saturating_add(120_000),
+            ),
+            WorkerTickOutcome::Published
+        );
+        assert!(write_store.is_some());
+        let after = store.archive_publication_status().unwrap();
+        assert_eq!(after.target_generation, after.published_generation);
+
+        // Subsequent tick with no new generation is an idle no-op again.
+        assert_eq!(
+            run_worker_tick(&path, &mut read_store, &mut write_store, now()),
+            WorkerTickOutcome::Idle
+        );
     }
 }

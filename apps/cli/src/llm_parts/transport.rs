@@ -2,9 +2,11 @@
 //! HTTP client construction, bounded stream waits, cancellation and DNS.
 //! Transport does not interpret provider payloads or decide retries.
 
+use std::collections::HashMap;
 use std::env;
+use std::ffi::OsString;
 use std::net::{IpAddr, SocketAddr};
-use std::sync::{mpsc, OnceLock};
+use std::sync::{mpsc, Mutex, OnceLock};
 use std::thread;
 use std::time::{Duration, Instant};
 
@@ -73,12 +75,12 @@ pub(super) enum AsyncSendResult {
 
 const MAX_SSE_LINE_BYTES: usize = 16 * 1024 * 1024;
 
-/// Async HTTP response driven synchronously on a per-request single-threaded
-/// Tokio runtime. Dropping this value or hitting cancellation immediately
-/// aborts the in-flight hyper future and closes the underlying TCP socket
-/// without leaking detached OS threads.
+/// Async HTTP response driven synchronously on the shared background Tokio
+/// I/O runtime. Dropping this value or hitting cancellation immediately
+/// aborts the in-flight hyper future and closes/releases the underlying
+/// stream without creating a runtime per request or leaking OS threads.
 pub(super) struct CancellableHttpResponse {
-    runtime: tokio::runtime::Runtime,
+    runtime: tokio::runtime::Handle,
     response: reqwest::Response,
     per_read_timeout: Option<Duration>,
     buf: Vec<u8>,
@@ -292,46 +294,135 @@ async fn wait_for_cancellation(cancellation: &ExecutionContext) {
     }
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+struct AsyncClientCacheKey {
+    native_no_redirect: bool,
+    loopback_no_proxy: bool,
+    ssl_cert_file: Option<OsString>,
+}
+
+fn shared_async_runtime_handle() -> Result<tokio::runtime::Handle, String> {
+    static SHARED_ASYNC_RUNTIME: OnceLock<Result<tokio::runtime::Handle, String>> = OnceLock::new();
+    SHARED_ASYNC_RUNTIME
+        .get_or_init(|| {
+            let (tx, rx) = mpsc::sync_channel::<Result<tokio::runtime::Handle, String>>(1);
+            thread::Builder::new()
+                .name("nola-llm-io".to_string())
+                .spawn(move || {
+                    match tokio::runtime::Builder::new_current_thread()
+                        .enable_all()
+                        .build()
+                    {
+                        Ok(runtime) => {
+                            let handle = runtime.handle().clone();
+                            let _ = tx.send(Ok(handle));
+                            // Keep the shared I/O reactor, timers, and pooled HTTP/1.1 + HTTP/2
+                            // connection tasks alive for the lifetime of the process.
+                            runtime.block_on(std::future::pending::<()>());
+                        }
+                        Err(err) => {
+                            let _ = tx.send(Err(format!(
+                                "{} {err}",
+                                tr(Message::FailedCreateHttpClientPrefix)
+                            )));
+                        }
+                    }
+                })
+                .map_err(|err| format!("{} {err}", tr(Message::FailedCreateHttpClientPrefix)))?;
+            rx.recv().map_err(|_| {
+                format!(
+                    "{} shared async runtime failed to start",
+                    tr(Message::FailedCreateHttpClientPrefix)
+                )
+            })?
+        })
+        .clone()
+}
+
+fn cached_async_client(
+    handle: &tokio::runtime::Handle,
+    native_no_redirect: bool,
+    loopback_no_proxy: bool,
+) -> Result<reqwest::Client, String> {
+    static ASYNC_CLIENT_POOL: OnceLock<Mutex<HashMap<AsyncClientCacheKey, reqwest::Client>>> =
+        OnceLock::new();
+    let ssl_cert_file = env::var_os("SSL_CERT_FILE").filter(|path| !path.is_empty());
+    let key = AsyncClientCacheKey {
+        native_no_redirect,
+        loopback_no_proxy,
+        ssl_cert_file,
+    };
+    let pool = ASYNC_CLIENT_POOL.get_or_init(|| Mutex::new(HashMap::new()));
+    if let Ok(guard) = pool.lock() {
+        if let Some(client) = guard.get(&key) {
+            return Ok(client.clone());
+        }
+    }
+
+    let mut builder = async_stream_client_builder()?;
+    if native_no_redirect {
+        builder = builder.redirect(reqwest::redirect::Policy::none());
+    }
+    if loopback_no_proxy {
+        builder = builder.no_proxy();
+    }
+    let client = {
+        let _guard = handle.enter();
+        builder.build()
+    }
+    .map_err(|err| {
+        if native_no_redirect {
+            format!("native model HTTP client unavailable: {err}")
+        } else {
+            format!("{} {err}", tr(Message::FailedCreateHttpClientPrefix))
+        }
+    })?;
+
+    if let Ok(mut guard) = pool.lock() {
+        guard.entry(key).or_insert_with(|| client.clone());
+    }
+    Ok(client)
+}
+
 pub(super) fn build_async_stream_client(
     endpoint_host: Option<&str>,
     resolved_addr: Option<SocketAddr>,
-) -> Result<(tokio::runtime::Runtime, reqwest::Client), String> {
-    let runtime = tokio::runtime::Builder::new_current_thread()
-        .enable_all()
-        .build()
-        .map_err(|err| format!("{} {err}", tr(Message::FailedCreateHttpClientPrefix)))?;
+) -> Result<(tokio::runtime::Handle, reqwest::Client), String> {
+    let runtime = shared_async_runtime_handle()?;
+    let loopback = is_explicit_loopback_host(endpoint_host);
+    if resolved_addr.is_none() {
+        let client = cached_async_client(&runtime, false, loopback)?;
+        return Ok((runtime, client));
+    }
     let mut builder = async_stream_client_builder()?;
-    if is_explicit_loopback_host(endpoint_host) {
+    if loopback {
         builder = builder.no_proxy();
     }
     if let (Some(host), Some(addr)) = (endpoint_host, resolved_addr) {
         builder = builder.resolve(host, addr);
     }
-    let client = runtime
-        .block_on(async { builder.build() })
-        .map_err(|err| format!("{} {err}", tr(Message::FailedCreateHttpClientPrefix)))?;
+    let client = {
+        let _guard = runtime.enter();
+        builder.build()
+    }
+    .map_err(|err| format!("{} {err}", tr(Message::FailedCreateHttpClientPrefix)))?;
     Ok((runtime, client))
 }
 
 pub(super) fn build_async_native_stream_client(
     endpoint_host: Option<&str>,
-) -> Result<(tokio::runtime::Runtime, reqwest::Client), String> {
-    let runtime = tokio::runtime::Builder::new_current_thread()
-        .enable_all()
-        .build()
+) -> Result<(tokio::runtime::Handle, reqwest::Client), String> {
+    let runtime = shared_async_runtime_handle()
         .map_err(|error| format!("native model HTTP client unavailable: {error}"))?;
-    let mut builder = async_stream_client_builder()?.redirect(reqwest::redirect::Policy::none());
-    if is_explicit_loopback_host(endpoint_host) {
-        builder = builder.no_proxy();
-    }
-    let client = runtime
-        .block_on(async { builder.build() })
-        .map_err(|error| format!("native model HTTP client unavailable: {error}"))?;
+    let client = cached_async_client(&runtime, true, is_explicit_loopback_host(endpoint_host))?;
     Ok((runtime, client))
 }
 
 fn async_stream_client_builder() -> Result<reqwest::ClientBuilder, String> {
-    let mut builder = reqwest::Client::builder().connect_timeout(Duration::from_secs(30));
+    let mut builder = reqwest::Client::builder()
+        .connect_timeout(Duration::from_secs(30))
+        .pool_idle_timeout(Duration::from_secs(90))
+        .tcp_keepalive(Duration::from_secs(30));
     if let Some(path) = env::var_os("SSL_CERT_FILE").filter(|path| !path.is_empty()) {
         let pem = std::fs::read(path)
             .map_err(|_| "cannot read configured SSL_CERT_FILE".to_string())?;
@@ -348,7 +439,7 @@ fn async_stream_client_builder() -> Result<reqwest::ClientBuilder, String> {
 }
 
 pub(super) fn send_async_request_with_cancellation(
-    runtime: tokio::runtime::Runtime,
+    runtime: tokio::runtime::Handle,
     request: reqwest::RequestBuilder,
     header_timeout: Option<Duration>,
     per_read_timeout: Option<Duration>,
@@ -643,6 +734,79 @@ mod request_worker_tests {
         let eof = response.next_sse_data_frame(Duration::from_secs(2), &cancellation, "err");
         assert!(matches!(eof, StreamLineRecv::Disconnected));
         server.join().unwrap();
+    }
+
+    #[test]
+    fn shared_async_client_reuses_keepalive_connection_and_enforces_per_request_timeout() {
+        use std::io::{Read, Write};
+        use std::net::TcpListener;
+
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let addr = listener.local_addr().unwrap();
+        let server = thread::spawn(move || {
+            let (mut stream, _) = listener.accept().unwrap();
+            stream.set_read_timeout(Some(Duration::from_secs(3))).unwrap();
+            let mut buf = [0u8; 4096];
+            // Serve two sequential requests on the exact same TCP connection.
+            for expected in ["first", "second"] {
+                let mut req = Vec::new();
+                while !req.windows(4).any(|w| w == b"\r\n\r\n") {
+                    let read = stream.read(&mut buf).unwrap();
+                    assert!(read > 0);
+                    req.extend_from_slice(&buf[..read]);
+                }
+                write!(
+                    stream,
+                    "HTTP/1.1 200 OK\r\nContent-Length: {}\r\nConnection: keep-alive\r\n\r\n{}",
+                    expected.len(),
+                    expected
+                )
+                .unwrap();
+                stream.flush().unwrap();
+            }
+        });
+
+        let cancellation = ExecutionContext::default();
+        for expected in ["first", "second"] {
+            let (runtime, client) = build_async_stream_client(Some("127.0.0.1"), None).unwrap();
+            let request = client.get(format!("http://{addr}/ping"));
+            let response = match send_async_request_with_cancellation(
+                runtime,
+                request,
+                Some(Duration::from_secs(2)),
+                Some(Duration::from_secs(2)),
+                &cancellation,
+            ) {
+                AsyncSendResult::Response(resp) => resp,
+                AsyncSendResult::Error(err) => panic!("unexpected error: {err}"),
+                AsyncSendResult::Cancelled => panic!("unexpected cancel"),
+            };
+            assert_eq!(response.text(&cancellation).unwrap(), expected);
+        }
+        server.join().unwrap();
+
+        // Verify per-request header timeout still triggers accurately on the pooled client.
+        let slow_listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let slow_addr = slow_listener.local_addr().unwrap();
+        let slow_server = thread::spawn(move || {
+            let (mut stream, _) = slow_listener.accept().unwrap();
+            let mut buf = [0u8; 1024];
+            let _ = stream.read(&mut buf);
+            thread::sleep(Duration::from_millis(300));
+        });
+        let (runtime, client) = build_async_stream_client(Some("127.0.0.1"), None).unwrap();
+        let outcome = send_async_request_with_cancellation(
+            runtime,
+            client.get(format!("http://{slow_addr}/slow")),
+            Some(Duration::from_millis(80)),
+            Some(Duration::from_millis(80)),
+            &cancellation,
+        );
+        assert!(
+            matches!(outcome, AsyncSendResult::Error(ref msg) if msg.contains("timed out")),
+            "expected per-request header timeout"
+        );
+        let _ = slow_server.join();
     }
 }
 

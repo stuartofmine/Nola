@@ -680,7 +680,8 @@ fn flush_execution_terminal_utf8(cancellation: &ExecutionCancellation, pending_u
 fn execution_cancel_key(key: &crossterm::event::KeyEvent) -> bool {
     key.kind == KeyEventKind::Press
         && (key.code == KeyCode::Esc
-            || (key.code == KeyCode::Char('c') && key.modifiers.contains(KeyModifiers::CONTROL)))
+            || (matches!(key.code, KeyCode::Char('c' | 'C'))
+                && key.modifiers.contains(KeyModifiers::CONTROL)))
 }
 
 fn execution_background_key(key: &crossterm::event::KeyEvent) -> bool {
@@ -1467,6 +1468,20 @@ pub fn render_permission_prompt(prompt: &PermissionPrompt) -> String {
     render_permission_prompt_with_selection(prompt, None)
 }
 
+fn permission_diff_line_color(trimmed: &str) -> Option<&'static str> {
+    if trimmed.starts_with("+++") || trimmed.starts_with("---") {
+        None
+    } else if trimmed.starts_with('+') {
+        Some("\x1b[32m")
+    } else if trimmed.starts_with('-') {
+        Some("\x1b[31m")
+    } else if trimmed.starts_with("@@") || trimmed.starts_with("*** ") {
+        Some("\x1b[36m")
+    } else {
+        None
+    }
+}
+
 fn render_permission_prompt_with_selection(
     prompt: &PermissionPrompt,
     selected: Option<usize>,
@@ -1486,15 +1501,7 @@ fn render_permission_prompt_with_selection(
     for (label, value) in &prompt.rows {
         for (index, line) in value.split('\n').enumerate() {
             let trimmed = line.trim_end_matches('\r');
-            let diff_color = if trimmed.starts_with("+ ") || trimmed == "+" {
-                Some("\x1b[32m")
-            } else if trimmed.starts_with("- ") || trimmed == "-" {
-                Some("\x1b[31m")
-            } else if trimmed.starts_with("@@ ") || trimmed.starts_with("*** ") {
-                Some("\x1b[36m")
-            } else {
-                None
-            };
+            let diff_color = permission_diff_line_color(trimmed);
             let padded_label = pad_right_display_width(
                 if index == 0 { label.as_str() } else { "" },
                 9,
@@ -1888,9 +1895,10 @@ mod tests {
     use crate::i18n::{interaction_text, ui_text, UiText};
     use super::{
         adaptive_panel_inner_width, append_execution_input, confirmation_answer_is_yes,
-        display_width, modal_scroll_direction, render_user_question_prompt,
-        should_suppress_popup_shortcut, update_execution_input_from_key, wrap_display_width,
-        ExecutionCancellation, UserQuestionPrompt,
+        display_width, execution_cancel_key, modal_scroll_direction, permission_diff_line_color,
+        render_user_question_prompt, should_suppress_popup_shortcut,
+        update_execution_input_from_key, wrap_display_width, ExecutionCancellation,
+        UserQuestionPrompt,
     };
     use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
     use std::time::Duration;
@@ -2326,5 +2334,33 @@ mod tests {
         assert_eq!(modal_scroll_direction(&KeyEvent::new(KeyCode::Down, KeyModifiers::ALT)), Some(true));
         assert_eq!(modal_scroll_direction(&KeyEvent::new(KeyCode::Char('u'), KeyModifiers::CONTROL)), Some(false));
         assert_eq!(modal_scroll_direction(&KeyEvent::new(KeyCode::Char('d'), KeyModifiers::CONTROL)), Some(true));
+    }
+
+    #[test]
+    fn execution_cancel_key_accepts_esc_and_both_ctrl_c_cases() {
+        use crossterm::event::KeyEvent;
+        assert!(execution_cancel_key(&KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE)));
+        assert!(execution_cancel_key(&KeyEvent::new(KeyCode::Char('c'), KeyModifiers::CONTROL)));
+        assert!(execution_cancel_key(&KeyEvent::new(KeyCode::Char('C'), KeyModifiers::CONTROL)));
+        assert!(execution_cancel_key(&KeyEvent::new(
+            KeyCode::Char('C'),
+            KeyModifiers::CONTROL | KeyModifiers::SHIFT
+        )));
+        assert!(!execution_cancel_key(&KeyEvent::new(KeyCode::Char('c'), KeyModifiers::NONE)));
+        assert!(!execution_cancel_key(&KeyEvent::new(KeyCode::Char('C'), KeyModifiers::SHIFT)));
+    }
+
+    #[test]
+    fn permission_diff_line_color_handles_unified_diff_without_spaces() {
+        assert_eq!(permission_diff_line_color("+let x = 1;"), Some("\x1b[32m"));
+        assert_eq!(permission_diff_line_color("+"), Some("\x1b[32m"));
+        assert_eq!(permission_diff_line_color("-let x = 0;"), Some("\x1b[31m"));
+        assert_eq!(permission_diff_line_color("-"), Some("\x1b[31m"));
+        assert_eq!(permission_diff_line_color("@@ -1,3 +1,4 @@"), Some("\x1b[36m"));
+        assert_eq!(permission_diff_line_color("@@"), Some("\x1b[36m"));
+        assert_eq!(permission_diff_line_color("*** Update File: src/lib.rs"), Some("\x1b[36m"));
+        assert_eq!(permission_diff_line_color("+++ b/src/lib.rs"), None);
+        assert_eq!(permission_diff_line_color("--- a/src/lib.rs"), None);
+        assert_eq!(permission_diff_line_color(" unchanged context"), None);
     }
 }

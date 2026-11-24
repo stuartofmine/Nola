@@ -79,6 +79,32 @@ fn find_unique_tolerant_edit_span(
         }
         common
     }
+    fn reindent_line(body: &str, old_base: &str, target_base: &str, out: &mut String) {
+        if body.trim().is_empty() {
+            out.push_str(body);
+        } else if let Some(rest) = body.strip_prefix(old_base) {
+            out.push_str(target_base);
+            out.push_str(rest);
+        } else {
+            let line_indent = leading_indent(body);
+            if !line_indent.is_empty() && old_base.starts_with(line_indent) {
+                let dedent = old_base.len() - line_indent.len();
+                let rest = &body[line_indent.len()..];
+                if target_base.len() > dedent
+                    && target_base.ends_with(&old_base[line_indent.len()..])
+                {
+                    out.push_str(&target_base[..target_base.len() - dedent]);
+                    out.push_str(rest);
+                } else {
+                    out.push_str(body);
+                }
+            } else {
+                // Intentionally unindented (column 0, e.g. raw strings/heredocs)
+                // or mixed whitespace style: preserve relative indentation verbatim.
+                out.push_str(body);
+            }
+        }
+    }
     fn reindent_replacement(new_text: &str, old_base: &str, target_base: &str) -> String {
         if old_base == target_base {
             return new_text.to_string();
@@ -93,30 +119,14 @@ fn find_unique_tolerant_edit_span(
                 } else {
                     (&line_with_nl[..line_with_nl.len() - 1], "\n")
                 };
-                if body.trim().is_empty() {
-                    out.push_str(body);
-                } else if let Some(rest) = body.strip_prefix(old_base) {
-                    out.push_str(target_base);
-                    out.push_str(rest);
-                } else {
-                    out.push_str(target_base);
-                    out.push_str(body.trim_start_matches([' ', '\t']));
-                }
+                reindent_line(body, old_base, target_base, &mut out);
                 out.push_str(nl);
                 start = idx + 1;
             }
         }
         if start < new_text.len() {
             let body = &new_text[start..];
-            if body.trim().is_empty() {
-                out.push_str(body);
-            } else if let Some(rest) = body.strip_prefix(old_base) {
-                out.push_str(target_base);
-                out.push_str(rest);
-            } else {
-                out.push_str(target_base);
-                out.push_str(body.trim_start_matches([' ', '\t']));
-            }
+            reindent_line(body, old_base, target_base, &mut out);
         }
         out
     }
@@ -857,10 +867,12 @@ fn write_file(args: &Map<String, Value>, ctx: &ToolContext) -> ToolOutcome {
                 if !refresh_mutation_effect_versions(&mut outcome) {
                     return partial_file_mutation_failure(outcome,"Written resource could not be observed after formatting; its final version is unknown or absent, do not replay the replacement");
                 }
-                // Preserve read continuity when the file on disk exactly matches
-                // the full text the model just authored (no external rewrite).
-                record_authored_file_full_access(&target, &content);
-                outcome.text.push_str(&format_sections.join(""));
+                // Preserve read continuity for newly created files (never mint
+                // read credit when replacing a pre-existing unread file).
+                if current.is_none() {
+                    record_authored_file_full_access(&target, &content);
+                }
+                outcome.text.push_str(&format_sections.join("\n"));
                 if let Some(diag) = post_edit_diagnostics::diagnostics_section_for_file(&target) {
                     outcome.text.push_str(&diag);
                 }
@@ -1374,29 +1386,38 @@ fn replace_symbol_body(args: &Map<String, Value>, ctx: &ToolContext) -> ToolOutc
             format!("Replace symbol preview ({kind} {symbol})"),
         );
     }
-    with_file_write_lock(&target, || match fs::write(&target, updated) {
-        Ok(()) => {
-            refresh_file_access_state(&target);
-            sections.extend([String::new(), "Applied.".to_string()]);
-            if let Some(format_root) = format_root_for_path(&target, &ctx.allowed_dirs) {
-                match formatting_sections(
-                    &format_root,
-                    std::slice::from_ref(&target),
-                    &ctx.cancellation,
-                    ctx.policy.process_sandbox(),
-                ) {
-                    Ok(format_sections) => sections.extend(format_sections),
-                    Err(outcome) => return outcome,
-                }
+    with_file_write_lock(&target, || {
+        let had_full_read = existing_file_access_snapshot(&target, &Map::new())
+            .ok()
+            .flatten()
+            .is_some_and(|snapshot| snapshot.full_read);
+        match fs::write(&target, &updated) {
+            Ok(()) => {
                 refresh_file_access_state(&target);
+                sections.extend([String::new(), "Applied.".to_string()]);
+                if let Some(format_root) = format_root_for_path(&target, &ctx.allowed_dirs) {
+                    match formatting_sections(
+                        &format_root,
+                        std::slice::from_ref(&target),
+                        &ctx.cancellation,
+                        ctx.policy.process_sandbox(),
+                    ) {
+                        Ok(format_sections) => sections.extend(format_sections),
+                        Err(outcome) => return outcome,
+                    }
+                    refresh_file_access_state(&target);
+                }
+                if had_full_read {
+                    record_authored_file_full_access(&target, &updated);
+                }
+                ok(
+                    sections.join("\n"),
+                    format!("Replaced {kind} {symbol} in {}", target.display()),
+                )
+                .with_file_artifact(&target, "edit")
             }
-            ok(
-                sections.join("\n"),
-                format!("Replaced {kind} {symbol} in {}", target.display()),
-            )
-            .with_file_artifact(&target, "edit")
+            Err(err) => error(format!("Write failed: {err}")),
         }
-        Err(err) => error(format!("Write failed: {err}")),
     })
 }
 
@@ -4114,4 +4135,95 @@ This workspace is a regular directory, not a Git repository. File and document t
         });
     }
     outcome
+}
+
+#[cfg(test)]
+mod tolerant_reindent_and_continuity_tests {
+    use super::*;
+
+    #[test]
+    fn reindent_preserves_raw_column_zero_and_relative_dedented_lines() {
+        // File block is indented by 4 spaces, while model supplied 8-space base indent.
+        let source = "fn main() {\n    let a = 1;\n    let b = 2;\n}\n";
+        let old_text = "        let a = 1;\n        let b = 2;";
+        // Replacement includes:
+        // - normal line at old_base (8 spaces -> 4 spaces)
+        // - nested line (+4 spaces -> 8 spaces)
+        // - column-0 raw string content (must stay at column 0, NOT get 4 spaces!)
+        // - intentionally dedented line (6 spaces = old_base - 2 -> 2 spaces)
+        let new_text = concat!(
+            "        let s = r#\"\n",
+            "raw line at column zero\n",
+            "        \"#;\n",
+            "            let inner = 1;\n",
+            "      let dedented = 2;"
+        );
+
+        let (start, end, replacement) =
+            find_unique_tolerant_edit_span(source, old_text, new_text)
+                .expect("expected tolerant pass-2 match");
+        let mut updated = source.to_string();
+        updated.replace_range(start..end, &replacement);
+
+        let expected = concat!(
+            "fn main() {\n",
+            "    let s = r#\"\n",
+            "raw line at column zero\n",
+            "    \"#;\n",
+            "        let inner = 1;\n",
+            "  let dedented = 2;\n",
+            "}\n"
+        );
+        assert_eq!(updated, expected);
+    }
+
+    #[test]
+    fn write_file_then_edit_file_then_edit_file_preserves_read_continuity() {
+        let fixture = tempfile::tempdir().unwrap();
+        let root = fixture.path();
+        let target = root.join("continuity.txt");
+        let ctx = ToolContext {
+            memory_binding: nola_domain::memory_owner::MemoryExecutionBinding::local_profile(),
+            language_services: Default::default(),
+            skills: Default::default(),
+            allowed_dirs: vec![root.to_path_buf()],
+            policy: crate::tools::ToolExecutionPolicy::new(
+                Vec::new(),
+                true,
+                "allow".into(),
+                Vec::new(),
+            ),
+            permission_scope: Default::default(),
+            cancellation: Default::default(),
+            plan_state: Default::default(),
+            output_store: ToolOutputStore::new(root.join("outputs")),
+            browser: BrowserRuntime::new(root.join("browser")),
+        };
+        let _scope = ctx.permission_scope.enter();
+
+        let wrote = write_file(
+            json!({"path": target, "content": "one\ntwo\nthree\n"})
+                .as_object()
+                .unwrap(),
+            &ctx,
+        );
+        assert!(!wrote.error, "{}", wrote.text);
+
+        let edit1 = edit_file(
+            json!({"path": target, "old_text": "one", "new_text": "ONE"})
+                .as_object()
+                .unwrap(),
+            &ctx,
+        );
+        assert!(!edit1.error, "edit1 failed: {}", edit1.text);
+
+        let edit2 = edit_file(
+            json!({"path": target, "old_text": "two", "new_text": "TWO"})
+                .as_object()
+                .unwrap(),
+            &ctx,
+        );
+        assert!(!edit2.error, "edit2 failed: {}", edit2.text);
+        assert_eq!(fs::read_to_string(&target).unwrap(), "ONE\nTWO\nthree\n");
+    }
 }

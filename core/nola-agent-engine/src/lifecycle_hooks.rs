@@ -1,10 +1,11 @@
 // SPDX-License-Identifier: Apache-2.0
 // File Overview:
-// - Purpose: Plan trusted, observation-only lifecycle Hook invocations for platform Hosts.
+// - Purpose: Plan trusted lifecycle Hook invocations and evaluate Hook decisions for platform Hosts.
 // - Boundary: Core validates and matches configuration; Hosts perform all I/O and permission checks.
-// - Security: This version cannot block, mutate tool input/output, or widen permissions.
+// - Security: Rules default to observation-only (`blocking: false`); blocking/mutating decisions are explicit opt-in.
 
 use serde::{Deserialize, Serialize};
+use serde_json::Value;
 use sha2::{Digest, Sha256};
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -110,6 +111,8 @@ pub struct LifecycleHookRule {
     pub display_order: i64,
     #[serde(default = "default_timeout_ms")]
     pub timeout_ms: u64,
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub blocking: bool,
 }
 
 /// A Host-owned executable binding advertised to Core. Execution details such
@@ -196,6 +199,89 @@ fn default_enabled() -> bool {
 
 fn default_timeout_ms() -> u64 {
     10_000
+}
+
+fn is_false(value: &bool) -> bool {
+    !*value
+}
+
+fn default_outcome_status() -> LifecycleHookExecutionStatus {
+    LifecycleHookExecutionStatus::Succeeded
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "action", rename_all = "snake_case")]
+pub enum LifecycleHookDecision {
+    #[default]
+    Allow,
+    Block {
+        reason: String,
+    },
+    ModifyInput {
+        input: Value,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        reason: Option<String>,
+    },
+    InjectContext {
+        text: String,
+    },
+}
+
+pub type LifecycleHookAction = LifecycleHookDecision;
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct LifecycleHookOutcome {
+    #[serde(default)]
+    pub invocation_id: String,
+    #[serde(default)]
+    pub rule_id: String,
+    #[serde(default = "default_outcome_status")]
+    pub status: LifecycleHookExecutionStatus,
+    #[serde(default)]
+    pub decision: LifecycleHookDecision,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub output_preview: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub error_code: Option<String>,
+}
+
+impl Default for LifecycleHookOutcome {
+    fn default() -> Self {
+        Self {
+            invocation_id: String::new(),
+            rule_id: String::new(),
+            status: LifecycleHookExecutionStatus::Succeeded,
+            decision: LifecycleHookDecision::Allow,
+            output_preview: None,
+            error_code: None,
+        }
+    }
+}
+
+/// Evaluates an ordered sequence of lifecycle hook outcomes into a single
+/// effective decision. Precedence: first `Block` wins, then first
+/// `ModifyInput`, then first `InjectContext`, otherwise `Allow`.
+pub fn evaluate_hook_decisions(outcomes: &[LifecycleHookOutcome]) -> LifecycleHookDecision {
+    if let Some(decision) = outcomes.iter().find_map(|outcome| match &outcome.decision {
+        LifecycleHookDecision::Block { .. } => Some(outcome.decision.clone()),
+        _ => None,
+    }) {
+        return decision;
+    }
+    if let Some(decision) = outcomes.iter().find_map(|outcome| match &outcome.decision {
+        LifecycleHookDecision::ModifyInput { .. } => Some(outcome.decision.clone()),
+        _ => None,
+    }) {
+        return decision;
+    }
+    if let Some(decision) = outcomes.iter().find_map(|outcome| match &outcome.decision {
+        LifecycleHookDecision::InjectContext { .. } => Some(outcome.decision.clone()),
+        _ => None,
+    }) {
+        return decision;
+    }
+    LifecycleHookDecision::Allow
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -532,7 +618,7 @@ pub fn plan_lifecycle_hooks(
             display_order: rule.display_order,
             timeout_ms: rule.timeout_ms,
             required_capability: required_capability(rule.handler.kind),
-            observation_only: true,
+            observation_only: !rule.blocking,
         });
     }
     invocations.sort_by(|left, right| {
@@ -736,6 +822,7 @@ mod tests {
             },
             display_order: 0,
             timeout_ms: 5_000,
+            blocking: false,
         }
     }
 
@@ -983,5 +1070,180 @@ mod tests {
             rule.reason == LifecycleHookRejectionReason::MatcherMismatch
                 || rule.reason == LifecycleHookRejectionReason::InvalidRule
         }));
+    }
+
+    #[test]
+    fn evaluate_hook_decisions_respects_block_modify_inject_allow_precedence() {
+        let allow = LifecycleHookOutcome {
+            rule_id: "r.allow".to_string(),
+            decision: LifecycleHookDecision::Allow,
+            ..LifecycleHookOutcome::default()
+        };
+        let inject_first = LifecycleHookOutcome {
+            rule_id: "r.inject1".to_string(),
+            decision: LifecycleHookDecision::InjectContext {
+                text: "remember style guide".to_string(),
+            },
+            ..LifecycleHookOutcome::default()
+        };
+        let inject_second = LifecycleHookOutcome {
+            rule_id: "r.inject2".to_string(),
+            decision: LifecycleHookDecision::InjectContext {
+                text: "second context".to_string(),
+            },
+            ..LifecycleHookOutcome::default()
+        };
+        let modify_first = LifecycleHookOutcome {
+            rule_id: "r.modify1".to_string(),
+            decision: LifecycleHookDecision::ModifyInput {
+                input: serde_json::json!({"command": "git status --short"}),
+                reason: Some("normalized flags".to_string()),
+            },
+            ..LifecycleHookOutcome::default()
+        };
+        let modify_second = LifecycleHookOutcome {
+            rule_id: "r.modify2".to_string(),
+            decision: LifecycleHookDecision::ModifyInput {
+                input: serde_json::json!({"command": "git diff"}),
+                reason: None,
+            },
+            ..LifecycleHookOutcome::default()
+        };
+        let block_first = LifecycleHookOutcome {
+            rule_id: "r.block1".to_string(),
+            decision: LifecycleHookDecision::Block {
+                reason: "destructive command denied".to_string(),
+            },
+            ..LifecycleHookOutcome::default()
+        };
+        let block_second = LifecycleHookOutcome {
+            rule_id: "r.block2".to_string(),
+            decision: LifecycleHookDecision::Block {
+                reason: "secondary block".to_string(),
+            },
+            ..LifecycleHookOutcome::default()
+        };
+
+        assert_eq!(evaluate_hook_decisions(&[]), LifecycleHookDecision::Allow);
+        assert_eq!(
+            evaluate_hook_decisions(std::slice::from_ref(&allow)),
+            LifecycleHookDecision::Allow
+        );
+        assert_eq!(
+            evaluate_hook_decisions(&[allow.clone(), inject_first.clone(), inject_second]),
+            LifecycleHookDecision::InjectContext {
+                text: "remember style guide".to_string(),
+            }
+        );
+        assert_eq!(
+            evaluate_hook_decisions(&[
+                allow.clone(),
+                inject_first.clone(),
+                modify_first.clone(),
+                modify_second
+            ]),
+            LifecycleHookDecision::ModifyInput {
+                input: serde_json::json!({"command": "git status --short"}),
+                reason: Some("normalized flags".to_string()),
+            }
+        );
+        assert_eq!(
+            evaluate_hook_decisions(&[
+                allow,
+                inject_first,
+                modify_first,
+                block_first,
+                block_second
+            ]),
+            LifecycleHookDecision::Block {
+                reason: "destructive command denied".to_string(),
+            }
+        );
+    }
+
+    #[test]
+    fn blocking_rule_plans_non_observation_invocation_while_default_stays_observation_only() {
+        // Legacy serialized rule JSON without `blocking` defaults to observation-only.
+        let legacy_json = serde_json::json!({
+            "id": "legacy.obs",
+            "event": "pre_tool_use",
+            "source": "workspace",
+            "trust": "trusted",
+            "handler": {
+                "id": "handler.legacy",
+                "kind": "command",
+                "executionMode": "sync"
+            },
+            "matcher": { "toolNames": ["bash"] }
+        });
+        let legacy_rule: LifecycleHookRule = serde_json::from_value(legacy_json).unwrap();
+        assert!(!legacy_rule.blocking);
+        let serialized_legacy = serde_json::to_value(&legacy_rule).unwrap();
+        assert!(
+            serialized_legacy.get("blocking").is_none(),
+            "observation-only rules omit blocking field for v1 revision compatibility"
+        );
+
+        let mut blocking_rule = rule(
+            "guard.block",
+            LifecycleHookSource::Workspace,
+            LifecycleHookTrustStatus::Trusted,
+            &["bash"],
+        );
+        blocking_rule.blocking = true;
+
+        let plan = plan_lifecycle_hooks(&LifecycleHookPlanInput {
+            event: Some(event("bash")),
+            rules: vec![legacy_rule, blocking_rule],
+            ..LifecycleHookPlanInput::default()
+        })
+        .unwrap();
+
+        assert_eq!(plan.invocations.len(), 2);
+        let guard = plan
+            .invocations
+            .iter()
+            .find(|inv| inv.rule_id == "guard.block")
+            .unwrap();
+        let legacy = plan
+            .invocations
+            .iter()
+            .find(|inv| inv.rule_id == "legacy.obs")
+            .unwrap();
+        assert!(!guard.observation_only);
+        assert!(legacy.observation_only);
+    }
+
+    #[test]
+    fn hook_decision_and_outcome_serde_defaults_remain_backward_compatible() {
+        let minimal_outcome: LifecycleHookOutcome = serde_json::from_value(serde_json::json!({
+            "invocationId": "hook_1",
+            "ruleId": "rule_1"
+        }))
+        .unwrap();
+        assert_eq!(minimal_outcome.decision, LifecycleHookDecision::Allow);
+        assert_eq!(
+            minimal_outcome.status,
+            LifecycleHookExecutionStatus::Succeeded
+        );
+
+        let variants: Vec<LifecycleHookAction> = vec![
+            LifecycleHookDecision::Allow,
+            LifecycleHookDecision::Block {
+                reason: "policy violation".to_string(),
+            },
+            LifecycleHookDecision::ModifyInput {
+                input: serde_json::json!({"path": "/workspace/safe.rs"}),
+                reason: Some("rewrote path".to_string()),
+            },
+            LifecycleHookDecision::InjectContext {
+                text: "use strict mode".to_string(),
+            },
+        ];
+        for variant in variants {
+            let encoded = serde_json::to_string(&variant).unwrap();
+            let decoded: LifecycleHookDecision = serde_json::from_str(&encoded).unwrap();
+            assert_eq!(decoded, variant);
+        }
     }
 }

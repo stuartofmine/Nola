@@ -293,16 +293,39 @@ impl AgentModelToolProjection {
         turn_projection_digest: impl Into<String>,
         model_definitions: Vec<Value>,
     ) -> Result<CompiledModelToolProjection, String> {
-        let mut ordered = BTreeMap::new();
+        Self::compile_preserving_prefix_order(revision, turn_projection_digest, model_definitions, &[])
+    }
+
+    /// Compiles a model-visible tool surface while preserving the prefix order
+    /// of an earlier projection for prompt-cache stability.
+    ///
+    /// Previously projected capability IDs appear first in their exact original
+    /// relative order (skipping removed tools and ignoring duplicate entries in
+    /// `previous_order`). Any newly added tools are appended at the tail in
+    /// deterministic canonical (lexicographical) order so appending a tool never
+    /// reorders earlier definitions in the prompt prefix.
+    pub fn compile_preserving_prefix_order(
+        revision: u64,
+        turn_projection_digest: impl Into<String>,
+        model_definitions: Vec<Value>,
+        previous_order: &[String],
+    ) -> Result<CompiledModelToolProjection, String> {
+        let mut remaining = BTreeMap::new();
         for definition in model_definitions {
             let id = exact_model_tool_id(&definition)
                 .ok_or("model tool projection contains an invalid capability identity")?
                 .to_string();
-            if ordered.insert(id, canonical_json(&definition)).is_some() {
+            if remaining.insert(id, canonical_json(&definition)).is_some() {
                 return Err("model tool projection contains duplicate capability identities".into());
             }
         }
-        let tools = ordered.into_values().collect::<Vec<_>>();
+        let mut tools = Vec::with_capacity(remaining.len());
+        for id in previous_order {
+            if let Some(definition) = remaining.remove(id) {
+                tools.push(definition);
+            }
+        }
+        tools.extend(remaining.into_values());
         let projection = Self::capture_ordered(revision, turn_projection_digest.into(), &tools);
         Ok(CompiledModelToolProjection { tools, projection })
     }
@@ -871,5 +894,123 @@ mod tests {
                 "function":{"name":"beta","parameters":{"type":"object"}}
             }),
         ]));
+    }
+
+    #[test]
+    fn compile_preserving_prefix_order_appends_new_tools_without_reordering_prior_prefix() {
+        let aardvark = json!({"type":"function","function":{"name":"aardvark","parameters":{"type":"object"}}});
+        let alpha = json!({"type":"function","function":{"name":"alpha","parameters":{"type":"object"}}});
+        let beta = json!({"type":"function","function":{"name":"beta","parameters":{"type":"object"}}});
+        let delta = json!({"type":"function","function":{"name":"delta","parameters":{"type":"object"}}});
+        let gamma = json!({"type":"function","function":{"name":"gamma","parameters":{"type":"object"}}});
+
+        let initial = AgentModelToolProjection::compile_preserving_prefix_order(
+            1,
+            "turn-digest",
+            vec![gamma.clone(), beta.clone()],
+            &[],
+        )
+        .unwrap();
+        assert_eq!(initial.projection.capability_ids, vec!["beta", "gamma"]);
+        assert!(initial.projection.matches_model_definitions(&initial.tools));
+
+        // Appending `alpha` (lexicographically earlier than `beta` and `gamma`)
+        // must keep the prior prefix byte-identical and place `alpha` at the tail.
+        let appended = AgentModelToolProjection::compile_preserving_prefix_order(
+            2,
+            "turn-digest",
+            vec![alpha.clone(), gamma.clone(), beta.clone()],
+            &initial.projection.capability_ids,
+        )
+        .unwrap();
+        assert_eq!(
+            appended.projection.capability_ids,
+            vec!["beta", "gamma", "alpha"]
+        );
+        assert_eq!(&appended.tools[..2], &initial.tools[..]);
+        assert!(appended.projection.matches_model_definitions(&appended.tools));
+        assert!(!appended.projection.matches_model_definitions(&[
+            alpha.clone(),
+            beta.clone(),
+            gamma.clone(),
+        ]));
+
+        // Multiple newly added tools are sorted deterministically at the tail
+        // regardless of their input order.
+        let tail_order_a = AgentModelToolProjection::compile_preserving_prefix_order(
+            3,
+            "turn-digest",
+            vec![
+                delta.clone(),
+                gamma.clone(),
+                aardvark.clone(),
+                alpha.clone(),
+                beta.clone(),
+            ],
+            &appended.projection.capability_ids,
+        )
+        .unwrap();
+        let tail_order_b = AgentModelToolProjection::compile_preserving_prefix_order(
+            3,
+            "turn-digest",
+            vec![
+                aardvark.clone(),
+                alpha.clone(),
+                beta.clone(),
+                delta.clone(),
+                gamma.clone(),
+            ],
+            &appended.projection.capability_ids,
+        )
+        .unwrap();
+        assert_eq!(
+            tail_order_a.projection.capability_ids,
+            vec!["beta", "gamma", "alpha", "aardvark", "delta"]
+        );
+        assert_eq!(tail_order_a.tools, tail_order_b.tools);
+        assert_eq!(tail_order_a.projection, tail_order_b.projection);
+        assert_eq!(&tail_order_a.tools[..3], &appended.tools[..]);
+    }
+
+    #[test]
+    fn compile_preserving_prefix_order_handles_removals_duplicate_hints_and_rejects_invalid() {
+        let alpha = json!({"type":"function","function":{"name":"alpha"}});
+        let beta = json!({"type":"function","function":{"name":"beta"}});
+        let gamma = json!({"type":"function","function":{"name":"gamma"}});
+
+        let previous_order = vec![
+            "gamma".to_string(),
+            "removed_tool".to_string(),
+            "gamma".to_string(),
+            "beta".to_string(),
+        ];
+        let compiled = AgentModelToolProjection::compile_preserving_prefix_order(
+            4,
+            "turn-digest",
+            vec![alpha.clone(), beta.clone(), gamma.clone()],
+            &previous_order,
+        )
+        .unwrap();
+        assert_eq!(
+            compiled.projection.capability_ids,
+            vec!["gamma", "beta", "alpha"]
+        );
+        assert!(compiled.projection.matches_model_definitions(&compiled.tools));
+
+        // Duplicate definitions and invalid identities remain strictly rejected.
+        assert!(AgentModelToolProjection::compile_preserving_prefix_order(
+            5,
+            "turn-digest",
+            vec![alpha.clone(), alpha.clone()],
+            &previous_order,
+        )
+        .is_err());
+        assert!(AgentModelToolProjection::compile_preserving_prefix_order(
+            5,
+            "turn-digest",
+            vec![alpha, json!({"type":"function","function":{}})],
+            &previous_order,
+        )
+        .is_err());
     }
 }

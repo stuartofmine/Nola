@@ -1571,6 +1571,119 @@ fn resolve_missing_path(path: &Path) -> Option<PathBuf> {
     Some(resolved)
 }
 
+const MAX_GITIGNORE_BYTES: u64 = 256 * 1024;
+
+struct GitignoreRule {
+    negated: bool,
+    dir_only: bool,
+    anchored: bool,
+    regex: Regex,
+}
+
+struct WorkspaceGitignore {
+    rules: Vec<GitignoreRule>,
+}
+
+impl WorkspaceGitignore {
+    fn load(root: &Path) -> Self {
+        let path = root.join(".gitignore");
+        let Ok(file) = fs::File::open(path) else {
+            return Self { rules: Vec::new() };
+        };
+        let mut bytes = Vec::new();
+        if file.take(MAX_GITIGNORE_BYTES).read_to_end(&mut bytes).is_err() {
+            return Self { rules: Vec::new() };
+        }
+        Self::parse(&String::from_utf8_lossy(&bytes))
+    }
+
+    fn parse(contents: &str) -> Self {
+        let mut rules = Vec::new();
+        for raw_line in contents.lines() {
+            let trimmed = trim_gitignore_line(raw_line);
+            if trimmed.is_empty() || trimmed.starts_with('#') {
+                continue;
+            }
+            let (negated, rest) = if let Some(stripped) = trimmed.strip_prefix('!') {
+                (true, stripped)
+            } else {
+                (false, trimmed.as_str())
+            };
+            let unescaped = rest
+                .strip_prefix("\\#")
+                .map(|tail| format!("#{tail}"))
+                .or_else(|| rest.strip_prefix("\\!").map(|tail| format!("!{tail}")))
+                .unwrap_or_else(|| rest.to_string());
+            let dir_only = unescaped.ends_with('/');
+            let mut pattern = unescaped.trim_end_matches('/');
+            if let Some(stripped) = pattern.strip_prefix("./") {
+                pattern = stripped;
+            }
+            let anchored = pattern.starts_with('/') || pattern.contains('/');
+            let pattern = pattern.trim_start_matches('/');
+            if pattern.is_empty() {
+                continue;
+            }
+            let fragment = glob_regex_fragment(pattern);
+            if let Ok(regex) = Regex::new(&format!("^{fragment}$")) {
+                rules.push(GitignoreRule {
+                    negated,
+                    dir_only,
+                    anchored,
+                    regex,
+                });
+            }
+        }
+        Self { rules }
+    }
+
+    fn is_ignored(&self, relative_path: &Path, is_dir: bool) -> bool {
+        if self.rules.is_empty() {
+            return false;
+        }
+        let rel_slash = path_slash(relative_path);
+        let file_name = relative_path
+            .file_name()
+            .map(|name| name.to_string_lossy());
+        let mut ignored = false;
+        for rule in &self.rules {
+            if rule.dir_only && !is_dir {
+                continue;
+            }
+            let matched = if rule.anchored {
+                rule.regex.is_match(&rel_slash)
+            } else {
+                file_name
+                    .as_deref()
+                    .is_some_and(|name| rule.regex.is_match(name))
+            };
+            if matched {
+                ignored = !rule.negated;
+            }
+        }
+        ignored
+    }
+}
+
+fn trim_gitignore_line(raw: &str) -> String {
+    let line = raw.strip_suffix('\r').unwrap_or(raw);
+    let bytes = line.as_bytes();
+    let mut end = bytes.len();
+    while end > 0 && matches!(bytes[end - 1], b' ' | b'\t') {
+        let mut backslashes = 0usize;
+        let mut idx = end - 1;
+        while idx > 0 && bytes[idx - 1] == b'\\' {
+            backslashes += 1;
+            idx -= 1;
+        }
+        if backslashes % 2 == 1 {
+            break;
+        }
+        end -= 1;
+    }
+    line[..end].replace("\\ ", " ").replace("\\\t", "\t")
+}
+
 fn walk_files<F>(root: &Path, limit: usize, callback: &mut F)
 where F: FnMut(&Path) -> bool {
     walk_files_controlled(root, limit, callback, &|| false);
@@ -1578,6 +1691,7 @@ where F: FnMut(&Path) -> bool {
 
 fn walk_files_controlled<F>(root: &Path, limit: usize, callback: &mut F, stop: &dyn Fn() -> bool)
 where F: FnMut(&Path) -> bool {
+    let gitignore = WorkspaceGitignore::load(root);
     let mut stack = vec![root.to_path_buf()];
     let mut seen = 0usize;
     while let Some(dir) = stack.pop() {
@@ -1589,9 +1703,19 @@ where F: FnMut(&Path) -> bool {
             // Never follow directory cycles or leave the admitted root via a link.
             if kind.is_symlink() { continue; }
             let path = entry.path();
+            let rel = path.strip_prefix(root).ok();
             if kind.is_dir() {
-                if !should_skip_dir(&entry.file_name().to_string_lossy()) { stack.push(path); }
+                if should_skip_dir(&entry.file_name().to_string_lossy()) {
+                    continue;
+                }
+                if rel.is_some_and(|relative| gitignore.is_ignored(relative, true)) {
+                    continue;
+                }
+                stack.push(path);
             } else if kind.is_file() {
+                if rel.is_some_and(|relative| gitignore.is_ignored(relative, false)) {
+                    continue;
+                }
                 seen += 1;
                 if !callback(&path) || seen >= limit { return; }
             }
@@ -1606,7 +1730,16 @@ fn should_skip_dir(name: &str) -> bool {
             | ".build"
             | "build"
             | "dist"
+            | "out"
+            | "coverage"
             | ".cache"
+            | ".next"
+            | ".nuxt"
+            | ".svelte-kit"
+            | ".turbo"
+            | ".mypy_cache"
+            | ".pytest_cache"
+            | ".ruff_cache"
             | "DerivedData"
             | "node_modules"
             | "target"
@@ -1614,6 +1747,7 @@ fn should_skip_dir(name: &str) -> bool {
             | ".venv"
             | "venv"
             | "vendor"
+            | "third_party"
             | "Pods"
             | "__pycache__"
     )

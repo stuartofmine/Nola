@@ -322,11 +322,27 @@ fn interactive_grant(rule: &PermissionRule) -> bool {
     rule.source == PermissionRuleSource::Conversation
 }
 
+fn is_shell_capability(capability: &str) -> bool {
+    matches!(
+        capability,
+        "bash" | "shell.execute" | "bash_background_start" | "bash_command_review" | "pty_exec"
+    )
+}
+
+fn rule_matches_shell_capability(rule: &PermissionRule, capability: &str) -> bool {
+    is_shell_capability(capability)
+        && (rule.capability_pattern == capability
+            || (!interactive_grant(rule)
+                && rule.capability_pattern == "bash"
+                && capability == "pty_exec"))
+}
+
 fn capability_matches(rule: &PermissionRule, capability: &str) -> bool {
     if interactive_grant(rule) {
         rule.capability_pattern == capability
     } else {
         wildcard_matches(&rule.capability_pattern, capability)
+            || (rule.capability_pattern == "bash" && capability == "pty_exec")
     }
 }
 
@@ -339,17 +355,19 @@ pub fn permission_resource_matches(rule: &PermissionRule, subject: &PermissionSu
         if rule.resource_pattern == subject.resource { return true; }
     }
     if !interactive_grant(rule) && rule.resource_pattern == "*" { return true; }
-    let shell_capability = matches!(subject.capability.as_str(),
-        "bash" | "shell.execute" | "bash_background_start" | "bash_command_review");
-    if shell_capability && rule.capability_pattern == subject.capability
+    if rule_matches_shell_capability(rule, &subject.capability)
         && rule.resource_pattern.starts_with(BASH_SCOPE_PREFIX)
     {
         return bash_scope_matches(&rule.resource_pattern, &subject.resource);
     }
-    if shell_capability && rule.capability_pattern == subject.capability
+    if rule_matches_shell_capability(rule, &subject.capability)
         && rule.resource_pattern.starts_with(BASH_COMMAND_GLOB_PREFIX)
     {
-        return bash_command_glob_matches(&rule.resource_pattern, &subject.resource);
+        return bash_command_glob_matches_for_decision(
+            &rule.resource_pattern,
+            &subject.resource,
+            rule.decision == PermissionPolicyDecision::Allow,
+        );
     }
     if rule.capability_pattern == subject.capability
         && matches!(
@@ -394,7 +412,7 @@ fn permission_resource_matches_verified(rule: &PermissionRule, subject: &Permiss
             PermissionResource::File {components:requested,..} => requested.starts_with(&components),
             _ => false,
         }).collect::<Vec<_>>()
-    } else if matches!(subject.capability.as_str(),"bash"|"shell.execute"|"bash_background_start"|"bash_command_review")
+    } else if is_shell_capability(&subject.capability)
         && (rule.resource_pattern.starts_with(BASH_SCOPE_PREFIX) || rule.resource_pattern.starts_with(BASH_COMMAND_GLOB_PREFIX)) {
         resolved.resources.iter().map(|resource| match resource {
             PermissionResource::ProcessInvocation {command,cwd,..} => permission_resource_matches(rule,&PermissionSubject {
@@ -473,7 +491,27 @@ fn hex_value(value: u8) -> Option<u8> {
     }
 }
 
+fn contains_shell_compound_operator(text: &str) -> bool {
+    text.contains(';')
+        || text.contains("&&")
+        || text.contains("||")
+        || text.contains('|')
+        || text.contains("$(")
+        || text.contains('`')
+        || text.contains('\n')
+        || text.contains('\r')
+}
+
+#[cfg(test)]
 fn bash_command_glob_matches(pattern: &str, resource: &str) -> bool {
+    bash_command_glob_matches_for_decision(pattern, resource, true)
+}
+
+fn bash_command_glob_matches_for_decision(
+    pattern: &str,
+    resource: &str,
+    reject_compound_if_unlisted: bool,
+) -> bool {
     let Some(encoded) = pattern.strip_prefix(BASH_COMMAND_GLOB_PREFIX) else {
         return false;
     };
@@ -489,6 +527,13 @@ fn bash_command_glob_matches(pattern: &str, resource: &str) -> bool {
     let Some(command) = resource.get("command").and_then(Value::as_str) else {
         return false;
     };
+    if reject_compound_if_unlisted
+        && command_pattern != "*"
+        && !contains_shell_compound_operator(command_pattern)
+        && contains_shell_compound_operator(command)
+    {
+        return false;
+    }
     wildcard_matches(command_pattern, command)
 }
 
@@ -498,12 +543,15 @@ pub fn bash_conversation_scope(resource: &str) -> Option<String> {
     let cwd = resource.get("cwd").and_then(Value::as_str).unwrap_or(".");
     let tokens = safe_shell_tokens(command)?;
     let executable = tokens.first()?.rsplit('/').next().unwrap_or_default();
+    if matches!(
+        executable,
+        "rm" | "rmdir" | "unlink" | "shred" | "truncate" | "kill" | "killall" | "pkill"
+    ) {
+        // Destructive commands must never auto-widen to a 1-token prefix grant.
+        // Callers fall back to exact literal resource matching.
+        return None;
+    }
     let keep = match executable {
-        // Choosing "allow for this conversation" must mean more than one
-        // exact argv string. Keep destructive executable families scoped to
-        // the same working directory, while still requiring a fresh decision
-        // when the agent switches to a different destructive mechanism.
-        "rm" | "rmdir" | "unlink" | "shred" | "truncate" | "kill" | "killall" | "pkill" => 1,
         "git" | "cargo" | "xcodebuild" => 2,
         "npm" | "pnpm" | "yarn" if tokens.get(1).map(String::as_str) == Some("run") => 3,
         "npm" | "pnpm" | "yarn" => 2,
@@ -881,5 +929,141 @@ mod tests {
                 "{requested}"
             );
         }
+    }
+
+    #[test]
+    fn destructive_commands_are_not_auto_widened_by_bash_conversation_scope() {
+        for cmd in [
+            "rm first.txt",
+            "/bin/rm -rf tmp",
+            "rmdir build",
+            "unlink stale.sock",
+            "shred secret.key",
+            "truncate -s 0 app.log",
+            "kill 12345",
+            "killall node",
+            "pkill python",
+        ] {
+            let resource = json!({"cwd": "/workspace", "command": cmd}).to_string();
+            assert_eq!(
+                bash_conversation_scope(&resource),
+                None,
+                "destructive command `{cmd}` must not auto-widen"
+            );
+        }
+        // Safe non-destructive families still widen as expected.
+        let safe = json!({"cwd": "/workspace", "command": "cargo test --lib"}).to_string();
+        assert!(bash_conversation_scope(&safe).is_some());
+    }
+
+    #[test]
+    fn bash_command_glob_rejects_compound_shell_operators_on_allow_rules() {
+        let pattern = format!(
+            "{BASH_COMMAND_GLOB_PREFIX}{}",
+            json!({"command_pattern": "git status*"})
+        );
+        let allow_rule = PermissionRule {
+            capability_pattern: "bash".into(),
+            resource_pattern: pattern.clone(),
+            decision: PermissionPolicyDecision::Allow,
+            source: PermissionRuleSource::UserGlobal,
+        };
+        let authority = PermissionAuthorityFacts {
+            carries_live_user_authority: true,
+            accepts_conversation_permission_grants: true,
+        };
+        let eval = |rules: &[PermissionRule], command: &str| {
+            evaluate_permission(
+                rules,
+                &PermissionSubject {
+                    capability: "bash".into(),
+                    resource: json!({"command": command, "cwd": "/workspace"}).to_string(),
+                },
+                authority,
+                true,
+            )
+            .decision
+        };
+
+        assert_eq!(eval(&[allow_rule.clone()], "git status --short"), PermissionPolicyDecision::Allow);
+        for chained in [
+            "git status && rm -rf ~",
+            "git status; rm -rf ~",
+            "git status || rm -rf ~",
+            "git status | sh",
+            "git status $(whoami)",
+            "git status `whoami`",
+            "git status\nrm -rf ~",
+        ] {
+            assert_eq!(
+                eval(&[allow_rule.clone()], chained),
+                PermissionPolicyDecision::Ask,
+                "allow glob must reject compound shell command: {chained}"
+            );
+            assert!(
+                !bash_command_glob_matches(
+                    &pattern,
+                    &json!({"command": chained, "cwd": "/workspace"}).to_string()
+                ),
+                "bash_command_glob_matches must reject compound command: {chained}"
+            );
+        }
+
+        // Deny globs must still catch dangerous sub-commands inside compound invocations.
+        let deny_rule = PermissionRule {
+            capability_pattern: "bash".into(),
+            resource_pattern: format!(
+                "{BASH_COMMAND_GLOB_PREFIX}{}",
+                json!({"command_pattern": "*npm install*"})
+            ),
+            decision: PermissionPolicyDecision::Deny,
+            source: PermissionRuleSource::UserGlobal,
+        };
+        assert_eq!(
+            eval(&[deny_rule], "cd /workspace && npm install"),
+            PermissionPolicyDecision::Deny
+        );
+    }
+
+    #[test]
+    fn pty_exec_inherits_bash_rules_and_command_globs() {
+        let authority = PermissionAuthorityFacts {
+            carries_live_user_authority: true,
+            accepts_conversation_permission_grants: true,
+        };
+        let allow_status = PermissionRule {
+            capability_pattern: "bash".into(),
+            resource_pattern: format!(
+                "{BASH_COMMAND_GLOB_PREFIX}{}",
+                json!({"command_pattern": "git status*"})
+            ),
+            decision: PermissionPolicyDecision::Allow,
+            source: PermissionRuleSource::UserGlobal,
+        };
+        let deny_rm = PermissionRule {
+            capability_pattern: "bash".into(),
+            resource_pattern: format!(
+                "{BASH_COMMAND_GLOB_PREFIX}{}",
+                json!({"command_pattern": "rm *"})
+            ),
+            decision: PermissionPolicyDecision::Deny,
+            source: PermissionRuleSource::UserGlobal,
+        };
+        let rules = [allow_status, deny_rm];
+        let eval_pty = |command: &str| {
+            evaluate_permission(
+                &rules,
+                &PermissionSubject {
+                    capability: "pty_exec".into(),
+                    resource: json!({"command": command, "cwd": "/workspace"}).to_string(),
+                },
+                authority,
+                true,
+            )
+            .decision
+        };
+        assert_eq!(eval_pty("git status --short"), PermissionPolicyDecision::Allow);
+        assert_eq!(eval_pty("git status && rm -rf ~"), PermissionPolicyDecision::Ask);
+        assert_eq!(eval_pty("rm -rf /tmp/demo"), PermissionPolicyDecision::Deny);
     }
 }

@@ -1302,8 +1302,9 @@ mod tests {
 
     #[test]
     fn default_threshold_caps_large_windows_to_the_active_context_ceiling() {
-        assert_eq!(default_compaction_threshold_for_window(262_144), 96_000);
-        assert_eq!(default_compaction_threshold_for_window(200_000), 96_000);
+        assert_eq!(default_compaction_threshold_for_window(400_000), 180_000);
+        assert_eq!(default_compaction_threshold_for_window(262_144), 157_286);
+        assert_eq!(default_compaction_threshold_for_window(200_000), 120_000);
         assert_eq!(default_compaction_threshold_for_window(100_000), 60_000);
     }
 

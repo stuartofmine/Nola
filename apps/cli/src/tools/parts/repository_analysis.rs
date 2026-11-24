@@ -1280,7 +1280,13 @@ fn read_file_text(
                     .to_string(),
             ));
         }
-        let (text, _) = extract_binary_document_text(target, cap as usize, show_line_numbers)?;
+        let (mut text, _) = extract_binary_document_text(target, cap as usize, show_line_numbers)?;
+        if text.trim().is_empty() {
+            text = format!(
+                "No extractable text found in {} (the file may contain scanned images or vector graphics). For PDFs, use read_file with pdf_page=1 to render pages visually.",
+                target.display()
+            );
+        }
         return Ok(ObservedFileText { text, raw_content: None, observation: None, next_start_line: None, presentation_exhausted: false, oversized_line_offset: None });
     }
     let auto_large_preview = !explicit_range && !explicit_max_bytes

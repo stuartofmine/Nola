@@ -1490,6 +1490,14 @@ fn interactive_help_rows() -> Vec<(String, String)> {
             tr(Message::InteractiveSlashModelHint).to_string(),
         ),
         (
+            "/thinking [level]".to_string(),
+            match current_language() {
+                Language::ZhHans => "查看或调整思考深度（off|low|medium|high|xhigh|max|default）",
+                _ => "Show or adjust reasoning effort (off|low|medium|high|xhigh|max|default)",
+            }
+            .to_string(),
+        ),
+        (
             "/executor".to_string(),
             tr(Message::InteractiveSlashExecutorHint).to_string(),
         ),
@@ -1551,6 +1559,22 @@ fn interactive_help_rows() -> Vec<(String, String)> {
             .to_string(),
         ),
         (
+            "/fork [title]".to_string(),
+            match current_language() {
+                Language::ZhHans => "从当前会话分叉出新的分支会话并立即切换",
+                _ => "Fork the current conversation into a new branch and switch to it",
+            }
+            .to_string(),
+        ),
+        (
+            "/copy".to_string(),
+            match current_language() {
+                Language::ZhHans => "复制最近一条助手回复到剪贴板（SSH/无头终端自动回退 OSC 52）",
+                _ => "Copy the latest assistant reply to the clipboard (OSC 52 fallback over SSH)",
+            }
+            .to_string(),
+        ),
+        (
             "/plan".to_string(),
             tr(Message::InteractiveSlashPlanHint).to_string(),
         ),
@@ -1598,6 +1622,14 @@ fn interactive_help_rows() -> Vec<(String, String)> {
         ("/room".to_string(), ui_text(UiText::HelpRoom).to_string()),
         ("/work".to_string(), ui_text(UiText::HelpWork).to_string()),
         ("/recover".to_string(), crate::unknown_effect_recovery::usage().to_string()),
+        (
+            "/input-recovery [resume <id>]".to_string(),
+            match current_language() {
+                Language::ZhHans => "查看或恢复挂起的输入提交意图",
+                _ => "Inspect or resume a pending boundary input submission",
+            }
+            .to_string(),
+        ),
         ("/tasks".to_string(), ui_text(UiText::HelpTasks).to_string()),
         ("/jobs".to_string(), ui_text(UiText::HelpJobs).to_string()),
         (
@@ -1833,6 +1865,41 @@ mod interactive_terminal_ui_contract_tests {
         assert_eq!(normalize_interactive_command("/QUESTIONS"), Some("/questions"));
         assert!(is_resume_command("/resume"));
         assert!(is_resume_command("/resume ses-42"));
+    }
+
+    #[test]
+    fn every_registered_slash_command_has_non_empty_help_description() {
+        let rows = interactive_help_rows();
+        for cmd in INTERACTIVE_SLASH_COMMANDS {
+            let found = rows
+                .iter()
+                .find(|(usage, _)| usage.split_whitespace().next() == Some(cmd.name));
+            assert!(
+                found.is_some_and(|(_, desc)| !desc.trim().is_empty()),
+                "slash command {} must have a non-empty description in interactive_help_rows()",
+                cmd.name
+            );
+            assert_eq!(
+                normalize_interactive_command(cmd.name),
+                Some(cmd.name),
+                "slash command {} must normalize to itself",
+                cmd.name
+            );
+        }
+        for required in ["/thinking", "/input-recovery", "/fork", "/copy"] {
+            assert!(
+                INTERACTIVE_SLASH_COMMANDS
+                    .iter()
+                    .any(|cmd| cmd.name == required),
+                "{required} missing from INTERACTIVE_SLASH_COMMANDS"
+            );
+            assert!(
+                rows.iter()
+                    .any(|(usage, desc)| usage.split_whitespace().next() == Some(required)
+                        && !desc.trim().is_empty()),
+                "{required} missing from interactive_help_rows()"
+            );
+        }
     }
 }
 
@@ -2251,11 +2318,47 @@ fn with_cli_execution_control<T>(
     result
 }
 
+const CLI_JSON_SCHEMA_COMPONENT_ID: &str = "cli-json-schema-contract";
+
+fn format_json_schema_contract(schema: &Value) -> String {
+    let serialized = serde_json::to_string_pretty(schema).unwrap_or_else(|_| schema.to_string());
+    format!(
+        "Structured Output Contract (--json-schema):\n\
+Your final response MUST be a single valid JSON value conforming strictly to the following JSON Schema.\n\
+Do not wrap the JSON in markdown code fences and do not include any prose before or after the JSON.\n\n\
+{serialized}"
+    )
+}
+
+fn attach_json_schema_contract(config: &mut Config) {
+    let Some(schema) = config.json_schema.as_ref() else {
+        return;
+    };
+    config
+        .host_context_components
+        .retain(|component| component.id != CLI_JSON_SCHEMA_COMPONENT_ID);
+    let contract = format_json_schema_contract(schema);
+    config
+        .host_context_components
+        .push(nola_core::context_engine::ContextComponent {
+            kind: nola_core::context_engine::ContextComponentKind::ProjectInstruction,
+            id: CLI_JSON_SCHEMA_COMPONENT_ID.to_string(),
+            content: Value::String(contract),
+            source: Some(nola_core::context_engine::ContextComponentSource {
+                platform: Some(nola_core::context_engine::ContextPlatform::Cli),
+                title: Some("Structured JSON Output Schema".to_string()),
+                mime_type: Some("application/schema+json".to_string()),
+                ..nola_core::context_engine::ContextComponentSource::default()
+            }),
+        });
+}
+
 fn prepare_cli_prompt<'a>(config: &Config, prompt: &'a str) -> Result<(Config, std::borrow::Cow<'a, str>), String> {
-    let selected_config = crate::conversation_invocation::prepare_submission(config)?;
+    let mut selected_config = crate::conversation_invocation::prepare_submission(config)?;
     if selected_config.main_expert_selection.is_some() && (!config.save_session || !config.tools_enabled) {
         return Err("Expert mentions require a saved conversation with tools enabled.".into());
     }
+    attach_json_schema_contract(&mut selected_config);
     Ok((selected_config, std::borrow::Cow::Borrowed(prompt)))
 }
 
@@ -2304,6 +2407,13 @@ fn finish_cli_foreground(
 }
 
 fn run_single_prompt(config: &Config, prompt: &str) -> Result<PromptRunResult, String> {
+    run_single_prompt_internal(config, prompt).map(|(result, _)| result)
+}
+
+fn run_single_prompt_internal(
+    config: &Config,
+    prompt: &str,
+) -> Result<(PromptRunResult, Option<String>), String> {
     let (selected_config, text) = prepare_cli_prompt(config, prompt)?;
     let prompt = text.as_ref();
     let config = &selected_config;
@@ -2311,7 +2421,9 @@ fn run_single_prompt(config: &Config, prompt: &str) -> Result<PromptRunResult, S
     // internal lifecycle messages or change the interactive rendering model.
     let (turn_config, used_data_sources) =
         prepare_cli_data_source_context_or_fallback(config, prompt);
-    let mut emitter = Emitter::new(config.json_output).with_quiet_status(true);
+    let mut emitter = Emitter::new(config.json_output)
+        .with_quiet_status(true)
+        .with_buffered_json(config.output_format == config::CliOutputFormat::Json);
     // Give the terminal immediate feedback while Core prepares context and
     // waits for the first model event. Without this, a later turn can appear
     // inert for several seconds even though its Run was already accepted.
@@ -2329,6 +2441,7 @@ fn run_single_prompt(config: &Config, prompt: &str) -> Result<PromptRunResult, S
     emitter.wait_for_execution_input_release();
     let session_id = emitter.session_id().map(str::to_string);
     let terminal_reason = emitter.take_terminal_reason();
+    let last_error = emitter.take_last_error();
     // Custom permission intentionally ends the current tool run and hands
     // control back to the main composer. Input typed during that hand-off is
     // still normal user input and must be replayed exactly once on the next
@@ -2340,23 +2453,26 @@ fn run_single_prompt(config: &Config, prompt: &str) -> Result<PromptRunResult, S
     let draft_user_input = emitter.take_draft_user_input();
     let context_usage = emitter.take_context_usage();
     let output = emitter.take_markdown_text();
-    Ok(PromptRunResult {
-        goal_signal: run_outcome.goal_signal.clone(),
-        run_outcome,
-        output,
-        terminal_reason,
-        session_id,
-        queued_user_inputs,
-        draft_user_input,
-        context_usage,
-    })
+    Ok((
+        PromptRunResult {
+            goal_signal: run_outcome.goal_signal.clone(),
+            run_outcome,
+            output,
+            terminal_reason,
+            session_id,
+            queued_user_inputs,
+            draft_user_input,
+            context_usage,
+        },
+        last_error,
+    ))
 }
 
-fn run_single_prompt_with_execution_cancellation(
+fn run_single_prompt_with_execution_cancellation_internal(
     config: &Config,
     prompt: &str,
     cancellation: interaction::ExecutionCancellation,
-) -> Result<PromptRunResult, String> {
+) -> Result<(PromptRunResult, Option<String>), String> {
     let (selected_config, text) = prepare_cli_prompt(config, prompt)?;
     let prompt = text.as_ref();
     let config = &selected_config;
@@ -2375,7 +2491,9 @@ fn run_single_prompt_with_execution_cancellation(
                 .as_millis(),
         );
     }
-    let mut emitter = Emitter::new(config.json_output).with_quiet_status(true);
+    let mut emitter = Emitter::new(config.json_output)
+        .with_quiet_status(true)
+        .with_buffered_json(config.output_format == config::CliOutputFormat::Json);
     emitter.status("processing", "");
     let request = turn_config.host_invocation_request()?;
     let run_outcome = with_cli_execution_control(config, cancellation, &mut emitter, |control, emitter|
@@ -2387,16 +2505,20 @@ fn run_single_prompt_with_execution_cancellation(
     let draft_user_input = emitter.take_draft_user_input();
     let context_usage = emitter.take_context_usage();
     let output = emitter.take_markdown_text();
-    Ok(PromptRunResult {
-        goal_signal: run_outcome.goal_signal.clone(),
-        run_outcome,
-        output,
-        terminal_reason: emitter.take_terminal_reason(),
-        session_id,
-        queued_user_inputs,
-        draft_user_input,
-        context_usage,
-    })
+    let last_error = emitter.take_last_error();
+    Ok((
+        PromptRunResult {
+            goal_signal: run_outcome.goal_signal.clone(),
+            run_outcome,
+            output,
+            terminal_reason: emitter.take_terminal_reason(),
+            session_id,
+            queued_user_inputs,
+            draft_user_input,
+            context_usage,
+        },
+        last_error,
+    ))
 }
 
 fn resume_cli_core_pending(
@@ -2621,7 +2743,9 @@ impl crate::goal_runtime::GoalRoundDriver for CliGoalRoundDriver {
         let config = self.round_config(request);
         let cancellation = if config.json_output { interaction::ExecutionCancellation::default() }
             else { interaction::ExecutionCancellation::interactive() };
-        let mut emitter = Emitter::new(config.json_output).with_quiet_status(true);
+        let mut emitter = Emitter::new(config.json_output)
+            .with_quiet_status(true)
+            .with_buffered_json(config.output_format == config::CliOutputFormat::Json);
         let session = request.session.session_id.as_deref().ok_or("Goal recovery requires a session")?;
         let run_outcome = with_cli_execution_control(&config, cancellation.clone(), &mut emitter, |control, emitter|
             crate::core_agent_runtime::resume_frozen_core_agent_run(session, run_id, emitter, control))?;
@@ -2964,5 +3088,43 @@ fn unicode_char_width(ch: char) -> usize {
         0
     } else {
         UnicodeWidthChar::width(ch).unwrap_or(1)
+    }
+}
+
+#[cfg(test)]
+mod ci_schema_contract_tests {
+    use super::*;
+
+    #[test]
+    fn json_schema_contract_attaches_idempotently_to_prompt_context() {
+        let mut config = Config::for_test().unwrap();
+        config.json_schema = Some(json!({
+            "type": "object",
+            "properties": {
+                "passed": { "type": "boolean" },
+                "summary": { "type": "string" }
+            },
+            "required": ["passed"]
+        }));
+
+        attach_json_schema_contract(&mut config);
+        attach_json_schema_contract(&mut config);
+
+        let attached: Vec<_> = config
+            .host_context_components
+            .iter()
+            .filter(|c| c.id == CLI_JSON_SCHEMA_COMPONENT_ID)
+            .collect();
+        assert_eq!(attached.len(), 1);
+        let content = attached[0].content.as_str().unwrap();
+        assert!(content.contains("Structured Output Contract (--json-schema)"));
+        assert!(content.contains("\"passed\""));
+        assert_eq!(
+            attached[0]
+                .source
+                .as_ref()
+                .and_then(|s| s.mime_type.as_deref()),
+            Some("application/schema+json")
+        );
     }
 }

@@ -3,6 +3,7 @@
 pub mod mcp_host;
 pub mod mcp_stdio;
 pub mod mcp_connection_authority;
+pub mod oauth;
 
 pub trait Cancellation: Sync { fn is_requested(&self) -> bool; }
 #[derive(Clone, Default)]

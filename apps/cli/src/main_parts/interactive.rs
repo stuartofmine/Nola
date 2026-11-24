@@ -70,6 +70,52 @@ fn persist_interactive_view_state(store: &mut Option<crate::cli_view_state::View
     }
 }
 
+const VIEW_STATE_SAVE_DEBOUNCE: Duration = Duration::from_millis(250);
+
+struct ViewStateSaveDebouncer {
+    debounce: Duration,
+    last_save_at: Option<Instant>,
+    dirty: bool,
+}
+
+impl ViewStateSaveDebouncer {
+    fn new(debounce: Duration) -> Self {
+        Self {
+            debounce,
+            last_save_at: None,
+            dirty: false,
+        }
+    }
+
+    fn should_flush(&mut self, now: Instant, force: bool) -> bool {
+        if force {
+            self.last_save_at = Some(now);
+            self.dirty = false;
+            return true;
+        }
+        match self.last_save_at {
+            None => {
+                self.last_save_at = Some(now);
+                self.dirty = false;
+                true
+            }
+            Some(previous) if now.duration_since(previous) >= self.debounce => {
+                self.last_save_at = Some(now);
+                self.dirty = false;
+                true
+            }
+            Some(_) => {
+                self.dirty = true;
+                false
+            }
+        }
+    }
+
+    fn has_pending_flush(&self) -> bool {
+        self.dirty
+    }
+}
+
 fn interactive_git_branch(project_root: &Path) -> Option<String> {
     let head = std::fs::read_to_string(project_root.join(".git").join("HEAD")).ok()?;
     let trimmed = head.trim();
@@ -496,6 +542,36 @@ fn run_interactive_session(config: &Config, resume_pending: bool) -> Result<Inte
                 crate::terminal_ui::invalidate_presented_screen();
                 continue;
             }
+            if let Some(shell_cmd) = parse_bang_shell_command(prompt.as_str()) {
+                if shell_cmd.is_empty() {
+                    terminal_notice!("{}", match current_language() {
+                        Language::ZhHans => "  用法：!<命令>  （在当前工作区直接执行本地命令，不调用模型）",
+                        _ => "  Usage: !<command>  (run a local shell command in the workspace without calling the model)",
+                    });
+                    continue;
+                }
+                if input_history.last().map(String::as_str) != Some(prompt.as_str()) {
+                    input_history.push(prompt.clone());
+                    if input_history.len() > 128 {
+                        input_history.drain(0..(input_history.len() - 128));
+                    }
+                }
+                history_cursor = None;
+                match run_local_bang_command(&interactive_config.project_root, shell_cmd) {
+                    Ok(output) => {
+                        let rendered = format_bang_command_output(
+                            shell_cmd,
+                            output.exit_code,
+                            &output.stdout,
+                            &output.stderr,
+                            interactive_color_enabled(),
+                        );
+                        terminal_notice!("{rendered}");
+                    }
+                    Err(error) => terminal_notice!("{}", format_error(&error)),
+                }
+                continue;
+            }
         }
         if recovery_blocked && (!chat_commands || !prompt.starts_with('/')) {
             terminal_notice!("{}", ui_text(UiText::RecoveryBlockedUseResume));
@@ -604,6 +680,9 @@ fn run_interactive_session(config: &Config, resume_pending: bool) -> Result<Inte
             }
             SlashCommandResult::Draft(draft) => { pending_draft = Some(draft); continue; }
             SlashCommandResult::Handled => continue,
+            SlashCommandResult::SwitchSession(next) => {
+                return Ok(InteractiveSessionExit::Switch(next));
+            }
             SlashCommandResult::WorkspaceChanged | SlashCommandResult::SessionReset => {
                 clear_pending_task_completions();
                 TURN_CHECKPOINTS.with(|store| store.borrow_mut().clear());
@@ -1124,6 +1203,7 @@ fn read_interactive_prompt_line(
     } else {
         0
     };
+    let mut view_state_debouncer = ViewStateSaveDebouncer::new(VIEW_STATE_SAVE_DEBOUNCE);
 
     loop {
         let effective_footer = interactive_effective_footer(prompt_footer, esc_pending_clear);
@@ -1134,13 +1214,15 @@ fn read_interactive_prompt_line(
             r.start = expand_interactive_pasted_content(&line[..r.start], &pasted_contents).len();
             r.end = r.start + r.text.len();
         }
-        persist_interactive_view_state(
-            view_store,
-            expanded.clone(),
-            expanded_cursor,
-            expanded_mentions.clone(),
-            edit_target.cloned(),
-        );
+        if view_state_debouncer.should_flush(Instant::now(), false) {
+            persist_interactive_view_state(
+                view_store,
+                expanded.clone(),
+                expanded_cursor,
+                expanded_mentions.clone(),
+                edit_target.cloned(),
+            );
+        }
         if show_prompt && background_notification_pending {
             // Snapshot before reconciliation. Events appended concurrently
             // after this read remain above the consumed cursor and cause the
@@ -1396,11 +1478,12 @@ fn read_interactive_prompt_line(
                 continue;
             }
             if is_interactive_submit_event(&key) {
-                let (expanded, expanded_mentions) = if let Some(command) = submit_command {
+                let (expanded, expanded_cursor, expanded_mentions) = if let Some(command) = submit_command {
                     line.clone_from(&command);
-                    (command, Vec::new())
+                    let len = command.len();
+                    (command, len, Vec::new())
                 } else {
-                    (expanded, expanded_mentions)
+                    (expanded, expanded_cursor, expanded_mentions)
                 };
                 let selection =
                     match crate::cli_expert_mentions::bind(&expanded, &expanded_mentions) {
@@ -1411,7 +1494,17 @@ fn read_interactive_prompt_line(
                         }
                     };
                 if selection.is_none() && edit_target.is_none() {
+                    view_state_debouncer.should_flush(Instant::now(), true);
                     persist_interactive_view_state(view_store, String::new(), 0, vec![], None);
+                } else if view_state_debouncer.has_pending_flush() {
+                    view_state_debouncer.should_flush(Instant::now(), true);
+                    persist_interactive_view_state(
+                        view_store,
+                        expanded.clone(),
+                        expanded_cursor,
+                        expanded_mentions.clone(),
+                        edit_target.cloned(),
+                    );
                 }
                 finish_interactive_prompt_line(&line, prompt_footer)?;
                 interaction::clear_interactive_execution_draft();
@@ -1510,6 +1603,16 @@ fn read_interactive_prompt_line(
                         && line.is_empty()
                         && completion_cycle.is_none()
                     {
+                        if view_state_debouncer.has_pending_flush() {
+                            view_state_debouncer.should_flush(Instant::now(), true);
+                            persist_interactive_view_state(
+                                view_store,
+                                expanded.clone(),
+                                expanded_cursor,
+                                expanded_mentions.clone(),
+                                edit_target.cloned(),
+                            );
+                        }
                         return Ok(Some(InteractivePromptInput::Submitted("/mode".to_string())));
                     }
                     if !goal_entry
@@ -1572,12 +1675,37 @@ fn read_interactive_prompt_line(
                         redraw_interactive_prompt_line(&line, cursor, prompt_footer, config)?;
                         continue;
                     }
+                    if view_state_debouncer.has_pending_flush() {
+                        view_state_debouncer.should_flush(Instant::now(), true);
+                        persist_interactive_view_state(
+                            view_store,
+                            expanded.clone(),
+                            expanded_cursor,
+                            expanded_mentions.clone(),
+                            edit_target.cloned(),
+                        );
+                    }
                     finish_interactive_prompt_line("", prompt_footer)?;
                     return Ok(None);
                 }
                 KeyCode::Char('d' | 'D') if key.modifiers.contains(KeyModifiers::CONTROL) && line.is_empty() => {
+                    if view_state_debouncer.has_pending_flush() {
+                        view_state_debouncer.should_flush(Instant::now(), true);
+                        persist_interactive_view_state(
+                            view_store,
+                            expanded.clone(),
+                            expanded_cursor,
+                            expanded_mentions.clone(),
+                            edit_target.cloned(),
+                        );
+                    }
                     finish_interactive_prompt_line("", prompt_footer)?;
                     return Ok(None);
+                }
+                KeyCode::Char('o' | 'O') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+                    let verbose = agent::toggle_interactive_verbose_output();
+                    terminal_notice!("{}", interactive_verbose_output_toggle_notice(verbose));
+                    redraw_interactive_prompt_line(&line, cursor, prompt_footer, config)?;
                 }
                 _ => {}
             }
@@ -1646,6 +1774,32 @@ fn read_interactive_prompt_line(
 /// manufacture a second submission from the same physical key press.
 fn is_interactive_submit_event(key: &KeyEvent) -> bool {
     crate::composer::is_submit(key)
+}
+
+#[cfg(test)]
+fn is_interactive_verbose_toggle_key(key: &KeyEvent) -> bool {
+    key.kind == KeyEventKind::Press
+        && matches!(key.code, KeyCode::Char('o' | 'O'))
+        && key.modifiers.contains(KeyModifiers::CONTROL)
+}
+
+fn interactive_verbose_output_toggle_notice(enabled: bool) -> &'static str {
+    match current_language() {
+        Language::ZhHans => {
+            if enabled {
+                "  详细工具与推理输出：开启（按 Ctrl+O 折叠）"
+            } else {
+                "  详细工具与推理输出：关闭（按 Ctrl+O 展开）"
+            }
+        }
+        _ => {
+            if enabled {
+                "  Verbose tool & reasoning output: ON (Ctrl+O to collapse)"
+            } else {
+                "  Verbose tool & reasoning output: OFF (Ctrl+O to expand)"
+            }
+        }
+    }
 }
 
 #[cfg(test)]
@@ -2642,11 +2796,39 @@ fn interactive_input_bar_line(
     prefix: &str,
     line_width: usize,
 ) -> String {
-    interactive_input_bar_line_with_color(text, is_placeholder, clear, prefix, line_width, interactive_color_enabled())
+    interactive_input_bar_line_with_palette(
+        text,
+        is_placeholder,
+        clear,
+        prefix,
+        line_width,
+        interactive_color_enabled(),
+        interactive_truecolor_enabled(),
+    )
 }
 
 fn interactive_input_bar_line_with_color(
     text: &str, is_placeholder: bool, clear: bool, prefix: &str, line_width: usize, color: bool,
+) -> String {
+    interactive_input_bar_line_with_palette(
+        text,
+        is_placeholder,
+        clear,
+        prefix,
+        line_width,
+        color,
+        true,
+    )
+}
+
+fn interactive_input_bar_line_with_palette(
+    text: &str,
+    is_placeholder: bool,
+    clear: bool,
+    prefix: &str,
+    line_width: usize,
+    color: bool,
+    truecolor: bool,
 ) -> String {
     let visible_line =
         truncate_display_width_tail(text, line_width.saturating_sub(display_width(prefix)));
@@ -2661,13 +2843,15 @@ fn interactive_input_bar_line_with_color(
     let padding = " ".repeat(line_width.saturating_sub(content_width));
     let clear_prefix = if clear { "\x1b[2K" } else { "" };
     if color {
+        let (composer_bg, composer_dim_fg, composer_prefix_fg) =
+            interactive_composer_palette_for(truecolor);
         let value_color = if use_placeholder {
-            INTERACTIVE_COMPOSER_DIM_FG
+            composer_dim_fg
         } else {
-            INTERACTIVE_COMPOSER_BG
+            composer_bg
         };
         format!(
-            "{clear_prefix}{INTERACTIVE_COMPOSER_PREFIX_FG}{prefix}{value_color}{visible}{INTERACTIVE_COMPOSER_BG}{padding}{INTERACTIVE_RESET}"
+            "{clear_prefix}{composer_prefix_fg}{prefix}{value_color}{visible}{composer_bg}{padding}{INTERACTIVE_RESET}"
         )
     } else if visible.is_empty() {
         format!("{clear_prefix}{prefix}")
@@ -2719,13 +2903,14 @@ fn interactive_input_bar(line: &str, placeholder: Option<&str>, clear: bool) -> 
     let padding = " ".repeat(line_width.saturating_sub(content_width));
     let clear_prefix = if clear { "\x1b[2K" } else { "" };
     if interactive_color_enabled() {
+        let (composer_bg, composer_dim_fg, composer_prefix_fg) = interactive_composer_palette();
         let value_color = if use_placeholder {
-            INTERACTIVE_COMPOSER_DIM_FG
+            composer_dim_fg
         } else {
-            INTERACTIVE_COMPOSER_BG
+            composer_bg
         };
         format!(
-            "{clear_prefix}{INTERACTIVE_COMPOSER_PREFIX_FG}{prefix}{value_color}{visible}{INTERACTIVE_COMPOSER_BG}{padding}{INTERACTIVE_RESET}"
+            "{clear_prefix}{composer_prefix_fg}{prefix}{value_color}{visible}{composer_bg}{padding}{INTERACTIVE_RESET}"
         )
     } else if visible.is_empty() {
         format!("{clear_prefix}{prefix}")
@@ -3600,6 +3785,8 @@ const INTERACTIVE_SLASH_COMMANDS: &[SlashCommand] = &[
     SlashCommand { name: "/compact" },
     SlashCommand { name: "/new" },
     SlashCommand { name: "/clear" },
+    SlashCommand { name: "/fork" },
+    SlashCommand { name: "/copy" },
     SlashCommand { name: "/plan" },
     SlashCommand { name: "/mode" },
     SlashCommand { name: "/diff" },
@@ -3610,6 +3797,9 @@ const INTERACTIVE_SLASH_COMMANDS: &[SlashCommand] = &[
     SlashCommand { name: "/room" },
     SlashCommand { name: "/work" },
     SlashCommand { name: "/recover" },
+    SlashCommand {
+        name: "/input-recovery",
+    },
     SlashCommand { name: "/tasks" },
     SlashCommand { name: "/jobs" },
     SlashCommand { name: "/stop" },
@@ -3648,6 +3838,8 @@ fn normalize_interactive_command(command: &str) -> Option<&'static str> {
         "/compact" => "/compact",
         "/new" | "/n" => "/new",
         "/clear" | "/cls" => "/clear",
+        "/fork" => "/fork",
+        "/copy" => "/copy",
         "/plan" | "/p" => "/plan",
         "/mode" => "/mode",
         "/diff" => "/diff",
@@ -3658,6 +3850,7 @@ fn normalize_interactive_command(command: &str) -> Option<&'static str> {
         "/room" => "/room",
         "/work" | "/w" => "/work",
         "/recover" => "/recover",
+        "/input-recovery" => "/input-recovery",
         "/tasks" | "/t" => "/tasks",
         "/jobs" | "/j" => "/jobs",
         "/stop" => "/stop",
@@ -4123,6 +4316,7 @@ enum SlashCommandResult {
     GoalEntry,
     WorkspaceChanged,
     SessionReset,
+    SwitchSession(Box<Config>),
 }
 
 enum ResumePreflight {
@@ -5666,6 +5860,55 @@ fn handle_interactive_slash_command(
             terminal_notice!("  {}", ui_text(UiText::ContinueUsage));
             Ok(SlashCommandResult::Handled)
         }
+        "/fork" => {
+            let title_override = parts.collect::<Vec<_>>().join(" ");
+            let (next, created) = fork_interactive_session(
+                config,
+                (!title_override.trim().is_empty()).then_some(title_override.as_str()),
+            )?;
+            terminal_notice!("{}", match current_language() {
+                Language::ZhHans => format!(
+                    "  已分叉会话 → {}（{} 条消息）",
+                    created.conversation_id, created.message_count
+                ),
+                _ => format!(
+                    "  Forked conversation → {} ({} messages)",
+                    created.conversation_id, created.message_count
+                ),
+            });
+            Ok(SlashCommandResult::SwitchSession(Box::new(next)))
+        }
+        "/copy" => {
+            let saved = load_interactive_session_for_command(config)?.ok_or_else(|| {
+                match current_language() {
+                    Language::ZhHans => "当前没有可复制的会话记录".to_string(),
+                    _ => "No active conversation to copy from".to_string(),
+                }
+            })?;
+            let reply = latest_assistant_reply_text(&saved).ok_or_else(|| {
+                match current_language() {
+                    Language::ZhHans => "当前会话还没有助手回复可复制".to_string(),
+                    _ => "No assistant reply found in the current conversation".to_string(),
+                }
+            })?;
+            let method = copy_text_to_clipboard(&reply)?;
+            let chars = reply.chars().count();
+            terminal_notice!("{}", match (current_language(), method) {
+                (Language::ZhHans, ClipboardCopyMethod::Native) => {
+                    format!("  已复制最近一条助手回复（{chars} 字符）到剪贴板")
+                }
+                (Language::ZhHans, ClipboardCopyMethod::Osc52) => {
+                    format!("  已通过 OSC 52 复制最近一条助手回复（{chars} 字符）到终端剪贴板")
+                }
+                (_, ClipboardCopyMethod::Native) => {
+                    format!("  Copied latest assistant reply ({chars} chars) to clipboard")
+                }
+                (_, ClipboardCopyMethod::Osc52) => {
+                    format!("  Copied latest assistant reply ({chars} chars) via OSC 52")
+                }
+            });
+            Ok(SlashCommandResult::Handled)
+        }
         "/history" => {
             print_interactive_session_history(config)?;
             Ok(SlashCommandResult::Handled)
@@ -6403,5 +6646,369 @@ mod thinking_command_tests {
         config.plan_mode = true;
         let plan_footer = interactive_prompt_footer_line(&config, None, None).unwrap();
         assert!(plan_footer.contains("gpt-5 · PLAN"), "{plan_footer}");
+    }
+}
+
+const MAX_BANG_OUTPUT_LINES: usize = 80;
+const MAX_BANG_OUTPUT_CHARS: usize = 8 * 1024;
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct BangCommandOutput {
+    exit_code: Option<i32>,
+    stdout: String,
+    stderr: String,
+}
+
+fn parse_bang_shell_command(prompt: &str) -> Option<&str> {
+    prompt.trim().strip_prefix('!').map(str::trim)
+}
+
+fn run_local_bang_command(project_root: &Path, command: &str) -> Result<BangCommandOutput, String> {
+    let mut cmd = if cfg!(windows) {
+        let mut c = process::Command::new("cmd");
+        c.args(["/C", command]);
+        c
+    } else {
+        let mut c = process::Command::new("sh");
+        c.args(["-c", command]);
+        c
+    };
+    let output = cmd
+        .current_dir(project_root)
+        .stdin(process::Stdio::null())
+        .output()
+        .map_err(|err| format!("failed to run local command `{command}`: {err}"))?;
+    Ok(BangCommandOutput {
+        exit_code: output.status.code(),
+        stdout: String::from_utf8_lossy(&output.stdout).into_owned(),
+        stderr: String::from_utf8_lossy(&output.stderr).into_owned(),
+    })
+}
+
+fn format_bang_command_output(
+    command: &str,
+    exit_code: Option<i32>,
+    stdout: &str,
+    stderr: &str,
+    color: bool,
+) -> String {
+    let status_suffix = match exit_code {
+        Some(0) => String::new(),
+        Some(code) => format!(" (exit {code})"),
+        None => " (terminated)".to_string(),
+    };
+    let header = if color {
+        if exit_code == Some(0) {
+            format!("  \x1b[36m$\x1b[0m {command}")
+        } else {
+            format!("  \x1b[31m$\x1b[0m {command}\x1b[31m{status_suffix}\x1b[0m")
+        }
+    } else {
+        format!("  $ {command}{status_suffix}")
+    };
+
+    let mut combined = String::new();
+    if !stdout.is_empty() {
+        combined.push_str(stdout);
+    }
+    if !stderr.is_empty() {
+        if !combined.is_empty() && !combined.ends_with('\n') {
+            combined.push('\n');
+        }
+        combined.push_str(stderr);
+    }
+
+    let mut lines = vec![header];
+    if combined.trim().is_empty() {
+        let empty_note = if color {
+            "    \x1b[2;39m(no output)\x1b[0m".to_string()
+        } else {
+            "    (no output)".to_string()
+        };
+        lines.push(empty_note);
+        return lines.join("\n");
+    }
+
+    let mut total_chars = 0usize;
+    let mut emitted_lines = 0usize;
+    let mut truncated = false;
+    for raw_line in combined.lines() {
+        let line = raw_line.trim_end_matches('\r');
+        let line_chars = line.chars().count();
+        if emitted_lines >= MAX_BANG_OUTPUT_LINES
+            || total_chars.saturating_add(line_chars) > MAX_BANG_OUTPUT_CHARS
+        {
+            truncated = true;
+            break;
+        }
+        lines.push(format!("    {line}"));
+        emitted_lines += 1;
+        total_chars = total_chars.saturating_add(line_chars + 1);
+    }
+    if truncated {
+        let notice = if color {
+            "    \x1b[2;39m… (output truncated)\x1b[0m".to_string()
+        } else {
+            "    … (output truncated)".to_string()
+        };
+        lines.push(notice);
+    }
+    lines.join("\n")
+}
+
+fn fork_interactive_session(
+    config: &Config,
+    title_override: Option<&str>,
+) -> Result<(Config, nola_application::ConversationBranchCreation), String> {
+    if !config.save_session {
+        return Err(match current_language() {
+            Language::ZhHans => "当前会话未开启持久化，无法分叉".to_string(),
+            _ => "Cannot fork an ephemeral session without persistence".to_string(),
+        });
+    }
+    let source_id = config.session_id.as_deref().ok_or_else(|| match current_language() {
+        Language::ZhHans => "当前还没有已保存的会话，请先发送一条消息后再使用 /fork".to_string(),
+        _ => "No active saved conversation yet; send a message before running /fork".to_string(),
+    })?;
+    let mut canonical = crate::application_port::CliApplicationPort::persistent_default()?;
+    let window = canonical.load_conversation_projection_window_v1(source_id, None, 1, 600_000)?;
+    let through_message_id = window
+        .projection
+        .messages
+        .last()
+        .map(|message| message.message_id.0.clone())
+        .ok_or_else(|| match current_language() {
+            Language::ZhHans => "当前会话尚无完整消息边界，无法分叉".to_string(),
+            _ => "Current conversation has no complete message boundary to fork".to_string(),
+        })?;
+    let source_summary = canonical.conversation_summary(source_id)?;
+    let source_settings = canonical.load_conversation_settings(source_id)?;
+    let title = title_override
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(ToOwned::to_owned)
+        .unwrap_or_else(|| {
+            let base = source_summary
+                .as_ref()
+                .map(|summary| summary.title.trim())
+                .filter(|value| !value.is_empty())
+                .unwrap_or("Conversation");
+            format!("{base} (fork)")
+        });
+    let branch_id = uuid::Uuid::new_v4().to_string();
+    let now_ms = chrono::Utc::now().timestamp_millis();
+    let created = canonical.create_conversation_branch(
+        nola_application::CreateConversationBranch {
+            operation_id: format!("cli-fork:{branch_id}"),
+            source_conversation_id: source_id.to_string(),
+            expected_source_revision: i64::try_from(window.projection.revision)
+                .map_err(|_| "conversation revision exceeds the canonical range".to_string())?,
+            through_message_id,
+            conversation: nola_domain::CanonicalBranchTarget {
+                id: branch_id,
+                title,
+                settings_json: source_settings,
+                created_at_ms: now_ms,
+                updated_at_ms: now_ms,
+            },
+            committed_at_ms: now_ms,
+        },
+    )?;
+    let mut next = config.clone();
+    next.session_id = Some(created.conversation_id.clone());
+    next.continue_last = false;
+    next.resume_session = false;
+    next.fork_session = false;
+    crate::conversation_invocation::initialize_or_restore(&mut next)?;
+    Ok((next, created))
+}
+
+fn latest_assistant_reply_text(saved: &session::SavedSession) -> Option<String> {
+    interactive_session_replay_commits(saved)
+        .into_iter()
+        .rev()
+        .find_map(|commit| match commit {
+            InteractiveReplayCommit::Assistant(text) if !text.trim().is_empty() => Some(text),
+            _ => None,
+        })
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ClipboardCopyMethod {
+    Native,
+    Osc52,
+}
+
+fn encode_osc52_clipboard_sequence(text: &str) -> String {
+    use base64::Engine as _;
+    let encoded = base64::engine::general_purpose::STANDARD.encode(text.as_bytes());
+    format!("\x1b]52;c;{encoded}\x07")
+}
+
+fn prefer_osc52_clipboard() -> bool {
+    std::env::var_os("SSH_CONNECTION").is_some()
+        || std::env::var_os("SSH_TTY").is_some()
+        || std::env::var_os("SSH_CLIENT").is_some()
+}
+
+fn copy_text_to_clipboard(text: &str) -> Result<ClipboardCopyMethod, String> {
+    let mut native_error: Option<String> = None;
+    if !prefer_osc52_clipboard() {
+        match arboard::Clipboard::new()
+            .and_then(|mut clipboard| clipboard.set_text(text.to_string()))
+        {
+            Ok(()) => return Ok(ClipboardCopyMethod::Native),
+            Err(err) => native_error = Some(err.to_string()),
+        }
+    }
+    if io::stdout().is_terminal() {
+        let seq = encode_osc52_clipboard_sequence(text);
+        let mut stdout = io::stdout().lock();
+        stdout
+            .write_all(seq.as_bytes())
+            .and_then(|_| stdout.flush())
+            .map_err(|err| err.to_string())?;
+        return Ok(ClipboardCopyMethod::Osc52);
+    }
+    Err(native_error.unwrap_or_else(|| {
+        "Clipboard unavailable in non-interactive headless session".to_string()
+    }))
+}
+
+#[cfg(test)]
+mod interactive_dx_workflow_tests {
+    use super::*;
+
+    #[test]
+    fn bang_shell_command_parses_executes_locally_and_bounds_output() {
+        assert_eq!(parse_bang_shell_command("!git status"), Some("git status"));
+        assert_eq!(parse_bang_shell_command("  !  ls -la  "), Some("ls -la"));
+        assert_eq!(parse_bang_shell_command("!"), Some(""));
+        assert_eq!(parse_bang_shell_command("hello !world"), None);
+        assert_eq!(parse_bang_shell_command("/help"), None);
+
+        let dir = tempfile::tempdir().unwrap();
+        let output = run_local_bang_command(dir.path(), "echo nola-bang-ok").unwrap();
+        assert_eq!(output.exit_code, Some(0));
+        assert!(output.stdout.contains("nola-bang-ok"), "{output:?}");
+
+        let rendered = format_bang_command_output(
+            "echo nola-bang-ok",
+            output.exit_code,
+            &output.stdout,
+            &output.stderr,
+            false,
+        );
+        assert!(rendered.contains("  $ echo nola-bang-ok"), "{rendered}");
+        assert!(rendered.contains("    nola-bang-ok"), "{rendered}");
+
+        let many_lines = (0..120).map(|i| format!("line-{i}")).collect::<Vec<_>>().join("\n");
+        let bounded = format_bang_command_output("seq 120", Some(0), &many_lines, "", false);
+        assert!(bounded.contains("… (output truncated)"), "{bounded}");
+        assert!(!bounded.contains("line-119"), "{bounded}");
+
+        let failed = format_bang_command_output("false", Some(1), "", "boom", false);
+        assert!(failed.contains("(exit 1)"), "{failed}");
+        assert!(failed.contains("boom"), "{failed}");
+    }
+
+    #[test]
+    fn osc52_clipboard_sequence_and_latest_assistant_reply_extraction() {
+        assert_eq!(
+            encode_osc52_clipboard_sequence("hello nola"),
+            "\x1b]52;c;aGVsbG8gbm9sYQ==\x07"
+        );
+        let saved = session::SavedSession {
+            id: "ses-copy".into(),
+            created_at: "2026-01-01T00:00:00Z".into(),
+            updated_at: "2026-01-01T00:00:00Z".into(),
+            messages: vec![
+                json!({"role": "user", "content": "first question"}),
+                json!({"role": "assistant", "content": "first answer"}),
+                json!({"role": "user", "content": "second question"}),
+                json!({"role": "assistant", "content": "latest answer to copy"}),
+            ],
+        };
+        assert_eq!(
+            latest_assistant_reply_text(&saved).as_deref(),
+            Some("latest answer to copy")
+        );
+    }
+
+    #[test]
+    fn view_state_save_debouncer_batches_rapid_typing_and_flushes_on_force() {
+        let t0 = Instant::now();
+        let mut debouncer = ViewStateSaveDebouncer::new(Duration::from_millis(250));
+        assert!(debouncer.should_flush(t0, false));
+        assert!(!debouncer.has_pending_flush());
+
+        assert!(!debouncer.should_flush(t0 + Duration::from_millis(50), false));
+        assert!(debouncer.has_pending_flush());
+        assert!(!debouncer.should_flush(t0 + Duration::from_millis(200), false));
+        assert!(debouncer.has_pending_flush());
+
+        assert!(debouncer.should_flush(t0 + Duration::from_millis(250), false));
+        assert!(!debouncer.has_pending_flush());
+
+        assert!(!debouncer.should_flush(t0 + Duration::from_millis(300), false));
+        assert!(debouncer.has_pending_flush());
+        assert!(debouncer.should_flush(t0 + Duration::from_millis(310), true));
+        assert!(!debouncer.has_pending_flush());
+    }
+
+    #[test]
+    fn input_bar_line_uses_fallback_palette_when_truecolor_is_disabled() {
+        let fallback = interactive_input_bar_line_with_palette(
+            "hello",
+            false,
+            false,
+            "  ",
+            20,
+            true,
+            false,
+        );
+        assert!(fallback.contains(INTERACTIVE_COMPOSER_BG_FALLBACK), "{fallback:?}");
+        assert!(!fallback.contains(";2;"), "{fallback:?}");
+    }
+
+    #[test]
+    fn fork_copy_and_input_recovery_normalize_properly() {
+        assert_eq!(normalize_interactive_command("/fork"), Some("/fork"));
+        assert_eq!(normalize_interactive_command("/FORK"), Some("/fork"));
+        assert_eq!(normalize_interactive_command("/copy"), Some("/copy"));
+        assert_eq!(normalize_interactive_command("/COPY"), Some("/copy"));
+        assert_eq!(
+            normalize_interactive_command("/input-recovery"),
+            Some("/input-recovery")
+        );
+    }
+
+    #[test]
+    fn ctrl_o_verbose_toggle_key_and_status_notice() {
+        assert!(is_interactive_verbose_toggle_key(&KeyEvent::new(
+            KeyCode::Char('o'),
+            KeyModifiers::CONTROL,
+        )));
+        assert!(is_interactive_verbose_toggle_key(&KeyEvent::new(
+            KeyCode::Char('O'),
+            KeyModifiers::CONTROL,
+        )));
+        assert!(!is_interactive_verbose_toggle_key(&KeyEvent::new(
+            KeyCode::Char('o'),
+            KeyModifiers::NONE,
+        )));
+        assert!(!is_interactive_verbose_toggle_key(
+            &KeyEvent::new_with_kind(
+                KeyCode::Char('o'),
+                KeyModifiers::CONTROL,
+                KeyEventKind::Release,
+            )
+        ));
+
+        let on_notice = interactive_verbose_output_toggle_notice(true);
+        let off_notice = interactive_verbose_output_toggle_notice(false);
+        assert!(on_notice.contains("Ctrl+O"), "{on_notice}");
+        assert!(off_notice.contains("Ctrl+O"), "{off_notice}");
+        assert_ne!(on_notice, off_notice);
     }
 }

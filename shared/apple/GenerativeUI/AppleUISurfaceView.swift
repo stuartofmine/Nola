@@ -38,30 +38,155 @@ private func appleUIHasMarkedText() -> Bool {
 
 /// Native composition is transient renderer state. One observer is shared by
 /// mounted cards; it never evaluates form rules or persists user input.
+/// Uses text-editing notifications with zero idle polling or full-window DFS.
 @MainActor
 private final class AppleUICompositionMonitor: ObservableObject {
     static let shared = AppleUICompositionMonitor()
     @Published private(set) var generation: UInt64 = 0
     private(set) var isComposing = false
     private var readers = 0
-    private var timer: AnyCancellable?
+    private var observers: [AnyCancellable] = []
+    private var activeCompositionTimer: AnyCancellable?
+    #if os(iOS)
+    private weak var activeTextInput: (UIView & UITextInput)?
+    #endif
+
     func acquire() {
+        let wasIdle = readers == 0
         readers += 1
-        refresh()
-        guard timer == nil else { return }
-        timer = Timer.publish(every: 0.08, on: .main, in: .common).autoconnect().sink { [weak self] _ in
-            MainActor.assumeIsolated { self?.refresh() }
+        installObserversIfNeeded()
+        if wasIdle {
+            refresh()
         }
     }
+
     func release() {
         readers = max(0, readers - 1)
-        if readers == 0 { timer = nil }
+        if readers == 0 {
+            observers.removeAll()
+            stopActiveCompositionTimer()
+            #if os(iOS)
+            activeTextInput = nil
+            #endif
+        }
     }
+
+    private func installObserversIfNeeded() {
+        guard observers.isEmpty else { return }
+        let center = NotificationCenter.default
+        #if os(iOS)
+        let beginOrChangeNames: [Notification.Name] = [
+            UITextField.textDidBeginEditingNotification,
+            UITextField.textDidChangeNotification,
+            UITextView.textDidBeginEditingNotification,
+            UITextView.textDidChangeNotification,
+        ]
+        for name in beginOrChangeNames {
+            observers.append(center.publisher(for: name).sink { [weak self] notification in
+                MainActor.assumeIsolated { self?.handleTextEditingNotification(notification) }
+            })
+        }
+        let endNames: [Notification.Name] = [
+            UITextField.textDidEndEditingNotification,
+            UITextView.textDidEndEditingNotification,
+        ]
+        for name in endNames {
+            observers.append(center.publisher(for: name).sink { [weak self] notification in
+                MainActor.assumeIsolated { self?.handleTextDidEndEditing(notification) }
+            })
+        }
+        observers.append(center.publisher(for: UITextInputMode.currentInputModeDidChangeNotification).sink { [weak self] _ in
+            MainActor.assumeIsolated { self?.refreshActiveInput() }
+        })
+        #elseif os(macOS)
+        let names: [Notification.Name] = [
+            NSText.didBeginEditingNotification,
+            NSText.didChangeNotification,
+            NSText.didEndEditingNotification,
+            NSTextView.didChangeSelectionNotification,
+        ]
+        for name in names {
+            observers.append(center.publisher(for: name).sink { [weak self] _ in
+                MainActor.assumeIsolated { self?.refresh() }
+            })
+        }
+        #endif
+    }
+
+    #if os(iOS)
+    private func handleTextEditingNotification(_ notification: Notification) {
+        if let input = notification.object as? (UIView & UITextInput) {
+            activeTextInput = input
+            updateComposing(input.isFirstResponder && input.markedTextRange != nil)
+        } else {
+            refreshActiveInput()
+        }
+    }
+
+    private func handleTextDidEndEditing(_ notification: Notification) {
+        if let ended = notification.object as? UIView, activeTextInput === ended {
+            activeTextInput = nil
+        }
+        updateComposing(activeTextInput.map { $0.isFirstResponder && $0.markedTextRange != nil } ?? false)
+    }
+
+    private func refreshActiveInput() {
+        if let input = activeTextInput {
+            if input.isFirstResponder {
+                updateComposing(input.markedTextRange != nil)
+            } else {
+                activeTextInput = nil
+                updateComposing(false)
+            }
+        } else {
+            updateComposing(false)
+        }
+    }
+    #endif
+
     private func refresh() {
-        let current = appleUIHasMarkedText()
+        #if os(iOS)
+        if let input = activeTextInput {
+            if input.isFirstResponder {
+                updateComposing(input.markedTextRange != nil)
+                return
+            }
+            activeTextInput = nil
+        }
+        updateComposing(appleUIHasMarkedText())
+        #else
+        updateComposing(appleUIHasMarkedText())
+        #endif
+    }
+
+    private func updateComposing(_ current: Bool) {
+        if current {
+            startActiveCompositionTimerIfNeeded()
+        } else {
+            stopActiveCompositionTimer()
+        }
         guard current != isComposing else { return }
         isComposing = current
         generation &+= 1
+    }
+
+    private func startActiveCompositionTimerIfNeeded() {
+        guard readers > 0, activeCompositionTimer == nil else { return }
+        // Only poll while an IME marked-text session is actively underway so
+        // committing identical text (which may not fire textDidChange) clears promptly.
+        activeCompositionTimer = Timer.publish(every: 0.12, on: .main, in: .common).autoconnect().sink { [weak self] _ in
+            MainActor.assumeIsolated {
+                #if os(iOS)
+                self?.refreshActiveInput()
+                #else
+                self?.refresh()
+                #endif
+            }
+        }
+    }
+
+    private func stopActiveCompositionTimer() {
+        activeCompositionTimer = nil
     }
 }
 
@@ -72,17 +197,60 @@ nonisolated enum AppleUISubmissionOutcome<JSON: JournalJSONValue>: Sendable {
 }
 
 /// Process-local editing state is keyed by the complete Core owner tuple. It is
-/// retained when SwiftUI virtualizes a row or navigation destroys its view.
-/// It contains only uncommitted edits and receipt identity, never UI authority.
+/// retained across brief virtualization when uncommitted edits exist, bounded by
+/// an LRU cap and evicted on disappear once idle so entries never leak unboundedly.
 @MainActor
 private final class AppleUIEditingRegistry {
     static let shared = AppleUIEditingRegistry()
-    private var entries: [AppleUISurfaceIdentity: AnyObject] = [:]
+    static let maxEntries = 64
+
+    private struct Entry {
+        let state: AnyObject
+        let hasActiveEdits: @MainActor () -> Bool
+    }
+
+    private var entries: [AppleUISurfaceIdentity: Entry] = [:]
+    private var accessOrder: [AppleUISurfaceIdentity] = []
+
     func state<JSON: JournalJSONValue>(for identity: AppleUISurfaceIdentity) -> AppleUIEditingState<JSON> {
-        if let state = entries[identity] as? AppleUIEditingState<JSON> { return state }
+        if let state = entries[identity]?.state as? AppleUIEditingState<JSON> {
+            touch(identity)
+            return state
+        }
         let state = AppleUIEditingState<JSON>()
-        entries[identity] = state
+        entries[identity] = Entry(state: state) { [weak state] in
+            guard let state else { return false }
+            return !state.drafts.isEmpty || state.pending || state.unresolved != nil
+        }
+        touch(identity)
+        evictIfNeeded(excluding: identity)
         return state
+    }
+
+    func remove(for identity: AppleUISurfaceIdentity) {
+        entries.removeValue(forKey: identity)
+        accessOrder.removeAll { $0 == identity }
+    }
+
+    func removeIfIdle(for identity: AppleUISurfaceIdentity) {
+        guard let entry = entries[identity], !entry.hasActiveEdits() else { return }
+        remove(for: identity)
+    }
+
+    private func touch(_ identity: AppleUISurfaceIdentity) {
+        accessOrder.removeAll { $0 == identity }
+        accessOrder.append(identity)
+    }
+
+    private func evictIfNeeded(excluding protected: AppleUISurfaceIdentity) {
+        guard entries.count > Self.maxEntries else { return }
+        for candidate in accessOrder where entries.count > Self.maxEntries {
+            guard candidate != protected, let entry = entries[candidate], !entry.hasActiveEdits() else { continue }
+            remove(for: candidate)
+        }
+        while entries.count > Self.maxEntries, let oldest = accessOrder.first(where: { $0 != protected }) {
+            remove(for: oldest)
+        }
     }
 }
 
@@ -267,7 +435,18 @@ struct AppleUISurfaceView<JSON: JournalJSONValue>: View {
                 editing.failure = error.localizedDescription
             }
         }
-        .onDisappear { modal = nil; focusedTextFieldIDs.removeAll(); wasSurfaceComposing = false; AppleUIModalCoordinator.shared.release(presentationID); composition.release() }
+        .onDisappear {
+            modal = nil
+            focusedTextFieldIDs.removeAll()
+            wasSurfaceComposing = false
+            AppleUIModalCoordinator.shared.release(presentationID)
+            composition.release()
+            if snapshot.phase == .readOnly || snapshot.phase == .deleted {
+                AppleUIEditingRegistry.shared.remove(for: snapshot.identity)
+            } else {
+                AppleUIEditingRegistry.shared.removeIfIdle(for: snapshot.identity)
+            }
+        }
         .sheet(item: $modal, onDismiss: { AppleUIModalCoordinator.shared.release(presentationID) }) { selection in
             VStack(alignment: .leading, spacing: 16) {
                 HStack {
@@ -327,6 +506,7 @@ struct AppleUISurfaceView<JSON: JournalJSONValue>: View {
                     if composition.isComposing { wasSurfaceComposing = true }
                 } else {
                     focusedTextFieldIDs.remove(nodeID)
+                    if focusedTextFieldIDs.isEmpty { wasSurfaceComposing = false }
                 }
             })
     }

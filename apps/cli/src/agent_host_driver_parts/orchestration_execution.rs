@@ -1398,11 +1398,15 @@ impl CliAgentHostDriver {
         let mut base_messages = provider_messages_for_wire_protocol(messages, &declared_llm);
         inject_canonical_user_media(messages, &mut base_messages, invocation_plan.vision_input, invocation_plan.native_pdf_input);
         let media_preparation = inject_tool_artifact_media(&mut base_messages, invocation_plan.vision_input, invocation_plan.native_pdf_input);
-        if !media_preparation.is_empty() {
+        let prepared_media = media_preparation
+            .into_iter()
+            .filter(|entry| entry.get("status").and_then(Value::as_str) == Some("prepared"))
+            .collect::<Vec<_>>();
+        if !prepared_media.is_empty() {
             Self::emit(&sampling_request, &mut sequence, HostResponse::ToolProgress {
                 title:"tool_media.prepared".into(), detail:None,
                 metadata:json!({"request_id":sampling_request.request_id,
-                    "effect_id":sampling_request.effect_id.0, "artifacts":media_preparation,
+                    "effect_id":sampling_request.effect_id.0, "artifacts":prepared_media,
                     "model_receipt_proven":false}),
             }, emit)?;
         }

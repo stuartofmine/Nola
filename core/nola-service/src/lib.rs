@@ -370,6 +370,11 @@ mod local {
         parent_pid: Option<u32>,
     ) -> Result<(), ServiceFailure> {
         let _database_service_lock = acquire_database_service_lock(database_path)?;
+        #[cfg(unix)]
+        if let Some(parent) = socket_path.parent() {
+            ensure_private_socket_parent(parent)?;
+        }
+        #[cfg(not(unix))]
         if let Some(parent) = socket_path.parent() {
             fs::create_dir_all(parent)
                 .map_err(|error| format!("create service socket directory failed: {error}"))?;
@@ -392,14 +397,14 @@ mod local {
 
         let listener = UnixListener::bind(socket_path)
             .map_err(|error| format!("bind application service socket failed: {error}"))?;
+        #[cfg(unix)]
+        fs::set_permissions(socket_path, fs::Permissions::from_mode(0o600))
+            .map_err(|error| format!("restrict application service socket failed: {error}"))?;
         if parent_pid.is_some() {
             listener.set_nonblocking(true).map_err(|error| {
                 format!("configure application service listener failed: {error}")
             })?;
         }
-        #[cfg(unix)]
-        fs::set_permissions(socket_path, fs::Permissions::from_mode(0o600))
-            .map_err(|error| format!("restrict application service socket failed: {error}"))?;
         let _socket_guard = SocketGuard(socket_path.to_path_buf());
         let policy = if let Some(archive_directory) = archive_incompatible_store {
             ApplicationPersistencePolicy::ArchiveAndRecreateIncompatible {
@@ -470,6 +475,11 @@ mod local {
                 // any byte boundary. That is a connection failure, not a
                 // reason to release the device's single-writer service.
                 Ok((stream, _)) => {
+                    #[cfg(unix)]
+                    if verify_unix_peer_uid(&stream).is_err() {
+                        drop(stream);
+                        continue;
+                    }
                     let Some(permit) = connections.try_acquire() else {
                         // Reject before reading or executing any command. Keep
                         // accepting so overload cannot grow the worker registry.
@@ -531,6 +541,150 @@ mod local {
     }
 
     #[cfg(unix)]
+    fn is_shared_temp_dir(path: &Path) -> bool {
+        use std::os::unix::fs::MetadataExt;
+        if matches!(
+            path.to_str(),
+            Some("/tmp")
+                | Some("/private/tmp")
+                | Some("/var/tmp")
+                | Some("/private/var/tmp")
+                | Some("/")
+        ) {
+            return true;
+        }
+        fs::metadata(path).is_ok_and(|meta| (meta.mode() & 0o1000) != 0)
+    }
+
+    #[cfg(unix)]
+    fn ensure_private_socket_parent(parent: &Path) -> Result<(), String> {
+        use std::os::unix::fs::{DirBuilderExt, MetadataExt};
+        if parent.as_os_str().is_empty() {
+            return Ok(());
+        }
+        let euid = unsafe { libc::geteuid() };
+        if fs::symlink_metadata(parent).is_err() {
+            let mut builder = fs::DirBuilder::new();
+            builder.recursive(true).mode(0o700);
+            builder
+                .create(parent)
+                .map_err(|error| format!("create service socket directory failed: {error}"))?;
+            fs::set_permissions(parent, fs::Permissions::from_mode(0o700))
+                .map_err(|error| format!("restrict service socket directory failed: {error}"))?;
+        }
+        if is_shared_temp_dir(parent) {
+            return Ok(());
+        }
+        let meta = fs::symlink_metadata(parent)
+            .map_err(|error| format!("inspect service socket directory failed: {error}"))?;
+        if meta.file_type().is_symlink() || !meta.is_dir() {
+            return Err(format!(
+                "service socket directory {} must be a real directory",
+                parent.display()
+            ));
+        }
+        if meta.uid() != euid {
+            return Err(format!(
+                "service socket directory {} is not owned by the current user",
+                parent.display()
+            ));
+        }
+        if meta.mode() & 0o077 != 0 {
+            fs::set_permissions(parent, fs::Permissions::from_mode(0o700))
+                .map_err(|error| format!("restrict service socket directory failed: {error}"))?;
+        }
+        Ok(())
+    }
+
+    #[cfg(any(target_os = "linux", target_os = "android"))]
+    fn unix_peer_uid(descriptor: std::os::fd::RawFd) -> std::io::Result<libc::uid_t> {
+        let mut cred = libc::ucred {
+            pid: 0,
+            uid: 0,
+            gid: 0,
+        };
+        let mut len = std::mem::size_of::<libc::ucred>() as libc::socklen_t;
+        let result = unsafe {
+            libc::getsockopt(
+                descriptor,
+                libc::SOL_SOCKET,
+                libc::SO_PEERCRED,
+                (&mut cred as *mut libc::ucred).cast(),
+                &mut len,
+            )
+        };
+        if result != 0 {
+            return Err(std::io::Error::last_os_error());
+        }
+        if (len as usize) < std::mem::size_of::<libc::ucred>() {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::InvalidData,
+                "incomplete SO_PEERCRED payload",
+            ));
+        }
+        Ok(cred.uid)
+    }
+
+    #[cfg(any(
+        target_os = "macos",
+        target_os = "ios",
+        target_os = "freebsd",
+        target_os = "openbsd",
+        target_os = "netbsd",
+        target_os = "dragonfly"
+    ))]
+    fn unix_peer_uid(descriptor: std::os::fd::RawFd) -> std::io::Result<libc::uid_t> {
+        let mut euid: libc::uid_t = 0;
+        let mut egid: libc::gid_t = 0;
+        let result = unsafe { libc::getpeereid(descriptor, &mut euid, &mut egid) };
+        if result != 0 {
+            return Err(std::io::Error::last_os_error());
+        }
+        Ok(euid)
+    }
+
+    #[cfg(all(
+        unix,
+        not(any(
+            target_os = "linux",
+            target_os = "android",
+            target_os = "macos",
+            target_os = "ios",
+            target_os = "freebsd",
+            target_os = "openbsd",
+            target_os = "netbsd",
+            target_os = "dragonfly"
+        ))
+    ))]
+    fn unix_peer_uid(_descriptor: std::os::fd::RawFd) -> std::io::Result<libc::uid_t> {
+        Err(std::io::Error::new(
+            std::io::ErrorKind::Unsupported,
+            "Unix peer credential verification is unsupported on this platform",
+        ))
+    }
+
+    #[cfg(unix)]
+    fn verify_peer_uid_matches(
+        actual: libc::uid_t,
+        expected: libc::uid_t,
+    ) -> std::io::Result<()> {
+        if actual != expected {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::PermissionDenied,
+                format!("peer UID {actual} does not match service UID {expected}"),
+            ));
+        }
+        Ok(())
+    }
+
+    #[cfg(unix)]
+    fn verify_unix_peer_uid(stream: &UnixStream) -> std::io::Result<()> {
+        let expected = unsafe { libc::geteuid() };
+        let actual = unix_peer_uid(stream.as_raw_fd())?;
+        verify_peer_uid_matches(actual, expected)
+    }
+
+    #[cfg(unix)]
     fn process_is_alive(pid: u32) -> bool {
         let result = unsafe { libc::kill(pid as libc::pid_t, 0) };
         result == 0 || std::io::Error::last_os_error().raw_os_error() == Some(libc::EPERM)
@@ -546,6 +700,39 @@ mod local {
 
     #[cfg(all(test, unix))]
     mod tests {
+        #[test]
+        fn ensure_private_socket_parent_enforces_0700_and_rejects_symlinks() {
+            use std::os::unix::fs::{symlink, MetadataExt, PermissionsExt};
+
+            let directory = tempfile::tempdir().unwrap();
+            let nested = directory.path().join("private-run");
+            super::ensure_private_socket_parent(&nested).unwrap();
+            let meta = std::fs::symlink_metadata(&nested).unwrap();
+            assert_eq!(meta.mode() & 0o777, 0o700);
+
+            std::fs::set_permissions(&nested, std::fs::Permissions::from_mode(0o755)).unwrap();
+            super::ensure_private_socket_parent(&nested).unwrap();
+            let tightened = std::fs::symlink_metadata(&nested).unwrap();
+            assert_eq!(tightened.mode() & 0o777, 0o700);
+
+            let link = directory.path().join("link-run");
+            symlink(&nested, &link).unwrap();
+            assert!(super::ensure_private_socket_parent(&link).is_err());
+        }
+
+        #[test]
+        fn accept_peer_uid_verification_accepts_same_user_and_rejects_foreign_uid() {
+            use std::os::fd::AsRawFd;
+
+            let (server_end, _client_end) = super::UnixStream::pair().unwrap();
+            let euid = unsafe { libc::geteuid() };
+            assert_eq!(super::unix_peer_uid(server_end.as_raw_fd()).unwrap(), euid);
+            super::verify_unix_peer_uid(&server_end).unwrap();
+
+            let err = super::verify_peer_uid_matches(euid.wrapping_add(1), euid).unwrap_err();
+            assert_eq!(err.kind(), std::io::ErrorKind::PermissionDenied);
+        }
+
         #[test]
         fn absent_owner_cannot_turn_an_original_mutation_into_a_rejection() {
             let directory = tempfile::tempdir().unwrap();

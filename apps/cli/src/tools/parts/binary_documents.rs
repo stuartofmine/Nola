@@ -18,30 +18,26 @@ fn render_pdf_page(target: &Path, page: u64, ctx: &ToolContext) -> ToolOutcome {
     let directory = tool_try!(tempfile::tempdir().map_err(|err| error(err.to_string())));
     let input = directory.path().join("input.pdf");
     tool_try!(fs::write(&input, bytes).map_err(|err| error(err.to_string())));
-    let mut command = Command::new("pdftoppm");
-    command.args(["-f", &page.to_string(), "-l", &page.to_string(), "-singlefile",
-        "-scale-to", "1600", "-png"]).arg(&input)
-        .stdin(Stdio::null()).stdout(Stdio::piped()).stderr(Stdio::piped());
-    #[cfg(unix)]
-    command.process_group(0);
-    let child = match command.spawn() {
-        Ok(child) => child,
-        Err(err) if err.kind() == std::io::ErrorKind::NotFound => return missing_program_dependency(
-            "pdftoppm", "pdf_page_rendering",
-            json!({"apt-get":"poppler-utils","apk":"poppler-utils","dnf":"poppler-utils","brew":"poppler"}),
-            json!({"tool":"read_file","arguments":{"path":target,"pdf_page":page}})),
-        Err(err) => return error(format!("PDF renderer could not start: {err}. No page was inspected; installing a package may not resolve this error.")),
+    let png_bytes = match render_pdf_page_with_pdftoppm(&input, page, &ctx.cancellation) {
+        Ok(png) => png,
+        Err(PdfRenderAttempt::NotFound) => {
+            if let Some(png) = tool_try!(render_pdf_page_with_fallbacks(&input, directory.path(), page, &ctx.cancellation)) {
+                png
+            } else {
+                return missing_program_dependency(
+                    "pdftoppm",
+                    "pdf_page_rendering",
+                    json!({"apt-get":"poppler-utils","apk":"poppler-utils","dnf":"poppler-utils","brew":"poppler","pip":"pymupdf"}),
+                    json!({"tool":"read_file","arguments":{"path":target,"pdf_page":page}}),
+                );
+            }
+        }
+        Err(PdfRenderAttempt::Failed(outcome)) => return outcome,
     };
-    let output = tool_try!(wait_for_child_output(child, &ctx.cancellation,
-        Duration::from_secs(20), "PDF page rendering"));
-    if !output.status.success() || !output.stdout.starts_with(b"\x89PNG\r\n\x1a\n") {
-        return error(format!("PDF page {page} could not be rendered: {}",
-            String::from_utf8_lossy(&output.stderr).chars().take(1000).collect::<String>()));
-    }
-    if output.stdout.len() > 16 * 1024 * 1024 {
+    if png_bytes.len() > 16 * 1024 * 1024 {
         return error("Rendered PDF page exceeds the 16 MiB image limit".into());
     }
-    let snapshot = tool_try!(ctx.output_store.persist_media(&output.stdout)
+    let snapshot = tool_try!(ctx.output_store.persist_media(&png_bytes)
         .map_err(|err| error(format!("PDF page snapshot failed: {err}"))));
     let mut outcome = ok(format!("Rendered page {page} of {} to a PNG bounded to 1600 pixels. Only this page is supplied; other pages are not inspected. Image input support is required.", target.display()),
         format!("Rendered PDF page {page}")).with_file_artifact(&snapshot, "read");
@@ -50,6 +46,176 @@ fn render_pdf_page(target: &Path, page: u64, ctx: &ToolContext) -> ToolOutcome {
         artifact.name = format!("page-{page}.png");
     }
     outcome
+}
+
+enum PdfRenderAttempt {
+    NotFound,
+    Failed(ToolOutcome),
+}
+
+fn render_pdf_page_with_pdftoppm(
+    input: &Path,
+    page: u64,
+    cancellation: &RuntimeExecutionControl,
+) -> Result<Vec<u8>, PdfRenderAttempt> {
+    let mut command = Command::new("pdftoppm");
+    command
+        .args([
+            "-f",
+            &page.to_string(),
+            "-l",
+            &page.to_string(),
+            "-singlefile",
+            "-scale-to",
+            "1600",
+            "-png",
+        ])
+        .arg(input)
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped());
+    #[cfg(unix)]
+    command.process_group(0);
+    let child = match command.spawn() {
+        Ok(child) => child,
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => {
+            return Err(PdfRenderAttempt::NotFound);
+        }
+        Err(err) => {
+            return Err(PdfRenderAttempt::Failed(error(format!(
+                "PDF renderer could not start: {err}. No page was inspected; installing a package may not resolve this error."
+            ))));
+        }
+    };
+    let output = wait_for_child_output(child, cancellation, Duration::from_secs(20), "PDF page rendering")
+        .map_err(PdfRenderAttempt::Failed)?;
+    if !output.status.success() || !output.stdout.starts_with(b"\x89PNG\r\n\x1a\n") {
+        return Err(PdfRenderAttempt::Failed(error(format!(
+            "PDF page {page} could not be rendered: {}",
+            String::from_utf8_lossy(&output.stderr)
+                .chars()
+                .take(1000)
+                .collect::<String>()
+        ))));
+    }
+    Ok(output.stdout)
+}
+
+fn render_pdf_page_with_fallbacks(
+    input: &Path,
+    temp_dir: &Path,
+    page: u64,
+    cancellation: &RuntimeExecutionControl,
+) -> Result<Option<Vec<u8>>, ToolOutcome> {
+    let out_png = temp_dir.join("page.png");
+    let page_str = page.to_string();
+
+    // Fallback 1: mutool (mupdf-tools)
+    {
+        let mut cmd = Command::new("mutool");
+        cmd.args(["draw", "-F", "png", "-r", "150", "-o"])
+            .arg(&out_png)
+            .arg(input)
+            .arg(&page_str)
+            .stdin(Stdio::null())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped());
+        #[cfg(unix)]
+        cmd.process_group(0);
+        if let Ok(child) = cmd.spawn() {
+            let output = wait_for_child_output(child, cancellation, Duration::from_secs(20), "PDF page rendering (mutool)")?;
+            if output.status.success() {
+                if let Ok(bytes) = fs::read(&out_png) {
+                    if bytes.starts_with(b"\x89PNG\r\n\x1a\n") {
+                        return Ok(Some(bytes));
+                    }
+                }
+            }
+        }
+    }
+
+    // Fallback 2: Ghostscript (gs)
+    {
+        let mut cmd = Command::new("gs");
+        cmd.args([
+            "-dSAFER",
+            "-dBATCH",
+            "-dNOPAUSE",
+            "-sDEVICE=png16m",
+            "-r150",
+            &format!("-dFirstPage={page}"),
+            &format!("-dLastPage={page}"),
+            &format!("-sOutputFile={}", out_png.display()),
+        ])
+        .arg(input)
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped());
+        #[cfg(unix)]
+        cmd.process_group(0);
+        if let Ok(child) = cmd.spawn() {
+            let output = wait_for_child_output(child, cancellation, Duration::from_secs(20), "PDF page rendering (gs)")?;
+            if output.status.success() {
+                if let Ok(bytes) = fs::read(&out_png) {
+                    if bytes.starts_with(b"\x89PNG\r\n\x1a\n") {
+                        return Ok(Some(bytes));
+                    }
+                }
+            }
+        }
+    }
+
+    // Fallback 3: python3 with PyMuPDF (fitz) or pypdfium2 if installed
+    {
+        let script = r#"
+import sys
+pdf_path, out_path, page_num = sys.argv[1], sys.argv[2], int(sys.argv[3])
+try:
+    import fitz
+    doc = fitz.open(pdf_path)
+    if page_num < 1 or page_num > len(doc):
+        sys.exit(2)
+    p = doc[page_num - 1]
+    scale = min(1600.0 / max(p.rect.width, p.rect.height, 1.0), 2.5)
+    p.get_pixmap(matrix=fitz.Matrix(scale, scale)).save(out_path)
+    sys.exit(0)
+except ImportError:
+    pass
+try:
+    import pypdfium2 as pdfium
+    doc = pdfium.PdfDocument(pdf_path)
+    if page_num < 1 or page_num > len(doc):
+        sys.exit(2)
+    img = doc[page_num - 1].render(scale=2.0).to_pil()
+    img.thumbnail((1600, 1600))
+    img.save(out_path, format="PNG")
+    sys.exit(0)
+except ImportError:
+    sys.exit(3)
+"#;
+        let mut cmd = Command::new("python3");
+        cmd.args(["-c", script])
+            .arg(input)
+            .arg(&out_png)
+            .arg(&page_str)
+            .stdin(Stdio::null())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped());
+        #[cfg(unix)]
+        cmd.process_group(0);
+        if let Ok(child) = cmd.spawn() {
+            let output = wait_for_child_output(child, cancellation, Duration::from_secs(20), "PDF page rendering (python)")?;
+            if output.status.success() {
+                if let Ok(bytes) = fs::read(&out_png) {
+                    if bytes.starts_with(b"\x89PNG\r\n\x1a\n") {
+                        return Ok(Some(bytes));
+                    }
+                }
+            }
+        }
+    }
+
+    Ok(None)
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -571,5 +737,81 @@ mod binary_document_tests {
         ] {
             assert_eq!(binary_document_kind(header), BinaryDocumentKind::Audio);
         }
+    }
+
+    #[test]
+    fn read_file_on_binary_document_populates_non_null_extracted_content_in_data() {
+        let sample_rate = 8_000u32;
+        let samples = vec![0i16; 800];
+        let data_bytes = (samples.len() * 2) as u32;
+        let mut wav = Vec::new();
+        wav.extend_from_slice(b"RIFF");
+        wav.extend_from_slice(&(36 + data_bytes).to_le_bytes());
+        wav.extend_from_slice(b"WAVEfmt ");
+        wav.extend_from_slice(&16u32.to_le_bytes());
+        wav.extend_from_slice(&1u16.to_le_bytes());
+        wav.extend_from_slice(&1u16.to_le_bytes());
+        wav.extend_from_slice(&sample_rate.to_le_bytes());
+        wav.extend_from_slice(&(sample_rate * 2).to_le_bytes());
+        wav.extend_from_slice(&2u16.to_le_bytes());
+        wav.extend_from_slice(&16u16.to_le_bytes());
+        wav.extend_from_slice(b"data");
+        wav.extend_from_slice(&data_bytes.to_le_bytes());
+        for sample in samples {
+            wav.extend_from_slice(&sample.to_le_bytes());
+        }
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path().canonicalize().unwrap();
+        let file_path = root.join("sample.wav");
+        fs::write(&file_path, &wav).unwrap();
+        let ctx = ToolContext {
+            memory_binding: nola_domain::memory_owner::MemoryExecutionBinding::local_profile(),
+            language_services: Default::default(),
+            skills: Default::default(),
+            allowed_dirs: vec![root.clone()],
+            policy: ToolExecutionPolicy::new(Vec::new(), false, "ask".into(), Vec::new()),
+            permission_scope: Default::default(),
+            cancellation: Default::default(),
+            plan_state: Default::default(),
+            output_store: ToolOutputStore::for_test(),
+            browser: BrowserRuntime::new(root.join("browser")),
+        };
+        let args = json!({"path": file_path});
+        let outcome = read_file(args.as_object().unwrap(), &ctx);
+        assert!(!outcome.error, "read_file failed: {}", outcome.text);
+        let data = outcome.data.expect("structured data");
+        assert_eq!(data["content_kind"], "extracted_document");
+        let extracted = data["content"]
+            .as_str()
+            .expect("extracted_document data.content must be non-null string");
+        assert!(
+            extracted.contains("format: audio/decoded-signal-summary"),
+            "unexpected extracted content: {extracted}"
+        );
+    }
+
+    #[test]
+    fn with_file_artifact_changes_records_before_version_for_create_and_edit() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path().canonicalize().unwrap();
+        let target = root.join("deliverable.txt");
+        let before_empty: FileArtifactStates = BTreeMap::new();
+        fs::write(&target, b"v1").unwrap();
+        let mut after_create: FileArtifactStates = BTreeMap::new();
+        after_create.insert(target.clone(), file_artifact_fingerprint(&target).unwrap());
+        let created = ok("ok".into(), "ok".into()).with_file_artifact_changes(&before_empty, &after_create);
+        let create_effect = &created.execution.expect("receipt").effects[0];
+        assert_eq!(create_effect.operation, "create");
+        assert_eq!(create_effect.before_version.as_deref(), Some("absent:v1"));
+        assert!(create_effect.after_version.as_deref().is_some_and(|v| v.starts_with("sha256:")));
+
+        fs::write(&target, b"v2-updated").unwrap();
+        let mut after_edit: FileArtifactStates = BTreeMap::new();
+        after_edit.insert(target.clone(), file_artifact_fingerprint(&target).unwrap());
+        let edited = ok("ok".into(), "ok".into()).with_file_artifact_changes(&after_create, &after_edit);
+        let edit_effect = &edited.execution.expect("receipt").effects[0];
+        assert_eq!(edit_effect.operation, "edit");
+        assert!(edit_effect.before_version.as_deref().is_some_and(|v| v.starts_with("fingerprint:v1:")));
+        assert_ne!(edit_effect.before_version, edit_effect.after_version);
     }
 }

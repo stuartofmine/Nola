@@ -976,6 +976,22 @@ impl AgentRuntime {
 
     pub(super) fn cancel_with_identity(&mut self, cancellation_id: String, reason: Option<String>, events: &mut Vec<RuntimeEvent>, effects: &mut Vec<AgentEffect>) -> Result<(), String> {
         if cancellation_id.trim().is_empty() { return Err("cancellation identity is required".into()); }
+        if self
+            .session
+            .execution
+            .active_turn
+            .as_ref()
+            .is_some_and(|turn| turn.status == AgentTurnStatus::Cancelling)
+            && self
+                .session
+                .execution
+                .requirements
+                .cancellation_id
+                .as_deref()
+                == Some(cancellation_id.as_str())
+        {
+            return Err("the active turn is already cancelling".to_string());
+        }
         if let Some(turn_id) = self.session.execution.active_turn.as_ref().filter(|turn| !turn.status.is_terminal()).map(|turn| turn.turn_id.clone()) {
             self.session.execution.requirements.cancellation_id = Some(cancellation_id.clone());
             if self.session.execution.requirements.scope.is_some() {
@@ -1003,7 +1019,91 @@ impl AgentRuntime {
             .as_ref()
             .ok_or_else(|| "no active turn to cancel".to_string())?;
         if active_turn.status == AgentTurnStatus::Cancelling {
-            return Err("the active turn is already cancelling".to_string());
+            // A second cancel while already Cancelling escalates to forced
+            // cancellation so a stuck or non-cancellable tool/effect can never
+            // permanently lock out Ctrl+C.
+            let owner_turn_id = active_turn.turn_id.clone();
+            let remaining_tools = active_turn
+                .tools
+                .iter()
+                .enumerate()
+                .filter(|(_, tool)| {
+                    !matches!(
+                        tool.status,
+                        ToolCallStatus::Completed
+                            | ToolCallStatus::Failed
+                            | ToolCallStatus::Denied
+                            | ToolCallStatus::Cancelled
+                    )
+                })
+                .map(|(index, tool)| (index, tool.call_id.clone(), tool.name.clone()))
+                .collect::<Vec<_>>();
+            let cancelled_results = remaining_tools
+                .iter()
+                .map(|(_, call_id, name)| AgentItem::ToolResult {
+                    id: ItemId::from_string(self.session.allocate_id("tool-result")),
+                    call_id: call_id.clone(),
+                    name: name.clone(),
+                    output: serde_json::json!({
+                        "status": "cancelled",
+                        "reason": reason,
+                        "forced": true,
+                        "permission_decision": null,
+                        "instruction": "This call was force-cancelled after a repeated interrupt request. Preserve earlier completed results; cancellation does not revoke existing grants."
+                    }),
+                    is_error: true,
+                    full_output_ref: None,
+                    artifacts: Vec::new(),
+                })
+                .collect::<Vec<_>>();
+            let pending_effect_ids = self
+                .session
+                .host
+                .pending_effects
+                .iter()
+                .filter(|effect| effect.turn_id.as_deref() == Some(owner_turn_id.as_str()))
+                .map(|effect| effect.effect_id.clone())
+                .collect::<Vec<_>>();
+            for effect_id in pending_effect_ids {
+                let _ = self.session.host.pending_effects.complete(&effect_id);
+            }
+            let turn = self
+                .session
+                .execution
+                .active_turn
+                .as_mut()
+                .ok_or_else(|| "no active turn to cancel".to_string())?;
+            for (index, _, _) in remaining_tools {
+                turn.tools[index].status = ToolCallStatus::Cancelled;
+            }
+            turn.confirm_code_cells_cancelled()?;
+            turn.status = AgentTurnStatus::Cancelled;
+            turn.cancellation_reason = None;
+            self.withdraw_user_input_waits(&reason, events);
+            let admission_ids = self
+                .session
+                .execution
+                .input_queue
+                .withdraw_current(owner_turn_id.as_str(), &reason);
+            if !admission_ids.is_empty() {
+                events.push(RuntimeEvent::InputWithdrawn {
+                    turn_id: owner_turn_id.clone(),
+                    admission_ids,
+                    reason: reason.clone(),
+                });
+            }
+            self.session
+                .execution
+                .permissions
+                .interrupt_turn(&owner_turn_id, &reason);
+            events.push(RuntimeEvent::TurnCancelled {
+                session_id: self.session.session_id.clone(),
+                turn_id: owner_turn_id,
+                reason,
+            });
+            self.session.conversation.context_window.cancel_compaction();
+            self.session.record_items(cancelled_results);
+            return Ok(());
         }
         let host_catalog = active_turn
             .context
@@ -1014,16 +1114,10 @@ impl AgentRuntime {
             &host_catalog,
         )
         .blocking_interrupts();
-        if !blocking_calls.is_empty() {
-            return Err(format!(
-                "turn interruption is blocked by non-cancellable running tool call(s): {}",
-                blocking_calls
-                    .iter()
-                    .map(|call_id| call_id.as_str())
-                    .collect::<Vec<_>>()
-                    .join(", ")
-            ));
-        }
+        // Do not lock out Ctrl+C when a running tool declares
+        // HostCancellationMode::Unsupported; mark the turn Cancelling so it
+        // settles cleanly or can be force-cancelled on a second cancel().
+        let has_non_cancellable_running_tool = !blocking_calls.is_empty();
         let pending_effects = self.session.host.pending_effects.iter().collect::<Vec<_>>();
         let facts = pending_effects
             .iter()
@@ -1125,7 +1219,8 @@ impl AgentRuntime {
         for index in cancellation.tool_indices {
             turn.tools[index].status = ToolCallStatus::Cancelled;
         }
-        let waits_for_host_cancellation = !pending_effect_ids.is_empty() || task_cancellations > 0;
+        let waits_for_host_cancellation =
+            !pending_effect_ids.is_empty() || task_cancellations > 0 || has_non_cancellable_running_tool;
         for cell in turn.code_cells.values_mut().filter(|cell| !cell.is_terminal()) {
             let targets = cell_cancellation_targets.get(&cell.identity().cell_id)
                 .ok_or("missing code cell cancellation plan")?;
@@ -1403,5 +1498,123 @@ mod automatic_memory_extraction_tests {
             .map(|item| item.id().as_str())
             .collect::<Vec<_>>();
         assert_eq!(item_ids, vec!["user-current", "assistant-current"]);
+    }
+
+    #[test]
+    fn cancel_allows_unsupported_running_tool_and_escalates_on_second_cancel() {
+        use crate::agent::host::{
+            HostCancellationMode, HostCapabilityCatalog, HostCapabilityRoute,
+        };
+        use crate::agent::protocol::ModelToolCall;
+        use crate::agent::runtime::AgentRuntime;
+        use crate::agent::runtime_event::RuntimeEvent;
+        use crate::agent::tool_lifecycle::ToolCallStatus;
+        use crate::agent::turn::AgentTurnStatus;
+        use crate::agent::AgentCoreConfig;
+
+        let mut model = crate::agent::code_mode::capability_descriptors(&Default::default())
+            .unwrap()
+            .remove(0);
+        model.id = "model.stream".into();
+        model.route = HostCapabilityRoute::Model;
+        let mut tool = model.clone();
+        tool.id = "blocking_tool".into();
+        tool.route = HostCapabilityRoute::Tool;
+        tool.cancellation = HostCancellationMode::Unsupported;
+        tool.input_schema = json!({"type": "object", "properties": {}});
+
+        let mut catalog = HostCapabilityCatalog::empty("cancel-escalation-host");
+        catalog.capabilities.insert(model.id.clone(), model);
+        catalog.capabilities.insert(tool.id.clone(), tool);
+
+        let mut runtime = AgentRuntime::try_new(AgentCoreConfig {
+            session_id: Some(SessionId::from_string("cancel-escalation-session".into())),
+            turn_identity: crate::agent::model_capability::test_host_identity(),
+            host_catalog: Some(catalog),
+            tools: vec![json!({
+                "type": "function",
+                "function": {"name": "blocking_tool", "parameters": {"type": "object", "properties": {}}}
+            })],
+            ..Default::default()
+        })
+        .unwrap();
+
+        let turn_id = TurnId::from_string("cancel-escalation-turn".into());
+        runtime
+            .start_turn(
+                Default::default(),
+                vec![AgentItem::user_message(
+                    ItemId::from_string("u1".into()),
+                    "Run tool",
+                )],
+                vec![],
+                vec![],
+                Default::default(),
+                vec![],
+                Some(turn_id.as_str().into()),
+                Some(1000),
+                None,
+                &mut Vec::new(),
+                &mut Vec::new(),
+            )
+            .unwrap();
+
+        let turn = runtime.session.execution.active_turn.as_mut().unwrap();
+        turn.tools = turn.admit_tool_calls(vec![ModelToolCall {
+            call_id: CallId::from_string("call-blocking".into()),
+            name: "blocking_tool".into(),
+            arguments: json!({}),
+            permission_scope: None,
+            permission_rationale: None,
+        }]);
+        turn.tools[0].status = ToolCallStatus::Running;
+        turn.status = AgentTurnStatus::AwaitingTools;
+
+        // First cancel must NOT fail even though the running tool declares Unsupported cancellation.
+        let mut first_events = Vec::new();
+        let mut first_effects = Vec::new();
+        runtime
+            .cancel_with_identity(
+                "cancel-1".into(),
+                Some("first ctrl-c".into()),
+                &mut first_events,
+                &mut first_effects,
+            )
+            .expect("first cancel marks turn Cancelling instead of locking out Ctrl+C");
+        assert_eq!(
+            runtime.session.execution.active_turn.as_ref().unwrap().status,
+            AgentTurnStatus::Cancelling
+        );
+
+        // Duplicate replay with identical cancellation_id is still rejected.
+        let dup_err = runtime
+            .cancel_with_identity(
+                "cancel-1".into(),
+                None,
+                &mut Vec::new(),
+                &mut Vec::new(),
+            )
+            .expect_err("duplicate cancellation_id must remain rejected");
+        assert!(dup_err.contains("already cancelling"));
+
+        // Second cancel with a new identity (second Ctrl+C) escalates to forced cancellation.
+        let mut second_events = Vec::new();
+        let mut second_effects = Vec::new();
+        runtime
+            .cancel_with_identity(
+                "cancel-2".into(),
+                Some("forced ctrl-c".into()),
+                &mut second_events,
+                &mut second_effects,
+            )
+            .expect("second cancel escalates to forced cancellation");
+        let turn = runtime.session.execution.active_turn.as_ref().unwrap();
+        assert_eq!(turn.status, AgentTurnStatus::Cancelled);
+        assert_eq!(turn.tools[0].status, ToolCallStatus::Cancelled);
+        assert!(second_events.iter().any(|event| matches!(
+            event,
+            RuntimeEvent::TurnCancelled { turn_id: id, reason, .. }
+                if id == &turn_id && reason == "forced ctrl-c"
+        )));
     }
 }

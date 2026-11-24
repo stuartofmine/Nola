@@ -1346,6 +1346,45 @@ fn mobile_bearer_token(request: &Request) -> Option<String> {
     }
 }
 
+const MOBILE_AUTH_NONCE_TTL_SEC: u64 = 120;
+const MAX_MOBILE_AUTH_NONCES: usize = 10_000;
+
+fn prune_mobile_auth_nonces_locked(nonces: &mut HashMap<String, Instant>, now: Instant) {
+    let ttl = StdDuration::from_secs(MOBILE_AUTH_NONCE_TTL_SEC);
+    nonces.retain(|_, seen| now.saturating_duration_since(*seen) <= ttl);
+}
+
+fn record_mobile_auth_nonce_with_limit(
+    nonces: &mut HashMap<String, Instant>,
+    nonce: &str,
+    now: Instant,
+    max_entries: usize,
+) -> bool {
+    prune_mobile_auth_nonces_locked(nonces, now);
+    if nonces.contains_key(nonce) || max_entries == 0 {
+        return false;
+    }
+    while nonces.len() >= max_entries {
+        let Some(oldest) = nonces
+            .iter()
+            .min_by_key(|(_, seen)| **seen)
+            .map(|(key, _)| key.clone())
+        else {
+            break;
+        };
+        nonces.remove(&oldest);
+    }
+    nonces.insert(nonce.to_string(), now).is_none()
+}
+
+fn record_mobile_auth_nonce_locked(
+    nonces: &mut HashMap<String, Instant>,
+    nonce: &str,
+    now: Instant,
+) -> bool {
+    record_mobile_auth_nonce_with_limit(nonces, nonce, now, MAX_MOBILE_AUTH_NONCES)
+}
+
 fn mobile_proof_token(request: &Request) -> Option<String> {
     let timestamp = request_header(request, "X-Nola-Mobile-Timestamp")?
         .parse::<u64>()
@@ -1371,7 +1410,7 @@ fn mobile_proof_token(request: &Request) -> Option<String> {
             .get_or_init(|| Mutex::new(HashMap::new()))
             .lock()
             .ok()?;
-        nonces.retain(|_, seen| seen.elapsed() <= StdDuration::from_secs(120));
+        prune_mobile_auth_nonces_locked(&mut nonces, Instant::now());
         if nonces.contains_key(nonce) {
             return None;
         }
@@ -1400,10 +1439,72 @@ fn mobile_proof_token(request: &Request) -> Option<String> {
         .get_or_init(|| Mutex::new(HashMap::new()))
         .lock()
         .ok()?;
-    if nonces.insert(nonce.to_string(), Instant::now()).is_some() {
+    if !record_mobile_auth_nonce_locked(&mut nonces, nonce, Instant::now()) {
         return None;
     }
     Some(matched)
+}
+
+#[cfg(test)]
+mod mobile_auth_nonce_cap_tests {
+    use super::*;
+
+    #[test]
+    fn mobile_auth_nonces_reject_replay_prune_expired_and_evict_oldest_at_cap() {
+        let base = Instant::now();
+        let mut nonces = HashMap::new();
+
+        assert_eq!(MAX_MOBILE_AUTH_NONCES, 10_000);
+        assert!(record_mobile_auth_nonce_with_limit(
+            &mut nonces,
+            "nonce-1",
+            base,
+            3,
+        ));
+        assert!(!record_mobile_auth_nonce_with_limit(
+            &mut nonces,
+            "nonce-1",
+            base + StdDuration::from_secs(1),
+            3,
+        ));
+        assert!(record_mobile_auth_nonce_with_limit(
+            &mut nonces,
+            "nonce-2",
+            base + StdDuration::from_secs(2),
+            3,
+        ));
+        assert!(record_mobile_auth_nonce_with_limit(
+            &mut nonces,
+            "nonce-3",
+            base + StdDuration::from_secs(3),
+            3,
+        ));
+        assert_eq!(nonces.len(), 3);
+
+        // Inserting a 4th live nonce evicts the oldest ("nonce-1") to hold the cap.
+        assert!(record_mobile_auth_nonce_with_limit(
+            &mut nonces,
+            "nonce-4",
+            base + StdDuration::from_secs(4),
+            3,
+        ));
+        assert_eq!(nonces.len(), 3);
+        assert!(!nonces.contains_key("nonce-1"));
+        assert!(nonces.contains_key("nonce-2"));
+        assert!(nonces.contains_key("nonce-3"));
+        assert!(nonces.contains_key("nonce-4"));
+
+        // After TTL expires, all old nonces are pruned before inserting the new one.
+        let after_ttl = base + StdDuration::from_secs(MOBILE_AUTH_NONCE_TTL_SEC + 10);
+        assert!(record_mobile_auth_nonce_with_limit(
+            &mut nonces,
+            "nonce-5",
+            after_ttl,
+            3,
+        ));
+        assert_eq!(nonces.len(), 1);
+        assert!(nonces.contains_key("nonce-5"));
+    }
 }
 
 fn request_header<'a>(request: &'a Request, name: &str) -> Option<&'a str> {

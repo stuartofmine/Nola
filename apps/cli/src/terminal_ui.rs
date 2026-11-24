@@ -14,7 +14,7 @@ const MAX_ACTIVE_LINES: usize = 6;
 const MAX_FOOTER_LINES: usize = 2;
 const MAX_CONTENT_WIDTH: usize = 120;
 const MAX_SOFT_WRAP_LOOKBACK: usize = 24;
-const MAX_VIEWPORT_REPLAY_BYTES: usize = 256 * 1024;
+const MAX_VIEWPORT_REPLAY_BYTES: usize = 2 * 1024 * 1024;
 const MAX_VIEWPORT_ROWS_PER_FRAME: usize = 4;
 
 /// Terminal emulators do not expose the desktop Reduce Motion preference.
@@ -3810,8 +3810,9 @@ mod tests {
     #[test]
     fn oversized_semantic_cell_is_retained_whole_instead_of_evicted_unpainted() {
         let mut state = frontier_fixture();
+        let line = "retained-code-padding-0123456789abcdefghijklmnopqrstuvwxyz0123456789\n";
         let source = format!("```text\nOVERSIZED-FIRST\n{}\nOVERSIZED-LAST\n```",
-            "retained-code\n".repeat(MAX_VIEWPORT_REPLAY_BYTES / 10));
+            line.repeat(MAX_VIEWPORT_REPLAY_BYTES / line.len() + 2));
         assert!(source.len() > MAX_VIEWPORT_REPLAY_BYTES);
         state.deferred_history.push_back(TranscriptCell::Markdown(source.clone()));
         let mut terminal = vt100::Parser::new(12,80,0);
@@ -3851,7 +3852,9 @@ mod tests {
     #[test]
     fn oversized_prefix_plus_later_text_and_notification_is_painted_before_eviction() {
         let mut state = frontier_fixture();
-        let source = format!("```text\nRETAINED-FIRST\n{}\n```","retained-code\n".repeat(MAX_VIEWPORT_REPLAY_BYTES/10));
+        let line = "retained-code-padding-0123456789abcdefghijklmnopqrstuvwxyz0123456789\n";
+        let source = format!("```text\nRETAINED-FIRST\n{}\n```",
+            line.repeat(MAX_VIEWPORT_REPLAY_BYTES / line.len() + 2));
         state.deferred_history.push_back(TranscriptCell::Markdown(source.clone()));
         state.deferred_history.push_back(TranscriptCell::Text("later text".into()));
         state.deferred_history.push_back(TranscriptCell::Text("LATER-NOTIFICATION".into()));
@@ -3870,7 +3873,8 @@ mod tests {
     fn one_admission_batch_of_small_cells_cannot_evict_its_unpainted_first_cell() {
         let mut state = frontier_fixture();
         state.deferred_history.push_back(TranscriptCell::Text("RETAINED-FIRST".into()));
-        for index in 0..300 { state.deferred_history.push_back(TranscriptCell::Text(format!("small-{index} {}","x".repeat(1024)))); }
+        let payload = "x".repeat(MAX_VIEWPORT_REPLAY_BYTES / 250 + 64);
+        for index in 0..300 { state.deferred_history.push_back(TranscriptCell::Text(format!("small-{index} {payload}"))); }
         state.deferred_history.push_back(TranscriptCell::Text("LATER-NOTIFICATION".into()));
         let mut witness = FrameWitness::new();
         witness.write_all(&pending_frame_bytes(&mut state,80,12,false)).unwrap();
@@ -3886,8 +3890,10 @@ mod tests {
     #[test]
     fn a_reader_anchor_prevents_eviction_of_its_cell_under_new_source_pressure() {
         let mut state = frontier_fixture();
+        let retained_line = format!("retained row {}\n", "x".repeat(64));
+        let per_cell = MAX_VIEWPORT_REPLAY_BYTES / (retained_line.len() * 2) + 128;
         for label in ["first","reader","last"] {
-            state.deferred_history.push_back(TranscriptCell::Text(format!("{label}\n{}","retained row\n".repeat(8000))));
+            state.deferred_history.push_back(TranscriptCell::Text(format!("{label}\n{}",retained_line.repeat(per_cell))));
         }
         let _ = delivered_pending_frames(&mut state,80,12);
         // Rewind into the first retained cell (earlier fully offscreen cells
@@ -3900,13 +3906,23 @@ mod tests {
         witness.flush().unwrap(); evict_painted_history(&mut state);
         let anchor = state.reader_anchor.clone().unwrap();
         let first_id = state.history_first_cell_id;
-        state.deferred_history.push_back(TranscriptCell::Text("new pending row\n".repeat(10000)));
+        let pending_line = format!("new pending row {}\n", "y".repeat(64));
+        state.deferred_history.push_back(TranscriptCell::Text(pending_line.repeat(per_cell)));
         witness.write_all(&pending_frame_bytes(&mut state,80,12,false)).unwrap();
         witness.flush().unwrap(); evict_painted_history(&mut state);
         assert_eq!(state.reader_anchor.as_ref(),Some(&anchor));
         assert_eq!(state.history_first_cell_id,first_id,"viewport cell cannot be evicted");
         assert!(state.history_tail_bytes>MAX_VIEWPORT_REPLAY_BYTES);
         assert!(!state.frame_pending,"reading does not spin through unseen source");
+    }
+
+    #[test]
+    fn viewport_replay_cap_retains_two_megabytes_of_scrollback() {
+        assert_eq!(MAX_VIEWPORT_REPLAY_BYTES, 2 * 1024 * 1024);
+        let mut state = UiState::default();
+        let one_megabyte = "a".repeat(1024 * 1024);
+        remember_history(&mut state, &one_megabyte);
+        assert_eq!(state.history_tail_bytes, 1024 * 1024);
     }
 
     #[test]

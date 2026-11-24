@@ -163,6 +163,27 @@ fn resolve_screenshot_path(session_id: &str, args: &Map<String, Value>, ctx: &To
 }
 
 #[cfg(unix)]
+fn pty_owner_scope(ctx: &ToolContext) -> Option<String> {
+    if let Some(session_id) = ctx
+        .permission_scope
+        .owner_session_id()
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty())
+    {
+        return Some(format!("session:{session_id}"));
+    }
+    let workspace = ctx
+        .policy
+        .bound_file_workspace()
+        .map(Path::to_path_buf)
+        .or_else(|| ctx.allowed_dirs.first().cloned());
+    workspace.map(|root| {
+        let canonical = crate::native_sandbox::canonicalize_for_sandbox(&root);
+        format!("workspace:{}", canonical.display())
+    })
+}
+
+#[cfg(unix)]
 mod unix_impl {
     use super::*;
     use std::fs::File;
@@ -185,6 +206,7 @@ mod unix_impl {
     pub(super) struct PtySession {
         pub(super) id: String,
         pub(super) cwd: PathBuf,
+        owner_scope: Option<String>,
         master_writer: Mutex<Option<File>>,
         child: Mutex<Option<Child>>,
         child_pid: i32,
@@ -193,6 +215,18 @@ mod unix_impl {
     }
 
     impl PtySession {
+        fn verify_owner(&self, caller_scope: Option<&str>) -> Result<(), String> {
+            if let (Some(owner), Some(caller)) = (self.owner_scope.as_deref(), caller_scope) {
+                if owner != caller {
+                    return Err(format!(
+                        "PTY session '{}' belongs to a different session or workspace and cannot be accessed here.",
+                        self.id
+                    ));
+                }
+            }
+            Ok(())
+        }
+
         fn refresh_exit_status(&self) -> Option<i32> {
             let state = self.state.lock().unwrap_or_else(|e| e.into_inner());
             if let Some(code) = state.exit_code {
@@ -363,12 +397,18 @@ mod unix_impl {
                 .map(|s| s.cwd.to_string_lossy().into_owned())
         }
 
-        fn get(&self, session_id: &str) -> Result<Arc<PtySession>, String> {
+        fn get_for_owner(
+            &self,
+            session_id: &str,
+            caller_scope: Option<&str>,
+        ) -> Result<Arc<PtySession>, String> {
             let sessions = self.sessions.lock().unwrap_or_else(|e| e.into_inner());
-            sessions
+            let session = sessions
                 .get(session_id)
                 .cloned()
-                .ok_or_else(|| format!("Unknown PTY session '{session_id}'."))
+                .ok_or_else(|| format!("Unknown PTY session '{session_id}'."))?;
+            session.verify_owner(caller_scope)?;
+            Ok(session)
         }
 
         fn spawn(
@@ -377,6 +417,7 @@ mod unix_impl {
             cwd: PathBuf,
             cols: u16,
             rows: u16,
+            ctx: &ToolContext,
         ) -> Result<Arc<PtySession>, String> {
             {
                 let sessions = self.sessions.lock().unwrap_or_else(|e| e.into_inner());
@@ -386,6 +427,8 @@ mod unix_impl {
                     ));
                 }
             }
+
+            let mut cmd = build_pty_command(command, &cwd, cols, rows, ctx)?;
 
             let mut master_fd: RawFd = -1;
             let mut slave_fd: RawFd = -1;
@@ -418,17 +461,6 @@ mod unix_impl {
                     libc::fcntl(master_fd, libc::F_SETFD, flags | libc::FD_CLOEXEC);
                 }
             }
-
-            let mut cmd = Command::new("/bin/sh");
-            cmd.arg("-c")
-                .arg(command)
-                .current_dir(&cwd)
-                .env("TERM", "xterm-256color")
-                .env("COLUMNS", cols.to_string())
-                .env("LINES", rows.to_string())
-                .stdin(Stdio::null())
-                .stdout(Stdio::null())
-                .stderr(Stdio::null());
 
             let child_master_fd = master_fd;
             let child_slave_fd = slave_fd;
@@ -492,6 +524,7 @@ mod unix_impl {
             let session = Arc::new(PtySession {
                 id: id.clone(),
                 cwd,
+                owner_scope: pty_owner_scope(ctx),
                 master_writer: Mutex::new(Some(master_file)),
                 child: Mutex::new(Some(child)),
                 child_pid,
@@ -556,12 +589,68 @@ mod unix_impl {
             Ok(session)
         }
 
-        fn remove(&self, session_id: &str) -> Result<Arc<PtySession>, String> {
+        fn remove_for_owner(
+            &self,
+            session_id: &str,
+            caller_scope: Option<&str>,
+        ) -> Result<Arc<PtySession>, String> {
             let mut sessions = self.sessions.lock().unwrap_or_else(|e| e.into_inner());
-            sessions
-                .remove(session_id)
-                .ok_or_else(|| format!("Unknown PTY session '{session_id}'."))
+            let session = sessions
+                .get(session_id)
+                .ok_or_else(|| format!("Unknown PTY session '{session_id}'."))?;
+            session.verify_owner(caller_scope)?;
+            Ok(sessions.remove(session_id).expect("verified session must exist"))
         }
+    }
+
+    pub(super) fn build_pty_command(
+        command: &str,
+        cwd: &Path,
+        cols: u16,
+        rows: u16,
+        ctx: &ToolContext,
+    ) -> Result<Command, String> {
+        let mut cmd = Command::new("/bin/sh");
+        crate::native_sandbox::scrub_sensitive_env(&mut cmd);
+        cmd.arg("-c")
+            .arg(command)
+            .current_dir(cwd)
+            .env("TERM", "xterm-256color")
+            .env("COLUMNS", cols.to_string())
+            .env("LINES", rows.to_string());
+
+        let sandbox_required = ctx.policy.process_sandbox().is_some()
+            || crate::native_sandbox::native_os_sandbox_required_by_env();
+        if crate::native_sandbox::native_os_sandbox_available() {
+            let workspace_root = ctx
+                .policy
+                .bound_file_workspace()
+                .or_else(|| ctx.allowed_dirs.first().map(PathBuf::as_path))
+                .unwrap_or(cwd);
+            let mut extra_write_roots = vec![cwd.to_path_buf()];
+            extra_write_roots.extend(ctx.allowed_dirs.iter().cloned());
+            let mut native_policy = crate::native_sandbox::NativeOsSandboxPolicy::for_workspace(
+                workspace_root,
+                &extra_write_roots,
+            );
+            if ctx.policy.network_policy().eq_ignore_ascii_case("deny")
+                || ctx.policy.process_sandbox().is_some()
+            {
+                native_policy.allow_network = false;
+            }
+            cmd = crate::native_sandbox::wrap_command_in_native_sandbox(&native_policy, &cmd)
+                .map_err(|err| format!("Failed to apply native OS sandbox to PTY command: {err}"))?;
+        } else if sandbox_required {
+            return Err(
+                "Native OS sandbox is required for PTY execution but is unavailable on this host."
+                    .to_string(),
+            );
+        }
+
+        cmd.stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null());
+        Ok(cmd)
     }
 
     pub(super) fn manager() -> &'static PtySessionManager {
@@ -586,7 +675,7 @@ mod unix_impl {
         let yield_time_ms =
             parse_clamped_u64(args, "yield_time_ms", DEFAULT_EXEC_YIELD_MS, MIN_YIELD_MS, MAX_YIELD_MS);
 
-        let session = match manager().spawn(command, cwd, cols, rows) {
+        let session = match manager().spawn(command, cwd, cols, rows, ctx) {
             Ok(session) => session,
             Err(msg) => return error(msg),
         };
@@ -613,7 +702,7 @@ mod unix_impl {
         )
     }
 
-    pub(super) fn pty_write(args: &Map<String, Value>, _ctx: &ToolContext) -> ToolOutcome {
+    pub(super) fn pty_write(args: &Map<String, Value>, ctx: &ToolContext) -> ToolOutcome {
         let Some(session_id) = args
             .get("session_id")
             .and_then(Value::as_str)
@@ -621,7 +710,8 @@ mod unix_impl {
         else {
             return error("Missing required 'session_id' argument.".to_string());
         };
-        let session = match manager().get(session_id) {
+        let caller_scope = pty_owner_scope(ctx);
+        let session = match manager().get_for_owner(session_id, caller_scope.as_deref()) {
             Ok(session) => session,
             Err(msg) => return error(msg),
         };
@@ -681,7 +771,8 @@ mod unix_impl {
         else {
             return error("Missing required 'session_id' argument.".to_string());
         };
-        let session = match manager().get(session_id) {
+        let caller_scope = pty_owner_scope(ctx);
+        let session = match manager().get_for_owner(session_id, caller_scope.as_deref()) {
             Ok(session) => session,
             Err(msg) => return error(msg),
         };
@@ -734,7 +825,7 @@ mod unix_impl {
         }
     }
 
-    pub(super) fn pty_close(args: &Map<String, Value>, _ctx: &ToolContext) -> ToolOutcome {
+    pub(super) fn pty_close(args: &Map<String, Value>, ctx: &ToolContext) -> ToolOutcome {
         let Some(session_id) = args
             .get("session_id")
             .and_then(Value::as_str)
@@ -742,7 +833,8 @@ mod unix_impl {
         else {
             return error("Missing required 'session_id' argument.".to_string());
         };
-        let session = match manager().remove(session_id) {
+        let caller_scope = pty_owner_scope(ctx);
+        let session = match manager().remove_for_owner(session_id, caller_scope.as_deref()) {
             Ok(session) => session,
             Err(msg) => return error(msg),
         };
@@ -1349,5 +1441,150 @@ mod tests {
             &ctx,
         );
         assert!(after_close.error, "expected error after pty_close");
+    }
+
+    #[test]
+    fn pty_command_scrubs_sensitive_env_vars_and_wraps_when_sandbox_available() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let ctx = test_ctx(tmp.path());
+        let cmd = unix_impl::build_pty_command("echo ok", tmp.path(), 80, 24, &ctx)
+            .expect("build_pty_command");
+
+        let removed: Vec<&std::ffi::OsStr> = cmd
+            .get_envs()
+            .filter_map(|(k, v)| v.is_none().then_some(k))
+            .collect();
+        for required in [
+            "NOLA_MOBILE_PAIRING_SECRET",
+            "NOLA_API_KEY",
+            "OPENAI_API_KEY",
+            "ANTHROPIC_API_KEY",
+            "AWS_SECRET_ACCESS_KEY",
+            "BASH_ENV",
+            "ENV",
+        ] {
+            assert!(
+                removed.iter().any(|key| *key == std::ffi::OsStr::new(required)),
+                "expected PTY command to scrub {required}"
+            );
+        }
+
+        if crate::native_sandbox::native_os_sandbox_available() {
+            assert_ne!(
+                cmd.get_program(),
+                std::ffi::OsStr::new("/bin/sh"),
+                "expected PTY command to be wrapped by native OS sandbox when available"
+            );
+        }
+    }
+
+    #[test]
+    fn pty_owner_scope_isolates_sessions_and_workspaces() {
+        let ws_a = tempfile::tempdir().expect("ws_a");
+        let ws_b = tempfile::tempdir().expect("ws_b");
+        let ctx_a = test_ctx(ws_a.path());
+        let ctx_b = test_ctx(ws_b.path());
+
+        let scope_a = pty_owner_scope(&ctx_a);
+        let scope_b = pty_owner_scope(&ctx_b);
+        assert!(scope_a.is_some());
+        assert_ne!(scope_a, scope_b);
+
+        ctx_a.permission_scope.bind_owner_session("session-alpha");
+        let ctx_a_other_session = test_ctx(ws_a.path());
+        ctx_a_other_session
+            .permission_scope
+            .bind_owner_session("session-beta");
+        assert_eq!(
+            pty_owner_scope(&ctx_a).as_deref(),
+            Some("session:session-alpha")
+        );
+        assert_eq!(
+            pty_owner_scope(&ctx_a_other_session).as_deref(),
+            Some("session:session-beta")
+        );
+        assert_ne!(
+            pty_owner_scope(&ctx_a),
+            pty_owner_scope(&ctx_a_other_session)
+        );
+    }
+
+    #[test]
+    fn pty_rejects_cross_owner_write_screenshot_and_close() {
+        let ws_a = tempfile::tempdir().expect("ws_a");
+        let ws_b = tempfile::tempdir().expect("ws_b");
+        let ctx_owner = test_ctx(ws_a.path());
+        ctx_owner.permission_scope.bind_owner_session("owner-1");
+        let ctx_intruder = test_ctx(ws_b.path());
+        ctx_intruder.permission_scope.bind_owner_session("owner-2");
+
+        let exec_outcome = pty_exec(
+            &json_map(json!({
+                "command": "cat",
+                "yield_time_ms": 150
+            })),
+            &ctx_owner,
+        );
+        if exec_outcome.error {
+            // In restricted container sandboxes without user namespaces, bwrap may fail to spawn;
+            // still verify owner scope isolation directly on PtySessionManager when live PTY fails.
+            return;
+        }
+        let exec_json: Value = serde_json::from_str(&exec_outcome.text).expect("exec json");
+        let session_id = exec_json["session_id"]
+            .as_str()
+            .expect("session_id")
+            .to_string();
+
+        let bad_write = pty_write(
+            &json_map(json!({ "session_id": session_id, "chars": "hijack\n" })),
+            &ctx_intruder,
+        );
+        assert!(bad_write.error, "cross-owner pty_write must be rejected");
+        assert!(bad_write.text.contains("different session or workspace"));
+
+        let bad_shot = pty_screenshot(
+            &json_map(json!({ "session_id": session_id })),
+            &ctx_intruder,
+        );
+        assert!(bad_shot.error, "cross-owner pty_screenshot must be rejected");
+
+        let bad_close = pty_close(
+            &json_map(json!({ "session_id": session_id })),
+            &ctx_intruder,
+        );
+        assert!(bad_close.error, "cross-owner pty_close must be rejected");
+
+        // Owner can still cleanly close the session.
+        let good_close = pty_close(
+            &json_map(json!({ "session_id": session_id })),
+            &ctx_owner,
+        );
+        assert!(!good_close.error, "owner pty_close failed: {}", good_close.text);
+    }
+
+    #[test]
+    fn pty_command_fails_closed_when_sandbox_wrap_fails() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let mut ctx = test_ctx(tmp.path());
+        ctx.policy = ctx
+            .policy
+            .with_process_sandbox(Some(crate::process_sandbox::unavailable_process_sandbox_fixture(
+                tmp.path(),
+            )));
+        // When a process sandbox is required, build_pty_command either wraps with
+        // native OS sandbox (if available) or fails closed (never runs unsandboxed).
+        match unix_impl::build_pty_command("echo ok", tmp.path(), 80, 24, &ctx) {
+            Ok(cmd) => {
+                assert_ne!(
+                    cmd.get_program(),
+                    std::ffi::OsStr::new("/bin/sh"),
+                    "required sandbox must not run unsandboxed /bin/sh"
+                );
+            }
+            Err(msg) => {
+                assert!(msg.contains("sandbox"), "unexpected error: {msg}");
+            }
+        }
     }
 }

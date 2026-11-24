@@ -4203,7 +4203,9 @@ fn grep_reads_pages_beyond_two_hundred_and_reports_oversize() {
     assert!(result.text.contains("needle 399"));
     assert!(result.text.contains("scan incomplete"));
     fs::write(&file, vec![b'x';4_000_001]).unwrap();
-    assert!(grep_files(&args,&ctx).error);
+    let oversized = grep_files(&args,&ctx);
+    assert!(!oversized.error, "{}", oversized.text);
+    assert!(oversized.text.contains("skipped 1 file(s) larger than 4 MB"), "{}", oversized.text);
     let _ = fs::remove_dir_all(root);
 }
 #[test]

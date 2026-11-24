@@ -1070,6 +1070,123 @@ fn build_web_search_snapshot(
     }
 }
 
+const MAX_SNAPSHOT_BYTES: usize = 4 * 1024 * 1024;
+const MAX_SNAPSHOT_REDIRECTS: usize = 5;
+
+fn is_blocked_snapshot_ip(ip: std::net::IpAddr) -> bool {
+    match ip {
+        std::net::IpAddr::V4(v4) => {
+            let octets = v4.octets();
+            v4.is_loopback()
+                || v4.is_private()
+                || v4.is_link_local()
+                || v4.is_broadcast()
+                || v4.is_multicast()
+                || v4.is_unspecified()
+                || octets[0] == 0
+                || (octets[0] == 100 && (octets[1] & 0b1100_0000) == 64)
+                || octets[0] >= 240
+        }
+        std::net::IpAddr::V6(v6) => {
+            let segments = v6.segments();
+            if segments[0..5] == [0, 0, 0, 0, 0] && segments[5] == 0xffff {
+                let mapped = std::net::Ipv4Addr::new(
+                    (segments[6] >> 8) as u8,
+                    (segments[6] & 0xff) as u8,
+                    (segments[7] >> 8) as u8,
+                    (segments[7] & 0xff) as u8,
+                );
+                return is_blocked_snapshot_ip(std::net::IpAddr::V4(mapped));
+            }
+            if segments[0..6] == [0, 0, 0, 0, 0, 0] && (segments[6] != 0 || segments[7] > 1) {
+                let compat = std::net::Ipv4Addr::new(
+                    (segments[6] >> 8) as u8,
+                    (segments[6] & 0xff) as u8,
+                    (segments[7] >> 8) as u8,
+                    (segments[7] & 0xff) as u8,
+                );
+                return is_blocked_snapshot_ip(std::net::IpAddr::V4(compat));
+            }
+            v6.is_loopback()
+                || v6.is_unspecified()
+                || v6.is_multicast()
+                || (segments[0] & 0xfe00) == 0xfc00
+                || (segments[0] & 0xffc0) == 0xfe80
+                || (segments[0] & 0xffc0) == 0xfec0
+        }
+    }
+}
+
+fn validate_public_snapshot_url(url: &reqwest::Url) -> Result<(), String> {
+    if !matches!(url.scheme(), "http" | "https") {
+        return Err(format!(
+            "不支持的网页协议：{}（仅允许 http/https）",
+            url.scheme()
+        ));
+    }
+    let Some(host) = url.host() else {
+        return Err("网页 URL 缺少有效主机名".to_string());
+    };
+    let port = url
+        .port_or_known_default()
+        .ok_or_else(|| "网页 URL 缺少有效端口".to_string())?;
+    match host {
+        url::Host::Ipv4(v4) => {
+            if is_blocked_snapshot_ip(std::net::IpAddr::V4(v4)) {
+                return Err(format!("拒绝访问非公网地址：{v4}"));
+            }
+        }
+        url::Host::Ipv6(v6) => {
+            if is_blocked_snapshot_ip(std::net::IpAddr::V6(v6)) {
+                return Err(format!("拒绝访问非公网地址：{v6}"));
+            }
+        }
+        url::Host::Domain(domain) => {
+            let normalized = domain.trim().trim_end_matches('.').to_ascii_lowercase();
+            if normalized.is_empty()
+                || normalized == "localhost"
+                || normalized.ends_with(".localhost")
+            {
+                return Err(format!("拒绝访问本地主机：{domain}"));
+            }
+            let addrs: Vec<std::net::SocketAddr> = (domain, port)
+                .to_socket_addrs()
+                .map_err(|err| format!("无法解析目标主机 {domain}：{err}"))?
+                .collect();
+            if addrs.is_empty() {
+                return Err(format!("目标主机 {domain} 未解析到任何网络地址"));
+            }
+            for addr in addrs {
+                if is_blocked_snapshot_ip(addr.ip()) {
+                    return Err(format!(
+                        "拒绝访问非公网地址（{} -> {}）",
+                        domain,
+                        addr.ip()
+                    ));
+                }
+            }
+        }
+    }
+    Ok(())
+}
+
+fn read_bounded_snapshot_html(
+    reader: &mut dyn Read,
+    max_bytes: usize,
+) -> Result<String, String> {
+    let mut bytes = Vec::new();
+    reader
+        .take((max_bytes as u64).saturating_add(1))
+        .read_to_end(&mut bytes)
+        .map_err(|err| format!("读取网页响应失败：{err}"))?;
+    if bytes.len() > max_bytes {
+        return Err(format!(
+            "网页响应体超过最大限制（{max_bytes} 字节）"
+        ));
+    }
+    Ok(String::from_utf8_lossy(&bytes).into_owned())
+}
+
 fn build_html_snapshot(
     action: &WebScheduledAction,
 ) -> (String, String, Vec<Value>, Option<String>) {
@@ -1077,9 +1194,30 @@ fn build_html_snapshot(
     if url.is_empty() {
         return failed_snapshot("网页任务缺少 URL");
     }
+    let parsed_url = match reqwest::Url::parse(url) {
+        Ok(parsed) => parsed,
+        Err(err) => return failed_snapshot(format!("网页 URL 无效：{err}")),
+    };
+    if let Err(err) = validate_public_snapshot_url(&parsed_url) {
+        return failed_snapshot(err);
+    }
     let client = match reqwest::blocking::Client::builder()
         .no_proxy()
-        .redirect(reqwest::redirect::Policy::limited(10))
+        .redirect(reqwest::redirect::Policy::custom(|attempt| {
+            if attempt.previous().len() >= MAX_SNAPSHOT_REDIRECTS {
+                return attempt.error(std::io::Error::new(
+                    std::io::ErrorKind::Other,
+                    "网页重定向次数超过限制",
+                ));
+            }
+            if let Err(err) = validate_public_snapshot_url(attempt.url()) {
+                return attempt.error(std::io::Error::new(
+                    std::io::ErrorKind::PermissionDenied,
+                    err,
+                ));
+            }
+            attempt.follow()
+        }))
         .timeout(StdDuration::from_secs(15))
         .user_agent("Nola-CLI-Web/1.0 (+local-first html monitor)")
         .build()
@@ -1087,7 +1225,7 @@ fn build_html_snapshot(
         Ok(client) => client,
         Err(err) => return failed_snapshot(format!("创建网页客户端失败：{err}")),
     };
-    let response = match client.get(url).send() {
+    let mut response = match client.get(parsed_url).send() {
         Ok(response) => response,
         Err(err) => return failed_snapshot(format!("抓取网页失败：{err}")),
     };
@@ -1106,9 +1244,17 @@ fn build_html_snapshot(
     if status_code >= 400 {
         return failed_snapshot(format!("网页返回异常状态：HTTP {status_code}"));
     }
-    let html = match response.text() {
+    if response
+        .content_length()
+        .is_some_and(|length| length > MAX_SNAPSHOT_BYTES as u64)
+    {
+        return failed_snapshot(format!(
+            "网页响应体超过最大限制（{MAX_SNAPSHOT_BYTES} 字节）"
+        ));
+    }
+    let html = match read_bounded_snapshot_html(&mut response, MAX_SNAPSHOT_BYTES) {
         Ok(text) => text,
-        Err(err) => return failed_snapshot(format!("读取网页响应失败：{err}")),
+        Err(err) => return failed_snapshot(err),
     };
     let title = html_title(&html).unwrap_or_default();
     let description = html_meta_content(&html, "description")
@@ -1141,6 +1287,77 @@ fn build_html_snapshot(
         "statusCode": status_code,
     });
     ("success".to_string(), summary, vec![snapshot], None)
+}
+
+#[cfg(test)]
+mod html_snapshot_ssrf_tests {
+    use super::*;
+
+    #[test]
+    fn validate_public_snapshot_url_blocks_schemes_and_non_public_targets() {
+        for blocked in [
+            "file:///etc/passwd",
+            "ftp://93.184.216.34/file",
+            "gopher://93.184.216.34/",
+            "http://127.0.0.1/",
+            "http://127.0.0.2:8080/admin",
+            "http://localhost/api",
+            "http://sub.localhost/api",
+            "http://[::1]/",
+            "http://10.0.0.1/",
+            "http://172.16.0.1/",
+            "http://172.31.255.255/",
+            "http://192.168.1.1/",
+            "http://169.254.169.254/latest/meta-data/",
+            "http://[fe80::1]/",
+            "http://100.64.0.1/",
+            "http://100.127.255.254/",
+            "http://0.0.0.0/",
+            "http://[::]/",
+            "http://224.0.0.1/",
+            "http://[ff02::1]/",
+            "http://[fc00::1]/",
+            "http://[fd12:3456:789a::1]/",
+            "http://[::ffff:127.0.0.1]/",
+            "http://[::ffff:169.254.169.254]/",
+            "http://[::ffff:10.0.0.1]/",
+        ] {
+            let parsed = reqwest::Url::parse(blocked).expect(blocked);
+            assert!(
+                validate_public_snapshot_url(&parsed).is_err(),
+                "expected SSRF block for {blocked}"
+            );
+        }
+
+        for allowed in [
+            "https://93.184.216.34/",
+            "http://1.1.1.1/index.html",
+            "https://[2606:2800:220:1:248:1893:25c8:1946]/",
+            "http://172.15.0.1/",
+            "http://172.32.0.1/",
+            "http://100.63.255.255/",
+            "http://100.128.0.1/",
+        ] {
+            let parsed = reqwest::Url::parse(allowed).expect(allowed);
+            assert!(
+                validate_public_snapshot_url(&parsed).is_ok(),
+                "expected public URL allowed: {allowed}"
+            );
+        }
+    }
+
+    #[test]
+    fn read_bounded_snapshot_html_enforces_size_limit() {
+        let exact = vec![b'a'; 1024];
+        let mut cursor = Cursor::new(exact);
+        let read = read_bounded_snapshot_html(&mut cursor, 1024).unwrap();
+        assert_eq!(read.len(), 1024);
+
+        let oversized = vec![b'b'; 1025];
+        let mut cursor = Cursor::new(oversized);
+        assert!(read_bounded_snapshot_html(&mut cursor, 1024).is_err());
+        assert_eq!(MAX_SNAPSHOT_BYTES, 4 * 1024 * 1024);
+    }
 }
 
 fn build_local_file_snapshot(

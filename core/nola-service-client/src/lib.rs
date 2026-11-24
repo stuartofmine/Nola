@@ -75,8 +75,9 @@ impl ApplicationServiceRequestCancellation {
 impl ApplicationServiceClient {
     pub fn for_database(database_path: impl Into<PathBuf>) -> Self {
         let database_path = database_path.into();
-        let hash = database_path_hash(&database_path);
-        let socket_path = socket_path_for_hash(hash);
+        let identity = database_identity_path(&database_path);
+        let hash = database_identity_hash(&identity);
+        let socket_path = socket_path_for_identity(&identity, hash);
         let client_id = format!("nola-local-{hash:016x}");
         Self {
             database_path,
@@ -733,29 +734,189 @@ fn client_id_for_database(database_path: &Path) -> String {
 
 pub fn socket_path_for_database(database_path: &Path) -> PathBuf {
     // FNV-1a matches the native Mac client and avoids exposing database paths
-    // in a world-readable temporary directory name.
-    socket_path_for_hash(database_path_hash(database_path))
+    // in shared temporary directory names.
+    let identity = database_identity_path(database_path);
+    socket_path_for_identity(&identity, database_identity_hash(&identity))
 }
 
-fn socket_path_for_hash(hash: u64) -> PathBuf {
-    // Unix-domain socket paths have a small fixed-size address field (104
-    // bytes on macOS). Process-specific TMPDIR values can already exceed that
-    // limit before the socket name is appended, so keep transport endpoints
-    // in the system's short, shared temporary root. The database hash prevents
-    // collisions and the service restricts the socket itself to mode 0600.
-    #[cfg(unix)]
-    let socket_root = PathBuf::from("/tmp");
+#[cfg(unix)]
+const MAX_UNIX_SOCKET_PATH_BYTES: usize = 100;
+
+#[cfg(unix)]
+fn socket_path_fits_unix_limit(dir: &Path, socket_name: &str) -> bool {
+    use std::os::unix::ffi::OsStrExt;
+    dir.join(socket_name).as_os_str().as_bytes().len() <= MAX_UNIX_SOCKET_PATH_BYTES
+}
+
+#[cfg(unix)]
+fn is_shared_temp_dir(path: &Path) -> bool {
+    use std::os::unix::fs::MetadataExt;
+    if matches!(
+        path.to_str(),
+        Some("/tmp") | Some("/private/tmp") | Some("/var/tmp") | Some("/private/var/tmp") | Some("/")
+    ) {
+        return true;
+    }
+    std::fs::metadata(path).is_ok_and(|meta| (meta.mode() & 0o1000) != 0)
+}
+
+#[cfg(unix)]
+fn is_owned_existing_dir(path: &Path, euid: libc::uid_t) -> bool {
+    use std::os::unix::fs::MetadataExt;
+    std::fs::metadata(path).is_ok_and(|meta| meta.is_dir() && meta.uid() == euid)
+}
+
+#[cfg(unix)]
+fn ensure_private_socket_dir(dir: &Path) -> Result<(), String> {
+    use std::os::unix::fs::{DirBuilderExt, MetadataExt, PermissionsExt};
+    let euid = unsafe { libc::geteuid() };
+    if let Ok(meta) = std::fs::symlink_metadata(dir) {
+        if meta.file_type().is_symlink() || !meta.is_dir() {
+            return Err(format!(
+                "socket directory {} must be a real directory",
+                dir.display()
+            ));
+        }
+        if meta.uid() != euid {
+            return Err(format!(
+                "socket directory {} is not owned by the current user",
+                dir.display()
+            ));
+        }
+        if meta.mode() & 0o077 != 0 {
+            std::fs::set_permissions(dir, std::fs::Permissions::from_mode(0o700)).map_err(
+                |error| format!("restrict socket directory {} failed: {error}", dir.display()),
+            )?;
+        }
+        return Ok(());
+    }
+    let mut builder = std::fs::DirBuilder::new();
+    builder.recursive(true).mode(0o700);
+    builder.create(dir).map_err(|error| {
+        format!(
+            "create private socket directory {} failed: {error}",
+            dir.display()
+        )
+    })?;
+    std::fs::set_permissions(dir, std::fs::Permissions::from_mode(0o700)).map_err(|error| {
+        format!("restrict socket directory {} failed: {error}", dir.display())
+    })?;
+    let meta = std::fs::symlink_metadata(dir).map_err(|error| {
+        format!("inspect socket directory {} failed: {error}", dir.display())
+    })?;
+    if meta.file_type().is_symlink()
+        || !meta.is_dir()
+        || meta.uid() != euid
+        || (meta.mode() & 0o077 != 0)
+    {
+        return Err(format!(
+            "socket directory {} is not a private directory owned by the current user",
+            dir.display()
+        ));
+    }
+    Ok(())
+}
+
+#[cfg(unix)]
+fn select_unix_socket_dir_with(
+    database_identity: &Path,
+    socket_name: &str,
+    xdg_runtime_dir: Option<&Path>,
+    home_dir: Option<&Path>,
+) -> PathBuf {
+    let euid = unsafe { libc::geteuid() };
+
+    // 1. Prefer $XDG_RUNTIME_DIR/nola when set, absolute, owned by current UID,
+    //    within sun_path limits, and secured to mode 0700.
+    if let Some(xdg) = xdg_runtime_dir.filter(|path| path.is_absolute()) {
+        let candidate = xdg.join("nola");
+        if is_owned_existing_dir(xdg, euid)
+            && socket_path_fits_unix_limit(&candidate, socket_name)
+            && ensure_private_socket_dir(&candidate).is_ok()
+        {
+            return candidate;
+        }
+    }
+
+    // 2. Fallback to <db_parent>/.nola-run when the database parent exists, is
+    //    owned by the current UID (never shared/sticky /tmp), fits within the
+    //    Unix sun_path limit, and can be secured to mode 0700.
+    if let Some(db_parent) = database_identity
+        .parent()
+        .filter(|path| !path.as_os_str().is_empty())
+    {
+        let candidate = db_parent.join(".nola-run");
+        if is_owned_existing_dir(db_parent, euid)
+            && !is_shared_temp_dir(db_parent)
+            && socket_path_fits_unix_limit(&candidate, socket_name)
+            && ensure_private_socket_dir(&candidate).is_ok()
+        {
+            return candidate;
+        }
+    }
+
+    // 3. Fallback to ~/.nola/run when HOME is set, owned by current UID, fits
+    //    within the Unix sun_path limit, and can be secured to mode 0700.
+    if let Some(home) = home_dir.filter(|path| path.is_absolute()) {
+        let candidate = home.join(".nola").join("run");
+        if is_owned_existing_dir(home, euid)
+            && socket_path_fits_unix_limit(&candidate, socket_name)
+            && ensure_private_socket_dir(&candidate).is_ok()
+        {
+            return candidate;
+        }
+    }
+
+    // 4. Last-resort short user-private directory (0700, owned by current UID),
+    //    keeping sockets out of world-writable /tmp directly while staying well
+    //    within macOS/Linux sun_path byte limits.
+    let fallback = PathBuf::from(format!("/tmp/nola-run-{euid}"));
+    let _ = ensure_private_socket_dir(&fallback);
+    fallback
+}
+
+#[cfg(unix)]
+fn select_unix_socket_dir(database_identity: &Path, socket_name: &str) -> PathBuf {
+    let xdg = std::env::var_os("XDG_RUNTIME_DIR")
+        .filter(|value| !value.is_empty())
+        .map(PathBuf::from);
+    let home = std::env::var_os("HOME")
+        .filter(|value| !value.is_empty())
+        .map(PathBuf::from);
+    select_unix_socket_dir_with(
+        database_identity,
+        socket_name,
+        xdg.as_deref(),
+        home.as_deref(),
+    )
+}
+
+fn socket_path_for_identity(database_identity: &Path, hash: u64) -> PathBuf {
     #[cfg(windows)]
     {
-        let root = std::env::var_os("LOCALAPPDATA").map(PathBuf::from).unwrap_or_else(std::env::temp_dir);
-        return root.join("NolaIPC").join(format!("v{APPLICATION_SERVICE_PROTOCOL_VERSION}-{hash:016x}"));
+        let _ = database_identity;
+        let root = std::env::var_os("LOCALAPPDATA")
+            .map(PathBuf::from)
+            .unwrap_or_else(std::env::temp_dir);
+        return root
+            .join("NolaIPC")
+            .join(format!("v{APPLICATION_SERVICE_PROTOCOL_VERSION}-{hash:016x}"));
+    }
+    #[cfg(unix)]
+    {
+        let socket_name = format!(
+            "nola-application-v{APPLICATION_SERVICE_PROTOCOL_VERSION}-{hash:016x}.sock"
+        );
+        let socket_root = select_unix_socket_dir(database_identity, &socket_name);
+        socket_root.join(socket_name)
     }
     #[cfg(not(any(unix, windows)))]
-    let socket_root = std::env::temp_dir();
-    #[cfg(not(windows))]
-    socket_root.join(format!(
-        "nola-application-v{APPLICATION_SERVICE_PROTOCOL_VERSION}-{hash:016x}.sock"
-    ))
+    {
+        let _ = database_identity;
+        std::env::temp_dir().join(format!(
+            "nola-application-v{APPLICATION_SERVICE_PROTOCOL_VERSION}-{hash:016x}.sock"
+        ))
+    }
 }
 
 fn database_identity_path(database_path: &Path) -> PathBuf {
@@ -778,13 +939,17 @@ fn database_identity_path(database_path: &Path) -> PathBuf {
     absolute
 }
 
-fn database_path_hash(database_path: &Path) -> u64 {
+fn database_identity_hash(identity: &Path) -> u64 {
     let mut hash = 0xcbf29ce484222325_u64;
-    for byte in database_identity_path(database_path).as_os_str().to_string_lossy().as_bytes() {
+    for byte in identity.as_os_str().to_string_lossy().as_bytes() {
         hash ^= u64::from(*byte);
         hash = hash.wrapping_mul(0x100000001b3);
     }
     hash
+}
+
+fn database_path_hash(database_path: &Path) -> u64 {
+    database_identity_hash(&database_identity_path(database_path))
 }
 
 #[cfg(any(unix, windows))]
@@ -889,6 +1054,11 @@ mod platform {
     fn startup_process_lock(socket: &Path, timeout: Duration) -> Result<std::fs::File, String> {
         use std::os::unix::fs::{MetadataExt, OpenOptionsExt};
         let lock_path = socket.with_extension("startup.lock");
+        if let Some(parent) = lock_path.parent().filter(|path| !path.as_os_str().is_empty()) {
+            if !parent.exists() {
+                ensure_private_socket_dir(parent)?;
+            }
+        }
         let file = std::fs::OpenOptions::new().read(true).write(true).create(true)
             .mode(0o600).custom_flags(libc::O_NOFOLLOW | libc::O_CLOEXEC)
             .open(&lock_path).map_err(|error| format!("open service startup lock failed: {error}"))?;
@@ -1213,6 +1383,96 @@ mod platform {
         }
     }
 
+    #[cfg(any(target_os = "linux", target_os = "android"))]
+    fn unix_peer_uid(descriptor: std::os::fd::RawFd) -> std::io::Result<libc::uid_t> {
+        let mut cred = libc::ucred {
+            pid: 0,
+            uid: 0,
+            gid: 0,
+        };
+        let mut len = std::mem::size_of::<libc::ucred>() as libc::socklen_t;
+        let result = unsafe {
+            libc::getsockopt(
+                descriptor,
+                libc::SOL_SOCKET,
+                libc::SO_PEERCRED,
+                (&mut cred as *mut libc::ucred).cast(),
+                &mut len,
+            )
+        };
+        if result != 0 {
+            return Err(std::io::Error::last_os_error());
+        }
+        if (len as usize) < std::mem::size_of::<libc::ucred>() {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::InvalidData,
+                "incomplete SO_PEERCRED payload",
+            ));
+        }
+        Ok(cred.uid)
+    }
+
+    #[cfg(any(
+        target_os = "macos",
+        target_os = "ios",
+        target_os = "freebsd",
+        target_os = "openbsd",
+        target_os = "netbsd",
+        target_os = "dragonfly"
+    ))]
+    fn unix_peer_uid(descriptor: std::os::fd::RawFd) -> std::io::Result<libc::uid_t> {
+        let mut euid: libc::uid_t = 0;
+        let mut egid: libc::gid_t = 0;
+        let result = unsafe { libc::getpeereid(descriptor, &mut euid, &mut egid) };
+        if result != 0 {
+            return Err(std::io::Error::last_os_error());
+        }
+        Ok(euid)
+    }
+
+    #[cfg(all(
+        unix,
+        not(any(
+            target_os = "linux",
+            target_os = "android",
+            target_os = "macos",
+            target_os = "ios",
+            target_os = "freebsd",
+            target_os = "openbsd",
+            target_os = "netbsd",
+            target_os = "dragonfly"
+        ))
+    ))]
+    fn unix_peer_uid(_descriptor: std::os::fd::RawFd) -> std::io::Result<libc::uid_t> {
+        Err(std::io::Error::new(
+            std::io::ErrorKind::Unsupported,
+            "Unix peer credential verification is unsupported on this platform",
+        ))
+    }
+
+    #[cfg(unix)]
+    fn verify_peer_uid_matches(
+        actual: libc::uid_t,
+        expected: libc::uid_t,
+    ) -> std::io::Result<()> {
+        if actual != expected {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::PermissionDenied,
+                format!(
+                    "application service peer UID {actual} does not match current UID {expected}"
+                ),
+            ));
+        }
+        Ok(())
+    }
+
+    #[cfg(unix)]
+    fn verify_unix_peer_uid(stream: &UnixStream) -> std::io::Result<()> {
+        let expected = unsafe { libc::geteuid() };
+        let actual = unix_peer_uid(stream.as_raw_fd())?;
+        verify_peer_uid_matches(actual, expected)
+    }
+
     #[cfg(unix)]
     fn connect_with_deadline(
         path: &Path,
@@ -1220,7 +1480,9 @@ mod platform {
         cancellation: Option<&RequestCancellation>,
     ) -> std::io::Result<UnixStream> {
         if deadline.is_none() && cancellation.is_none() {
-            return UnixStream::connect(path);
+            let stream = UnixStream::connect(path)?;
+            verify_unix_peer_uid(&stream)?;
+            return Ok(stream);
         }
         let address = socket2::SockAddr::unix(path)?;
         let timed_out = || {
@@ -1260,7 +1522,9 @@ mod platform {
             match socket.connect(&address) {
                 Ok(()) => {
                     socket.set_nonblocking(false)?;
-                    return Ok(UnixStream::from(std::os::fd::OwnedFd::from(socket)));
+                    let stream = UnixStream::from(std::os::fd::OwnedFd::from(socket));
+                    verify_unix_peer_uid(&stream)?;
+                    return Ok(stream);
                 }
                 Err(error) if error.raw_os_error() == Some(libc::EINPROGRESS) => {
                     wait_for_socket_writable(socket.as_raw_fd(), deadline, cancellation)?;
@@ -1268,7 +1532,9 @@ mod platform {
                         return Err(error);
                     }
                     socket.set_nonblocking(false)?;
-                    return Ok(UnixStream::from(std::os::fd::OwnedFd::from(socket)));
+                    let stream = UnixStream::from(std::os::fd::OwnedFd::from(socket));
+                    verify_unix_peer_uid(&stream)?;
+                    return Ok(stream);
                 }
                 Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {
                     // Linux may reject a nonblocking AF_UNIX connect with EAGAIN
@@ -1864,6 +2130,17 @@ mod platform {
                 elapsed < Duration::from_millis(100),
                 "cancellation took {elapsed:?}"
             );
+        }
+
+        #[test]
+        fn unix_peer_uid_verification_accepts_current_user_and_rejects_mismatch() {
+            let (client, _server) = UnixStream::pair().unwrap();
+            let euid = unsafe { libc::geteuid() };
+            assert_eq!(unix_peer_uid(client.as_raw_fd()).unwrap(), euid);
+            verify_unix_peer_uid(&client).unwrap();
+
+            let err = verify_peer_uid_matches(euid.wrapping_add(1), euid).unwrap_err();
+            assert_eq!(err.kind(), std::io::ErrorKind::PermissionDenied);
         }
 
         #[test]
@@ -2532,5 +2809,74 @@ mod tests {
         let first_client = ApplicationServiceClient::for_database("/tmp/Nola State/nola.db");
         let second_client = ApplicationServiceClient::for_database("/tmp/Nola State/nola.db");
         assert_eq!(first_client.client_id(), second_client.client_id());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn unix_socket_dir_prefers_private_xdg_then_db_parent_then_home_within_sun_path_limit() {
+        use std::os::unix::ffi::OsStrExt;
+        use std::os::unix::fs::MetadataExt;
+
+        let euid = unsafe { libc::geteuid() };
+        let base = PathBuf::from(format!("/tmp/nl-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&base);
+        let xdg = base.join("x");
+        let db_dir = base.join("d");
+        let home = base.join("h");
+        std::fs::create_dir_all(&xdg).unwrap();
+        std::fs::create_dir_all(&db_dir).unwrap();
+        std::fs::create_dir_all(&home).unwrap();
+        let sock_name = "nola-application-v1-0123456789abcdef.sock";
+
+        // 1. Prefers $XDG_RUNTIME_DIR/nola with mode 0700.
+        let chosen_xdg = select_unix_socket_dir_with(
+            &db_dir.join("nola.db"),
+            sock_name,
+            Some(&xdg),
+            Some(&home),
+        );
+        assert_eq!(chosen_xdg, xdg.join("nola"));
+        let xdg_meta = std::fs::symlink_metadata(&chosen_xdg).unwrap();
+        assert_eq!(xdg_meta.uid(), euid);
+        assert_eq!(xdg_meta.mode() & 0o777, 0o700);
+        assert!(chosen_xdg.join(sock_name).as_os_str().as_bytes().len() <= MAX_UNIX_SOCKET_PATH_BYTES);
+
+        // 2. Falls back to <db_parent>/.nola-run with mode 0700 when XDG is absent.
+        let chosen_db =
+            select_unix_socket_dir_with(&db_dir.join("nola.db"), sock_name, None, Some(&home));
+        assert_eq!(chosen_db, db_dir.join(".nola-run"));
+        let db_meta = std::fs::symlink_metadata(&chosen_db).unwrap();
+        assert_eq!(db_meta.uid(), euid);
+        assert_eq!(db_meta.mode() & 0o777, 0o700);
+
+        // 3. Falls back to ~/.nola/run when <db_parent> would exceed sun_path limit.
+        let long_db_dir = base.join("aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa");
+        std::fs::create_dir_all(&long_db_dir).unwrap();
+        let chosen_home = select_unix_socket_dir_with(
+            &long_db_dir.join("nola.db"),
+            sock_name,
+            None,
+            Some(&home),
+        );
+        assert_eq!(chosen_home, home.join(".nola").join("run"));
+        let home_meta = std::fs::symlink_metadata(&chosen_home).unwrap();
+        assert_eq!(home_meta.uid(), euid);
+        assert_eq!(home_meta.mode() & 0o777, 0o700);
+        assert!(
+            chosen_home.join(sock_name).as_os_str().as_bytes().len() <= MAX_UNIX_SOCKET_PATH_BYTES
+        );
+
+        // 4. Rejects symlinked socket directories.
+        let symlink_target = base.join("real-target");
+        std::fs::create_dir_all(&symlink_target).unwrap();
+        let symlink_dir = base.join("sym-dir");
+        std::os::unix::fs::symlink(&symlink_target, &symlink_dir).unwrap();
+        assert!(ensure_private_socket_dir(&symlink_dir).is_err());
+
+        // 5. Never places the default socket directly inside world-writable /tmp.
+        let default_path = socket_path_for_database(&db_dir.join("nola.db"));
+        assert_ne!(default_path.parent(), Some(Path::new("/tmp")));
+
+        let _ = std::fs::remove_dir_all(&base);
     }
 }

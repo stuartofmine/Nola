@@ -139,12 +139,38 @@ impl AgentRuntime {
             && full_request_estimate < full_prompt_limit && archive_tokens < 64 {
             return self.request_model_after_compaction(events, effects);
         }
+        // Prefer zero-cost Tier-1 micro-compaction (trimming stale oversized
+        // tool results in the working set while preserving canonical transcript
+        // bodies) before spending a full LLM summarization round and wiping the
+        // prompt prefix cache.
+        if reason == CompactionReason::ThresholdReached && history_budget.is_some() {
+            let micro_ceiling = history_trigger_budget.saturating_sub(1).max(1);
+            if self.try_tier1_micro_compaction(reason, micro_ceiling, events, effects)? {
+                return Ok(());
+            }
+        }
         let summary_budget = if plan.items_to_summarize.is_empty() {
             None
         } else {
             match plan.summary_token_budget(target_tokens, prompt_limit, handoff) {
                 Ok(budget) => Some(budget),
                 Err(error) => {
+                    if history_budget.is_some() || reason == CompactionReason::ContextLimitRecovery
+                    {
+                        let micro_ceiling = if reason == CompactionReason::ContextLimitRecovery {
+                            target_tokens.min(prompt_limit)
+                        } else {
+                            prompt_limit
+                        };
+                        if self.try_tier1_micro_compaction(
+                            reason,
+                            micro_ceiling,
+                            events,
+                            effects,
+                        )? {
+                            return Ok(());
+                        }
+                    }
                     if history_budget.is_some() {
                         if let Some(turn_id) = self.session.execution.active_turn.as_ref().map(|turn| turn.turn_id.clone()) {
                             return self.block_context_budget(&turn_id, full_request_estimate, full_prompt_limit, events);
@@ -162,6 +188,14 @@ impl AgentRuntime {
         let items_to_summarize = plan.items_to_summarize;
         if items_to_summarize.is_empty() {
             if reason == CompactionReason::ContextLimitRecovery {
+                if self.try_tier1_micro_compaction(
+                    reason,
+                    target_tokens.min(prompt_limit),
+                    events,
+                    effects,
+                )? {
+                    return Ok(());
+                }
                 if let Some(recovery) =
                     super::super::compaction_planner::project_oversized_atomic_item(
                         &self.session.conversation.model_context,
@@ -286,6 +320,12 @@ impl AgentRuntime {
                     return self.request_model_after_compaction(events, effects);
                 }
             }
+            if reason == CompactionReason::ThresholdReached
+                && full_request_estimate > full_prompt_limit
+                && self.try_tier1_micro_compaction(reason, prompt_limit, events, effects)?
+            {
+                return Ok(());
+            }
             // A large instruction or unresolved transaction can leave no safe
             // archive. Continue automatic work without inventing a summary;
             // hard overflow recovery above handles bounded source projections.
@@ -361,6 +401,74 @@ impl AgentRuntime {
             target_tokens: summary_budget.expect("non-empty archive has a summary budget"),
         });
         Ok(())
+    }
+
+    /// Tier-1 cheap, zero-LLM-call micro-compaction over stale bulky
+    /// `ToolResult` items in `model_context` (canonical `transcript` remains
+    /// byte-for-byte lossless).
+    ///
+    /// Commits and resumes the active model step only when micro-compaction
+    /// reclaims tokens and brings the working history within `history_ceiling`.
+    fn try_tier1_micro_compaction(
+        &mut self,
+        reason: CompactionReason,
+        history_ceiling: usize,
+        events: &mut Vec<RuntimeEvent>,
+        effects: &mut Vec<AgentEffect>,
+    ) -> Result<bool, String> {
+        let micro = super::super::compaction_planner::micro_compact_stale_tool_results(
+            &self.session.conversation.model_context,
+            super::super::compaction_planner::DEFAULT_MICRO_COMPACTION_KEEP_RECENT_ITEMS,
+            super::super::compaction_planner::DEFAULT_MICRO_COMPACTION_MAX_STALE_TOOL_RESULT_CHARS,
+        );
+        if !micro.did_compact() || micro.compacted_tokens > history_ceiling {
+            return Ok(false);
+        }
+
+        let compacted_id_set = micro
+            .compacted_item_ids
+            .iter()
+            .map(ItemId::as_str)
+            .collect::<std::collections::BTreeSet<_>>();
+        let source_items = self
+            .session
+            .conversation
+            .model_context
+            .iter()
+            .filter(|item| compacted_id_set.contains(item.id().as_str()))
+            .cloned()
+            .collect::<Vec<_>>();
+        let source_fingerprint =
+            super::super::context_window::compaction_source_fingerprint(&source_items)?;
+        let original_token_count = source_items.iter().fold(0usize, |total, item| {
+            total.saturating_add(item.estimated_tokens())
+        });
+        let replaced_item_count = source_items.len();
+        let tokens_reclaimed = micro.tokens_reclaimed;
+
+        // Mutate only the replaceable model working set; canonical transcript
+        // bodies remain intact and addressable by item ID.
+        self.session.conversation.model_context = micro.items;
+        self.session
+            .conversation
+            .context_window
+            .rebase_estimate(&self.session.conversation.model_context);
+        events.push(RuntimeEvent::CompactionCompleted {
+            summary: format!(
+                "Tier-1 micro-compaction trimmed {replaced_item_count} stale tool result(s) in the model working set, reclaiming {tokens_reclaimed} estimated tokens while preserving canonical transcript bodies."
+            ),
+            replaced_item_count,
+            remaining_item_count: self.session.conversation.model_context.len(),
+            reason: Some(reason),
+            compaction_item_id: None,
+            source_fingerprint: Some(source_fingerprint),
+            source_item_count: replaced_item_count,
+            original_token_count,
+        });
+        if self.session.execution.active_turn.is_some() {
+            self.request_model_after_compaction(events, effects)?;
+        }
+        Ok(true)
     }
 
     pub(super) fn request_model_after_compaction(
@@ -512,7 +620,7 @@ mod long_run_tests {
                 "generation {index}: {tool:?}"
             );
             let call_id = tool.call_id.clone();
-            runtime
+            let tool_out = runtime
                 .dispatch(AgentCommand::ToolCompleted {
                     turn_id: turn_id.clone(),
                     call_id,
@@ -528,6 +636,11 @@ mod long_run_tests {
                     effect_elapsed_millis: 1,
                 })
                 .unwrap();
+            compacted += tool_out
+                .event_envelopes
+                .iter()
+                .filter(|env| matches!(env.event, crate::agent::protocol::AgentEvent::CompactionCompleted { compaction_item_id: None, .. }))
+                .count();
         }
         while runtime
             .session
@@ -571,5 +684,335 @@ mod long_run_tests {
         );
         assert!(runtime.session.conversation.model_context.iter().any(|item|
             matches!(item, AgentItem::Message { id, role: AgentRole::User, content } if id.as_str() == "long-input" && content == "Continue the requested long task")));
+    }
+
+    fn micro_compaction_fixture_runtime(
+        context_window: crate::agent::context_window::ContextWindowConfig,
+    ) -> AgentRuntime {
+        let mut model = crate::agent::code_mode::capability_descriptors(&Default::default())
+            .unwrap()
+            .remove(0);
+        model.id = "model.stream".into();
+        model.route = HostCapabilityRoute::Model;
+        let mut reader = model.clone();
+        reader.id = "fixture_read".into();
+        reader.route = HostCapabilityRoute::Tool;
+        reader.exposure = HostCapabilityExposure::Visible;
+        reader.permission_domain = Some("fixture.read".into());
+        reader.input_normalization = Default::default();
+        reader.input_schema =
+            json!({"type":"object","properties":{"record":{"type":"integer"}},"required":["record"]});
+        let mut catalog = crate::agent::host::HostCapabilityCatalog::empty("micro-compact-host");
+        catalog.capabilities.insert(model.id.clone(), model);
+        catalog.capabilities.insert(reader.id.clone(), reader);
+        AgentRuntime::try_new(AgentCoreConfig {
+            session_id: Some(SessionId::from_string("micro-compact-session".into())),
+            turn_identity: crate::agent::model_capability::test_host_identity(),
+            host_catalog: Some(catalog),
+            permission_rules: crate::agent::permissions::PermissionRuleSet {
+                rules: vec![crate::agent::permissions::PermissionRule {
+                    capability_pattern: "fixture.read".into(),
+                    resource_pattern: "*".into(),
+                    decision: RuleDecision::Allow,
+                    source: crate::agent::permissions::PermissionRuleSource::UserGlobal,
+                }],
+            },
+            tools: vec![json!({
+                "type":"function",
+                "function":{"name":"fixture_read","parameters":{"type":"object","properties":{}}}
+            })],
+            context_window,
+            ..Default::default()
+        })
+        .unwrap()
+    }
+
+    fn append_active_batch_with_bulky_stale_results(runtime: &mut AgentRuntime, include_tiny_prefix: bool) {
+        let mut items = Vec::new();
+        if include_tiny_prefix {
+            items.push(AgentItem::user_message(
+                ItemId::from_string("old-tiny-user".into()),
+                "hi",
+            ));
+        }
+        let current_user = runtime
+            .session
+            .conversation
+            .model_context
+            .last()
+            .cloned()
+            .expect("active turn user message");
+        items.push(current_user);
+        // Unresolved call keeps the active batch anchored in `kept_items` so
+        // summary-only compaction cannot evict the bulky stale tool results.
+        items.push(AgentItem::ToolCall {
+            id: ItemId::from_string("call-pending-item".into()),
+            call_id: CallId::from_string("call-pending".into()),
+            name: "fixture_read".into(),
+            arguments: json!({"record": 99}),
+        });
+        for index in 0..7 {
+            items.push(AgentItem::ToolCall {
+                id: ItemId::from_string(format!("batch-call-{index}")),
+                call_id: CallId::from_string(format!("batch-{index}")),
+                name: "fixture_read".into(),
+                arguments: json!({"record": index}),
+            });
+        }
+        for index in 0..7 {
+            let output = if index < 2 {
+                json!({
+                    "record": index,
+                    "content": format!(
+                        "HEAD-{index}\n{}\nTAIL-{index}",
+                        format!("verbose-stale-output-{index} ").repeat(1100)
+                    ),
+                })
+            } else {
+                json!({
+                    "record": index,
+                    "content": format!("recent concise evidence {index}"),
+                })
+            };
+            items.push(AgentItem::ToolResult {
+                id: ItemId::from_string(format!("batch-res-{index}")),
+                call_id: CallId::from_string(format!("batch-{index}")),
+                name: "fixture_read".into(),
+                output,
+                is_error: false,
+                full_output_ref: Some(format!("blob://run/batch-{index}")),
+                artifacts: vec![],
+            });
+        }
+        items.push(AgentItem::assistant_message(
+            ItemId::from_string("recent-note".into()),
+            "Waiting for final batch item.",
+        ));
+
+        runtime.session.conversation.model_context = items.clone();
+        runtime.session.conversation.transcript = items;
+    }
+
+    #[test]
+    fn tier1_micro_compaction_prevents_context_budget_block_on_bulky_stale_tool_results() {
+        let mut runtime = micro_compaction_fixture_runtime(
+            crate::agent::context_window::ContextWindowConfig {
+                context_window_tokens: 14_000,
+                reserved_output_tokens: 1_000,
+                prompt_token_limit: Some(11_000),
+                auto_compact_tokens: Some(9_000),
+                compaction_target_tokens: Some(7_500),
+                ..Default::default()
+            },
+        );
+        runtime
+            .dispatch(AgentCommand::SubmitInput {
+                origin: Default::default(),
+                items: vec![AgentItem::user_message(
+                    ItemId::from_string("active-user".into()),
+                    "Inspect the logs and continue.",
+                )],
+                turn_context_items: vec![],
+                turn_context_platform: Default::default(),
+                turn_context_components: vec![],
+                submission_id: Some("micro-submit".into()),
+                submitted_at_epoch_ms: Some(1000),
+                delivery: AgentInputDelivery::CurrentTurn,
+            })
+            .unwrap();
+        // Simulate the initial model step having settled before compaction runs.
+        runtime.session.host.pending_effects = Default::default();
+
+        append_active_batch_with_bulky_stale_results(&mut runtime, true);
+        let history_tokens = runtime
+            .session
+            .conversation
+            .model_context
+            .iter()
+            .fold(0usize, |sum, item| sum.saturating_add(item.estimated_tokens()));
+        assert!(
+            history_tokens > 11_000,
+            "fixture must exceed prompt_token_limit to exercise hard budget pressure; got {history_tokens}"
+        );
+        runtime
+            .session
+            .conversation
+            .context_window
+            .refresh_model_estimate(&runtime.session.conversation.model_context, 4_500);
+
+        let prompt_limit = runtime
+            .session
+            .conversation
+            .context_window
+            .history_budget_for_model_limit(11_000, history_tokens);
+        let target_limit = runtime
+            .session
+            .conversation
+            .context_window
+            .history_budget_for_model_limit(7_500, history_tokens);
+        let mut events = Vec::new();
+        let mut effects = Vec::new();
+
+        runtime
+            .request_compaction_with_history_budget(
+                CompactionReason::ThresholdReached,
+                Some((target_limit, prompt_limit)),
+                &mut events,
+                &mut effects,
+            )
+            .unwrap();
+
+        let turn = runtime.session.execution.active_turn.as_ref().unwrap();
+        assert_eq!(
+            turn.status,
+            AgentTurnStatus::AwaitingModel,
+            "Tier-1 micro-compaction must resume the model instead of hard-blocking; outcome={:?}",
+            turn.completion_outcome
+        );
+        assert!(turn.completion_outcome.is_none());
+        assert!(
+            effects
+                .iter()
+                .any(|effect| matches!(effect, AgentEffect::InvokeModel { .. })),
+            "expected resumed model effect after Tier-1 micro-compaction"
+        );
+        assert!(
+            !effects
+                .iter()
+                .any(|effect| matches!(effect, AgentEffect::CompactContext { .. })),
+            "Tier-1 micro-compaction must resolve pressure without a paid LLM compaction call"
+        );
+        assert!(events.iter().any(|event| matches!(
+            event,
+            RuntimeEvent::CompactionCompleted {
+                replaced_item_count: 2,
+                reason: Some(CompactionReason::ThresholdReached),
+                ..
+            }
+        )));
+
+        // Stale tool results in model_context are micro-compacted while
+        // canonical transcript preserves the original full bodies.
+        for stale_id in ["batch-res-0", "batch-res-1"] {
+            let model_item = runtime
+                .session
+                .conversation
+                .model_context
+                .iter()
+                .find(|item| item.id().as_str() == stale_id)
+                .unwrap();
+            let transcript_item = runtime
+                .session
+                .conversation
+                .transcript
+                .iter()
+                .find(|item| item.id().as_str() == stale_id)
+                .unwrap();
+            assert!(model_item.estimated_tokens() < transcript_item.estimated_tokens());
+            match model_item {
+                AgentItem::ToolResult { output, .. } => {
+                    let preview = output["preview"].as_str().expect("micro-compacted preview");
+                    assert!(preview.contains("[micro-compacted: kept head/tail of "));
+                }
+                other => panic!("expected ToolResult, got {other:?}"),
+            }
+            match transcript_item {
+                AgentItem::ToolResult { output, .. } => {
+                    assert!(output.get("micro_compacted").is_none());
+                }
+                other => panic!("expected canonical ToolResult, got {other:?}"),
+            }
+        }
+    }
+
+    #[test]
+    fn tier1_micro_compaction_recovers_context_limit_without_dropping_tool_pairs() {
+        let mut runtime = micro_compaction_fixture_runtime(
+            crate::agent::context_window::ContextWindowConfig {
+                context_window_tokens: 14_000,
+                reserved_output_tokens: 1_000,
+                prompt_token_limit: Some(11_000),
+                auto_compact_tokens: Some(9_000),
+                compaction_target_tokens: Some(7_500),
+                ..Default::default()
+            },
+        );
+        runtime
+            .dispatch(AgentCommand::SubmitInput {
+                origin: Default::default(),
+                items: vec![AgentItem::user_message(
+                    ItemId::from_string("recovery-user".into()),
+                    "Recover from provider context overflow.",
+                )],
+                turn_context_items: vec![],
+                turn_context_platform: Default::default(),
+                turn_context_components: vec![],
+                submission_id: Some("recovery-submit".into()),
+                submitted_at_epoch_ms: Some(1000),
+                delivery: AgentInputDelivery::CurrentTurn,
+            })
+            .unwrap();
+        let turn_id = runtime
+            .session
+            .execution
+            .active_turn
+            .as_ref()
+            .unwrap()
+            .turn_id
+            .clone();
+
+        append_active_batch_with_bulky_stale_results(&mut runtime, false);
+        let original_item_count = runtime.session.conversation.model_context.len();
+        runtime
+            .session
+            .conversation
+            .context_window
+            .refresh_model_estimate(&runtime.session.conversation.model_context, 300);
+
+        let reduction = runtime
+            .dispatch(AgentCommand::RecoverContextLimit {
+                turn_id,
+                error: "context_length_exceeded".into(),
+            })
+            .unwrap();
+
+        let turn = runtime.session.execution.active_turn.as_ref().unwrap();
+        assert_eq!(turn.status, AgentTurnStatus::AwaitingModel);
+        assert!(reduction
+            .host_requests
+            .iter()
+            .any(|req| matches!(req.payload, HostRequest::ModelStream { .. })));
+        assert!(!reduction
+            .host_requests
+            .iter()
+            .any(|req| matches!(req.payload, HostRequest::Compact { .. })));
+        assert_eq!(
+            runtime.session.conversation.model_context.len(),
+            original_item_count,
+            "Tier-1 micro-compaction should shrink stale tool results in place without dropping pairs"
+        );
+        let calls = runtime
+            .session
+            .conversation
+            .model_context
+            .iter()
+            .filter_map(|item| match item {
+                AgentItem::ToolCall { call_id, .. } if call_id.as_str() != "call-pending" => {
+                    Some(call_id.as_str())
+                }
+                _ => None,
+            })
+            .collect::<Vec<_>>();
+        let results = runtime
+            .session
+            .conversation
+            .model_context
+            .iter()
+            .filter_map(|item| match item {
+                AgentItem::ToolResult { call_id, .. } => Some(call_id.as_str()),
+                _ => None,
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(calls, results);
     }
 }

@@ -1377,6 +1377,11 @@ fn list_dir(args: &Map<String, Value>, ctx: &ToolContext) -> ToolOutcome {
     )
 }
 
+const MAX_GLOB_SCANNED_FILES: usize = 50_000;
+const MAX_GLOB_COLLECTED_MATCHES: usize = 20_000;
+const MAX_GREP_FILE_BYTES: u64 = 4_000_000;
+const MAX_GREP_SCANNED_FILES: usize = 50_000;
+
 fn glob_files(args: &Map<String, Value>, ctx: &ToolContext) -> ToolOutcome {
     let root_arg = arg_string(args, "root").or_else(|| {
         ctx.allowed_dirs
@@ -1400,23 +1405,36 @@ fn glob_files(args: &Map<String, Value>, ctx: &ToolContext) -> ToolOutcome {
         Ok(regex) => regex,
         Err(err) => return error(err),
     };
-    let mut matches = Vec::new();
-    walk_files(&root, usize::MAX, &mut |path| {
-        if let Ok(rel) = path.strip_prefix(&root) {
-            let text = path_slash(rel);
-            if regex.is_match(&text) {
-                matches.push(path.display().to_string());
+    let stop = || ctx.cancellation.is_requested();
+    let mut matches: Vec<(String, Option<SystemTime>)> = Vec::new();
+    walk_files_controlled(
+        &root,
+        MAX_GLOB_SCANNED_FILES,
+        &mut |path| {
+            if let Ok(rel) = path.strip_prefix(&root) {
+                let text = path_slash(rel);
+                if regex.is_match(&text) {
+                    let modified = fs::metadata(path).and_then(|meta| meta.modified()).ok();
+                    matches.push((path.display().to_string(), modified));
+                }
             }
-        }
-        matches.len() < limit
-    });
+            matches.len() < MAX_GLOB_COLLECTED_MATCHES
+        },
+        &stop,
+    );
+    if ctx.cancellation.is_requested() {
+        return error("glob cancelled".to_string());
+    }
+    matches.sort_by(|a, b| b.1.cmp(&a.1).then_with(|| a.0.cmp(&b.0)));
+    matches.truncate(limit);
+    let paths = matches.into_iter().map(|(path, _)| path).collect::<Vec<_>>();
     ok(
-        if matches.is_empty() {
+        if paths.is_empty() {
             "(no matches)".to_string()
         } else {
-            matches.join("\n")
+            paths.join("\n")
         },
-        format!("glob -> {} {}", matches.len(), tr(Message::MatchesUnit)),
+        format!("glob -> {} {}", paths.len(), tr(Message::MatchesUnit)),
     )
 }
 
@@ -1503,32 +1521,67 @@ fn grep_files(args: &Map<String, Value>, ctx: &ToolContext) -> ToolOutcome {
     let started = std::time::Instant::now();
     let stop = || ctx.cancellation.is_requested() || started.elapsed() >= std::time::Duration::from_secs(30);
     let mut scanned = 0usize;
-    let mut oversized = false;
+    let mut skipped_large_files = 0usize;
+    let mut skipped_binary_files = 0usize;
+    let mut hit_time_limit = false;
 
     let mut process_file = |path: &Path| {
-        if stop() { return false; }
+        if ctx.cancellation.is_requested() {
+            return false;
+        }
+        if started.elapsed() >= std::time::Duration::from_secs(30) {
+            hit_time_limit = true;
+            return false;
+        }
         scanned += 1;
+        let under_limit = |total_matches: usize, matching_len: usize| {
+            (if output_mode == "content" { total_matches } else { matching_len }) < collection_limit
+        };
         if let Some(glob) = &glob {
             if let Ok(rel) = path.strip_prefix(&search_root) {
                 if !glob_matches_path(glob, rel) {
-                    return (if output_mode == "content" { total_matches } else { matching_files.len() }) < collection_limit;
+                    return under_limit(total_matches, matching_files.len());
                 }
             }
         }
+        // Check metadata length before allocating/reading to skip large files cleanly.
+        let Ok(metadata) = fs::metadata(path) else {
+            return under_limit(total_matches, matching_files.len());
+        };
+        if metadata.len() > MAX_GREP_FILE_BYTES {
+            skipped_large_files += 1;
+            return under_limit(total_matches, matching_files.len());
+        }
         let bytes = match fs::File::open(path).and_then(|file| {
-            let mut bytes = Vec::new();
-            std::io::Read::read_to_end(&mut std::io::Read::take(file, 4_000_001), &mut bytes)?;
+            let mut bytes = Vec::with_capacity(metadata.len().min(65_536) as usize);
+            std::io::Read::read_to_end(
+                &mut std::io::Read::take(file, MAX_GREP_FILE_BYTES + 1),
+                &mut bytes,
+            )?;
             Ok(bytes)
-        }) { Ok(bytes) => bytes, Err(_) => return (if output_mode == "content" { total_matches } else { matching_files.len() }) < collection_limit };
-        if bytes.len() > 4_000_000 { oversized = true; return false; }
-        if bytes.contains(&0) || bytes.len() > 4_000_000 {
-            return (if output_mode == "content" { total_matches } else { matching_files.len() }) < collection_limit;
+        }) {
+            Ok(bytes) => bytes,
+            Err(_) => return under_limit(total_matches, matching_files.len()),
+        };
+        if bytes.len() as u64 > MAX_GREP_FILE_BYTES {
+            skipped_large_files += 1;
+            return under_limit(total_matches, matching_files.len());
+        }
+        if bytes.contains(&0) {
+            skipped_binary_files += 1;
+            return under_limit(total_matches, matching_files.len());
         }
         let text = String::from_utf8_lossy(&bytes);
         let lines = text.lines().collect::<Vec<_>>();
         let mut emitted_ranges: Vec<(usize, usize)> = Vec::new();
         for (index, line) in lines.iter().enumerate() {
-            if stop() { return false; }
+            if ctx.cancellation.is_requested() {
+                return false;
+            }
+            if started.elapsed() >= std::time::Duration::from_secs(30) {
+                hit_time_limit = true;
+                return false;
+            }
             if regex.is_match(line) {
                 if context_lines == 0 {
                     content.push(format!("{}:{}:{}", path.display(), index + 1, line));
@@ -1560,21 +1613,25 @@ fn grep_files(args: &Map<String, Value>, ctx: &ToolContext) -> ToolOutcome {
                 }
                 *counts.entry(path.to_path_buf()).or_insert(0) += 1;
                 total_matches += 1;
-                if (if output_mode == "content" { total_matches } else { matching_files.len() }) >= collection_limit {
+                if !under_limit(total_matches, matching_files.len()) {
                     return false;
                 }
             }
         }
-        (if output_mode == "content" { total_matches } else { matching_files.len() }) < collection_limit
+        under_limit(total_matches, matching_files.len())
     };
     if let Some(path) = scoped_file.as_ref() {
         let _ = process_file(path);
     } else {
-        walk_files_controlled(&search_root, 50_000, &mut process_file, &stop);
+        walk_files_controlled(&search_root, MAX_GREP_SCANNED_FILES, &mut process_file, &stop);
     }
-    if ctx.cancellation.is_requested() { return error("grep cancelled".into()); }
-    if stop() || scanned >= 50_000 { return error("grep scan incomplete: time/file budget exceeded; narrow root or glob".into()); }
-    if oversized { return error("grep scan incomplete: file exceeds 4 MB; narrow glob or use bounded read_file".into()); }
+    if ctx.cancellation.is_requested() {
+        return error("grep cancelled".into());
+    }
+    let hit_file_limit = scanned >= MAX_GREP_SCANNED_FILES;
+    let budget_truncated = hit_time_limit
+        || hit_file_limit
+        || started.elapsed() >= std::time::Duration::from_secs(30);
     let entries = match output_mode {
         "files_with_matches" => matching_files
             .iter()
@@ -1626,6 +1683,16 @@ fn grep_files(args: &Map<String, Value>, ctx: &ToolContext) -> ToolOutcome {
     if (if output_mode == "content" { total_matches } else { matching_files.len() }) >= collection_limit {
         text.push_str("\n...[scan incomplete: requested page boundary reached; more entries may exist]");
     }
+    if budget_truncated {
+        text.push_str(&format!(
+            "\n...[truncated: true; scan budget reached after {scanned} files; narrow root or glob for exhaustive results]"
+        ));
+    }
+    if skipped_large_files > 0 {
+        text.push_str(&format!(
+            "\n...[skipped {skipped_large_files} file(s) larger than 4 MB]"
+        ));
+    }
     ok(
         text,
         format!(
@@ -1635,6 +1702,12 @@ fn grep_files(args: &Map<String, Value>, ctx: &ToolContext) -> ToolOutcome {
             matching_files.len()
         ),
     )
+    .with_data(json!({
+        "truncated": budget_truncated,
+        "scanned_files": scanned,
+        "skipped_large_files": skipped_large_files,
+        "skipped_binary_files": skipped_binary_files,
+    }))
 }
 
 fn glob_matches_path(glob: &Regex, relative_path: &Path) -> bool {
@@ -1646,8 +1719,23 @@ fn glob_matches_path(glob: &Regex, relative_path: &Path) -> bool {
 
 #[cfg(test)]
 mod recursive_glob_contract_tests {
-    use super::{glob_matches_path, glob_regex};
+    use super::*;
     use std::path::Path;
+
+    fn search_test_context(root: &Path, browser_root: &Path) -> ToolContext {
+        ToolContext {
+            memory_binding: nola_domain::memory_owner::MemoryExecutionBinding::local_profile(),
+            language_services: Default::default(),
+            skills: Default::default(),
+            allowed_dirs: vec![root.to_path_buf()],
+            policy: ToolExecutionPolicy::new(Vec::new(), true, "allow".to_string(), Vec::new()),
+            permission_scope: Default::default(),
+            cancellation: Default::default(),
+            plan_state: Default::default(),
+            output_store: ToolOutputStore::for_test(),
+            browser: BrowserRuntime::new(browser_root.to_path_buf()),
+        }
+    }
 
     #[test]
     fn basename_glob_matches_files_in_nested_directories() {
@@ -1660,6 +1748,150 @@ mod recursive_glob_contract_tests {
             &glob,
             Path::new("UI/Chat/MacChatWorkspaceView.rs")
         ));
+    }
+
+    #[test]
+    fn grep_skips_oversized_text_and_binary_files_without_erroring() {
+        let dir = tempfile::tempdir().unwrap();
+        let browser_dir = tempfile::tempdir().unwrap();
+        let root = dir.path().canonicalize().unwrap();
+        let normal = root.join("normal.rs");
+        let large_text = root.join("huge.log");
+        let large_binary = root.join("bundle.bin");
+        fs::write(&normal, "fn find_me() -> usize { 42 }\n").unwrap();
+        fs::write(&large_text, vec![b'a'; 4_000_100]).unwrap();
+        let mut binary_payload = vec![b'z'; 4_000_100];
+        binary_payload[0] = 0;
+        fs::write(&large_binary, binary_payload).unwrap();
+
+        let ctx = search_test_context(&root, browser_dir.path());
+        let mut args = Map::new();
+        args.insert("root".into(), Value::String(root.display().to_string()));
+        args.insert("pattern".into(), Value::String("find_me".into()));
+
+        let outcome = grep_files(&args, &ctx);
+        assert!(!outcome.error, "grep must skip >4MB files cleanly: {}", outcome.text);
+        assert!(outcome.text.contains("find_me"), "{}", outcome.text);
+        assert!(outcome.text.contains("skipped 2 file(s) larger than 4 MB"), "{}", outcome.text);
+        let data = outcome.data.expect("structured grep metadata");
+        assert_eq!(data["skipped_large_files"], 2);
+        assert_eq!(data["truncated"], false);
+    }
+
+    #[test]
+    fn grep_and_glob_skip_gitignore_rules_and_expanded_build_dirs() {
+        let dir = tempfile::tempdir().unwrap();
+        let browser_dir = tempfile::tempdir().unwrap();
+        let root = dir.path().canonicalize().unwrap();
+        fs::write(
+            root.join(".gitignore"),
+            "# comment\n*.ignored.rs\nignored_dir/\n/root_only.txt\n*.log\n!keep.log\n",
+        )
+        .unwrap();
+        fs::create_dir_all(root.join("src")).unwrap();
+        fs::create_dir_all(root.join("ignored_dir")).unwrap();
+        fs::create_dir_all(root.join(".next/cache")).unwrap();
+        fs::create_dir_all(root.join("coverage")).unwrap();
+        fs::create_dir_all(root.join(".mypy_cache")).unwrap();
+        fs::create_dir_all(root.join(".pytest_cache")).unwrap();
+        fs::create_dir_all(root.join(".ruff_cache")).unwrap();
+        fs::create_dir_all(root.join("third_party/lib")).unwrap();
+        fs::create_dir_all(root.join(".turbo")).unwrap();
+        fs::create_dir_all(root.join("out")).unwrap();
+
+        let visible_src = root.join("src/main.rs");
+        let kept_log = root.join("keep.log");
+        let nested_root_only = root.join("src/root_only.txt");
+        fs::write(&visible_src, "needle_token\n").unwrap();
+        fs::write(&kept_log, "needle_token\n").unwrap();
+        fs::write(&nested_root_only, "needle_token\n").unwrap();
+
+        // Files that must all be skipped by .gitignore or should_skip_dir
+        fs::write(root.join("src/gen.ignored.rs"), "needle_token\n").unwrap();
+        fs::write(root.join("ignored_dir/a.rs"), "needle_token\n").unwrap();
+        fs::write(root.join("root_only.txt"), "needle_token\n").unwrap();
+        fs::write(root.join("debug.log"), "needle_token\n").unwrap();
+        fs::write(root.join(".next/cache/a.rs"), "needle_token\n").unwrap();
+        fs::write(root.join("coverage/report.rs"), "needle_token\n").unwrap();
+        fs::write(root.join(".mypy_cache/meta.rs"), "needle_token\n").unwrap();
+        fs::write(root.join(".pytest_cache/state.rs"), "needle_token\n").unwrap();
+        fs::write(root.join(".ruff_cache/state.rs"), "needle_token\n").unwrap();
+        fs::write(root.join("third_party/lib/a.rs"), "needle_token\n").unwrap();
+        fs::write(root.join(".turbo/a.rs"), "needle_token\n").unwrap();
+        fs::write(root.join("out/a.rs"), "needle_token\n").unwrap();
+
+        let ctx = search_test_context(&root, browser_dir.path());
+        let mut grep_args = Map::new();
+        grep_args.insert("root".into(), Value::String(root.display().to_string()));
+        grep_args.insert("pattern".into(), Value::String("needle_token".into()));
+        let grep_outcome = grep_files(&grep_args, &ctx);
+        assert!(!grep_outcome.error, "{}", grep_outcome.text);
+        assert!(grep_outcome.text.contains(&visible_src.display().to_string()), "{}", grep_outcome.text);
+        assert!(grep_outcome.text.contains(&kept_log.display().to_string()), "{}", grep_outcome.text);
+        assert!(grep_outcome.text.contains(&nested_root_only.display().to_string()), "{}", grep_outcome.text);
+        for excluded in [
+            "gen.ignored.rs",
+            "ignored_dir",
+            "debug.log",
+            ".next",
+            "coverage",
+            ".mypy_cache",
+            ".pytest_cache",
+            ".ruff_cache",
+            "third_party",
+            ".turbo",
+            "/out/",
+        ] {
+            assert!(
+                !grep_outcome.text.contains(excluded),
+                "excluded entry {excluded} leaked into grep output: {}",
+                grep_outcome.text
+            );
+        }
+        assert!(!grep_outcome.text.contains(&root.join("root_only.txt").display().to_string()));
+
+        let mut glob_args = Map::new();
+        glob_args.insert("root".into(), Value::String(root.display().to_string()));
+        glob_args.insert("pattern".into(), Value::String("**/*.rs".into()));
+        let glob_outcome = glob_files(&glob_args, &ctx);
+        assert!(!glob_outcome.error, "{}", glob_outcome.text);
+        assert_eq!(glob_outcome.text, visible_src.display().to_string());
+    }
+
+    #[test]
+    fn glob_sorts_matches_by_modification_time_newest_first() {
+        let dir = tempfile::tempdir().unwrap();
+        let browser_dir = tempfile::tempdir().unwrap();
+        let root = dir.path().canonicalize().unwrap();
+        let older = root.join("a_older.rs");
+        let newer = root.join("z_newer.rs");
+        fs::write(&older, "fn old() {}\n").unwrap();
+        // Ensure distinct mtimes across filesystems with coarse timestamp granularity.
+        std::thread::sleep(Duration::from_millis(25));
+        fs::write(&newer, "fn new() {}\n").unwrap();
+        #[cfg(unix)]
+        {
+            use std::os::unix::ffi::OsStrExt;
+            // Explicitly set older mtime to guarantee deterministic ordering even on 1-second mtime filesystems.
+            let past = libc::timespec { tv_sec: 1_700_000_000, tv_nsec: 0 };
+            let times = [past, past];
+            if let Ok(c_path) = std::ffi::CString::new(older.as_os_str().as_bytes()) {
+                unsafe {
+                    libc::utimensat(libc::AT_FDCWD, c_path.as_ptr(), times.as_ptr(), 0);
+                }
+            }
+        }
+
+        let ctx = search_test_context(&root, browser_dir.path());
+        let mut args = Map::new();
+        args.insert("root".into(), Value::String(root.display().to_string()));
+        args.insert("pattern".into(), Value::String("*.rs".into()));
+        let outcome = glob_files(&args, &ctx);
+        assert!(!outcome.error, "{}", outcome.text);
+        let lines = outcome.text.lines().collect::<Vec<_>>();
+        assert_eq!(lines.len(), 2, "{}", outcome.text);
+        assert_eq!(lines[0], newer.display().to_string());
+        assert_eq!(lines[1], older.display().to_string());
     }
 }
 
