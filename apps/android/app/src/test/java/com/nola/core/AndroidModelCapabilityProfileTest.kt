@@ -22,7 +22,8 @@ class AndroidModelCapabilityProfileTest {
         assertEquals(1L, profile.revision)
         val wire = profile.wire()
         assertTrue(wire.getValue("native_tool_calls").jsonPrimitive.boolean)
-        for (key in listOf("vision_input", "reasoning", "stream_text",
+        assertTrue(wire.getValue("vision_input").jsonPrimitive.boolean)
+        for (key in listOf("reasoning", "stream_text",
             "stream_tool_calls", "stream_reasoning", "prompt_cache", "request_continuation")) {
             assertFalse(key, wire.getValue(key).jsonPrimitive.boolean)
         }

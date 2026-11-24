@@ -76,7 +76,7 @@ test('execution capability edits are not confused with product uses', () => {
     assert.deepEqual(metadataChanges(profile, draft), {}, 'Changing an unconfirmed draft is not execution authority.');
     draft.executionCapabilitiesConfirmed = true;
     assert.deepEqual(metadataChanges(profile, draft), { executionCapabilities: {
-        toolCalls: true, imageInput: false, reasoning: true, samplingParameters: false, samplingRequiresNoReasoning: false,
+        toolCalls: true, imageInput: true, reasoning: true, samplingParameters: false, samplingRequiresNoReasoning: false,
         chatOutputTokenField: 'auto',
     } });
     assert.deepEqual(profile.capabilities, ['chat']);

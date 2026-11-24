@@ -272,6 +272,14 @@ fn run_interactive_session(config: &Config, resume_pending: bool) -> Result<Inte
             chosen.apply(&mut interactive_config);
             crate::conversation_invocation::persist(&interactive_config)?;
         }
+        if let Some(selected_model) = LIVE_MODEL_CHANGE.with(|pending| pending.borrow_mut().take()) {
+            if let Err(error) = select_interactive_model(&mut interactive_config, &selected_model) {
+                terminal_notice!("{}", format_error(&error));
+            }
+        }
+        if let Some(selection) = LIVE_THINKING_CHANGE.with(|pending| pending.borrow_mut().take()) {
+            interactive_config.runtime.reasoning_selection = selection;
+        }
         crate::conversation_invocation::refresh_unmodified(&mut interactive_config)?;
         update_interactive_session_header(&interactive_config);
         if offer_user_questions && !goal_entry && !interactive_config.json_output {

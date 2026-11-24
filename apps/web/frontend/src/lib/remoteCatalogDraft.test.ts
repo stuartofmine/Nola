@@ -29,7 +29,7 @@ test('whole-catalog draft is isolated and serializes only owned fields', () => {
     assert.equal(request.endpoints[0].enabled, false);
     assert.equal(request.endpoints[0].models[0].priority, 80);
     assert.deepEqual(request.endpoints[0].models[0].executionCapabilities,
-        { toolCalls: true, imageInput: false, reasoning: false, samplingParameters: false, samplingRequiresNoReasoning: false,
+        { toolCalls: true, imageInput: true, reasoning: false, samplingParameters: false, samplingRequiresNoReasoning: false,
             chatOutputTokenField: 'auto' });
     assert.deepEqual(request.endpoints[0].models[0].parameters, { temperature: 0.7, maxOutputTokens: 16384 });
     assert.ok(!JSON.stringify(request).includes('private local setting'));

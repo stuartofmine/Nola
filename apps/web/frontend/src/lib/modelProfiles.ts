@@ -24,7 +24,7 @@ export type ModelExecutionCapabilities = {
 };
 
 export const importExecutionCapabilities = (): ModelExecutionCapabilities => ({
-    toolCalls: true, imageInput: false, reasoning: false, samplingParameters: false,
+    toolCalls: true, imageInput: true, reasoning: false, samplingParameters: false,
     samplingRequiresNoReasoning: false,
     chatOutputTokenField: 'auto',
 });

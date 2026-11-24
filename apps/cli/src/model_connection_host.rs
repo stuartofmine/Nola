@@ -222,7 +222,7 @@ fn catalog_reasoning_levels(config: &Value) -> Vec<String> {
 }
 
 fn make_model(id: &str, config: &Value, protocol: ModelProtocol) -> CatalogModel {
-    let modalities = config["modalities"]["input"]
+    let explicit_modalities = config["modalities"]["input"]
         .as_array()
         .or_else(|| config["architecture"]["input_modalities"].as_array())
         .or_else(|| config["modalities"].as_array())
@@ -231,9 +231,11 @@ fn make_model(id: &str, config: &Value, protocol: ModelProtocol) -> CatalogModel
                 .iter()
                 .filter_map(Value::as_str)
                 .map(str::to_owned)
-                .collect()
-        })
-        .unwrap_or_else(|| vec!["text".into()]);
+                .collect::<Vec<_>>()
+        });
+    let modalities = explicit_modalities
+        .clone()
+        .unwrap_or_else(|| vec!["text".into(), "image".into()]);
     let supported = config["supported_parameters"].as_array();
     let supports = |name: &str| supported.is_some_and(|items| items.iter().any(|v| v.as_str() == Some(name)));
     let tool_calls = config.get("tool_call").and_then(Value::as_bool)
@@ -244,7 +246,9 @@ fn make_model(id: &str, config: &Value, protocol: ModelProtocol) -> CatalogModel
         || config["modalities"]["input"].is_array();
     let declared = has_metadata.then(|| ModelExecutionCapabilities {
         tool_calls: ModelExecutionCapabilities::for_import(tool_calls).tool_calls,
-        image_input: modalities.iter().any(|v| v == "image"),
+        image_input: explicit_modalities
+            .as_ref()
+            .map_or(true, |items| items.iter().any(|v| v == "image")),
         reasoning: config["reasoning"].as_bool().unwrap_or_else(|| !reasoning_levels.is_empty() || supports("reasoning") || supports("reasoning_effort")),
         sampling_parameters: config["temperature"].as_bool().unwrap_or_else(|| supports("temperature")),
         ..Default::default()

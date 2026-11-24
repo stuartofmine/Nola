@@ -46,7 +46,11 @@ impl ModelExecutionCapabilities {
     /// Import defaults are distinct from a runtime declaration. A provider's
     /// explicit false must override the agent default, not be treated as absent.
     pub fn for_import(provider_tool_calls: Option<bool>) -> Self {
-        Self { tool_calls: provider_tool_calls.unwrap_or(true), ..Self::default() }
+        Self {
+            tool_calls: provider_tool_calls.unwrap_or(true),
+            image_input: true,
+            ..Self::default()
+        }
     }
 
     pub fn from_source(source: &Value) -> Result<Self, String> {
@@ -79,7 +83,7 @@ mod tests {
         assert!(ModelExecutionCapabilities::for_import(None).tool_calls);
         assert!(ModelExecutionCapabilities::for_import(Some(true)).tool_calls);
         assert!(!ModelExecutionCapabilities::for_import(Some(false)).tool_calls);
-        assert!(!ModelExecutionCapabilities::for_import(None).image_input);
+        assert!(ModelExecutionCapabilities::for_import(None).image_input);
     }
 
     fn declared_capabilities() -> Value {

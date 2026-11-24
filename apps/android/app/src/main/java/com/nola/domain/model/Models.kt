@@ -108,7 +108,7 @@ enum class ChatOutputTokenField {
 @Serializable
 data class ModelExecutionCapabilities(
     val toolCalls: Boolean = true,
-    val imageInput: Boolean = false,
+    val imageInput: Boolean = true,
     val reasoning: Boolean = false,
     val samplingParameters: Boolean = false,
     val samplingRequiresNoReasoning: Boolean = false,

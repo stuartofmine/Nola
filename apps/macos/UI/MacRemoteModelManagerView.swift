@@ -2023,7 +2023,7 @@ struct MacAddRemoteModelSheet: View {
     @State private var modelID: String
     @State private var displayName: String
     @State private var capabilities: Set<MacRemoteModelCapability> = [.chat, .retrieval, .issueRepair]
-    @State private var executionCapabilities = MacModelExecutionCapabilities(toolCalls: true)
+    @State private var executionCapabilities = MacModelExecutionCapabilities(toolCalls: true, imageInput: true)
     @State private var preset: MacModelParameterPreset = .balanced
     @State private var numericText: [String: String] = [:]
     @State private var invalidNumericFields: Set<String> = []
@@ -2139,7 +2139,7 @@ struct MacAddRemoteModelSheet: View {
     private var hasUnsavedChanges: Bool {
         modelID != request.initialModelID || displayName != request.initialModelID
             || capabilities != [.chat, .retrieval, .issueRepair]
-            || executionCapabilities != MacModelExecutionCapabilities(toolCalls: true)
+            || executionCapabilities != MacModelExecutionCapabilities(toolCalls: true, imageInput: true)
             || parameters != .webAlignedCloudDefaults || !invalidNumericFields.isEmpty
     }
 

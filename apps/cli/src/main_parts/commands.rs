@@ -2018,12 +2018,16 @@ use crate::goal_runtime::{terminal_reason_pauses_goal, compose_goal_prompt, goal
 
 thread_local! {
     static LIVE_PERMISSION_CHANGE: std::cell::Cell<Option<PermissionLevel>> = const { std::cell::Cell::new(None) };
+    static LIVE_MODEL_CHANGE: std::cell::RefCell<Option<String>> = const { std::cell::RefCell::new(None) };
+    static LIVE_THINKING_CHANGE: std::cell::RefCell<Option<Option<nola_core::agent::reasoning::ReasoningSelection>>> = const { std::cell::RefCell::new(None) };
 }
 
 #[derive(Debug)]
 struct LiveCliCommands {
     config: std::sync::Mutex<Config>,
     permission_change: std::sync::Mutex<Option<PermissionLevel>>,
+    model_change: std::sync::Mutex<Option<String>>,
+    thinking_change: std::sync::Mutex<Option<Option<nola_core::agent::reasoning::ReasoningSelection>>>,
     runtime: crate::runtime_control::RuntimeExecutionControl,
     execution_id: u64,
 }
@@ -2054,6 +2058,83 @@ impl interaction::ClientCommandHandler for LiveCliCommands {
                     });
                 }
                 result
+            }
+            "/model" => {
+                let mut parts = input.split_whitespace();
+                let _ = parts.next();
+                let chosen: Result<Option<String>, String> = match parts.next() {
+                    None => interactive_select_model(&config),
+                    Some(arg)
+                        if arg.eq_ignore_ascii_case("status")
+                            || arg.eq_ignore_ascii_case("local") =>
+                    {
+                        print_local_model_status();
+                        Ok(None)
+                    }
+                    Some(arg)
+                        if matches!(
+                            arg.to_ascii_lowercase().as_str(),
+                            "install" | "remove" | "start" | "stop" | "config"
+                        ) =>
+                    {
+                        crate::terminal_ui::commit_history(&format!(
+                            "{} {}",
+                            input.trim(),
+                            match current_language() {
+                                Language::ZhHans => "· 本地模型管理命令请等当前任务结束或按 Esc 后执行。",
+                                _ => "· Wait for the active turn to finish or press Esc before running local model management commands.",
+                            }
+                        ));
+                        Ok(None)
+                    }
+                    Some(arg) => Ok(Some(arg.to_string())),
+                };
+                match chosen {
+                    Ok(Some(selected_model)) => {
+                        let label = interactive_model_picker_label(&selected_model, &config);
+                        *self.model_change.lock().unwrap_or_else(|p| p.into_inner()) = Some(selected_model);
+                        crate::terminal_ui::commit_history(&match current_language() {
+                            Language::ZhHans => format!("  模型已设为 {label}，将在下一轮请求生效。"),
+                            _ => format!("  Model set to {label}; applies to the next turn."),
+                        });
+                        Ok(())
+                    }
+                    Ok(None) => Ok(()),
+                    Err(error) => Err(error),
+                }
+            }
+            "/thinking" => {
+                let mut parts = input.split_whitespace();
+                let _ = parts.next();
+                match parts.next() {
+                    None => {
+                        let current = config
+                            .runtime
+                            .reasoning_effort_display()
+                            .unwrap_or_else(|| "default".to_string());
+                        crate::terminal_ui::commit_history(&match current_language() {
+                            Language::ZhHans => format!("  当前思考等级：{current} · 用法：/thinking <off|low|medium|high|xhigh|max|default>"),
+                            _ => format!("  Reasoning effort: {current} · Usage: /thinking <off|low|medium|high|xhigh|max|default>"),
+                        });
+                        Ok(())
+                    }
+                    Some(raw) => match crate::runtime_config::parse_reasoning_effort_selection(raw) {
+                        Ok(selection) => {
+                            config.runtime.reasoning_selection = selection.clone();
+                            *self.thinking_change.lock().unwrap_or_else(|p| p.into_inner()) = Some(selection);
+                            let label = config
+                                .runtime
+                                .reasoning_effort_display()
+                                .unwrap_or_else(|| "default".to_string());
+                            crate::terminal_ui::commit_history(&match current_language() {
+                                Language::ZhHans => format!("  思考等级已设为 {label}，将在下一轮请求生效。"),
+                                _ => format!("  Reasoning effort set to {label}; applies to the next turn."),
+                            });
+                            Ok(())
+                        }
+                        Err(error) => Err(error),
+                    },
+                }
             }
             "/help" => {
                 print_interactive_help(input.trim().split_once(char::is_whitespace).map_or("", |(_, query)| query));
@@ -2104,6 +2185,8 @@ fn with_cli_execution_control<T>(
     let commands = std::sync::Arc::new(LiveCliCommands {
         config: std::sync::Mutex::new(config.clone()),
         permission_change: Default::default(),
+        model_change: Default::default(),
+        thinking_change: Default::default(),
         runtime: cancellation.runtime_control(),
         execution_id: cancellation.execution_id(),
     });
@@ -2118,6 +2201,12 @@ fn with_cli_execution_control<T>(
     drop(_listener);
     if let Some(change) = commands.permission_change.lock().unwrap_or_else(|p| p.into_inner()).take() {
         LIVE_PERMISSION_CHANGE.with(|pending| pending.set(Some(change)));
+    }
+    if let Some(model) = commands.model_change.lock().unwrap_or_else(|p| p.into_inner()).take() {
+        LIVE_MODEL_CHANGE.with(|pending| *pending.borrow_mut() = Some(model));
+    }
+    if let Some(thinking) = commands.thinking_change.lock().unwrap_or_else(|p| p.into_inner()).take() {
+        LIVE_THINKING_CHANGE.with(|pending| *pending.borrow_mut() = Some(thinking));
     }
     result
 }
