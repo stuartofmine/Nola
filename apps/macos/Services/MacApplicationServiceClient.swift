@@ -188,7 +188,7 @@ nonisolated final class MacApplicationServiceClient: @unchecked Sendable {
         self.databaseURL = databaseURL
         expertHostJournal = Self.makeExpertHostJournal(databaseURL)
         let hash = Self.databaseIdentityHash(for: databaseURL)
-        socketURL = Self.serviceSocketURL(hash: hash)
+        socketURL = Self.serviceSocketURL(for: databaseURL)
         clientID = Self.serviceClientID(hash: hash)
         ownsSupervisorReference = true
         try FileManager.default.createDirectory(
@@ -225,7 +225,7 @@ nonisolated final class MacApplicationServiceClient: @unchecked Sendable {
         let hash = databaseIdentityHash(for: databaseURL)
         return MacApplicationServiceClient(
             databaseURL: databaseURL,
-            socketURL: serviceSocketURL(hash: hash),
+            socketURL: serviceSocketURL(for: databaseURL),
             clientID: serviceClientID(hash: hash),
             retainsSupervisor: true
         )
@@ -747,7 +747,32 @@ nonisolated final class MacApplicationServiceClient: @unchecked Sendable {
     }
 
     static func serviceSocketURL(for databaseURL: URL) -> URL {
-        serviceSocketURL(hash: databaseIdentityHash(for: databaseURL))
+        if let discovered = readDiscoveredSocketURL(for: databaseURL) {
+            return discovered
+        }
+        return serviceSocketURL(hash: databaseIdentityHash(for: databaseURL))
+    }
+
+    /// Reads `<db>.service.json` written atomically by `nola-store::ServiceLock`,
+    /// validating protocol version and owner EUID before trusting the socket path.
+    private static func readDiscoveredSocketURL(for databaseURL: URL) -> URL? {
+        let discoveryURL = URL(fileURLWithPath: "\(databaseURL.path).service.json", isDirectory: false)
+        guard let data = try? Data(contentsOf: discoveryURL),
+              let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+              let proto = obj["protocol_version"] as? Int,
+              proto == protocolVersion,
+              let euid = (obj["euid"] as? NSNumber)?.uint32Value,
+              euid == Darwin.geteuid(),
+              let socketPath = obj["socket_path"] as? String,
+              !socketPath.isEmpty else {
+            return nil
+        }
+        if let pid = (obj["pid"] as? NSNumber)?.int32Value, pid > 0 {
+            if Darwin.kill(pid, 0) != 0 && errno == ESRCH {
+                return nil
+            }
+        }
+        return URL(fileURLWithPath: socketPath, isDirectory: false)
     }
 
     private static func serviceSocketURL(hash: UInt64) -> URL {

@@ -16,6 +16,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"syscall"
 	"time"
 
@@ -327,24 +328,68 @@ func (c *Client) Close() error {
 
 type idleTimeoutConn struct {
 	net.Conn
-	timeout time.Duration
+	lastActivity *atomic.Int64
 }
 
-func newIdleTimeoutConn(conn net.Conn, timeout time.Duration) net.Conn {
-	if conn == nil || timeout <= 0 {
-		return conn
+// newBidirectionalIdlePair wraps both halves of a proxied connection pair so traffic
+// in EITHER direction (e.g., server->client SSE heartbeats/deltas while client is silent)
+// refreshes the shared idle clock. Only genuinely idle pairs are closed after timeout.
+func newBidirectionalIdlePair(a, b net.Conn, timeout time.Duration) (net.Conn, net.Conn, func()) {
+	if a == nil || b == nil || timeout <= 0 {
+		return a, b, func() {}
 	}
-	return &idleTimeoutConn{Conn: conn, timeout: timeout}
+	var last atomic.Int64
+	last.Store(time.Now().UnixNano())
+	done := make(chan struct{})
+	checkEvery := timeout / 4
+	if checkEvery < 10*time.Millisecond {
+		checkEvery = 10 * time.Millisecond
+	}
+	if checkEvery > 5*time.Second {
+		checkEvery = 5 * time.Second
+	}
+	go func() {
+		ticker := time.NewTicker(checkEvery)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-done:
+				return
+			case now := <-ticker.C:
+				if now.UnixNano()-last.Load() >= int64(timeout) {
+					_ = a.Close()
+					_ = b.Close()
+					return
+				}
+			}
+		}
+	}()
+	stop := func() {
+		select {
+		case <-done:
+		default:
+			close(done)
+		}
+	}
+	return &idleTimeoutConn{Conn: a, lastActivity: &last},
+		&idleTimeoutConn{Conn: b, lastActivity: &last},
+		stop
 }
 
 func (c *idleTimeoutConn) Read(p []byte) (int, error) {
-	_ = c.Conn.SetReadDeadline(time.Now().Add(c.timeout))
-	return c.Conn.Read(p)
+	n, err := c.Conn.Read(p)
+	if n > 0 {
+		c.lastActivity.Store(time.Now().UnixNano())
+	}
+	return n, err
 }
 
 func (c *idleTimeoutConn) Write(p []byte) (int, error) {
-	_ = c.Conn.SetWriteDeadline(time.Now().Add(c.timeout))
-	return c.Conn.Write(p)
+	n, err := c.Conn.Write(p)
+	if n > 0 {
+		c.lastActivity.Store(time.Now().UnixNano())
+	}
+	return n, err
 }
 
 // Tracks only this component's sockets. Closing transport does not cancel a Run.
@@ -423,10 +468,9 @@ func (c *connections) proxyAcquired(conn net.Conn, dial func(context.Context) (n
 	if err != nil || !c.add(remote) {
 		return
 	}
-	tailcat.ProxyConns(
-		newIdleTimeoutConn(conn, proxyIdleTimeout),
-		newIdleTimeoutConn(remote, proxyIdleTimeout),
-	)
+	wrappedLocal, wrappedRemote, stopIdle := newBidirectionalIdlePair(conn, remote, proxyIdleTimeout)
+	defer stopIdle()
+	tailcat.ProxyConns(wrappedLocal, wrappedRemote)
 }
 func (c *connections) beginClose() {
 	c.mu.Lock()

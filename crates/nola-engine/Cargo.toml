@@ -1,0 +1,21 @@
+[package]
+name = "nola-engine"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+nola-types = { workspace = true }
+nola-store = { workspace = true }
+nola-llm = { workspace = true }
+nola-tools = { workspace = true }
+globset = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+thiserror = { workspace = true }
+
+[dev-dependencies]
+tempfile = { workspace = true }
