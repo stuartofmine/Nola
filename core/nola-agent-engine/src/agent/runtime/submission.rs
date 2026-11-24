@@ -1309,7 +1309,10 @@ impl AgentRuntime {
                                     "error": error,
                                     "next_action": "The previous scope is still in effect. Correct task_scope_update before replying. To keep that scope, submit requirements=[] with a retain disposition for each current rN. To extend it, retain the existing requirements and add distinct new claims. A plain final reply does not settle this rejected control."
                                 }),
-                                Err(error) => json!({"error":error}),
+                                Err(error) => json!({
+                                    "error": error,
+                                    "next_action": "To finish without formal scope assessment, reply directly in plain text (no tool call) or call requirements_update with outcome=\"answered\"."
+                                }),
                             },
                             is_error: result.is_err(), full_output_ref: None, artifacts: Vec::new() };
                         events.push(RuntimeEvent::ItemCompleted { turn_id: turn_id.clone(), item: item.clone() });
@@ -1322,9 +1325,57 @@ impl AgentRuntime {
                         events.push(RuntimeEvent::ItemCompleted { turn_id: turn_id.clone(), item: item.clone() });
                         self.session.record_item(item);
                     }
+                    let consecutive_rejected_controls = if result.is_err() {
+                        let mut count = 0usize;
+                        for item in self.session.conversation.transcript.iter().rev() {
+                            match item {
+                                AgentItem::ToolCall { .. } | AgentItem::Reasoning { .. } => continue,
+                                AgentItem::ToolResult { name, is_error: true, .. }
+                                    if name == super::requirements::TOOL || name == super::task_scope::TOOL =>
+                                {
+                                    count += 1;
+                                }
+                                _ => break,
+                            }
+                        }
+                        count
+                    } else {
+                        0
+                    };
+                    let effective_stop_reason = loop_interruption_reason.or_else(|| {
+                        (consecutive_rejected_controls >= 3).then(|| {
+                            format!(
+                                "requirement control ({control}) was rejected {consecutive_rejected_controls} consecutive times without progress"
+                            )
+                        })
+                    });
                     if result.is_ok() && self.session.execution.requirements.proposed.is_some() {
                         self.complete_turn(&turn_id, &mut events, &mut effects)?;
-                    } else if let Some(reason) = loop_interruption_reason {
+                    } else if let Some(reason) = effective_stop_reason {
+                        // When a turn stops on loop recovery after a rejected requirements_update
+                        // that already carried a non-empty final answer, preserve and publish that
+                        // answer instead of terminating with a blank screen.
+                        if result.is_err() && control == super::requirements::TOOL {
+                            if let Some(fallback_answer) = tool_calls
+                                .iter()
+                                .find(|call| call.name == control)
+                                .and_then(|call| call.arguments.get("answer"))
+                                .and_then(Value::as_str)
+                                .map(str::trim)
+                                .filter(|text| !text.is_empty())
+                            {
+                                let item = AgentItem::Message {
+                                    id: ItemId::from_string(self.session.allocate_id("answer")),
+                                    role: AgentRole::Assistant,
+                                    content: fallback_answer.to_string(),
+                                };
+                                events.push(RuntimeEvent::ItemCompleted {
+                                    turn_id: turn_id.clone(),
+                                    item: item.clone(),
+                                });
+                                self.session.record_item(item);
+                            }
+                        }
                         self.conclude_no_progress(&turn_id, reason,
                             nola_domain::core_requirements::RecoveryStopCause::UnfinishedRequirementControl {
                                 call_id: tool_calls.iter().find(|call| call.name == control)
