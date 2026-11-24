@@ -136,6 +136,6 @@ UiAction使用原submission_id生成队列/Item身份，投递目标为Surface o
 
 ### 发布器的权限边界与呈现
 
-Core 自有 `render_ui` 只发布闭合 schema 校验后的会话内容，不读取外部资源，也不执行组件事件对应的业务动作。运行时对该精确的 Builtin/Nola/generative_ui/HostState 描述符免除“未知风险”的产品默认确认，仍完整评估显式 Ask/Deny 规则。其他来源、其他路由和按钮后续工具操作不继承该豁免。发布回执不是用户同意，也不是业务操作完成凭证。
+Core 自有 `render_ui` 只发布闭合 schema 校验后的会话内容，不读取外部资源，也不执行组件事件对应的业务动作。运行时对该精确的 Builtin/Nola/generative_ui/HostState 描述符免除“未知风险”的产品默认确认，仍完整评估显式 Ask/Deny 规则。其他来源、其他路由和按钮后续工具操作不继承该豁免。发布回执不是用户同意，也不是业务操作完成凭证。非图形 CLI/Host 表面在首轮默认将 `render_ui` 归入延迟工具层（`Deferred`），减少首轮 schema 负载；需要时仍可通过 `tool_search` 按需发现并受同一权限与 schema 契约约束。
 
 客户端隐藏 Surface revision 及已显示卡片的重复版本入口；内部 revision、历史精确读取、CAS 和恢复协议不变。原生表单组件不承担任意绘图；Mermaid 图形继续走既有 Markdown 渲染链路，不新增协议组件或修改 catalog。

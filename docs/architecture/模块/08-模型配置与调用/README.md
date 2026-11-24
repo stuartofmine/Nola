@@ -52,14 +52,19 @@ Nola 在每次推理前调用 Rust Core 的 `nola_model_privacy::redact_model_re
 
 | 内容 | 模型收到的内容 |
 | --- | --- |
-| 常见邮箱、大陆手机号、支持的国际电话号码、符合格式的大陆居民身份证号 | 对应的 `[EMAIL]`、`[PHONE]` 或 `[ID]` |
-| 已识别的令牌、私钥块、凭据字段，以及请求文本中出现的已配置长密钥 | `[CREDENTIAL]` |
+| 常见邮箱、大陆手机号、支持的国际电话号码、符合格式的大陆居民身份证号 | 对公网/第三方端点脱敏为 `[EMAIL]`、`[PHONE]` 或 `[ID]`；本机回环、RFC1918/CGNAT/link-local、IPv6 ULA、`.local` 及容器宿主机桥接端点默认保留原文，可通过 `NOLA_REDACT_PII=0/1` 显式覆写 |
+| 已识别的令牌、私钥块、凭据字段，以及请求文本中出现的已配置长密钥 | 所有端点统一脱敏为 `[CREDENTIAL]`；带标签凭据匹配限制在同一行内（不跨换行吞并下一行），并排除 shell 变量展开（`$VAR`/`${...}`）与非密钥标识/算法/配置策略名（如 `sha256`、`mask_secret`），避免破坏配置文件或脚本语义 |
 | 工具调用历史、工具结果中的 JSON、工具描述和参数示例 | 文本按同一规则处理。工具名、调用 ID、参数定义及关联关系保留 |
 | HTTP 认证头、模型 ID、附件二进制、提供方签名或加密的续传记录 | 按各自的协议传输 |
 
 占位符只表示类别。Core 不建立反查表，也不把占位符还原为工具执行参数。图片中的文字、附件文件内部以及自由文本中的人名和住址超出这套文本规则的识别范围。该功能保护模型请求，远程宿主仍按既有配对授权接收会话数据。
 
 运行 `python3 scripts/test_model_request_privacy.py` 可以用本地 HTTP 接收端检查三种协议中的首次请求与历史重放，还会检查一个真实的文件读取结果和本地保存的原文。
+
+## 流式推理退化重采样与正文展示保护（2026-11-24）
+
+- 当工具轮次的 `ReasoningProgressGuard` 检测到重复退化思考（`model_repetitive_reasoning`），且本轮尚未向用户输出任何可见 `TextDelta` 时，流式适配层（[streaming.rs](../../../../apps/cli/src/llm_parts/streaming.rs)）触发一次事务性重采样（`LlmEvent::Retrying`，随后 `LlmEvent::SamplingStarted` 清空前次推理与临时缓冲），不再因已流式输出 `ReasoningDelta` 而被误判为不可重试。
+- `ModelTextPresentationGate::push_text_against_reasoning` 仅剥离真正复述整段思考前缀的重复文本，不会在助手回复正文碰巧与 `<think>` 共享首词时吞掉正文开头词。
 
 ## 相关设计
 

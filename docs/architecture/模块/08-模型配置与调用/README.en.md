@@ -25,11 +25,15 @@ Distinguish a catalog read from an inference attempt. Test repeated startup, a b
 
 Every Nola provider adapter passes a request copy through Rust Core's `nola_model_privacy::redact_model_request`. CLI, desktop Host and model gateway adapters call Rust directly. Apple and Android direct and on-device adapters use the same C ABI. Replayed history, tool results and auxiliary requests are covered. The local conversation retains its original content.
 
-Recognized email addresses, supported phone formats and mainland Chinese identity number patterns become `[EMAIL]`, `[PHONE]` and `[ID]`. Recognized credentials, PEM private keys and sensitive structured fields become `[CREDENTIAL]`. Core processes human-readable tool descriptions, examples and serialized tool payloads. It preserves protocol identifiers, tool schemas, authentication headers, binary attachments and signed or encrypted continuation data.
+Recognized email addresses, supported phone formats and mainland Chinese identity number patterns become `[EMAIL]`, `[PHONE]` and `[ID]` for remote/public endpoints; local and private endpoints (loopback, RFC1918/CGNAT/link-local, IPv6 ULA, `.local`, and container host bridges) skip PII redaction by default unless overridden via `NOLA_REDACT_PII=0/1`. Recognized credentials, PEM private keys and sensitive structured fields become `[CREDENTIAL]` across all endpoints; labeled credential matching stays single-line (never spanning newlines) and excludes shell variable expansions (`$VAR`/`${...}`) and non-secret policy/algorithm identifiers so scripts and structured config payloads are not corrupted. Core processes human-readable tool descriptions, examples and serialized tool payloads. It preserves protocol identifiers, tool schemas, authentication headers, binary attachments and signed or encrypted continuation data.
 
 Placeholders identify a category. Core maintains no reverse lookup and grants no tool authority to recover an original value. The rules cannot identify arbitrary personal names, postal addresses, text inside images or the contents of binary files. A paired remote Host receives the original conversation under its existing authorization.
 
 Run `python3 scripts/test_model_request_privacy.py` to inspect first-turn and replayed HTTP requests for three protocols, a real file-tool result and the original local message.
+
+## Repetitive reasoning resample and stream presentation (2026-11-24)
+
+On tool-capable turns, when `ReasoningProgressGuard` aborts degenerate reasoning (`model_repetitive_reasoning`) before any visible `TextDelta` is emitted, the CLI streaming adapter ([streaming.rs](../../../../apps/cli/src/llm_parts/streaming.rs)) performs a single transactional resample (`LlmEvent::Retrying`, with `LlmEvent::SamplingStarted` clearing prior reasoning buffers). `ModelTextPresentationGate::push_text_against_reasoning` preserves opening assistant words that happen to share a short prefix with `<think>`.
 
 ## Detailed references
 
