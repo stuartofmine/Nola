@@ -433,6 +433,105 @@ pub unsafe extern "C" fn nola_core_application_intelligence_clear(
     true
 }
 
+/// Stateless personal intelligence recall fallback for hosts querying without an open handle.
+///
+/// # Safety
+/// `json_ptr` must point to `json_len` readable UTF-8 bytes.
+#[no_mangle]
+pub unsafe extern "C" fn nola_core_intelligence_recall(
+    json_ptr: *const u8,
+    json_len: usize,
+) -> *mut c_char {
+    let _req = unsafe { parse_json_slice(json_ptr, json_len) };
+    to_owned_c_string(json!({"ok": true, "context": "", "items": []}).to_string())
+}
+
+/// Deterministic context compaction planner for mobile/macOS hosts.
+///
+/// # Safety
+/// `json_ptr` must point to `json_len` readable UTF-8 bytes.
+#[no_mangle]
+pub unsafe extern "C" fn nola_core_context_plan(
+    json_ptr: *const u8,
+    json_len: usize,
+) -> *mut c_char {
+    let Some(req) = (unsafe { parse_json_slice(json_ptr, json_len) }) else {
+        return std::ptr::null_mut();
+    };
+    let window = req
+        .get("context_window_tokens")
+        .and_then(|v| v.as_u64())
+        .unwrap_or(128_000) as usize;
+    let reserved = req
+        .get("reserved_output_tokens")
+        .and_then(|v| v.as_u64())
+        .unwrap_or(16_384) as usize;
+    let prompt_limit = req
+        .get("prompt_token_limit")
+        .and_then(|v| v.as_u64())
+        .map(|v| v as usize)
+        .unwrap_or_else(|| window.saturating_sub(reserved).max(4_096));
+    let threshold_pct = req
+        .get("threshold_percent")
+        .and_then(|v| v.as_u64())
+        .unwrap_or(60) as usize;
+    let trigger_tokens = req
+        .get("token_threshold")
+        .and_then(|v| v.as_u64())
+        .map(|v| v as usize)
+        .unwrap_or_else(|| (prompt_limit * threshold_pct) / 100);
+    let estimated = req
+        .get("estimated_tokens")
+        .and_then(|v| v.as_u64())
+        .unwrap_or(0) as usize;
+    let msg_count = req
+        .get("message_count")
+        .and_then(|v| v.as_u64())
+        .unwrap_or(0) as usize;
+    let keep_recent = req
+        .get("keep_recent_messages")
+        .and_then(|v| v.as_u64())
+        .unwrap_or(8) as usize;
+    let min_msgs = req
+        .get("min_messages_before_compaction")
+        .and_then(|v| v.as_u64())
+        .unwrap_or(4) as usize;
+
+    let hard_limit_reached = estimated >= prompt_limit;
+    let should_compact = msg_count >= min_msgs && estimated >= trigger_tokens;
+    let archive_count = if should_compact {
+        msg_count.saturating_sub(keep_recent)
+    } else {
+        0
+    };
+    let usage_pct = if prompt_limit > 0 {
+        (estimated as f64 / prompt_limit as f64) * 100.0
+    } else {
+        0.0
+    };
+    let reason = if hard_limit_reached {
+        "hard_limit_reached"
+    } else if should_compact {
+        "threshold_exceeded"
+    } else {
+        "within_budget"
+    };
+    to_owned_c_string(
+        json!({
+            "should_compact": should_compact,
+            "hard_limit_reached": hard_limit_reached,
+            "trigger_tokens": trigger_tokens,
+            "prompt_token_limit": prompt_limit,
+            "target_tokens": (trigger_tokens * 75) / 100,
+            "keep_recent_messages": keep_recent,
+            "archive_message_count": archive_count,
+            "usage_percent": usage_pct,
+            "reason": reason
+        })
+        .to_string(),
+    )
+}
+
 /// Deterministic context preparation using Nola v2 token estimation and budget computation.
 ///
 /// # Safety
@@ -493,7 +592,7 @@ pub unsafe extern "C" fn nola_core_context_prepare(
     to_owned_c_string(
         json!({
             "schema_version": 1,
-            "action": "keep",
+            "action": "ready",
             "messages": messages,
             "tools": tools,
             "payload_digest": payload_digest,

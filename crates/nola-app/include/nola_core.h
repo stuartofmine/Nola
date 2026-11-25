@@ -74,7 +74,9 @@ char *nola_core_application_intelligence_snapshot(NolaCoreApplication *app);
 bool nola_core_application_intelligence_clear(NolaCoreApplication *app);
 
 /* Stateless policy / context / prompt / model interop engines */
+char *nola_core_context_plan(const uint8_t *json_ptr, size_t json_len);
 char *nola_core_context_prepare(const uint8_t *json_ptr, size_t json_len);
+char *nola_core_intelligence_recall(const uint8_t *json_ptr, size_t json_len);
 char *nola_core_memory_select_json(const uint8_t *json_ptr, size_t json_len);
 char *nola_core_data_source_resolve(const uint8_t *json_ptr, size_t json_len);
 char *nola_core_resource_access_evaluate_json(const uint8_t *json_ptr, size_t json_len);
