@@ -32,6 +32,8 @@ use crate::policy::EffectivePolicy;
 
 const MAX_PARALLEL_READ_TOOLS: usize = 12;
 const MAX_CONSECUTIVE_OUTPUT_LIMITS: usize = 5;
+const MAX_CONSECUTIVE_EMPTY_RESPONSES: usize = 3;
+const MAX_ACTIVE_TOOL_MEDIA_ATTACHMENTS: usize = 3;
 
 #[derive(Debug, Error)]
 pub enum AgentError {
@@ -327,14 +329,46 @@ impl AgentEngine {
         let mut final_text = String::new();
         let mut steps = 0usize;
         let mut consecutive_output_limits = 0usize;
+        let mut consecutive_empty_responses = 0usize;
         let mut cancelled = false;
         // Real server-token calibration ratio (actual_input / estimated_input), clamped to [1.0, 2.5].
         let mut token_calibration: f64 = 1.0;
+        // Optional execution deadline (e.g. NOLA_EXECUTION_DEADLINE_UNIX_MS from supervisor) for
+        // one-shot ephemeral tail wrap-up reminders (0 KV prefix drift!).
+        let execution_deadline_ms: Option<i64> = std::env::var("NOLA_EXECUTION_DEADLINE_UNIX_MS")
+            .ok()
+            .and_then(|s| s.trim().parse::<i64>().ok())
+            .filter(|&v| v > 0);
+        let mut deadline_warn_180_sent = false;
+        let mut deadline_warn_60_sent = false;
 
         loop {
             if cfg.cancel.load(Ordering::Relaxed) {
                 cancelled = true;
                 break;
+            }
+            // Inject at most two one-shot ephemeral wrap-up reminders as execution deadline nears.
+            if let Some(deadline_ms) = execution_deadline_ms {
+                let remaining_secs = (deadline_ms.saturating_sub(now_ms())) / 1_000;
+                if remaining_secs <= 60 && !deadline_warn_60_sent {
+                    deadline_warn_60_sent = true;
+                    deadline_warn_180_sent = true;
+                    pending_reminders.push(RuntimeReminder {
+                        tag: "time_budget_final".into(),
+                        text: format!(
+                            "Time budget warning: ~{}s remaining before hard timeout. Immediately write/save your best working deliverable(s), run a quick verification check, and conclude.",
+                            remaining_secs.max(0)
+                        ),
+                    });
+                } else if remaining_secs <= 180 && !deadline_warn_180_sent {
+                    deadline_warn_180_sent = true;
+                    pending_reminders.push(RuntimeReminder {
+                        tag: "time_budget".into(),
+                        text: format!(
+                            "Time budget notice: ~{remaining_secs}s remaining. Stop broad exploration, converge on your solution, ensure all required output files are written to disk, and verify them."
+                        ),
+                    });
+                }
             }
             // Drain any asynchronous messages delivered to this agent's inbox (e.g. from parent task_control).
             if let Some(inbox) = &cfg.inbox {
@@ -493,6 +527,24 @@ impl AgentEngine {
 
             // Final assistant response (no tool calls)
             if resp.tool_calls.is_empty() {
+                // Guard against reasoning-only empty turns (e.g. model streamed thousands of
+                // reasoning tokens then stopped with empty content & no tool calls): nudge to continue!
+                if resp.content.trim().is_empty() {
+                    consecutive_empty_responses += 1;
+                    if consecutive_empty_responses <= MAX_CONSECUTIVE_EMPTY_RESPONSES {
+                        pending_reminders.push(RuntimeReminder {
+                            tag: "empty_response".into(),
+                            text: "Your previous turn produced only internal reasoning with empty visible output and no tool calls. Continue directly by invoking the next tool call or providing your final answer.".into(),
+                        });
+                        self.persist_state(
+                            &state_key,
+                            &history,
+                            &active_policy,
+                            catalog.active_names(),
+                        )?;
+                        continue;
+                    }
+                }
                 if let Some(schema) = &cfg.json_schema {
                     validate_json_output(&resp.content, schema)?;
                 }
@@ -500,6 +552,7 @@ impl AgentEngine {
                 self.persist_state(&state_key, &history, &active_policy, catalog.active_names())?;
                 break;
             }
+            consecutive_empty_responses = 0;
 
             // Execute tool batch: read-only batches (including read-only git actions) run in parallel!
             let all_read_only = resp.tool_calls.len() > 1
@@ -674,6 +727,10 @@ impl AgentEngine {
                 guard_batch.push((tc.name.clone(), tc.arguments.clone(), out.result));
             }
 
+            // Cap active tool media attachments in history (keeping the newest 3) so long
+            // vision sessions do not re-prefill dozens of stale base64 images every turn.
+            evict_stale_tool_media(&mut history, MAX_ACTIVE_TOOL_MEDIA_ATTACHMENTS);
+
             if let Some(reminder) = loop_guard.observe_batch(&guard_batch) {
                 pending_reminders.push(reminder);
             }
@@ -749,6 +806,36 @@ impl AgentEngine {
                 .append_event(session_id, &kind, val, DEFAULT_MAX_EVENTS_PER_SCOPE);
         }
         on_event(event);
+    }
+}
+
+pub(crate) fn evict_stale_tool_media(history: &mut [HistoryMessage], max_active: usize) {
+    let total_media: usize = history
+        .iter()
+        .map(|m| match m {
+            HistoryMessage::Tool { media, .. } => media.len(),
+            _ => 0,
+        })
+        .sum();
+    if total_media <= max_active {
+        return;
+    }
+    let mut to_drop = total_media - max_active;
+    for msg in history.iter_mut() {
+        if to_drop == 0 {
+            break;
+        }
+        if let HistoryMessage::Tool { media, .. } = msg {
+            if !media.is_empty() {
+                if media.len() <= to_drop {
+                    to_drop -= media.len();
+                    media.clear();
+                } else {
+                    media.drain(..to_drop);
+                    to_drop = 0;
+                }
+            }
+        }
     }
 }
 

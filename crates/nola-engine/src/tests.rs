@@ -740,3 +740,107 @@ fn three_tier_compaction_dedup_reasoning_hard_limit_and_overflow_recovery() {
     assert_eq!(res.final_text, "Recovered after compaction!");
     assert_eq!(*caller.calls.lock().unwrap(), 2);
 }
+
+#[test]
+fn empty_reasoning_turn_continues_and_stale_tool_media_is_evicted() {
+    // 1. Reasoning-only turn with empty content & no tool_calls MUST NOT exit prematurely!
+    let dir = tempfile::tempdir().unwrap();
+    let ctx = ToolContext::new(dir.path());
+    let store = Store::open_in_memory().unwrap();
+    let caller = Arc::new(ScriptedCaller::new(vec![
+        NormalizedModelResponse {
+            response_id: Some("r_think_only".into()),
+            response_model: Some("mock".into()),
+            content: String::new(),
+            reasoning: Some("Long internal reasoning chain...".into()),
+            tool_calls: vec![],
+            stop_reason: ModelStopReason::Stop,
+            usage: TokenUsage::default(),
+            continuation: None,
+        },
+        NormalizedModelResponse {
+            response_id: Some("r_final".into()),
+            response_model: Some("mock".into()),
+            content: "Final deliverable written and verified.".into(),
+            reasoning: None,
+            tool_calls: vec![],
+            stop_reason: ModelStopReason::Stop,
+            usage: TokenUsage::default(),
+            continuation: None,
+        },
+    ]));
+    let engine = AgentEngine::new(
+        store,
+        Arc::new(ToolRegistry::with_builtin_tools()),
+        caller.clone(),
+    );
+    let res = engine
+        .run(
+            &ctx,
+            "Solve task",
+            AgentRunConfig {
+                session_id: Some("s_empty".into()),
+                resume: false,
+                route: mock_route(ModelProtocol::OpenAiChat),
+                frozen_system_blocks: vec![FrozenSystemBlock {
+                    id: "sys".into(),
+                    text: "System".into(),
+                }],
+                host_capabilities: HostCapabilities {
+                    interactive_user_input: false,
+                    network_allowed: true,
+                },
+                policy: EffectivePolicy {
+                    profile: PermissionProfile::AllowAll,
+                    workspace_trusted: true,
+                    network_allowed: true,
+                    rules: vec![],
+                },
+                hooks: HookRunner::default(),
+                approval: None,
+                max_steps: 6,
+                force_tool_set: ForceToolSet::Auto,
+                stream: false,
+                json_schema: None,
+                cancel: Arc::new(AtomicBool::new(false)),
+                auto_recall_memory: false,
+                inbox: None,
+            },
+            |_| {},
+        )
+        .unwrap();
+    assert_eq!(res.final_text, "Final deliverable written and verified.");
+    assert_eq!(res.steps, 2);
+    let captured = caller.captured.lock().unwrap();
+    assert!(captured[1]
+        .ephemeral_tail_reminders
+        .iter()
+        .any(|r| r.tag == "empty_response"));
+
+    // 2. Stale tool media eviction keeps only the newest 3 images
+    let mk_img = |name: &str| nola_types::MediaAttachment {
+        mime_type: "image/png".into(),
+        filename: name.into(),
+        bytes_base64: "AAAA".into(),
+        raw_bytes_len: 3,
+        sha256: name.into(),
+    };
+    let mut hist: Vec<HistoryMessage> = (1..=5)
+        .map(|i| HistoryMessage::Tool {
+            call_id: format!("c{i}"),
+            tool_name: "read_file".into(),
+            payload: ToolModelPayload::text("img"),
+            is_error: false,
+            media: vec![mk_img(&format!("p{i}.png"))],
+        })
+        .collect();
+    crate::loop_runner::evict_stale_tool_media(&mut hist, 3);
+    let counts: Vec<usize> = hist
+        .iter()
+        .map(|m| match m {
+            HistoryMessage::Tool { media, .. } => media.len(),
+            _ => 0,
+        })
+        .collect();
+    assert_eq!(counts, vec![0, 0, 1, 1, 1]);
+}
