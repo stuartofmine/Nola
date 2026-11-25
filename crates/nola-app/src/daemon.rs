@@ -124,6 +124,13 @@ pub fn run_daemon(
 
 #[cfg(unix)]
 fn peer_matches_euid(stream: &UnixStream) -> bool {
+    #[cfg(any(
+        target_os = "linux",
+        target_os = "macos",
+        target_os = "freebsd",
+        target_os = "openbsd",
+        target_os = "netbsd"
+    ))]
     use std::os::unix::io::AsRawFd;
     #[cfg(target_os = "linux")]
     {

@@ -18,7 +18,6 @@ libc = { workspace = true }
 lopdf = { workspace = true }
 regex = { workspace = true }
 reqwest = { workspace = true }
-rquickjs = { workspace = true }
 rustfft = { workspace = true }
 scraper = { workspace = true }
 serde = { workspace = true }
@@ -26,6 +25,9 @@ serde_json = { workspace = true }
 symphonia = { workspace = true }
 url = { workspace = true }
 vt100 = { workspace = true }
+
+[target.'cfg(not(any(target_os = "android", target_os = "ios")))'.dependencies]
+rquickjs = { workspace = true }
 
 [dev-dependencies]
 tempfile = { workspace = true }

@@ -1331,6 +1331,7 @@ version = "2.0.0"
 dependencies = [
  "chrono",
  "crossterm",
+ "hex",
  "libc",
  "nola-engine",
  "nola-llm",
@@ -1341,6 +1342,7 @@ dependencies = [
  "nola-types",
  "serde",
  "serde_json",
+ "sha2",
  "signal-hook",
  "tempfile",
  "tiny_http",

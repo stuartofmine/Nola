@@ -29,9 +29,6 @@ internal object AgentCoreNative {
     val isMemorySelectionAvailable: Boolean
         get() = loaded && runCatching { nativeMemorySelectionAbiVersion() == 1 }.getOrDefault(false)
 
-    val isLifecycleHookRegistryAvailable: Boolean
-        get() = loaded && runCatching { nativeLifecycleHookAbiVersion() == 1 }.getOrDefault(false)
-
     val isApplicationAvailable: Boolean
         get() = loaded && runCatching {
             supportsApplicationContract(nativeApplicationAbiVersion(), nativeApplicationProtocolVersion())
@@ -45,19 +42,12 @@ internal object AgentCoreNative {
     external fun nativeMobileMcpHost(handle: Long, input: ByteArray): ByteArray?
     external fun nativeIntelligenceAbiVersion(): Int
     external fun nativeSoftwareUpdate(input: ByteArray): ByteArray?
-    external fun nativeContextPlan(input: ByteArray): ByteArray?
     external fun nativeMemorySelectionAbiVersion(): Int
     external fun nativeMemorySelect(input: ByteArray): ByteArray?
     external fun nativeDataSourceAbiVersion(): Int
     external fun nativeDataSourceResolve(input: ByteArray): ByteArray?
     external fun nativeResourceAccessAbiVersion(): Int
     external fun nativeResourceAccessEvaluate(input: ByteArray): ByteArray?
-    external fun nativeLifecycleHookAbiVersion(): Int
-    external fun nativeLifecycleHookBuildRegistry(input: ByteArray): ByteArray?
-    external fun nativeLifecycleHookPlan(input: ByteArray): ByteArray?
-    external fun nativeLifecycleHookProjectExecution(input: ByteArray): ByteArray?
-    external fun nativePromptCacheAbiVersion(): Int
-    external fun nativePromptCacheDiagnose(input: ByteArray): ByteArray?
     external fun nativeToolPolicyAbiVersion(): Int
     external fun nativeToolPolicy(input: ByteArray): ByteArray?
     external fun nativePromptComposerAbiVersion(): Int
@@ -68,10 +58,6 @@ internal object AgentCoreNative {
     external fun nativeApplicationIntelligenceRecall(handle: Long, input: ByteArray): ByteArray?
     external fun nativeApplicationIntelligenceSnapshot(handle: Long): ByteArray?
     external fun nativeApplicationIntelligenceClear(handle: Long): Boolean
-    external fun nativeIntelligenceIngest(input: ByteArray): ByteArray?
-    external fun nativeIntelligenceRecall(input: ByteArray): ByteArray?
-    external fun nativeIntelligenceSnapshot(): ByteArray?
-    external fun nativeIntelligenceClear(): Boolean
     external fun nativeApplicationAbiVersion(): Int
     external fun nativeApplicationOpen(path: ByteArray): Long
     external fun nativeApplicationExecute(handle: Long, command: ByteArray): ByteArray?

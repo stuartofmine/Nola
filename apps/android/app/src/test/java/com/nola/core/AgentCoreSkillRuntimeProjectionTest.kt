@@ -17,7 +17,7 @@ class AgentCoreSkillRuntimeProjectionTest {
         val fixtureFile = generateSequence(
             java.io.File(requireNotNull(System.getProperty("user.dir"))),
         ) { it.parentFile }
-            .map { root -> java.io.File(root, "core/tests/fixtures/capability_activation_v1.json") }
+            .map { root -> java.io.File(root, "tests/apple/ios/Fixtures/capability_activation_v1.json") }
             .firstOrNull(java.io.File::isFile)
             ?: error("capability activation fixture is missing")
         val fixture = kotlinx.serialization.json.Json.parseToJsonElement(fixtureFile.readText())
