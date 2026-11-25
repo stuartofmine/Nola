@@ -1477,4 +1477,13 @@
     <string name="permission_from_subagent">Von Unteraufgabe: %1$s</string>
     <string name="permission_queue_pending">1 von %1$d ausstehend</string>
     <string name="chat_response_failed_empty">Antwort fehlgeschlagen.</string>
+    <string name="chat_v2_question_placeholder">Antwort eingeben…</string>
+    <string name="chat_v2_question_skip">Überspringen</string>
+    <string name="chat_v2_question_submit">Senden</string>
+    <string name="chat_v2_ui_unavailable">Interaktive Oberfläche nicht verfügbar</string>
+    <string name="chat_v2_ui_interaction_failed">Interaktion fehlgeschlagen</string>
+    <string name="chat_v2_context_compacted">Kontext komprimiert</string>
+    <string name="chat_v2_context_compacted_range">Kontext komprimiert (%1$s → %2$s Tokens)</string>
+    <string name="chat_v2_context_compacted_after">Kontext komprimiert (%1$s Tokens)</string>
+    <string name="chat_v2_context_compaction_failed">Kontextkomprimierung fehlgeschlagen</string>
 </resources>

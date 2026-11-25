@@ -1487,4 +1487,13 @@
     <string name="permission_from_subagent">From subagent: %1$s</string>
     <string name="permission_queue_pending">1 of %1$d pending</string>
     <string name="chat_response_failed_empty">Response failed.</string>
+    <string name="chat_v2_question_placeholder">Type your answer…</string>
+    <string name="chat_v2_question_skip">Skip</string>
+    <string name="chat_v2_question_submit">Submit</string>
+    <string name="chat_v2_ui_unavailable">Interactive UI unavailable</string>
+    <string name="chat_v2_ui_interaction_failed">Interaction failed</string>
+    <string name="chat_v2_context_compacted">Context compacted</string>
+    <string name="chat_v2_context_compacted_range">Context compacted (%1$s → %2$s tokens)</string>
+    <string name="chat_v2_context_compacted_after">Context compacted (%1$s tokens)</string>
+    <string name="chat_v2_context_compaction_failed">Context compaction failed</string>
 </resources>

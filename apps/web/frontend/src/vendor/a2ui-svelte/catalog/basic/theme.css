@@ -17,6 +17,7 @@
 	--a2ui-color-text-muted: #5c6370;
 	--a2ui-color-primary: #2f6feb;
 	--a2ui-color-on-primary: #ffffff;
+	--a2ui-color-accent: var(--a2ui-color-primary);
 	--a2ui-color-surface: #ffffff;
 	--a2ui-color-surface-raised: #f6f7f9;
 	--a2ui-color-border: #d8dce3;
@@ -32,11 +33,12 @@
 }
 
 @media (prefers-color-scheme: dark) {
-	:where(:root) {
+	:where(:root:not([data-appearance="light"])) {
 		--a2ui-color-text: #e7e9ee;
 		--a2ui-color-text-muted: #9aa2b1;
 		--a2ui-color-primary: #6c9bff;
 		--a2ui-color-on-primary: #0b1020;
+		--a2ui-color-accent: var(--a2ui-color-primary);
 		--a2ui-color-surface: #14161b;
 		--a2ui-color-surface-raised: #1c1f26;
 		--a2ui-color-border: #2c313b;
@@ -46,11 +48,13 @@
 }
 
 /* Force a scheme regardless of the OS preference. */
-:where(.a2ui-dark) {
+:where(.a2ui-dark),
+:where(:root[data-appearance="dark"]) {
 	--a2ui-color-text: #e7e9ee;
 	--a2ui-color-text-muted: #9aa2b1;
 	--a2ui-color-primary: #6c9bff;
 	--a2ui-color-on-primary: #0b1020;
+	--a2ui-color-accent: var(--a2ui-color-primary);
 	--a2ui-color-surface: #14161b;
 	--a2ui-color-surface-raised: #1c1f26;
 	--a2ui-color-border: #2c313b;

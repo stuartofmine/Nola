@@ -98,10 +98,11 @@ object NolaColors {
     val success: Color @Composable get() = if (MaterialTheme.colorScheme.background.luminance() < 0.5f) Color(0xFF5CD68D) else Color(0xFF147537)
     val warning: Color @Composable get() = MaterialTheme.colorScheme.tertiary
     val danger: Color @Composable get() = MaterialTheme.colorScheme.error
+    val info: Color @Composable get() = if (isDark) Color(0xFF78B4F8) else Color(0xFF2563EB)
 
     val bgLight = Color(0xFFFAFAFA)
     val bgDark = Color(0xFF0b0b0c)
-    val surfaceElevated: Color @Composable get() = MaterialTheme.colorScheme.surface
+    val surfaceElevated: Color @Composable get() = MaterialTheme.colorScheme.surfaceContainerHigh
     val rowFill: Color @Composable get() = MaterialTheme.colorScheme.surfaceVariant
     val mutedFill: Color @Composable get() = MaterialTheme.colorScheme.surfaceContainer
 

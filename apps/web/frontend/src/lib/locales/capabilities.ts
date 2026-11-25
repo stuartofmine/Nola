@@ -96,6 +96,7 @@ const messages: Record<string, Translations> = {
     'capability.category.planning-automation': ['Planning and automation', '计划与自动化', 'Planung und Automatisierung', 'Planificación y automatización', 'Planification et automatisation', '計画と自動化', 'Планирование и автоматизация'],
     'capability.category.knowledge-research': ['Knowledge and research', '知识与研究', 'Wissen und Recherche', 'Conocimiento e investigación', 'Connaissances et recherche', '知識と調査', 'Знания и исследования'],
     'capability.category.workspace': ['Workspace', '工作区', 'Arbeitsbereich', 'Espacio de trabajo', 'Espace de travail', 'ワークスペース', 'Рабочая область'],
+    'capability.category.builtin': ['Built-in skills', '内置技能', 'Integrierte Skills', 'Habilidades integradas', 'Compétences intégrées', '組み込みスキル', 'Встроенные навыки'],
     'capability.category.custom': ['Custom skills', '自定义技能', 'Benutzerdefinierte Skills', 'Habilidades personalizadas', 'Compétences personnalisées', 'カスタムスキル', 'Пользовательские навыки'],
     'capability.category.mcp': ['MCP', 'MCP', 'MCP', 'MCP', 'MCP', 'MCP', 'MCP'],
 };

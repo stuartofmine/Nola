@@ -144,7 +144,7 @@
 
 <svelte:window bind:innerWidth={viewportWidth} />
 <ConfirmationDialog bind:this={confirmation} />
-<ToastHost />
+<ToastHost hasMobileNav={path !== '/chat' && path !== '/login'} />
 <a class="skip-content" href="#page-main" onclick={event => { event.preventDefault(); (document.getElementById('page-main') ?? content)?.focus(); }}>{t($locale, 'shell.skipContent')}</a>
 <div bind:this={content} tabindex="-1" class="workspace-content" class:with-mobile-navigation={path !== '/chat' && path !== '/login'}>
 {#if primaryRoot}<div class="mobile-brand-bar"><a href="/today" aria-label="Nola"><span class="nola-mark">n</span><strong>Nola</strong></a><button type="button" aria-label={t($locale, 'shell.toggleAppearance')} onclick={toggleAppearance}><svg aria-hidden="true" viewBox="0 0 24 24">{#if $darkAppearance}<circle cx="12" cy="12" r="4"/><path d="M12 2v2m0 16v2M2 12h2m16 0h2M5 5l1 1m12 12 1 1M5 19l1-1M18 6l1-1"/>{:else}<path d="M20 14A8 8 0 0 1 10 4a8 8 0 1 0 10 10Z"/>{/if}</svg></button></div>{/if}

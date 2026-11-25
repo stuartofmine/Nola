@@ -111,12 +111,12 @@
 <ConfirmationDialog bind:this={gate}/>
 <section class="library" aria-label={t($locale,'plugin.title')}>
     <header>
-        <h1>{t($locale,adding ? 'plugin.add' : 'plugin.title')}</h1>
+        <h2>{t($locale,adding ? 'plugin.add' : 'plugin.title')}</h2>
         {#if !adding && profiles && !readError && !error && usable && !profileErrors.length}
-            <button class="library-refresh" disabled={busy} onclick={refresh}>{t($locale,'plugin.refresh')}</button>
+            <button type="button" class="library-refresh" disabled={busy} onclick={refresh}>{t($locale,'plugin.refresh')}</button>
         {/if}
         {#if !adding && usable}
-            <button class="primary add" bind:this={addButton} disabled={busy || !!readError} onclick={begin}><PrototypeIcon name="plus" size={16}/>{t($locale,'plugin.add')}</button>
+            <button type="button" class="primary add" bind:this={addButton} disabled={busy || !!readError} onclick={begin}><PrototypeIcon name="plus" size={16}/>{t($locale,'plugin.add')}</button>
         {/if}
     </header>
     {#if adding}
@@ -141,7 +141,7 @@
                         </div>
                         <details class="row-actions" use:dismissibleDisclosure>
                             <summary aria-label={t($locale,'plugin.more',{name:plugin.pages[0]?.title ?? plugin.links[0]?.title ?? info.name})}><PrototypeIcon name="more" size={18}/></summary>
-                            <div class="menu"><button class="danger" disabled={busy || !!readError || !profile.available || !!profile.error} onclick={event => {
+                            <div class="menu"><button type="button" class="danger" aria-label={`${t($locale,'plugin.remove')}: ${info.name}`} disabled={busy || !!readError || !profile.available || !!profile.error} onclick={event => {
                                 const details = event.currentTarget.closest('details');
                                 if (details) { details.open = false; details.querySelector('summary')?.focus(); }
                                 void change('remove',profile,plugin.source);
@@ -157,7 +157,7 @@
     {#if busy}<p class="feedback" role="status">{t($locale,'plugin.working')}</p>{/if}
     {#if error || readError || profileErrors.length || (profiles && !usable && !adding)}
         <div class="feedback">{#if error || readError || profileErrors.length}<div role="alert">{#if error}<p>{error}</p>{/if}{#if readError}<p>{readError}</p>{/if}{#each profileErrors as profile}<p>{label(profile)} · {profile.error}</p>{/each}</div>{/if}
-            <button disabled={busy} onclick={refresh}>{t($locale,'plugin.refresh')}</button>
+            <button type="button" disabled={busy} onclick={refresh}>{t($locale,'plugin.refresh')}</button>
         </div>
     {/if}
 </section>
@@ -167,7 +167,7 @@
     .library { max-width: none; padding: 0; }
     header,.form-actions,li,.add { display:flex;align-items:center;gap:.6rem; }
     header { justify-content:space-between;gap:1rem;margin-bottom:1.35rem; }
-    h1 { margin:0;font-size:clamp(1.45rem,2.25vw,2rem);line-height:1.25; }
+    h2 { margin:0;font-size:clamp(1.25rem,2vw,1.5rem);line-height:1.25; }
     .library button,.library input,.library select { min-height:44px; }
     .add { white-space:nowrap; }
     .collection { list-style:none;margin:0;padding:0; }
@@ -181,7 +181,7 @@
     .row-actions { position:relative;flex:none; }
     .row-actions summary { display:grid;place-items:center;list-style:none;cursor:pointer;width:44px;height:44px;color:var(--muted);border-radius:.6rem; }
     .row-actions summary::-webkit-details-marker { display:none; }
-    .menu { position:absolute;inset-inline-end:0;top:100%;z-index:2;min-width:8rem;padding:.22rem;background:var(--surface);border:1px solid var(--border);border-radius:.6rem;box-shadow:0 4px 16px #0002; }
+    .menu { position:absolute;inset-inline-end:0;top:100%;z-index:2;min-width:8rem;padding:.22rem;background:var(--surface-elevated);border:1px solid var(--border);border-radius:.6rem;box-shadow:var(--dialog-shadow); }
     .menu button { width:100%;text-align:start;border:0;background:transparent; }
     @media(hover:hover){.row-actions summary:hover,.resource a:hover { color:var(--accent);background:var(--accent-subtle); }}
     .library :is(a,button,input,select,summary):focus-visible { outline:2px solid var(--accent);outline-offset:2px; }

@@ -3405,3 +3405,6 @@
 "chat.task.state.failed" = "失敗";
 "chat.task.state.cancelled" = "キャンセル済み";
 "chat.context.skills.template.body" = "# スキル：新しいスキル\n\n## 使う場面\nこのスキルを使う具体的な状況を説明します。\n\n## 手順\n1. ユーザーの目的を明確にする。\n2. 関連する情報を確認する。\n3. 簡潔で実行に移せる結果を示す。\n\n## 回答の形式\n- 内容を整理する。\n- 前提とリスクを明示する。";
+"chat.v2.question.placeholder" = "回答を入力…";
+"chat.v2.question.submit" = "送信";
+"chat.v2.question.skip" = "スキップ";

@@ -3420,3 +3420,6 @@
 "chat.task.state.failed" = "Fehlgeschlagen";
 "chat.task.state.cancelled" = "Abgebrochen";
 "chat.context.skills.template.body" = "# Skill: Neuer Skill\n\n## Einsatzgebiet\nBeschreibe konkret, wann dieser Skill eingesetzt werden soll.\n\n## Ablauf\n1. Ziel klären.\n2. Relevanten Kontext prüfen.\n3. Ein knappes, umsetzbares Ergebnis liefern.\n\n## Ausgabe\n- Antwort klar gliedern.\n- Annahmen und Risiken benennen.";
+"chat.v2.question.placeholder" = "Antwort eingeben…";
+"chat.v2.question.submit" = "Senden";
+"chat.v2.question.skip" = "Überspringen";

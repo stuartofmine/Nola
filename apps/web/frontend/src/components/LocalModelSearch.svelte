@@ -345,7 +345,7 @@
                                 </div>
                             </details>
                         </div>
-                        <button class="primary download-btn" disabled={!canStart} aria-label={t($locale, 'local.confirmDownload') + ' · ' + candidate.repository} onclick={() => update('install-plan', { engine, source, repository: candidate.repository, plan: candidate.plan })}>{t($locale, 'local.download')}</button>
+                        <button type="button" class="primary download-btn" disabled={!canStart} aria-label={t($locale, 'local.confirmDownload') + ' · ' + candidate.repository} onclick={() => update('install-plan', { engine, source, repository: candidate.repository, plan: candidate.plan })}>{t($locale, 'local.download')}</button>
                     </li>
                 {/each}
             </ul>

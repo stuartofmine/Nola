@@ -57,9 +57,10 @@ use crate::config::{
 };
 use crate::web_api::{
     build_agent_settings_snapshot, build_dashboard_snapshot, build_model_profiles_response,
-    build_workspace_review, conversation_configuration_json, conversation_knowledge_key,
-    ensure_host_id, infer_model_capabilities, load_conversation_knowledge,
-    memory_item_to_record_with_store, memory_meta_key, ms_to_rfc3339, normalize_automation_record,
+    build_workspace_review, canonical_automation_format, conversation_configuration_json,
+    conversation_knowledge_key, ensure_host_id, infer_model_capabilities,
+    load_conversation_knowledge, memory_item_to_record_with_store, memory_meta_key, ms_to_rfc3339,
+    normalize_automation_record, normalize_data_source_record, project_skill_descriptor,
     reconstruct_v2_messages, session_meta_key, session_to_conversation_json, session_usage_json,
 };
 
@@ -5056,16 +5057,10 @@ fn handle_http_request(mut req: Request, state: Arc<WebServerState>) {
                 .into_iter()
                 .filter_map(|s| {
                     let trimmed = s.name.trim().to_string();
-                    if trimmed.is_empty() || !seen_ids.insert(trimmed.clone()) {
+                    if trimmed.is_empty() || !seen_ids.insert(trimmed) {
                         return None;
                     }
-                    Some(json!({
-                        "id": trimmed,
-                        "name": trimmed,
-                        "description": s.description,
-                        "path": s.path,
-                        "body": s.body
-                    }))
+                    Some(project_skill_descriptor(&s, &store))
                 })
                 .collect();
                 let _ = respond_api_json(req, 200, &json!({"skills": skills}), crypto_tok);
@@ -5411,16 +5406,13 @@ fn handle_http_request(mut req: Request, state: Arc<WebServerState>) {
                     .get("definition")
                     .filter(|v| v.is_object())
                     .unwrap_or(&body);
-                let prev_format = existing
-                    .get("format")
-                    .and_then(|v| v.as_str())
-                    .unwrap_or("agent")
-                    .to_string();
-                let next_format = patch_src
-                    .get("format")
-                    .and_then(|v| v.as_str())
-                    .unwrap_or(&prev_format)
-                    .to_string();
+                let prev_format = canonical_automation_format(
+                    existing.get("format").and_then(|v| v.as_str()),
+                );
+                let next_format = match patch_src.get("format").and_then(|v| v.as_str()) {
+                    Some(raw_fmt) => canonical_automation_format(Some(raw_fmt)),
+                    None => prev_format.clone(),
+                };
                 let prev_freq = existing
                     .get("frequency")
                     .and_then(|v| v.as_str())
@@ -5452,6 +5444,7 @@ fn handle_http_request(mut req: Request, state: Arc<WebServerState>) {
                             dst.insert(k.clone(), v.clone());
                         }
                     }
+                    dst.insert("format".into(), json!(next_format));
                     if next_format == "agent" {
                         dst.insert("url".into(), json!(""));
                         dst.insert("scriptApproved".into(), Value::Null);
@@ -5963,7 +5956,17 @@ fn handle_http_request(mut req: Request, state: Arc<WebServerState>) {
                 let _ = respond_api_json(req, 200, &json!({"usageRecords": usage}), crypto_tok);
             }
             (Method::Get, "/api/data-sources") => {
-                let items: Vec<Value> = suite.list_records("data_source").unwrap_or_default();
+                let raw_items: Vec<Value> = suite.list_records("data_source").unwrap_or_default();
+                let mut seen_ids: HashSet<String> = HashSet::new();
+                let items: Vec<Value> = raw_items
+                    .iter()
+                    .map(normalize_data_source_record)
+                    .filter(|s| {
+                        s.get("id")
+                            .and_then(|v| v.as_str())
+                            .is_some_and(|id| !id.is_empty() && seen_ids.insert(id.to_string()))
+                    })
+                    .collect();
                 let wrapped: Vec<Value> = items.iter().map(|s| json!({"source": s})).collect();
                 let _ = respond_api_json(
                     req,
@@ -5973,15 +5976,10 @@ fn handle_http_request(mut req: Request, state: Arc<WebServerState>) {
                 );
             }
             (Method::Post, "/api/data-sources") => {
-                let mut ds_body = body;
-                let id = ds_body
-                    .get("id")
-                    .and_then(|v| v.as_str())
-                    .filter(|s| !s.is_empty())
-                    .map(ToString::to_string)
-                    .unwrap_or_else(new_id);
-                ds_body["id"] = json!(id);
+                let mut ds_body = normalize_data_source_record(&body);
+                let id = ds_body["id"].as_str().unwrap_or("").to_string();
                 let (ok, probe) = probe_and_attach_data_source_validation(&suite, &id, &mut ds_body);
+                let ds_body = normalize_data_source_record(&ds_body);
                 match suite.upsert_record("data_source", &id, &ds_body) {
                     Ok(()) => {
                         let _ = respond_api_json(
@@ -6001,9 +5999,21 @@ fn handle_http_request(mut req: Request, state: Arc<WebServerState>) {
                     && !p.trim_start_matches("/api/data-sources/").contains('/') =>
             {
                 let id = percent_decode_path(p.trim_start_matches("/api/data-sources/"));
-                let mut ds_body = body;
+                let mut ds_body = suite
+                    .list_records::<Value>("data_source")
+                    .unwrap_or_default()
+                    .into_iter()
+                    .find(|v| v.get("id").and_then(|s| s.as_str()) == Some(id.as_str()))
+                    .unwrap_or_else(|| json!({"id": id}));
+                if let (Some(dst), Some(src)) = (ds_body.as_object_mut(), body.as_object()) {
+                    for (k, v) in src {
+                        dst.insert(k.clone(), v.clone());
+                    }
+                }
                 ds_body["id"] = json!(id);
+                let mut ds_body = normalize_data_source_record(&ds_body);
                 let (ok, probe) = probe_and_attach_data_source_validation(&suite, &id, &mut ds_body);
+                let ds_body = normalize_data_source_record(&ds_body);
                 match suite.upsert_record("data_source", &id, &ds_body) {
                     Ok(()) => {
                         let _ = respond_api_json(
@@ -6031,7 +6041,7 @@ fn handle_http_request(mut req: Request, state: Arc<WebServerState>) {
                     p.trim_start_matches("/api/data-sources/")
                         .trim_end_matches("/test"),
                 );
-                let mut existing = suite
+                let raw_existing = suite
                     .list_records::<Value>("data_source")
                     .unwrap_or_default()
                     .into_iter()
@@ -6039,7 +6049,10 @@ fn handle_http_request(mut req: Request, state: Arc<WebServerState>) {
                     .unwrap_or_else(|| {
                         json!({"id": id, "name": id, "kind": "localFile", "location": "", "accessPolicy": "conversationOptIn"})
                     });
+                let mut existing = normalize_data_source_record(&raw_existing);
+                existing["id"] = json!(id);
                 let (ok, probe) = probe_and_attach_data_source_validation(&suite, &id, &mut existing);
+                let existing = normalize_data_source_record(&existing);
                 let _ = suite.upsert_record("data_source", &id, &existing);
                 let _ = respond_api_json(
                     req,
@@ -7047,7 +7060,7 @@ fn probe_and_attach_data_source_validation(
         .get("maximumAgeMinutes")
         .and_then(|v| v.as_i64())
         .unwrap_or(60)
-        .max(1);
+        .clamp(1, 10_080);
     let now_iso = Utc::now().to_rfc3339();
 
     if matches!(
@@ -7083,10 +7096,11 @@ fn probe_and_attach_data_source_validation(
                         "redactedSample": "",
                         "recordCount": 0,
                         "maximumAgeMinutes": max_age,
-                        "validationState": "blocked",
+                        "validationState": "failed",
                         "validatedAt": now_iso,
                         "errorMessage": "access to sensitive local path is forbidden"
                     });
+                    record["lastError"] = json!("access to sensitive local path is forbidden");
                     record["updatedAt"] = json!(now_iso);
                     return (false, probe);
                 }
@@ -7111,9 +7125,14 @@ fn probe_and_attach_data_source_validation(
         .or_else(|| probe.get("bytesRead"))
         .or_else(|| probe.get("sizeBytes"))
         .and_then(|v| v.as_u64())
-        .unwrap_or(if ok { 1 } else { 0 });
-    let err_msg = probe.get("error").cloned().unwrap_or(Value::Null);
-    record["validationContract"] = json!({
+        .unwrap_or(if ok { 1 } else { 0 })
+        .min(9_007_199_254_740_991);
+    let err_msg = probe
+        .get("error")
+        .and_then(|v| v.as_str())
+        .map(str::trim)
+        .filter(|s| !s.is_empty());
+    let mut contract = json!({
         "sourceId": id,
         "readerDescription": format!("{kind} reader"),
         "schemaFields": ["content"],
@@ -7121,9 +7140,15 @@ fn probe_and_attach_data_source_validation(
         "recordCount": record_count,
         "maximumAgeMinutes": max_age,
         "validationState": state,
-        "validatedAt": now_iso,
-        "errorMessage": err_msg
+        "validatedAt": now_iso
     });
+    if let Some(err) = err_msg {
+        contract["errorMessage"] = json!(err);
+        record["lastError"] = json!(err);
+    } else if let Some(obj) = record.as_object_mut() {
+        obj.remove("lastError");
+    }
+    record["validationContract"] = contract;
     record["updatedAt"] = json!(now_iso);
     (ok, probe)
 }
@@ -9420,11 +9445,13 @@ fn handle_sse_chat_turn(
     let store_persist = store.clone();
     let crypto_for_stream = crypto_tok;
     std::thread::spawn(move || {
+        let mut collected_text = String::new();
         let mut collected_reasoning = String::new();
         let mut collected_tools: Vec<Value> = Vec::new();
         let mut collected_surfaces: Vec<Value> = Vec::new();
         let run_res = engine.run_with_media(&ctx, &prompt, user_media, run_cfg, |ev| {
             match &ev {
+                AgentEvent::TextDelta { delta } => collected_text.push_str(delta),
                 AgentEvent::ReasoningDelta { delta } => collected_reasoning.push_str(delta),
                 AgentEvent::ToolFinished {
                     call_id,
@@ -9468,11 +9495,16 @@ fn handle_sse_chat_turn(
         });
         match run_res {
             Ok(res) => {
+                let final_content = if !res.final_text.trim().is_empty() {
+                    res.final_text
+                } else {
+                    collected_text
+                };
                 let _ = store_persist.append_event(
                     &conv_id_c,
                     "chat_assistant",
                     json!({
-                        "content": res.final_text,
+                        "content": final_content,
                         "reasoning": collected_reasoning,
                         "toolCalls": collected_tools,
                         "uiSurfaces": collected_surfaces,
@@ -10445,5 +10477,64 @@ mod tests {
         assert!(joined.contains("Use Rust"));
         assert!(joined.contains("Default Docs"));
         assert!(!joined.contains("Blocked Secret"));
+    }
+
+    #[test]
+    fn data_source_probe_and_normalize_produces_valid_contract_for_created_and_listed_records() {
+        let dir = tempfile::tempdir().unwrap();
+        let sample_file = dir.path().join("notes.md");
+        fs::write(&sample_file, "# Release Notes\nAll checks green.\n").unwrap();
+        let store = Store::open_in_memory().unwrap();
+        let suite = ModulesSuite::new(store.clone(), dir.path().to_path_buf(), None);
+
+        // Simulate POST /api/data-sources with minimal fields (no accessPolicy supplied)
+        let mut created = normalize_data_source_record(&json!({
+            "id": "ds-valid-1",
+            "name": "Release Notes",
+            "kind": "localFile",
+            "location": sample_file.display().to_string()
+        }));
+        let (ok, _probe) = probe_and_attach_data_source_validation(&suite, "ds-valid-1", &mut created);
+        assert!(ok);
+        let created = normalize_data_source_record(&created);
+        suite.upsert_record("data_source", "ds-valid-1", &created).unwrap();
+
+        // Simulate a raw legacy record in SQLite without accessPolicy or name
+        suite
+            .upsert_record(
+                "data_source",
+                "ds-legacy-2",
+                &json!({"id": "ds-legacy-2", "title": "Legacy", "path": "/nonexistent.txt"}),
+            )
+            .unwrap();
+
+        // Simulate GET /api/data-sources projection
+        let listed: Vec<Value> = suite
+            .list_records::<Value>("data_source")
+            .unwrap()
+            .iter()
+            .map(normalize_data_source_record)
+            .collect();
+        assert_eq!(listed.len(), 2);
+        for ds in &listed {
+            for key in ["id", "name", "kind", "location", "accessPolicy"] {
+                assert!(
+                    ds.get(key).and_then(|v| v.as_str()).is_some(),
+                    "listed data source missing string {key}: {ds}"
+                );
+            }
+            if let Some(vc) = ds.get("validationContract").and_then(|v| v.as_object()) {
+                assert_eq!(vc["sourceId"], ds["id"]);
+                for ckey in ["readerDescription", "redactedSample", "validationState", "validatedAt"] {
+                    assert!(vc.get(ckey).and_then(|v| v.as_str()).is_some());
+                }
+                assert!(vc["schemaFields"].as_array().unwrap().iter().all(|v| v.is_string()));
+                assert!(vc["recordCount"].as_u64().is_some());
+                assert!(vc["maximumAgeMinutes"].as_i64().unwrap() >= 1);
+            }
+        }
+        let valid_ds = listed.iter().find(|d| d["id"] == "ds-valid-1").unwrap();
+        assert_eq!(valid_ds["validationContract"]["validationState"], "verified");
+        assert!(valid_ds.get("lastError").is_none());
     }
 }

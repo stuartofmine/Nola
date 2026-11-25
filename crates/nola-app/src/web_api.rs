@@ -243,10 +243,12 @@ pub fn reconstruct_v2_messages(store: &Store, conversation_id: &str) -> (Vec<Val
     };
     let mut messages: Vec<Value> = Vec::new();
     let mut raw_events: Vec<Value> = Vec::new();
+    let mut last_was_turn_completed = false;
     for ev in &events {
         raw_events.push(serde_json::to_value(ev).unwrap_or(json!({})));
         match ev.kind.as_str() {
             "user_message" | "chat_user" => {
+                last_was_turn_completed = false;
                 let text = ev
                     .payload
                     .get("content")
@@ -292,8 +294,9 @@ pub fn reconstruct_v2_messages(store: &Store, conversation_id: &str) -> (Vec<Val
                     .cloned()
                     .unwrap_or_else(|| json!([]));
                 let usage = ev.payload.get("usage").cloned();
+                let has_tools = tool_calls.as_array().is_some_and(|a| !a.is_empty());
                 let has_surfaces = ui_surfaces.as_array().is_some_and(|a| !a.is_empty());
-                if !text.is_empty() || !reasoning.is_empty() || has_surfaces {
+                if !text.is_empty() || !reasoning.is_empty() || has_surfaces || has_tools {
                     let mut entry = json!({
                         "id": format!("msg-{}", ev.seq),
                         "seq": ev.seq,
@@ -310,21 +313,33 @@ pub fn reconstruct_v2_messages(store: &Store, conversation_id: &str) -> (Vec<Val
                     // WebHost emits `chat_assistant` right after `AgentEngine`'s `turn_completed`
                     // with richer `reasoning`, `toolCalls`, and `uiSurfaces`; upgrade in-place.
                     let should_replace_prev = ev.kind == "chat_assistant"
-                        && messages.last().is_some_and(|prev| {
-                            prev.get("role").and_then(|v| v.as_str()) == Some("assistant")
-                                && prev.get("content").and_then(|v| v.as_str()) == Some(text)
-                                && prev
-                                    .get("reasoning")
-                                    .and_then(|v| v.as_str())
-                                    .unwrap_or("")
-                                    .is_empty()
-                        });
+                        && (last_was_turn_completed
+                            || messages.last().is_some_and(|prev| {
+                                prev.get("role").and_then(|v| v.as_str()) == Some("assistant")
+                                    && prev.get("content").and_then(|v| v.as_str()) == Some(text)
+                                    && prev
+                                        .get("reasoning")
+                                        .and_then(|v| v.as_str())
+                                        .unwrap_or("")
+                                        .is_empty()
+                            }));
                     if should_replace_prev {
                         if let Some(last) = messages.last_mut() {
+                            if text.is_empty() {
+                                if let Some(prev_text) = last
+                                    .get("content")
+                                    .and_then(|v| v.as_str())
+                                    .filter(|s| !s.is_empty())
+                                {
+                                    entry["content"] = json!(prev_text);
+                                }
+                            }
                             *last = entry;
                         }
+                        last_was_turn_completed = false;
                     } else {
                         messages.push(entry);
+                        last_was_turn_completed = ev.kind == "turn_completed";
                     }
                 }
             }
@@ -419,6 +434,123 @@ fn memory_item_to_record_with_meta(item: &MemoryItem, meta: Option<&Value>) -> V
     })
 }
 
+const BUILTIN_SKILL_CATEGORIES: &[&str] = &[
+    "documents",
+    "data-analysis",
+    "design-presentations",
+    "communication",
+    "planning-automation",
+    "knowledge-research",
+    "workspace",
+];
+
+fn builtin_skill_category_id(name: &str) -> &'static str {
+    match name.trim().to_ascii_lowercase().as_str() {
+        "code-review" | "debugging" | "tdd" => "workspace",
+        _ => "workspace",
+    }
+}
+
+/// Project a discovered `SkillDescriptor` into the canonical JSON object expected by
+/// `/api/agent/settings`, `/api/skills`, and `/api/automation-skills`.
+pub fn project_skill_descriptor(s: &nola_types::SkillDescriptor, store: &Store) -> Value {
+    let name = s.name.trim();
+    let builtins = nola_modules::skills::builtin_skills();
+    let builtin_match = builtins
+        .iter()
+        .find(|b| b.name.eq_ignore_ascii_case(name));
+    let is_builtin = s.path.starts_with("builtin://") || builtin_match.is_some();
+    let enabled = nola_modules::skills::is_skill_enabled(store, name);
+    let category_id = if is_builtin {
+        builtin_skill_category_id(name)
+    } else {
+        "custom"
+    };
+    let mut obj = json!({
+        "id": name,
+        "name": name,
+        "display_name": name,
+        "description": s.description,
+        "path": s.path,
+        "body": s.body,
+        "content": s.body,
+        "enabled": enabled,
+        "source": if is_builtin { "built_in" } else { "discovered" },
+        "built_in": is_builtin,
+        "category_id": category_id,
+        "revision": 1
+    });
+    if is_builtin {
+        let default_body = builtin_match
+            .map(|b| b.body.as_str())
+            .unwrap_or(s.body.as_str());
+        obj["default_content"] = json!(default_body);
+    }
+    obj
+}
+
+fn normalize_saved_skill_entry(
+    raw: &Value,
+    builtins: &[nola_types::SkillDescriptor],
+    store: &Store,
+) -> Value {
+    let mut item = raw.clone();
+    let Some(map) = item.as_object_mut() else {
+        return item;
+    };
+    let name = map
+        .get("name")
+        .or_else(|| map.get("id"))
+        .and_then(|v| v.as_str())
+        .map(str::trim)
+        .unwrap_or("")
+        .to_string();
+    let path = map
+        .get("path")
+        .and_then(|v| v.as_str())
+        .unwrap_or("");
+    let existing_source = map
+        .get("source")
+        .and_then(|v| v.as_str())
+        .unwrap_or("");
+    let builtin_match = builtins
+        .iter()
+        .find(|b| b.name.eq_ignore_ascii_case(&name));
+    let is_builtin = builtin_match.is_some()
+        || path.starts_with("builtin://")
+        || map.get("built_in").and_then(|v| v.as_bool()) == Some(true)
+        || map.get("builtin").and_then(|v| v.as_bool()) == Some(true)
+        || map.get("isBuiltin").and_then(|v| v.as_bool()) == Some(true)
+        || matches!(existing_source, "built_in" | "builtin");
+
+    if is_builtin {
+        map.insert("source".into(), json!("built_in"));
+        map.insert("built_in".into(), json!(true));
+        let valid_cat = map
+            .get("category_id")
+            .and_then(|v| v.as_str())
+            .is_some_and(|c| BUILTIN_SKILL_CATEGORIES.contains(&c));
+        if !valid_cat {
+            map.insert("category_id".into(), json!(builtin_skill_category_id(&name)));
+        }
+        if !map.contains_key("default_content") {
+            if let Some(b) = builtin_match {
+                map.insert("default_content".into(), json!(b.body));
+            }
+        }
+    } else {
+        map.entry("built_in".to_string()).or_insert_with(|| json!(false));
+        map.entry("category_id".to_string()).or_insert_with(|| json!("custom"));
+    }
+    if !name.is_empty() && !map.contains_key("enabled") {
+        map.insert(
+            "enabled".into(),
+            json!(nola_modules::skills::is_skill_enabled(store, &name)),
+        );
+    }
+    item
+}
+
 pub fn build_agent_settings_snapshot(store: &Store, suite: &ModulesSuite) -> Value {
     let saved = store
         .get_kv("agent_settings")
@@ -470,24 +602,15 @@ pub fn build_agent_settings_snapshot(store: &Store, suite: &ModulesSuite) -> Val
         .and_then(|v| v.as_bool())
         .unwrap_or(true);
 
+    let builtins = nola_modules::skills::builtin_skills();
     let skills: Vec<Value> = if let Some(arr) = saved.get("skills").and_then(|v| v.as_array()) {
-        arr.clone()
+        arr.iter()
+            .map(|entry| normalize_saved_skill_entry(entry, &builtins, store))
+            .collect()
     } else {
         nola_modules::skills::discover_skills(&suite.workspace_root, suite.user_home.as_deref())
             .into_iter()
-            .map(|s| {
-                let enabled = nola_modules::skills::is_skill_enabled(store, &s.name);
-                json!({
-                    "id": s.name,
-                    "name": s.name,
-                    "display_name": s.name,
-                    "description": s.description,
-                    "content": s.body,
-                    "enabled": enabled,
-                    "source": "discovered",
-                    "revision": 1
-                })
-            })
+            .map(|s| project_skill_descriptor(&s, store))
             .collect()
     };
 
@@ -827,6 +950,192 @@ fn ensure_profile_snake_case_aliases(p: &mut Value) {
     }
 }
 
+/// Normalize any automation `format` value to the canonical set expected by the Web UI
+/// (`agent`, `html`, `search`, `rss`, `json`, `icalendar`, `file`, `folder`, `script`, `reminder`),
+/// mapping legacy/alias `"prompt"` values to `"agent"`.
+pub fn canonical_automation_format(raw: Option<&str>) -> String {
+    let trimmed = raw.map(str::trim).unwrap_or("");
+    if trimmed.is_empty() {
+        return "agent".to_string();
+    }
+    match trimmed.to_ascii_lowercase().as_str() {
+        "prompt" | "agent" | "agent_prompt" | "prompt_automation" => "agent".to_string(),
+        "html" | "search" | "rss" | "json" | "icalendar" | "file" | "folder" | "script"
+        | "reminder" => trimmed.to_ascii_lowercase(),
+        _ => trimmed.to_string(),
+    }
+}
+
+/// Strictly normalize a `data_source` record so it always satisfies `dataSources.ts`'s `parseSource`
+/// validator (`id`, `name`, `kind`, `location`, `accessPolicy`, and optional `validationContract`).
+pub fn normalize_data_source_record(raw: &Value) -> Value {
+    const MAX_JS_SAFE_INTEGER: u64 = 9_007_199_254_740_991;
+    let id = raw
+        .get("id")
+        .and_then(|v| v.as_str())
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .map(ToString::to_string)
+        .unwrap_or_else(new_id);
+    let name = raw
+        .get("name")
+        .or_else(|| raw.get("title"))
+        .and_then(|v| v.as_str())
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .unwrap_or(&id)
+        .to_string();
+    let kind_raw = raw
+        .get("kind")
+        .or_else(|| raw.get("type"))
+        .and_then(|v| v.as_str())
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .unwrap_or("localFile");
+    let kind = match kind_raw.to_ascii_lowercase().as_str() {
+        "localfile" | "local_file" | "file" | "local" => "localFile".to_string(),
+        "http" | "https" | "url" | "web" | "api" => "http".to_string(),
+        _ => kind_raw.to_string(),
+    };
+    let location = raw
+        .get("location")
+        .or_else(|| raw.get("path"))
+        .or_else(|| raw.get("url"))
+        .or_else(|| raw.get("endpoint"))
+        .and_then(|v| v.as_str())
+        .map(str::trim)
+        .unwrap_or("")
+        .to_string();
+    let policy_raw = raw
+        .get("accessPolicy")
+        .or_else(|| raw.get("access_policy"))
+        .and_then(|v| v.as_str())
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .unwrap_or("conversationOptIn");
+    let access_policy = match policy_raw.to_ascii_lowercase().as_str() {
+        "conversationoptin" | "conversation_opt_in" | "opt_in" => "conversationOptIn".to_string(),
+        "askwhenrelevant" | "ask_when_relevant" | "ask" => "askWhenRelevant".to_string(),
+        "defaultenabled" | "default_enabled" | "default" => "defaultEnabled".to_string(),
+        "blocked" | "deny" | "disabled" => "blocked".to_string(),
+        _ => policy_raw.to_string(),
+    };
+    let max_age = raw
+        .get("maximumAgeMinutes")
+        .or_else(|| raw.get("maximum_age_minutes"))
+        .or_else(|| raw.pointer("/validationContract/maximumAgeMinutes"))
+        .and_then(|v| v.as_i64())
+        .unwrap_or(60)
+        .clamp(1, 10_080);
+    let updated_at = raw
+        .get("updatedAt")
+        .or_else(|| raw.get("updated_at"))
+        .and_then(|v| v.as_str())
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .map(ToString::to_string)
+        .unwrap_or_else(|| Utc::now().to_rfc3339());
+
+    let mut out = serde_json::Map::new();
+    out.insert("id".into(), json!(id));
+    out.insert("name".into(), json!(name));
+    out.insert("kind".into(), json!(kind));
+    out.insert("location".into(), json!(location));
+    out.insert("accessPolicy".into(), json!(access_policy));
+    out.insert("maximumAgeMinutes".into(), json!(max_age));
+    out.insert("updatedAt".into(), json!(updated_at));
+
+    if let Some(last_err) = raw
+        .get("lastError")
+        .or_else(|| raw.get("last_error"))
+        .and_then(|v| v.as_str())
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+    {
+        out.insert("lastError".into(), json!(last_err));
+    }
+
+    if let Some(vc) = raw.get("validationContract").and_then(|v| v.as_object()) {
+        let reader_description = vc
+            .get("readerDescription")
+            .and_then(|v| v.as_str())
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+            .map(ToString::to_string)
+            .unwrap_or_else(|| format!("{kind} reader"));
+        let schema_fields: Vec<String> = vc
+            .get("schemaFields")
+            .and_then(|v| v.as_array())
+            .map(|arr| {
+                arr.iter()
+                    .filter_map(|item| item.as_str().map(ToString::to_string))
+                    .collect()
+            })
+            .unwrap_or_else(|| vec!["content".to_string()]);
+        let redacted_sample = vc
+            .get("redactedSample")
+            .and_then(|v| v.as_str())
+            .unwrap_or("")
+            .to_string();
+        let record_count = vc
+            .get("recordCount")
+            .and_then(|v| {
+                v.as_u64()
+                    .or_else(|| v.as_i64().filter(|&n| n >= 0).map(|n| n as u64))
+            })
+            .unwrap_or(0)
+            .min(MAX_JS_SAFE_INTEGER);
+        let contract_max_age = vc
+            .get("maximumAgeMinutes")
+            .and_then(|v| v.as_i64())
+            .unwrap_or(max_age)
+            .clamp(1, 10_080);
+        let raw_state = vc
+            .get("validationState")
+            .and_then(|v| v.as_str())
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+            .unwrap_or("failed");
+        let validation_state = match raw_state.to_ascii_lowercase().as_str() {
+            "ok" | "verified" => "verified".to_string(),
+            "empty" | "verifiedempty" | "verified_empty" => "verifiedEmpty".to_string(),
+            "error" | "failed" => "failed".to_string(),
+            "blocked" => "blocked".to_string(),
+            _ => raw_state.to_string(),
+        };
+        let validated_at = vc
+            .get("validatedAt")
+            .and_then(|v| v.as_str())
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+            .map(ToString::to_string)
+            .unwrap_or_else(|| updated_at.clone());
+        let mut contract = serde_json::Map::new();
+        contract.insert("sourceId".into(), json!(id));
+        contract.insert("readerDescription".into(), json!(reader_description));
+        contract.insert("schemaFields".into(), json!(schema_fields));
+        contract.insert("redactedSample".into(), json!(redacted_sample));
+        contract.insert("recordCount".into(), json!(record_count));
+        contract.insert("maximumAgeMinutes".into(), json!(contract_max_age));
+        contract.insert("validationState".into(), json!(validation_state));
+        contract.insert("validatedAt".into(), json!(validated_at));
+        if let Some(err_msg) = vc
+            .get("errorMessage")
+            .and_then(|v| v.as_str())
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+        {
+            contract.insert("errorMessage".into(), json!(err_msg));
+        }
+        if let Some(recipe) = vc.get("readRecipe").filter(|v| !v.is_null()) {
+            contract.insert("readRecipe".into(), recipe.clone());
+        }
+        out.insert("validationContract".into(), Value::Object(contract));
+    }
+
+    Value::Object(out)
+}
+
 pub fn normalize_automation_record(raw: &Value) -> Value {
     let id = raw
         .get("id")
@@ -842,12 +1151,7 @@ pub fn normalize_automation_record(raw: &Value) -> Value {
         .map(str::trim)
         .filter(|s| !s.is_empty())
         .unwrap_or("Automation");
-    let format = raw
-        .get("format")
-        .and_then(|v| v.as_str())
-        .map(str::trim)
-        .filter(|s| !s.is_empty())
-        .unwrap_or("agent");
+    let format = canonical_automation_format(raw.get("format").and_then(|v| v.as_str()));
     let url = if format == "agent" || format == "script" {
         ""
     } else {
@@ -1507,5 +1811,152 @@ mod tests {
         assert_eq!(decoded["cwd"], "/tmp");
         assert_eq!(norm["scriptCwd"], "/tmp");
         assert_eq!(norm["scriptApproved"], false);
+    }
+
+    #[test]
+    fn data_source_normalization_passes_strict_frontend_contract() {
+        // Legacy/partial record missing accessPolicy, using title/path, and broken contract fields
+        let norm = normalize_data_source_record(&json!({
+            "id": "ds-1",
+            "title": "Project Notes",
+            "kind": "local_file",
+            "path": "/tmp/notes.md",
+            "validationContract": {
+                "sourceId": "wrong-id",
+                "recordCount": -5,
+                "maximumAgeMinutes": 0,
+                "schemaFields": ["content", 123],
+                "validationState": "ok",
+                "errorMessage": null
+            }
+        }));
+        for key in ["id", "name", "kind", "location", "accessPolicy"] {
+            assert!(
+                norm.get(key).and_then(|v| v.as_str()).is_some(),
+                "missing required string field {key}: {norm}"
+            );
+        }
+        assert_eq!(norm["id"], "ds-1");
+        assert_eq!(norm["name"], "Project Notes");
+        assert_eq!(norm["kind"], "localFile");
+        assert_eq!(norm["location"], "/tmp/notes.md");
+        assert_eq!(norm["accessPolicy"], "conversationOptIn");
+
+        let vc = norm["validationContract"].as_object().unwrap();
+        assert_eq!(vc["sourceId"], "ds-1");
+        assert!(vc["readerDescription"].is_string());
+        assert!(vc["redactedSample"].is_string());
+        assert_eq!(vc["validationState"], "verified");
+        assert!(vc["validatedAt"].as_str().is_some_and(|s| !s.is_empty()));
+        assert_eq!(vc["schemaFields"], json!(["content"]));
+        assert_eq!(vc["recordCount"], 0);
+        assert_eq!(vc["maximumAgeMinutes"], 1);
+        assert!(vc.get("errorMessage").is_none());
+
+        // Minimal newly created record without validationContract
+        let minimal = normalize_data_source_record(&json!({
+            "name": "API Feed",
+            "kind": "http",
+            "location": "https://example.com/feed.json"
+        }));
+        assert!(minimal["id"].as_str().is_some_and(|s| !s.is_empty()));
+        assert_eq!(minimal["name"], "API Feed");
+        assert_eq!(minimal["kind"], "http");
+        assert_eq!(minimal["location"], "https://example.com/feed.json");
+        assert_eq!(minimal["accessPolicy"], "conversationOptIn");
+        assert!(minimal.get("validationContract").is_none());
+    }
+
+    #[test]
+    fn builtin_skills_have_builtin_source_and_non_custom_category() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = Store::open_in_memory().unwrap();
+        let suite = ModulesSuite::new(store.clone(), dir.path().to_path_buf(), None);
+
+        // Fresh discovery
+        let snap = build_agent_settings_snapshot(&store, &suite);
+        let skills = snap["skills"].as_array().unwrap();
+        for name in ["code-review", "debugging", "tdd"] {
+            let sk = skills
+                .iter()
+                .find(|s| s["name"] == name)
+                .unwrap_or_else(|| panic!("expected built-in skill {name}"));
+            assert_eq!(sk["built_in"], true);
+            assert_eq!(sk["source"], "built_in");
+            assert_eq!(sk["category_id"], "workspace");
+            assert!(sk["default_content"].as_str().is_some_and(|s| !s.is_empty()));
+        }
+
+        // Legacy persisted agent_settings with source="discovered" upgrades cleanly
+        store
+            .set_kv(
+                "agent_settings",
+                &json!({
+                    "skills": [
+                        {"id": "code-review", "name": "code-review", "source": "discovered", "enabled": true},
+                        {"id": "my-custom", "name": "my-custom", "source": "custom", "enabled": true}
+                    ]
+                }),
+            )
+            .unwrap();
+        let upgraded = build_agent_settings_snapshot(&store, &suite);
+        let upgraded_skills = upgraded["skills"].as_array().unwrap();
+        let cr = upgraded_skills.iter().find(|s| s["name"] == "code-review").unwrap();
+        assert_eq!(cr["built_in"], true);
+        assert_eq!(cr["source"], "built_in");
+        assert_eq!(cr["category_id"], "workspace");
+        assert!(cr["default_content"].as_str().is_some_and(|s| !s.is_empty()));
+
+        let custom = upgraded_skills.iter().find(|s| s["name"] == "my-custom").unwrap();
+        assert_eq!(custom["built_in"], false);
+        assert_eq!(custom["category_id"], "custom");
+    }
+
+    #[test]
+    fn prompt_automation_normalizes_to_canonical_agent_format_and_multistep_messages_reconstruct() {
+        let prompt_auto = normalize_automation_record(&json!({
+            "id": "auto-prompt-1",
+            "name": "Daily Briefing",
+            "format": "prompt",
+            "userPrompt": "Summarize open PRs",
+            "frequency": "daily",
+            "time": "08:30"
+        }));
+        assert_eq!(prompt_auto["format"], "agent");
+        assert_eq!(prompt_auto["url"], "");
+        assert_eq!(prompt_auto["userPrompt"], "Summarize open PRs");
+
+        // Multi-step turn_completed + chat_assistant deduplicates in-place without losing Markdown
+        let store = Store::open_in_memory().unwrap();
+        store
+            .append_event("conv-multi", "chat_user", json!({"content": "show table"}), 100)
+            .unwrap();
+        store
+            .append_event(
+                "conv-multi",
+                "turn_completed",
+                json!({"final_text": "| a | b |\n|---|---|\n| 1 | 2 |\n\nRendered UI."}),
+                100,
+            )
+            .unwrap();
+        store
+            .append_event(
+                "conv-multi",
+                "chat_assistant",
+                json!({
+                    "content": "| a | b |\n|---|---|\n| 1 | 2 |\n\nRendered UI.",
+                    "reasoning": "checked metrics",
+                    "toolCalls": [{"callId": "c1", "name": "render_ui_surface", "ok": true, "summary": "rendered"}],
+                    "uiSurfaces": []
+                }),
+                100,
+            )
+            .unwrap();
+        let (msgs, _) = reconstruct_v2_messages(&store, "conv-multi");
+        assert_eq!(msgs.len(), 2);
+        assert_eq!(msgs[1]["role"], "assistant");
+        assert_eq!(msgs[1]["content"], "| a | b |\n|---|---|\n| 1 | 2 |\n\nRendered UI.");
+        assert_eq!(msgs[1]["reasoning"], "checked metrics");
+        assert_eq!(msgs[1]["toolCalls"][0]["name"], "render_ui_surface");
     }
 }

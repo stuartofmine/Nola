@@ -4,6 +4,8 @@
     import { locale, t } from '../lib/i18n';
     import { toasts, dismissToast } from '../lib/toast';
 
+    let { hasMobileNav = false }: { hasMobileNav?: boolean } = $props();
+
     let reducedMotion = $state(typeof matchMedia === 'function' && matchMedia('(prefers-reduced-motion: reduce)').matches);
     onMount(() => {
         if (typeof matchMedia !== 'function') return;
@@ -16,7 +18,7 @@
 </script>
 
 {#if $toasts.length}
-    <div class="toast-host" role="region" aria-live="polite" aria-label={t($locale, 'shell.notifications')}>
+    <div class="toast-host" class:with-mobile-nav={hasMobileNav} role="region" aria-live="polite" aria-label={t($locale, 'shell.notifications')}>
         {#each $toasts as item (item.id)}
             <div class="toast" data-tone={item.tone} role={item.tone === 'error' ? 'alert' : 'status'}
                 in:fly={{ y: 8, duration: reducedMotion ? 0 : 180 }} out:fade={{ duration: reducedMotion ? 0 : 100 }}>
@@ -46,10 +48,10 @@
         padding: 10px 14px;
         border: 1px solid var(--border);
         border-radius: 12px;
-        background: var(--surface-elevated, var(--surface));
+        background: var(--surface-elevated);
         color: var(--content);
         font-size: .875rem;
-        box-shadow: 0 8px 24px rgb(0 0 0 / .16);
+        box-shadow: var(--dialog-shadow);
     }
     .toast[data-tone='error'] { border-color: var(--danger); color: var(--danger); }
     .toast[data-tone='success'] { border-color: var(--success); }
@@ -62,8 +64,14 @@
         color: var(--muted);
         font-size: 16px;
         line-height: 1;
+        flex: none;
+    }
+    @media (pointer: coarse) {
+        .toast-close { min-width: 44px; min-height: 44px; margin: -6px -8px -6px 0; }
     }
     @media (max-width: 760px) {
-        .toast-host { inset: auto 16px calc(72px + env(safe-area-inset-bottom, 0px)) 16px; max-width: none; }
+        .toast-host { inset: auto 16px calc(16px + env(safe-area-inset-bottom, 0px)) 16px; max-width: none; }
+        .toast-host.with-mobile-nav { bottom: calc(72px + env(safe-area-inset-bottom, 0px)); }
+        .toast-close { min-width: 44px; min-height: 44px; margin: -6px -8px -6px 0; }
     }
 </style>

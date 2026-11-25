@@ -107,12 +107,13 @@
     .review-header h2 { margin: 0; font-size: 1rem; }
     .embedded-review p { margin: 0; color: var(--muted); font-size: .875rem; line-height: 1.6; }
     .workspace-root code { display: block; overflow-wrap: anywhere; }
-    .workspace-badge { margin-bottom: 4px; display: inline-block; }
+    .badge { display: inline-flex; align-items: center; flex: none; padding: 2px 8px; border: 1px solid var(--border); border-radius: 999px; background: var(--surface-subtle, var(--panel)); color: var(--muted); font-size: 12px; font-weight: 500; line-height: 1.4; white-space: nowrap; }
+    .workspace-badge { margin-bottom: 4px; }
     .workspace-files li { justify-content: space-between; align-items: baseline; }
     .workspace-files .file-path { flex: 1 1 auto; }
     .workspace-files .file-meta { flex: 0 0 auto; color: var(--muted); font-size: .75rem; white-space: nowrap; }
     .actions.start { justify-content: flex-start; }
-    ul { list-style: none; margin: 0; padding: 0; } li { display: flex; gap: 8px; border-bottom: 1px solid var(--border); padding-block: 10px; font-size: .875rem; } li span { overflow-wrap: anywhere; min-width: 0; }
+    ul { list-style: none; margin: 0; padding: 0; } li { display: flex; align-items: center; gap: 8px; border-bottom: 1px solid var(--border); padding-block: 10px; font-size: .875rem; } li span { overflow-wrap: anywhere; min-width: 0; }
     summary { min-height: 44px; padding-block: 10px; cursor: pointer; font-size: .875rem; }
     pre { max-height: min(60dvh, 600px); overflow: auto; padding: 12px; border: 1px solid var(--border); border-radius: 10px; font: 12px/1.65 var(--font-code, monospace); white-space: pre; }
     .embedded-review button { min-height: var(--control-hit-size); }

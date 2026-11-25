@@ -40,10 +40,15 @@ struct AppleUINodeView<JSON: JournalJSONValue>: View {
         } else {
         switch node.component {
         case "Text":
-            Text(node.props["text"]?.journalString ?? "")
-                .font(textFont(node.props["variant"]?.journalString))
-                .textSelection(.enabled)
-                .frame(maxWidth: .infinity, alignment: .leading)
+            if presentationOnly {
+                Text(node.props["text"]?.journalString ?? "")
+                    .font(textFont(node.props["variant"]?.journalString))
+            } else {
+                Text(node.props["text"]?.journalString ?? "")
+                    .font(textFont(node.props["variant"]?.journalString))
+                    .textSelection(.enabled)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+            }
         case "Icon":
             AppleUIIconView(name: node.props["name"]?.journalString,
                 svgPath: node.props["name"]?.journalObject?["svgPath"]?.journalString,
@@ -57,7 +62,8 @@ struct AppleUINodeView<JSON: JournalJSONValue>: View {
         case "Card":
             children(node, "child").padding(16)
                 .frame(maxWidth: .infinity, alignment: .leading)
-                .overlay(RoundedRectangle(cornerRadius: 12).strokeBorder(Color.secondary.opacity(0.25), lineWidth: 1))
+                .background(Color("NolaSurfaceRaised"), in: RoundedRectangle(cornerRadius: 14, style: .continuous))
+                .overlay(RoundedRectangle(cornerRadius: 14, style: .continuous).strokeBorder(Color("NolaDivider"), lineWidth: 1))
         case "Divider": Divider()
         case "Button":
             if presentationOnly {
@@ -103,7 +109,7 @@ struct AppleUINodeView<JSON: JournalJSONValue>: View {
                 .onDisappear { onTextFocusChanged(id, false) }
         case "CheckBox":
             Toggle(label(node), isOn: binding(node, default: false))
-                .tint(Color(red: 0x23 / 255.0, green: 0x70 / 255.0, blue: 0x47 / 255.0))
+                .tint(Color("NolaSuccess"))
                 .frame(minHeight: controlHeight).contentShape(Rectangle())
                 .disabled(node.bindings["value"] == nil)
         case "Slider":
@@ -154,10 +160,22 @@ struct AppleUINodeView<JSON: JournalJSONValue>: View {
                 .frame(minHeight: controlHeight).disabled(node.bindings["value"] == nil)
         case "Tabs":
             let titles = node.props["tab_titles"]?.journalArray?.compactMap(\.journalString) ?? []
+            let pickerLabel = label(node).isEmpty ? String(localized: "a2ui.tabs", defaultValue: "Tabs") : label(node)
             VStack(alignment: .leading, spacing: 12) {
-                Picker("", selection: $selectedTab) {
-                    ForEach(Array(titles.enumerated()), id: \.offset) { index, title in Text(title).tag(index) }
-                }.pickerStyle(.menu)
+                if titles.count <= 5 {
+                    Picker(pickerLabel, selection: $selectedTab) {
+                        ForEach(Array(titles.enumerated()), id: \.offset) { index, title in Text(title).tag(index) }
+                    }
+                    .pickerStyle(.segmented)
+                    .labelsHidden()
+                    .accessibilityLabel(pickerLabel)
+                } else {
+                    Picker(pickerLabel, selection: $selectedTab) {
+                        ForEach(Array(titles.enumerated()), id: \.offset) { index, title in Text(title).tag(index) }
+                    }
+                    .pickerStyle(.menu)
+                    .accessibilityLabel(pickerLabel)
+                }
                 children(node, "tab:\(titles.indices.contains(selectedTab) ? selectedTab : 0)")
             }
         case "Modal":

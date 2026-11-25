@@ -1477,4 +1477,13 @@
     <string name="permission_from_subagent">De subagente: %1$s</string>
     <string name="permission_queue_pending">1 de %1$d pendientes</string>
     <string name="chat_response_failed_empty">La respuesta falló.</string>
+    <string name="chat_v2_question_placeholder">Escribe tu respuesta…</string>
+    <string name="chat_v2_question_skip">Omitir</string>
+    <string name="chat_v2_question_submit">Enviar</string>
+    <string name="chat_v2_ui_unavailable">Interfaz interactiva no disponible</string>
+    <string name="chat_v2_ui_interaction_failed">Error en la interacción</string>
+    <string name="chat_v2_context_compacted">Contexto compactado</string>
+    <string name="chat_v2_context_compacted_range">Contexto compactado (%1$s → %2$s tokens)</string>
+    <string name="chat_v2_context_compacted_after">Contexto compactado (%1$s tokens)</string>
+    <string name="chat_v2_context_compaction_failed">Error al compactar el contexto</string>
 </resources>

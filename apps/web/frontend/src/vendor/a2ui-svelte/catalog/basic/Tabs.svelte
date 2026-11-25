@@ -70,18 +70,30 @@
 	}
 	.tab {
 		appearance: none;
-		background: none;
+		background: transparent;
 		border: none;
 		border-bottom: 2px solid transparent;
+		border-radius: 0;
+		box-shadow: none;
 		color: var(--a2ui-color-text-muted);
 		font: inherit;
 		padding: 0.5rem 0.75rem;
 		cursor: pointer;
 		white-space: nowrap;
 	}
-	.tab.active {
+	.tab:hover:not(:disabled) {
+		background: var(--composer-pill-hover-bg, var(--a2ui-color-surface-raised));
+		border-color: transparent;
+		border-bottom-color: var(--a2ui-color-border);
+		color: var(--a2ui-color-text);
+	}
+	.tab.active,
+	.tab.active:hover:not(:disabled) {
 		color: var(--a2ui-color-text);
 		background: var(--accent-subtle, var(--a2ui-color-surface-raised));
+		border-color: transparent;
+		border-bottom-color: var(--a2ui-color-accent, var(--a2ui-color-primary));
+		font-weight: 600;
 	}
 	.panel {
 		display: flex;

@@ -358,10 +358,13 @@ struct MacConversationCanvas: View {
                     if let conversationID = model.selectedConversationID,
                        let v2Surfaces = model.v2UISurfacesByConversation[conversationID],
                        !v2Surfaces.isEmpty {
+                        let indexedSurfaces: [(key: String, json: String)] = v2Surfaces.enumerated().map { index, json in
+                            (key: MacV2UISurfaceCard.surfaceKey(for: json, index: index), json: json)
+                        }
                         VStack(alignment: .leading, spacing: 8) {
-                            ForEach(Array(v2Surfaces.enumerated()), id: \.offset) { _, snapshotJSON in
+                            ForEach(indexedSurfaces, id: \.key) { item in
                                 MacV2UISurfaceCard(
-                                    snapshotJSON: snapshotJSON,
+                                    snapshotJSON: item.json,
                                     conversationID: conversationID,
                                     onSubmit: { convID, interactionData in
                                         try await model.submitV2UIInteraction(
@@ -676,9 +679,22 @@ private struct MacV2UISurfaceCard: View {
     let snapshotJSON: String
     let conversationID: String
     let onSubmit: (String, Data) async throws -> Data
+    @State private var committedSnapshot: AppleUISnapshot<MacCanonicalJSONValue>?
     @State private var fieldValues: [String: String] = [:]
     @State private var isSubmitting = false
     @State private var submissionError: String?
+
+    static func surfaceKey(for snapshotJSON: String, index: Int) -> String {
+        if let data = snapshotJSON.data(using: .utf8),
+           let root = try? JSONSerialization.jsonObject(with: data) as? [String: Any] {
+            if let sid = root["surface_id"] as? String, !sid.isEmpty { return sid }
+            if let identity = root["identity"] as? [String: Any],
+               let sid = identity["surface_id"] as? String, !sid.isEmpty {
+                return sid
+            }
+        }
+        return "surface-\(index)"
+    }
 
     private var decodedSnapshot: AppleUISnapshot<MacCanonicalJSONValue>? {
         guard let data = snapshotJSON.data(using: .utf8) else { return nil }
@@ -693,9 +709,17 @@ private struct MacV2UISurfaceCard: View {
     var body: some View {
         Group {
             if let snapshot = decodedSnapshot {
-                let targetConvID = conversationID.isEmpty ? snapshot.identity.owner.conversation_id : conversationID
+                let activeSnapshot: AppleUISnapshot<MacCanonicalJSONValue> = {
+                    if let committed = committedSnapshot,
+                       committed.identity == snapshot.identity,
+                       committed.revision >= snapshot.revision {
+                        return committed
+                    }
+                    return snapshot
+                }()
+                let targetConvID = conversationID.isEmpty ? activeSnapshot.identity.owner.conversation_id : conversationID
                 AppleUISurfaceView(
-                    snapshot: snapshot,
+                    snapshot: activeSnapshot,
                     submit: { submission in
                         do {
                             let encoded = try JSONEncoder().encode(submission.interaction)
@@ -715,14 +739,19 @@ private struct MacV2UISurfaceCard: View {
                                let updated = try? JSONDecoder().decode(AppleUISnapshot<MacCanonicalJSONValue>.self, from: snapData) {
                                 return .committed(AppleUIInteractionReceipt(snapshot: updated, queued_submission_id: submission.submission_id))
                             }
-                            return .committed(AppleUIInteractionReceipt(snapshot: snapshot, queued_submission_id: submission.submission_id))
+                            return .committed(AppleUIInteractionReceipt(snapshot: activeSnapshot, queued_submission_id: submission.submission_id))
                         } catch {
                             return .rejected(error.localizedDescription)
                         }
                     },
-                    accepted: { _ in }
+                    accepted: { receipt in
+                        if receipt.snapshot.identity == snapshot.identity,
+                           receipt.snapshot.revision >= activeSnapshot.revision {
+                            committedSnapshot = receipt.snapshot
+                        }
+                    }
                 )
-                .id(snapshot.identity)
+                .id(activeSnapshot.identity)
             } else if let root = rawObject {
                 rawSurfaceBody(root: root)
             }
@@ -750,7 +779,7 @@ private struct MacV2UISurfaceCard: View {
                 let actionID = (props["action_id"] as? String) ?? (props["action"] as? String) ?? id
                 switch kind.lowercased() {
                 case "button", "action":
-                    Button(text.isEmpty ? (actionID.isEmpty ? "Submit" : actionID) : text) {
+                    Button(text.isEmpty ? (actionID.isEmpty ? String(localized: "Submit") : actionID) : text) {
                         isSubmitting = true
                         submissionError = nil
                         Task {
@@ -767,7 +796,7 @@ private struct MacV2UISurfaceCard: View {
                             }
                         }
                     }
-                    .buttonStyle(.borderedProminent)
+                    .buttonStyle(.nolaProminent)
                     .disabled(isSubmitting)
                 case "textfield", "text_field", "input":
                     let bindingKey = (props["binding"] as? String) ?? (id.isEmpty ? "input" : id)

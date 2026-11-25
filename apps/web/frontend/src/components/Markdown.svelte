@@ -133,12 +133,12 @@
     .markdown :global(li > div > p:first-child) { margin-top: 0; } .markdown :global(li > div > p:last-child) { margin-bottom: 0; }
     li.task { list-style: none; display: flex; align-items: baseline; gap: .55em; } .task input { width: auto; margin: 0; }
     blockquote { margin: 12px 0; padding-inline-start: 12px; border-inline-start: 2px solid var(--outline); color: var(--muted); }
-    .markdown :global(code) { font-family: var(--font-code); font-size: .9em; background: var(--panel); border-radius: 4px; padding: .12em .3em; }
+    .markdown :global(code) { font-family: var(--font-code); font-size: .9em; background: var(--canvas); border: 1px solid var(--border); border-radius: 4px; padding: .12em .35em; }
     .code-block { margin: 1em 0; border: 1px solid var(--border); border-radius: 10px; overflow: hidden; }
-    .code-header { display: flex; justify-content: space-between; align-items: center; gap: 12px; padding: 6px 12px; background: var(--panel); font-size: .85em; color: var(--muted); }
+    .code-header { display: flex; justify-content: space-between; align-items: center; gap: 12px; padding: 6px 12px; background: var(--canvas); border-bottom: 1px solid var(--border); font-size: .85em; color: var(--muted); }
     .code-header button { padding: 3px 8px; min-height: max(32px, var(--control-hit-size)); min-width: 44px; }
     pre { margin: 0; padding: 12px; overflow: auto; max-height: 480px; white-space: pre; line-height: 1.5; tab-size: 4; background: var(--surface); }
-    .markdown pre code { padding: 0; background: none; border-radius: 0; }
+    .markdown pre code { padding: 0; background: none; border: 0; border-radius: 0; }
     .markdown {
         --tok-kw: #9a2b7c;
         --tok-str: #146c37;
@@ -205,7 +205,7 @@
         padding: 12px 16px;
         border: 1px solid var(--border);
         border-radius: 10px;
-        background: var(--panel);
+        background: var(--canvas);
         color: var(--content);
         font-family: 'Cambria Math', 'STIX Two Math', 'Latin Modern Math', Georgia, 'Times New Roman', serif;
         font-size: 1.12em;
@@ -272,7 +272,7 @@
     .table-scroll { overflow-x: auto; margin: 1em 0; border: 1px solid var(--border); border-radius: 8px; }
     table { border-collapse: collapse; min-width: 100%; font-size: .95em; }
     th, td { padding: 8px 12px; border-bottom: 1px solid var(--border); min-width: 64px; vertical-align: top; }
-    th { background: var(--panel); font-weight: 600; } tbody tr:last-child td { border-bottom: 0; }
+    th { background: var(--canvas); font-weight: 600; } td { background: var(--surface); } tbody tr:last-child td { border-bottom: 0; }
     hr { border: 0; border-top: 1px solid var(--border); margin: 1.3em 0; }
     .copy-notice { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; margin: 0; }
     @media (pointer: coarse) { .code-header button { min-height: 44px; } }

@@ -97,5 +97,5 @@
     .tab-rename { display: flex; align-items: center; }
     .tab-rename input { min-height: 30px; height: 30px; width: min(260px, 42vw); padding: 2px 10px; border: 1px solid var(--input-focus-border); border-radius: 7px; background: var(--input-bg); font-size: 12.5px; }
     @media (pointer: coarse) { .tab > .edit-hint { opacity: .85; width: 30px; height: 30px; min-height: 30px; } }
-    @media (max-width: 700px) { .content-tabs { justify-content: flex-start; } .tab { height: 40px; max-width: 200px; } .tab > .close { min-width: 44px; min-height: 44px; } }
+    @media (max-width: 760px) { .content-tabs { justify-content: flex-start; padding-inline: 2px; } .tab { height: 40px; max-width: 200px; min-width: 72px; } .tab > .close { min-width: 44px; min-height: 44px; } }
 </style>

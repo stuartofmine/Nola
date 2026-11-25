@@ -2,6 +2,10 @@ import { executionConversationLink } from './results.ts';
 import { randomId } from './randomId.ts';
 export const automationFormats = ['agent', 'html', 'search', 'rss', 'json', 'icalendar', 'file', 'folder', 'script'] as const;
 export type AutomationFormat = typeof automationFormats[number];
+export const automationDisplayFormats = [...automationFormats, 'reminder', 'prompt', 'conversation', 'assistant'] as const;
+export function automationFormatKnown(format: string): boolean {
+    return (automationDisplayFormats as readonly string[]).includes(format);
+}
 export interface Automation {
     executionSpec?: unknown;
     id: string; name: string; url: string; format: string; userPrompt: string; revision?: number;

@@ -1479,4 +1479,13 @@
     <string name="permission_from_subagent">サブエージェント: %1$s</string>
     <string name="permission_queue_pending">%1$d 件中 1 件保留中</string>
     <string name="chat_response_failed_empty">応答に失敗しました。</string>
+    <string name="chat_v2_question_placeholder">回答を入力…</string>
+    <string name="chat_v2_question_skip">スキップ</string>
+    <string name="chat_v2_question_submit">送信</string>
+    <string name="chat_v2_ui_unavailable">対話 UI を利用できません</string>
+    <string name="chat_v2_ui_interaction_failed">操作に失敗しました</string>
+    <string name="chat_v2_context_compacted">コンテキストを圧縮しました</string>
+    <string name="chat_v2_context_compacted_range">コンテキストを圧縮しました（%1$s → %2$s トークン）</string>
+    <string name="chat_v2_context_compacted_after">コンテキストを圧縮しました（%1$s トークン）</string>
+    <string name="chat_v2_context_compaction_failed">コンテキストの圧縮に失敗しました</string>
 </resources>

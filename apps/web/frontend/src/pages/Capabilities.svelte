@@ -42,12 +42,31 @@
     let reviewRead: AbortController | undefined;
     let reviewLoading = $state(false);
     let disposed = false;
+    const builtInCategories = [
+        'documents', 'data-analysis', 'design-presentations', 'communication',
+        'planning-automation', 'knowledge-research', 'workspace',
+    ] as const;
+    function isBuiltIn(item: Capability): boolean {
+        return builtin(item) || item.isBuiltIn === true || item.source === 'built-in';
+    }
     const items = $derived(settings ? mode === 'skills' ? settings.skills : settings.mcp_servers : []);
     const filtered = $derived(items.map((item, index) => ({ item, index })).filter(({ item }) =>
-        (source === 'all' || (source === 'builtin') === builtin(item)) &&
+        (source === 'all' || (source === 'builtin') === isBuiltIn(item)) &&
         `${capabilityName(item)} ${item.description || item.summary || ''} ${item.category_name || ''}`.toLocaleLowerCase().includes(query.trim().toLocaleLowerCase())));
     const dirty = $derived(!!original && JSON.stringify(draft) !== JSON.stringify(capabilityDraft(original)));
-    const sections = $derived(capabilitySections(filtered, mode));
+    const sections = $derived.by(() => {
+        if (mode === 'mcp') return capabilitySections(filtered, mode);
+        const groups = [...builtInCategories, 'builtin', 'custom'] as const;
+        return groups.map(id => ({
+            id,
+            titleKey: `capability.category.${id}`,
+            entries: filtered.filter(({ item }) => {
+                if (!isBuiltIn(item)) return id === 'custom';
+                const category = builtInCategories.some(key => key === item.category_id) ? item.category_id : 'builtin';
+                return category === id;
+            }).sort((a, b) => Number(isBuiltIn(b.item)) - Number(isBuiltIn(a.item)) || capabilityName(a.item).localeCompare(capabilityName(b.item))),
+        })).filter(group => group.entries.length > 0);
+    });
     function displayName(item: Capability) { return capabilityName(item, t($locale, 'capability.unnamed')); }
     function showError(cause: unknown) {
         if (disposed) return;
@@ -158,7 +177,7 @@
         try { await persist(updatedCapability(original, draft, mode)); } catch (cause) { showError(cause); }
     }
     async function remove() {
-        if (busy || !original || (mode === 'skills' && builtin(original))) return;
+        if (busy || !original || (mode === 'skills' && isBuiltIn(original))) return;
         if (!await confirmation.ask({ title: t($locale, 'capability.deleteTitle'), description: t($locale, 'capability.deleteBody'), confirmLabel: t($locale, 'capability.delete'), destructive: true })) return;
         if (disposed) return;
         if (selected === null) { dialog.close(); original = undefined; return; }
@@ -201,17 +220,17 @@
     <div><h1>{t($locale, 'capability.title')}</h1><p class="muted">{t($locale, 'capability.subtitle')}</p></div>
     <div class="actions">
         {#if !plugins}
-            {#if mode === 'mcp'}<button disabled={busy || !settings} onclick={addLocalMcp}>{t($locale, 'capability.addLocalMcp')}</button>{/if}
-            <button class="primary" disabled={busy || !settings} onclick={() => edit()}>{t($locale, mode === 'skills' ? 'capability.addSkill' : 'capability.addMcp')}</button>
+            {#if mode === 'mcp'}<button type="button" disabled={busy || !settings} onclick={addLocalMcp}>{t($locale, 'capability.addLocalMcp')}</button>{/if}
+            <button type="button" class="primary" disabled={busy || !settings} onclick={() => edit()}>{t($locale, mode === 'skills' ? 'capability.addSkill' : 'capability.addMcp')}</button>
         {/if}
     </div>
 </header>
 <div class="content management-content">
     <div class="tabs" role="tablist" aria-label={t($locale, 'capability.type')}>
-        {#each allTabs as value}<button id="capability-{value}" role="tab" aria-selected={activeTab === value} aria-controls="capability-panel" tabindex={activeTab === value ? 0 : -1} onkeydown={tabKey} disabled={busy} onclick={() => switchTab(value)}>{t($locale, value === 'skills' ? 'capability.skills' : value === 'mcp' ? 'capability.mcp' : 'plugin.title')}</button>{/each}
+        {#each allTabs as value}<button type="button" id="capability-{value}" role="tab" aria-selected={activeTab === value} aria-controls="capability-panel" tabindex={activeTab === value ? 0 : -1} onkeydown={tabKey} disabled={busy} onclick={() => switchTab(value)}>{t($locale, value === 'skills' ? 'capability.skills' : value === 'mcp' ? 'capability.mcp' : 'plugin.title')}</button>{/each}
     </div>
     {#if plugins}
-    <div id="capability-panel" role="tabpanel" aria-labelledby="capability-plugins" tabindex="0"><HarnessPlugins /></div>
+    <div id="capability-panel" role="tabpanel" aria-labelledby="capability-plugins"><HarnessPlugins /></div>
     {:else}
     <aside aria-label={t($locale, 'execution.scope.host')}>
         <p class="muted">{t($locale, 'execution.scope.host')}</p><p class="muted">{t($locale, 'execution.scope.child')}</p>
@@ -219,20 +238,27 @@
             <p class="muted">{backend.display_name}: {t($locale, 'execution.scope.noApprovalBridge')}</p>
         {/each}
     </aside>
-    <div class="retained-settings">{#if skillReview?.pending || settings?.skill_settings_backup_key}<button disabled={busy || reviewLoading} aria-busy={reviewLoading} onclick={openSkillReview}>{t($locale, 'capability.reviewTitle')}</button>{/if}</div>
+    <div class="retained-settings">{#if skillReview?.pending || settings?.skill_settings_backup_key}<button type="button" disabled={busy || reviewLoading} aria-busy={reviewLoading} onclick={openSkillReview}>{t($locale, 'capability.reviewTitle')}</button>{/if}</div>
     {#if skillReview?.pending}<p class="notice" role="status">{t($locale, 'capability.reviewHint')}</p>{/if}
 
     <div class="fields"><label>{t($locale, 'capability.search')}<input type="search" bind:value={query} placeholder={t($locale, 'capability.searchHint')} /></label><label>{t($locale, 'capability.source')}<select bind:value={source}><option value="all">{t($locale, 'capability.all')}</option><option value="builtin">{t($locale, 'capability.builtin')}</option><option value="custom">{t($locale, 'capability.custom')}</option></select></label></div>
-    {#if error && !original}<div class="notice error" role="alert">{t($locale, error, { detail: errorDetail })} <button bind:this={retryButton} onclick={load} aria-disabled={busy}>{t($locale, 'capability.reload')}</button></div>{/if}
+    {#if error && !original}<div class="notice error" role="alert">{t($locale, error, { detail: errorDetail })} <button type="button" bind:this={retryButton} onclick={load} aria-disabled={busy}>{t($locale, 'capability.reload')}</button></div>{/if}
     {#if notice}<p role="status">{t($locale, notice)}</p>{/if}
-    <div id="capability-panel" role="tabpanel" aria-labelledby="capability-{mode}" aria-busy={busy} tabindex="0">
+    <div id="capability-panel" role="tabpanel" aria-labelledby="capability-{mode}" aria-busy={busy}>
         {#if !settings && busy}<p role="status">{t($locale, 'capability.loading')}</p>{:else if settings}
         {#each sections as section (section.id)}
         <section class="category" aria-label={t($locale, section.titleKey)}><h2>{t($locale, section.titleKey)} <span class="muted">{section.entries.length.toLocaleString($locale)}</span></h2>
         <div class="gallery">{#each section.entries as { item, index }}
             <div class="card capability">
-                <div class="row between capability-head">
-                    <button type="button" class="capability-open" onclick={() => edit(item, index)} disabled={busy}><strong>{displayName(item)}</strong></button>
+                <div class="capability-row">
+                    <button type="button" class="capability-open" onclick={() => edit(item, index)} disabled={busy}>
+                        <span class="capability-title-row">
+                            <strong>{displayName(item)}</strong>
+                            <span class="capability-badge" data-builtin={isBuiltIn(item) || undefined}>{t($locale, isBuiltIn(item) ? 'capability.builtin' : 'capability.custom')}</span>
+                        </span>
+                        <span class="summary muted">{String(item.description || item.summary || t($locale, 'capability.noDescription'))}</span>
+                        {#if item.category_name}<span class="capability-category muted">{item.category_name}</span>{/if}
+                    </button>
                     <label class="capability-switch">
                         <input type="checkbox" role="switch" aria-label={displayName(item)} checked={item.enabled !== false} disabled={busy} onchange={event => {
                             const next = event.currentTarget.checked;
@@ -241,10 +267,6 @@
                         }} />
                     </label>
                 </div>
-                <button type="button" class="capability-open capability-meta" onclick={() => edit(item, index)} disabled={busy}>
-                    <span class="summary muted">{String(item.description || item.summary || t($locale, 'capability.noDescription'))}</span>
-                    <span class="muted">{t($locale, builtin(item) ? 'capability.builtin' : 'capability.custom')}{item.category_name ? ` · ${item.category_name}` : ''}</span>
-                </button>
             </div>
         {/each}</div></section>
         {:else}<div class="card"><h2>{t($locale, query || source !== 'all' ? 'capability.noMatches' : 'capability.empty')}</h2><p class="muted">{t($locale, query || source !== 'all' ? 'capability.noMatchesHint' : 'capability.emptyHint')}</p></div>{/each}
@@ -260,8 +282,8 @@
         <fieldset disabled={busy}>
             <label class="row"><input class="check" type="checkbox" role="switch" bind:checked={draft.enabled} />{t($locale, 'capability.enable')}</label>
             <p class="muted">{t($locale, 'capability.permissionHint')}</p>
-            <label>{t($locale, 'capability.name')}<input bind:value={draft.name} readonly={mode === 'skills' && builtin(original)} required /></label>
-            <label>{t($locale, 'capability.description')}<textarea bind:value={draft.description} required={mode === 'skills'} rows="3" readonly={mode === 'skills' && builtin(original)}></textarea></label>
+            <label>{t($locale, 'capability.name')}<input bind:value={draft.name} readonly={mode === 'skills' && isBuiltIn(original)} required /></label>
+            <label>{t($locale, 'capability.description')}<textarea bind:value={draft.description} required={mode === 'skills'} rows="3" readonly={mode === 'skills' && isBuiltIn(original)}></textarea></label>
             {#if mode === 'skills'}<label>{t($locale, 'capability.content')}<textarea class="instructions" required bind:value={draft.primary} rows="12"></textarea></label><small>{t($locale, 'capability.characterCount', { count: draft.primary.length.toLocaleString($locale) })}</small>
             {:else if stdioMcp(original)}<label>{t($locale, 'capability.launch')}<textarea class="instructions" bind:value={draft.primary} required rows="7"></textarea></label>
             {:else}<label>{t($locale, 'capability.endpoint')}<input type="url" bind:value={draft.primary} required /></label><p class="muted">{t($locale, 'capability.discoveryHint')}</p>{/if}
@@ -272,8 +294,8 @@
             </section>
         {/if}
         <div class="actions">
-            {#if mode === 'skills' && builtin(original) && typeof original.default_content === 'string'}<button type="button" disabled={busy || (!dirty && original.content === original.default_content)} onclick={restore}>{t($locale, 'capability.restore')}</button>{/if}
-            {#if selected !== null && (mode !== 'skills' || !builtin(original))}<button type="button" class="danger" disabled={busy} onclick={remove}>{t($locale, 'capability.delete')}</button>{/if}
+            {#if mode === 'skills' && isBuiltIn(original) && typeof original.default_content === 'string'}<button type="button" disabled={busy || (!dirty && original.content === original.default_content)} onclick={restore}>{t($locale, 'capability.restore')}</button>{/if}
+            {#if selected !== null && (mode !== 'skills' || !isBuiltIn(original))}<button type="button" class="danger" disabled={busy} onclick={remove}>{t($locale, 'capability.delete')}</button>{/if}
             <button type="button" disabled={busy} onclick={() => close()}>{t($locale, 'capability.cancel')}</button><button class="primary" disabled={busy || (selected !== null && !dirty)}>{t($locale, busy ? 'capability.saving' : 'capability.save')}</button>
         </div>
     </form>{/if}
@@ -306,17 +328,20 @@
     .category { display: grid; gap: 12px; margin-bottom: 24px; }
     .gallery { display: grid; grid-template-columns: minmax(0, 1fr); gap: 0; border-bottom: 1px solid var(--border); }
     .capability { text-align: start; min-width: 0; overflow-wrap: anywhere; background: transparent; border: 0; border-top: 1px solid var(--border); border-radius: 0; padding: 16px 8px; gap: 6px; }
-    .capability-head { align-items: center; gap: 12px; }
-    .capability-open { display: grid; gap: 4px; flex: 1; min-width: 0; text-align: start; border: 0; background: transparent; box-shadow: none; padding: 2px 0; min-height: 0; }
+    .capability-row { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; }
+    .capability-open { display: grid; gap: 6px; flex: 1; min-width: 0; text-align: start; border: 0; background: transparent; box-shadow: none; padding: 2px 0; min-height: 0; }
     .capability-open:hover:not(:disabled) { background: transparent; border-color: transparent; }
+    .capability-title-row { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; }
+    .capability-badge { display: inline-flex; align-items: center; padding: 1px 8px; border-radius: 999px; border: 1px solid var(--border); background: var(--panel); color: var(--muted); font-size: .75rem; font-weight: 500; line-height: 1.5; }
+    .capability-badge[data-builtin] { background: var(--accent-subtle); color: var(--content); }
+    .capability-category { font-size: .8125rem; }
     .capability-switch { display: inline-flex; align-items: center; flex: none; padding: 0; min-height: 36px; }
     .capability .summary { font-size: var(--text-body); }
     .capability strong { font-size: 1rem; font-weight: 600; }
-    .capability-meta > span:last-child { font-size: .8125rem; }
     .summary { display: -webkit-box; -webkit-line-clamp: 3; line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden; }
     fieldset { border: 0; padding: 0; margin: 0; min-width: 0; display: grid; gap: 12px; }
     textarea { width: 100%; resize: vertical; min-height: 72px; font: inherit; color: inherit; background: var(--input-bg); border: 1px solid var(--input-border); border-radius: var(--radius-control); padding: 12px; }
-    @media (max-width: 560px) { .capability-head { gap: 8px; } }
+    @media (max-width: 560px) { .capability-row { gap: 8px; } }
     .instructions { font-family: ui-monospace, monospace; } .check { width: auto; }
     details { border-bottom: 1px solid var(--border); padding: 10px 0; overflow-wrap: anywhere; } summary { cursor: pointer; }
 </style>

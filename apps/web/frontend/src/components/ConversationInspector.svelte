@@ -46,6 +46,34 @@
 
     let activeTab = $state<InspectorTab>('tasks');
 
+    const inspectorTabs: ReadonlyArray<{ id: InspectorTab; labelKey: string }> = [
+        { id: 'tasks', labelKey: 'chatInspector.tabTasks' },
+        { id: 'diff', labelKey: 'chatInspector.tabDiff' },
+        { id: 'context', labelKey: 'chatInspector.tabContext' },
+        { id: 'data-sources', labelKey: 'chatInspector.tabDataSources' },
+        { id: 'knowledge', labelKey: 'chatInspector.tabKnowledge' },
+    ];
+
+    function handleTabKeydown(event: KeyboardEvent & { currentTarget: HTMLButtonElement }, index: number) {
+        const nextIndex =
+            event.key === 'ArrowRight'
+                ? (index + 1) % inspectorTabs.length
+                : event.key === 'ArrowLeft'
+                  ? (index + inspectorTabs.length - 1) % inspectorTabs.length
+                  : event.key === 'Home'
+                    ? 0
+                    : event.key === 'End'
+                      ? inspectorTabs.length - 1
+                      : null;
+        if (nextIndex === null) return;
+        event.preventDefault();
+        activeTab = inspectorTabs[nextIndex].id;
+        const buttons = event.currentTarget.parentElement?.querySelectorAll<HTMLButtonElement>('[role="tab"]');
+        const target = buttons?.[nextIndex];
+        target?.focus();
+        target?.scrollIntoView({ block: 'nearest', inline: 'nearest' });
+    }
+
     // Tab 1: Tasks & Goal
     let goal = $state<V2ConversationGoal | null>(null);
     let goalTitleDraft = $state('');
@@ -424,6 +452,17 @@
     });
 </script>
 
+<svelte:window
+    onkeydown={event => {
+        if (event.key === 'Escape' && !document.querySelector('dialog:modal')) {
+            event.preventDefault();
+            onclose();
+        }
+    }}
+/>
+
+<div class="inspector-scrim" aria-hidden="true" onclick={onclose}></div>
+
 <aside
     class="inspector-drawer"
     data-testid="conversation-inspector"
@@ -440,7 +479,9 @@
                     aria-label={t($locale, 'chatConversations.refresh')}
                     onclick={refreshCurrentTab}
                 >
-                    ↻
+                    <svg class="inspector-refresh-icon" aria-hidden="true" viewBox="0 0 24 24">
+                        <path d="M20 7v5h-5M20 12a8 8 0 1 0-2 5" />
+                    </svg>
                 </button>
             {/if}
             <button
@@ -456,59 +497,30 @@
     </header>
 
     <div class="inspector-tabs" role="tablist" aria-label={t($locale, 'chatInspector.panel')}>
-        <button
-            type="button"
-            role="tab"
-            class="inspector-tab"
-            class:active={activeTab === 'tasks'}
-            aria-selected={activeTab === 'tasks'}
-            onclick={() => (activeTab = 'tasks')}
-        >
-            {t($locale, 'chatInspector.tabTasks')}
-        </button>
-        <button
-            type="button"
-            role="tab"
-            class="inspector-tab"
-            class:active={activeTab === 'diff'}
-            aria-selected={activeTab === 'diff'}
-            onclick={() => (activeTab = 'diff')}
-        >
-            {t($locale, 'chatInspector.tabDiff')}
-        </button>
-        <button
-            type="button"
-            role="tab"
-            class="inspector-tab"
-            class:active={activeTab === 'context'}
-            aria-selected={activeTab === 'context'}
-            onclick={() => (activeTab = 'context')}
-        >
-            {t($locale, 'chatInspector.tabContext')}
-        </button>
-        <button
-            type="button"
-            role="tab"
-            class="inspector-tab"
-            class:active={activeTab === 'data-sources'}
-            aria-selected={activeTab === 'data-sources'}
-            onclick={() => (activeTab = 'data-sources')}
-        >
-            {t($locale, 'chatInspector.tabDataSources')}
-        </button>
-        <button
-            type="button"
-            role="tab"
-            class="inspector-tab"
-            class:active={activeTab === 'knowledge'}
-            aria-selected={activeTab === 'knowledge'}
-            onclick={() => (activeTab = 'knowledge')}
-        >
-            {t($locale, 'chatInspector.tabKnowledge')}
-        </button>
+        {#each inspectorTabs as tab, idx (tab.id)}
+            <button
+                type="button"
+                role="tab"
+                id={`inspector-tab-${tab.id}`}
+                aria-controls={`inspector-panel-${tab.id}`}
+                class="inspector-tab"
+                class:active={activeTab === tab.id}
+                aria-selected={activeTab === tab.id}
+                tabindex={activeTab === tab.id ? 0 : -1}
+                onclick={() => (activeTab = tab.id)}
+                onkeydown={event => handleTabKeydown(event, idx)}
+            >
+                {t($locale, tab.labelKey)}
+            </button>
+        {/each}
     </div>
 
-    <div class="inspector-body">
+    <div
+        class="inspector-body"
+        role="tabpanel"
+        id={`inspector-panel-${activeTab}`}
+        aria-labelledby={`inspector-tab-${activeTab}`}
+    >
         {#if !conversationId}
             <p class="inspector-muted">{t($locale, 'chatInspector.noConversationSelected')}</p>
         {:else if activeTab === 'tasks'}
@@ -538,12 +550,14 @@
                             type="text"
                             bind:value={goalTitleDraft}
                             placeholder={t($locale, 'chatInspector.goalTitlePlaceholder')}
+                            aria-label={t($locale, 'chatInspector.goalTitlePlaceholder')}
                             disabled={goalSaving}
                         />
                         <textarea
                             rows="2"
                             bind:value={goalDescDraft}
                             placeholder={t($locale, 'chatInspector.goalDescPlaceholder')}
+                            aria-label={t($locale, 'chatInspector.goalDescPlaceholder')}
                             disabled={goalSaving}
                         ></textarea>
                         <div class="inspector-btn-row">
@@ -737,9 +751,14 @@
                                         onchange={() => void toggleDataSource(src.id)}
                                     />
                                     <div class="source-meta">
-                                        <strong>{src.name}</strong>
+                                        <div class="source-meta-head">
+                                            <strong>{src.name}</strong>
+                                            {#if isBlocked}
+                                                <span class="source-blocked-badge">{t($locale, 'chatDataSources.blocked')}</span>
+                                            {/if}
+                                        </div>
                                         <small class="inspector-muted">
-                                            {src.kind}{src.location ? ` · ${src.location}` : ''}{isBlocked ? ` · ${t($locale, 'chatDataSources.blocked')}` : ''}
+                                            {src.kind}{src.location ? ` · ${src.location}` : ''}
                                         </small>
                                     </div>
                                 </label>
@@ -811,6 +830,9 @@
 </aside>
 
 <style>
+    .inspector-scrim {
+        display: none;
+    }
     .inspector-drawer {
         width: 340px;
         flex-shrink: 0;
@@ -825,7 +847,7 @@
         display: flex;
         align-items: center;
         justify-content: space-between;
-        padding: 10px 12px;
+        padding: 8px 12px;
         border-bottom: 1px solid var(--border);
         gap: 8px;
     }
@@ -842,13 +864,13 @@
     .inspector-icon-btn {
         display: grid;
         place-items: center;
-        width: 28px;
-        height: 28px;
-        min-width: 28px;
-        min-height: 28px;
+        width: 36px;
+        height: 36px;
+        min-width: 36px;
+        min-height: 36px;
         padding: 0;
         border: 1px solid transparent;
-        border-radius: 6px;
+        border-radius: 7px;
         background: transparent;
         color: var(--muted);
         cursor: pointer;
@@ -857,17 +879,33 @@
         color: var(--content);
         background: var(--composer-pill-hover-bg);
     }
+    .inspector-refresh-icon {
+        width: 16px;
+        height: 16px;
+        fill: none;
+        stroke: currentColor;
+        stroke-width: 1.6;
+        stroke-linecap: round;
+        stroke-linejoin: round;
+    }
     .inspector-tabs {
         display: flex;
-        flex-wrap: wrap;
+        flex-wrap: nowrap;
+        overflow-x: auto;
+        scrollbar-width: none;
         gap: 4px;
         padding: 8px 10px;
         border-bottom: 1px solid var(--border);
         background: var(--canvas);
     }
+    .inspector-tabs::-webkit-scrollbar {
+        display: none;
+    }
     .inspector-tab {
-        padding: 4px 8px;
-        min-height: 28px;
+        flex: 0 0 auto;
+        white-space: nowrap;
+        padding: 4px 10px;
+        min-height: 30px;
         min-width: 0;
         border: 1px solid transparent;
         border-radius: 6px;
@@ -960,6 +998,11 @@
         background: var(--canvas);
         color: var(--content);
         font-size: 12px;
+    }
+    .inspector-form textarea {
+        resize: none;
+    }
+    .knowledge-textarea {
         resize: vertical;
     }
     .knowledge-field {
@@ -1109,32 +1152,88 @@
         border: 1px solid var(--border);
         background: var(--canvas);
     }
+    .source-item.blocked {
+        opacity: 0.65;
+        border-style: dashed;
+        background: var(--panel);
+    }
     .source-toggle {
         display: flex;
         align-items: flex-start;
         gap: 8px;
+        min-height: 0;
+        padding: 0;
+        border-radius: 0;
         cursor: pointer;
+    }
+    .source-toggle input[type='checkbox'] {
+        margin-top: 2px;
+    }
+    .source-item.blocked .source-toggle {
+        cursor: not-allowed;
     }
     .source-meta {
         display: flex;
         flex-direction: column;
         gap: 2px;
         min-width: 0;
+        flex: 1;
         overflow-wrap: anywhere;
         font-size: 12px;
+    }
+    .source-meta-head {
+        display: flex;
+        align-items: center;
+        gap: 6px;
+        flex-wrap: wrap;
+    }
+    .source-blocked-badge {
+        display: inline-flex;
+        align-items: center;
+        padding: 1px 6px;
+        border-radius: 999px;
+        border: 1px solid var(--border);
+        background: var(--canvas);
+        color: var(--muted);
+        font-size: 10px;
+        font-weight: 600;
+        line-height: 1.4;
     }
     @media (max-width: 1024px) {
         .inspector-drawer {
             width: 290px;
         }
     }
+    @media (pointer: coarse) {
+        .inspector-icon-btn {
+            width: 44px;
+            height: 44px;
+            min-width: 44px;
+            min-height: 44px;
+        }
+    }
     @media (max-width: 760px) {
+        .inspector-scrim {
+            display: block;
+            position: fixed;
+            inset: 0;
+            z-index: 49;
+            background: rgb(0 0 0 / .42);
+        }
         .inspector-drawer {
             position: fixed;
-            inset: 44px 0 0 auto;
+            inset: 0 0 0 auto;
+            padding-top: env(safe-area-inset-top, 0px);
+            padding-bottom: env(safe-area-inset-bottom, 0px);
             width: min(92vw, 340px);
-            z-index: 30;
+            z-index: 50;
             box-shadow: var(--dialog-shadow);
+        }
+        .inspector-icon-btn {
+            width: 44px;
+            height: 44px;
+            min-width: 44px;
+            min-height: 44px;
         }
     }
 </style>

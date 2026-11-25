@@ -3634,16 +3634,16 @@ class ChatViewModel @Inject constructor(
             val tokensBefore = result["tokens_before"]?.jsonPrimitive?.contentOrNull
             val tokensAfter = result["tokens_after"]?.jsonPrimitive?.contentOrNull
             val summary = explicitSummary ?: when {
-                tokensBefore != null && tokensAfter != null -> "Context compacted ($tokensBefore → $tokensAfter tokens)"
-                tokensAfter != null -> "Context compacted ($tokensAfter tokens)"
-                else -> "Context compacted"
+                tokensBefore != null && tokensAfter != null -> context.getString(R.string.chat_v2_context_compacted_range, tokensBefore, tokensAfter)
+                tokensAfter != null -> context.getString(R.string.chat_v2_context_compacted_after, tokensAfter)
+                else -> context.getString(R.string.chat_v2_context_compacted)
             }
             _uiState.update { it.copy(v2CompactionSummary = summary, error = null) }
             reloadContextState()
         } catch (cancelled: kotlinx.coroutines.CancellationException) {
             throw cancelled
         } catch (error: Exception) {
-            _uiState.update { it.copy(error = error.localizedMessage ?: error.message ?: "Context compaction failed") }
+            _uiState.update { it.copy(error = error.localizedMessage ?: error.message ?: context.getString(R.string.chat_v2_context_compaction_failed)) }
         }
     }
 
@@ -5134,7 +5134,7 @@ class ChatViewModel @Inject constructor(
             is SseEvent.V2Compacted -> {
                 _uiState.update {
                     it.copy(
-                        v2CompactionSummary = event.summary.takeIf { s -> s.isNotBlank() } ?: "Context compacted",
+                        v2CompactionSummary = event.summary.takeIf { s -> s.isNotBlank() } ?: context.getString(R.string.chat_v2_context_compacted),
                         processingState = ProcessingState.Streaming,
                     )
                 }

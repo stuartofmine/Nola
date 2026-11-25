@@ -1380,8 +1380,11 @@ struct ChatView: View {
                         Image(systemName: "xmark")
                             .font(.caption)
                             .foregroundStyle(.secondary)
+                            .frame(minWidth: 44, minHeight: 44)
+                            .contentShape(Rectangle())
                     }
                     .buttonStyle(.plain)
+                    .accessibilityLabel(NSLocalizedString("common.close", value: "Close", comment: "Close"))
                 }
                 .padding(.horizontal, 12)
                 .padding(.vertical, 8)
@@ -1395,17 +1398,34 @@ struct ChatView: View {
                 .accessibilityIdentifier("chat.v2.compactionBanner")
             }
 
-            if !v2UiSurfaces.isEmpty {
+            if !v2UiSurfaces.isEmpty || pendingV2UserQuestion != nil {
                 let activeConvID = container.chatManager.v2SessionID ?? container.chatManager.currentConversationId?.uuidString ?? ""
-                VStack(alignment: .leading, spacing: 8) {
-                    ForEach(Array(v2UiSurfaces.enumerated()), id: \.offset) { _, surface in
-                        IOSV2UISurfaceCard(
-                            snapshotValue: surface,
-                            conversationID: activeConvID,
-                            onSubmit: { convID, interaction in
-                                try await container.chatManager.submitV2UIInteraction(
-                                    conversationId: convID,
-                                    interaction: interaction
+                let indexedSurfaces: [(key: String, surface: AgentCoreJSONValue)] = v2UiSurfaces.enumerated().map { index, surface in
+                    (key: Self.v2SurfaceKey(for: surface, index: index), surface: surface)
+                }
+                let cardsStack = VStack(alignment: .leading, spacing: 8) {
+                    if !indexedSurfaces.isEmpty {
+                        ForEach(indexedSurfaces, id: \.key) { item in
+                            IOSV2UISurfaceCard(
+                                snapshotValue: item.surface,
+                                conversationID: activeConvID,
+                                onSubmit: { convID, interaction in
+                                    try await container.chatManager.submitV2UIInteraction(
+                                        conversationId: convID,
+                                        interaction: interaction
+                                    )
+                                }
+                            )
+                        }
+                    }
+
+                    if let questionPrompt = pendingV2UserQuestion {
+                        IOSV2UserQuestionCard(
+                            prompt: questionPrompt,
+                            onRespond: { requestID, answer in
+                                try await container.chatManager.respondToV2UserQuestion(
+                                    requestID: requestID,
+                                    answer: answer
                                 )
                             }
                         )
@@ -1413,22 +1433,15 @@ struct ChatView: View {
                 }
                 .padding(.horizontal, DesignTokens.spacing_lg)
                 .padding(.vertical, 4)
-            }
 
-            if let questionPrompt = pendingV2UserQuestion {
-                IOSV2UserQuestionCard(
-                    prompt: questionPrompt,
-                    onRespond: { requestID, answer in
-                        Task {
-                            try? await container.chatManager.respondToV2UserQuestion(
-                                requestID: requestID,
-                                answer: answer
-                            )
-                        }
+                ViewThatFits(in: .vertical) {
+                    cardsStack
+                    ScrollView {
+                        cardsStack
                     }
-                )
-                .padding(.horizontal, DesignTokens.spacing_lg)
-                .padding(.vertical, 4)
+                    .frame(maxHeight: 280)
+                }
+                .frame(maxHeight: 280)
             }
 
             if let message = hostPermissionSubmissionError, pendingHostPermissionRequest != nil {
@@ -3355,12 +3368,25 @@ struct ChatView: View {
         }
     }
 
+    private static func v2SurfaceKey(for surface: AgentCoreJSONValue, index: Int) -> String {
+        if case .object(let root) = surface {
+            if case .string(let sid)? = root["surface_id"], !sid.isEmpty { return sid }
+            if case .object(let identity)? = root["identity"],
+               case .string(let sid)? = identity["surface_id"], !sid.isEmpty {
+                return sid
+            }
+        }
+        return "surface-\(index)"
+    }
+
 }
 
 private struct IOSV2UserQuestionCard: View {
     let prompt: ChatManager.V2UserQuestionPrompt
-    let onRespond: (String, String?) -> Void
+    let onRespond: (String, String?) async throws -> Void
     @State private var answerText: String = ""
+    @State private var isSubmitting = false
+    @State private var submissionError: String?
 
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
@@ -3376,24 +3402,43 @@ private struct IOSV2UserQuestionCard: View {
                     HStack(spacing: 8) {
                         ForEach(prompt.options, id: \.self) { option in
                             Button(option) {
-                                onRespond(prompt.requestID, option)
+                                submitAnswer(option)
                             }
                             .buttonStyle(.bordered)
+                            .disabled(isSubmitting)
                         }
                     }
                 }
             }
             HStack(spacing: 8) {
-                TextField("Type your answer...", text: $answerText)
-                    .textFieldStyle(.roundedBorder)
-                Button("Submit") {
+                TextField(
+                    NSLocalizedString("chat.v2.question.placeholder", value: "Type your answer...", comment: "V2 user question answer placeholder"),
+                    text: $answerText
+                )
+                .nolaInputFieldSurface()
+                .disabled(isSubmitting)
+                Button(NSLocalizedString("chat.v2.question.skip", value: "Skip", comment: "Skip V2 user question")) {
+                    submitAnswer(nil)
+                }
+                .buttonStyle(.bordered)
+                .disabled(isSubmitting)
+                Button(NSLocalizedString("chat.v2.question.submit", value: "Submit", comment: "Submit V2 user question answer")) {
                     let trimmed = answerText.trimmingCharacters(in: .whitespacesAndNewlines)
                     guard !trimmed.isEmpty else { return }
-                    onRespond(prompt.requestID, trimmed)
-                    answerText = ""
+                    submitAnswer(trimmed, clearInput: true)
                 }
                 .buttonStyle(.borderedProminent)
-                .disabled(answerText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                .tint(DesignTokens.actionColor)
+                .foregroundStyle(DesignTokens.onActionColor)
+                .disabled(isSubmitting || answerText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+            }
+            if isSubmitting {
+                ProgressView().controlSize(.small)
+            }
+            if let submissionError {
+                Text(submissionError)
+                    .font(.caption)
+                    .foregroundStyle(DesignTokens.dangerColor)
             }
         }
         .padding(12)
@@ -3404,12 +3449,30 @@ private struct IOSV2UserQuestionCard: View {
         )
         .accessibilityIdentifier("chat.v2.userQuestionCard")
     }
+
+    private func submitAnswer(_ answer: String?, clearInput: Bool = false) {
+        guard !isSubmitting else { return }
+        isSubmitting = true
+        submissionError = nil
+        Task {
+            defer { isSubmitting = false }
+            do {
+                try await onRespond(prompt.requestID, answer)
+                if clearInput {
+                    answerText = ""
+                }
+            } catch {
+                submissionError = error.localizedDescription
+            }
+        }
+    }
 }
 
 private struct IOSV2UISurfaceCard: View {
     let snapshotValue: AgentCoreJSONValue
     let conversationID: String
     let onSubmit: (String, [String: Any]) async throws -> [String: Any]
+    @State private var committedSnapshot: AppleUISnapshot<AgentCoreJSONValue>?
     @State private var fieldValues: [String: String] = [:]
     @State private var isSubmitting = false
     @State private var submissionError: String?
@@ -3422,9 +3485,17 @@ private struct IOSV2UISurfaceCard: View {
     var body: some View {
         Group {
             if let snapshot = decodedSnapshot {
-                let targetConvID = conversationID.isEmpty ? snapshot.identity.owner.conversation_id : conversationID
+                let activeSnapshot: AppleUISnapshot<AgentCoreJSONValue> = {
+                    if let committed = committedSnapshot,
+                       committed.identity == snapshot.identity,
+                       committed.revision >= snapshot.revision {
+                        return committed
+                    }
+                    return snapshot
+                }()
+                let targetConvID = conversationID.isEmpty ? activeSnapshot.identity.owner.conversation_id : conversationID
                 AppleUISurfaceView(
-                    snapshot: snapshot,
+                    snapshot: activeSnapshot,
                     submit: { submission in
                         do {
                             let encoded = try JSONEncoder().encode(submission.interaction)
@@ -3442,14 +3513,19 @@ private struct IOSV2UISurfaceCard: View {
                                let updated = try? JSONDecoder().decode(AppleUISnapshot<AgentCoreJSONValue>.self, from: snapData) {
                                 return .committed(AppleUIInteractionReceipt(snapshot: updated, queued_submission_id: submission.submission_id))
                             }
-                            return .committed(AppleUIInteractionReceipt(snapshot: snapshot, queued_submission_id: submission.submission_id))
+                            return .committed(AppleUIInteractionReceipt(snapshot: activeSnapshot, queued_submission_id: submission.submission_id))
                         } catch {
                             return .rejected(error.localizedDescription)
                         }
                     },
-                    accepted: { _ in }
+                    accepted: { receipt in
+                        if receipt.snapshot.identity == snapshot.identity,
+                           receipt.snapshot.revision >= activeSnapshot.revision {
+                            committedSnapshot = receipt.snapshot
+                        }
+                    }
                 )
-                .id(snapshot.identity)
+                .id(activeSnapshot.identity)
             } else if case .object(let root) = snapshotValue {
                 rawSurfaceBody(root: root)
             }
@@ -3497,7 +3573,7 @@ private struct IOSV2UISurfaceCard: View {
                 let actionID = Self.stringValue(props["action_id"]) ?? Self.stringValue(props["action"]) ?? id
                 switch kind.lowercased() {
                 case "button", "action":
-                    Button(text.isEmpty ? (actionID.isEmpty ? "Submit" : actionID) : text) {
+                    Button(text.isEmpty ? (actionID.isEmpty ? NSLocalizedString("chat.v2.question.submit", value: "Submit", comment: "Submit V2 UI action") : actionID) : text) {
                         guard !conversationID.isEmpty else { return }
                         isSubmitting = true
                         submissionError = nil
@@ -3515,6 +3591,8 @@ private struct IOSV2UISurfaceCard: View {
                         }
                     }
                     .buttonStyle(.borderedProminent)
+                    .tint(DesignTokens.actionColor)
+                    .foregroundStyle(DesignTokens.onActionColor)
                     .disabled(isSubmitting || conversationID.isEmpty)
                 case "textfield", "text_field", "input":
                     let bindingKey = Self.stringValue(props["binding"]) ?? (id.isEmpty ? "input" : id)
@@ -3522,7 +3600,7 @@ private struct IOSV2UISurfaceCard: View {
                         get: { fieldValues[bindingKey] ?? "" },
                         set: { fieldValues[bindingKey] = $0 }
                     ))
-                    .textFieldStyle(.roundedBorder)
+                    .nolaInputFieldSurface()
                 default:
                     if !text.isEmpty {
                         Text(text).font(.body)

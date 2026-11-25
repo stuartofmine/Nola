@@ -3404,6 +3404,8 @@ final class MacWorkspaceModel {
         remoteTaskObservationCoordinator.cancel(conversationID: conversation.id)
         conversations.removeAll { $0.id == conversation.id }
         messagesByConversation[conversation.id] = nil
+        v2UISurfacesByConversation.removeValue(forKey: conversation.id)
+        v2SessionIDByConversation.removeValue(forKey: conversation.id)
         presentationOverlays[conversation.id] = nil
         journalMessageReferences[conversation.id] = nil
         permissionProjectionsByConversation[conversation.id] = nil

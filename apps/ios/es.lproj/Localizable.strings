@@ -3419,3 +3419,6 @@
 "chat.task.state.failed" = "Fallida";
 "chat.task.state.cancelled" = "Cancelada";
 "chat.context.skills.template.body" = "# Habilidad: nueva habilidad\n\n## Cuándo usarla\nDescribe la situación concreta en la que debe usarse esta habilidad.\n\n## Procedimiento\n1. Aclara el objetivo del usuario.\n2. Revisa el contexto pertinente.\n3. Ofrece un resultado conciso y práctico.\n\n## Estilo de respuesta\n- Organiza la respuesta.\n- Indica los supuestos y riesgos.";
+"chat.v2.question.placeholder" = "Escribe tu respuesta…";
+"chat.v2.question.submit" = "Enviar";
+"chat.v2.question.skip" = "Omitir";

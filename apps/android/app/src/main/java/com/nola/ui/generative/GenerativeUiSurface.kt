@@ -7,6 +7,7 @@ import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.semantics.SemanticsPropertyKey
 import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import com.nola.R
@@ -80,11 +81,12 @@ private fun SurfaceContent(
     val hasDraft = drafts.isNotEmpty()
     val previewAccepted = candidate?.takeIf { hasDraft && it.snapshot.catalog_digest == snapshot.catalog_digest && it.snapshot.catalog_id == snapshot.catalog_id && it.identity == snapshot.identity && it.base_revision == snapshot.revision &&
         it.draft_generation == draftGeneration && composing.isEmpty() }
-    val actionsReady = !hasDraft || previewAccepted != null
+    val actionsReady = preview == null || !hasDraft || previewAccepted != null
     val renderedSnapshot = previewAccepted?.snapshot ?: snapshot
-    LaunchedEffect(snapshot.identity, snapshot.revision, snapshot.phase, hasDraft, draftRevision, draftGeneration, unresolved, pending, restoring, previewRetry) {
+    LaunchedEffect(snapshot.identity, snapshot.revision, snapshot.phase, preview != null, hasDraft, draftRevision, draftGeneration, unresolved, pending, restoring, previewRetry) {
         candidate = null
         previewFailure = null
+        val previewFn = currentPreview ?: return@LaunchedEffect
         if (!hasDraft || composing.isNotEmpty() || unresolved != null || pending || restoring || snapshot.phase != UiSurfacePhase.Ready) return@LaunchedEffect
         if (draftRevision != snapshot.revision) { previewFailure = context.getString(R.string.ui_edit_revision_changed); return@LaunchedEffect }
         val input = UiPreviewInput(snapshot.identity, snapshot.revision,
@@ -92,7 +94,7 @@ private fun SurfaceContent(
         val baseline = snapshot
         delay(180)
         try {
-            val result = checkNotNull(currentPreview) { context.getString(R.string.ui_preview_unavailable) }(input)
+            val result = previewFn(input)
             result.requireMatches(input, baseline)
             if (latest.identity == input.identity && latest.revision == input.expected_surface_revision &&
                 draftGeneration == input.draft_generation && composing.isEmpty()) candidate = result
@@ -177,7 +179,13 @@ private fun SurfaceContent(
     Column(Modifier.semantics { this[UiSurfaceIdentitySemantics] = snapshot.identity },
         verticalArrangement = Arrangement.spacedBy(12.dp)) {
         when (snapshot.phase) {
-            UiSurfacePhase.Pending -> Text(context.getString(R.string.ui_surface_pending))
+            UiSurfacePhase.Pending -> Row(
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
+                CircularProgressIndicator(modifier = Modifier.size(16.dp), strokeWidth = 2.dp)
+                Text(context.getString(R.string.ui_surface_pending))
+            }
             UiSurfacePhase.Deleted -> Text(context.getString(R.string.ui_surface_deleted))
             else -> renderedSnapshot.root_instance_id?.let { render(it) }
                 ?: snapshot.summary.takeIf { it.isNotEmpty() }?.let { Text(it) }
@@ -210,9 +218,14 @@ private fun SurfaceContent(
     }
     modal?.let { id ->
         Dialog(onDismissRequest = { modal = null }) {
-            Surface(shape = MaterialTheme.shapes.large) {
+            Surface(
+                shape = MaterialTheme.shapes.large,
+                color = MaterialTheme.colorScheme.surfaceContainerHigh,
+            ) {
                 Column(Modifier.heightIn(max = maximumDialogHeight).padding(20.dp).verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(16.dp)) {
-                    TextButton(onClick = { modal = null }) { Text(context.getString(R.string.common_close)) }
+                    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
+                        TextButton(onClick = { modal = null }) { Text(context.getString(R.string.common_close)) }
+                    }
                     renderedSnapshot.nodes[id]?.slots?.get("content").orEmpty().forEach { render(it) }
                 }
             }

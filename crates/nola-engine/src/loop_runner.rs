@@ -483,6 +483,8 @@ impl AgentEngine {
         let mut total_usage = TokenUsage::default();
         let mut all_effects: Vec<ResourceEffect> = Vec::new();
         let mut final_text = String::new();
+        let mut accumulated_text_segments: Vec<String> = Vec::new();
+        let mut prior_step_trailing_newlines: Option<usize> = None;
         let mut steps = 0usize;
         let mut consecutive_output_limits = 0usize;
         let mut consecutive_empty_responses = 0usize;
@@ -602,9 +604,17 @@ impl AgentEngine {
             };
             let estimated_req_tokens = estimate_request_tokens(&request);
 
+            let mut step_streamed_text = false;
+            let mut step_streamed_trailing_newlines = 0usize;
             let resp = match self.caller.call(&cfg.route, &request, cfg.stream, &mut |delta| {
                 match delta {
-                    ModelStreamDelta::Text(t) => on_event(AgentEvent::TextDelta { delta: t }),
+                    ModelStreamDelta::Text(t) => emit_step_text_delta(
+                        t,
+                        prior_step_trailing_newlines,
+                        &mut step_streamed_text,
+                        &mut step_streamed_trailing_newlines,
+                        &mut on_event,
+                    ),
                     ModelStreamDelta::Reasoning(r) => {
                         on_event(AgentEvent::ReasoningDelta { delta: r })
                     }
@@ -637,11 +647,17 @@ impl AgentEngine {
                     );
                     token_calibration = (token_calibration * 1.25).clamp(1.0, 2.5);
                     request.history = history.clone();
+                    step_streamed_text = false;
+                    step_streamed_trailing_newlines = 0;
                     self.caller.call(&cfg.route, &request, cfg.stream, &mut |delta| {
                         match delta {
-                            ModelStreamDelta::Text(t) => {
-                                on_event(AgentEvent::TextDelta { delta: t })
-                            }
+                            ModelStreamDelta::Text(t) => emit_step_text_delta(
+                                t,
+                                prior_step_trailing_newlines,
+                                &mut step_streamed_text,
+                                &mut step_streamed_trailing_newlines,
+                                &mut on_event,
+                            ),
                             ModelStreamDelta::Reasoning(r) => {
                                 on_event(AgentEvent::ReasoningDelta { delta: r })
                             }
@@ -652,6 +668,24 @@ impl AgentEngine {
                 }
                 Err(err) => return Err(AgentError::Llm(err)),
             };
+
+            // Preserve assistant text emitted before or after tool calls across multi-step turns!
+            if !resp.content.trim().is_empty() {
+                if cfg.stream && !step_streamed_text {
+                    emit_step_text_delta(
+                        resp.content.clone(),
+                        prior_step_trailing_newlines,
+                        &mut step_streamed_text,
+                        &mut step_streamed_trailing_newlines,
+                        &mut on_event,
+                    );
+                }
+                accumulated_text_segments.push(resp.content.clone());
+                prior_step_trailing_newlines =
+                    Some(resp.content.chars().rev().take_while(|&c| c == '\n').count());
+            } else if step_streamed_text {
+                prior_step_trailing_newlines = Some(step_streamed_trailing_newlines);
+            }
 
             // Calibrate local estimator using real server-reported input_tokens
             if resp.usage.input_tokens > 0 && estimated_req_tokens > 0 {
@@ -675,7 +709,11 @@ impl AgentEngine {
             if resp.stop_reason == ModelStopReason::OutputLimit {
                 consecutive_output_limits += 1;
                 if consecutive_output_limits >= MAX_CONSECUTIVE_OUTPUT_LIMITS {
-                    final_text = resp.content;
+                    final_text = if cfg.json_schema.is_some() {
+                        resp.content
+                    } else {
+                        join_assistant_segments(&accumulated_text_segments)
+                    };
                     self.persist_state(
                         &state_key,
                         &history,
@@ -724,7 +762,11 @@ impl AgentEngine {
                 if let Some(schema) = &cfg.json_schema {
                     validate_json_output(&resp.content, schema)?;
                 }
-                final_text = resp.content;
+                final_text = if cfg.json_schema.is_some() {
+                    resp.content
+                } else {
+                    join_assistant_segments(&accumulated_text_segments)
+                };
                 self.persist_state(
                     &state_key,
                     &history,
@@ -955,6 +997,10 @@ impl AgentEngine {
                 catalog.active_names(),
                 &session_usage,
             )?;
+        }
+
+        if final_text.is_empty() && !accumulated_text_segments.is_empty() {
+            final_text = join_assistant_segments(&accumulated_text_segments);
         }
 
         let stop_payload = json!({
@@ -1408,4 +1454,186 @@ fn validate_json_output(raw: &str, schema: &Value) -> Result<(), AgentError> {
         }
     }
     Ok(())
+}
+
+fn update_trailing_newlines(trailing: &mut usize, chunk: &str) {
+    if chunk.is_empty() {
+        return;
+    }
+    if chunk.chars().all(|c| c == '\n') {
+        *trailing = trailing.saturating_add(chunk.chars().count());
+    } else {
+        *trailing = chunk.chars().rev().take_while(|&c| c == '\n').count();
+    }
+}
+
+fn emit_step_text_delta(
+    delta: String,
+    prior_trailing: Option<usize>,
+    step_streamed: &mut bool,
+    step_trailing: &mut usize,
+    on_event: &mut impl FnMut(AgentEvent),
+) {
+    if delta.is_empty() {
+        return;
+    }
+    if !*step_streamed {
+        if let Some(prev_trailing) = prior_trailing {
+            let leading = delta.chars().take_while(|&c| c == '\n').count();
+            let needed = 2usize.saturating_sub(prev_trailing.saturating_add(leading));
+            if needed > 0 {
+                on_event(AgentEvent::TextDelta {
+                    delta: "\n".repeat(needed),
+                });
+            }
+        }
+        *step_streamed = true;
+    }
+    update_trailing_newlines(step_trailing, &delta);
+    on_event(AgentEvent::TextDelta { delta });
+}
+
+fn join_assistant_segments(segments: &[String]) -> String {
+    let mut out = String::new();
+    for seg in segments {
+        if seg.trim().is_empty() {
+            continue;
+        }
+        if !out.is_empty() {
+            let trailing = out.chars().rev().take_while(|&c| c == '\n').count();
+            let leading = seg.chars().take_while(|&c| c == '\n').count();
+            let needed = 2usize.saturating_sub(trailing.saturating_add(leading));
+            for _ in 0..needed {
+                out.push('\n');
+            }
+        }
+        out.push_str(seg);
+    }
+    out
+}
+
+#[cfg(test)]
+mod multi_step_text_tests {
+    use super::*;
+    use nola_types::{ModelCapabilities, ModelProtocol, ModelToolCall, PermissionProfile};
+
+    struct StreamingMultiStepCaller {
+        responses: Mutex<Vec<NormalizedModelResponse>>,
+    }
+
+    impl ModelCaller for StreamingMultiStepCaller {
+        fn call(
+            &self,
+            _route: &ModelRouteConfig,
+            _req: &StructuredModelRequest,
+            stream: bool,
+            on_delta: &mut dyn FnMut(ModelStreamDelta),
+        ) -> Result<NormalizedModelResponse, LlmError> {
+            let resp = self.responses.lock().unwrap().remove(0);
+            if stream && !resp.content.is_empty() {
+                on_delta(ModelStreamDelta::Text(resp.content.clone()));
+            }
+            Ok(resp)
+        }
+    }
+
+    #[test]
+    fn multi_step_assistant_markdown_before_tool_calls_is_preserved_in_stream_and_final_text() {
+        let dir = tempfile::tempdir().unwrap();
+        let ctx = ToolContext::new(dir.path());
+        let store = Store::open_in_memory().unwrap();
+        let step1_md = "## Report\n| Metric | Value |\n|---|---|\n| Latency | 12ms |\n\n```rust\nfn ok() -> bool { true }\n```";
+        let step2_md = "Interactive summary rendered cleanly.";
+        let caller = Arc::new(StreamingMultiStepCaller {
+            responses: Mutex::new(vec![
+                NormalizedModelResponse {
+                    response_id: Some("r1".into()),
+                    response_model: Some("mock".into()),
+                    content: step1_md.into(),
+                    reasoning: None,
+                    tool_calls: vec![ModelToolCall {
+                        call_id: "call_1".into(),
+                        name: "write_file".into(),
+                        arguments: json!({"path": "out.txt", "content": "ok"}),
+                    }],
+                    stop_reason: ModelStopReason::ToolCalls,
+                    usage: TokenUsage::default(),
+                    continuation: None,
+                },
+                NormalizedModelResponse {
+                    response_id: Some("r2".into()),
+                    response_model: Some("mock".into()),
+                    content: step2_md.into(),
+                    reasoning: None,
+                    tool_calls: vec![],
+                    stop_reason: ModelStopReason::Stop,
+                    usage: TokenUsage::default(),
+                    continuation: None,
+                },
+            ]),
+        });
+        let engine = AgentEngine::new(
+            store.clone(),
+            Arc::new(ToolRegistry::with_builtin_tools()),
+            caller,
+        );
+        let mut streamed = String::new();
+        let mut turn_completed_text = String::new();
+        let res = engine
+            .run(
+                &ctx,
+                "Generate report",
+                AgentRunConfig {
+                    session_id: Some("sess-multistep".into()),
+                    resume: false,
+                    route: ModelRouteConfig {
+                        connection_id: "mock".into(),
+                        protocol: ModelProtocol::OpenAiChat,
+                        endpoint: "http://127.0.0.1:1/v1".into(),
+                        api_key: String::new(),
+                        model: "mock-model".into(),
+                        context_window: 32_768,
+                        max_output_tokens: Some(4096),
+                        temperature: None,
+                        top_p: None,
+                        reasoning_effort: None,
+                        prompt_cache_key: None,
+                        capabilities: ModelCapabilities::default(),
+                    },
+                    frozen_system_blocks: vec![FrozenSystemBlock {
+                        id: "sys".into(),
+                        text: "System".into(),
+                    }],
+                    host_capabilities: HostCapabilities::default(),
+                    policy: EffectivePolicy {
+                        profile: PermissionProfile::AllowAll,
+                        workspace_trusted: true,
+                        network_allowed: true,
+                        rules: vec![],
+                    },
+                    hooks: HookRunner::default(),
+                    approval: None,
+                    max_steps: 5,
+                    force_tool_set: ForceToolSet::Auto,
+                    stream: true,
+                    json_schema: None,
+                    cancel: Arc::new(AtomicBool::new(false)),
+                    auto_recall_memory: false,
+                    inbox: None,
+                },
+                |ev| match ev {
+                    AgentEvent::TextDelta { delta } => streamed.push_str(&delta),
+                    AgentEvent::TurnCompleted { final_text, .. } => {
+                        turn_completed_text = final_text;
+                    }
+                    _ => {}
+                },
+            )
+            .unwrap();
+
+        let expected = format!("{step1_md}\n\n{step2_md}");
+        assert_eq!(streamed, expected);
+        assert_eq!(res.final_text, expected);
+        assert_eq!(turn_completed_text, expected);
+    }
 }

@@ -124,7 +124,7 @@ struct MacEditorWindowCloseGuard: NSViewRepresentable {
 }
 
 enum MacDesignTokens {
-    /// Canonical Warm Ink & Warm Paper RGB fallbacks synchronized with shared/design-tokens/tokens.json.
+    /// Canonical Monochrome Obsidian & Porcelain RGB fallbacks synchronized with shared/design-tokens/tokens.json.
     /// Native macOS chrome continues binding semantic Asset Catalog entries through `MacDesignColor`.
     enum Palette {
         enum Light {
@@ -204,7 +204,7 @@ enum MacDesignTokens {
         static let field: CGFloat = 10
         static let panel: CGFloat = 14
         static let floating: CGFloat = 20
-        static let message: CGFloat = 16
+        static let message: CGFloat = 18
     }
 
     enum Control {
@@ -338,11 +338,15 @@ enum MacDesignColor {
     static let success = Color("NolaSuccess")
     static let warning = Color("NolaWarning")
     static let danger = Color("NolaDanger")
-    static let switchTrackOn = MacDesignTokens.Palette.fallbackColor(light: 0x147537, dark: 0x2E8B57)
-    static let switchTrackOnHover = MacDesignTokens.Palette.fallbackColor(light: 0x1D5E3B, dark: 0x369B63)
-    static let switchTrackOff = MacDesignTokens.Palette.fallbackColor(light: 0xDDDAD3, dark: 0x3A3935)
-    static let switchTrackOffHover = MacDesignTokens.Palette.fallbackColor(light: 0xD2CEC6, dark: 0x45443F)
-    static let switchBorderOff = MacDesignTokens.Palette.fallbackColor(light: 0xC4C0B7, dark: 0x52504B)
+    static let info = MacDesignTokens.Palette.fallbackColor(
+        light: MacDesignTokens.Palette.Light.info,
+        dark: MacDesignTokens.Palette.Dark.info
+    )
+    static let switchTrackOn = MacDesignTokens.Palette.fallbackColor(light: 0x147537, dark: 0x5CD68D)
+    static let switchTrackOnHover = MacDesignTokens.Palette.fallbackColor(light: 0x1D5E3B, dark: 0x4CC67D)
+    static let switchTrackOff = MacDesignTokens.Palette.fallbackColor(light: 0xE4E4E7, dark: 0x2E2E33)
+    static let switchTrackOffHover = MacDesignTokens.Palette.fallbackColor(light: 0xD4D4D8, dark: 0x3A3A40)
+    static let switchBorderOff = MacDesignTokens.Palette.fallbackColor(light: 0xC4C4CA, dark: 0x48484F)
 }
 
 private struct MacGlobalWorkspaceChromeKey: EnvironmentKey {

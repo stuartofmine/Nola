@@ -234,19 +234,19 @@ export function formatPermissionSummary(prompt: V2PermissionPrompt): {
 
     const command = pickString('command', 'cmd', 'script');
     if (command) {
-        return { headline: `${prompt.tool} — run command`, target: command };
+        return { headline: prompt.tool, target: command };
     }
     const filePath = pickString('path', 'file_path', 'filePath', 'target_path', 'target', 'cwd', 'directory');
     if (filePath) {
-        return { headline: `${prompt.tool} — ${filePath}`, target: filePath };
+        return { headline: prompt.tool, target: filePath };
     }
     const url = pickString('url', 'uri', 'endpoint', 'href');
     if (url) {
-        return { headline: `${prompt.tool} — ${url}`, target: url };
+        return { headline: prompt.tool, target: url };
     }
     const query = pickString('query', 'pattern', 'search', 'prompt');
     if (query) {
-        return { headline: `${prompt.tool} — ${query}`, target: query };
+        return { headline: prompt.tool, target: query };
     }
 
     const previewPairs = Object.entries(args)
@@ -1066,7 +1066,7 @@ export async function streamV2ChatMessage(
                     callbacks.onPermissionRequested?.({
                         requestId: ev.request_id,
                         tool: String(ev.tool ?? 'tool'),
-                        reason: String(ev.reason ?? 'Requires user confirmation'),
+                        reason: typeof ev.reason === 'string' ? ev.reason : '',
                         arguments: ev.arguments,
                     });
                 }

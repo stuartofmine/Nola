@@ -3450,3 +3450,6 @@
 "chat.task.state.failed" = "Échec";
 "chat.task.state.cancelled" = "Annulée";
 "chat.context.skills.template.body" = "# Compétence : nouvelle compétence\n\n## Quand l’utiliser\nDécrivez la situation précise où utiliser cette compétence.\n\n## Procédure\n1. Clarifier l’objectif.\n2. Examiner le contexte pertinent.\n3. Fournir un résultat concis et concret.\n\n## Réponse\n- Structurer la réponse.\n- Préciser les hypothèses et les risques.";
+"chat.v2.question.placeholder" = "Saisissez votre réponse…";
+"chat.v2.question.submit" = "Envoyer";
+"chat.v2.question.skip" = "Ignorer";

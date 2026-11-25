@@ -88,6 +88,8 @@
     let transcriptEl = $state<HTMLDivElement>();
     let composerEl = $state<HTMLTextAreaElement>();
     let fileInputEl = $state<HTMLInputElement>();
+    let expertPopupEl = $state<HTMLDivElement>();
+    let expertToggleBtnEl = $state<HTMLButtonElement>();
 
     // Smart scroll anchor
     let isPinnedToBottom = $state(true);
@@ -142,6 +144,7 @@
     const tabViewports = new Map<string, { top: number }>();
     const selectedContentTab = $derived(contentTabs.items.find(item => item.key === contentTabs.selected));
     const managementContentSelected = $derived(selectedContentTab?.kind === 'page');
+    const isConversationTabActive = $derived(contentTabs.selected === conversationTabKey);
     const activeTabTitle = $derived(active?.title || t($locale, 'shell.conversations.new'));
     const ownerKey = $derived(active?.conversationId ?? 'workspace');
 
@@ -256,11 +259,25 @@
         }
     }
 
+    function closeExpertPicker(restoreFocus = false) {
+        expertPickerOpen = false;
+        expertTriggerRange = null;
+        expertQuery = '';
+        expertHighlightIdx = 0;
+        if (restoreFocus) composerEl?.focus();
+    }
+
+    function scrollHighlightedExpertIntoView() {
+        void tick().then(() => {
+            expertPopupEl
+                ?.querySelectorAll<HTMLElement>('.expert-option')
+                [expertHighlightIdx]?.scrollIntoView({ block: 'nearest' });
+        });
+    }
+
     function toggleExpertPicker() {
         if (expertPickerOpen) {
-            expertPickerOpen = false;
-            expertTriggerRange = null;
-            expertQuery = '';
+            closeExpertPicker();
             return;
         }
         expertTriggerRange = null;
@@ -635,14 +652,25 @@
             messages = messages.map(m => (m.id === assistantId ? fn(m) : m));
         };
 
+        let needsTextBreakAfterTool = false;
+
         try {
             await streamV2ChatMessage(
                 conv.conversationId,
                 sentText,
                 {
                     onTextDelta: delta => {
-                        if (serial !== generation) return;
-                        updateAssistant(m => ({ ...m, content: m.content + delta }));
+                        if (serial !== generation || !delta) return;
+                        updateAssistant(m => {
+                            let prefix = '';
+                            if (needsTextBreakAfterTool) {
+                                needsTextBreakAfterTool = false;
+                                if (m.content.trim().length > 0 && !m.content.endsWith('\n\n') && !delta.startsWith('\n')) {
+                                    prefix = m.content.endsWith('\n') ? '\n' : '\n\n';
+                                }
+                            }
+                            return { ...m, content: m.content + prefix + delta };
+                        });
                         void scrollToBottom(false);
                     },
                     onReasoningDelta: delta => {
@@ -652,6 +680,7 @@
                     },
                     onToolStarted: (callId, name, args) => {
                         if (serial !== generation) return;
+                        needsTextBreakAfterTool = true;
                         updateAssistant(m => ({
                             ...m,
                             toolCalls: [
@@ -713,7 +742,15 @@
                     onTurnCompleted: (finalText, turnUsage) => {
                         if (serial !== generation) return;
                         if (finalText) {
-                            updateAssistant(m => (m.content ? m : { ...m, content: finalText }));
+                            updateAssistant(m => {
+                                if (!m.content) return { ...m, content: finalText };
+                                if (needsTextBreakAfterTool && finalText.trim() && !m.content.includes(finalText.trim())) {
+                                    needsTextBreakAfterTool = false;
+                                    const sep = m.content.endsWith('\n\n') ? '' : m.content.endsWith('\n') ? '\n' : '\n\n';
+                                    return { ...m, content: m.content + sep + finalText };
+                                }
+                                return m;
+                            });
                         }
                         if (turnUsage) {
                             sessionUsage = mergeV2TokenUsage(sessionUsage, turnUsage);
@@ -952,14 +989,14 @@
         if (expertPickerOpen) {
             if (event.key === 'Escape') {
                 event.preventDefault();
-                expertPickerOpen = false;
-                expertTriggerRange = null;
+                closeExpertPicker();
                 return;
             }
             if (event.key === 'ArrowDown') {
                 event.preventDefault();
                 if (filteredExperts.length > 0) {
                     expertHighlightIdx = (expertHighlightIdx + 1) % filteredExperts.length;
+                    scrollHighlightedExpertIntoView();
                 }
                 return;
             }
@@ -967,6 +1004,7 @@
                 event.preventDefault();
                 if (filteredExperts.length > 0) {
                     expertHighlightIdx = (expertHighlightIdx - 1 + filteredExperts.length) % filteredExperts.length;
+                    scrollHighlightedExpertIntoView();
                 }
                 return;
             }
@@ -1034,13 +1072,33 @@
     });
 </script>
 
-<svelte:window bind:innerWidth={viewportWidth} />
+<svelte:window
+    bind:innerWidth={viewportWidth}
+    onclick={event => {
+        if (!expertPickerOpen) return;
+        const target = event.target;
+        if (
+            target instanceof Node &&
+            !expertPopupEl?.contains(target) &&
+            !expertToggleBtnEl?.contains(target) &&
+            !composerEl?.contains(target)
+        ) {
+            closeExpertPicker();
+        }
+    }}
+    onkeydown={event => {
+        if (expertPickerOpen && event.key === 'Escape') {
+            event.preventDefault();
+            closeExpertPicker(true);
+        }
+    }}
+/>
 <svelte:head><title>{active?.title || t($locale, 'chatPage.title')} — Nola</title></svelte:head>
 
 <div class="chat-shell" class:sidebar-collapsed={!sidebarOpen}>
     <aside class="chat-sidebar" aria-label={t($locale, 'chatInspector.list.conversations')}>
         <div class="sidebar-top">
-            <WorkspaceListNavigation category={listCategory} visible={sidebarOpen} onchange={setListCategory} />
+            <WorkspaceListNavigation category={listCategory} visible={sidebarOpen} collapsed={!sidebarOpen} onchange={setListCategory} />
             <div class="sidebar-tools">
                 <button
                     type="button"
@@ -1090,13 +1148,13 @@
             <footer class="sidebar-footer">
                 <button
                     type="button"
-                    class="sidebar-action"
+                    class="sidebar-action sidebar-footer-item"
                     onclick={() => openManagementTab('/settings')}
                 >
                     <PrototypeIcon name="settings" size={16} />
                     <span>{t($locale, 'shell.settings')}</span>
                 </button>
-                <a class="sidebar-action" href="/models" onclick={e => { e.preventDefault(); openManagementTab('/models'); }}>
+                <a class="sidebar-action sidebar-footer-item" href="/models" onclick={e => { e.preventDefault(); openManagementTab('/models'); }}>
                     <PrototypeIcon name="models" size={16} />
                     <span>{t($locale, 'shell.nav.models')}</span>
                 </a>
@@ -1134,37 +1192,44 @@
                 }}
                 onrename={(id, nextTitle) => conversationManager?.renameConversationById(id, nextTitle)}
             />
-            <div class="topbar-actions">
-                {#if active}
+            {#if isConversationTabActive}
+                <div class="topbar-actions">
+                    {#if active}
+                        <button
+                            type="button"
+                            class="topbar-pill topbar-icon-pill"
+                            title={t($locale, 'chatInspector.review')}
+                            aria-label={t($locale, 'chatInspector.review')}
+                            onclick={() => openManagementTab(`/workspace-review?conversation=${encodeURIComponent(active!.conversationId)}`)}
+                        >
+                            <PrototypeIcon name="review" size={14} />
+                            <span class="topbar-btn-label">{t($locale, 'chatInspector.review')}</span>
+                        </button>
+                        <button
+                            type="button"
+                            class="topbar-pill branch-btn"
+                            title={t($locale, 'chatInspector.branch')}
+                            disabled={streaming || !messages.length}
+                            onclick={branchActiveConversation}
+                        >
+                            {t($locale, 'chatInspector.branch')}
+                        </button>
+                    {/if}
                     <button
                         type="button"
-                        class="topbar-pill"
-                        onclick={() => openManagementTab(`/workspace-review?conversation=${encodeURIComponent(active!.conversationId)}`)}
+                        class="topbar-pill topbar-icon-pill inspector-toggle-btn"
+                        class:active={inspectorOpen}
+                        data-testid="inspector-toggle"
+                        title={t($locale, 'chatPage.details')}
+                        aria-expanded={inspectorOpen}
+                        aria-label={t($locale, 'chatPage.details')}
+                        onclick={() => (inspectorOpen = !inspectorOpen)}
                     >
-                        {t($locale, 'chatInspector.review')}
+                        <PrototypeIcon name="overview" size={14} />
+                        <span class="topbar-btn-label">{t($locale, 'chatPage.details')}</span>
                     </button>
-                    <button
-                        type="button"
-                        class="topbar-pill"
-                        disabled={streaming || !messages.length}
-                        onclick={branchActiveConversation}
-                    >
-                        {t($locale, 'chatInspector.branch')}
-                    </button>
-                {/if}
-                <button
-                    type="button"
-                    class="topbar-pill inspector-toggle-btn"
-                    class:active={inspectorOpen}
-                    data-testid="inspector-toggle"
-                    aria-expanded={inspectorOpen}
-                    aria-label={t($locale, 'chatPage.details')}
-                    onclick={() => (inspectorOpen = !inspectorOpen)}
-                >
-                    <PrototypeIcon name="overview" size={14} />
-                    <span>{t($locale, 'chatPage.details')}</span>
-                </button>
-            </div>
+                </div>
+            {/if}
         </header>
 
         <div
@@ -1290,7 +1355,7 @@
                                             {#if msg.role === 'assistant'}
                                                 {#if msg.content}
                                                     <Markdown source={msg.content} streaming={streaming && msgIndex === messages.length - 1} />
-                                                {:else if streaming}
+                                                {:else if streaming && msgIndex === messages.length - 1}
                                                     <p class="muted">{t($locale, 'chatPage.working')}</p>
                                                 {/if}
                                             {:else}
@@ -1307,13 +1372,13 @@
                                                 <strong>{t($locale, 'chatPermission.title')}</strong>
                                                 <code class="permission-tool-badge">{pendingPermission.tool}</code>
                                             </div>
-                                            <p class="permission-headline">{permissionSummary.headline}</p>
+                                            {#if permissionSummary.headline && permissionSummary.headline !== pendingPermission.tool && permissionSummary.headline !== permissionSummary.target}
+                                                <p class="permission-headline">{permissionSummary.headline}</p>
+                                            {/if}
                                             {#if permissionSummary.target}
                                                 <code class="permission-target">{permissionSummary.target}</code>
                                             {/if}
-                                            {#if pendingPermission.reason}
-                                                <span class="muted permission-reason">{pendingPermission.reason}</span>
-                                            {/if}
+                                            <span class="muted permission-reason">{pendingPermission.reason || t($locale, 'chatPermission.ready')}</span>
                                         </header>
                                         <details class="permission-raw-details">
                                             <summary>{t($locale, 'chatPage.toolTechnicalDetails')}</summary>
@@ -1459,6 +1524,7 @@
                                 {t($locale, 'chatInspector.attach')}
                             </button>
                             <button
+                                bind:this={expertToggleBtnEl}
                                 type="button"
                                 class="toolbar-btn"
                                 class:active={expertPickerOpen}
@@ -1509,7 +1575,7 @@
 
                         <div class="composer-anchor">
                             {#if expertPickerOpen}
-                                <div class="expert-popup" role="listbox" aria-label={t($locale, 'rooms.experts')}>
+                                <div bind:this={expertPopupEl} class="expert-popup" role="listbox" aria-label={t($locale, 'rooms.experts')}>
                                     {#if expertsLoading}
                                         <p class="expert-popup-empty">{t($locale, 'rooms.loading')}</p>
                                     {:else if filteredExperts.length === 0}
@@ -1547,6 +1613,7 @@
                                     bind:value={draft}
                                     rows="2"
                                     placeholder={t($locale, 'chatPage.placeholder')}
+                                    aria-label={t($locale, 'chatPage.placeholder')}
                                     disabled={loading}
                                     oninput={handleDraftInput}
                                     onkeydown={onComposerKeydown}
@@ -1625,10 +1692,15 @@
         flex-direction: column;
         min-width: 0;
         min-height: 0;
+        overflow: hidden;
         border-right: 1px solid var(--border);
         background: var(--panel);
         padding: 10px 8px;
         gap: 10px;
+    }
+    .chat-shell.sidebar-collapsed .chat-sidebar {
+        align-items: center;
+        padding: 10px 6px;
     }
     .sidebar-top {
         display: flex;
@@ -1636,10 +1708,20 @@
         justify-content: space-between;
         gap: 6px;
     }
+    .chat-shell.sidebar-collapsed .sidebar-top {
+        flex-direction: column;
+        align-items: center;
+        justify-content: flex-start;
+        gap: 8px;
+    }
     .sidebar-tools {
         display: flex;
         align-items: center;
         gap: 4px;
+    }
+    .chat-shell.sidebar-collapsed .sidebar-tools {
+        flex-direction: column;
+        align-items: center;
     }
     .sidebar-body {
         flex: 1;
@@ -1653,22 +1735,32 @@
         padding-top: 8px;
         border-top: 1px solid var(--border);
     }
-    .sidebar-action {
+    .sidebar-footer-item {
         display: flex;
         align-items: center;
         gap: 8px;
+        width: 100%;
         min-height: 36px;
         padding: 6px 10px;
         border: 1px solid transparent;
         border-radius: 8px;
         background: transparent;
+        box-shadow: none;
         color: var(--content);
         text-decoration: none;
+        text-align: start;
+        font: inherit;
         font-size: 13px;
+        line-height: 1.4;
         cursor: pointer;
     }
-    .sidebar-action:hover {
+    .sidebar-footer-item:hover:not(:disabled) {
         background: var(--composer-pill-hover-bg);
+        border-color: transparent;
+        color: var(--content);
+    }
+    .sidebar-footer-item:active:not(:disabled) {
+        background: var(--control-active-bg);
     }
     .icon-btn {
         display: grid;
@@ -1723,7 +1815,10 @@
         font-size: 12px;
         cursor: pointer;
     }
-    .inspector-toggle-btn {
+    .toolbar-select {
+        padding: 4px 28px 4px 10px;
+    }
+    .topbar-icon-pill {
         display: inline-flex;
         align-items: center;
         gap: 5px;
@@ -1787,6 +1882,12 @@
         border: 1px solid var(--border);
         color: var(--content);
         box-shadow: var(--glass-pill-shadow);
+    }
+    .status-note {
+        max-width: 780px;
+        margin: 24px auto;
+        text-align: center;
+        font-size: 13px;
     }
     .empty-state {
         max-width: 680px;
@@ -1889,13 +1990,39 @@
     .reasoning-box summary,
     .tool-card summary,
     .permission-raw-details summary {
+        list-style: none;
         cursor: pointer;
         color: var(--muted);
         display: flex;
         align-items: center;
         justify-content: space-between;
         gap: 8px;
+        min-height: 28px;
+        padding-block: 2px;
         font-size: 12px;
+    }
+    .reasoning-box summary::-webkit-details-marker,
+    .tool-card summary::-webkit-details-marker,
+    .permission-raw-details summary::-webkit-details-marker {
+        display: none;
+    }
+    .reasoning-box summary::after,
+    .tool-card summary::after,
+    .permission-raw-details summary::after {
+        content: '';
+        width: 12px;
+        height: 12px;
+        flex: none;
+        background: currentColor;
+        opacity: 0.65;
+        -webkit-mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2.2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='m6 9 6 6 6-6'/%3E%3C/svg%3E") center / contain no-repeat;
+        mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2.2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='m6 9 6 6 6-6'/%3E%3C/svg%3E") center / contain no-repeat;
+        transition: transform var(--motion-fast) ease;
+    }
+    .reasoning-box[open] > summary::after,
+    .tool-card[open] > summary::after,
+    .permission-raw-details[open] > summary::after {
+        transform: rotate(180deg);
     }
     .reasoning-box pre,
     .tool-summary,
@@ -1915,6 +2042,38 @@
     .tool-name {
         font-family: var(--font-code, monospace);
         color: var(--content);
+        min-width: 0;
+        overflow-wrap: anywhere;
+    }
+    .tool-status {
+        display: inline-flex;
+        align-items: center;
+        margin-inline-start: auto;
+        padding: 1px 8px;
+        border-radius: 999px;
+        border: 1px solid var(--border);
+        background: var(--panel);
+        color: var(--muted);
+        font-size: 11px;
+        font-weight: 600;
+        line-height: 1.45;
+        flex: none;
+    }
+    .tool-card[data-status='running'] .tool-status {
+        color: var(--info);
+        border-color: color-mix(in srgb, var(--info) 40%, var(--border));
+        background: color-mix(in srgb, var(--info) 12%, transparent);
+    }
+    .tool-card[data-status='completed'] .tool-status {
+        color: var(--success);
+        border-color: color-mix(in srgb, var(--success) 40%, var(--border));
+        background: color-mix(in srgb, var(--success) 12%, transparent);
+    }
+    .tool-card[data-status='failed'] .tool-status,
+    .tool-card[data-status='error'] .tool-status {
+        color: var(--danger);
+        border-color: color-mix(in srgb, var(--danger) 40%, var(--border));
+        background: color-mix(in srgb, var(--danger) 12%, transparent);
     }
     .interactive-card {
         border: 1px solid var(--primary);
@@ -2094,24 +2253,35 @@
         align-items: flex-end;
         gap: 10px;
         padding: 10px 12px;
-        border: 1px solid var(--border);
+        border: 1px solid var(--composer-border);
         border-radius: 12px;
-        background: var(--panel);
+        background: var(--composer-bg);
+        box-shadow: var(--composer-shadow);
+        transition: border-color var(--motion-fast) ease, box-shadow var(--motion-fast) ease;
+    }
+    .composer-box:focus-within {
+        border-color: var(--composer-focus-border);
+        box-shadow: var(--composer-focus-shadow);
     }
     #chat-composer {
         flex: 1;
         min-width: 0;
         min-height: 44px;
         max-height: 220px;
-        resize: vertical;
-        border: 0;
+        padding: 0;
+        resize: none;
+        border: none;
         background: transparent;
+        box-shadow: none;
         color: var(--content);
         font: inherit;
         line-height: 1.5;
     }
-    #chat-composer:focus {
+    #chat-composer:focus,
+    #chat-composer:hover {
+        border: none;
         outline: none;
+        box-shadow: none;
     }
     .composer-actions {
         display: flex;
@@ -2133,12 +2303,70 @@
     .muted {
         color: var(--muted);
     }
+    @media (pointer: coarse) {
+        .chip-remove {
+            min-width: 36px;
+            min-height: 36px;
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            margin: -4px -6px -4px 0;
+            border-radius: 999px;
+        }
+        .workspace-topbar .icon-btn,
+        .workspace-topbar .topbar-pill {
+            min-height: 44px;
+            min-width: 44px;
+        }
+    }
     @media (max-width: 760px) {
         .chat-shell {
             grid-template-columns: minmax(0, 1fr);
         }
         .chat-sidebar {
             display: none;
+        }
+        .workspace-topbar {
+            padding: 4px 8px;
+            gap: 4px;
+            flex-wrap: nowrap;
+            min-height: 48px;
+        }
+        .topbar-actions {
+            gap: 4px;
+            flex-shrink: 0;
+        }
+        .topbar-btn-label {
+            position: absolute;
+            width: 1px;
+            height: 1px;
+            overflow: hidden;
+            clip-path: inset(50%);
+            white-space: nowrap;
+        }
+        .workspace-topbar .icon-btn,
+        .workspace-topbar .topbar-icon-pill {
+            width: 40px;
+            min-width: 40px;
+            min-height: 40px;
+            padding: 0;
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+        }
+        .workspace-topbar .branch-btn {
+            min-height: 40px;
+            min-width: 40px;
+            padding: 4px 8px;
+        }
+        .chip-remove {
+            min-width: 36px;
+            min-height: 36px;
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            margin: -4px -6px -4px 0;
+            border-radius: 999px;
         }
     }
 </style>

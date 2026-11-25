@@ -3592,3 +3592,6 @@
 "chat.task.state.failed" = "Failed";
 "chat.task.state.cancelled" = "Cancelled";
 "chat.context.skills.template.body" = "# Skill: New Skill\n\n## When to use\nDescribe the exact scenario where this skill should be used.\n\n## Workflow\n1. Clarify the user goal.\n2. Inspect relevant context.\n3. Produce a concise, actionable result.\n\n## Output style\n- Keep the response structured.\n- Call out assumptions and risks.";
+"chat.v2.question.placeholder" = "Type your answer...";
+"chat.v2.question.submit" = "Submit";
+"chat.v2.question.skip" = "Skip";

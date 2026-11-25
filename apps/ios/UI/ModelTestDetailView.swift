@@ -319,14 +319,16 @@ struct ModelTestDetailViewNew: View {
                     HStack(spacing: DesignTokens.spacing_md) {
                         Image(systemName: "exclamationmark.circle.fill")
                             .font(.title3)
-                            .foregroundColor(.white)
+                            .foregroundStyle(DesignTokens.dangerColor)
                         
                         VStack(alignment: .leading, spacing: DesignTokens.spacing_xs) {
                             Text(L10n.modelTestDetailFailedTitle)
                                 .font(.headline)
                                 .fontWeight(.semibold)
+                                .foregroundStyle(DesignTokens.dangerColor)
                             Text(error)
                                 .font(.caption)
+                                .foregroundStyle(.primary)
                         }
                         
                         Spacer()
@@ -334,12 +336,21 @@ struct ModelTestDetailViewNew: View {
                         Button(action: { errorMessage = nil }) {
                             Image(systemName: "xmark.circle.fill")
                                 .font(.body)
-                                .foregroundColor(.white)
+                                .foregroundStyle(DesignTokens.dangerColor)
+                                .frame(minWidth: 44, minHeight: 44)
+                                .contentShape(Rectangle())
                         }
+                        .buttonStyle(.plain)
                     }
                     .padding(DesignTokens.spacing_md)
-                    .background(DesignTokens.dangerColor)
-                    .cornerRadius(DesignTokens.radius_md)
+                    .background(
+                        DesignTokens.dangerColor.opacity(0.14),
+                        in: RoundedRectangle(cornerRadius: DesignTokens.radius_md, style: .continuous)
+                    )
+                    .overlay(
+                        RoundedRectangle(cornerRadius: DesignTokens.radius_md, style: .continuous)
+                            .stroke(DesignTokens.dangerColor.opacity(0.4), lineWidth: 1)
+                    )
                     
                     Spacer()
                 }

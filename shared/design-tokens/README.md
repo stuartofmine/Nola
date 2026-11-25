@@ -1,4 +1,4 @@
-# 跨平台设计 Token（Warm Ink & Warm Paper）
+# 跨平台设计 Token（Monochrome Obsidian & Porcelain）
 
 `tokens.json` 是 Nola 跨端表面、文字层级、状态语义色、字号阶梯、圆角与间距的唯一机器可读真源。
 
@@ -6,7 +6,7 @@
 
 | 文件 | 说明 |
 | --- | --- |
-| [tokens.json](tokens.json) | 浅色（Warm Paper）与深色（Warm Ink）核心表面、正文/次级文字、边界、控制描边、语义状态色，以及字号、圆角、间距和动效基准 |
+| [tokens.json](tokens.json) | 浅色（Porcelain）与深色（Obsidian）核心表面、正文/次级文字、边界、控制描边、语义状态色，以及字号、圆角、间距和动效基准 |
 
 ## 平台对齐入口
 

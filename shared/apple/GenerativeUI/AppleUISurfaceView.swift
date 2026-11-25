@@ -361,17 +361,22 @@ struct AppleUISurfaceView<JSON: JournalJSONValue>: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
             if snapshot.phase == .pending {
-                Text(String(localized: "a2ui.pending", defaultValue: "Preparing interface…"))
+                HStack(spacing: 8) {
+                    ProgressView().controlSize(.small)
+                    Text(String(localized: "a2ui.pending", defaultValue: "Preparing interface…"))
+                }
             } else if snapshot.phase == .deleted {
                 Text(String(localized: "a2ui.deleted", defaultValue: "This interface was removed."))
             } else if let root = snapshot.root_instance_id { node(root).disabled(disabled) }
             else if !snapshot.summary.isEmpty { Text(snapshot.summary) }
             if editing.pending { ProgressView().controlSize(.small) }
-            if let failure = editing.failure { Label(failure, systemImage: "exclamationmark.circle").foregroundStyle(.secondary) }
+            if let failure = editing.failure { Label(failure, systemImage: "exclamationmark.circle").foregroundStyle(Color("NolaDanger")) }
             if snapshot.phase == .ready && !editing.pending && editing.unresolved == nil && !editing.drafts.isEmpty && (editing.failure != nil || editing.draftRevision != snapshot.revision) {
                 Button(String(localized: "a2ui.revalidate", defaultValue: "Validate again")) {
                     editing.revalidate(against: snapshot)
-                }.disabled(surfaceIsComposing)
+                }
+                .buttonStyle(.bordered)
+                .disabled(surfaceIsComposing)
                 Button(String(localized: "a2ui.discardEdits", defaultValue: "Discard edits and use current values")) {
                     editing.drafts = [:]
                     editing.draftRevision = nil
@@ -379,9 +384,12 @@ struct AppleUISurfaceView<JSON: JournalJSONValue>: View {
                     editing.preview = nil
                     editing.failure = nil
                 }
+                .buttonStyle(.bordered)
             }
             if snapshot.phase == .ready || snapshot.phase == .pending, let unresolved = editing.unresolved {
-                Button(String(localized: "a2ui.checkSubmission", defaultValue: "Check submission result")) { Task { await deliver(unresolved) } }.disabled(editing.pending)
+                Button(String(localized: "a2ui.checkSubmission", defaultValue: "Check submission result")) { Task { await deliver(unresolved) } }
+                    .buttonStyle(.bordered)
+                    .disabled(editing.pending)
             }
         }
         .accessibilityElement(children: .contain)
@@ -465,6 +473,9 @@ struct AppleUISurfaceView<JSON: JournalJSONValue>: View {
                     }
                 }
             }.padding(20)
+            #if os(macOS)
+            .frame(minWidth: 420, minHeight: 320)
+            #endif
         }
     }
 
@@ -651,11 +662,14 @@ struct AppleUIReferencedSurfaceView<JSON: JournalJSONValue>: View {
                         }
                         else if case .unknown(let message) = result { failure = message }
                     }
-                }.disabled(reconciling)
+                }
+                .buttonStyle(.bordered)
+                .disabled(reconciling)
             }
             if let failure {
-                Text(failure).font(.caption).foregroundStyle(.secondary)
+                Text(failure).font(.caption).foregroundStyle(Color("NolaDanger"))
                 Button(String(localized: "a2ui.reloadForm", defaultValue: "Reload form")) { retry &+= 1 }
+                    .buttonStyle(.bordered)
             }
             if snapshot == nil { AppleUIHistoryView(reference: reference, load: readRevision) }
         }

@@ -18,7 +18,12 @@ class ConversationPresentationTest {
             currentParameters = ModelParameters(), longTermMemory = "app memory",
             permissionConfigurationOwner = com.nola.data.local.PermissionConfigurationOwner.Remote(
                 com.nola.data.remote.api.RemoteSubmissionIdentity("host", "client", "A", "run-A", "user-A", "assistant-A")),
-            activeResponseId = "A-response", revealResponseId = "A-reveal", error = "A error")
+            activeResponseId = "A-response", revealResponseId = "A-reveal",
+            pendingUserQuestion = V2UserQuestionPrompt(requestId = "q-1", conversationId = "A", question = "Proceed?"),
+            v2UiSurfaces = listOf(kotlinx.serialization.json.buildJsonObject { put("surface_id", kotlinx.serialization.json.JsonPrimitive("s-1")) }),
+            v2SessionId = "v2-session-A",
+            v2CompactionSummary = "Context compacted",
+            error = "A error")
             .applyCanonicalContextUsage(ConversationProjectionV1.ContextUsage(7500, 32768, 28672, false, 12))
         val empty = original.newConversationPresentation(AndroidAgentPermissionMode.Cautious)
         assertNull(empty.conversationId)
@@ -38,6 +43,10 @@ class ConversationPresentationTest {
         assertNull(empty.activeTurnId)
         assertNull(empty.activeResponseId)
         assertNull(empty.revealResponseId)
+        assertNull(empty.pendingUserQuestion)
+        assertTrue(empty.v2UiSurfaces.isEmpty())
+        assertNull(empty.v2SessionId)
+        assertNull(empty.v2CompactionSummary)
         assertNull(empty.error)
         assertEquals("", empty.currentResponse)
         assertEquals("", empty.thinking)

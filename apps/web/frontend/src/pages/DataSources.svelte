@@ -16,6 +16,7 @@
     import { DataSourceError, newSourceId, parseSources, parseUsage, sourceDraft, sourcePayload, sourceReceipt, deletionReceipt, sourceState, disclosureKey, replaceSource, sourcePolicies, sourceKinds, mobileInformationTabs } from '../lib/dataSources';
     import type { DataSource, SourceUsage } from '../lib/dataSources';
     import RefreshButton from '../components/RefreshButton.svelte';
+    import PrototypeIcon from '../components/PrototypeIcon.svelte';
     import ConfirmationDialog from '../components/ConfirmationDialog.svelte';
     import Automations from './Automations.svelte';
     import MemoryCenter from '../components/MemoryCenter.svelte';
@@ -27,10 +28,10 @@
     let usage = $state<SourceUsage[]>([]);
     type InformationTab = 'overview' | 'knowledge' | 'sources' | 'memory' | 'plans' | 'activity' | 'usage';
     const desktopTabs: InformationTab[] = ['knowledge', 'sources', 'memory', 'plans', 'usage'];
-    const tabs = $derived<readonly InformationTab[]>(viewportWidth <= 700 ? mobileInformationTabs : desktopTabs);
+    const tabs = $derived<readonly InformationTab[]>(viewportWidth <= 760 ? mobileInformationTabs : desktopTabs);
     function tabAt(url: URL, width: number): InformationTab {
         const requested = url.searchParams.get('tab');
-        const compact = width <= 700;
+        const compact = width <= 760;
         const available: readonly InformationTab[] = compact ? mobileInformationTabs : desktopTabs;
         if (requested === 'activity' || requested === 'usage') return compact ? 'activity' : 'usage';
         return available.find(item => item === requested) ?? (compact ? 'overview' : 'sources');
@@ -55,13 +56,13 @@
     }
     function resizeSections() {
         const width = window.innerWidth;
-        const crossed = (width <= 700) !== (viewportWidth <= 700);
+        const crossed = (width <= 760) !== (viewportWidth <= 760);
         viewportWidth = width;
         if (crossed) selectTab(tabAt(pageLocation.read(), width), false);
     }
     const tabLabel = (item: InformationTab) => item === 'knowledge' ? 'chatKnowledge.knowledgePoints'
         : item === 'activity' ? 'shell.informationActivity'
-        : item === 'memory' && viewportWidth <= 700 ? 'memoryCenter.title' : `data_sources.tab.${item}`;
+        : item === 'memory' && viewportWidth <= 760 ? 'memoryCenter.title' : `data_sources.tab.${item}`;
     const tabHint = (item: InformationTab) => item === 'overview' ? 'shell.informationOverviewHint'
         : item === 'usage' ? 'data_sources.section.usage_hint' : `shell.informationRow.${item}.hint`;
     const informationIcons: Partial<Record<InformationTab, string>> = {
@@ -76,7 +77,7 @@
     let directory = $state<HTMLElement>();
     function focusSection(previous: InformationTab) {
         void tick().then(() => {
-            if (disposed || !pageLocation.active() || viewportWidth > 700) return;
+            if (disposed || !pageLocation.active() || viewportWidth > 760) return;
             const target = tab === 'overview'
                 ? directory?.querySelector<HTMLAnchorElement>(`a[href$="tab=${previous}"]`)
                 : heading;
@@ -171,8 +172,10 @@
         if ((section === 'usage' || section === 'activity') && !usageLoaded && !usageLoading) void loadUsage();
     }
     onMount(() => { readSection(tab); return () => { disposed = true; ++editorVersion; cancelReads(); }; });
+    let editorOpener: HTMLElement | undefined;
     async function edit(source?: DataSource) {
         if (busy || editorId) return;
+        editorOpener = document.activeElement instanceof HTMLElement ? document.activeElement : undefined;
         ++editorVersion; existing = source ? structuredClone($state.snapshot(source)) : undefined;
         // The host accepts draft.id. Keep it across failed creates to avoid duplicate sources.
         try { editorId = source?.id ?? newSourceId(); }
@@ -180,7 +183,12 @@
         draft = sourceDraft(source); baseline = JSON.stringify(draft);
         formError = undefined; notice = ''; await tick(); if (!disposed) dialog.showModal();
     }
-    function closeNow() { dialog.close(); editorId = ''; existing = undefined; formError = undefined; ++editorVersion; }
+    function closeNow() {
+        dialog.close(); editorId = ''; existing = undefined; formError = undefined; ++editorVersion;
+        const opener = editorOpener;
+        editorOpener = undefined;
+        void tick().then(() => { if (!disposed && pageLocation.active() && opener?.isConnected) opener.focus(); });
+    }
     async function close(event?: Event) {
         event?.preventDefault(); if (busy) return;
         const version = editorVersion;
@@ -243,21 +251,21 @@
         <article class="source"><div class="row between"><strong>{record.sourceTitle || record.sourceId}</strong><span>{t($locale, disclosureKey(record))}</span></div><p>{record.purpose}</p><p class="muted">{t($locale, 'data_sources.usage.consumer')}: {record.consumer} · {resultTime(record.usedAt, $locale)}</p>{#if record.conversationId}<a class="button" href={conversationHref(record.conversationId)}>{t($locale, 'data_sources.usage.conversation')}</a>{/if}</article>
     {:else}<p class="muted">{t($locale, 'data_sources.usage.empty')}</p>{/each}
 {/snippet}
-{#if viewportWidth <= 700 && tab !== 'overview'}<div class="information-back"><button type="button" onclick={showDirectory}><span aria-hidden="true">‹</span>{t($locale, 'shell.information')}</button></div>{/if}
-<header class="page-header" class:mobile-overview={viewportWidth <= 700 && tab === 'overview'}><div><h1 tabindex="-1" bind:this={heading} id={viewportWidth <= 700 ? `data-tab-${tab}` : undefined}>{t($locale, tab !== 'overview' ? tabLabel(tab) : 'shell.information')}</h1><p class="muted">{t($locale, tabHint(tab))}</p></div><div class="actions page-actions">{#if tab === 'sources'}<button class="primary" disabled={busy || !sourcesLoaded} onclick={() => edit()}>{t($locale, 'data_sources.action.add')}</button>{/if}</div></header>
-<div class="content management-content" class:mobile-overview={viewportWidth <= 700 && tab === 'overview'}>
-    {#if viewportWidth <= 700 && tab === 'overview'}
+{#if viewportWidth <= 760 && tab !== 'overview'}<div class="information-back"><button type="button" onclick={showDirectory}><PrototypeIcon name="back" size={18} />{t($locale, 'shell.information')}</button></div>{/if}
+<header class="page-header" class:mobile-overview={viewportWidth <= 760 && tab === 'overview'}><div><h1 tabindex="-1" bind:this={heading} id={viewportWidth <= 760 ? `data-tab-${tab}` : undefined}>{t($locale, tab !== 'overview' ? tabLabel(tab) : 'shell.information')}</h1><p class="muted">{t($locale, tabHint(tab))}</p></div><div class="actions page-actions">{#if tab === 'sources'}<button type="button" class="primary" disabled={busy || !sourcesLoaded} onclick={() => edit()}>{t($locale, 'data_sources.action.add')}</button>{/if}</div></header>
+<div class="content management-content" class:mobile-overview={viewportWidth <= 760 && tab === 'overview'}>
+    {#if viewportWidth <= 760 && tab === 'overview'}
         <nav bind:this={directory} class="information-navigation" aria-label={t($locale, 'shell.information')}>
             {#each tabs as item}<a href={`/data-sources?tab=${item}`} onclick={event => openInformation(event, item)}><span class="information-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><path d={informationIcons[item]} /></svg></span><span class="information-copy"><strong>{t($locale, overviewLabel(item))}</strong></span></a>{/each}
         </nav>
     {/if}
-    {#if viewportWidth > 700}<div class="data-tabs" role="tablist" aria-label={t($locale, 'data_sources.header.title')}>
+    {#if viewportWidth > 760}<div class="data-tabs" role="tablist" aria-label={t($locale, 'data_sources.header.title')}>
         {#each tabs as item, index}<button type="button" role="tab" id={`data-tab-${item}`} aria-controls={`data-panel-${item}`} aria-selected={tab === item} tabindex={tab === item ? 0 : -1} onclick={() => selectTab(item)} onkeydown={event => tabKey(event, index)}>{t($locale, tabLabel(item))}</button>{/each}
     </div>{/if}
-    <div class="data-panel" id="data-panel-knowledge" role={viewportWidth <= 700 ? 'region' : 'tabpanel'} aria-labelledby="data-tab-knowledge" hidden={tab !== 'knowledge'}>{#if knowledgeVisited}<InformationKnowledge />{/if}</div>
-    {#if activityVisited}<div class="data-panel" id="data-panel-activity" role={viewportWidth <= 700 ? 'region' : 'tabpanel'} aria-labelledby="data-tab-activity" hidden={tab !== 'activity'}><section class="card"><h2>{t($locale, 'chatInspector.list.activity')}</h2><p class="muted">{t($locale, 'activity.results_hint')}</p><a class="button" href="/activity">{t($locale, 'chatInspector.list.activity')}</a></section></div>{/if}
+    <div class="data-panel" id="data-panel-knowledge" role={viewportWidth <= 760 ? 'region' : 'tabpanel'} aria-labelledby="data-tab-knowledge" hidden={tab !== 'knowledge'}>{#if knowledgeVisited}<InformationKnowledge />{/if}</div>
+    {#if activityVisited}<div class="data-panel" id="data-panel-activity" role={viewportWidth <= 760 ? 'region' : 'tabpanel'} aria-labelledby="data-tab-activity" hidden={tab !== 'activity'}><section class="card"><h2>{t($locale, 'chatInspector.list.activity')}</h2><p class="muted">{t($locale, 'activity.results_hint')}</p><a class="button" href="/activity">{t($locale, 'chatInspector.list.activity')}</a></section></div>{/if}
     {#if notice && !editorId}<p role="status" class:error={!!formError}>{t($locale, notice)} {#if formError}{message(formError)}{/if}</p>{/if}
-    <div class="card data-panel" id="data-panel-sources" role={viewportWidth <= 700 ? 'region' : 'tabpanel'} aria-labelledby="data-tab-sources" hidden={tab !== 'sources'} aria-busy={sourcesLoading || !!operation}>
+    <div class="card data-panel" id="data-panel-sources" role={viewportWidth <= 760 ? 'region' : 'tabpanel'} aria-labelledby="data-tab-sources" hidden={tab !== 'sources'} aria-busy={sourcesLoading || !!operation}>
         <div class="row between"><h2>{t($locale, 'data_sources.section.sources')}</h2><RefreshButton disabled={busy} loading={sourcesLoading} refresh={loadSources} /></div>
         <p class="muted">{t($locale, 'data_sources.refresh_hint')}</p>
         {#if sourcesError}<div role="alert" class="error">{t($locale, 'data_sources.error.load')}{message(sourcesError)}{#if sourcesLoaded}<p>{t($locale, 'data_sources.stale')}</p>{/if}</div>{/if}
@@ -269,15 +277,15 @@
                     <div class="row between"><div><h2>{source.name}</h2><p class="muted location">{source.location}</p></div><span>{t($locale, `data_sources.state.${sourceState(source)}`)}</span></div>
                     <p>{Object.hasOwn(policyKeys, source.accessPolicy) ? t($locale, policyKey(source.accessPolicy)) : source.accessPolicy} · {source.kind === 'http' ? 'HTTP / HTTPS' : source.kind === 'localFile' ? t($locale, 'data_sources.kind.local') : source.kind}</p>
                     {#if source.validationContract}<p class="muted">{source.validationContract.recordCount} {t($locale, 'data_sources.contract.records')} · {resultTime(source.validationContract.validatedAt, $locale)}</p>{/if}
-                    <div class="actions"><button disabled={busy} onclick={() => edit(source)}>{t($locale, 'data_sources.action.edit')}</button><button disabled={busy} onclick={() => mutate('test', source)}>{t($locale, 'data_sources.action.test')}</button></div>
+                    <div class="actions"><button type="button" disabled={busy} onclick={() => edit(source)}>{t($locale, 'data_sources.action.edit')}</button><button type="button" disabled={busy} onclick={() => mutate('test', source)}>{t($locale, 'data_sources.action.test')}</button></div>
                 </article>
             {:else}<h2>{t($locale, 'data_sources.empty.title')}</h2><p class="muted">{t($locale, 'data_sources.empty.body')}</p>{/each}
         {/if}
     </div>
-    <div class="data-panel" id="data-panel-plans" role={viewportWidth <= 700 ? 'region' : 'tabpanel'} aria-labelledby="data-tab-plans" hidden={tab !== 'plans'}>{#if plansVisited}<Automations embedded />{/if}</div>
-    <div class="data-panel" id="data-panel-memory" role={viewportWidth <= 700 ? 'region' : 'tabpanel'} aria-labelledby="data-tab-memory" hidden={tab !== 'memory'}>{#if memoryVisited}<MemoryCenter />{/if}</div>
-    <div class="card data-panel" id="data-panel-usage" role={viewportWidth <= 700 ? "region" : "tabpanel"} aria-labelledby={viewportWidth <= 700 ? "data-tab-activity" : "data-tab-usage"} hidden={tab !== 'usage' && tab !== 'activity'} aria-busy={usageLoading}>
-        <div class="row between"><h2>{t($locale, 'data_sources.section.usage')}</h2><RefreshButton disabled={busy} loading={usageLoading} refresh={loadUsage} /></div>
+    <div class="data-panel" id="data-panel-plans" role={viewportWidth <= 760 ? 'region' : 'tabpanel'} aria-labelledby="data-tab-plans" hidden={tab !== 'plans'}>{#if plansVisited}<Automations embedded />{/if}</div>
+    <div class="data-panel" id="data-panel-memory" role={viewportWidth <= 760 ? 'region' : 'tabpanel'} aria-labelledby="data-tab-memory" hidden={tab !== 'memory'}>{#if memoryVisited}<MemoryCenter />{/if}</div>
+    <div class="card data-panel" id="data-panel-usage" role={viewportWidth <= 760 ? "region" : "tabpanel"} aria-labelledby={viewportWidth <= 760 ? "data-usage-heading" : "data-tab-usage"} hidden={tab !== 'usage' && tab !== 'activity'} aria-busy={usageLoading}>
+        <div class="row between"><h2 id="data-usage-heading">{t($locale, 'data_sources.section.usage')}</h2><RefreshButton disabled={busy} loading={usageLoading} refresh={loadUsage} /></div>
         <p class="muted">{t($locale, 'data_sources.section.usage_hint')}</p>
         {#if usageError}<div class="error" role="alert">{t($locale, 'data_sources.usage.load_failed')}: {message(usageError)}{#if usageLoaded}<p>{t($locale, 'data_sources.stale')}</p>{/if}</div>{/if}
         {#if usageLoading && !usageLoaded}<p role="status">{t($locale, 'activity.refreshing')}</p>{/if}
@@ -315,7 +323,6 @@
     dialog { max-width: 760px; } p { margin: 0; } .source h2 { font-size: 16px; }
     .information-back { padding: 4px 16px 0; }
     .information-back button { display: flex; gap: 8px; align-items: center; min-height: 44px; padding: 4px; background: transparent; border: 0; }
-    .information-back span { font-size: 24px; }
     .information-navigation { display: grid; gap: 0; overflow: visible; border-top: 1px solid var(--border); }
     .information-navigation a { display: flex; align-items: center; gap: 14px; min-height: 60px; padding: 12px; border: 0; border-bottom: 1px solid var(--border); border-radius: 0; white-space: normal; }
     .information-navigation a:hover { background: var(--accent-subtle); }
@@ -323,7 +330,7 @@
     .information-icon svg { width: 21px; height: 21px; fill: none; stroke: currentColor; stroke-width: 1.25; stroke-linejoin: round; stroke-linecap: round; }
     .information-copy { flex: 1; min-width: 0; display: grid; gap: 3px; }
     .information-copy strong { font-size: 17px; line-height: 24px; font-weight: 600; }
-    @media (max-width: 700px) {
+    @media (max-width: 760px) {
         .page-header.mobile-overview { padding: 24px 20px 22px; }
         .page-header.mobile-overview h1 { font-size: 28px; line-height: 36px; font-weight: 650; }
         .page-header.mobile-overview p { font-size: 15px; line-height: 24px; margin-top: 6px; }

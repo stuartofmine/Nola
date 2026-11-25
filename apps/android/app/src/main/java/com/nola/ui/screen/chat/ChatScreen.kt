@@ -84,10 +84,12 @@ import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.sizeIn
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
@@ -2157,16 +2159,15 @@ internal fun ChatTranscript(
             }
 
             if (state.v2UiSurfaces.isNotEmpty()) {
-                items(
+                itemsIndexed(
                     items = state.v2UiSurfaces,
-                    key = { snapshot ->
-                        val surfaceId = (snapshot["surface_id"] as? kotlinx.serialization.json.JsonPrimitive)?.content
+                    key = { index, snapshot ->
+                        val surfaceId = (snapshot["surface_id"] as? kotlinx.serialization.json.JsonPrimitive)?.content?.takeIf { it.isNotBlank() }
                             ?: ((snapshot["identity"] as? kotlinx.serialization.json.JsonObject)
-                                ?.get("surface_id") as? kotlinx.serialization.json.JsonPrimitive)?.content
-                            ?: snapshot.hashCode().toString()
-                        "v2_ui_surface_$surfaceId"
+                                ?.get("surface_id") as? kotlinx.serialization.json.JsonPrimitive)?.content?.takeIf { it.isNotBlank() }
+                        if (surfaceId != null) "v2_ui_surface_$surfaceId" else "v2_ui_surface_${index}_${snapshot.hashCode()}"
                     },
-                ) { snapshot ->
+                ) { _, snapshot ->
                     V2UiSurfaceItem(
                         snapshotJson = snapshot,
                         conversationId = state.conversationId,
@@ -2833,7 +2834,7 @@ private fun AttachmentChip(
             modifier = Modifier
                 .size(48.dp)
                 .clip(CircleShape)
-                .clickable(enabled = enabled, onClick = onRemove),
+                .clickable(enabled = enabled, role = Role.Button, onClick = onRemove),
             contentAlignment = Alignment.Center
         ) {
             Icon(
@@ -2875,7 +2876,7 @@ private fun ComposerCircleButton(
         modifier = Modifier
             .size(48.dp)
             .clip(CircleShape)
-            .clickable(enabled = enabled, onClick = onClick),
+            .clickable(enabled = enabled, role = Role.Button, onClick = onClick),
         contentAlignment = Alignment.Center
     ) {
         Box(
@@ -3107,7 +3108,7 @@ private fun V2CompactionSummaryBanner(
             )
             IconButton(
                 onClick = onDismiss,
-                modifier = Modifier.size(28.dp),
+                modifier = Modifier.sizeIn(minWidth = 48.dp, minHeight = 48.dp),
             ) {
                 Icon(
                     imageVector = Icons.Filled.Close,
@@ -3127,6 +3128,7 @@ private fun V2UserQuestionCard(
     onRespond: (String, String?) -> Unit,
 ) {
     var answerText by remember(prompt.requestId) { mutableStateOf("") }
+    var submitting by remember(prompt.requestId) { mutableStateOf(false) }
     Card(
         modifier = Modifier
             .fillMaxWidth()
@@ -3166,7 +3168,13 @@ private fun V2UserQuestionCard(
                     prompt.options.forEach { option ->
                         FilterChip(
                             selected = answerText == option,
-                            onClick = { onRespond(prompt.requestId, option) },
+                            enabled = !submitting,
+                            onClick = {
+                                if (!submitting) {
+                                    submitting = true
+                                    onRespond(prompt.requestId, option)
+                                }
+                            },
                             label = { Text(option) },
                         )
                     }
@@ -3175,8 +3183,9 @@ private fun V2UserQuestionCard(
             androidx.compose.material3.OutlinedTextField(
                 value = answerText,
                 onValueChange = { answerText = it },
+                enabled = !submitting,
                 modifier = Modifier.fillMaxWidth(),
-                placeholder = { Text("Type your answer...") },
+                placeholder = { Text(stringResource(R.string.chat_v2_question_placeholder)) },
                 singleLine = false,
                 maxLines = 4,
             )
@@ -3186,15 +3195,28 @@ private fun V2UserQuestionCard(
                 verticalAlignment = Alignment.CenterVertically,
             ) {
                 androidx.compose.material3.TextButton(
-                    onClick = { onRespond(prompt.requestId, null) },
+                    enabled = !submitting,
+                    modifier = Modifier.heightIn(min = 48.dp),
+                    onClick = {
+                        if (!submitting) {
+                            submitting = true
+                            onRespond(prompt.requestId, null)
+                        }
+                    },
                 ) {
-                    Text("Skip")
+                    Text(stringResource(R.string.chat_v2_question_skip))
                 }
                 androidx.compose.material3.Button(
-                    enabled = answerText.isNotBlank(),
-                    onClick = { onRespond(prompt.requestId, answerText.trim()) },
+                    enabled = !submitting && answerText.isNotBlank(),
+                    modifier = Modifier.heightIn(min = 48.dp),
+                    onClick = {
+                        if (!submitting) {
+                            submitting = true
+                            onRespond(prompt.requestId, answerText.trim())
+                        }
+                    },
                 ) {
-                    Text("Submit")
+                    Text(stringResource(R.string.chat_v2_question_submit))
                 }
             }
         }
@@ -3207,6 +3229,7 @@ private fun V2UiSurfaceItem(
     conversationId: String?,
     onSubmitInteraction: (suspend (String, kotlinx.serialization.json.JsonObject) -> kotlinx.serialization.json.JsonObject)?,
 ) {
+    val context = androidx.compose.ui.platform.LocalContext.current
     val parsedSnapshot = remember(snapshotJson) {
         runCatching {
             v2UiSnapshotJson.decodeFromString(
@@ -3216,7 +3239,13 @@ private fun V2UiSurfaceItem(
         }.getOrNull()
     }
     if (parsedSnapshot != null) {
-        val convId = conversationId ?: parsedSnapshot.identity.owner.conversation_id
+        var committedSnapshot by remember(parsedSnapshot.identity) {
+            mutableStateOf<com.nola.data.local.UiSnapshot?>(null)
+        }
+        val activeSnapshot = committedSnapshot?.takeIf {
+            it.identity == parsedSnapshot.identity && it.revision >= parsedSnapshot.revision
+        } ?: parsedSnapshot
+        val convId = conversationId ?: activeSnapshot.identity.owner.conversation_id
         Card(
             modifier = Modifier
                 .fillMaxWidth()
@@ -3228,10 +3257,12 @@ private fun V2UiSurfaceItem(
         ) {
             Box(modifier = Modifier.padding(14.dp)) {
                 com.nola.ui.generative.GenerativeUiSurface(
-                    snapshot = parsedSnapshot,
+                    snapshot = activeSnapshot,
                     submit = { submission ->
                         val handler = onSubmitInteraction
-                            ?: return@GenerativeUiSurface com.nola.ui.generative.UiSubmissionOutcome.Rejected("Interactive UI unavailable")
+                            ?: return@GenerativeUiSurface com.nola.ui.generative.UiSubmissionOutcome.Rejected(
+                                context.getString(R.string.chat_v2_ui_unavailable)
+                            )
                         try {
                             val payload = kotlinx.serialization.json.buildJsonObject {
                                 put("surface_id", kotlinx.serialization.json.JsonPrimitive(submission.interaction.identity.surface_id))
@@ -3254,15 +3285,23 @@ private fun V2UiSurfaceItem(
                                     com.nola.data.local.UiSnapshot.serializer(),
                                     updatedObj.toString(),
                                 )
-                            }.getOrDefault(parsedSnapshot)
+                            }.getOrDefault(activeSnapshot)
                             com.nola.ui.generative.UiSubmissionOutcome.Committed(
                                 com.nola.data.local.UiInteractionReceipt(updatedSnapshot, submission.submission_id)
                             )
                         } catch (e: Exception) {
-                            com.nola.ui.generative.UiSubmissionOutcome.Rejected(e.message ?: "Interaction failed")
+                            com.nola.ui.generative.UiSubmissionOutcome.Rejected(
+                                e.message ?: context.getString(R.string.chat_v2_ui_interaction_failed)
+                            )
                         }
                     },
-                    accepted = {},
+                    accepted = { receipt ->
+                        if (receipt.snapshot.identity == parsedSnapshot.identity &&
+                            receipt.snapshot.revision >= activeSnapshot.revision
+                        ) {
+                            committedSnapshot = receipt.snapshot
+                        }
+                    },
                 )
             }
         }
@@ -3337,14 +3376,14 @@ private fun V2UiSurfaceItem(
                                             },
                                         )
                                     } catch (e: Exception) {
-                                        interactionError = e.message ?: "Interaction failed"
+                                        interactionError = e.message ?: context.getString(R.string.chat_v2_ui_interaction_failed)
                                     } finally {
                                         submitting = false
                                     }
                                 }
                             },
                         ) {
-                            Text(text.ifBlank { actionId.ifBlank { "Submit" } })
+                            Text(text.ifBlank { actionId.ifBlank { stringResource(R.string.chat_v2_question_submit) } })
                         }
                     }
                     "textfield", "text_field", "input" -> {
@@ -3541,7 +3580,7 @@ fun MessageBubble(
         }
         if (isUser) {
             if (visibleText.isNotBlank()) {
-                val userBubbleShape = RoundedCornerShape(20.dp)
+                val userBubbleShape = com.nola.ui.theme.NolaContinuousShape(NolaRadius.message)
                 Card(
                     modifier = Modifier.widthIn(max = 560.dp),
                     colors = CardDefaults.cardColors(

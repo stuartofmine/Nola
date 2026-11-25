@@ -125,7 +125,7 @@
 <style>
     .login-shell { min-height: 100dvh; display: grid; place-items: center; padding: 40px 20px; background: var(--panel); }
     .login-card { width: 100%; max-width: 480px; display: grid; gap: 20px; padding: 32px; border: 1px solid var(--border); border-radius: var(--radius); background: var(--surface); }
-    .brand { display: inline-flex; align-items: center; gap: 10px; }
+    .brand { display: inline-flex; align-items: center; gap: 10px; padding: 0; }
     .mark { width: 32px; height: 32px; display: grid; place-items: center; border-radius: 9px; background: var(--accent); color: var(--on-primary); font: italic 600 20px/1 Georgia, serif; }
     .wordmark { font-size: 20px; font-weight: 650; letter-spacing: -.015em; }
     .topline { display: flex; justify-content: space-between; align-items: center; gap: 12px; flex-wrap: wrap; }

@@ -1477,4 +1477,13 @@
     <string name="permission_from_subagent">От субагента: %1$s</string>
     <string name="permission_queue_pending">1 из %1$d ожидает</string>
     <string name="chat_response_failed_empty">Не удалось получить ответ.</string>
+    <string name="chat_v2_question_placeholder">Введите ответ…</string>
+    <string name="chat_v2_question_skip">Пропустить</string>
+    <string name="chat_v2_question_submit">Отправить</string>
+    <string name="chat_v2_ui_unavailable">Интерактивный интерфейс недоступен</string>
+    <string name="chat_v2_ui_interaction_failed">Ошибка взаимодействия</string>
+    <string name="chat_v2_context_compacted">Контекст сжат</string>
+    <string name="chat_v2_context_compacted_range">Контекст сжат (%1$s → %2$s токенов)</string>
+    <string name="chat_v2_context_compacted_after">Контекст сжат (%1$s токенов)</string>
+    <string name="chat_v2_context_compaction_failed">Не удалось сжать контекст</string>
 </resources>

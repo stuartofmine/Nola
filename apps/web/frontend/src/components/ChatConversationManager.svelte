@@ -225,7 +225,7 @@
 <svelte:window onbeforeunload={event => { if (!acceptsWorkspaceUnload(event)) return; if (renameDirty) { event.preventDefault(); event.returnValue = ''; } }} />
 {#if !confirm}<ConfirmationDialog bind:this={confirmation} />{/if}
 {#snippet createEntry()}
-    <button bind:this={createButton} class="new-conversation" disabled={navigationDisabled || writing} onclick={() => mutate('create')}><svg aria-hidden="true" viewBox="0 0 24 24"><path d="M12 5v14M5 12h14" /></svg><span>{t($locale, 'shell.conversations.new')}</span></button>
+    <button bind:this={createButton} class="new-conversation" aria-label={t($locale, 'shell.conversations.new')} title={t($locale, 'shell.conversations.new')} disabled={navigationDisabled || writing} onclick={() => mutate('create')}><svg aria-hidden="true" viewBox="0 0 24 24"><path d="M12 5v14M5 12h14" /></svg><span>{t($locale, 'shell.conversations.new')}</span></button>
 {/snippet}
 <section class="conversation-manager" class:page-list={layout === 'page'} class:sidebar-list={layout === 'sidebar'} aria-label={t($locale, 'chatInspector.list.conversations')}>
     <header class="list-heading">
@@ -248,7 +248,7 @@
                 {#if layout === 'page'}<ConversationRowDetails conversationId={conversation.conversationId} version={JSON.stringify([generation, loadVersion, conversation.updatedAt, conversation.revision])} />{/if}
             </button>
             <details class="row-actions" use:dismissibleDisclosure>
-                <summary aria-label={t($locale, 'chatConversations.actionsFor', {name: conversation.title || t($locale, 'chatConversations.untitled')})} aria-disabled={menuLocked(conversation)} onclick={event => { if (menuLocked(conversation)) event.preventDefault(); }}><PrototypeIcon name="more" size={16} /></summary>
+                <summary aria-label={t($locale, 'chatConversations.actionsFor', {name: conversation.title || t($locale, 'chatConversations.untitled')})} title={t($locale, 'chatConversations.actionsFor', {name: conversation.title || t($locale, 'chatConversations.untitled')})} aria-disabled={menuLocked(conversation)} onclick={event => { if (menuLocked(conversation)) event.preventDefault(); }}><PrototypeIcon name="more" size={16} /></summary>
                 <div class="row-action-buttons">
                     <button disabled={rowLocked(conversation)} onclick={event => pin(conversation, event.currentTarget)}>{t($locale, conversation.isPinned ? 'chatConversations.unpin' : 'chatConversations.pin')}</button>
                     <button disabled={rowLocked(conversation)} onclick={event => rename(conversation, event.currentTarget)}>{t($locale, 'chatConversations.rename')}</button>
@@ -288,8 +288,10 @@
     .new-conversation span { min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
     svg { width: 20px; height: 20px; flex: none; fill: none; stroke: currentColor; stroke-width: 1.6; }
     .search-row { position: relative; display: flex; min-width: 0; }
-    .conversation-search { display: flex; align-items: center; gap: 10px; min-width: 0; width: 100%; padding-left: 12px; padding-right: 44px; background: var(--panel); border-radius: 8px; color: var(--muted); }
-    .conversation-search input { min-height: 44px; padding: 8px 0; border: 0; border-radius: 0; background: transparent; font-size: 15px; }
+    .conversation-search { display: flex; align-items: center; gap: 10px; min-width: 0; width: 100%; padding-left: 12px; padding-right: 44px; background: var(--input-bg); border: 1px solid var(--border); border-radius: 8px; color: var(--muted); transition: border-color var(--motion-fast) ease; }
+    .conversation-search:focus-within { border-color: var(--input-focus-border); }
+    .conversation-search input { min-height: 44px; padding: 8px 0; border: 0; border-radius: 0; background: transparent; box-shadow: none; font-size: 15px; }
+    .conversation-search input:hover, .conversation-search input:focus { border-color: transparent; outline: none; }
     .refresh-list { position: absolute; inset: 0 0 0 auto; display: grid; place-items: center; padding: 0; width: 44px; min-height: 44px; border: 0; background: transparent; color: var(--muted); }
     .refresh-list svg { width: 16px; height: 16px; }
     .sr-only { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); }
@@ -301,7 +303,7 @@
     .conversation:hover:not(:disabled) { background: var(--composer-pill-hover-bg); border-color: transparent; }
     .conversation[aria-current], .conversation[aria-current]:hover { background: var(--glass-pill-bg); border-color: var(--glass-pill-border); box-shadow: var(--glass-pill-shadow); color: var(--content); font-weight: 600; }
     .conversation[aria-current] .conversation-heading > span { font-weight: 600; }
-    @media (hover: hover) { .conversation:not([aria-current]):not(:disabled):hover { background: var(--panel); } .conversation[aria-current]:not(:disabled):hover { background: var(--accent-subtle); } }
+    @media (hover: hover) { .conversation:not([aria-current]):not(:disabled):hover { background: var(--composer-pill-hover-bg); border-color: transparent; } .conversation[aria-current]:not(:disabled):hover { background: var(--glass-pill-bg); } }
     .conversation-heading { display: flex; align-items: baseline; gap: 8px; min-width: 0; }
     .conversation-heading > span { flex: 1; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; font-weight: 400; }
     .conversation-heading small { flex-shrink: 0; max-width: 30%; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; color: var(--muted); font-size: 12px; font-weight: 400; }
@@ -322,7 +324,11 @@
     .sidebar-list .group-title { margin-left: 12px; margin-top: 4px; }
     .sidebar-list .new-conversation { justify-self: start; color: var(--content); font-size: 12px; line-height: 18px; min-height: 32px; padding: 4px 6px; }
     .sidebar-list .new-conversation svg { width: 16px; height: 16px; }
-    @media (max-width: 700px), (pointer: coarse) { .sidebar-list .conversation, .sidebar-list .conversation-search input, .sidebar-list .refresh-list, .sidebar-list .new-conversation { min-height: 44px; } }
+    .sidebar-list .row-actions > summary { top: 4px; right: 4px; width: 32px; height: 32px; min-width: 32px; min-height: 32px; padding: 0; }
+    @media (max-width: 760px), (pointer: coarse) {
+        .sidebar-list .conversation, .sidebar-list .conversation-search input, .sidebar-list .refresh-list, .sidebar-list .new-conversation { min-height: 44px; }
+        .sidebar-list .row-actions > summary { top: 0; right: 0; width: 44px; height: 44px; min-width: 44px; min-height: 44px; }
+    }
     form label { flex: 1; min-width: 160px; }
     .muted { font-size: 12px; margin: 0; }
     .row-actions { display: block; grid-column: 1 / -1; min-width: 0; }

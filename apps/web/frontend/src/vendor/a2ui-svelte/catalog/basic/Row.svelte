@@ -11,13 +11,13 @@
 		ariaLabel?: string;
 	}
 
-	let { slots, justify = 'start', align = 'stretch', weight, ariaLabel }: Props = $props();
+	let { slots, justify = 'start', align, weight, ariaLabel }: Props = $props();
 </script>
 
 <div
 	class="a2ui-row"
 	style:justify-content={JUSTIFY[justify] ?? 'flex-start'}
-	style:align-items={ALIGN[align] ?? 'stretch'}
+	style:align-items={align ? ALIGN[align] : undefined}
 	style:flex-grow={weight}
 	aria-label={ariaLabel}
 >
@@ -28,6 +28,8 @@
 	.a2ui-row {
 		display: flex;
 		flex-direction: row;
+		flex-wrap: wrap;
+		align-items: flex-end;
 		min-width: 0;
 		/* Invisible containers contribute no spacing — leaves own their margins. */
 		margin: 0;

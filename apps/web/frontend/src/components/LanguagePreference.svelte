@@ -8,4 +8,8 @@
         {#each supportedLocales as language}<option value={language} lang={language}>{languageNames[language]}</option>{/each}
     </select>
 </label>
-<style>.language-preference { display: grid; gap: 8px; font-size: .875rem; } select { width: 100%; min-width: 0; min-height: 44px; }</style>
+<style>
+    .language-preference { display: grid; gap: 8px; font-size: .875rem; }
+    select { width: 100%; min-width: 0; min-height: 38px; }
+    @media (pointer: coarse) { select { min-height: 44px; } }
+</style>

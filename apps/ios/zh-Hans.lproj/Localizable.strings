@@ -3583,3 +3583,6 @@
 "chat.task.state.failed" = "失败";
 "chat.task.state.cancelled" = "已取消";
 "chat.context.skills.template.body" = "# 技能：新技能\n\n## 适用场景\n描述适合使用这项技能的具体情况。\n\n## 工作流程\n1. 明确用户目标。\n2. 查看相关背景信息。\n3. 给出简明、可执行的结果。\n\n## 输出要求\n- 层次清晰。\n- 说明假设和风险。";
+"chat.v2.question.placeholder" = "输入你的回答…";
+"chat.v2.question.submit" = "提交";
+"chat.v2.question.skip" = "跳过";

@@ -526,7 +526,7 @@ struct MacComposerView: View {
             bottomToolbar
         }
         .background(
-            colorScheme == .dark ? Color(red: 0.082, green: 0.082, blue: 0.092) : MacDesignColor.panel,
+            MacDesignColor.panel,
             in: RoundedRectangle(cornerRadius: 18, style: .continuous)
         )
         .overlay {

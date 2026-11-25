@@ -4,8 +4,9 @@ import androidx.compose.ui.res.stringResource
 import com.nola.R
 
 import androidx.compose.foundation.BorderStroke
-import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.selection.selectable
+import androidx.compose.foundation.selection.toggleable
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material3.*
@@ -13,6 +14,7 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.input.TextFieldValue
@@ -113,7 +115,12 @@ internal fun GenerativeUiNode(
                         .fillMaxWidth()
                         .heightIn(min = 48.dp)
                         .clip(RoundedCornerShape(8.dp))
-                        .clickable(enabled = editable) { edit(id, "value", JsonPrimitive(!checked)) },
+                        .toggleable(
+                            value = checked,
+                            enabled = editable,
+                            role = Role.Checkbox,
+                            onValueChange = { edit(id, "value", JsonPrimitive(it)) },
+                        ),
                     verticalAlignment = Alignment.CenterVertically,
                 ) {
                     Checkbox(checked = checked, enabled = editable, onCheckedChange = null)
@@ -142,16 +149,32 @@ internal fun GenerativeUiNode(
                     val optionValue = fields?.get("value")
                     if (optionValue != null) key(index) {
                         val isSelected = optionValue in selected
+                        val onSelectOption: () -> Unit = {
+                            val next = if (isMultiple) selected.toMutableList() else mutableListOf()
+                            if (optionValue in next) next.remove(optionValue) else next.add(optionValue)
+                            edit(id, "value", JsonArray(next))
+                        }
+                        val selectionModifier = if (isMultiple) {
+                            Modifier.toggleable(
+                                value = isSelected,
+                                enabled = editable,
+                                role = Role.Checkbox,
+                                onValueChange = { onSelectOption() },
+                            )
+                        } else {
+                            Modifier.selectable(
+                                selected = isSelected,
+                                enabled = editable,
+                                role = Role.RadioButton,
+                                onClick = onSelectOption,
+                            )
+                        }
                         Row(
                             Modifier
                                 .fillMaxWidth()
                                 .heightIn(min = 48.dp)
                                 .clip(RoundedCornerShape(8.dp))
-                                .clickable(enabled = editable) {
-                                    val next = if (isMultiple) selected.toMutableList() else mutableListOf()
-                                    if (optionValue in next) next.remove(optionValue) else next.add(optionValue)
-                                    edit(id, "value", JsonArray(next))
-                                },
+                                .then(selectionModifier),
                             verticalAlignment = Alignment.CenterVertically,
                         ) {
                             if (isMultiple) {

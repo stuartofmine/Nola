@@ -152,7 +152,7 @@
                     {t($locale, 'modelTest.parameters')}
                 </a>
             {/if}
-            <button class="primary" onclick={busy ? stop : run} disabled={loading || (!busy && !canRun)}>
+            <button type="button" class="primary" onclick={busy ? stop : run} disabled={loading || (!busy && !canRun)}>
                 {t($locale, busy ? 'modelTest.stop' : 'modelTest.run')}
             </button>
         </div>
@@ -161,17 +161,17 @@
     <div class="model-test-grid">
         <section class="card setup">
             <h2>{t($locale, 'modelTest.setup')}</h2>
-            <div class="tabs" role="tablist">
-                <button role="tab" aria-selected={target === 'local'} onclick={() => (target = 'local')} disabled={busy}>
+            <div class="tabs" role="tablist" aria-label={t($locale, 'models.type')}>
+                <button type="button" role="tab" aria-selected={target === 'local'} onclick={() => (target = 'local')} disabled={busy}>
                     {t($locale, 'models.local')}
                 </button>
-                <button role="tab" aria-selected={target === 'cloud'} onclick={() => (target = 'cloud')} disabled={busy}>
+                <button type="button" role="tab" aria-selected={target === 'cloud'} onclick={() => (target = 'cloud')} disabled={busy}>
                     {t($locale, 'models.api')}
                 </button>
             </div>
             {#if target === 'local'}
                 {#if installedLocalModels.length}
-                    <select value={activeLocal?.id ?? ''} onchange={e => (selectedLocalId = e.currentTarget.value)} disabled={busy}>
+                    <select aria-label={t($locale, 'models.local')} value={activeLocal?.id ?? ''} onchange={e => (selectedLocalId = e.currentTarget.value)} disabled={busy}>
                         {#each installedLocalModels as model (model.id)}
                             <option value={model.id}>{model.displayName || model.name || model.id}</option>
                         {/each}
@@ -180,7 +180,7 @@
                     <div class="muted">{t($locale, 'modelTest.notConfigured')}</div>
                 {/if}
             {:else if availableRemoteProfiles.length}
-                <select value={activeRemote?.id ?? ''} onchange={e => (selectedRemoteId = e.currentTarget.value)} disabled={busy}>
+                <select aria-label={t($locale, 'models.api')} value={activeRemote?.id ?? ''} onchange={e => (selectedRemoteId = e.currentTarget.value)} disabled={busy}>
                     {#each availableRemoteProfiles as profile (profile.id)}
                         <option value={profile.id}>{profile.displayName || profile.modelName}</option>
                     {/each}
@@ -200,7 +200,7 @@
         <section class="card output">
             <header class="output-header">
                 <h2>{t($locale, 'modelTest.output')}</h2>
-                <button onclick={clear} disabled={busy || (!output && !error)}>{t($locale, 'modelTest.clear')}</button>
+                <button type="button" onclick={clear} disabled={busy || (!output && !error)}>{t($locale, 'modelTest.clear')}</button>
             </header>
             {#if busy}<p role="status" class="muted">{t($locale, 'modelTest.running')}</p>{/if}
             {#if output}
@@ -213,12 +213,14 @@
 </div>
 
 <style>
-    .model-test-page { min-height: 100%; }
+    .model-test-page { min-height: 100%; container-type: inline-size; container-name: model-test; }
     .page-header { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 20px; }
     .actions { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; }
-    .model-test-grid { display: grid; grid-template-columns: minmax(280px, 360px) minmax(0, 1fr); gap: 16px; padding: 20px; }
+    .model-test-page > .notice { max-width: 1120px; margin: 0 auto 16px; padding: 12px 16px; }
+    .model-test-grid { display: grid; grid-template-columns: minmax(280px, 360px) minmax(0, 1fr); gap: 16px; max-width: 1120px; margin-inline: auto; padding: 0 32px 32px; }
     .card { min-width: 0; padding: 20px; }
     .setup { display: flex; flex-direction: column; gap: 12px; }
     .output-header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 12px; }
-    @media (max-width: 760px) { .model-test-grid { grid-template-columns: 1fr; } }
+    @container model-test (max-width: 760px) { .model-test-grid { grid-template-columns: minmax(0, 1fr); padding: 0 16px 24px; } }
+    @media (max-width: 760px) { .model-test-grid { grid-template-columns: minmax(0, 1fr); padding: 0 16px 24px; } }
 </style>
