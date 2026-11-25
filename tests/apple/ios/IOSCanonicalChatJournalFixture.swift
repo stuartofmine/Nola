@@ -113,7 +113,7 @@ nonisolated final class IOSCanonicalChatJournalFixture: @unchecked Sendable {
                 for byte in data { $0.yield(byte) }; $0.finish()
             })
         }
-        if request.url?.path.hasSuffix("/chat/agent/v2/configuration") == true {
+        if request.url?.path.hasSuffix("/chat/conversations/c1/configuration") == true {
             guard payload["operation"] as? String == "read",
                   payload["expected_host_id"] as? String == Self.sourceHostID,
                   let conversation = payload["conversation_id"] as? String,
@@ -138,7 +138,7 @@ nonisolated final class IOSCanonicalChatJournalFixture: @unchecked Sendable {
                 "unresolved_run_ids": [], "source_unconfirmed": false,
                 "minimum_policy_revision": payload["minimum_policy_revision"] ?? NSNull()]))
         }
-        if request.url?.path.hasSuffix("/chat/agent/v2/ui/queued-input") == true {
+        if request.url?.path.hasSuffix("/chat/conversations/c1/events") == true {
             guard payload["expected_host_id"] as? String == Self.sourceHostID,
                   let conversation = payload["conversation_id"] as? String,
                   let client = payload["client_id"] as? String, !client.isEmpty,
@@ -155,7 +155,7 @@ nonisolated final class IOSCanonicalChatJournalFixture: @unchecked Sendable {
             }
             return try pairedResult(.object(["head": head, "dispatch": dispatch]))
         }
-        if request.url?.path.hasSuffix("/chat/agent/v2/submission-frontier") == true {
+        if request.url?.path.hasSuffix("/chat/conversations/c1/configuration") == true {
             let result = try source.executeAgentCommand(Self.value([
                 "type": "observe_submission_frontier", "source_host_id": Self.sourceHostID,
                 "request": payload
@@ -169,7 +169,7 @@ nonisolated final class IOSCanonicalChatJournalFixture: @unchecked Sendable {
                 for byte in data { $0.yield(byte) }; $0.finish()
             })
         }
-        if request.url?.path.hasSuffix("/chat/agent/v2/observe") == true {
+        if request.url?.path.hasSuffix("/chat/conversations/c1/events") == true {
             let result = try observationResult(payload)
             guard let conversation = payload["conversation_id"] as? String,
                   let client = payload["client_id"] as? String else { throw invalid("Missing observation owner") }

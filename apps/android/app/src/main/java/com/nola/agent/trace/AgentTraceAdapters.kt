@@ -52,6 +52,21 @@ class AgentTraceSession(
         is SseEvent.TaskStreamCheckpoint -> null
         is SseEvent.AssistantJournal, is SseEvent.AssistantTerminal -> null
         is SseEvent.ExternalSessionStarted -> null
+        is SseEvent.V2SessionStarted,
+        is SseEvent.V2TextDelta,
+        is SseEvent.V2ReasoningDelta,
+        is SseEvent.V2Compacted,
+        is SseEvent.V2TurnCompleted -> null
+        is SseEvent.V2ToolStarted -> event(
+            kind = "tool.started",
+            spanId = source.callId,
+            payload = AgentTracePayload(summary = source.name, toolName = source.name, callId = source.callId),
+        )
+        is SseEvent.V2ToolFinished -> event(
+            kind = if (source.isError) "tool.failed" else "tool.completed",
+            spanId = source.callId,
+            payload = AgentTracePayload(summary = source.summary, toolName = source.name, callId = source.callId),
+        )
         is SseEvent.PermissionRequest -> event(
             kind = "tool.permission.requested",
             spanId = source.id,

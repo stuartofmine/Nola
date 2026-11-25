@@ -133,6 +133,14 @@ pub fn validate_same_origin(request: &Request) -> Result<(), &'static str> {
         }
         return Err("Referer header does not match Host");
     }
+    // Native clients (Android/iOS/macOS/CLI) do not send browser Origin headers;
+    // permit authenticated native API callers when no browser Origin is present.
+    if header_value(request, "authorization")
+        .is_some_and(|v| v.trim_start().to_ascii_lowercase().starts_with("bearer "))
+        || header_value(request, "x-nola-client").is_some_and(|v| !v.trim().is_empty())
+    {
+        return Ok(());
+    }
     Err("missing Origin/Sec-Fetch-Site/Referer header on mutating request")
 }
 

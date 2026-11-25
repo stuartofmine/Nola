@@ -75,6 +75,13 @@ sealed class SseEvent {
         val protocolVersion: Int
     ) : SseEvent()
     data class ExternalSessionStarted(val backendId: String, val sessionId: String) : SseEvent()
+    data class V2SessionStarted(val sessionId: String, val model: String = "") : SseEvent()
+    data class V2TextDelta(val delta: String) : SseEvent()
+    data class V2ReasoningDelta(val delta: String) : SseEvent()
+    data class V2ToolStarted(val callId: String, val name: String) : SseEvent()
+    data class V2ToolFinished(val callId: String, val name: String, val isError: Boolean, val summary: String) : SseEvent()
+    data class V2Compacted(val summary: String) : SseEvent()
+    data class V2TurnCompleted(val sessionId: String, val finalText: String) : SseEvent()
     data class Error(val message: String, val code: String? = null) : SseEvent()
 }
 
@@ -156,6 +163,7 @@ internal fun decodeSsePayload(
     val isEncrypted = rawObject["type"]?.jsonPrimitive?.contentOrNull == "encrypted"
     if (!isEncrypted) {
         return try {
+            decodeV2AgentEvent(rawObject)?.let { return it }
             validateControlTrace(rawObject)
             decodeCoreProjectionHint(rawObject) ?: json.decodeFromJsonElement<SseEventDto>(rawObject).toDomain(rawObject)
         } catch (e: Exception) {
@@ -176,6 +184,40 @@ internal fun decodeSsePayload(
         decodeCoreProjectionHint(eventObject) ?: json.decodeFromJsonElement<SseEventDto>(eventObject).toDomain(eventObject)
     } catch (e: Exception) {
         throw IllegalStateException("Failed to decode Web host SSE event", e)
+    }
+}
+
+private fun decodeV2AgentEvent(envelope: kotlinx.serialization.json.JsonObject): SseEvent? {
+    val type = envelope["type"]?.jsonPrimitive?.contentOrNull ?: return null
+    return when (type) {
+        "session_started" -> SseEvent.V2SessionStarted(
+            sessionId = envelope["session_id"]?.jsonPrimitive?.contentOrNull.orEmpty(),
+            model = envelope["model"]?.jsonPrimitive?.contentOrNull.orEmpty(),
+        )
+        "text_delta" -> SseEvent.V2TextDelta(
+            delta = envelope["delta"]?.jsonPrimitive?.contentOrNull.orEmpty(),
+        )
+        "reasoning_delta" -> SseEvent.V2ReasoningDelta(
+            delta = envelope["delta"]?.jsonPrimitive?.contentOrNull.orEmpty(),
+        )
+        "tool_started" -> SseEvent.V2ToolStarted(
+            callId = envelope["call_id"]?.jsonPrimitive?.contentOrNull.orEmpty(),
+            name = envelope["name"]?.jsonPrimitive?.contentOrNull.orEmpty(),
+        )
+        "tool_finished" -> SseEvent.V2ToolFinished(
+            callId = envelope["call_id"]?.jsonPrimitive?.contentOrNull.orEmpty(),
+            name = envelope["name"]?.jsonPrimitive?.contentOrNull.orEmpty(),
+            isError = envelope["is_error"]?.jsonPrimitive?.contentOrNull == "true",
+            summary = envelope["summary"]?.jsonPrimitive?.contentOrNull.orEmpty(),
+        )
+        "compacted" -> SseEvent.V2Compacted(
+            summary = envelope["summary"]?.jsonPrimitive?.contentOrNull.orEmpty(),
+        )
+        "turn_completed" -> SseEvent.V2TurnCompleted(
+            sessionId = envelope["session_id"]?.jsonPrimitive?.contentOrNull.orEmpty(),
+            finalText = envelope["final_text"]?.jsonPrimitive?.contentOrNull.orEmpty(),
+        )
+        else -> null
     }
 }
 

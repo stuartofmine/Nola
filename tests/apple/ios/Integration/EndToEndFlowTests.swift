@@ -419,7 +419,7 @@ final class EndToEndFlowTests: XCTestCase {
         XCTAssertEqual(requests.count, 1)
         for request in requests {
             XCTAssertEqual(request.method, "POST")
-            XCTAssertEqual(request.path, "/api/mobile/chat/agent/v2/stream")
+            XCTAssertEqual(request.path, "/api/chat/conversations/c1/messages")
             XCTAssertEqual(request.headers["accept"], "text/event-stream")
             XCTAssertEqual(request.headers["x-nola-mobile-crypto"], "aes-gcm-v1")
             XCTAssertNil(request.headers["authorization"])

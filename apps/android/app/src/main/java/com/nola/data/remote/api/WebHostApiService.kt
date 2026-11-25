@@ -117,4 +117,38 @@ interface WebHostApiService {
         submission: FrozenRemoteSubmission,
         pinnedCertificateSha256: String = "",
     ): kotlinx.coroutines.flow.Flow<SseEvent>
+
+    /** Direct Rust v2 WebHost REST + AgentEvent SSE endpoints (zero v1 compat). */
+    suspend fun v2CreateConversation(
+        hostBaseUrl: String,
+        token: String,
+        title: String = "New conversation",
+        pinnedCertificateSha256: String = "",
+    ): String {
+        error("v2 conversation creation is unavailable")
+    }
+
+    suspend fun v2DeleteConversation(
+        hostBaseUrl: String,
+        token: String,
+        conversationId: String,
+        pinnedCertificateSha256: String = "",
+    ) {}
+
+    fun v2StreamMessage(
+        hostBaseUrl: String,
+        token: String,
+        conversationId: String,
+        content: String,
+        pinnedCertificateSha256: String = "",
+    ): kotlinx.coroutines.flow.Flow<SseEvent> {
+        error("v2 SSE message streaming is unavailable")
+    }
+
+    suspend fun v2CancelConversation(
+        hostBaseUrl: String,
+        token: String,
+        conversationId: String,
+        pinnedCertificateSha256: String = "",
+    ) {}
 }

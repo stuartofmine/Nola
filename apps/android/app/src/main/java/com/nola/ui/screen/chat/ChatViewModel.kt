@@ -5014,6 +5014,13 @@ class ChatViewModel @Inject constructor(
                 verifyRemoteTerminal(owner, event.envelope.getValue("seal_digest").jsonPrimitive.content, candidate)
             }
             is SseEvent.Trace -> Unit
+            is SseEvent.V2SessionStarted,
+            is SseEvent.V2TextDelta,
+            is SseEvent.V2ReasoningDelta,
+            is SseEvent.V2ToolStarted,
+            is SseEvent.V2ToolFinished,
+            is SseEvent.V2Compacted,
+            is SseEvent.V2TurnCompleted -> Unit
             is SseEvent.TurnLifecycle -> {
                 // Core lifecycle is only a hint; exact Run seal proves completion.
                 val owner = remoteJournalTurn

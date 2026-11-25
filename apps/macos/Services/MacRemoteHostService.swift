@@ -1600,7 +1600,7 @@ actor MacRemoteHostService: MacRemoteAgentRunning {
               let payload = try JSONSerialization.jsonObject(with: inputData) as? [String: Any] else {
             throw MacRemoteHostError.invalidResponse
         }
-        return try await authenticatedRead(payload, path: "chat/agent/v2/journal", configuration: configuration)
+        return try await authenticatedRead(payload, path: "chat/conversations", configuration: configuration)
     }
 
     private func authenticatedRead<Result: Decodable & Sendable>(_ payload: [String: Any], path: String,
@@ -1672,7 +1672,7 @@ actor MacRemoteHostService: MacRemoteAgentRunning {
         guard let host = target.configuration.expectedHostID else { throw MacRemoteHostError.invalidResponse }
         guard let epoch = target.expectedSourceStoreEpoch, !epoch.isEmpty else { throw MacRemoteHostError.invalidResponse }
         let state: MacUIQueueState = try await authenticatedRead(["expected_host_id": host, "expected_source_store_epoch": epoch, "conversation_id": conversationID,
-            "client_id": target.clientID], path: "chat/agent/v2/ui/queued-input", configuration: target.configuration)
+            "client_id": target.clientID], path: "chat/conversations/\(conversationID)/events", configuration: target.configuration)
         try state.validate(hostID: host, clientID: target.clientID, conversationID: conversationID)
         return state
     }
@@ -1683,7 +1683,7 @@ actor MacRemoteHostService: MacRemoteAgentRunning {
         guard let epoch = target.expectedSourceStoreEpoch, !epoch.isEmpty else { throw MacRemoteHostError.invalidResponse }
         let result: Result = try await authenticatedRead(["expected_host_id": host, "expected_source_store_epoch": epoch, "conversation_id": conversationID,
             "client_id": target.clientID, "command_id": commandID, "request_digest": requestDigest],
-            path: "chat/agent/v2/ui/queued-input/cancel", configuration: target.configuration)
+            path: "chat/conversations/\(conversationID)/cancel", configuration: target.configuration)
         guard result.cancelled, result.command_id == commandID else { throw MacRemoteHostError.invalidResponse }
     }
 
@@ -1691,7 +1691,7 @@ actor MacRemoteHostService: MacRemoteAgentRunning {
         guard let host = target.configuration.expectedHostID else { throw MacRemoteHostError.invalidResponse }
         guard let epoch = target.expectedSourceStoreEpoch, !epoch.isEmpty else { throw MacRemoteHostError.invalidResponse }
         let snapshots: [AppleUISnapshot<MacCanonicalJSONValue>] = try await authenticatedRead(
-            ["expected_host_id": host, "expected_source_store_epoch": epoch, "conversation_id": conversationID], path: "chat/agent/v2/ui/surfaces",
+            ["expected_host_id": host, "expected_source_store_epoch": epoch, "conversation_id": conversationID], path: "chat/conversations/\(conversationID)/events",
             configuration: target.configuration, responseByteLimit: 16 * 1024 * 1024)
         guard snapshots.count <= 8, snapshots.allSatisfy({ $0.identity.owner.conversation_id == conversationID && $0.identity.owner.authority_id == epoch }) else { throw MacRemoteHostError.invalidResponse }
         return snapshots
@@ -1701,7 +1701,7 @@ actor MacRemoteHostService: MacRemoteAgentRunning {
         guard let host = target.configuration.expectedHostID,
               var payload = try JSONSerialization.jsonObject(with: JSONEncoder().encode(input)) as? [String: Any] else { throw MacRemoteHostError.invalidResponse }
         payload["expected_host_id"] = host
-        return try await authenticatedRead(payload, path: "chat/agent/v2/ui/preview",
+        return try await authenticatedRead(payload, path: "chat/conversations/\(input.identity.owner.conversation_id)/events",
             configuration: target.configuration, responseByteLimit: 2 * 1024 * 1024)
     }
 
@@ -1710,14 +1710,14 @@ actor MacRemoteHostService: MacRemoteAgentRunning {
         let owner = try JSONSerialization.jsonObject(with: JSONEncoder().encode(identity))
         return try await authenticatedRead(["expected_host_id": host, "identity": owner,
             "base_revision": baseRevision.map { NSNumber(value: $0) as Any } ?? NSNull()],
-            path: "chat/agent/v2/ui/changes", configuration: target.configuration, responseByteLimit: 2 * 1024 * 1024)
+            path: "chat/conversations/\(identity.owner.conversation_id)/events", configuration: target.configuration, responseByteLimit: 2 * 1024 * 1024)
     }
 
     func readUISurfaceRevision(_ reference: AppleUISurfaceReference, target: MacRemoteSubmissionTarget) async throws -> AppleUISnapshot<MacCanonicalJSONValue>? {
         guard let host = target.configuration.expectedHostID else { throw MacRemoteHostError.invalidResponse }
         let identity = try JSONSerialization.jsonObject(with: JSONEncoder().encode(reference.identity))
         let snapshot: AppleUISnapshot<MacCanonicalJSONValue>? = try await authenticatedRead(
-            ["expected_host_id": host, "identity": identity, "revision": reference.revision], path: "chat/agent/v2/ui/revision",
+            ["expected_host_id": host, "identity": identity, "revision": reference.revision], path: "chat/conversations/\(reference.identity.owner.conversation_id)/events",
             configuration: target.configuration, responseByteLimit: 2 * 1024 * 1024)
         guard snapshot == nil || (snapshot?.identity == reference.identity && snapshot?.revision == reference.revision
             && (snapshot?.phase == .readOnly || snapshot?.phase == .deleted)) else { throw MacRemoteHostError.invalidResponse }
@@ -1734,7 +1734,7 @@ actor MacRemoteHostService: MacRemoteAgentRunning {
         do {
             let object = try JSONSerialization.jsonObject(with: JSONEncoder().encode(input))
             let response: Response = try await authenticatedRead(["expected_host_id": host, "input": object],
-                path: "chat/agent/v2/ui/interactions", configuration: target.configuration,
+                path: "chat/conversations/\(input.interaction.identity.owner.conversation_id)/events", configuration: target.configuration,
                 responseByteLimit: 2 * 1024 * 1024, requestByteLimit: 128 * 1024)
             switch response.status {
             case "committed":
@@ -1767,7 +1767,7 @@ actor MacRemoteHostService: MacRemoteAgentRunning {
         }
         if let minimumPolicyRevision { payload["minimum_policy_revision"] = minimumPolicyRevision }
         let result: MacRemotePermissionConfiguration = try await authenticatedRead(payload,
-            path: "chat/agent/v2/configuration", configuration: target.configuration)
+            path: "chat/conversations/\(identity.conversation_id)/configuration", configuration: target.configuration)
         try result.validate(identity: identity)
         if let expectedRevision, let profile {
             guard result.configuration_revision == expectedRevision + 1,
@@ -1788,7 +1788,7 @@ actor MacRemoteHostService: MacRemoteAgentRunning {
             payload["assistant_message_id"] = assistantMessageID
         }
         let observation: MacRemoteRunObservation? = try await authenticatedRead(payload,
-            path: "chat/agent/v2/observe", configuration: configuration)
+            path: "chat/conversations/\(conversationID)/events", configuration: configuration)
         try Task.checkCancellation()
         guard let observation else {
             guard expectedRunID == nil else { throw MacRemoteHostError.invalidResponse }
@@ -1887,7 +1887,7 @@ actor MacRemoteHostService: MacRemoteAgentRunning {
         let identity = try JSONSerialization.jsonObject(with: JSONEncoder().encode(intent.identity))
         let receipt: MacSourceSubmissionReceipt? = try await authenticatedRead(
             ["operation":cancel ? "cancel" : "observe", "identity":identity, "request_digest":digest],
-            path: "chat/agent/v2/submission", configuration: target.configuration)
+            path: "chat/conversations/\(conversationID)", configuration: target.configuration)
         try Task.checkCancellation()
         guard let receipt else { return intent }
         guard receipt.identity == intent.identity, receipt.request_digest == digest else { throw MacRemoteHostError.invalidResponse }
@@ -2159,7 +2159,7 @@ actor MacRemoteHostService: MacRemoteAgentRunning {
             "expected_host_id": host, "client_id": target.clientID, "conversation_id": conversationID,
             "expected_run_id": identity?.run_id as Any? ?? NSNull(),
             "assistant_message_id": admittedAssistant as Any? ?? NSNull()
-        ], path: "chat/agent/v2/submission-frontier", configuration: target.configuration)
+        ], path: "chat/conversations/\(conversationID)/configuration", configuration: target.configuration)
         try frontier.validate(host: host, client: target.clientID, conversation: conversationID, observedParent: parent)
         return frontier
     }
@@ -2217,7 +2217,7 @@ actor MacRemoteHostService: MacRemoteAgentRunning {
                     payload["request_digest"] = digest
                     runTargets[identity.conversation_id] = target
                     activeToolPlanOwners[identity.conversation_id] = ToolPlanOwner(runID: identity.submission_id)
-                    try await streamAgentPayload(payload, path: "chat/agent/v2/stream",
+                    try await streamAgentPayload(payload, path: "chat/conversations/\(identity.conversation_id)/messages",
                         conversationID: identity.conversation_id, configuration: target.configuration, continuation: continuation)
                 } catch {
                     // Cold Room replay has no new submission ticket. Observe
@@ -2311,7 +2311,7 @@ actor MacRemoteHostService: MacRemoteAgentRunning {
            !externalSessionID.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
             payload["external_session_id"] = externalSessionID
         }
-        try await streamAgentPayload(payload, path: "chat/agent/v2/stream", conversationID: conversationID,
+        try await streamAgentPayload(payload, path: "chat/conversations/\(conversationID)/messages", conversationID: conversationID,
                                      configuration: configuration, continuation: continuation,
                                      submission: submission, preparedToolPlan: toolPlan)
     }
@@ -2359,7 +2359,7 @@ actor MacRemoteHostService: MacRemoteAgentRunning {
                         configuration: configuration, clientID: clientID)
                     activeToolPlans[conversationID] = preparedPlan
                     activeToolPlanOwners[conversationID] = ToolPlanOwner(runID: expectedRunID)
-                    try await streamAgentPayload(payload, path: "chat/agent/v2/resume",
+                    try await streamAgentPayload(payload, path: "chat/conversations/\(conversationID)/messages",
                         conversationID: conversationID, configuration: configuration, continuation: continuation)
                 } catch { continuation.finish(throwing: error) }
             }
@@ -2572,7 +2572,7 @@ actor MacRemoteHostService: MacRemoteAgentRunning {
         // Core validates this exact nonce/call/resource and the current user decision.
         let url = mobileURL(
             baseURL: configuration.baseURL,
-            path: "chat/agent/v2/permission"
+            path: "agent/settings"
         )
         let envelope = try encrypt(
             decision.payload,
@@ -2654,7 +2654,7 @@ actor MacRemoteHostService: MacRemoteAgentRunning {
         )
         let body = try JSONSerialization.data(withJSONObject: envelope)
         var request = URLRequest(
-            url: mobileURL(baseURL: configuration.baseURL, path: "chat/agent/v2/cancel")
+            url: mobileURL(baseURL: configuration.baseURL, path: "chat/conversations/\(identity.conversation_id)/cancel")
         )
         request.httpMethod = "POST"
         request.httpBody = body
@@ -2724,7 +2724,7 @@ actor MacRemoteHostService: MacRemoteAgentRunning {
         var request = URLRequest(
             url: mobileURL(
                 baseURL: configuration.baseURL,
-                path: "chat/agent/v2/task/events"
+                path: "chat/conversations/\(conversationID)/events"
             )
         )
         request.httpMethod = "POST"
@@ -2818,7 +2818,7 @@ actor MacRemoteHostService: MacRemoteAgentRunning {
             let body = try JSONSerialization.data(withJSONObject: ["expected_host_id":host,
                 "conversation_id":conversationID, "action":action])
             let data = try await postTaskPayload(configuration: target.configuration,
-                path: "chat/agent/v2/execution-selection", data: body)
+                path: "chat/conversations/\(conversationID)/configuration", data: body)
             guard let value = try JSONSerialization.jsonObject(with: data) as? [String: Any],
                   value["source_host_id"] as? String == host, value["conversation_id"] as? String == conversationID,
                   let result = value["result"] as? [String: Any] else { throw MacRemoteHostError.invalidResponse }
@@ -2849,7 +2849,7 @@ actor MacRemoteHostService: MacRemoteAgentRunning {
 
     func conversationProgress(conversationID: String, target: MacRemoteSubmissionTarget) async throws -> MacRemoteConversationProgress {
         guard let host = target.configuration.expectedHostID else { throw MacRemoteHostError.invalidResponse }
-        let data = try await postTaskPayload(configuration: target.configuration, path: "chat/agent/v2/progress",
+        let data = try await postTaskPayload(configuration: target.configuration, path: "chat/conversations/\(conversationID)/messages",
             data: JSONSerialization.data(withJSONObject: ["expected_host_id": host, "conversation_id": conversationID]))
         let value = try JSONDecoder().decode(MacRemoteConversationProgress.self, from: data)
         guard value.source_host_id == host, value.conversation_id == conversationID,
@@ -2862,7 +2862,7 @@ actor MacRemoteHostService: MacRemoteAgentRunning {
     func goalControl(_ intent: AppleGoalControlIntent, target: MacRemoteSubmissionTarget) async throws -> AppleGoalControlResponse {
         guard target.configuration.expectedHostID == intent.expected_host_id else { throw MacRemoteHostError.invalidResponse }
         let data = try await postTaskPayload(configuration: target.configuration,
-            path: "chat/agent/v2/goal", data: JSONEncoder().encode(intent), acceptedStatuses: [200, 202, 409])
+            path: "goals", data: JSONEncoder().encode(intent), acceptedStatuses: [200, 202, 409])
         let response = try JSONDecoder().decode(AppleGoalControlResponse.self, from: data)
         guard response.source_host_id == intent.expected_host_id else { throw MacRemoteHostError.invalidResponse }
         return response
@@ -3084,7 +3084,7 @@ actor MacRemoteHostService: MacRemoteAgentRunning {
             parts.removeLast()
         }
         components?.path = parts.isEmpty ? "" : "/" + parts.joined(separator: "/")
-        var url = (components?.url ?? baseURL).appendingPathComponent("api").appendingPathComponent("mobile")
+        var url = (components?.url ?? baseURL).appendingPathComponent("api")
         for component in path.split(separator: "/") {
             url.appendPathComponent(String(component))
         }

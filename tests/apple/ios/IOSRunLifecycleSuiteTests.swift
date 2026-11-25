@@ -217,7 +217,7 @@ private actor PermissionGETAttemptCounter {
             conversation_id: "conversation", submission_id: "run", user_message_id: "user", assistant_message_id: "assistant")
         let provider = WebAgentProvider(config: .init(baseURL: URL(string: "http://127.0.0.1:8123")!,
             token: "fixture", expectedHostId: "host", clientId: "client")) { request in
-            XCTAssertEqual(request.url?.path, "/api/mobile/chat/agent/v2/configuration")
+            XCTAssertEqual(request.url?.path, "/api/chat/conversations/c1/configuration")
             let wire = try XCTUnwrap(JSONSerialization.jsonObject(with: request.httpBody!) as? [String: Any])
             let input = try WebAgentProvider.decryptMobileJSON(wire, token: "fixture")
             let patch = input["operation"] as? String == "patch"
@@ -253,7 +253,7 @@ private actor PermissionGETAttemptCounter {
             assistant_message_id: "assistant")
         let provider = WebAgentProvider(config: .init(baseURL: URL(string: "http://127.0.0.1:8123")!,
             token: "fixture", expectedHostId: "host", clientId: "client")) { request in
-            XCTAssertEqual(request.url?.path, "/api/mobile/chat/agent/v2/cancel")
+            XCTAssertEqual(request.url?.path, "/api/chat/conversations/c1/cancel")
             let wire = try XCTUnwrap(JSONSerialization.jsonObject(with: request.httpBody!) as? [String: Any])
             let input = try WebAgentProvider.decryptMobileJSON(wire, token: "fixture")
             XCTAssertEqual(Set(input.keys), ["identity"])
@@ -284,7 +284,7 @@ private actor PermissionGETAttemptCounter {
         let config = WebAgentProvider.Config(baseURL: URL(string: "http://127.0.0.1:8123")!, token: "fixture",
             expectedHostId: "host", clientId: "client")
         let provider = WebAgentProvider(config: config) { request in
-            XCTAssertEqual(request.url?.path, "/api/mobile/chat/agent/v2/observe")
+            XCTAssertEqual(request.url?.path, "/api/chat/conversations/c1/events")
             let wire = try JSONSerialization.jsonObject(with: request.httpBody!) as! [String: Any]
             let input = try WebAgentProvider.decryptMobileJSON(wire, token: "fixture")
             XCTAssertEqual(input["operation"] as? String, "discover")
@@ -393,7 +393,7 @@ private actor PermissionGETAttemptCounter {
         let config = WebAgentProvider.Config(baseURL: URL(string: "http://127.0.0.1:8123")!, token: "fixture",
             expectedHostId: "host", clientId: "client")
         let provider = WebAgentProvider(config: config) { request in
-            XCTAssertEqual(request.url?.path, "/api/mobile/chat/agent/v2/resume")
+            XCTAssertEqual(request.url?.path, "/api/chat/conversations/c1/messages")
             let wire = try JSONSerialization.jsonObject(with: request.httpBody!) as! [String: Any]
             let input = try WebAgentProvider.decryptMobileJSON(wire, token: "fixture")
             XCTAssertEqual(Set(input.keys), Set(["conversation_id", "expected_run_id", "expected_host_id", "client_id"]))

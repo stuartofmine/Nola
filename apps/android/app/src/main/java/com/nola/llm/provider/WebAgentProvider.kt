@@ -561,46 +561,73 @@ class WebAgentProvider @Inject constructor(
         return if (timeout != null) kotlinx.coroutines.withTimeout(timeout) { collectSummary() } else collectSummary()
     }
 
+    /** Direct Rust v2 WebHost SSE chat streaming (zero v1 journal/outbox overhead). */
+    fun streamV2Message(
+        conversationId: String,
+        content: String,
+        configuration: Config? = config,
+    ): Flow<SseEvent> {
+        val cfg = checkNotNull(configuration) { "Web Agent Host is not configured" }.copy()
+        return webHostApi.v2StreamMessage(
+            hostBaseUrl = cfg.hostBaseUrl,
+            token = cfg.token,
+            conversationId = conversationId,
+            content = content,
+            pinnedCertificateSha256 = cfg.pinnedCertificateSha256,
+        )
+    }
+
+    suspend fun cancelV2Conversation(conversationId: String, configuration: Config? = config) {
+        val cfg = checkNotNull(configuration) { "Web Agent Host is not configured" }.copy()
+        webHostApi.v2CancelConversation(
+            hostBaseUrl = cfg.hostBaseUrl,
+            token = cfg.token,
+            conversationId = conversationId,
+            pinnedCertificateSha256 = cfg.pinnedCertificateSha256,
+        )
+    }
+
     override fun generateSummaryStream(input: ModelInput): Flow<String> = flow {
-        val cfg = checkNotNull(config) { "Web Agent Host is not configured" }
-        val conversation = java.util.UUID.randomUUID().toString()
-        val submission = java.util.UUID.randomUUID().toString()
-        val identity = com.nola.data.remote.api.RemoteSubmissionIdentity(cfg.expectedHostId, cfg.clientId,
-            conversation, submission, submission, "$submission:assistant")
-        val request = freezeHostToolPlan(prepareAgentRequest(input, conversationId = conversation, submissionId = submission, configuration = cfg), cfg)
-        val submit = submissionTransport(cfg)
-        // Auxiliary summaries need no local replica intent or fake conversation.
-        // The source-only digest operation is not an admission receipt.
-        val prepared = submit(buildJsonObject { put("operation", JsonPrimitive("prepare")); put("identity", identity.wire()); put("request", request) })
-            .getValue("result") as? JsonObject ?: error("Missing source digest preparation")
-        require(prepared["identity"] == identity.wire())
-        val frozen = com.nola.data.remote.api.FrozenRemoteSubmission(identity, prepared.getValue("request_digest").jsonPrimitive.content, request)
-        val reader = RemoteJournalSummary(cfg.expectedHostId, conversation, submission, journalTransport(cfg))
-        var committed: String? = null
-        var streamFailure: Exception? = null
-        try { streamFrozenSubmission(frozen, cfg).collect { event ->
-            if (committed != null) return@collect
-            when (event) {
-                is SseEvent.SubmissionReceipt -> reader.acceptReceipt(com.nola.data.remote.api.decodeRemoteSubmissionReceipt(
-                    event.receipt, identity, frozen.requestDigest))
-                is SseEvent.AssistantJournal -> reader.observe(event.envelope)
-                is SseEvent.AssistantTerminal -> committed = reader.terminal(event.envelope)
-                is SseEvent.PermissionRequest -> error("Summary requires interactive permission")
-                is SseEvent.DeviceToolRequest -> error("Summary requires device approval")
-                is SseEvent.Error -> error(redactHostToolText(event.message))
-                else -> Unit // Trace, lifecycle and task events are not answer/terminal authority.
+        val cfg = checkNotNull(config) { "Web Agent Host is not configured" }.copy()
+        val prompt = input.messages.lastOrNull()?.get("content")?.toString().orEmpty()
+        val conversationId = webHostApi.v2CreateConversation(
+            hostBaseUrl = cfg.hostBaseUrl,
+            token = cfg.token,
+            title = "Summary",
+            pinnedCertificateSha256 = cfg.pinnedCertificateSha256,
+        )
+        try {
+            var emittedAny = false
+            webHostApi.v2StreamMessage(
+                hostBaseUrl = cfg.hostBaseUrl,
+                token = cfg.token,
+                conversationId = conversationId,
+                content = prompt,
+                pinnedCertificateSha256 = cfg.pinnedCertificateSha256,
+            ).collect { event ->
+                when (event) {
+                    is SseEvent.V2TextDelta -> if (event.delta.isNotEmpty()) {
+                        emittedAny = true
+                        emit(event.delta)
+                    }
+                    is SseEvent.V2TurnCompleted -> if (!emittedAny && event.finalText.isNotEmpty()) {
+                        emittedAny = true
+                        emit(event.finalText)
+                    }
+                    is SseEvent.Error -> error(redactHostToolText(event.message))
+                    else -> Unit
+                }
             }
-        } } catch (cancelled: kotlinx.coroutines.CancellationException) { throw cancelled }
-        catch (failure: Exception) { streamFailure = failure }
-        if (!reader.isAdmitted()) {
-            val result = try { submit(frozen.reconciliationRequest()).getValue("result") }
-                catch (cancelled: kotlinx.coroutines.CancellationException) { throw cancelled }
-                catch (failure: Exception) { throw com.nola.data.remote.api.RemoteSubmissionUnresolved(frozen, failure) }
-            if (result is JsonObject) reader.acceptReceipt(com.nola.data.remote.api.decodeRemoteSubmissionReceipt(result, identity, frozen.requestDigest))
+        } finally {
+            runCatching {
+                webHostApi.v2DeleteConversation(
+                    hostBaseUrl = cfg.hostBaseUrl,
+                    token = cfg.token,
+                    conversationId = conversationId,
+                    pinnedCertificateSha256 = cfg.pinnedCertificateSha256,
+                )
+            }
         }
-        val answer = committed ?: reader.terminal()
-        if (answer == null) throw com.nola.data.remote.api.RemoteSubmissionUnresolved(frozen, streamFailure)
-        emit(answer)
     }
 
     override suspend fun chat(
