@@ -385,23 +385,54 @@ pub fn run_web_server(
                 let _ = respond_json(req, 200, &build_dashboard_snapshot(&suite));
             }
             (Method::Get, "/api/workspace/today") => {
-                let sessions = store.list_sessions(20).unwrap_or_default();
-                let goals: Vec<Value> = suite.list_records("goal").unwrap_or_default();
-                let automations: Vec<Value> = suite.list_records("automation").unwrap_or_default();
+                let offset = parse_query_i64(query, "offset").unwrap_or(0).max(0) as usize;
+                let sessions = store.list_sessions(50).unwrap_or_default();
+                let to_fact = |s: &Session| {
+                    json!({
+                        "conversation_id": s.id,
+                        "title": s.title,
+                        "updated_at_ms": s.updated_at_ms,
+                        "needs_response": false,
+                        "active_run": Value::Null
+                    })
+                };
+                let page_sessions: Vec<Value> = sessions.iter().skip(offset).take(20).map(to_fact).collect();
+                let recent_sessions: Vec<Value> = sessions.iter().take(5).map(to_fact).collect();
+                let has_more = sessions.len() > offset + page_sessions.len();
+                let next_offset = if has_more {
+                    json!(offset + page_sessions.len())
+                } else {
+                    Value::Null
+                };
                 let _ = respond_json(
                     req,
                     200,
                     &json!({
-                        "date": Utc::now().format("%Y-%m-%d").to_string(),
-                        "sessions": sessions.len(),
-                        "goals": goals,
-                        "automations": automations,
-                        "pendingResponses": []
+                        "source_host_id": host_id,
+                        "snapshot": {
+                            "conversations": page_sessions,
+                            "recent_conversations": recent_sessions,
+                            "queued_instances": [],
+                            "needs_attention": false,
+                            "unrepresented_expert_contexts": [],
+                            "has_more_conversations": has_more,
+                            "next_conversation_offset": next_offset,
+                            "has_more_queued_instances": false
+                        }
                     }),
                 );
             }
             (Method::Post, "/api/activity") => {
-                let _ = respond_json(req, 200, &json!({"items": [], "hasMore": false}));
+                let _ = respond_json(
+                    req,
+                    200,
+                    &json!({
+                        "entries": [],
+                        "next_cursor": Value::Null,
+                        "items": [],
+                        "hasMore": false
+                    }),
+                );
             }
             (Method::Get, "/api/results") => {
                 let _ = respond_json(req, 200, &json!({"results": []}));
@@ -937,7 +968,182 @@ pub fn run_web_server(
             }
             (Method::Post, "/api/model-profiles/catalog/replace") => {
                 let body = read_json_body(&mut req);
-                if let Some(profiles) = body.get("profiles") {
+                if let Some(endpoints) = body.get("endpoints").and_then(|v| v.as_array()) {
+                    let mut cfg = load_active_config(&store);
+                    let prev_keys: BTreeMap<String, Option<String>> = cfg
+                        .llm
+                        .connections
+                        .iter()
+                        .map(|c| (c.id.clone(), c.api_key.clone()))
+                        .collect();
+                    let mut new_conns = Vec::new();
+                    let mut flattened_profiles = Vec::new();
+                    let mut best_default: Option<(i64, String, String)> = None;
+
+                    for (ep_idx, ep) in endpoints.iter().enumerate() {
+                        let ep_id = ep
+                            .get("id")
+                            .and_then(|v| v.as_str())
+                            .filter(|s| !s.is_empty())
+                            .map(ToString::to_string)
+                            .unwrap_or_else(new_id);
+                        let ep_name = ep
+                            .get("name")
+                            .and_then(|v| v.as_str())
+                            .unwrap_or(&ep_id)
+                            .to_string();
+                        let base_url = ep
+                            .get("baseURL")
+                            .or_else(|| ep.get("url"))
+                            .and_then(|v| v.as_str())
+                            .unwrap_or("")
+                            .to_string();
+                        let wire_proto = ep
+                            .get("wireProtocol")
+                            .or_else(|| ep.get("protocol"))
+                            .and_then(|v| v.as_str())
+                            .unwrap_or("chat_completions")
+                            .to_string();
+                        let ep_enabled = ep.get("enabled").and_then(|v| v.as_bool()).unwrap_or(true);
+                        let rust_proto = match wire_proto.as_str() {
+                            "anthropic" => "anthropic",
+                            "responses" | "siwc_responses" => "openai_responses",
+                            _ => "openai_chat",
+                        };
+
+                        let mut conn_models = Vec::new();
+                        if let Some(models) = ep.get("models").and_then(|v| v.as_array()) {
+                            for (m_idx, m) in models.iter().enumerate() {
+                                let model_name = m
+                                    .get("modelName")
+                                    .or_else(|| m.get("modelId"))
+                                    .and_then(|v| v.as_str())
+                                    .unwrap_or("")
+                                    .to_string();
+                                if model_name.is_empty() {
+                                    continue;
+                                }
+                                let prof_id = m
+                                    .get("id")
+                                    .and_then(|v| v.as_str())
+                                    .filter(|s| !s.is_empty())
+                                    .map(ToString::to_string)
+                                    .unwrap_or_else(|| format!("{ep_id}:{model_name}"));
+                                let display_name = m
+                                    .get("displayName")
+                                    .and_then(|v| v.as_str())
+                                    .filter(|s| !s.is_empty())
+                                    .unwrap_or(&model_name)
+                                    .to_string();
+                                let enabled = m.get("enabled").and_then(|v| v.as_bool()).unwrap_or(true);
+                                let priority = m.get("priority").and_then(|v| v.as_i64()).unwrap_or(50);
+                                let caps: Vec<String> = m
+                                    .get("capabilities")
+                                    .and_then(|v| v.as_array())
+                                    .map(|a| {
+                                        a.iter()
+                                            .filter_map(|x| x.as_str().map(ToString::to_string))
+                                            .collect()
+                                    })
+                                    .unwrap_or_else(|| vec!["chat".into()]);
+                                let params = m.get("parameters").cloned().unwrap_or_else(|| json!({}));
+
+                                if ep_enabled && enabled && caps.iter().any(|c| c == "chat") {
+                                    let replace = best_default
+                                        .as_ref()
+                                        .map(|(p, _, _)| priority > *p)
+                                        .unwrap_or(true);
+                                    if replace {
+                                        best_default = Some((priority, ep_id.clone(), model_name.clone()));
+                                    }
+                                }
+
+                                conn_models.push(crate::config::ModelEntry {
+                                    id: model_name.clone(),
+                                    context_window: params
+                                        .get("maxContextLength")
+                                        .and_then(|v| v.as_u64())
+                                        .map(|n| n as usize),
+                                    max_output_tokens: params
+                                        .get("maxOutputTokens")
+                                        .and_then(|v| v.as_u64())
+                                        .map(|n| n as usize),
+                                    temperature: params.get("temperature").and_then(|v| v.as_f64()),
+                                    top_p: params.get("topP").and_then(|v| v.as_f64()),
+                                    reasoning_effort: None,
+                                    capabilities: None,
+                                });
+
+                                flattened_profiles.push(json!({
+                                    "id": prof_id,
+                                    "provider": "openai-compatible",
+                                    "connectionId": Value::Null,
+                                    "modelId": model_name,
+                                    "modelName": model_name,
+                                    "displayName": display_name,
+                                    "revision": 2,
+                                    "enabled": enabled,
+                                    "selected": false,
+                                    "priority": priority,
+                                    "order": m_idx,
+                                    "capabilities": caps,
+                                    "executionCapabilities": m.get("executionCapabilities").cloned().unwrap_or_else(|| json!({
+                                        "toolCalls": true,
+                                        "imageInput": true,
+                                        "reasoning": true,
+                                        "samplingParameters": true,
+                                        "samplingRequiresNoReasoning": false,
+                                        "chatOutputTokenField": "auto"
+                                    })),
+                                    "executionCapabilityStatus": "tools_enabled",
+                                    "reasoning": m.get("reasoning").cloned().unwrap_or_else(|| json!({"control": "automatic"})),
+                                    "parameters": params,
+                                    "protocol": wire_proto,
+                                    "endpoint": {
+                                        "id": ep_id,
+                                        "name": ep_name,
+                                        "url": base_url,
+                                        "baseURL": base_url,
+                                        "protocol": wire_proto,
+                                        "wireProtocol": wire_proto,
+                                        "enabled": ep_enabled,
+                                        "order": ep_idx
+                                    }
+                                }));
+                            }
+                        }
+
+                        new_conns.push(crate::config::ConnectionConfig {
+                            id: ep_id.clone(),
+                            endpoint: base_url,
+                            protocol: Some(rust_proto.into()),
+                            provider: None,
+                            api_key: prev_keys.get(&ep_id).cloned().flatten(),
+                            api_key_env: None,
+                            models: conn_models,
+                        });
+                    }
+
+                    if let Some((_, ref def_conn, ref def_model)) = best_default {
+                        cfg.llm.default_model = Some(crate::config::DefaultModelSelection {
+                            connection: def_conn.clone(),
+                            model: def_model.clone(),
+                        });
+                        for p in &mut flattened_profiles {
+                            let ep_match = p.pointer("/endpoint/id").and_then(|v| v.as_str()) == Some(def_conn.as_str());
+                            let m_match = p.get("modelName").and_then(|v| v.as_str()) == Some(def_model.as_str());
+                            if ep_match && m_match {
+                                p["selected"] = json!(true);
+                            }
+                        }
+                    }
+                    cfg.llm.connections = new_conns;
+                    let _ = store.set_kv(
+                        crate::config::KV_APPLIED_CONFIG,
+                        &serde_json::to_value(&cfg).unwrap_or(json!({})),
+                    );
+                    let _ = store.set_kv("web_model_profiles", &Value::Array(flattened_profiles));
+                } else if let Some(profiles) = body.get("profiles") {
                     let _ = store.set_kv("web_model_profiles", profiles);
                 }
                 let _ = respond_json(req, 200, &build_model_profiles_response(&store));
@@ -992,7 +1198,67 @@ pub fn run_web_server(
                 );
             }
             (Method::Get, "/api/model-connections") => {
-                let _ = respond_json(req, 200, &json!({"connections": [], "accounts": []}));
+                let _ = respond_json(
+                    req,
+                    200,
+                    &json!({"connections": [], "accounts": [], "selections": []}),
+                );
+            }
+            (Method::Post, "/api/model-connections/kimi-login/owners")
+            | (Method::Post, "/api/model-connections/opencode-login/owners") => {
+                let _ = respond_json(req, 200, &json!([]));
+            }
+            (Method::Get, "/api/model-gateway/clients") => {
+                let clients = store
+                    .get_kv("model_gateway_clients")
+                    .ok()
+                    .flatten()
+                    .unwrap_or_else(|| json!([]));
+                let _ = respond_json(req, 200, &clients);
+            }
+            (Method::Get, "/api/model-gateway/access") => {
+                let access = store
+                    .get_kv("model_gateway_access")
+                    .ok()
+                    .flatten()
+                    .unwrap_or_else(|| json!({"revision": 1, "enabled": false}));
+                let _ = respond_json(req, 200, &access);
+            }
+            (Method::Post, "/api/model-gateway/access") => {
+                let body = read_json_body(&mut req);
+                let revoke = body.get("revoke").and_then(|v| v.as_bool()).unwrap_or(false);
+                let prev_rev = store
+                    .get_kv("model_gateway_access")
+                    .ok()
+                    .flatten()
+                    .and_then(|v| v.get("revision").and_then(|r| r.as_i64()))
+                    .unwrap_or(1);
+                let next_rev = prev_rev + 1;
+                let saved = json!({"revision": next_rev, "enabled": !revoke});
+                let _ = store.set_kv("model_gateway_access", &saved);
+                if revoke {
+                    let _ = respond_json(req, 200, &saved);
+                } else {
+                    let token = format!("nola_gw_{}", new_id());
+                    let _ = respond_json(
+                        req,
+                        200,
+                        &json!({"revision": next_rev, "enabled": true, "token": token}),
+                    );
+                }
+            }
+            (Method::Get, "/api/model-gateway/attempts") => {
+                let _ = respond_json(req, 200, &json!([]));
+            }
+            (Method::Get, "/api/agent/skill-settings-review") => {
+                let _ = respond_json(
+                    req,
+                    200,
+                    &json!({"pending": false, "expected_revision": 1, "items": []}),
+                );
+            }
+            (Method::Post, "/api/agent/skill-settings-review") => {
+                let _ = respond_json(req, 200, &json!({"ok": true, "pending": false}));
             }
 
             // --- Agent Settings, Tools, Defaults & Permission Rules ---

@@ -26,6 +26,9 @@ export function navigateWorkspace(href: string): void {
 export function initialWorkspaceLocation(href: string, width: number): URL {
     const location = new URL(href);
     if (!Number.isFinite(width) || width < 0) return location;
+    if (location.pathname === '/' || location.pathname === '/ui' || location.pathname === '/ui/') {
+        location.pathname = width <= 760 ? '/today' : '/chat';
+    }
     if (width <= 760 && location.pathname === '/chat') {
         const content = location.searchParams.get('content');
         const management = content ? managementContentPath(content, location.origin) : null;

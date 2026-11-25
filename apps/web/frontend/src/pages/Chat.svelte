@@ -67,11 +67,15 @@
         return entry;
     }
 
-    function syncUrl(conversationId: string | null) {
+    function syncUrl(conversationId: string | null, contentPath?: string | null) {
         if (typeof window === 'undefined') return;
         const url = new URL(window.location.href);
         if (conversationId) url.searchParams.set('conversation', conversationId);
         else url.searchParams.delete('conversation');
+        if (contentPath !== undefined) {
+            if (contentPath) url.searchParams.set('content', contentPath);
+            else url.searchParams.delete('content');
+        }
         window.history.replaceState(window.history.state, '', url);
     }
 
@@ -80,14 +84,18 @@
         if (transcriptEl) transcriptEl.scrollTop = transcriptEl.scrollHeight;
     }
 
-    async function openConversation(conv: ChatConversation) {
+    async function openConversation(conv: ChatConversation, preserveTab = false) {
         if (streaming) stopStreaming();
         const serial = ++generation;
         active = conv;
         error = '';
         needsModelConfig = false;
-        contentTabs = selectContentTab(contentTabs, conversationTabKey);
-        syncUrl(conv.conversationId);
+        if (!preserveTab) {
+            contentTabs = selectContentTab(contentTabs, conversationTabKey);
+            syncUrl(conv.conversationId, null);
+        } else {
+            syncUrl(conv.conversationId);
+        }
         loading = true;
         try {
             const loaded = await loadV2Messages(conv.conversationId);
@@ -109,11 +117,13 @@
         }
         const origin = typeof window === 'undefined' ? 'http://nola.invalid' : window.location.origin;
         const resolved = managementContentPath(path, origin);
+        const resolvedPath = resolved?.path ?? path;
         contentTabs = openPageContentTab(
             contentTabs,
-            resolved?.path ?? path,
+            resolvedPath,
             resolved?.titleKey ?? 'shell.settings',
         );
+        syncUrl(active?.conversationId ?? null, resolvedPath);
     }
 
     async function ensureActiveConversation(): Promise<ChatConversation> {
@@ -294,14 +304,18 @@
         void (async () => {
             try {
                 const url = new URL(window.location.href);
+                const initialContent = url.searchParams.get('content');
+                if (initialContent) {
+                    openManagementTab(initialContent);
+                }
                 const requestedId = url.searchParams.get('conversation');
                 if (requestedId) {
                     const conv = await getV2Conversation(requestedId);
-                    await openConversation(conv);
+                    await openConversation(conv, Boolean(initialContent));
                 } else {
                     const existing = await listV2Conversations();
                     if (existing.length > 0) {
-                        await openConversation(existing[0]);
+                        await openConversation(existing[0], Boolean(initialContent));
                     }
                 }
             } catch {
@@ -400,8 +414,16 @@
                 {ownerKey}
                 conversationId={active?.conversationId ?? null}
                 canRename={!!active && !streaming}
-                onselect={key => { contentTabs = selectContentTab(contentTabs, key); }}
-                onclose={key => { contentTabs = closeContentTab(contentTabs, key); }}
+                onselect={key => {
+                    contentTabs = selectContentTab(contentTabs, key);
+                    const sel = contentTabs.items.find(item => item.key === contentTabs.selected);
+                    syncUrl(active?.conversationId ?? null, sel?.kind === 'page' ? sel.path : null);
+                }}
+                onclose={key => {
+                    contentTabs = closeContentTab(contentTabs, key);
+                    const sel = contentTabs.items.find(item => item.key === contentTabs.selected);
+                    syncUrl(active?.conversationId ?? null, sel?.kind === 'page' ? sel.path : null);
+                }}
                 onrename={(id, nextTitle) => conversationManager?.renameConversationById(id, nextTitle)}
             />
         </header>

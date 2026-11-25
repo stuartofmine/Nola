@@ -271,30 +271,76 @@ pub fn build_model_profiles_response(store: &Store) -> Value {
     } else {
         let default_sel = cfg.llm.default_model.as_ref();
         let mut out = Vec::new();
-        for conn in &cfg.llm.connections {
-            let protocol = conn
-                .protocol
-                .clone()
-                .unwrap_or_else(|| "openai_chat".into());
-            for m in &conn.models {
+        for (ep_idx, conn) in cfg.llm.connections.iter().enumerate() {
+            let wire_protocol = match conn.protocol.as_deref().unwrap_or("openai_chat") {
+                "anthropic" => "anthropic",
+                "responses" | "openai_responses" => "responses",
+                "siwc_responses" => "siwc_responses",
+                _ => "chat_completions",
+            };
+            for (m_idx, m) in conn.models.iter().enumerate() {
                 let selected = default_sel
                     .map(|d| d.connection == conn.id && d.model == m.id)
                     .unwrap_or(false);
+                let capabilities = vec!["chat".to_string()];
+                let exec_caps = match m.capabilities.as_ref() {
+                    Some(c) => json!({
+                        "toolCalls": c.tool_calls,
+                        "imageInput": c.image_input,
+                        "reasoning": c.reasoning,
+                        "samplingParameters": c.sampling_parameters,
+                        "samplingRequiresNoReasoning": false,
+                        "chatOutputTokenField": "auto"
+                    }),
+                    None => json!({
+                        "toolCalls": true,
+                        "imageInput": true,
+                        "reasoning": true,
+                        "samplingParameters": true,
+                        "samplingRequiresNoReasoning": false,
+                        "chatOutputTokenField": "auto"
+                    }),
+                };
+                let mut params = serde_json::Map::new();
+                if let Some(t) = m.temperature {
+                    params.insert("temperature".into(), json!(t));
+                }
+                if let Some(p) = m.top_p {
+                    params.insert("topP".into(), json!(p));
+                }
+                if let Some(max_out) = m.max_output_tokens {
+                    params.insert("maxOutputTokens".into(), json!(max_out));
+                }
+                if let Some(ctx) = m.context_window {
+                    params.insert("maxContextLength".into(), json!(ctx));
+                }
                 out.push(json!({
                     "id": format!("{}:{}", conn.id, m.id),
+                    "provider": "openai-compatible",
+                    "connectionId": Value::Null,
                     "modelId": m.id,
                     "modelName": m.id,
                     "displayName": m.id,
+                    "revision": 1,
                     "enabled": true,
                     "selected": selected,
-                    "capabilities": ["chat"],
-                    "protocol": protocol,
+                    "priority": if selected { 100 } else { 50 },
+                    "order": m_idx,
+                    "capabilities": capabilities,
+                    "executionCapabilities": exec_caps,
+                    "executionCapabilityStatus": "tools_enabled",
+                    "reasoning": { "control": "automatic" },
+                    "parameters": Value::Object(params),
+                    "protocol": wire_protocol,
                     "endpoint": {
                         "id": conn.id,
                         "name": conn.id,
                         "url": conn.endpoint,
-                        "protocol": protocol,
-                        "enabled": true
+                        "baseURL": conn.endpoint,
+                        "protocol": wire_protocol,
+                        "wireProtocol": wire_protocol,
+                        "enabled": true,
+                        "order": ep_idx
                     }
                 }));
             }
