@@ -208,6 +208,16 @@ impl AgentEngine {
             if let Some(val) = self.store.get_kv(&state_key)? {
                 if let Ok(saved) = serde_json::from_value::<PersistedSessionState>(val) {
                     let mut merged_policy = saved.policy;
+                    // Never silently escalate on resume, while always honoring stricter overrides
+                    // (e.g. tightening a session from AcceptEdits -> Cautious).
+                    let profile_rank = |p: nola_types::PermissionProfile| match p {
+                        nola_types::PermissionProfile::Cautious => 0u8,
+                        nola_types::PermissionProfile::AcceptEdits => 1u8,
+                        nola_types::PermissionProfile::AllowAll => 2u8,
+                    };
+                    if profile_rank(cfg.policy.profile) < profile_rank(merged_policy.profile) {
+                        merged_policy.profile = cfg.policy.profile;
+                    }
                     merged_policy.network_allowed =
                         merged_policy.network_allowed && cfg.policy.network_allowed;
                     for r in &cfg.policy.rules {

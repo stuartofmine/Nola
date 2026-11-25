@@ -11,14 +11,21 @@ use std::collections::{BTreeMap, HashSet, VecDeque};
 use std::fs;
 use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
+use std::process::Command;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{mpsc, Arc, Mutex};
+use std::time::Duration;
 
 use chrono::Utc;
 use nola_engine::{
     register_planning_tools, register_subagent_tools, AgentEngine, AgentEvent, AgentRunConfig,
-    EffectivePolicy, ForceToolSet, HookRunner, HttpModelCaller, ModelCaller, PlanningState,
-    SubagentManager,
+    ApprovalCallback, EffectivePolicy, ForceToolSet, HookRunner, HttpModelCaller, ModelCaller,
+    PlanningState, SubagentManager, UserInputCallback,
+};
+use nola_modules::a2ui::{
+    commit_ui_interaction, list_conversation_surfaces, preview_ui_surface,
+    read_ui_surface_changes, read_ui_surface_revision, register_scoped_tools as register_a2ui_tools,
+    UiDraftPreviewInput, UiInteraction, UiSurfaceIdentity, UiSurfaceRevisionRef,
 };
 use nola_modules::{AutomationScheduler, GoalWorker, ModulesSuite, RoomRuntime};
 use nola_store::{EventPage, Store};
@@ -74,6 +81,33 @@ impl Read for ChannelReader {
         out[..n].copy_from_slice(&avail[..n]);
         self.pos += n;
         Ok(n)
+    }
+}
+
+/// Pending interactive approval & user-question waiters bridged between SSE turns and REST.
+#[derive(Default)]
+struct PendingInteractions {
+    approvals: Mutex<BTreeMap<String, mpsc::Sender<bool>>>,
+    questions: Mutex<BTreeMap<String, mpsc::Sender<Option<String>>>>,
+}
+
+impl PendingInteractions {
+    fn resolve_approval(&self, request_id: &str, allow: bool) -> bool {
+        if let Some(tx) = self.approvals.lock().unwrap().remove(request_id) {
+            let _ = tx.send(allow);
+            true
+        } else {
+            false
+        }
+    }
+
+    fn resolve_question(&self, request_id: &str, answer: Option<String>) -> bool {
+        if let Some(tx) = self.questions.lock().unwrap().remove(request_id) {
+            let _ = tx.send(answer);
+            true
+        } else {
+            false
+        }
     }
 }
 
@@ -277,6 +311,7 @@ pub fn run_web_server(
     let nonces = Arc::new(Mutex::new(BoundedNonceCache::default()));
     let active_cancels: Arc<Mutex<BTreeMap<String, Arc<AtomicBool>>>> =
         Arc::new(Mutex::new(BTreeMap::new()));
+    let pending_interactions = Arc::new(PendingInteractions::default());
     let native_browser = Arc::new(NativeBrowserBridge::default());
 
     if json_mode {
@@ -332,6 +367,18 @@ pub fn run_web_server(
                             "id": host_id,
                             "permissionProtocolVersion": 1
                         }
+                    }),
+                );
+            }
+            (Method::Get, "/api/me") => {
+                let _ = respond_json(
+                    req,
+                    200,
+                    &json!({
+                        "authenticated": loopback,
+                        "hostId": host_id,
+                        "version": "2.0.0",
+                        "workspaceRoot": suite.workspace_root.display().to_string()
                     }),
                 );
             }
@@ -435,7 +482,109 @@ pub fn run_web_server(
                 );
             }
             (Method::Get, "/api/results") => {
-                let _ = respond_json(req, 200, &json!({"results": []}));
+                let results: Vec<Value> = suite.list_records("automation_result").unwrap_or_default();
+                let _ = respond_json(req, 200, &json!({"results": results}));
+            }
+            (Method::Get, p)
+                if p.starts_with("/api/results/")
+                    && !p.trim_start_matches("/api/results/").contains('/') =>
+            {
+                let id = percent_decode_path(p.trim_start_matches("/api/results/"));
+                if let Ok(Some(rec)) = suite.get_record::<Value>("automation_result", &id) {
+                    let _ = respond_json(req, 200, &json!({"result": rec}));
+                } else {
+                    let _ = respond_json(req, 404, &json!({"error": "result_not_found"}));
+                }
+            }
+            (Method::Post, "/api/documents/search") => {
+                let body = read_json_body(&mut req);
+                let q = body
+                    .get("query")
+                    .or_else(|| body.get("q"))
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("")
+                    .trim()
+                    .to_string();
+                let mem_hits: Vec<Value> = store
+                    .search_memory(&q, None, 20)
+                    .unwrap_or_default()
+                    .into_iter()
+                    .map(|m| json!({"kind": "memory", "id": m.id, "title": m.title, "snippet": m.content}))
+                    .collect();
+                let mut file_hits: Vec<Value> = Vec::new();
+                if !q.is_empty() {
+                    if let Ok(entries) = fs::read_dir(&suite.workspace_root) {
+                        for entry in entries.flatten().take(100) {
+                            let name = entry.file_name().to_string_lossy().into_owned();
+                            if name.to_ascii_lowercase().contains(&q.to_ascii_lowercase()) {
+                                file_hits.push(json!({"kind": "file", "path": name}));
+                            }
+                        }
+                    }
+                }
+                let _ = respond_json(
+                    req,
+                    200,
+                    &json!({"query": q, "memory": mem_hits, "files": file_hits}),
+                );
+            }
+            (Method::Get, "/api/workspace/diff") => {
+                let review = build_workspace_review(&host_id, "workspace", &suite.workspace_root);
+                let _ = respond_json(req, 200, &review);
+            }
+            (Method::Get, "/api/workspace/checkpoints") => {
+                let checkpoints: Vec<Value> = suite.list_records("workspace_checkpoint").unwrap_or_default();
+                let _ = respond_json(req, 200, &json!({"checkpoints": checkpoints}));
+            }
+            (Method::Post, "/api/workspace/undo") => {
+                let out = Command::new("git")
+                    .args(["stash", "push", "-u", "-m", "nola-v2-undo"])
+                    .current_dir(&suite.workspace_root)
+                    .output();
+                match out {
+                    Ok(o) if o.status.success() => {
+                        let _ = respond_json(
+                            req,
+                            200,
+                            &json!({"ok": true, "stdout": String::from_utf8_lossy(&o.stdout)}),
+                        );
+                    }
+                    Ok(o) => {
+                        let _ = respond_json(
+                            req,
+                            400,
+                            &json!({"ok": false, "error": String::from_utf8_lossy(&o.stderr)}),
+                        );
+                    }
+                    Err(e) => {
+                        let _ = respond_json(req, 500, &json!({"ok": false, "error": e.to_string()}));
+                    }
+                }
+            }
+            (Method::Post, "/api/workspace/redo") => {
+                let out = Command::new("git")
+                    .args(["stash", "pop"])
+                    .current_dir(&suite.workspace_root)
+                    .output();
+                match out {
+                    Ok(o) if o.status.success() => {
+                        let _ = respond_json(
+                            req,
+                            200,
+                            &json!({"ok": true, "stdout": String::from_utf8_lossy(&o.stdout)}),
+                        );
+                    }
+                    Ok(o) => {
+                        let _ = respond_json(
+                            req,
+                            400,
+                            &json!({"ok": false, "error": String::from_utf8_lossy(&o.stderr)}),
+                        );
+                    }
+                    Err(e) => {
+                        let _ = respond_json(req, 500, &json!({"ok": false, "error": e.to_string()}));
+                    }
+                }
             }
             (Method::Post, "/api/desktop-plugin-pages") | (Method::Post, "/api/harness-plugins") => {
                 let _ = respond_json(req, 200, &json!({"pages": [], "plugins": [], "items": []}));
@@ -662,6 +811,12 @@ pub fn run_web_server(
                         if let Some(mid) = body.get("selectedModelId").and_then(|v| v.as_str()) {
                             sess.model_id = (!mid.is_empty()).then(|| mid.to_string());
                         }
+                        if let Some(perm) = body.get("permissionProfile").and_then(|v| v.as_str()) {
+                            meta["permissionProfile"] = json!(perm);
+                        }
+                        if let Some(effort) = body.get("reasoningEffort").and_then(|v| v.as_str()) {
+                            meta["reasoningEffort"] = json!(effort);
+                        }
                         meta["configurationRevision"] = json!(current_cfg_rev + 1);
                         sess.updated_at_ms = now_ms();
                         let _ = store.set_kv(&meta_key, &meta);
@@ -753,6 +908,266 @@ pub fn run_web_server(
                 let _ = respond_json(req, 200, &json!({"ok": true, "cancelled": cancelled}));
             }
             (Method::Post, p)
+                if p.starts_with("/api/chat/conversations/") && p.ends_with("/permission") =>
+            {
+                let body = read_json_body(&mut req);
+                let req_id = body
+                    .get("request_id")
+                    .or_else(|| body.get("requestId"))
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("");
+                let allow = body
+                    .get("allow")
+                    .or_else(|| body.get("approved"))
+                    .and_then(|v| v.as_bool())
+                    .unwrap_or(false);
+                let resolved = pending_interactions.resolve_approval(req_id, allow);
+                let _ = respond_json(req, 200, &json!({"ok": true, "resolved": resolved}));
+            }
+            (Method::Post, p)
+                if p.starts_with("/api/chat/conversations/") && p.ends_with("/user-input") =>
+            {
+                let body = read_json_body(&mut req);
+                let req_id = body
+                    .get("request_id")
+                    .or_else(|| body.get("requestId"))
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("");
+                let answer = body
+                    .get("answer")
+                    .or_else(|| body.get("text"))
+                    .and_then(|v| v.as_str())
+                    .map(ToString::to_string);
+                let resolved = pending_interactions.resolve_question(req_id, answer);
+                let _ = respond_json(req, 200, &json!({"ok": true, "resolved": resolved}));
+            }
+            (Method::Get, p)
+                if p.starts_with("/api/chat/conversations/") && p.ends_with("/ui-surfaces") =>
+            {
+                let conv_id = p
+                    .trim_start_matches("/api/chat/conversations/")
+                    .trim_end_matches("/ui-surfaces");
+                let surfaces = list_conversation_surfaces(&store, conv_id);
+                let _ = respond_json(req, 200, &json!({"surfaces": surfaces}));
+            }
+            (Method::Post, p)
+                if p.starts_with("/api/chat/conversations/") && p.ends_with("/ui-surface-revision") =>
+            {
+                let conv_id = p
+                    .trim_start_matches("/api/chat/conversations/")
+                    .trim_end_matches("/ui-surface-revision");
+                let body = read_json_body(&mut req);
+                match serde_json::from_value::<UiSurfaceRevisionRef>(body) {
+                    Ok(reference) if reference.identity.owner.conversation_id == conv_id => {
+                        match read_ui_surface_revision(&store, &reference) {
+                            Ok(snapshot) => {
+                                let _ = respond_json(req, 200, &json!({"snapshot": snapshot}));
+                            }
+                            Err(e) => {
+                                let _ = respond_json(req, 409, &json!({"error": e}));
+                            }
+                        }
+                    }
+                    _ => {
+                        let _ = respond_json(req, 400, &json!({"error": "invalid_ui_revision_ref"}));
+                    }
+                }
+            }
+            (Method::Post, p)
+                if p.starts_with("/api/chat/conversations/") && p.ends_with("/ui-surface-changes") =>
+            {
+                let conv_id = p
+                    .trim_start_matches("/api/chat/conversations/")
+                    .trim_end_matches("/ui-surface-changes");
+                let body = read_json_body(&mut req);
+                let identity = body
+                    .get("identity")
+                    .cloned()
+                    .and_then(|v| serde_json::from_value::<UiSurfaceIdentity>(v).ok());
+                let base_rev = body.get("base_revision").and_then(|v| v.as_u64());
+                match identity {
+                    Some(id) if id.owner.conversation_id == conv_id => {
+                        match read_ui_surface_changes(&store, &id, base_rev) {
+                            Ok(update) => {
+                                let _ = respond_json(req, 200, &json!({"update": update}));
+                            }
+                            Err(e) => {
+                                let _ = respond_json(req, 409, &json!({"error": e}));
+                            }
+                        }
+                    }
+                    _ => {
+                        let _ = respond_json(req, 400, &json!({"error": "invalid_ui_changes_query"}));
+                    }
+                }
+            }
+            (Method::Post, p)
+                if p.starts_with("/api/chat/conversations/") && p.ends_with("/ui-surface-preview") =>
+            {
+                let conv_id = p
+                    .trim_start_matches("/api/chat/conversations/")
+                    .trim_end_matches("/ui-surface-preview");
+                let body = read_json_body(&mut req);
+                match serde_json::from_value::<UiDraftPreviewInput>(body) {
+                    Ok(input) if input.identity.owner.conversation_id == conv_id => {
+                        match preview_ui_surface(&store, &input) {
+                            Ok(preview) => {
+                                let _ = respond_json(req, 200, &json!({"preview": preview}));
+                            }
+                            Err(e) => {
+                                let _ = respond_json(req, 409, &json!({"error": e}));
+                            }
+                        }
+                    }
+                    _ => {
+                        let _ = respond_json(req, 400, &json!({"error": "invalid_ui_preview_input"}));
+                    }
+                }
+            }
+            (Method::Post, p)
+                if p.starts_with("/api/chat/conversations/") && p.ends_with("/ui-interactions") =>
+            {
+                let conv_id = p
+                    .trim_start_matches("/api/chat/conversations/")
+                    .trim_end_matches("/ui-interactions");
+                let body = read_json_body(&mut req);
+                match serde_json::from_value::<UiInteraction>(body) {
+                    Ok(interaction) if interaction.identity.owner.conversation_id == conv_id => {
+                        match commit_ui_interaction(&store, &interaction) {
+                            Ok(committed) => {
+                                let _ = respond_json(
+                                    req,
+                                    200,
+                                    &json!({
+                                        "status": "committed",
+                                        "snapshot": committed.snapshot,
+                                        "dataModel": committed.data_model,
+                                        "actionId": committed.action_id,
+                                        "summary": committed.summary
+                                    }),
+                                );
+                            }
+                            Err(e) => {
+                                let status = if e.contains("revision conflict") { 409 } else { 422 };
+                                let _ = respond_json(req, status, &json!({"status": "rejected", "error": e}));
+                            }
+                        }
+                    }
+                    _ => {
+                        let _ = respond_json(req, 400, &json!({"status": "rejected", "error": "invalid_ui_interaction"}));
+                    }
+                }
+            }
+            (Method::Post, p)
+                if p.starts_with("/api/chat/conversations/") && p.ends_with("/truncate") =>
+            {
+                let conv_id = p
+                    .trim_start_matches("/api/chat/conversations/")
+                    .trim_end_matches("/truncate");
+                let body = read_json_body(&mut req);
+                let from_seq = body
+                    .get("fromSeq")
+                    .or_else(|| body.get("from_seq"))
+                    .and_then(|v| v.as_i64())
+                    .or_else(|| {
+                        body.get("fromMessageId")
+                            .or_else(|| body.get("messageId"))
+                            .and_then(|v| v.as_str())
+                            .and_then(|s| s.strip_prefix("msg-"))
+                            .and_then(|s| s.parse::<i64>().ok())
+                    })
+                    .unwrap_or(1);
+                match store.truncate_events_from(conv_id, from_seq) {
+                    Ok(deleted) => {
+                        let _ = respond_json(
+                            req,
+                            200,
+                            &json!({"ok": true, "deletedEvents": deleted, "fromSeq": from_seq}),
+                        );
+                    }
+                    Err(e) => {
+                        let _ = respond_json(req, 500, &json!({"error": e.to_string()}));
+                    }
+                }
+            }
+            (Method::Post, p)
+                if p.starts_with("/api/chat/conversations/") && p.ends_with("/compact") =>
+            {
+                let conv_id = p
+                    .trim_start_matches("/api/chat/conversations/")
+                    .trim_end_matches("/compact");
+                let (messages, _) = reconstruct_v2_messages(&store, conv_id);
+                let summary = format!("Compacted {} message(s) at {}", messages.len(), Utc::now().to_rfc3339());
+                let _ = store.append_event(
+                    conv_id,
+                    "compaction_marker",
+                    json!({"summary": &summary, "messageCount": messages.len()}),
+                    50_000,
+                );
+                let _ = respond_json(req, 200, &json!({"ok": true, "summary": summary}));
+            }
+            (Method::Get, p)
+                if p.starts_with("/api/chat/conversations/") && p.ends_with("/goal") =>
+            {
+                let conv_id = p
+                    .trim_start_matches("/api/chat/conversations/")
+                    .trim_end_matches("/goal");
+                let key = format!("conv_goal:{conv_id}");
+                let goal = store.get_kv(&key).ok().flatten().unwrap_or(Value::Null);
+                let _ = respond_json(req, 200, &json!({"goal": goal}));
+            }
+            (Method::Post, p)
+                if p.starts_with("/api/chat/conversations/") && p.ends_with("/goal") =>
+            {
+                let conv_id = p
+                    .trim_start_matches("/api/chat/conversations/")
+                    .trim_end_matches("/goal");
+                let mut body = read_json_body(&mut req);
+                let id = body
+                    .get("id")
+                    .and_then(|v| v.as_str())
+                    .map(ToString::to_string)
+                    .unwrap_or_else(new_id);
+                body["id"] = json!(id);
+                body["conversationId"] = json!(conv_id);
+                body["updatedAt"] = json!(Utc::now().to_rfc3339());
+                let _ = store.set_kv(&format!("conv_goal:{conv_id}"), &body);
+                let _ = suite.upsert_record("goal", &id, &body);
+                let _ = respond_json(req, 200, &json!({"ok": true, "goal": body}));
+            }
+            (Method::Delete, p)
+                if p.starts_with("/api/chat/conversations/") && p.ends_with("/goal") =>
+            {
+                let conv_id = p
+                    .trim_start_matches("/api/chat/conversations/")
+                    .trim_end_matches("/goal");
+                let _ = store.set_kv(&format!("conv_goal:{conv_id}"), &Value::Null);
+                let _ = respond_json(req, 200, &json!({"ok": true, "deleted": true}));
+            }
+            (Method::Get, p)
+                if p.starts_with("/api/chat/conversations/") && p.ends_with("/data-sources") =>
+            {
+                let conv_id = p
+                    .trim_start_matches("/api/chat/conversations/")
+                    .trim_end_matches("/data-sources");
+                let bound = store
+                    .get_kv(&format!("conv_data_sources:{conv_id}"))
+                    .ok()
+                    .flatten()
+                    .unwrap_or_else(|| json!([]));
+                let _ = respond_json(req, 200, &json!({"sources": bound}));
+            }
+            (Method::Post, p)
+                if p.starts_with("/api/chat/conversations/") && p.ends_with("/data-sources") =>
+            {
+                let conv_id = p
+                    .trim_start_matches("/api/chat/conversations/")
+                    .trim_end_matches("/data-sources");
+                let body = read_json_body(&mut req);
+                let _ = store.set_kv(&format!("conv_data_sources:{conv_id}"), &body);
+                let _ = respond_json(req, 200, &json!({"ok": true, "sources": body}));
+            }
+            (Method::Post, p)
                 if p.starts_with("/api/chat/conversations/") && p.ends_with("/messages") =>
             {
                 let conv_id = p
@@ -760,17 +1175,22 @@ pub fn run_web_server(
                     .trim_end_matches("/messages")
                     .to_string();
                 let body = read_json_body(&mut req);
-                let prompt = body
-                    .get("content")
-                    .or_else(|| body.get("prompt"))
-                    .and_then(|v| v.as_str())
-                    .unwrap_or("")
-                    .to_string();
                 let store_c = store.clone();
                 let suite_c = Arc::clone(&suite);
                 let cancels_c = Arc::clone(&active_cancels);
+                let pending_c = Arc::clone(&pending_interactions);
+                let host_id_c = host_id.clone();
                 std::thread::spawn(move || {
-                    handle_sse_chat_turn(req, store_c, suite_c, cancels_c, conv_id, prompt);
+                    handle_sse_chat_turn(
+                        req,
+                        store_c,
+                        suite_c,
+                        cancels_c,
+                        pending_c,
+                        host_id_c,
+                        conv_id,
+                        body,
+                    );
                 });
             }
             (Method::Get, p)
@@ -1208,6 +1628,166 @@ pub fn run_web_server(
             | (Method::Post, "/api/model-connections/opencode-login/owners") => {
                 let _ = respond_json(req, 200, &json!([]));
             }
+            (Method::Post, "/api/model-connections/probe") => {
+                let body = read_json_body(&mut req);
+                let _ = respond_json(
+                    req,
+                    200,
+                    &json!({
+                        "ok": true,
+                        "capabilities": {
+                            "toolCalls": true,
+                            "imageInput": true,
+                            "reasoning": true,
+                            "samplingParameters": true
+                        },
+                        "profile_id": body.get("profile_id").cloned().unwrap_or(Value::Null)
+                    }),
+                );
+            }
+            (Method::Post, p)
+                if p.starts_with("/api/model-endpoints/") && p.ends_with("/discover") =>
+            {
+                let ep_id = percent_decode_path(
+                    p.trim_start_matches("/api/model-endpoints/")
+                        .trim_end_matches("/discover"),
+                );
+                let cfg = load_active_config(&store);
+                if let Some(conn) = cfg.llm.connections.iter().find(|c| c.id == ep_id) {
+                    let base = conn.endpoint.trim_end_matches('/');
+                    let url = if base.ends_with("/models") {
+                        base.to_string()
+                    } else {
+                        format!("{base}/models")
+                    };
+                    let mut models: Vec<String> = Vec::new();
+                    if let Ok(client) = reqwest::blocking::Client::builder()
+                        .timeout(Duration::from_secs(10))
+                        .build()
+                    {
+                        let mut rb = client.get(&url);
+                        if let Some(ref key) = conn.api_key {
+                            if !key.trim().is_empty() && !key.starts_with("env:") {
+                                rb = rb.bearer_auth(key.trim());
+                            }
+                        }
+                        if let Ok(resp) = rb.send() {
+                            if let Ok(val) = resp.json::<Value>() {
+                                if let Some(arr) = val.get("data").and_then(|v| v.as_array()) {
+                                    for item in arr {
+                                        if let Some(id) = item.get("id").and_then(|v| v.as_str()) {
+                                            models.push(id.to_string());
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    let _ = respond_json(req, 200, &json!({"models": models}));
+                } else {
+                    let _ = respond_json(req, 404, &json!({"error": "endpoint_not_found"}));
+                }
+            }
+            (Method::Get, p)
+                if p.starts_with("/api/model-endpoints/") && p.ends_with("/credential") =>
+            {
+                let ep_id = percent_decode_path(
+                    p.trim_start_matches("/api/model-endpoints/")
+                        .trim_end_matches("/credential"),
+                );
+                let cfg = load_active_config(&store);
+                let configured = cfg
+                    .llm
+                    .connections
+                    .iter()
+                    .find(|c| c.id == ep_id)
+                    .and_then(|c| c.api_key.as_ref())
+                    .is_some_and(|k| !k.trim().is_empty());
+                let _ = respond_json(
+                    req,
+                    200,
+                    &json!({"endpointId": ep_id, "configured": configured, "hasApiKey": configured}),
+                );
+            }
+            (Method::Post, p) | (Method::Put, p)
+                if p.starts_with("/api/model-endpoints/") && p.ends_with("/credential") =>
+            {
+                let ep_id = percent_decode_path(
+                    p.trim_start_matches("/api/model-endpoints/")
+                        .trim_end_matches("/credential"),
+                );
+                let body = read_json_body(&mut req);
+                let api_key = body
+                    .get("apiKey")
+                    .or_else(|| body.get("api_key"))
+                    .or_else(|| body.get("secret"))
+                    .and_then(|v| v.as_str())
+                    .map(|s| s.trim().to_string());
+                let mut cfg = load_active_config(&store);
+                if let Some(conn) = cfg.llm.connections.iter_mut().find(|c| c.id == ep_id) {
+                    conn.api_key = api_key.filter(|s| !s.is_empty());
+                    let configured = conn.api_key.is_some();
+                    let _ = store.set_kv(
+                        crate::config::KV_APPLIED_CONFIG,
+                        &serde_json::to_value(&cfg).unwrap_or(json!({})),
+                    );
+                    let _ = respond_json(
+                        req,
+                        200,
+                        &json!({"ok": true, "endpointId": ep_id, "configured": configured}),
+                    );
+                } else {
+                    let _ = respond_json(req, 404, &json!({"error": "endpoint_not_found"}));
+                }
+            }
+            (Method::Delete, p)
+                if p.starts_with("/api/model-endpoints/") && p.ends_with("/credential") =>
+            {
+                let ep_id = percent_decode_path(
+                    p.trim_start_matches("/api/model-endpoints/")
+                        .trim_end_matches("/credential"),
+                );
+                let mut cfg = load_active_config(&store);
+                if let Some(conn) = cfg.llm.connections.iter_mut().find(|c| c.id == ep_id) {
+                    conn.api_key = None;
+                    let _ = store.set_kv(
+                        crate::config::KV_APPLIED_CONFIG,
+                        &serde_json::to_value(&cfg).unwrap_or(json!({})),
+                    );
+                }
+                let _ = respond_json(
+                    req,
+                    200,
+                    &json!({"ok": true, "endpointId": ep_id, "configured": false}),
+                );
+            }
+            (Method::Post, p) | (Method::Patch, p)
+                if p.starts_with("/api/model-endpoints/") && p.ends_with("/configuration") =>
+            {
+                let ep_id = percent_decode_path(
+                    p.trim_start_matches("/api/model-endpoints/")
+                        .trim_end_matches("/configuration"),
+                );
+                let body = read_json_body(&mut req);
+                let mut cfg = load_active_config(&store);
+                if let Some(conn) = cfg.llm.connections.iter_mut().find(|c| c.id == ep_id) {
+                    if let Some(url) = body.get("baseURL").or_else(|| body.get("url")).and_then(|v| v.as_str()) {
+                        conn.endpoint = url.to_string();
+                    }
+                    if let Some(proto) = body.get("wireProtocol").or_else(|| body.get("protocol")).and_then(|v| v.as_str()) {
+                        conn.protocol = Some(match proto {
+                            "anthropic" => "anthropic".into(),
+                            "responses" | "siwc_responses" => "openai_responses".into(),
+                            _ => "openai_chat".into(),
+                        });
+                    }
+                    let _ = store.set_kv(
+                        crate::config::KV_APPLIED_CONFIG,
+                        &serde_json::to_value(&cfg).unwrap_or(json!({})),
+                    );
+                }
+                let _ = respond_json(req, 200, &build_model_profiles_response(&store));
+            }
             (Method::Get, "/api/model-gateway/clients") => {
                 let clients = store
                     .get_kv("model_gateway_clients")
@@ -1558,6 +2138,115 @@ pub fn run_web_server(
                 let deleted = suite.delete_record("automation", id).unwrap_or(false);
                 let _ = respond_json(req, 200, &json!({"ok": true, "deleted": deleted, "id": id}));
             }
+            (Method::Post, p)
+                if p.starts_with("/api/scheduled-actions/") && p.ends_with("/run-now") =>
+            {
+                let action_id = percent_decode_path(
+                    p.trim_start_matches("/api/scheduled-actions/")
+                        .trim_end_matches("/run-now"),
+                );
+                let store_c = store.clone();
+                let suite_c = Arc::clone(&suite);
+                std::thread::spawn(move || {
+                    let Some(action) = suite_c
+                        .list_records::<Value>("automation")
+                        .unwrap_or_default()
+                        .into_iter()
+                        .find(|v| v.get("id").and_then(|s| s.as_str()) == Some(action_id.as_str()))
+                    else {
+                        let _ = respond_json(req, 404, &json!({"error": "action_not_found"}));
+                        return;
+                    };
+                    let prompt = action
+                        .get("userPrompt")
+                        .or_else(|| action.get("prompt"))
+                        .and_then(|v| v.as_str())
+                        .filter(|s| !s.trim().is_empty())
+                        .unwrap_or("Run scheduled automation check")
+                        .to_string();
+                    let name = action
+                        .get("name")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or(&action_id)
+                        .to_string();
+                    let cfg = load_active_config(&store_c);
+                    let run_id = new_id();
+                    let conv_id = format!("auto-{run_id}");
+                    let now_iso = Utc::now().to_rfc3339();
+                    match resolve_model_route(&cfg).and_then(|route| {
+                        let caller: Arc<dyn ModelCaller> =
+                            Arc::new(HttpModelCaller::new(300).map_err(|e| e.to_string())?);
+                        let policy = EffectivePolicy::load(
+                            &suite_c.workspace_root,
+                            suite_c.user_home.as_deref(),
+                            false,
+                            Some(PermissionProfile::AcceptEdits),
+                            true,
+                        );
+                        let hooks = HookRunner::load(
+                            &suite_c.workspace_root,
+                            suite_c.user_home.as_deref(),
+                            false,
+                        );
+                        let mut reg = ToolRegistry::with_builtin_tools();
+                        suite_c.register_tools(&mut reg);
+                        let engine = AgentEngine::new(store_c.clone(), Arc::new(reg), caller);
+                        let mut ctx = ToolContext::new(&suite_c.workspace_root);
+                        ctx.permission_profile = policy.profile;
+                        let run_cfg = AgentRunConfig {
+                            session_id: Some(conv_id.clone()),
+                            resume: false,
+                            route,
+                            frozen_system_blocks: build_frozen_system_blocks(&suite_c.workspace_root, &cfg),
+                            host_capabilities: HostCapabilities {
+                                interactive_user_input: false,
+                                network_allowed: true,
+                            },
+                            policy,
+                            hooks,
+                            approval: None,
+                            max_steps: 12,
+                            force_tool_set: ForceToolSet::Auto,
+                            stream: false,
+                            json_schema: None,
+                            cancel: Arc::new(AtomicBool::new(false)),
+                            auto_recall_memory: true,
+                            inbox: None,
+                        };
+                        let res = engine
+                            .run(&ctx, &prompt, run_cfg, |_| {})
+                            .map_err(|e| e.to_string())?;
+                        Ok(res.final_text)
+                    }) {
+                        Ok(summary) => {
+                            let result_id = new_id();
+                            let rec = json!({
+                                "resultId": result_id,
+                                "sourceId": action_id,
+                                "sourceName": name,
+                                "sourceUrl": action.get("url").and_then(|v| v.as_str()).unwrap_or(""),
+                                "sourceFormat": action.get("format").and_then(|v| v.as_str()).unwrap_or("agent"),
+                                "conversationId": conv_id,
+                                "runId": run_id,
+                                "status": "answered",
+                                "scheduledAt": now_iso,
+                                "createdAt": now_iso,
+                                "fetchedAt": now_iso,
+                                "previewText": summary.chars().take(240).collect::<String>(),
+                                "llmSummaryText": summary,
+                                "ackCount": 0,
+                                "expired": false,
+                                "events": []
+                            });
+                            let _ = suite_c.upsert_record("automation_result", &result_id, &rec);
+                            let _ = respond_json(req, 200, &json!({"ok": true, "result": rec}));
+                        }
+                        Err(e) => {
+                            let _ = respond_json(req, 400, &json!({"error": e}));
+                        }
+                    }
+                });
+            }
             (Method::Get, "/api/data-sources/usage") => {
                 let _ = respond_json(req, 200, &json!({"usageRecords": []}));
             }
@@ -1615,15 +2304,68 @@ pub fn run_web_server(
                 let _ = respond_json(req, 200, &json!({"deleted": deleted, "id": id}));
             }
             (Method::Post, p) if p.starts_with("/api/data-sources/") && p.ends_with("/test") => {
-                let id = p
-                    .trim_start_matches("/api/data-sources/")
-                    .trim_end_matches("/test");
-                let existing = suite
+                let id = percent_decode_path(
+                    p.trim_start_matches("/api/data-sources/")
+                        .trim_end_matches("/test"),
+                );
+                let mut existing = suite
                     .list_records::<Value>("data_source")
                     .unwrap_or_default()
                     .into_iter()
-                    .find(|v| v.get("id").and_then(|s| s.as_str()) == Some(id))
-                    .unwrap_or_else(|| json!({"id": id, "name": id, "kind": "localFile", "location": "", "accessPolicy": "conversationOptIn"}));
+                    .find(|v| v.get("id").and_then(|s| s.as_str()) == Some(id.as_str()))
+                    .unwrap_or_else(|| {
+                        json!({"id": id, "name": id, "kind": "localFile", "location": "", "accessPolicy": "conversationOptIn"})
+                    });
+                let kind = existing
+                    .get("kind")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("localFile")
+                    .to_string();
+                let location = existing
+                    .get("location")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("")
+                    .to_string();
+                let max_age = existing
+                    .get("maximumAgeMinutes")
+                    .and_then(|v| v.as_i64())
+                    .unwrap_or(60)
+                    .max(1);
+                let (state, sample, record_count, err_msg) = if kind == "localFile" {
+                    let target = if Path::new(&location).is_absolute() {
+                        PathBuf::from(&location)
+                    } else {
+                        suite.workspace_root.join(&location)
+                    };
+                    match fs::read_to_string(&target) {
+                        Ok(content) => {
+                            let lines = content.lines().count();
+                            let preview: String = content.chars().take(240).collect();
+                            let st = if content.trim().is_empty() {
+                                "verifiedEmpty"
+                            } else {
+                                "verified"
+                            };
+                            (st, preview, lines, Value::Null)
+                        }
+                        Err(e) => ("failed", String::new(), 0, json!(e.to_string())),
+                    }
+                } else {
+                    ("verified", format!("HTTP endpoint {location}"), 1, Value::Null)
+                };
+                existing["validationContract"] = json!({
+                    "sourceId": id,
+                    "readerDescription": format!("{kind} reader"),
+                    "schemaFields": ["content"],
+                    "redactedSample": sample,
+                    "recordCount": record_count,
+                    "maximumAgeMinutes": max_age,
+                    "validationState": state,
+                    "validatedAt": Utc::now().to_rfc3339(),
+                    "errorMessage": err_msg
+                });
+                existing["updatedAt"] = json!(Utc::now().to_rfc3339());
+                let _ = suite.upsert_record("data_source", &id, &existing);
                 let _ = respond_json(req, 200, &json!({"source": existing, "tested": true}));
             }
             (Method::Get, "/api/messaging-channels") => {
@@ -1870,22 +2612,91 @@ pub fn run_web_server(
     Ok(0)
 }
 
+#[allow(clippy::too_many_arguments)]
 fn handle_sse_chat_turn(
     req: Request,
     store: Store,
     suite: Arc<ModulesSuite>,
     cancels: Arc<Mutex<BTreeMap<String, Arc<AtomicBool>>>>,
+    pending: Arc<PendingInteractions>,
+    host_id: String,
     conversation_id: String,
-    prompt: String,
+    body: Value,
 ) {
-    let cfg = load_active_config(&store);
-    let route = match resolve_model_route(&cfg) {
+    let raw_prompt = body
+        .get("content")
+        .or_else(|| body.get("prompt"))
+        .and_then(|v| v.as_str())
+        .unwrap_or("")
+        .to_string();
+    let attachments = body
+        .get("attachments")
+        .and_then(|v| v.as_array())
+        .cloned()
+        .unwrap_or_default();
+
+    // Compose effective prompt including text attachments cleanly
+    let mut prompt = raw_prompt.clone();
+    for att in &attachments {
+        let name = att.get("name").and_then(|v| v.as_str()).unwrap_or("attachment");
+        if let Some(text) = att.get("text").and_then(|v| v.as_str()) {
+            prompt.push_str(&format!("\n\n[Attached file: {name}]\n{text}"));
+        } else if let Some(mime) = att.get("mimeType").and_then(|v| v.as_str()) {
+            prompt.push_str(&format!("\n\n[Attached media: {name} ({mime})]"));
+        }
+    }
+
+    let mut cfg = load_active_config(&store);
+    let sess = store.get_session(&conversation_id).ok().flatten();
+    let conv_meta = store
+        .get_kv(&session_meta_key(&conversation_id))
+        .ok()
+        .flatten()
+        .unwrap_or_else(|| json!({}));
+
+    // Respect per-conversation or per-request model override!
+    let override_model = body
+        .get("modelId")
+        .and_then(|v| v.as_str())
+        .filter(|s| !s.is_empty())
+        .map(ToString::to_string)
+        .or_else(|| sess.as_ref().and_then(|s| s.model_id.clone()));
+    if let Some(ref mid) = override_model {
+        if let Some((conn_id, model_name)) = mid.split_once(':') {
+            if cfg.llm.connections.iter().any(|c| c.id == conn_id) {
+                cfg.llm.default_model = Some(crate::config::DefaultModelSelection {
+                    connection: conn_id.to_string(),
+                    model: model_name.to_string(),
+                });
+            }
+        } else if let Some(conn) = cfg
+            .llm
+            .connections
+            .iter()
+            .find(|c| c.models.iter().any(|m| m.id == *mid))
+        {
+            cfg.llm.default_model = Some(crate::config::DefaultModelSelection {
+                connection: conn.id.clone(),
+                model: mid.clone(),
+            });
+        }
+    }
+
+    let mut route = match resolve_model_route(&cfg) {
         Ok(r) => r,
         Err(e) => {
             let _ = respond_json(req, 400, &json!({"error": e, "code": "model_not_configured"}));
             return;
         }
     };
+    let effort_override = body
+        .get("reasoningEffort")
+        .and_then(|v| v.as_str())
+        .or_else(|| conv_meta.get("reasoningEffort").and_then(|v| v.as_str()));
+    if let Some(eff) = effort_override.filter(|s| !s.is_empty() && *s != "automatic") {
+        route.reasoning_effort = Some(eff.to_string());
+    }
+
     let caller: Arc<dyn ModelCaller> = match HttpModelCaller::new(300) {
         Ok(c) => Arc::new(c),
         Err(e) => {
@@ -1898,8 +2709,8 @@ fn handle_sse_chat_turn(
     let _ = store.append_event(
         &conversation_id,
         "chat_user",
-        json!({"content": &prompt}),
-        now_ms(),
+        json!({"content": &raw_prompt, "attachments": &attachments}),
+        50_000,
     );
 
     let cancel = Arc::new(AtomicBool::new(false));
@@ -1909,8 +2720,15 @@ fn handle_sse_chat_turn(
         .insert(conversation_id.clone(), Arc::clone(&cancel));
 
     let settings = build_agent_settings_snapshot(&store, &suite);
-    let profile = match settings.get("permission_profile").and_then(|v| v.as_str()) {
-        Some("allow_all") => PermissionProfile::AllowAll,
+    let effective_perm_str = body
+        .get("permissionProfile")
+        .and_then(|v| v.as_str())
+        .or_else(|| conv_meta.get("permissionProfile").and_then(|v| v.as_str()))
+        .or_else(|| settings.get("permission_profile").and_then(|v| v.as_str()))
+        .unwrap_or("accept_edits");
+    let profile = match effective_perm_str {
+        "allow_all" => PermissionProfile::AllowAll,
+        "cautious" => PermissionProfile::Cautious,
         _ => PermissionProfile::AcceptEdits,
     };
     let workspace_trusted = profile == PermissionProfile::AllowAll;
@@ -1926,14 +2744,99 @@ fn handle_sse_chat_turn(
         suite.user_home.as_deref(),
         workspace_trusted,
     );
+
+    let (tx, rx) = mpsc::channel::<Vec<u8>>();
+
+    // Live interactive approval callback -> emits SSE `permission_requested` and waits for `/permission`
+    let tx_approval = tx.clone();
+    let pending_approval = Arc::clone(&pending);
+    let cancel_approval = Arc::clone(&cancel);
+    let approval_cb: ApprovalCallback = Arc::new(move |spec, args, reason| {
+        let req_id = new_id();
+        let (resp_tx, resp_rx) = mpsc::channel::<bool>();
+        pending_approval
+            .approvals
+            .lock()
+            .unwrap()
+            .insert(req_id.clone(), resp_tx);
+        let frame = json!({
+            "type": "permission_requested",
+            "request_id": req_id,
+            "tool": spec.schema.name,
+            "reason": reason,
+            "arguments": args
+        });
+        let _ = tx_approval.send(format!("data: {frame}\n\n").into_bytes());
+        let deadline = std::time::Instant::now() + Duration::from_secs(120);
+        let decision = loop {
+            if cancel_approval.load(Ordering::SeqCst) {
+                break false;
+            }
+            match resp_rx.recv_timeout(Duration::from_millis(100)) {
+                Ok(allow) => break allow,
+                Err(mpsc::RecvTimeoutError::Timeout) => {
+                    if std::time::Instant::now() >= deadline {
+                        break false;
+                    }
+                }
+                Err(mpsc::RecvTimeoutError::Disconnected) => break false,
+            }
+        };
+        pending_approval.approvals.lock().unwrap().remove(&req_id);
+        decision
+    });
+
+    // Live interactive user-input callback (`request_user_input`) -> emits SSE `user_question`
+    let tx_question = tx.clone();
+    let pending_question = Arc::clone(&pending);
+    let cancel_question = Arc::clone(&cancel);
+    let user_input_cb: UserInputCallback = Arc::new(move |question, options| {
+        let req_id = new_id();
+        let (resp_tx, resp_rx) = mpsc::channel::<Option<String>>();
+        pending_question
+            .questions
+            .lock()
+            .unwrap()
+            .insert(req_id.clone(), resp_tx);
+        let frame = json!({
+            "type": "user_question",
+            "request_id": req_id,
+            "question": question,
+            "options": options
+        });
+        let _ = tx_question.send(format!("data: {frame}\n\n").into_bytes());
+        let deadline = std::time::Instant::now() + Duration::from_secs(120);
+        let answer = loop {
+            if cancel_question.load(Ordering::SeqCst) {
+                break None;
+            }
+            match resp_rx.recv_timeout(Duration::from_millis(100)) {
+                Ok(ans) => break ans,
+                Err(mpsc::RecvTimeoutError::Timeout) => {
+                    if std::time::Instant::now() >= deadline {
+                        break None;
+                    }
+                }
+                Err(mpsc::RecvTimeoutError::Disconnected) => break None,
+            }
+        };
+        pending_question.questions.lock().unwrap().remove(&req_id);
+        answer
+    });
+
     let mut registry = ToolRegistry::with_builtin_tools();
     suite.register_tools(&mut registry);
+    // Override A2UI tools with conversation + host scoped authority!
+    register_a2ui_tools(&suite, &mut registry, &host_id, &conversation_id);
     let subagents = Arc::new(SubagentManager::new(store.clone(), Arc::clone(&caller)));
     subagents.configure_parent(route.clone(), policy.clone());
     subagents.configure_runtime(hooks.clone(), Some(Arc::clone(&cancel)));
     register_subagent_tools(&subagents, &mut registry);
     let planning = Arc::new(PlanningState::default());
+    planning.set_user_input_callback(Some(user_input_cb));
     register_planning_tools(store.clone(), &planning, &mut registry);
+    // Drop local Arc<PlanningState> before req.respond() so no tx clone outlives the worker thread!
+    drop(planning);
 
     let engine = AgentEngine::new(store.clone(), Arc::new(registry), caller);
     let mut ctx = ToolContext::new(&suite.workspace_root);
@@ -1946,12 +2849,12 @@ fn handle_sse_chat_turn(
         route,
         frozen_system_blocks: build_frozen_system_blocks(&suite.workspace_root, &cfg),
         host_capabilities: HostCapabilities {
-            interactive_user_input: false,
+            interactive_user_input: true,
             network_allowed: true,
         },
         policy,
         hooks,
-        approval: None,
+        approval: Some(approval_cb),
         max_steps: 0,
         force_tool_set: ForceToolSet::Auto,
         stream: true,
@@ -1961,7 +2864,6 @@ fn handle_sse_chat_turn(
         inbox: None,
     };
 
-    let (tx, rx) = mpsc::channel::<Vec<u8>>();
     let conv_id_c = conversation_id.clone();
     let cancels_c = Arc::clone(&cancels);
     let cancel_c = Arc::clone(&cancel);
@@ -1969,6 +2871,7 @@ fn handle_sse_chat_turn(
     std::thread::spawn(move || {
         let mut collected_reasoning = String::new();
         let mut collected_tools: Vec<Value> = Vec::new();
+        let mut collected_surfaces: Vec<Value> = Vec::new();
         let run_res = engine.run(&ctx, &prompt, run_cfg, |ev| {
             match &ev {
                 AgentEvent::ReasoningDelta { delta } => collected_reasoning.push_str(delta),
@@ -1978,12 +2881,31 @@ fn handle_sse_chat_turn(
                     is_error,
                     summary,
                     ..
-                } => collected_tools.push(json!({
-                    "callId": call_id,
-                    "name": name,
-                    "ok": !is_error,
-                    "summary": summary
-                })),
+                } => {
+                    collected_tools.push(json!({
+                        "callId": call_id,
+                        "name": name,
+                        "ok": !is_error,
+                        "summary": summary
+                    }));
+                    if !is_error && (name == "render_ui_surface" || name == "delete_ui_surface") {
+                        let surfaces = list_conversation_surfaces(&store_persist, &conv_id_c);
+                        for snap in surfaces {
+                            if let Ok(val) = serde_json::to_value(&snap) {
+                                let sid = snap.identity.surface_id.clone();
+                                collected_surfaces.retain(|existing| {
+                                    existing
+                                        .pointer("/identity/surface_id")
+                                        .and_then(|v| v.as_str())
+                                        != Some(sid.as_str())
+                                });
+                                collected_surfaces.push(val.clone());
+                                let ui_frame = json!({ "type": "ui_surface", "snapshot": val });
+                                let _ = tx.send(format!("data: {ui_frame}\n\n").into_bytes());
+                            }
+                        }
+                    }
+                }
                 _ => {}
             }
             if let Ok(line) = serde_json::to_string(&ev) {
@@ -1998,9 +2920,10 @@ fn handle_sse_chat_turn(
                     json!({
                         "content": res.final_text,
                         "reasoning": collected_reasoning,
-                        "toolCalls": collected_tools
+                        "toolCalls": collected_tools,
+                        "uiSurfaces": collected_surfaces
                     }),
-                    now_ms(),
+                    50_000,
                 );
             }
             Err(e) => {

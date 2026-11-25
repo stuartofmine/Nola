@@ -1340,6 +1340,7 @@ dependencies = [
  "nola-store",
  "nola-tools",
  "nola-types",
+ "reqwest",
  "serde",
  "serde_json",
  "sha2",

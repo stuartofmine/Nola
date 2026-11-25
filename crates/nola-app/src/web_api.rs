@@ -38,6 +38,14 @@ pub fn session_to_conversation_json(store: &Store, s: &Session) -> Value {
         .and_then(|v| v.as_i64())
         .unwrap_or(1)
         .max(1);
+    let permission_profile = meta
+        .get("permissionProfile")
+        .and_then(|v| v.as_str())
+        .unwrap_or("accept_edits");
+    let reasoning_effort = meta
+        .get("reasoningEffort")
+        .and_then(|v| v.as_str())
+        .unwrap_or("automatic");
     json!({
         "conversationId": s.id,
         "id": s.id,
@@ -47,6 +55,8 @@ pub fn session_to_conversation_json(store: &Store, s: &Session) -> Value {
         "updatedAt": ms_to_rfc3339(s.updated_at_ms),
         "selectedModelSource": s.model_connection.as_deref().unwrap_or(""),
         "selectedModelId": s.model_id.as_deref().unwrap_or(""),
+        "permissionProfile": permission_profile,
+        "reasoningEffort": reasoning_effort,
         "executionBackend": "nola-v2",
         "revision": revision,
         "configurationRevision": config_rev,
@@ -74,12 +84,19 @@ pub fn reconstruct_v2_messages(store: &Store, conversation_id: &str) -> (Vec<Val
                     .or_else(|| ev.payload.get("text"))
                     .and_then(|v| v.as_str())
                     .unwrap_or("");
+                let attachments = ev
+                    .payload
+                    .get("attachments")
+                    .cloned()
+                    .unwrap_or_else(|| json!([]));
                 messages.push(json!({
                     "id": format!("msg-{}", ev.seq),
+                    "seq": ev.seq,
                     "role": "user",
                     "content": text,
                     "reasoning": "",
                     "toolCalls": [],
+                    "attachments": attachments,
                     "createdAtMs": ev.created_at_ms
                 }));
             }
@@ -100,17 +117,25 @@ pub fn reconstruct_v2_messages(store: &Store, conversation_id: &str) -> (Vec<Val
                     .get("toolCalls")
                     .cloned()
                     .unwrap_or_else(|| json!([]));
-                if !text.is_empty() || !reasoning.is_empty() {
+                let ui_surfaces = ev
+                    .payload
+                    .get("uiSurfaces")
+                    .cloned()
+                    .unwrap_or_else(|| json!([]));
+                let has_surfaces = ui_surfaces.as_array().is_some_and(|a| !a.is_empty());
+                if !text.is_empty() || !reasoning.is_empty() || has_surfaces {
                     let entry = json!({
                         "id": format!("msg-{}", ev.seq),
+                        "seq": ev.seq,
                         "role": "assistant",
                         "content": text,
                         "reasoning": reasoning,
                         "toolCalls": tool_calls,
+                        "uiSurfaces": ui_surfaces,
                         "createdAtMs": ev.created_at_ms
                     });
                     // WebHost emits `chat_assistant` right after `AgentEngine`'s `turn_completed`
-                    // with richer `reasoning` and `toolCalls`; upgrade in-place instead of duplicating.
+                    // with richer `reasoning`, `toolCalls`, and `uiSurfaces`; upgrade in-place.
                     let should_replace_prev = ev.kind == "chat_assistant"
                         && messages.last().is_some_and(|prev| {
                             prev.get("role").and_then(|v| v.as_str()) == Some("assistant")

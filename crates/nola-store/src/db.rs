@@ -293,6 +293,41 @@ impl Store {
         })
     }
 
+    /// Delete events at or after `from_seq` within `scope` (for Edit & Resend / Regenerate).
+    pub fn truncate_events_from(&self, scope: &str, from_seq: i64) -> Result<usize, StoreError> {
+        self.with_conn(|conn| {
+            let tx = conn.transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)?;
+            let deleted = tx.execute(
+                "DELETE FROM events WHERE scope = ?1 AND seq >= ?2",
+                params![scope, from_seq],
+            )?;
+            let new_max: i64 = tx
+                .query_row(
+                    "SELECT COALESCE(MAX(seq), 0) FROM events WHERE scope = ?1",
+                    params![scope],
+                    |r| r.get(0),
+                )
+                .unwrap_or(0);
+            let new_min: i64 = tx
+                .query_row(
+                    "SELECT COALESCE(MIN(seq), 1) FROM events WHERE scope = ?1",
+                    params![scope],
+                    |r| r.get(0),
+                )
+                .unwrap_or(1);
+            tx.execute(
+                "INSERT INTO event_watermarks (scope, min_retained_seq, max_seq)
+                 VALUES (?1, ?2, ?3)
+                 ON CONFLICT(scope) DO UPDATE SET
+                   min_retained_seq = excluded.min_retained_seq,
+                   max_seq = excluded.max_seq",
+                params![scope, new_min, new_max],
+            )?;
+            tx.commit()?;
+            Ok(deleted)
+        })
+    }
+
     pub fn events_after(
         &self,
         scope: &str,

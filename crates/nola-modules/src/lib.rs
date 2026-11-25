@@ -12,6 +12,7 @@
 //! - Automations & MessagingChannels
 //! - LocalModels / Acquisition & Plugins
 
+pub mod a2ui;
 pub mod automations_messaging;
 pub mod data_sources;
 pub mod goal_worker;
@@ -78,6 +79,7 @@ impl ModulesSuite {
     /// Register all business-module tools as `ToolTier::Deferred` on `ToolRegistry`
     /// so Turn-0 tool schemas stay compact (~12 core tools) while all modules remain callable!
     pub fn register_tools(self: &Arc<Self>, registry: &mut ToolRegistry) {
+        a2ui::register_tools(self, registry);
         skills::register_tools(self, registry);
         memory::register_tools(self, registry);
         goals_sops::register_tools(self, registry);
