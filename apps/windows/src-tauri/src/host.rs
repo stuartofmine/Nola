@@ -307,7 +307,6 @@ impl Host {
             .arg(resources.join("web"))
             .arg("--json")
             .current_dir(workspace)
-            .env("NOLA_AGENT_HOST_PATH", bin.join("nola-agent-host.exe"))
             .env("NOLA_LLAMA_SERVER", bin.join("llama-server.exe"))
             .env("NOLA_LLAMA_BACKEND", backend)
             .env("NOLA_DESKTOP_PLATFORM", "windows")

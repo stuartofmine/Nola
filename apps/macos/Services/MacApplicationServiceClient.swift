@@ -905,6 +905,7 @@ nonisolated final class MacApplicationServiceSupervisor: @unchecked Sendable {
         archiveIncompatibleStoreAt archiveURL: URL? = nil
     ) -> [String] {
         var arguments = [
+            "server",
             "--database", databaseURL.path,
             "--socket", socketURL.path,
             "--parent-pid", String(parentPID),
@@ -1246,11 +1247,11 @@ nonisolated final class MacApplicationServiceSupervisor: @unchecked Sendable {
            FileManager.default.isExecutableFile(atPath: configured) {
             return URL(fileURLWithPath: configured)
         }
-        if let bundled = Bundle.main.url(forAuxiliaryExecutable: "nola-service") {
+        if let bundled = Bundle.main.url(forAuxiliaryExecutable: "nola") {
             return bundled
         }
         let adjacent = Bundle.main.bundleURL
-            .appendingPathComponent("Contents/MacOS/nola-service", isDirectory: false)
+            .appendingPathComponent("Contents/MacOS/nola", isDirectory: false)
         return FileManager.default.isExecutableFile(atPath: adjacent.path) ? adjacent : nil
     }
 }

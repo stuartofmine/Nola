@@ -77,7 +77,14 @@ pub fn run_with_args(args: &[String]) -> Result<u8, String> {
             "room" => return handle_room_cmd(&store, &suite, &opts, &opts.positional[1..]),
             "scheduler" => return handle_scheduler_cmd(&store, &suite, &opts, &opts.positional[1..]),
             "update" => return handle_update_cmd(&opts.positional[1..]),
-            "web" => return crate::web_server::run_web_server(store, suite, &opts.positional[1..]),
+            "web" => {
+                return crate::web_server::run_web_server(
+                    store,
+                    suite,
+                    &opts.positional[1..],
+                    opts.json_mode,
+                )
+            }
             "server" => return crate::daemon::run_daemon(store, suite, &db_path, &opts.positional[1..]),
             "tui" => return crate::tui::run_tui(store, suite, &workspace),
             _ => {}
@@ -240,7 +247,7 @@ fn parse_args(args: &[String]) -> Result<CliOptions, String> {
                     args.get(i).ok_or("--project requires a directory")?,
                 ));
             }
-            "--db" => {
+            "--db" | "--database" => {
                 i += 1;
                 opts.db_path = Some(PathBuf::from(args.get(i).ok_or("--db requires a path")?));
             }
@@ -586,8 +593,8 @@ fn print_help() {
            nola scheduler [list|tick]\n  \
            nola update check <https://manifest.json>\n  \
            nola modules <kind|skills>\n  \
-           nola web [--host 127.0.0.1] [--port 7860]\n  \
-           nola server [--socket <path>]\n  \
+           nola web [--host 127.0.0.1] [--port 5001] [--web-root <dir>] [--json]\n  \
+           nola server [--socket <path>] [--parent-pid <pid>]\n  \
            nola tui"
     );
 }

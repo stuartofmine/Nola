@@ -21,7 +21,6 @@ final class MacSecondaryPageCatalogCoverageTests: XCTestCase {
             catalogPath: "apps/macos/ModelCenter.xcstrings",
             sourcePaths: [
                 "apps/macos/UI/MacModelCenterView.swift",
-                "apps/macos/Services/MacModelCatalogService.swift",
                 "apps/macos/UI/MacSiwcSignInView.swift",
                 "apps/macos/UI/MacSiwcAccountManagementView.swift",
                 "apps/macos/Services/MacSiwcAccountBridge.swift"

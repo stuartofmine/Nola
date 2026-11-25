@@ -79,7 +79,7 @@ nonisolated struct MacDesktopPluginClient: Sendable {
     }
 
     private func request<T: Decodable & Sendable>(_ arguments: [String]) async throws -> T {
-        guard let executable = Bundle.main.url(forAuxiliaryExecutable: "nola-agent-host") else {
+        guard let executable = Bundle.main.url(forAuxiliaryExecutable: "nola") else {
             throw CocoaError(.executableNotLoadable)
         }
         let process = Process()

@@ -1,7 +1,5 @@
 package com.nola.di
 
-import com.nola.data.repository.AuthRepository
-import com.nola.data.repository.AuthRepositoryImpl
 import com.nola.data.repository.ChatRepository
 import com.nola.data.repository.ChatRepositoryImpl
 import com.nola.data.repository.ContextRepository
@@ -23,9 +21,6 @@ import javax.inject.Singleton
 @Module
 @InstallIn(SingletonComponent::class)
 abstract class RepositoryModule {
-
-    @Binds @Singleton
-    abstract fun bindAuthRepo(impl: AuthRepositoryImpl): AuthRepository
 
     @Binds @Singleton
     abstract fun bindConversationRepo(impl: ConversationRepositoryImpl): ConversationRepository

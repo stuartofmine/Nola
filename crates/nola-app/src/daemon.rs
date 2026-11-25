@@ -42,13 +42,28 @@ pub fn run_daemon(
     #[cfg(unix)]
     {
         let mut socket_path = default_socket_path(db_path);
+        let mut parent_pid: Option<i32> = None;
         let mut i = 0;
         while i < args.len() {
-            if args[i] == "--socket" {
-                if let Some(p) = args.get(i + 1) {
-                    socket_path = PathBuf::from(p);
+            match args[i].as_str() {
+                "--socket" => {
+                    if let Some(p) = args.get(i + 1) {
+                        socket_path = PathBuf::from(p);
+                    }
+                    i += 1;
                 }
-                i += 1;
+                "--parent-pid" => {
+                    if let Some(p) = args.get(i + 1).and_then(|s| s.parse::<i32>().ok()) {
+                        if p > 1 {
+                            parent_pid = Some(p);
+                        }
+                    }
+                    i += 1;
+                }
+                "--archive-incompatible-store" => {
+                    i += 1;
+                }
+                _ => {}
             }
             i += 1;
         }
@@ -66,11 +81,25 @@ pub fn run_daemon(
             let _ = std::fs::set_permissions(&socket_path, std::fs::Permissions::from_mode(0o600));
         }
 
+        if let Some(ppid) = parent_pid {
+            let sock_cleanup = socket_path.clone();
+            std::thread::spawn(move || loop {
+                std::thread::sleep(Duration::from_secs(1));
+                let alive = unsafe { libc::kill(ppid, 0) == 0 }
+                    || std::io::Error::last_os_error().raw_os_error() == Some(libc::EPERM);
+                if !alive {
+                    let _ = std::fs::remove_file(&sock_cleanup);
+                    std::process::exit(0);
+                }
+            });
+        }
+
         println!(
             "Nola v2 Application Service listening on {} (protocol v{})",
             socket_path.display(),
             PROTOCOL_VERSION
         );
+        let _ = std::io::stdout().flush();
 
         let active_clients = Arc::new(AtomicUsize::new(0));
         for stream in listener.incoming().flatten() {

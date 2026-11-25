@@ -35,7 +35,7 @@ function Invoke-Checked {
 
 Write-Host "Building Nola Rust runtime for $RustTarget..."
 Invoke-Checked rustup target add $RustTarget
-Invoke-Checked cargo build --manifest-path (Join-Path $RepoRoot "apps\cli\Cargo.toml") --release --target $RustTarget --bins
+Invoke-Checked cargo build --manifest-path (Join-Path $RepoRoot "Cargo.toml") -p nola-app --bin nola --release --target $RustTarget
 $CargoMetadata = (& cargo metadata --manifest-path (Join-Path $RepoRoot "Cargo.toml") --no-deps --format-version 1 | ConvertFrom-Json)
 if ($LASTEXITCODE -ne 0 -or [string]::IsNullOrWhiteSpace([string]$CargoMetadata.target_directory)) {
     throw "Could not resolve the Cargo workspace target directory"
@@ -95,7 +95,6 @@ if ($null -eq $LlamaServer) {
 }
 
 $env:NOLA_WINDOWS_CLI_PATH = Join-Path $CargoTargetDirectory "$RustTarget\release\nola.exe"
-$env:NOLA_WINDOWS_AGENT_HOST_PATH = Join-Path $CargoTargetDirectory "$RustTarget\release\nola-agent-host.exe"
 $env:NOLA_LLAMA_SERVER = $LlamaServer.FullName
 $env:NOLA_LLAMA_CPP_SOURCE = $LlamaSource
 $env:NOLA_LLAMA_BACKEND = $Backend

@@ -11,7 +11,7 @@
 
 use std::collections::{BTreeMap, HashSet, VecDeque};
 use std::fs;
-use std::io::Read;
+use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{mpsc, Arc, Mutex};
@@ -153,10 +153,72 @@ fn header_value<'a>(request: &'a Request, name: &str) -> Option<&'a str> {
         .map(|h| h.value.as_str())
 }
 
-pub fn run_web_server(store: Store, suite: Arc<ModulesSuite>, args: &[String]) -> Result<u8, String> {
+fn ms_to_rfc3339(ms: i64) -> String {
+    chrono::DateTime::<Utc>::from_timestamp_millis(ms)
+        .map(|dt| dt.to_rfc3339())
+        .unwrap_or_else(|| Utc::now().to_rfc3339())
+}
+
+fn session_to_conversation_json(s: &Session) -> Value {
+    json!({
+        "conversationId": s.id,
+        "id": s.id,
+        "title": s.title,
+        "isPinned": false,
+        "createdAt": ms_to_rfc3339(s.created_at_ms),
+        "updatedAt": ms_to_rfc3339(s.updated_at_ms),
+        "selectedModelSource": s.model_connection.as_deref().unwrap_or(""),
+        "selectedModelId": s.model_id.as_deref().unwrap_or(""),
+        "executionBackend": "nola-v2",
+        "revision": 1,
+        "configurationRevision": 1,
+        "workspace_root": s.workspace_root,
+        "created_at_ms": s.created_at_ms,
+        "updated_at_ms": s.updated_at_ms
+    })
+}
+
+fn is_loopback_host(host: &str) -> bool {
+    matches!(host, "127.0.0.1" | "localhost" | "::1")
+}
+
+fn server_started_handshake(host: &str, bound_port: u16) -> Value {
+    let host_part = if host.contains(':') && !host.starts_with('[') {
+        format!("[{host}]")
+    } else {
+        host.to_string()
+    };
+    json!({
+        "type": "server.started",
+        "protocol_version": 1,
+        "loopback": is_loopback_host(host),
+        "origin": format!("http://{host_part}:{bound_port}")
+    })
+}
+
+fn validate_native_browser_token(request: &Request) -> bool {
+    let Some(supplied) = header_value(request, "x-nola-native-browser-token").map(str::trim) else {
+        return false;
+    };
+    if supplied.is_empty() {
+        return false;
+    }
+    match std::env::var("NOLA_NATIVE_BROWSER_TOKEN") {
+        Ok(expected) if !expected.trim().is_empty() => supplied == expected.trim(),
+        _ => true,
+    }
+}
+
+pub fn run_web_server(
+    store: Store,
+    suite: Arc<ModulesSuite>,
+    args: &[String],
+    mut json_mode: bool,
+) -> Result<u8, String> {
     let mut host = "127.0.0.1".to_string();
-    let mut port: u16 = 7860;
-    let mut assets_dir = suite.workspace_root.join("apps/web/frontend/dist");
+    let mut port: u16 = 5001;
+    let mut web_root: Option<PathBuf> = None;
+    let mut assets_override: Option<PathBuf> = None;
     let mut i = 0;
     while i < args.len() {
         match args[i].as_str() {
@@ -172,29 +234,86 @@ pub fn run_web_server(store: Store, suite: Arc<ModulesSuite>, args: &[String]) -
                     port = p;
                 }
             }
+            "--web-root" => {
+                i += 1;
+                if let Some(r) = args.get(i) {
+                    web_root = Some(PathBuf::from(r));
+                }
+            }
             "--assets" => {
                 i += 1;
                 if let Some(a) = args.get(i) {
-                    assets_dir = PathBuf::from(a);
+                    assets_override = Some(PathBuf::from(a));
                 }
+            }
+            "--json" => {
+                json_mode = true;
             }
             _ => {}
         }
         i += 1;
     }
 
+    let (ui_dir, static_dir) = if let Some(root) = web_root {
+        let ui = root.join("app/static/ui");
+        let st = root.join("app/static");
+        if ui.is_dir() {
+            (ui, st)
+        } else {
+            (root.clone(), root)
+        }
+    } else if let Some(assets) = assets_override {
+        (assets.clone(), assets)
+    } else {
+        let built_ui = suite.workspace_root.join("apps/web/app/static/ui");
+        let dist_ui = suite.workspace_root.join("apps/web/frontend/dist");
+        let ui = if built_ui.is_dir() { built_ui } else { dist_ui };
+        let st = suite.workspace_root.join("apps/web/app/static");
+        (ui, st)
+    };
+
     let addr = format!("{host}:{port}");
     let server = Server::http(&addr).map_err(|e| format!("failed to bind {addr}: {e}"))?;
+    let bound_port = server
+        .server_addr()
+        .to_ip()
+        .map(|s| s.port())
+        .unwrap_or(port);
+    let loopback = is_loopback_host(&host);
     let host_id = new_id();
     let nonces = Arc::new(Mutex::new(BoundedNonceCache::default()));
     let active_cancels: Arc<Mutex<BTreeMap<String, Arc<AtomicBool>>>> =
         Arc::new(Mutex::new(BTreeMap::new()));
     let native_browser = Arc::new(NativeBrowserBridge::default());
 
-    println!("Nola v2 WebHost listening on http://{addr}");
+    if json_mode {
+        println!("{}", server_started_handshake(&host, bound_port));
+    } else {
+        println!("Nola v2 WebHost listening on http://{host}:{bound_port}");
+    }
+    let _ = std::io::stdout().flush();
 
     for mut req in server.incoming_requests() {
-        if let Err(reason) = validate_same_origin(&req) {
+        let url = req.url().to_string();
+        let (path, query) = url.split_once('?').unwrap_or((url.as_str(), ""));
+        let method = req.method().clone();
+
+        // Chrome Native Messaging host authenticates via X-Nola-Native-Browser-Token
+        // (no browser Origin header); all other mutating routes enforce strict same-origin CSRF.
+        let is_native_browser_host_route = matches!(
+            path,
+            "/api/native-browser/host/poll" | "/api/native-browser/host/result"
+        );
+        if is_native_browser_host_route {
+            if !validate_native_browser_token(&req) {
+                let _ = respond_json(
+                    req,
+                    401,
+                    &json!({"error": "unauthorized_native_browser_host"}),
+                );
+                continue;
+            }
+        } else if let Err(reason) = validate_same_origin(&req) {
             let _ = respond_json(req, 403, &json!({"error": "csrf_blocked", "message": reason}));
             continue;
         }
@@ -205,12 +324,8 @@ pub fn run_web_server(store: Store, suite: Arc<ModulesSuite>, args: &[String]) -
             }
         }
 
-        let url = req.url().to_string();
-        let (path, query) = url.split_once('?').unwrap_or((url.as_str(), ""));
-        let method = req.method().clone();
-
         match (method, path) {
-            // --- Health & Auth/Session (Tailcat + Web UI compatible) ---
+            // --- Health & Auth/Session (Tailcat + Web UI + Windows + Android compatible) ---
             (Method::Get, "/api/health") => {
                 let _ = respond_json(req, 200, &json!({"ok": true, "version": "2.0.0"}));
             }
@@ -219,8 +334,9 @@ pub fn run_web_server(store: Store, suite: Arc<ModulesSuite>, args: &[String]) -
                     req,
                     200,
                     &json!({
-                        "authenticated": false,
-                        "localTrust": false,
+                        "authenticated": loopback,
+                        "localTrust": loopback,
+                        "tailcatAvailable": true,
                         "transportIngress": "tailcat",
                         "hostId": host_id,
                         "version": "2.0.0"
@@ -233,15 +349,26 @@ pub fn run_web_server(store: Store, suite: Arc<ModulesSuite>, args: &[String]) -
             (Method::Post, "/api/web/logout") => {
                 let _ = respond_json(req, 200, &json!({"authenticated": false}));
             }
+            (Method::Get, "/api/software-update") => {
+                let _ = respond_json(
+                    req,
+                    200,
+                    &json!({"currentVersion": "2.0.0", "updateAvailable": false}),
+                );
+            }
 
             // --- Conversations & Streaming Chat ---
             (Method::Get, "/api/chat/conversations") | (Method::Get, "/api/sessions") => {
                 match store.list_sessions(200) {
                     Ok(sessions) => {
+                        let conversations: Vec<Value> = sessions
+                            .iter()
+                            .map(session_to_conversation_json)
+                            .collect();
                         let _ = respond_json(
                             req,
                             200,
-                            &json!({"conversations": sessions, "sessions": sessions}),
+                            &json!({"conversations": conversations, "sessions": sessions}),
                         );
                     }
                     Err(e) => {
@@ -265,18 +392,114 @@ pub fn run_web_server(store: Store, suite: Arc<ModulesSuite>, args: &[String]) -
                         .and_then(|v| v.as_str())
                         .map(ToString::to_string)
                         .unwrap_or_else(|| suite.workspace_root.display().to_string()),
-                    model_connection: None,
-                    model_id: None,
+                    model_connection: body
+                        .get("selectedModelSource")
+                        .and_then(|v| v.as_str())
+                        .filter(|s| !s.is_empty())
+                        .map(ToString::to_string),
+                    model_id: body
+                        .get("selectedModelId")
+                        .and_then(|v| v.as_str())
+                        .filter(|s| !s.is_empty())
+                        .map(ToString::to_string),
                     created_at_ms: ts,
                     updated_at_ms: ts,
                 };
                 match store.upsert_session(&sess) {
                     Ok(()) => {
+                        let conv = session_to_conversation_json(&sess);
                         let _ = respond_json(
                             req,
                             200,
-                            &json!({"conversationId": id, "conversation": sess}),
+                            &json!({"conversationId": id, "conversation": conv}),
                         );
+                    }
+                    Err(e) => {
+                        let _ = respond_json(req, 500, &json!({"error": e.to_string()}));
+                    }
+                }
+            }
+            (Method::Get, p)
+                if p.starts_with("/api/chat/conversations/") && p.ends_with("/messages") =>
+            {
+                let id = p
+                    .trim_start_matches("/api/chat/conversations/")
+                    .trim_end_matches("/messages");
+                let events = match store.events_after(id, 0, 1000) {
+                    Ok(EventPage::Events(ev)) => ev,
+                    _ => Vec::new(),
+                };
+                let latest_seq = events.last().map(|e| e.seq).unwrap_or(0);
+                let _ = respond_json(
+                    req,
+                    200,
+                    &json!({
+                        "messages": [],
+                        "events": events,
+                        "hasMore": false,
+                        "projectionRevision": 1,
+                        "eventSequence": latest_seq
+                    }),
+                );
+            }
+            (Method::Get, p)
+                if p.starts_with("/api/chat/conversations/")
+                    && !p.trim_start_matches("/api/chat/conversations/").contains('/') =>
+            {
+                let id = p.trim_start_matches("/api/chat/conversations/");
+                match store.get_session(id) {
+                    Ok(Some(sess)) => {
+                        let events = match store.events_after(id, 0, 1000) {
+                            Ok(EventPage::Events(ev)) => ev,
+                            _ => Vec::new(),
+                        };
+                        let conv = session_to_conversation_json(&sess);
+                        let _ = respond_json(
+                            req,
+                            200,
+                            &json!({
+                                "conversationId": sess.id,
+                                "conversation": conv,
+                                "events": events
+                            }),
+                        );
+                    }
+                    Ok(None) => {
+                        let _ = respond_json(req, 404, &json!({"error": "conversation_not_found"}));
+                    }
+                    Err(e) => {
+                        let _ = respond_json(req, 500, &json!({"error": e.to_string()}));
+                    }
+                }
+            }
+            (Method::Patch, p)
+                if p.starts_with("/api/chat/conversations/")
+                    && !p.trim_start_matches("/api/chat/conversations/").contains('/') =>
+            {
+                let id = p.trim_start_matches("/api/chat/conversations/");
+                let body = read_json_body(&mut req);
+                match store.get_session(id) {
+                    Ok(Some(mut sess)) => {
+                        if let Some(title) = body.get("title").and_then(|v| v.as_str()) {
+                            sess.title = title.to_string();
+                        }
+                        sess.updated_at_ms = now_ms();
+                        match store.upsert_session(&sess) {
+                            Ok(()) => {
+                                let conv = session_to_conversation_json(&sess);
+                                let _ = respond_json(
+                                    req,
+                                    200,
+                                    &json!({"ok": true, "conversation": conv}),
+                                );
+                            }
+                            Err(e) => {
+                                let _ = respond_json(req, 500, &json!({"error": e.to_string()}));
+                            }
+                        }
+                    }
+                    Ok(None) => {
+                        let _ = respond_json(req, 404, &json!({"error": "conversation_not_found"}));
                     }
                     Err(e) => {
                         let _ = respond_json(req, 500, &json!({"error": e.to_string()}));
@@ -636,8 +859,11 @@ pub fn run_web_server(store: Store, suite: Arc<ModulesSuite>, args: &[String]) -
                 let _ = respond_json(req, 200, &json!({"command_id": id}));
             }
             (Method::Post, "/api/native-browser/host/poll") => {
-                let next = native_browser.poll_next();
-                let _ = respond_json(req, 200, &json!({"command": next}));
+                if let Some(next) = native_browser.poll_next() {
+                    let _ = respond_json(req, 200, &json!({"type": "command", "command": next}));
+                } else {
+                    let _ = respond_json(req, 200, &json!({"type": "idle", "retry_ms": 500}));
+                }
             }
             (Method::Post, "/api/native-browser/host/result") => {
                 let body = read_json_body(&mut req);
@@ -684,9 +910,9 @@ pub fn run_web_server(store: Store, suite: Arc<ModulesSuite>, args: &[String]) -
             (_, p) if p.starts_with("/api/") => {
                 let _ = respond_json(req, 404, &json!({"error": "not_found"}));
             }
-            // --- Static frontend assets ---
+            // --- Static frontend assets (/ui/*, /static/*, and SPA fallback) ---
             (Method::Get, p) => {
-                serve_static_asset(req, &assets_dir, p);
+                serve_static_asset(req, &ui_dir, &static_dir, p);
             }
             _ => {
                 let _ = respond_json(req, 404, &json!({"error": "not_found"}));
@@ -885,28 +1111,57 @@ fn mime_for_path(path: &Path) -> &'static str {
     }
 }
 
-fn serve_static_asset(req: Request, assets_dir: &Path, path: &str) {
+fn resolve_static_target<'a>(
+    ui_dir: &'a Path,
+    static_dir: &'a Path,
+    decoded_path: &str,
+) -> (&'a Path, String, bool) {
+    if let Some(rest) = decoded_path.strip_prefix("/static/") {
+        return (static_dir, rest.trim_start_matches('/').to_string(), false);
+    }
+    let rel = if decoded_path == "/ui" || decoded_path == "/ui/" {
+        ""
+    } else if let Some(rest) = decoded_path.strip_prefix("/ui/") {
+        rest
+    } else {
+        decoded_path.trim_start_matches('/')
+    };
+    let rel = if rel.is_empty() { "index.html" } else { rel };
+    let looks_like_spa_route = !rel.rsplit('/').next().unwrap_or("").contains('.');
+    (ui_dir, rel.to_string(), looks_like_spa_route)
+}
+
+fn serve_static_asset(req: Request, ui_dir: &Path, static_dir: &Path, path: &str) {
     let decoded = percent_decode_path(path);
     if decoded.contains('\0') || decoded.contains('\\') || decoded.contains("..") {
         let _ = respond_json(req, 403, &json!({"error": "forbidden_path"}));
         return;
     }
-    let rel = decoded.trim_start_matches('/');
-    let rel = if rel.is_empty() { "index.html" } else { rel };
-    let Ok(canon_root) = fs::canonicalize(assets_dir) else {
+    let (root_dir, rel, spa_fallback) = resolve_static_target(ui_dir, static_dir, &decoded);
+    let Ok(canon_root) = fs::canonicalize(root_dir) else {
         let _ = respond_json(req, 404, &json!({"error": "not_found"}));
         return;
     };
-    let Ok(canon_candidate) = fs::canonicalize(canon_root.join(rel)) else {
-        let _ = respond_json(req, 404, &json!({"error": "not_found"}));
-        return;
+    let candidate = match fs::canonicalize(canon_root.join(&rel)) {
+        Ok(p) if p.starts_with(&canon_root) && p.is_file() => p,
+        _ if spa_fallback => match fs::canonicalize(canon_root.join("index.html")) {
+            Ok(idx) if idx.starts_with(&canon_root) && idx.is_file() => idx,
+            _ => {
+                let _ = respond_json(req, 404, &json!({"error": "not_found"}));
+                return;
+            }
+        },
+        Ok(_) => {
+            let _ = respond_json(req, 403, &json!({"error": "forbidden_path"}));
+            return;
+        }
+        Err(_) => {
+            let _ = respond_json(req, 404, &json!({"error": "not_found"}));
+            return;
+        }
     };
-    if !canon_candidate.starts_with(&canon_root) || !canon_candidate.is_file() {
-        let _ = respond_json(req, 403, &json!({"error": "forbidden_path"}));
-        return;
-    }
-    if let Ok(bytes) = fs::read(&canon_candidate) {
-        let ct = Header::from_bytes(&b"Content-Type"[..], mime_for_path(&canon_candidate).as_bytes())
+    if let Ok(bytes) = fs::read(&candidate) {
+        let ct = Header::from_bytes(&b"Content-Type"[..], mime_for_path(&candidate).as_bytes())
             .unwrap();
         let nosniff = Header::from_bytes(&b"X-Content-Type-Options"[..], &b"nosniff"[..]).unwrap();
         let resp = Response::from_data(bytes)
@@ -956,5 +1211,39 @@ mod tests {
         let v: Value = serde_json::from_str(&clean).unwrap();
         assert_eq!(v["endpoint"], "https://api.example.com/v1");
         assert_eq!(v["items"], json!([1, 2]));
+    }
+
+    #[test]
+    fn server_started_handshake_matches_windows_desktop_contract() {
+        let frame = server_started_handshake("127.0.0.1", 28421);
+        assert_eq!(frame["type"], "server.started");
+        assert_eq!(frame["protocol_version"], 1);
+        assert_eq!(frame["loopback"], true);
+        assert_eq!(frame["origin"], "http://127.0.0.1:28421");
+
+        let lan = server_started_handshake("0.0.0.0", 5001);
+        assert_eq!(lan["loopback"], false);
+    }
+
+    #[test]
+    fn static_target_resolves_ui_static_and_spa_routes() {
+        let ui = Path::new("/web/app/static/ui");
+        let st = Path::new("/web/app/static");
+        assert_eq!(
+            resolve_static_target(ui, st, "/ui/assets/app.js"),
+            (ui, "assets/app.js".into(), false)
+        );
+        assert_eq!(
+            resolve_static_target(ui, st, "/ui/chat"),
+            (ui, "chat".into(), true)
+        );
+        assert_eq!(
+            resolve_static_target(ui, st, "/static/favicon.ico"),
+            (st, "favicon.ico".into(), false)
+        );
+        assert_eq!(
+            resolve_static_target(ui, st, "/"),
+            (ui, "index.html".into(), false)
+        );
     }
 }

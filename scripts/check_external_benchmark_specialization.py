@@ -11,13 +11,11 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 BENCHMARK_ROOT = ROOT / "evals" / "benchmarks"
 PRODUCTION_ROOTS = (
-    ROOT / "core" / "src",
-    ROOT / "apps/cli" / "src",
     ROOT / "apps/ios",
     ROOT / "apps/macos",
     ROOT / "apps/android" / "app" / "src" / "main",
     ROOT / "apps/web" / "app",
-) + tuple((ROOT / "core").glob("*/src"))
+) + tuple((ROOT / "crates").glob("*/src"))
 
 
 def _manifest(name: str) -> dict:

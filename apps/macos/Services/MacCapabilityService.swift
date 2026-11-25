@@ -254,8 +254,7 @@ enum MacAccessibilityApplicationResolver {
         let executableName = application.executableURL?.lastPathComponent.lowercased() ?? ""
         return bundleIdentifier == Bundle.main.bundleIdentifier?.lowercased()
             || bundleIdentifier.hasPrefix("com.gaojc.nola")
-            || executableName == "nola-agent-host"
-            || executableName == "nola-cli"
+            || executableName == "nola"
     }
 }
 

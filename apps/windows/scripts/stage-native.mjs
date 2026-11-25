@@ -20,9 +20,6 @@ function firstFile(label, environmentName, override, candidates) {
 const cli = firstFile("nola.exe", "NOLA_WINDOWS_CLI_PATH", process.env.NOLA_WINDOWS_CLI_PATH, [
     path.join(repoRoot, "target", rustTarget, "release", "nola.exe"),
 ]);
-const agentHost = firstFile("nola-agent-host.exe", "NOLA_WINDOWS_AGENT_HOST_PATH", process.env.NOLA_WINDOWS_AGENT_HOST_PATH, [
-    path.join(repoRoot, "target", rustTarget, "release", "nola-agent-host.exe"),
-]);
 const llamaServer = firstFile("llama-server.exe", "NOLA_LLAMA_SERVER", process.env.NOLA_LLAMA_SERVER, [
     path.join(repoRoot, "vendor", "llama.cpp", "build", "bin", "Release", "llama-server.exe"),
 ]);
@@ -32,7 +29,6 @@ for (const entry of readdirSync(destination)) {
     if (/\.(exe|dll|pdb)$/i.test(entry)) rmSync(path.join(destination, entry));
 }
 copyFileSync(cli, path.join(destination, "nola.exe"));
-copyFileSync(agentHost, path.join(destination, "nola-agent-host.exe"));
 copyFileSync(llamaServer, path.join(destination, "llama-server.exe"));
 
 const llamaDirectory = path.dirname(llamaServer);

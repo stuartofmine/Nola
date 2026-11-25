@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# SPDX-License-Identifier: Apache-2.0
 set -euo pipefail
 . "$(cd "$(dirname "$0")" && pwd -P)/lib/rust_build_cache.sh"
 nola_rust_build_cache_init "${CARGO:-cargo}"
@@ -20,19 +21,13 @@ CARGO_TARGET_DIR="$CARGO_TARGET_DIR" nola_cargo build \
   --locked \
   --manifest-path "$ROOT/Cargo.toml" \
   --profile "$PROFILE" \
-  -p nola_cli \
-  --bin nola \
-  --bin nola-agent-host
+  -p nola-app \
+  --bin nola
 
 if [[ "$OUTPUT_DIR" != "$ARTIFACT_DIR" ]]; then
   install -m 755 "$ARTIFACT_DIR/nola" "$OUTPUT_DIR/nola"
-  install -m 755 "$ARTIFACT_DIR/nola-agent-host" "$OUTPUT_DIR/nola-agent-host"
 fi
 
-for required in \
-  "$OUTPUT_DIR/nola" \
-  "$OUTPUT_DIR/nola-agent-host"; do
-  [[ -f "$required" ]] || { echo "error: incomplete Nola runtime: $required" >&2; exit 3; }
-done
+[[ -f "$OUTPUT_DIR/nola" ]] || { echo "error: incomplete Nola runtime: $OUTPUT_DIR/nola" >&2; exit 3; }
 
 printf 'Nola CLI/Web runtime: %s\n' "$OUTPUT_DIR"

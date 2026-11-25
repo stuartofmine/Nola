@@ -31,7 +31,7 @@ def main():
     errors = []
     checked = 0
     for name in filter(None, names):
-        if PUBLIC_EXPORT.excluded(name) or name.startswith(('evals/benchmarks/terminal-bench/tasks/', 'evals/benchmarks/longmemeval/cases/', 'third_party/', 'apps/android/app/src/main/cpp/third_party/', 'apps/cli/vendor/')):
+        if PUBLIC_EXPORT.excluded(name) or name.startswith(('evals/benchmarks/terminal-bench/tasks/', 'evals/benchmarks/longmemeval/cases/', 'third_party/', 'apps/android/app/src/main/cpp/third_party/', 'vendor/')):
             continue
         path = ROOT / name
         if not path.is_file() or path.is_symlink():

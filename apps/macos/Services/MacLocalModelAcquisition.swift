@@ -92,7 +92,7 @@ nonisolated struct MacModelAcquisitionClient: Sendable {
     let environment: [String: String]
     let engineEnvironment: [String: String]
 
-    init(executable: URL? = Bundle.main.url(forAuxiliaryExecutable: "nola-agent-host"),
+    init(executable: URL? = Bundle.main.url(forAuxiliaryExecutable: "nola"),
          root: URL = MacLocalModelProfile.modelsRoot,
          environment: [String: String]? = nil) {
         self.executable = executable

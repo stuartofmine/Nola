@@ -900,7 +900,7 @@ nonisolated enum MacAgentHostExecutableLocator {
                 return url
             }
         }
-        if let bundled = bundle.url(forAuxiliaryExecutable: "nola-agent-host"),
+        if let bundled = bundle.url(forAuxiliaryExecutable: "nola"),
            fileManager.isExecutableFile(atPath: bundled.path) {
             return bundled
         }

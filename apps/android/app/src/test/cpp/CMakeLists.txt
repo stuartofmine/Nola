@@ -10,8 +10,8 @@ find_path(JNI_PLATFORM_INCLUDE jni_md.h HINTS "${JNI_INCLUDE}"
     PATH_SUFFIXES darwin linux win32 REQUIRED)
 add_library(nola_privacy_test SHARED ../../main/cpp/model_privacy_jni.cpp)
 target_include_directories(nola_privacy_test PRIVATE "${JNI_INCLUDE}" "${JNI_PLATFORM_INCLUDE}"
-    "${CMAKE_CURRENT_SOURCE_DIR}/../../../../../../core/swift_shims")
-find_library(CORE_PRIVACY NAMES nola_model_privacy nola_model_privacy.dll
+    "${CMAKE_CURRENT_SOURCE_DIR}/../../../../../../crates/nola-app/include")
+find_library(CORE_PRIVACY NAMES nola_app nola_app.dll
     PATHS "${RUST_OUTPUT}" NO_DEFAULT_PATH REQUIRED)
 target_link_libraries(nola_privacy_test PRIVATE "${CORE_PRIVACY}")
 # The JVM loads this adapter by absolute path, including on multi-config generators.
@@ -19,5 +19,5 @@ set_target_properties(nola_privacy_test PROPERTIES LIBRARY_OUTPUT_DIRECTORY "${C
     RUNTIME_OUTPUT_DIRECTORY_RELEASE "${CMAKE_BINARY_DIR}/lib")
 if(WIN32)
     add_custom_command(TARGET nola_privacy_test POST_BUILD COMMAND ${CMAKE_COMMAND} -E copy_if_different
-        "${RUST_OUTPUT}/nola_model_privacy.dll" "$<TARGET_FILE_DIR:nola_privacy_test>")
+        "${RUST_OUTPUT}/nola_app.dll" "$<TARGET_FILE_DIR:nola_privacy_test>")
 endif()

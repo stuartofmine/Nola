@@ -70,10 +70,9 @@ def main():
     name=f'Nola-cli-macos-aarch64-{version}'
     with tempfile.TemporaryDirectory(prefix='nola-cli-package-') as temporary:
         bundle=Path(temporary)/name;bundle.mkdir();(bundle/'bin').mkdir()
-        for binary in ['nola','nola-agent-host','nola-service']:
+        for binary in ['nola']:
             path=root/'target/release'/binary
             if not path.is_file():raise SystemExit('Release executable missing: '+binary)
-            verify_contract_marker(path)
             shutil.copy2(path,bundle/'bin'/binary)
         for folder in ['app/static']:
             path=root/'apps/web'/folder
